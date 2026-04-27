@@ -12,10 +12,9 @@ extern "C" {
 #include <memory>
 #include <optional>
 #include <string>
-#include <thread>
-#include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
+[[maybe_unused]]
 static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
   return {.ptr = s, .len = size};
 }
@@ -97,9 +96,9 @@ void add_random_frames(ddog_crasht_Handle_StackTrace* stacktrace) {
     std::string filename = "/path/to/code/file_" + std::to_string(i);
     check_result(ddog_crasht_StackFrame_with_file(new_frame.get(), to_slice_string(filename)),
                  "failed to add filename");
-    check_result(ddog_crasht_StackFrame_with_line(new_frame.get(), i * 4 + 3),
+    check_result(ddog_crasht_StackFrame_with_line(new_frame.get(), static_cast<uint32_t>(i * 4 + 3)),
                  "failed to add line");
-    check_result(ddog_crasht_StackFrame_with_column(new_frame.get(), i * 3 + 7),
+    check_result(ddog_crasht_StackFrame_with_column(new_frame.get(), static_cast<uint32_t>(i * 3 + 7)),
                  "failed to add line");
 
     // This operation consumes the frame, so use .release here
@@ -221,8 +220,13 @@ int main(void) {
 
   // This API allows one to capture useful files (e.g. /proc/pid/maps)
   // For testing purposes, use `/etc/hosts` which should exist on any reasonable UNIX system
+  #ifdef _WIN32
+  check_result(ddog_crasht_CrashInfoBuilder_with_file(builder.get(), to_slice_c_char("C:\\Windows\\System32\\drivers\\etc\\hosts")),
+               "Failed to add file");
+  #else
   check_result(ddog_crasht_CrashInfoBuilder_with_file(builder.get(), to_slice_c_char("/etc/hosts")),
                "Failed to add file");
+  #endif
 
   check_result(ddog_crasht_CrashInfoBuilder_with_kind(builder.get(), DDOG_CRASHT_ERROR_KIND_PANIC),
                "Failed to set error kind");
@@ -234,7 +238,7 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_timestamp(builder.get(), timestamp),
                "Failed to set timestamp");
 
-  ddog_crasht_ProcInfo procinfo = {.pid = 42};
+  ddog_crasht_ProcInfo procinfo = { .pid = 42, .tid = 0 };
   check_result(ddog_crasht_CrashInfoBuilder_with_proc_info(builder.get(), procinfo),
                "Failed to set procinfo");
 
@@ -242,13 +246,15 @@ int main(void) {
                "Failed to set os_info");
 
   // Test uploading a crash ping without siginfo
+  #ifndef _WIN32
   auto ping_endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/crash_ping_test"));
   check_result(ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(builder.get(), ping_endpoint),
                "Failed to upload crash ping");
   ddog_endpoint_drop(ping_endpoint);
+  #endif
 
   auto sigInfo = ddog_crasht_SigInfo {
-    .addr = "0xBABEF00D",
+    .addr = to_slice_c_char("0xBABEF00D"),
     .code = 16,
     .code_human_readable = DDOG_CRASHT_SI_CODES_UNKNOWN,
     .signo = -1,
@@ -258,15 +264,19 @@ int main(void) {
   check_result(ddog_crasht_CrashInfoBuilder_with_sig_info(builder.get(), sigInfo),
                "failed to add signal info");
 
+  #ifndef _WIN32
   auto ping_endpoint2 = ddog_endpoint_from_filename(to_slice_c_char("/tmp/crash_ping_test"));
   check_result(ddog_crasht_CrashInfoBuilder_upload_ping_to_endpoint(builder.get(), ping_endpoint2),
                "Failed to upload crash ping");
   ddog_endpoint_drop(ping_endpoint2);
+  #endif
 
+  #ifndef _WIN32
   auto crashinfo = extract_result(ddog_crasht_CrashInfoBuilder_build(builder.release()),
                                   "failed to build CrashInfo");
   auto endpoint = ddog_endpoint_from_filename(to_slice_c_char("/tmp/test"));
   check_result(ddog_crasht_CrashInfo_upload_to_endpoint(crashinfo.get(), endpoint),
                "Failed to export to file");
   ddog_endpoint_drop(endpoint);
+  #endif
 }

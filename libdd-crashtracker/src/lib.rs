@@ -76,7 +76,8 @@ pub use collector::{
     begin_op, clear_additional_tags, clear_spans, clear_traces, consume_and_emit_additional_tags,
     default_signals, disable, enable, end_op, init, insert_additional_tag, insert_span,
     insert_trace, on_fork, reconfigure, remove_additional_tag, remove_span, remove_trace,
-    reset_counters, update_config, update_metadata, OpTypes, DEFAULT_SYMBOLS,
+    report_unhandled_exception, reset_counters, update_config, update_metadata, OpTypes,
+    DEFAULT_SYMBOLS,
 };
 
 #[cfg(all(windows, feature = "collector_windows"))]
@@ -93,7 +94,8 @@ pub use receiver::{
 
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
 pub use shared::configuration::{
-    CrashtrackerConfiguration, CrashtrackerReceiverConfig, StacktraceCollection,
+    CrashtrackerConfiguration, CrashtrackerConfigurationBuilder, CrashtrackerReceiverConfig,
+    StacktraceCollection,
 };
 
 #[cfg(all(unix, feature = "benchmarking"))]

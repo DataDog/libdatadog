@@ -2,27 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::trace_exporter::agent_response::{
-    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
+    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
 use crate::trace_exporter::error::TraceExporterError;
 use crate::trace_exporter::TraceExporterOutputFormat;
-use hyper::header::CONTENT_TYPE;
+use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
 use libdd_common::header::{
-    APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
+    APPLICATION_MSGPACK, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
 use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use libdd_trace_utils::msgpack_encoder;
-use libdd_trace_utils::span::{Span, SpanText};
+use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_payload;
-use std::collections::HashMap;
 
 /// Prepared traces payload ready for sending to the agent
 pub(super) struct PreparedTracesPayload {
     /// Serialized msgpack payload
     pub data: Vec<u8>,
     /// HTTP headers for the request
-    pub headers: HashMap<&'static str, String>,
+    pub headers: HeaderMap,
     /// Number of trace chunks
     pub chunk_count: usize,
 }
@@ -46,7 +45,7 @@ impl<'a> TraceSerializer<'a> {
     }
 
     /// Prepare traces payload and HTTP headers for sending to agent
-    pub(super) fn prepare_traces_payload<T: SpanText>(
+    pub(super) fn prepare_traces_payload<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
         header_tags: TracerHeaderTags,
@@ -64,7 +63,7 @@ impl<'a> TraceSerializer<'a> {
     }
 
     /// Collect trace chunks based on output format
-    fn collect_and_process_traces<T: SpanText>(
+    fn collect_and_process_traces<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
     ) -> Result<tracer_payload::TraceChunks<T>, TraceExporterError> {
@@ -78,26 +77,22 @@ impl<'a> TraceSerializer<'a> {
     }
 
     /// Build HTTP headers for traces request
-    fn build_traces_headers(
-        &self,
-        header_tags: TracerHeaderTags,
-        chunk_count: usize,
-    ) -> HashMap<&'static str, String> {
-        let mut headers: HashMap<&'static str, String> = header_tags.into();
-        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
-        headers.insert(DATADOG_TRACE_COUNT_STR, chunk_count.to_string());
-        headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
+    fn build_traces_headers(&self, header_tags: TracerHeaderTags, chunk_count: usize) -> HeaderMap {
+        let mut headers: HeaderMap = header_tags.into();
+        headers.reserve(4);
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, HeaderValue::from_static("1"));
+        headers.insert(DATADOG_TRACE_COUNT, chunk_count.into());
+        headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
         if let Some(agent_payload_response_version) = &self.agent_payload_response_version {
-            headers.insert(
-                DATADOG_RATES_PAYLOAD_VERSION_HEADER,
-                agent_payload_response_version.header_value(),
-            );
+            // should never fail, as the version should only contain visible ascii chars
+            let _ = HeaderValue::try_from(agent_payload_response_version.header_value())
+                .map(|v| headers.insert(DATADOG_RATES_PAYLOAD_VERSION, v));
         }
         headers
     }
 
     /// Serialize payload to msgpack format
-    fn serialize_payload<T: SpanText>(
+    fn serialize_payload<T: TraceData>(
         &self,
         payload: &tracer_payload::TraceChunks<T>,
     ) -> Result<Vec<u8>, TraceExporterError> {
@@ -114,12 +109,10 @@ impl<'a> TraceSerializer<'a> {
 mod tests {
     use super::*;
     use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
-    use hyper::header::CONTENT_TYPE;
-    use libdd_common::header::{
-        APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
-    };
+    use http::header::CONTENT_TYPE;
+    use libdd_common::header::APPLICATION_MSGPACK_STR;
     use libdd_tinybytes::BytesString;
-    use libdd_trace_utils::span::SpanBytes;
+    use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::trace_utils::TracerHeaderTags;
 
     fn create_test_span() -> SpanBytes {
@@ -179,12 +172,9 @@ mod tests {
         let headers = serializer.build_traces_headers(header_tags, 3);
 
         // Check basic headers are present
-        assert_eq!(headers.get(DATADOG_SEND_REAL_HTTP_STATUS_STR).unwrap(), "1");
-        assert_eq!(headers.get(DATADOG_TRACE_COUNT_STR).unwrap(), "3");
-        assert_eq!(
-            headers.get(CONTENT_TYPE.as_str()).unwrap(),
-            APPLICATION_MSGPACK_STR
-        );
+        assert_eq!(headers.get(DATADOG_SEND_REAL_HTTP_STATUS).unwrap(), "1");
+        assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "3");
+        assert_eq!(headers.get(CONTENT_TYPE).unwrap(), APPLICATION_MSGPACK_STR);
 
         // Check tracer metadata headers are present
         assert_eq!(headers.get("datadog-meta-lang").unwrap(), "rust");
@@ -212,8 +202,8 @@ mod tests {
         let headers = serializer.build_traces_headers(header_tags, 2);
 
         // Check that agent payload version header is included
-        assert!(headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION_HEADER));
-        assert_eq!(headers.get(DATADOG_TRACE_COUNT_STR).unwrap(), "2");
+        assert!(headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
+        assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
     }
 
     #[test]
@@ -346,7 +336,7 @@ mod tests {
         assert!(!prepared.headers.is_empty());
 
         // Check headers
-        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT_STR).unwrap(), "2");
+        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
         assert_eq!(prepared.headers.get("datadog-meta-lang").unwrap(), "rust");
     }
 
@@ -377,9 +367,7 @@ mod tests {
 
         let prepared = result.unwrap();
         assert_eq!(prepared.chunk_count, 1);
-        assert!(prepared
-            .headers
-            .contains_key(DATADOG_RATES_PAYLOAD_VERSION_HEADER));
+        assert!(prepared.headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
     }
 
     #[test]
@@ -394,7 +382,7 @@ mod tests {
         let prepared = result.unwrap();
         assert_eq!(prepared.chunk_count, 0);
         assert!(!prepared.data.is_empty()); // Even empty traces result in some serialized data
-        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT_STR).unwrap(), "0");
+        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "0");
     }
 
     #[test]

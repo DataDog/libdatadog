@@ -18,6 +18,8 @@ pub struct ErrorData {
     pub kind: ErrorKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_name: Option<String>,
     pub source_type: SourceType,
     pub stack: StackTrace,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -202,7 +204,8 @@ impl super::test_utils::TestInstance for ErrorData {
         Self {
             is_crash: true,
             kind: ErrorKind::UnixSignal,
-            message: None,
+            message: Some(format!("Test crash message for seed {seed}")),
+            thread_name: Some(format!("test-thread-{seed}")),
             source_type: SourceType::Crashtracking,
             stack: StackTrace::test_instance(seed),
             threads: vec![],

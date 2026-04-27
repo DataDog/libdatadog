@@ -1,19 +1,19 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(tokio_taskdump)]
+#[cfg(all(tokio_unstable, target_os = "linux"))]
 use chrono::{DateTime, Utc};
-#[cfg(tokio_taskdump)]
+#[cfg(all(tokio_unstable, target_os = "linux"))]
 use std::time::{Duration, SystemTime};
-#[cfg(tokio_taskdump)]
+#[cfg(all(tokio_unstable, target_os = "linux"))]
 use tokio::time::timeout;
 
-#[cfg(not(tokio_taskdump))]
+#[cfg(not(all(tokio_unstable, target_os = "linux")))]
 pub async fn dump() -> String {
     "".to_string()
 }
 
-#[cfg(tokio_taskdump)]
+#[cfg(all(tokio_unstable, target_os = "linux"))]
 pub async fn dump() -> String {
     let mut dumps = "".to_string();
     if let Some(traces) = dump_tasks().await {
@@ -22,7 +22,7 @@ pub async fn dump() -> String {
     dumps
 }
 
-#[cfg(tokio_taskdump)]
+#[cfg(all(tokio_unstable, target_os = "linux"))]
 async fn dump_tasks() -> Option<String> {
     let handle = tokio::runtime::Handle::current();
     if let Ok(dump) = timeout(Duration::from_secs(2), handle.dump()).await {

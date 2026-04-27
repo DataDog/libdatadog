@@ -1,11 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, SpanText};
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+use crate::span::TraceData;
 use rmp::encode::{
     write_bin, write_bool, write_f64, write_i64, write_sint, write_str, write_u32, write_u64,
     write_u8, RmpWrite, ValueWriteError,
 };
+use std::borrow::Borrow;
 
 /// Encodes a `SpanLink` object into a slice of bytes.
 ///
@@ -15,13 +17,13 @@ use rmp::encode::{
 ///
 /// # Returns
 ///
-/// * `Ok(()))` - Nothing if successful.
+/// * `Ok(())` - Nothing if successful.
 /// * `Err(ValueWriteError)` - An error if the writing fails.
 ///
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub fn encode_span_links<W: RmpWrite, T: SpanText>(
+pub fn encode_span_links<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_links: &[SpanLink<T>],
 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -82,7 +84,7 @@ pub fn encode_span_links<W: RmpWrite, T: SpanText>(
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub fn encode_span_events<W: RmpWrite, T: SpanText>(
+pub fn encode_span_events<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_events: &[SpanEvent<T>],
 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -106,7 +108,7 @@ pub fn encode_span_events<W: RmpWrite, T: SpanText>(
             for (k, attribute) in event.attributes.iter() {
                 write_str(writer, k.borrow())?;
 
-                fn write_array_value<W: RmpWrite, T: SpanText>(
+                fn write_array_value<W: RmpWrite, T: TraceData>(
                     writer: &mut W,
                     value: &AttributeArrayValue<T>,
                 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -181,7 +183,7 @@ pub fn encode_span_events<W: RmpWrite, T: SpanText>(
 ///
 /// This function will return any error emitted by the writer.
 #[inline(always)]
-pub fn encode_span<W: RmpWrite, T: SpanText>(
+pub fn encode_span<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span: &Span<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -256,7 +258,7 @@ pub fn encode_span<W: RmpWrite, T: SpanText>(
         rmp::encode::write_map_len(writer, span.meta_struct.len() as u32)?;
         for (k, v) in span.meta_struct.iter() {
             write_str(writer, k.borrow())?;
-            write_bin(writer, v.as_ref())?;
+            write_bin(writer, v.borrow())?;
         }
     }
 

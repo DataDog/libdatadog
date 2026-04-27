@@ -23,7 +23,7 @@ use conn_stream::{ConnStream, ConnStreamError};
 #[derive(Clone)]
 pub enum Connector {
     Http(connect::HttpConnector),
-    #[cfg(feature = "https")]
+    #[cfg(feature = "tls-core")]
     Https(hyper_rustls::HttpsConnector<connect::HttpConnector>),
 }
 
@@ -39,7 +39,7 @@ impl Connector {
     /// Make sure this function is not called frequently. Fetching the root certificates is an
     /// expensive operation. Access the globally cached connector via Connector::default().
     fn new() -> Self {
-        #[cfg(feature = "https")]
+        #[cfg(feature = "tls-core")]
         {
             #[cfg(feature = "use_webpki_roots")]
             let https_connector_fn = https::build_https_connector_with_webpki_roots;
@@ -51,7 +51,7 @@ impl Connector {
                 Err(_) => Connector::Http(connect::HttpConnector::new()),
             }
         }
-        #[cfg(not(feature = "https"))]
+        #[cfg(not(feature = "tls-core"))]
         {
             Connector::Http(connect::HttpConnector::new())
         }
@@ -73,7 +73,7 @@ impl Connector {
                     ConnStream::from_http_connector_with_uri(c, uri).boxed()
                 }
             }
-            #[cfg(feature = "https")]
+            #[cfg(feature = "tls-core")]
             Self::Https(c) => {
                 ConnStream::from_https_connector_with_uri(c, uri, require_tls).boxed()
             }
@@ -81,33 +81,29 @@ impl Connector {
     }
 }
 
-#[cfg(feature = "https")]
+#[cfg(feature = "tls-core")]
 mod https {
     #[cfg(feature = "use_webpki_roots")]
     use hyper_rustls::ConfigBuilderExt;
 
     use rustls::ClientConfig;
 
-    /// When using aws-lc-rs, rustls needs to be initialized with the default CryptoProvider;
-    /// sometimes this is done as a side-effect of other operations, but we need to ensure it
-    /// happens here.  On non-unix platforms, ddcommon uses `ring` instead, which handles this
-    /// at rustls initialization.
-    /// In fips mode we expect someone to have done this already.
-    #[cfg(any(not(feature = "fips"), coverage))]
+    /// Ensures the rustls default CryptoProvider is installed (ring for non-FIPS).
+    /// In FIPS mode, the caller must install the FIPS provider before any TLS use.
+    #[cfg(feature = "https")]
     fn ensure_crypto_provider_initialized() {
         use std::sync::Once;
 
         static INIT_CRYPTO_PROVIDER: Once = Once::new();
 
         INIT_CRYPTO_PROVIDER.call_once(|| {
-            #[cfg(unix)]
-            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+            let _ = rustls::crypto::ring::default_provider().install_default();
         });
     }
 
-    // This actually needs to be done by the user somewhere in their own main. This will only
-    // be active on Unix platforms
-    #[cfg(all(feature = "fips", not(coverage)))]
+    /// In FIPS mode, the caller must install the FIPS-compliant crypto provider
+    /// (e.g., aws-lc-rs FIPS) before any TLS connections are established.
+    #[cfg(not(feature = "https"))]
     fn ensure_crypto_provider_initialized() {}
 
     #[cfg(feature = "use_webpki_roots")]
@@ -189,7 +185,7 @@ impl tower_service::Service<hyper::Uri> for Connector {
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match self {
             Connector::Http(c) => c.poll_ready(cx).map_err(|e| e.into()),
-            #[cfg(feature = "https")]
+            #[cfg(feature = "tls-core")]
             Connector::Https(c) => c.poll_ready(cx),
         }
     }
@@ -197,9 +193,8 @@ impl tower_service::Service<hyper::Uri> for Connector {
 
 #[cfg(test)]
 mod tests {
-    use crate::hyper_migration;
+    use crate::http_common;
     use std::env;
-    use tower_service::Service;
 
     use super::*;
 
@@ -209,22 +204,22 @@ mod tests {
     /// Verify that the Connector type implements the correct bound Connect + Clone
     /// to be able to use the hyper::Client
     fn test_hyper_client_from_connector() {
-        let _ = hyper_migration::new_default_client();
+        let _ = http_common::new_default_client();
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
     fn test_hyper_client_from_connector_with_webpki_roots() {
-        let _ = hyper_migration::new_default_client();
+        let _ = http_common::new_default_client();
     }
 
-    #[tokio::test]
+    #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(not(feature = "use_webpki_roots"))]
-    /// Verify that Connector will only allow non tls connections if root certificates
-    /// are not found
-    async fn test_missing_root_certificates_only_allow_http_connections() {
+    /// Verify that Connector falls back to Http when native root certificates
+    /// are not available and webpki roots are not enabled.
+    fn test_missing_root_certificates_only_allow_http_connections() {
         const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
         const ENV_SSL_CERT_DIR: &str = "SSL_CERT_DIR";
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
@@ -232,43 +227,27 @@ mod tests {
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
         env::set_var(ENV_SSL_CERT_DIR, "this/folder/does/not/exist");
-        let mut connector = Connector::new();
+        let connector = Connector::new();
 
         assert!(matches!(connector, Connector::Http(_)));
-
-        let stream = connector
-            .call(hyper::Uri::from_static("https://example.com"))
-            .await
-            .unwrap_err();
-
-        assert_eq!(
-            *stream.downcast::<errors::Error>().unwrap(),
-            errors::Error::CannotEstablishTlsConnection
-        );
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
         env::set_var(ENV_SSL_CERT_DIR, old_dir_value);
     }
 
-    #[tokio::test]
+    #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(feature = "use_webpki_roots")]
-    #[cfg(feature = "https")]
-    /// Verify that Connector will allow tls connections if root certificates
-    /// are not found but can use webpki certificates
-    async fn test_missing_root_certificates_use_webpki_certificates() {
+    #[cfg(feature = "tls-core")]
+    /// Verify that Connector builds an Https connector using webpki certificates
+    /// even when native root certificates are not available.
+    fn test_missing_root_certificates_use_webpki_certificates() {
         const ENV_SSL_CERT_FILE: &str = "SSL_CERT_FILE";
         let old_value = env::var(ENV_SSL_CERT_FILE).unwrap_or_default();
 
         env::set_var(ENV_SSL_CERT_FILE, "this/folder/does/not/exist");
-        let mut connector = Connector::new();
+        let connector = Connector::new();
         assert!(matches!(connector, Connector::Https(_)));
-
-        let stream = connector
-            .call(hyper::Uri::from_static("https://example.com"))
-            .await;
-
-        assert!(stream.is_ok());
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
     }

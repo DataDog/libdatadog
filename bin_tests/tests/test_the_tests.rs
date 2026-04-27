@@ -5,7 +5,7 @@
 
 use std::{fs, process};
 
-use bin_tests::{build_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
+use bin_tests::{fetch_built_artifacts, ArtifactType, ArtifactsBuild, BuildProfile};
 
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -34,10 +34,11 @@ fn test_the_tests_inner(profile: BuildProfile) {
             build_profile: profile,
             artifact_type: ArtifactType::CDylib,
             triple_target: None,
+            panic_abort: None,
         },
         &test_the_tests,
     ];
-    let artifacts = build_artifacts(crates).unwrap();
+    let artifacts = fetch_built_artifacts(crates).unwrap();
 
     for c in crates {
         assert!(fs::metadata(&artifacts[c]).unwrap().file_type().is_file());

@@ -6,20 +6,19 @@ pub use mini_agent::*;
 
 #[cfg(feature = "mini_agent")]
 mod mini_agent {
+    use bytes::{Buf, Bytes};
     use http_body_util::BodyExt;
-    use hyper::{body::Buf, Method, Request, StatusCode};
-    use libdd_common::hyper_migration;
-    use libdd_common::Connect;
+    use libdd_capabilities::HttpClientTrait;
+    use libdd_common::http_common;
     use libdd_common::Endpoint;
-    use libdd_common::GenericHttpClient;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
 
     pub async fn get_stats_from_request_body(
-        body: hyper_migration::Body,
+        body: http_common::Body,
     ) -> anyhow::Result<pb::ClientStatsPayload> {
-        let buffer = body.collect().await?.aggregate();
+        let buffer = BodyExt::collect(body).await?.aggregate();
 
         let client_stats_payload: pb::ClientStatsPayload =
             match rmp_serde::from_read(buffer.reader()) {
@@ -36,6 +35,14 @@ mod mini_agent {
     }
 
     pub fn construct_stats_payload(stats: Vec<pb::ClientStatsPayload>) -> pb::StatsPayload {
+        // set hostname on stats from tracer to empty string for serverless
+        let stats = stats
+            .into_iter()
+            .map(|mut stat| {
+                stat.hostname = "".to_string();
+                stat
+            })
+            .collect();
         pb::StatsPayload {
             agent_hostname: "".to_string(),
             agent_env: "".to_string(),
@@ -56,49 +63,31 @@ mod mini_agent {
         }
     }
 
-    pub async fn send_stats_payload(
+    pub async fn send_stats_payload<H: HttpClientTrait>(
         data: Vec<u8>,
         target: &Endpoint,
         api_key: &str,
     ) -> anyhow::Result<()> {
-        send_stats_payload_with_client::<libdd_common::connector::Connector>(
-            data, target, api_key, None,
-        )
-        .await
-    }
-
-    pub async fn send_stats_payload_with_client<C: Connect>(
-        data: Vec<u8>,
-        target: &Endpoint,
-        api_key: &str,
-        client: Option<&GenericHttpClient<C>>,
-    ) -> anyhow::Result<()> {
-        let req = Request::builder()
-            .method(Method::POST)
+        let client = H::new_client();
+        let req = http::Request::builder()
+            .method(http::Method::POST)
             .uri(target.url.clone())
             .header("Content-Type", "application/msgpack")
             .header("Content-Encoding", "gzip")
             .header("DD-API-KEY", api_key)
-            .body(hyper_migration::Body::from(data.clone()))?;
+            .body(Bytes::from(data))?;
 
-        let response = if let Some(client) = client {
-            client.request(req).await
-        } else {
-            let default_client = hyper_migration::new_default_client();
-            default_client.request(req).await
-        };
+        let response = client
+            .request(req)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send trace stats: {e}"))?;
 
-        match response {
-            Ok(response) => {
-                if response.status() != StatusCode::ACCEPTED {
-                    let body_bytes = response.into_body().collect().await?.to_bytes();
-                    let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                    anyhow::bail!("Server did not accept trace stats: {response_body}");
-                }
-                Ok(())
-            }
-            Err(e) => anyhow::bail!("Failed to send trace stats: {e}"),
+        if response.status() != http::StatusCode::ACCEPTED {
+            let response_body =
+                String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
+            anyhow::bail!("Server did not accept trace stats: {response_body}");
         }
+        Ok(())
     }
 }
 
@@ -106,8 +95,8 @@ mod mini_agent {
 #[cfg(feature = "mini_agent")]
 mod mini_agent_tests {
     use crate::stats_utils;
-    use hyper::Request;
-    use libdd_common::hyper_migration;
+    use http::Request;
+    use libdd_common::http_common;
     use libdd_trace_protobuf::pb::{
         ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
     };
@@ -146,7 +135,7 @@ mod mini_agent_tests {
                                 0,
                                 0
                             ],
-                            "GrpcStatusCode": "0",
+                            "GRPCStatusCode": "0",
                             "HTTPMethod": "GET",
                             "HTTPEndpoint": "/test"
                         }
@@ -168,7 +157,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(hyper_migration::Body::from(bytes))
+            .body(http_common::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;
@@ -200,6 +189,8 @@ mod mini_agent_tests {
                     grpc_status_code: "0".to_string(),
                     http_endpoint: "/test".to_string(),
                     http_method: "GET".to_string(),
+                    service_source: "".to_string(),
+                    span_derived_primary_tags: vec![],
                 }],
                 agent_time_shift: 0,
             }],
@@ -247,7 +238,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(hyper_migration::Body::from(bytes))
+            .body(http_common::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;

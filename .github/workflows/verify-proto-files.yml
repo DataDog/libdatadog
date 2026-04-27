@@ -3,7 +3,7 @@ on:
   pull_request:
     types: [ opened, synchronize, reopened ]
 env:
-  DATADOG_AGENT_TAG: "7f6d07c93ba087f23f80a3f0c2da4b1f3dc664d7"
+  DATADOG_AGENT_TAG: "bdcdd8cf1ba4090a29b96d5669cfab5dd81814b1"
   rust_version: "1.84.1"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -46,7 +46,7 @@ jobs:
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file idx/span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
       - name: Install ${{ env.rust_version }} toolchain
-        run: rustup install ${{ env.rust_version }} && rustup default ${{ env.rust_version }}
+        run: rustup set profile minimal && rustup install ${{ env.rust_version }} && rustup default ${{ env.rust_version }}
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:

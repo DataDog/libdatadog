@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::span::v05::dict::SharedDict;
-use crate::span::{v05, SharedDictBytes, Span, SpanBytes, SpanText};
+use crate::span::{v04, v05, BytesData, SharedDictBytes, TraceData};
 use crate::trace_utils::collect_trace_chunks;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
-use libdd_tinybytes::BytesString;
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
 
-pub type TracerPayloadV04 = Vec<SpanBytes>;
+pub type TracerPayloadV04 = Vec<v04::SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
 
 #[derive(Debug, Clone)]
@@ -18,19 +17,19 @@ pub type TracerPayloadV05 = Vec<v05::Span>;
 pub enum TraceEncoding {
     /// v0.4 encoding (TracerPayloadV04).
     V04,
-    /// v054 encoding (TracerPayloadV04).
+    /// v0.5 encoding (TracerPayloadV05).
     V05,
 }
 
-#[derive(Debug, Clone)]
-pub enum TraceChunks<T: SpanText> {
+#[derive(Debug)]
+pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan.
-    V04(Vec<Vec<Span<T>>>),
+    V04(Vec<Vec<v04::Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((SharedDict<T>, Vec<Vec<v05::Span>>)),
+    V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
 }
 
-impl TraceChunks<BytesString> {
+impl TraceChunks<BytesData> {
     pub fn into_tracer_payload_collection(self) -> TracerPayloadCollection {
         match self {
             TraceChunks::V04(traces) => TracerPayloadCollection::V04(traces),
@@ -39,7 +38,7 @@ impl TraceChunks<BytesString> {
     }
 }
 
-impl<T: SpanText> TraceChunks<T> {
+impl<T: TraceData> TraceChunks<T> {
     /// Returns the number of traces in the chunk
     pub fn size(&self) -> usize {
         match self {
@@ -49,13 +48,13 @@ impl<T: SpanText> TraceChunks<T> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 /// Enum representing a general abstraction for a collection of tracer payloads.
 pub enum TracerPayloadCollection {
     /// Collection of TracerPayloads.
     V07(Vec<pb::TracerPayload>),
     /// Collection of TraceChunkSpan.
-    V04(Vec<Vec<SpanBytes>>),
+    V04(Vec<Vec<v04::SpanBytes>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
     V05((SharedDictBytes, Vec<Vec<v05::Span>>)),
 }
@@ -223,7 +222,7 @@ impl TraceChunkProcessor for DefaultTraceChunkProcessor {
 pub fn decode_to_trace_chunks(
     data: libdd_tinybytes::Bytes,
     encoding_type: TraceEncoding,
-) -> Result<(TraceChunks<BytesString>, usize), anyhow::Error> {
+) -> Result<(TraceChunks<BytesData>, usize), anyhow::Error> {
     let (data, size) = match encoding_type {
         TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
         TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),
@@ -239,7 +238,7 @@ pub fn decode_to_trace_chunks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::SpanBytes;
+    use crate::span::v04::SpanBytes;
     use crate::test_utils::create_test_no_alloc_span;
     use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::pb;
@@ -278,34 +277,43 @@ mod tests {
 
     #[test]
     fn test_append_traces_v07() {
+        let mut two_traces = create_dummy_collection_v07();
+        two_traces.append(&mut create_dummy_collection_v07());
+
         let mut trace = create_dummy_collection_v07();
 
-        let empty = TracerPayloadCollection::V07(vec![]);
+        let mut empty = TracerPayloadCollection::V07(vec![]);
 
-        trace.append(&mut trace.clone());
+        trace.append(&mut create_dummy_collection_v07());
         assert_eq!(2, trace.size());
 
-        trace.append(&mut trace.clone());
+        trace.append(&mut two_traces);
         assert_eq!(4, trace.size());
 
-        trace.append(&mut empty.clone());
+        trace.append(&mut empty);
         assert_eq!(4, trace.size());
     }
 
     #[test]
     fn test_append_traces_v04() {
-        let mut trace =
-            TracerPayloadCollection::V04(vec![vec![create_test_no_alloc_span(0, 1, 0, 2, true)]]);
+        fn create_trace() -> TracerPayloadCollection {
+            TracerPayloadCollection::V04(vec![vec![create_test_no_alloc_span(0, 1, 0, 2, true)]])
+        }
 
-        let empty = TracerPayloadCollection::V04(vec![]);
+        let mut two_traces = create_trace();
+        two_traces.append(&mut create_trace());
 
-        trace.append(&mut trace.clone());
+        let mut trace = create_trace();
+
+        let mut empty = TracerPayloadCollection::V04(vec![]);
+
+        trace.append(&mut create_trace());
         assert_eq!(2, trace.size());
 
-        trace.append(&mut trace.clone());
+        trace.append(&mut two_traces);
         assert_eq!(4, trace.size());
 
-        trace.append(&mut empty.clone());
+        trace.append(&mut empty);
         assert_eq!(4, trace.size());
     }
 
@@ -313,7 +321,7 @@ mod tests {
     fn test_merge_traces() {
         let mut trace = create_dummy_collection_v07();
 
-        trace.append(&mut trace.clone());
+        trace.append(&mut create_dummy_collection_v07());
         assert_eq!(2, trace.size());
 
         trace.merge();
@@ -429,7 +437,7 @@ mod tests {
     #[test]
     fn test_try_into_meta_metrics_success() {
         let dummy_trace = create_trace();
-        let expected = vec![dummy_trace.clone()];
+        let expected = vec![create_trace()];
         let payload = rmp_serde::to_vec_named(&expected).unwrap();
         let payload = libdd_tinybytes::Bytes::from(payload);
 

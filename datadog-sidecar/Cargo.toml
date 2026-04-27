@@ -18,11 +18,13 @@ anyhow = { version = "1.0" }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
 libdd-common = { path = "../libdd-common" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
+libdd-trace-stats = { path = "../libdd-trace-stats" }
 datadog-remote-config = { path = "../datadog-remote-config" , features = ["live-debugger"]}
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
@@ -31,14 +33,15 @@ libdd-tinybytes = { path = "../libdd-tinybytes" }
 
 futures = { version = "0.3", default-features = false }
 manual_future = "0.1.1"
-http = "1.0"
-hyper = { workspace = true}
+http = "1.1"
 http-body-util = "0.1"
 
 datadog-ipc = { path = "../datadog-ipc", features = ["tiny-bytes"] }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 
 rand = "0.8.3"
+rmp-serde = "1.1.1"
+libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_with = "3.6.0"
 bincode = { version = "1.3.3" }
@@ -47,7 +50,7 @@ base64 = "0.22.1"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
 sha2 = "0.10"
-tokio = { version = "1.35.1", features = [
+tokio = { version = "1.49.0", features = [
     "fs",
     "sync",
     "io-util",
@@ -57,15 +60,16 @@ tokio = { version = "1.35.1", features = [
 tokio-util = { version = "0.7", features = ["codec"] }
 
 prctl = "1.0.0"
+sys-info = { version = "0.9.0" }
 tracing = { version = "0.1", default-features = false }
 tracing-log = { version = "0.2.0", optional = true }
-tracing-subscriber = { version = "0.3", default-features = false, features = [
+tracing-subscriber = { version = "0.3.22", default-features = false, features = [
     "std",
     "fmt",
     "env-filter",
 ], optional = true }
 chrono = "0.4.31"
-console-subscriber = { version = "0.4", optional = true }
+console-subscriber = { version = "0.5", optional = true }
 libc = { version = "0.2" }
 
 # watchdog and self telemetry
@@ -80,9 +84,17 @@ features = [
 ]
 version = "0.51.0"
 
+# unstable-only feature
+[target.'cfg(all(tokio_unstable, target_os = "linux"))'.dependencies.tokio]
+features = ["taskdump"]
+version = "1.49.0"
+
 # simd-json v0.15 uses Rust 2024 Edition, so it needs Rust 1.85+.
 [target.'cfg(not(target_arch = "x86"))'.dependencies]
 simd-json = "=0.14"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["socket", "mman"] }
@@ -91,7 +103,7 @@ sendfd = { version = "0.4", features = ["tokio"] }
 [target.'cfg(windows)'.dependencies]
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector", "collector_windows"] }
-winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl"] }
+winapi = { version = "0.3.9", features = ["securitybaseapi", "sddl", "winerror", "winbase"] }
 windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"] }
 
 [target.'cfg(windows_seh_wrapper)'.dependencies]
@@ -106,6 +118,6 @@ libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(tokio_taskdump,windows_seh_wrapper)',
+    'cfg(tokio_unstable,windows_seh_wrapper)',
     'cfg(feature, values("logging"))',
 ] }

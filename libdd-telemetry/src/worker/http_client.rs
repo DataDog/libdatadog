@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http_body_util::BodyExt;
-use libdd_common::{hyper_migration, HttpRequestBuilder};
+use libdd_common::{http_common, HttpRequestBuilder};
 use std::{
     fs::OpenOptions,
     future::Future,
@@ -22,16 +22,45 @@ pub mod header {
     pub const LIBRARY_LANGUAGE: HeaderName = HeaderName::from_static("dd-client-library-language");
     pub const LIBRARY_VERSION: HeaderName = HeaderName::from_static("dd-client-library-version");
 
-    /// Header key for whether to enable debug mode of telemetry.
     pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
+
+    pub const DD_SESSION_ID: HeaderName = HeaderName::from_static("dd-session-id");
+    pub const DD_ROOT_SESSION_ID: HeaderName = HeaderName::from_static("dd-root-session-id");
+    pub const DD_PARENT_SESSION_ID: HeaderName = HeaderName::from_static("dd-parent-session-id");
 }
 
-pub type ResponseFuture = Pin<
-    Box<dyn Future<Output = Result<hyper_migration::HttpResponse, hyper_migration::Error>> + Send>,
->;
+/// `session_id`, then `parent_session_id`, then `root_session_id` (must match call sites in
+/// `build_request`).
+pub(crate) fn add_instrumentation_session_headers(
+    mut builder: HttpRequestBuilder,
+    session_id: Option<&str>,
+    parent_session_id: Option<&str>,
+    root_session_id: Option<&str>,
+) -> HttpRequestBuilder {
+    let Some(s) = session_id.filter(|id| !id.is_empty()) else {
+        return builder;
+    };
+    builder = builder.header(header::DD_SESSION_ID, s);
+    if let Some(r) = root_session_id
+        .filter(|r| !r.is_empty())
+        .filter(|r| *r != s)
+    {
+        builder = builder.header(header::DD_ROOT_SESSION_ID, r);
+    }
+    if let Some(p) = parent_session_id
+        .filter(|p| !p.is_empty())
+        .filter(|p| *p != s)
+    {
+        builder = builder.header(header::DD_PARENT_SESSION_ID, p);
+    }
+    builder
+}
+
+pub type ResponseFuture =
+    Pin<Box<dyn Future<Output = Result<http_common::HttpResponse, http_common::Error>> + Send>>;
 
 pub trait HttpClient {
-    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture;
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture;
 }
 
 pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
@@ -99,7 +128,7 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
         }
     };
     Box::new(HyperClient {
-        inner: hyper_migration::new_client_periodic(),
+        inner: http_common::new_client_periodic(),
     })
 }
 
@@ -108,12 +137,12 @@ pub struct HyperClient {
 }
 
 impl HttpClient for HyperClient {
-    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture {
         let resp = self.inner.request(req);
         Box::pin(async move {
             match resp.await {
-                Ok(response) => Ok(hyper_migration::into_response(response)),
-                Err(e) => Err(e.into()),
+                Ok(response) => Ok(http_common::into_response(response)),
+                Err(e) => Err(http_common::Error::Client(e.into())),
             }
         })
     }
@@ -125,7 +154,7 @@ pub struct MockClient {
 }
 
 impl HttpClient for MockClient {
-    fn request(&self, req: hyper_migration::HttpRequest) -> ResponseFuture {
+    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
             debug!("MockClient writing request to file");
@@ -146,13 +175,13 @@ impl HttpClient for MockClient {
                             error = %e,
                             "Failed to write to mock file"
                         );
-                        return Err(hyper_migration::Error::from(e));
+                        return Err(http_common::Error::from(e));
                     }
                 }
             }
 
             debug!(http.status = 202, "MockClient returning success response");
-            hyper_migration::empty_response(hyper::Response::builder().status(202))
+            http_common::empty_response(http::Response::builder().status(202))
         })
     }
 }
@@ -172,7 +201,7 @@ mod tests {
         };
         c.request(
             HttpRequestBuilder::new()
-                .body(hyper_migration::Body::from("hello world\n"))
+                .body(http_common::Body::from("hello world\n"))
                 .unwrap(),
         )
         .await

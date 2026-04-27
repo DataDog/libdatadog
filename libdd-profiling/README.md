@@ -29,12 +29,12 @@ Core profiling library for collecting, aggregating, and exporting profiling data
 ## Example Usage
 
 ```rust
-use libdd_profiling::api::{Profile, ValueType};
+use libdd_profiling::api::{Profile, SampleType};
 
 // Create a profile
-let value_types = vec![
-    ValueType::new("samples", "count"),
-    ValueType::new("cpu", "nanoseconds"),
+let sample_types = vec![
+    SampleType::CpuSamples,
+    SampleType::CpuTime,
 ];
 
 // Add samples with stack traces

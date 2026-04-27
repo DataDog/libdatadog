@@ -14,9 +14,8 @@ use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
 use datadog_remote_config::fetch::ConfigOptions;
-use libdd_common::MutexExt;
-use tracing::log::warn;
-use tracing::{debug, error, info, trace};
+use libdd_common::{tag::Tag, MutexExt};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::service::agent_info::AgentInfoGuard;
 use crate::service::{InstanceId, QueueId, RuntimeInfo};
@@ -25,7 +24,7 @@ use crate::service::{InstanceId, QueueId, RuntimeInfo};
 ///
 /// It contains a list of runtimes, session configuration, tracer configuration, and log guards.
 /// It also has methods to manage the runtimes and configurations.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct SessionInfo {
     runtimes: Arc<Mutex<HashMap<String, RuntimeInfo>>>,
     pub(crate) session_config: Arc<Mutex<Option<libdd_telemetry::config::Config>>>,
@@ -38,32 +37,15 @@ pub(crate) struct SessionInfo {
     #[cfg(windows)]
     pub(crate) remote_config_notify_function:
         Arc<Mutex<crate::service::remote_configs::RemoteConfigNotifyFunction>>,
+    #[cfg(windows)]
+    pub(crate) process_handle: Arc<Mutex<Option<crate::service::sidecar_server::ProcessHandle>>>,
     pub(crate) log_guard:
         Arc<Mutex<Option<(MultiEnvFilterGuard<'static>, MultiWriterGuard<'static>)>>>,
     pub(crate) session_id: String,
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
-}
-
-impl Clone for SessionInfo {
-    fn clone(&self) -> Self {
-        SessionInfo {
-            runtimes: self.runtimes.clone(),
-            session_config: self.session_config.clone(),
-            debugger_config: self.debugger_config.clone(),
-            tracer_config: self.tracer_config.clone(),
-            dogstatsd: self.dogstatsd.clone(),
-            remote_config_options: self.remote_config_options.clone(),
-            agent_infos: self.agent_infos.clone(),
-            remote_config_interval: self.remote_config_interval.clone(),
-            #[cfg(windows)]
-            remote_config_notify_function: self.remote_config_notify_function.clone(),
-            log_guard: self.log_guard.clone(),
-            session_id: self.session_id.clone(),
-            pid: self.pid.clone(),
-            remote_config_enabled: self.remote_config_enabled.clone(),
-        }
-    }
+    pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
+    pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
 }
 
 impl SessionInfo {
@@ -165,6 +147,15 @@ impl SessionInfo {
         F: FnOnce(&mut libdd_telemetry::config::Config),
     {
         if let Some(cfg) = &mut *self.get_telemetry_config() {
+            f(cfg)
+        }
+    }
+
+    pub(crate) fn modify_stats_config<F>(&self, f: F)
+    where
+        F: FnOnce(&mut crate::service::stats_flusher::StatsConfig),
+    {
+        if let Some(cfg) = &mut *self.stats_config.lock_or_panic() {
             f(cfg)
         }
     }

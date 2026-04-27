@@ -8,6 +8,9 @@ jobs:
   test:
     name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
     runs-on: ${{ matrix.platform }}
+    permissions:
+      checks: write
+      contents: read
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -33,9 +36,11 @@ jobs:
           swap-storage: true
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
@@ -66,12 +71,21 @@ jobs:
         run: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
         env:
           RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-http-client (hyper-backend)"
+        shell: bash
+        run: cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+        env:
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
         shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
         env:
           RUSTFLAGS: "-C prefer-dynamic"
           RUST_BACKTRACE: full
+      - name: Add file attributes to JUnit XML
+        if: success() || failure()
+        shell: bash
+        run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml
       - name: Report Test Results
         if: success() || failure()
         uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # 4.3.1
@@ -100,11 +114,11 @@ jobs:
             CHECKSUM_CMD="shasum -a 256"
             EXPECTED_CHECKSUM="071a6140b17438b3f9dd6c65da48b48ea03fc310034fa624ce874fdb6c325da4"
           fi
-                    
+
           echo "Downloading datadog-ci from $URL"
           curl -L --fail --retry 3 -o "$OUTPUT" "$URL"
           chmod +x "$OUTPUT"
-          
+
           # Verify checksum
           ACTUAL_CHECKSUM=$($CHECKSUM_CMD "$OUTPUT" | cut -d' ' -f1)
           echo "Expected checksum: $EXPECTED_CHECKSUM"
@@ -148,6 +162,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Setup output dir
         shell: bash
         run: |
@@ -169,7 +185,7 @@ jobs:
           swap-storage: true
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
 
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
@@ -227,32 +243,52 @@ jobs:
           # Add BUILD_SYMBOLIZER variable only for Linux platforms
           if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
-            cmake --build .
-            ./symbolizer
-            ./crashinfo
           else
             cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
-            cmake --build .
           fi
-      - name: "Test building CXX bindings (Unix)"
+          cmake --build .
+      - name: "Run FFI examples"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          cargo ffi-test --skip-build
+      - name: "(Windows) Run FFI examples"
+        shell: bash
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cargo ffi-test
+      - name: "Test building CXX bindings - Crashinfo (Unix)"
         shell: bash
         if: matrix.platform != 'windows-latest'
         run: |
           set -e
           cd examples/cxx
           ./build-and-run-crashinfo.sh
+      - name: "Test building CXX bindings - Profiling (Unix)"
+        shell: bash
+        if: matrix.platform != 'windows-latest'
+        run: |
+          set -e
+          cd examples/cxx
+          ./build-profiling.sh
       - name: "Setup MSVC (Windows)"
         if: matrix.platform == 'windows-latest'
         uses: ilammy/msvc-dev-cmd@v1
-      - name: "Test building CXX bindings (Windows)"
+      - name: "Test building CXX bindings - Crashinfo (Windows)"
         shell: pwsh
         if: matrix.platform == 'windows-latest'
         run: |
           cd examples/cxx
           .\build-and-run-crashinfo.ps1
+      - name: "Test building CXX bindings - Profiling (Windows)"
+        shell: pwsh
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd examples/cxx
+          .\build-profiling.ps1
 
   cross-centos7:
-    name: build and test using cross - on centos7
+    name: Test x86_64-unknown-linux-gnu on centOS7 docker image
     runs-on: ubuntu-latest
     concurrency:
       group: ci-${{ github.ref }}-cross-centos7
@@ -270,15 +306,142 @@ jobs:
           swap-storage: true
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - run: cargo install cross || true
-      - run: cross build --workspace --target x86_64-unknown-linux-gnu --exclude builder
-      - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder  -- --skip "::single_threaded_tests::" --skip "tracing_integration_tests::"
-      - run: cross test --workspace --features libdd-crashtracker/generate-unit-test-files --target x86_64-unknown-linux-gnu --exclude builder --exclude bin_tests -- --skip "::tests::" --skip "::api_tests::" --test-threads 1 --skip "tracing_integration_tests::"
+      - name: Build CentOS 7 Docker image
+        run: docker build -t libdatadog-centos7 -f tools/docker/Dockerfile.centos .
+      - name: "cargo nextest run (centos7)"
+        # Run docker as a user, not the default root
+        # Mount and use the runner's toolchain as it's the same arch
+        # exclude tracing integration tests since they require docker in docker to run a test-agent
+        run: >-
+          docker run --rm
+          --user "$(id -u):$(id -g)" 
+          -v "${{ github.workspace }}:/workspace"
+          -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo"
+          -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup"
+          -e CARGO_HOME=/usr/local/cargo
+          -e RUSTUP_HOME=/usr/local/rustup
+          -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          -w /workspace
+          libdatadog-centos7
+          cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files
+          --exclude builder --profile ci
+          -E '!test(tracing_integration_tests::)'
+      - name: Add file attributes to JUnit XML
+        if: success() || failure()
+        run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml
+      - name: Report Test Results
+        if: success() || failure()
+        uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # 4.3.1
+        with:
+          report_paths: "target/nextest/ci/junit.xml"
+          check_name: "[centos7] test report"
+          include_passed: true
+      - name: Upload test results to Datadog
+        if: success() || failure()
+        run: |
+          URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_linux-x64"
+          OUTPUT="datadog-ci"
+          EXPECTED_CHECKSUM="3e1e9649d15d3feacced89ec90de66151046a58c7844217e4112362ad8dbf8d1"
+
+          echo "Downloading datadog-ci from $URL"
+          curl -L --fail --retry 3 -o "$OUTPUT" "$URL"
+          chmod +x "$OUTPUT"
+
+          ACTUAL_CHECKSUM=$(sha256sum "$OUTPUT" | cut -d' ' -f1)
+          echo "Expected checksum: $EXPECTED_CHECKSUM"
+          echo "Actual checksum: $ACTUAL_CHECKSUM"
+
+          if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
+            echo "Checksum verification failed!"
+            exit 1
+          fi
+          echo "Checksum verification passed"
+
+          ./"$OUTPUT" junit upload \
+            --service libdatadog \
+            --env ci \
+            --logs \
+            --tags arch:${{ runner.arch }},os:Linux,platform:centos7 \
+            target/nextest/ci/junit.xml
+        env:
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+
+  no-certs-exporter:
+    name: "exporter_e2e tests (no CA certificates)"
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}-no-certs-exporter
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
+      - name: Pre-fetch dependencies (requires network/certs on the runner)
+        run: cargo fetch
+      - name: Build no-certs Docker image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: tools/docker/Dockerfile.no-certs
+          tags: libdatadog-no-certs
+          load: true
+          cache-from: type=gha,scope=no-certs-docker
+          cache-to: type=gha,scope=no-certs-docker,mode=max
+      - name: "cargo test exporter_e2e (no CA certificates)"
+        # Mount the runner's Rust toolchain and cargo cache — no network needed inside.
+        # The container has no CA certificates, reproducing minimal environments like
+        # bare ubuntu:20.04. Regression test for 9a61cae82 which unconditionally loaded
+        # the system cert store even for plain HTTP/unix endpoints.
+        run: >-
+          docker run --rm
+          --user "$(id -u):$(id -g)"
+          -v "${{ github.workspace }}:/workspace"
+          -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo"
+          -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup"
+          -e CARGO_HOME=/usr/local/cargo
+          -e RUSTUP_HOME=/usr/local/rustup
+          -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          -w /workspace
+          libdatadog-no-certs
+          cargo test -p libdd-profiling --test exporter_e2e
+
+  wasm:
+    name: "cargo check --target wasm32-unknown-unknown"
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref }}-wasm
+      cancel-in-progress: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+      - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
+        run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
 
   ffi_bake:
     strategy:
@@ -287,13 +450,15 @@ jobs:
     name: "FFI ${{ matrix.target }} via docker bake"
     concurrency:
       group: ci-${{ github.ref }}-${{ matrix.target }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     runs-on:
       labels: ubuntu-latest-16-cores
       group: APM Larger Runners
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
         with:

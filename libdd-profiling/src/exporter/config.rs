@@ -70,6 +70,10 @@ pub fn agentless<AsStrRef: AsRef<str>, IntoCow: Into<Cow<'static, str>>>(
     })
 }
 
+/// Creates an Endpoint for dumping HTTP requests to a file for testing/debugging.
+///
+/// # Arguments
+/// * `path` - File system path where the HTTP request bytes should be written
 pub fn file(path: impl AsRef<str>) -> anyhow::Result<Endpoint> {
     let url: String = format!("file://{}", path.as_ref());
     Ok(Endpoint::from_slice(&url))

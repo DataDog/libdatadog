@@ -15,24 +15,48 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 #[cfg(unix)]
 use crate::crashtracker::crashtracker_unix_socket_path;
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
-use datadog_ipc::platform::AsyncChannel;
 
 use crate::setup::{self, IpcClient, IpcServer, Liaison};
 
 use crate::config::{self, Config};
 use crate::self_telemetry::self_telemetry;
-use crate::service::telemetry_action_receiver_task;
+use crate::service::{init_telemetry_sender, telemetry_action_receiver_task};
 use crate::tracer::SHM_LIMITER;
 use crate::watchdog::Watchdog;
 use crate::{ddog_daemon_entry_point, setup_daemon_process};
 
-async fn main_loop<L, C, Fut>(listener: L, cancel: Arc<C>) -> io::Result<()>
+/// Configuration for main_loop behavior
+pub struct MainLoopConfig {
+    pub enable_ctrl_c_handler: bool,
+    pub enable_crashtracker: bool,
+    pub external_shutdown_rx: Option<oneshot::Receiver<()>>,
+    /// Set to false in thread mode so the worker's UID can be obtained on the
+    /// first connection and used to fchown the SHM.
+    pub init_shm_eagerly: bool,
+}
+
+impl Default for MainLoopConfig {
+    fn default() -> Self {
+        Self {
+            enable_ctrl_c_handler: true,
+            enable_crashtracker: true,
+            external_shutdown_rx: None,
+            init_shm_eagerly: true,
+        }
+    }
+}
+
+pub async fn main_loop<L, C, Fut>(
+    listener: L,
+    cancel: Arc<C>,
+    loop_config: MainLoopConfig,
+) -> io::Result<()>
 where
     L: FnOnce(Box<dyn Fn(IpcClient)>) -> Fut,
     Fut: Future<Output = io::Result<()>>,
@@ -64,36 +88,58 @@ where
         }
     });
 
-    tokio::spawn(async move {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            tracing::error!("Error setting up signal handler {}", err);
-        }
-        tracing::info!("Received Ctrl-C Signal, shutting down");
-        cancel();
-    });
+    if let Some(shutdown_rx) = loop_config.external_shutdown_rx {
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            let _ = shutdown_rx.await;
+            tracing::info!("External shutdown signal received");
+            cancel();
+        });
+    }
+
+    if loop_config.enable_ctrl_c_handler {
+        let cancel = cancel.clone();
+        tokio::spawn(async move {
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                tracing::error!("Error setting up signal handler {}", err);
+            }
+            tracing::info!("Received Ctrl-C Signal, shutting down");
+            cancel();
+        });
+    }
 
     #[cfg(unix)]
-    tokio::spawn(async move {
-        let socket_path = crashtracker_unix_socket_path();
-        match libdd_crashtracker::get_receiver_unix_socket(socket_path.to_str().unwrap_or_default())
-        {
-            Ok(listener) => loop {
-                if let Err(e) =
-                    libdd_crashtracker::async_receiver_entry_point_unix_listener(&listener).await
-                {
-                    tracing::warn!("Got error while receiving crash report: {e}");
-                }
-            },
-            Err(e) => tracing::error!("Failed setting up the crashtracker listener: {e}"),
-        }
-    });
+    if loop_config.enable_crashtracker {
+        tokio::spawn(async move {
+            let socket_path = crashtracker_unix_socket_path();
+            match libdd_crashtracker::get_receiver_unix_socket(
+                socket_path.to_str().unwrap_or_default(),
+            ) {
+                Ok(listener) => loop {
+                    if let Err(e) =
+                        libdd_crashtracker::async_receiver_entry_point_unix_listener(&listener)
+                            .await
+                    {
+                        tracing::warn!("Got error while receiving crash report: {e}");
+                    }
+                },
+                Err(e) => tracing::error!("Failed setting up the crashtracker listener: {e}"),
+            }
+        });
+    }
 
-    // Init. Early, before we start listening.
-    drop(SHM_LIMITER.lock());
+    if loop_config.init_shm_eagerly {
+        drop(SHM_LIMITER.lock());
+    }
 
     let server = SidecarServer::default();
 
-    tokio::spawn(telemetry_action_receiver_task(server.clone()));
+    // Initialize telemetry sender synchronously before spawning the receiver task
+    // This ensures the sender is available immediately, avoiding race conditions
+    // where FFI calls might try to send telemetry before the receiver task starts
+    if let Some(rx) = init_telemetry_sender() {
+        tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
+    }
 
     let (shutdown_complete_tx, shutdown_complete_rx) = mpsc::channel::<()>(1);
 
@@ -115,7 +161,7 @@ where
             let server = server.clone();
             let shutdown_complete_tx = shutdown_complete_tx.clone();
             tokio::spawn(async move {
-                server.accept_connection(AsyncChannel::from(socket)).await;
+                server.accept_connection(socket).await;
                 cloned_counter.fetch_add(-1, Ordering::AcqRel);
                 tracing::info!("connection closed");
 
@@ -144,6 +190,19 @@ where
     Fut: Future<Output = io::Result<()>>,
     C: Fn() + Sync + Send + 'static,
 {
+    enter_listener_loop_with_config(acquire_listener, MainLoopConfig::default())
+}
+
+pub fn enter_listener_loop_with_config<F, L, Fut, C>(
+    acquire_listener: F,
+    loop_config: MainLoopConfig,
+) -> anyhow::Result<()>
+where
+    F: FnOnce() -> io::Result<(L, C)>,
+    L: FnOnce(Box<dyn Fn(IpcClient)>) -> Fut,
+    Fut: Future<Output = io::Result<()>>,
+    C: Fn() + Sync + Send + 'static,
+{
     #[cfg(feature = "tokio-console")]
     console_subscriber::init();
 
@@ -154,7 +213,7 @@ where
     let (listener, cancel) = acquire_listener()?;
 
     runtime
-        .block_on(main_loop(listener, Arc::new(cancel)))
+        .block_on(main_loop(listener, Arc::new(cancel), loop_config))
         .map_err(|e| e.into())
 }
 
@@ -200,11 +259,10 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     setup_daemon_process(listener, &mut spawn_cfg)?;
 
     let mut lib_deps = cfg.library_dependencies;
-    if cfg.appsec_config.is_some() {
-        #[allow(clippy::unwrap_used)]
-        lib_deps.push(spawn_worker::LibDependency::Path(
-            cfg.appsec_config.unwrap().shared_lib_path.into(),
-        ));
+    if let Some(appsec) = cfg.appsec_config.as_ref() {
+        lib_deps.push(spawn_worker::LibDependency::Path(std::path::PathBuf::from(
+            appsec.shared_lib_path.clone(),
+        )));
     }
 
     spawn_cfg
@@ -217,6 +275,15 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
 }
 
 pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTransport> {
+    // On Windows, named-pipe buffer sizes are fixed at creation time.  Set the global before
+    // attempt_listen so that the initial server pipe (created by this process and handed to the
+    // daemon) uses the configured size.  The daemon restores the same value at startup so that
+    // subsequent try_accept calls also use the right size.
+    #[cfg(windows)]
+    if cfg.pipe_buffer_size > 0 {
+        datadog_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
+    }
+
     let liaison = match cfg.ipc_mode {
         config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
         config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
@@ -231,8 +298,9 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
         err => err.context("Error starting sidecar").err(),
     };
 
-    Ok(liaison
-        .connect_to_server()
-        .map_err(|e| err.unwrap_or(e.into()))?
-        .into())
+    Ok(SidecarTransport::from(
+        liaison
+            .connect_to_server()
+            .map_err(|e| err.unwrap_or(e.into()))?,
+    ))
 }

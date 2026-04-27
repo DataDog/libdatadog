@@ -6,7 +6,6 @@ pub mod error;
 pub mod metrics;
 pub mod stats;
 mod trace_serializer;
-mod transport;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
@@ -15,40 +14,42 @@ use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
-use self::transport::TransportClient;
-use crate::agent_info::{AgentInfoFetcher, ResponseObserver};
-use crate::pausable_worker::PausableWorker;
-use crate::stats_exporter::StatsExporter;
+use crate::agent_info::ResponseObserver;
+use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
+#[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
-    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
+    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
-use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
+use crate::trace_exporter::error::{
+    InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
+};
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
-    health_metrics::HealthMetric,
+    health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
-use http_body_util::BodyExt;
-use hyper::http::uri::PathAndQuery;
-use hyper::Uri;
-use libdd_common::{hyper_migration, Endpoint};
-use libdd_common::{tag, tag::Tag};
-use libdd_common::{HttpClient, MutexExt};
+use bytes::Bytes;
+use http::header::HeaderMap;
+use http::uri::PathAndQuery;
+use http::Uri;
+use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_common::tag::Tag;
+use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
-use libdd_telemetry::worker::TelemetryWorker;
+use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
-use libdd_trace_utils::span::{Span, SpanText};
+use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
-use std::{borrow::Borrow, collections::HashMap, str::FromStr};
-use tokio::runtime::Runtime;
+use std::{borrow::Borrow, str::FromStr};
+use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
@@ -58,9 +59,6 @@ const INFO_ENDPOINT: &str = "/info";
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub enum TraceExporterInputFormat {
-    /// Proxy format is used when the traces are to be sent to the agent without processing them.
-    /// The whole payload is sent as is to the agent.
-    Proxy,
     #[allow(missing_docs)]
     #[default]
     V04,
@@ -133,6 +131,7 @@ pub struct TracerMetadata {
     pub language_interpreter: String,
     pub language_interpreter_vendor: String,
     pub git_commit_sha: String,
+    pub process_tags: String,
     pub client_computed_stats: bool,
     pub client_computed_top_level: bool,
 }
@@ -152,17 +151,19 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
     }
 }
 
-impl<'a> From<&'a TracerMetadata> for HashMap<&'static str, String> {
-    fn from(tags: &'a TracerMetadata) -> HashMap<&'static str, String> {
+impl<'a> From<&'a TracerMetadata> for HeaderMap {
+    fn from(tags: &'a TracerMetadata) -> HeaderMap {
         TracerHeaderTags::from(tags).into()
     }
 }
 
+/// Handles for the background workers owned by a [`TraceExporter`].
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
-    pub info: PausableWorker<AgentInfoFetcher>,
-    pub stats: Option<PausableWorker<StatsExporter>>,
-    pub telemetry: Option<PausableWorker<TelemetryWorker>>,
+    info_fetcher: WorkerHandle,
+    #[cfg(feature = "telemetry")]
+    telemetry: Option<WorkerHandle>,
 }
 
 /// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
@@ -189,141 +190,108 @@ enum DeserInputFormat {
     V05,
 }
 
+impl From<TraceExporterInputFormat> for DeserInputFormat {
+    fn from(f: TraceExporterInputFormat) -> Self {
+        match f {
+            TraceExporterInputFormat::V04 => DeserInputFormat::V04,
+            TraceExporterInputFormat::V05 => DeserInputFormat::V05,
+        }
+    }
+}
+
+/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
+/// pin it to a concrete type.
 #[derive(Debug)]
-pub struct TraceExporter {
+pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
-    // TODO - do something with the response callback - https://datadoghq.atlassian.net/browse/APMSP-1019
-    runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
+    shared_runtime: Arc<SharedRuntime>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     client_side_stats: ArcSwap<StatsComputationStatus>,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
+    #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
-    workers: Arc<Mutex<TraceExporterWorkers>>,
+    client: H,
+    #[cfg(not(target_arch = "wasm32"))]
+    workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    http_client: HttpClient,
+    /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
+    otlp_config: Option<OtlpTraceConfig>,
 }
 
-impl TraceExporter {
+impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
     }
 
-    /// Return the existing runtime or create a new one and start all workers
-    fn runtime(&self) -> Result<Arc<Runtime>, TraceExporterError> {
-        let mut runtime_guard = self.runtime.lock_or_panic();
-        match runtime_guard.as_ref() {
-            Some(runtime) => {
-                // Runtime already running
-                Ok(runtime.clone())
+    /// Stop the background workers owned by this exporter.
+    ///
+    /// Only the workers spawned for this exporter are stopped. Workers from other components
+    /// sharing the same [`SharedRuntime`] are unaffected.
+    ///
+    /// # Errors
+    /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
+    /// all workers finished.
+    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
+        let runtime = self.shared_runtime.clone();
+        if let Some(timeout) = timeout {
+            match runtime
+                .block_on(async { tokio::time::timeout(timeout, self.shutdown_workers()).await })
+                .map_err(TraceExporterError::Io)?
+            {
+                Ok(()) => Ok(()),
+                Err(_) => Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(
+                    timeout,
+                ))),
             }
-            None => {
-                // Create a new current thread runtime with all features enabled
-                let runtime = Arc::new(
-                    tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(1)
-                        .enable_all()
-                        .build()?,
-                );
-                *runtime_guard = Some(runtime.clone());
-                self.start_all_workers(&runtime)?;
-                Ok(runtime)
-            }
+        } else {
+            runtime
+                .block_on(self.shutdown_workers())
+                .map_err(TraceExporterError::Io)?;
+            Ok(())
         }
     }
 
-    /// Manually start all workers
-    pub fn run_worker(&self) -> Result<(), TraceExporterError> {
-        self.runtime()?;
-        Ok(())
-    }
+    async fn shutdown_workers(self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut join_set = JoinSet::new();
 
-    /// Start all workers with the given runtime
-    fn start_all_workers(&self, runtime: &Arc<Runtime>) -> Result<(), TraceExporterError> {
-        let mut workers = self.workers.lock_or_panic();
+            // Extract the stats handle before moving other fields.
+            if let StatsComputationStatus::Enabled { worker_handle, .. } =
+                &**self.client_side_stats.load()
+            {
+                let handle = worker_handle.clone();
+                join_set.spawn(async move { handle.stop().await });
+            }
 
-        self.start_info_worker(&mut workers, runtime)?;
-        self.start_stats_worker(&mut workers, runtime)?;
-        self.start_telemetry_worker(&mut workers, runtime)?;
+            let info_fetcher = self.workers.info_fetcher;
+            join_set.spawn(async move { info_fetcher.stop().await });
 
-        Ok(())
-    }
+            #[cfg(feature = "telemetry")]
+            if let Some(telemetry) = self.workers.telemetry {
+                join_set.spawn(async move { telemetry.stop().await });
+            }
 
-    /// Start the info worker
-    fn start_info_worker(
-        &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), TraceExporterError> {
-        workers.info.start(runtime).map_err(|e| {
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-        })
-    }
-
-    /// Start the stats worker if present
-    fn start_stats_worker(
-        &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), TraceExporterError> {
-        if let Some(stats_worker) = &mut workers.stats {
-            stats_worker.start(runtime).map_err(|e| {
-                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-            })?;
-        }
-        Ok(())
-    }
-
-    /// Start the telemetry worker if present
-    fn start_telemetry_worker(
-        &self,
-        workers: &mut TraceExporterWorkers,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), TraceExporterError> {
-        if let Some(telemetry_worker) = &mut workers.telemetry {
-            telemetry_worker.start(runtime).map_err(|e| {
-                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-            })?;
-            if let Some(client) = &self.telemetry {
-                runtime.block_on(client.start());
+            while let Some(result) = join_set.join_next().await {
+                if let Ok(Err(e)) = result {
+                    error!("Worker failed to shutdown: {:?}", e);
+                }
             }
         }
-        Ok(())
-    }
 
-    pub fn stop_worker(&self) {
-        let runtime = self.runtime.lock_or_panic().take();
-        if let Some(ref rt) = runtime {
-            // Stop workers to save their state
-            let mut workers = self.workers.lock_or_panic();
-            rt.block_on(async {
-                let _ = workers.info.pause().await;
-                if let Some(stats_worker) = &mut workers.stats {
-                    let _ = stats_worker.pause().await;
-                };
-                if let Some(telemetry_worker) = &mut workers.telemetry {
-                    let _ = telemetry_worker.pause().await;
-                };
-            });
-        }
-        // When the info fetcher is paused, the trigger channel keeps a reference to the runtime's
-        // IoStack as a waker. This prevents the IoStack from being dropped when shutting
-        // down runtime. By manually sending a message to the trigger channel we trigger the
-        // waker releasing the reference to the IoStack. Finally we drain the channel to
-        // avoid triggering a fetch when the info fetcher is restarted.
-        if let PausableWorker::Paused { worker } = &mut self.workers.lock_or_panic().info {
-            self.info_response_observer.manual_trigger();
-            worker.drain();
-        }
-        drop(runtime);
+        // On wasm32 workers are no-ops, nothing to stop.
+        #[cfg(target_arch = "wasm32")]
+        let _ = self;
     }
 
     /// Send msgpack serialized traces to the agent
@@ -332,23 +300,14 @@ impl TraceExporter {
     ///
     /// * data: A slice containing the serialized traces. This slice should be encoded following the
     ///   input_format passed to the TraceExporter on creating.
-    /// * trace_count: The number of traces in the data
     ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub fn send(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
+    pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
-        let res = match self.input_format {
-            TraceExporterInputFormat::Proxy => self.send_proxy(data.as_ref(), trace_count),
-            TraceExporterInputFormat::V04 => self.send_deser(data, DeserInputFormat::V04),
-            TraceExporterInputFormat::V05 => self.send_deser(data, DeserInputFormat::V05),
-        }?;
+        let res = self.send_deser(data, self.input_format.into())?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
@@ -358,55 +317,44 @@ impl TraceExporter {
         Ok(res)
     }
 
-    /// Safely shutdown the TraceExporter and all related tasks
-    pub fn shutdown(mut self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
+    /// **WARNING**: This method is experimental and should not be used for production.
+    /// Async version of [`Self::send`] for platforms that cannot use `block_on` (e.g. wasm)
+    pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
+        self.check_agent_info();
 
-        if let Some(timeout) = timeout {
-            match runtime
-                .block_on(async { tokio::time::timeout(timeout, self.shutdown_async()).await })
-            {
-                Ok(()) => Ok(()),
-                Err(_e) => Err(TraceExporterError::Shutdown(
-                    error::ShutdownError::TimedOut(timeout),
-                )),
-            }
-        } else {
-            runtime.block_on(self.shutdown_async());
-            Ok(())
+        let format: DeserInputFormat = self.input_format.into();
+
+        let (traces, _) = match format {
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
         }
+        .map_err(|e| {
+            error!("Error deserializing trace from request body: {e}");
+            self.emit_metric(
+                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
+                None,
+            );
+            TraceExporterError::Deserialization(e)
+        })?;
+        debug!(
+            trace_count = traces.len(),
+            "Trace deserialization completed successfully"
+        );
+        self.emit_metric(
+            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
+            None,
+        );
+
+        let res = self.send_trace_chunks_inner(traces).await?;
+        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
+            return Err(TraceExporterError::Agent(
+                error::AgentErrorKind::EmptyResponse,
+            ));
+        }
+        Ok(res)
     }
 
-    /// Future used inside `Self::shutdown`.
-    ///
-    /// This function should not take ownership of the trace exporter as it will cause the runtime
-    /// stored in the trace exporter to be dropped in a non-blocking context causing a panic.
-    async fn shutdown_async(&mut self) {
-        let stats_status = self.client_side_stats.load();
-        if let StatsComputationStatus::Enabled {
-            cancellation_token, ..
-        } = stats_status.as_ref()
-        {
-            cancellation_token.cancel();
-
-            let stats_worker = self.workers.lock_or_panic().stats.take();
-
-            if let Some(stats_worker) = stats_worker {
-                let _ = stats_worker.join().await;
-            }
-        }
-        if let Some(telemetry) = self.telemetry.take() {
-            telemetry.shutdown().await;
-            let telemetry_worker = self.workers.lock_or_panic().telemetry.take();
-
-            if let Some(telemetry_worker) = telemetry_worker {
-                let _ = telemetry_worker.join().await;
-            }
-        }
-    }
-
+    #[cfg(not(target_arch = "wasm32"))]
     /// Check if agent info state has changed
     fn has_agent_info_state_changed(&self, agent_info: &Arc<AgentInfo>) -> bool {
         Some(agent_info.state_hash.as_str())
@@ -417,6 +365,7 @@ impl TraceExporter {
                 .map(|s| s.as_str())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
             if self.has_agent_info_state_changed(&agent_info) {
@@ -426,14 +375,13 @@ impl TraceExporter {
                         let ctx = stats::StatsContext {
                             metadata: &self.metadata,
                             endpoint_url: &self.endpoint.url,
-                            runtime: &self.runtime,
+                            shared_runtime: &self.shared_runtime,
                         };
                         stats::handle_stats_disabled_by_agent(
                             &ctx,
                             &agent_info,
                             &self.client_side_stats,
-                            &self.workers,
-                            self.http_client.clone(),
+                            self.client.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -442,14 +390,13 @@ impl TraceExporter {
                         let ctx = stats::StatsContext {
                             metadata: &self.metadata,
                             endpoint_url: &self.endpoint.url,
-                            runtime: &self.runtime,
+                            shared_runtime: &self.shared_runtime,
                         };
                         stats::handle_stats_enabled(
                             &ctx,
                             &agent_info,
                             stats_concentrator,
                             &self.client_side_stats,
-                            &self.workers,
                         );
                     }
                 }
@@ -457,6 +404,12 @@ impl TraceExporter {
                     .store(Some(agent_info.state_hash.clone().into()))
             }
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn check_agent_info(&self) {
+        // No background workers on wasm — agent info is never fetched, stats are
+        // never computed. This is intentionally a no-op.
     }
 
     /// !!! This function is only for testing purposes !!!
@@ -475,7 +428,7 @@ impl TraceExporter {
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
     #[cfg(feature = "test-utils")]
-    pub fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
+    pub async fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
         loop {
             if std::time::Instant::now().duration_since(start) > timeout {
@@ -484,91 +437,8 @@ impl TraceExporter {
             if agent_info::get_agent_info().is_some() {
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
-    }
-
-    fn send_proxy(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.send_data_to_url(
-            data,
-            trace_count,
-            self.output_format.add_path(&self.endpoint.url),
-        )
-    }
-
-    fn send_data_to_url(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        self.runtime()?.block_on(async {
-            self.send_request_and_handle_response(data, trace_count, uri)
-                .await
-        })
-    }
-
-    /// Send HTTP request and handle the response
-    async fn send_request_and_handle_response(
-        &self,
-        data: &[u8],
-        trace_count: usize,
-        uri: Uri,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let transport_client = TransportClient::new(
-            &self.metadata,
-            self.health_metrics_enabled,
-            self.dogstatsd.as_ref(),
-            &self.common_stats_tags,
-        );
-        let req = transport_client.build_trace_request(data, trace_count, uri);
-        match hyper_migration::new_default_client().request(req).await {
-            Ok(response) => {
-                let response = hyper_migration::into_response(response);
-                transport_client
-                    .process_http_response(response, trace_count, data.len())
-                    .await
-            }
-            Err(err) => self.handle_request_error(err, data.len(), trace_count),
-        }
-    }
-
-    /// Handle HTTP request errors
-    fn handle_request_error(
-        &self,
-        err: hyper_util::client::legacy::Error,
-        payload_size: usize,
-        trace_count: usize,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        error!(
-            error = %err,
-            "Request to agent failed"
-        );
-        let type_tag = tag!("type", "network");
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-            Some(vec![&type_tag]),
-        );
-        // Emit dropped bytes metric for network/connection errors
-        self.emit_metric(
-            HealthMetric::Distribution(
-                health_metrics::TRANSPORT_DROPPED_BYTES,
-                payload_size as i64,
-            ),
-            None,
-        );
-        self.emit_metric(
-            HealthMetric::Distribution(
-                health_metrics::TRANSPORT_TRACES_DROPPED,
-                trace_count as i64,
-            ),
-            None,
-        );
-        Err(TraceExporterError::from(err))
     }
 
     /// Emit a health metric to dogstatsd
@@ -579,20 +449,76 @@ impl TraceExporter {
         }
     }
 
-    /// Send a list of trace chunks to the agent
+    /// Emit all health metrics from a SendResult
+    fn emit_send_result(&self, result: &SendResult) {
+        if self.health_metrics_enabled {
+            let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
+            emitter.emit_from_send_result(result);
+        }
+    }
+
+    /// Send a list of trace chunks to the agent (or OTLP endpoint when configured).
     ///
     /// # Arguments
     /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
     ///
     /// # Returns
-    /// * Ok(String): The response from the agent
+    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    pub fn send_trace_chunks<T: SpanText>(
+    pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
-        self.send_trace_chunks_inner(trace_chunks)
+        self.shared_runtime
+            .block_on(async { self.send_trace_chunks_inner(trace_chunks).await })?
+    }
+
+    /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
+    ///
+    /// # Arguments
+    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    ///
+    /// # Returns
+    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    pub async fn send_trace_chunks_async<T: TraceData>(
+        &self,
+        trace_chunks: Vec<Vec<Span<T>>>,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        self.check_agent_info();
+        self.send_trace_chunks_inner(trace_chunks).await
+    }
+
+    /// Sends trace chunks via OTLP HTTP/JSON when OTLP config is enabled.
+    async fn send_otlp_traces_inner<T: TraceData>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+        config: &OtlpTraceConfig,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let resource_info = {
+            let mut r = OtlpResourceInfo::default();
+            r.service = self.metadata.service.clone();
+            r.env = self.metadata.env.clone();
+            r.app_version = self.metadata.app_version.clone();
+            r.language = self.metadata.language.clone();
+            r.tracer_version = self.metadata.tracer_version.clone();
+            r.runtime_id = self.metadata.runtime_id.clone();
+            r
+        };
+        let request = map_traces_to_otlp(traces, &resource_info);
+        let json_body = serde_json::to_vec(&request).map_err(|e| {
+            error!("OTLP JSON serialization error: {e}");
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+        })?;
+        send_otlp_traces_http(
+            &self.client,
+            config,
+            self.endpoint.test_token.as_deref(),
+            json_body,
+        )
+        .await?;
+        Ok(AgentResponse::Unchanged)
     }
 
     /// Deserializes, processes and sends trace chunks to the agent
@@ -622,7 +548,8 @@ impl TraceExporter {
             None,
         );
 
-        self.send_trace_chunks_inner(traces)
+        self.shared_runtime
+            .block_on(async { self.send_trace_chunks_inner(traces).await })?
     }
 
     /// Send traces payload to agent with retry and telemetry reporting
@@ -630,37 +557,23 @@ impl TraceExporter {
         &self,
         endpoint: &Endpoint,
         mp_payload: Vec<u8>,
-        headers: HashMap<&'static str, String>,
+        headers: HeaderMap,
         chunks: usize,
+        chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result =
-            send_with_retry(&self.http_client, endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry(&self.client, endpoint, mp_payload, &headers, &strategy).await;
 
-        // Emit http.requests health metric based on number of attempts
-        let requests_count = match &result {
-            Ok((_, attempts)) => *attempts as i64,
-            Err(err) => match err {
-                SendWithRetryError::Http(_, attempts) => *attempts as i64,
-                SendWithRetryError::Timeout(attempts) => *attempts as i64,
-                SendWithRetryError::Network(_, attempts) => *attempts as i64,
-                SendWithRetryError::Build(attempts) => *attempts as i64,
-            },
-        };
-        self.emit_metric(
-            HealthMetric::Distribution(health_metrics::TRANSPORT_REQUESTS, requests_count),
-            None,
-        );
-
-        // Send telemetry for the payload sending
+        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
                 payload_len as u64,
                 chunks as u64,
+                chunks_dropped_p0 as u64,
             )) {
                 error!(?e, "Error sending telemetry");
             }
@@ -669,40 +582,61 @@ impl TraceExporter {
         self.handle_send_result(result, chunks, payload_len).await
     }
 
-    fn send_trace_chunks_inner<T: SpanText>(
+    async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
-        // Process stats computation
-        stats::process_traces_for_stats(
+        // Process stats computation and drop non-sampled (p0) chunks.
+        // This must run before the OTLP path so that unsampled spans are not exported.
+        let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats,
             self.client_computed_top_level,
         );
 
+        // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
+        // Unlike the agent path, there is no downstream agent to drop unsampled traces,
+        // so drop_chunks is always called here regardless of whether stats are enabled.
+        if let Some(ref config) = self.otlp_config {
+            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            if traces.is_empty() {
+                return Ok(AgentResponse::Unchanged);
+            }
+            return self.send_otlp_traces_inner(traces, config).await;
+        }
+
         let serializer = TraceSerializer::new(
             self.output_format,
             self.agent_payload_response_version.as_ref(),
         );
-        let prepared = serializer.prepare_traces_payload(traces, header_tags)?;
+        let prepared = match serializer.prepare_traces_payload(traces, header_tags) {
+            Ok(p) => p,
+            Err(e) => {
+                error!("Error serializing traces: {e}");
+                self.emit_metric(
+                    HealthMetric::Count(health_metrics::SERIALIZE_TRACES_ERRORS, 1),
+                    None,
+                );
+                return Err(e);
+            }
+        };
 
         let endpoint = Endpoint {
             url: self.get_agent_url(),
             ..self.endpoint.clone()
         };
 
-        self.runtime()?.block_on(async {
-            self.send_traces_with_telemetry(
-                &endpoint,
-                prepared.data,
-                prepared.headers,
-                prepared.chunk_count,
-            )
-            .await
-        })
+        self.send_traces_with_telemetry(
+            &endpoint,
+            prepared.data,
+            prepared.headers,
+            prepared.chunk_count,
+            dropped_p0_stats.dropped_p0_traces,
+        )
+        .await
     }
 
     /// Handle the result of sending traces to the agent
@@ -712,19 +646,9 @@ impl TraceExporter {
         chunks: usize,
         payload_len: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // Always emit http.sent.* metrics regardless of success/failure
-        self.emit_metric(
-            HealthMetric::Distribution(health_metrics::TRANSPORT_SENT_BYTES, payload_len as i64),
-            None,
-        );
-        self.emit_metric(
-            HealthMetric::Distribution(health_metrics::TRANSPORT_TRACES_SENT, chunks as i64),
-            None,
-        );
-
         match result {
-            Ok((response, _)) => {
-                self.handle_agent_response(chunks, response, payload_len)
+            Ok((response, attempts)) => {
+                self.handle_agent_response(chunks, response, payload_len, attempts)
                     .await
             }
             Err(err) => self.handle_send_error(err, payload_len, chunks).await,
@@ -740,116 +664,87 @@ impl TraceExporter {
     ) -> Result<AgentResponse, TraceExporterError> {
         error!(?err, "Error sending traces");
 
-        // Only emit the error metric for non-HTTP errors here
-        // HTTP errors will be handled by handle_http_send_error with specific status codes
-        match &err {
-            SendWithRetryError::Http(_, _) => {
-                // Will be handled by handle_http_send_error
-            }
-            SendWithRetryError::Timeout(_) => {
-                let type_tag = tag!("type", "timeout");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-                    Some(vec![&type_tag]),
-                );
-            }
-            SendWithRetryError::Network(_, _) => {
-                let type_tag = tag!("type", "network");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-                    Some(vec![&type_tag]),
-                );
-            }
-            SendWithRetryError::Build(_) => {
-                let type_tag = tag!("type", "build");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-                    Some(vec![&type_tag]),
-                );
-            }
-        };
-
         match err {
-            SendWithRetryError::Http(response, _) => {
-                self.handle_http_send_error(response, payload_len, chunks)
+            SendWithRetryError::Http(response, attempts) => {
+                self.handle_http_send_error(response, payload_len, chunks, attempts)
                     .await
             }
-            SendWithRetryError::Timeout(_) => Err(TraceExporterError::from(io::Error::from(
-                io::ErrorKind::TimedOut,
-            ))),
-            SendWithRetryError::Network(err, _) => Err(TraceExporterError::from(err)),
-            SendWithRetryError::Build(_) => Err(TraceExporterError::from(io::Error::from(
-                io::ErrorKind::Other,
-            ))),
+            SendWithRetryError::Timeout(attempts) => {
+                let send_result =
+                    SendResult::failure(TransportErrorType::Timeout, payload_len, chunks, attempts);
+                self.emit_send_result(&send_result);
+                Err(TraceExporterError::from(io::Error::from(
+                    io::ErrorKind::TimedOut,
+                )))
+            }
+            SendWithRetryError::Network(err, attempts) => {
+                let send_result =
+                    SendResult::failure(TransportErrorType::Network, payload_len, chunks, attempts);
+                self.emit_send_result(&send_result);
+                Err(TraceExporterError::from(err))
+            }
+            SendWithRetryError::ResponseBody(attempts) => {
+                let send_result = SendResult::failure(
+                    TransportErrorType::ResponseBody,
+                    payload_len,
+                    chunks,
+                    attempts,
+                );
+                self.emit_send_result(&send_result);
+                Err(TraceExporterError::from(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "failed to read response body",
+                )))
+            }
+            SendWithRetryError::Build(attempts) => {
+                let send_result =
+                    SendResult::failure(TransportErrorType::Build, payload_len, chunks, attempts);
+                self.emit_send_result(&send_result);
+                Err(TraceExporterError::from(io::Error::from(
+                    io::ErrorKind::Other,
+                )))
+            }
         }
     }
 
     /// Handle HTTP error responses from send with retry
     async fn handle_http_send_error(
         &self,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<Bytes>,
         payload_len: usize,
         chunks: usize,
+        attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
         let status = response.status();
 
         // Check if the agent state has changed for error responses
         self.info_response_observer.check_response(&response);
 
-        // Emit send traces errors metric with status code type
-        let type_tag =
-            Tag::new("type", status.as_str()).unwrap_or_else(|_| tag!("type", "unknown"));
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-            Some(vec![&type_tag]),
+        let send_result = SendResult::failure(
+            TransportErrorType::Http(status.as_u16()),
+            payload_len,
+            chunks,
+            attempts,
         );
+        self.emit_send_result(&send_result);
 
-        // Emit dropped bytes metric for HTTP error responses, excluding 404 and 415
-        if status.as_u16() != 404 && status.as_u16() != 415 {
-            self.emit_metric(
-                HealthMetric::Distribution(
-                    health_metrics::TRANSPORT_DROPPED_BYTES,
-                    payload_len as i64,
-                ),
-                None,
-            );
-            self.emit_metric(
-                HealthMetric::Distribution(health_metrics::TRANSPORT_TRACES_DROPPED, chunks as i64),
-                None,
-            );
-        }
-
-        let body = self.read_error_response_body(response).await?;
+        let body = String::from_utf8_lossy(response.body());
         Err(TraceExporterError::Request(RequestError::new(
-            status,
-            &String::from_utf8_lossy(&body),
+            status, &body,
         )))
     }
 
-    /// Read response body from error response
-    async fn read_error_response_body(
-        &self,
-        response: hyper::Response<hyper_migration::Body>,
-    ) -> Result<bytes::Bytes, TraceExporterError> {
-        match response.into_body().collect().await {
-            Ok(body) => Ok(body.to_bytes()),
-            Err(err) => {
-                error!(?err, "Error reading agent response body");
-                Err(TraceExporterError::from(err))
-            }
-        }
-    }
-
     /// Check if the agent's payload version has changed based on response headers
-    fn check_payload_version_changed(
-        &self,
-        response: &hyper::Response<hyper_migration::Body>,
-    ) -> bool {
-        let status = response.status();
+    fn check_payload_version_changed(&self, response: &http::Response<Bytes>) -> bool {
+        let is_success = response.status().is_success();
+        let version_header = response
+            .headers()
+            .get(DATADOG_RATES_PAYLOAD_VERSION)
+            .and_then(|v| v.to_str().ok());
         match (
-            status.is_success(),
+            is_success,
             self.agent_payload_response_version.as_ref(),
-            response.headers().get(DATADOG_RATES_PAYLOAD_VERSION_HEADER),
+            version_header,
         ) {
             (false, _, _) => {
                 // If the status is not success, the rates are considered unchanged
@@ -861,32 +756,9 @@ impl TraceExporter {
                 true
             }
             (true, Some(agent_payload_response_version), Some(new_payload_version)) => {
-                if let Ok(new_payload_version_str) = new_payload_version.to_str() {
-                    agent_payload_response_version.check_and_update(new_payload_version_str)
-                } else {
-                    false
-                }
+                agent_payload_response_version.check_and_update(new_payload_version)
             }
             _ => false,
-        }
-    }
-
-    /// Read response body and handle potential errors
-    async fn read_response_body(
-        &self,
-        response: hyper::Response<hyper_migration::Body>,
-    ) -> Result<String, TraceExporterError> {
-        match response.into_body().collect().await {
-            Ok(body) => Ok(String::from_utf8_lossy(&body.to_bytes()).to_string()),
-            Err(err) => {
-                error!(?err, "Error reading agent response body");
-                let type_tag = tag!("type", "response_body");
-                self.emit_metric(
-                    HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-                    Some(vec![&type_tag]),
-                );
-                Err(TraceExporterError::from(err))
-            }
         }
     }
 
@@ -894,19 +766,14 @@ impl TraceExporter {
     fn handle_successful_trace_response(
         &self,
         chunks: usize,
-        status: hyper::StatusCode,
+        payload_len: usize,
+        attempts: u32,
         body: String,
         payload_version_changed: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
-        debug!(
-            chunks = chunks,
-            status = %status,
-            "Trace chunks sent successfully to agent"
-        );
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::TRANSPORT_TRACES_SUCCESSFUL, chunks as i64),
-            None,
-        );
+        debug!(chunks = chunks, "Trace chunks sent successfully to agent");
+        let send_result = SendResult::success(payload_len, chunks, attempts);
+        self.emit_send_result(&send_result);
 
         Ok(if payload_version_changed {
             AgentResponse::Changed { body }
@@ -918,50 +785,41 @@ impl TraceExporter {
     async fn handle_agent_response(
         &self,
         chunks: usize,
-        response: hyper::Response<hyper_migration::Body>,
+        response: http::Response<Bytes>,
         payload_len: usize,
+        attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
         // Check if the agent state has changed
         self.info_response_observer.check_response(&response);
 
         let status = response.status();
         let payload_version_changed = self.check_payload_version_changed(&response);
-        let body = self.read_response_body(response).await?;
+        let body = String::from_utf8_lossy(response.body()).to_string();
 
         if !status.is_success() {
             warn!(
-                status = %status,
+                status = status.as_u16(),
                 "Agent returned non-success status for trace send"
             );
-            let type_tag =
-                Tag::new("type", status.as_str()).unwrap_or_else(|_| tag!("type", "unknown"));
-            self.emit_metric(
-                HealthMetric::Count(health_metrics::TRANSPORT_TRACES_FAILED, 1),
-                Some(vec![&type_tag]),
+            let send_result = SendResult::failure(
+                TransportErrorType::Http(status.as_u16()),
+                payload_len,
+                chunks,
+                attempts,
             );
-            // Emit dropped bytes metric for non-success status codes, excluding 404 and 415
-            if status.as_u16() != 404 && status.as_u16() != 415 {
-                self.emit_metric(
-                    HealthMetric::Distribution(
-                        health_metrics::TRANSPORT_DROPPED_BYTES,
-                        payload_len as i64,
-                    ),
-                    None,
-                );
-                self.emit_metric(
-                    HealthMetric::Distribution(
-                        health_metrics::TRANSPORT_TRACES_DROPPED,
-                        chunks as i64,
-                    ),
-                    None,
-                );
-            }
+            self.emit_send_result(&send_result);
             return Err(TraceExporterError::Request(RequestError::new(
                 status, &body,
             )));
         }
 
-        self.handle_successful_trace_response(chunks, status, body, payload_version_changed)
+        self.handle_successful_trace_response(
+            chunks,
+            payload_len,
+            attempts,
+            body,
+            payload_version_changed,
+        )
     }
 
     fn get_agent_url(&self) -> Uri {
@@ -969,12 +827,14 @@ impl TraceExporter {
     }
 
     #[cfg(test)]
+    #[cfg(not(target_arch = "wasm32"))]
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
-        stats::is_stats_worker_active(&self.client_side_stats, &self.workers)
+        stats::is_stats_worker_active(&self.client_side_stats)
     }
 }
 
+#[cfg(feature = "telemetry")]
 #[derive(Debug, Default, Clone)]
 pub struct TelemetryConfig {
     pub heartbeat: u64,
@@ -994,14 +854,12 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
     use httpmock::MockServer;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
+    use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::span::v05;
-    use libdd_trace_utils::span::SpanBytes;
-    use std::collections::HashMap;
     use std::net;
-    use std::time::Duration;
-    use tokio::time::sleep;
 
     // v05 messagepack empty payload -> [[""], []]
     const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
@@ -1042,17 +900,17 @@ mod tests {
             ..Default::default()
         };
 
-        let hashmap: HashMap<&'static str, String> = (&tracer_tags).into();
+        let headers: HeaderMap = (&tracer_tags).into();
 
-        assert_eq!(hashmap.get("datadog-meta-tracer-version").unwrap(), "v0.1");
-        assert_eq!(hashmap.get("datadog-meta-lang").unwrap(), "rust");
-        assert_eq!(hashmap.get("datadog-meta-lang-version").unwrap(), "1.52.1");
+        assert_eq!(headers.get("datadog-meta-tracer-version").unwrap(), "v0.1");
+        assert_eq!(headers.get("datadog-meta-lang").unwrap(), "rust");
+        assert_eq!(headers.get("datadog-meta-lang-version").unwrap(), "1.52.1");
         assert_eq!(
-            hashmap.get("datadog-meta-lang-interpreter").unwrap(),
+            headers.get("datadog-meta-lang-interpreter").unwrap(),
             "rustc"
         );
-        assert!(hashmap.contains_key("datadog-client-computed-stats"));
-        assert!(hashmap.contains_key("datadog-client-computed-top-level"));
+        assert!(headers.contains_key("datadog-client-computed-stats"));
+        assert!(headers.contains_key("datadog-client-computed-top-level"));
     }
 
     fn read(socket: &net::UdpSocket) -> String {
@@ -1069,7 +927,7 @@ mod tests {
         output: TraceExporterOutputFormat,
         enable_telemetry: bool,
         enable_health_metrics: bool,
-    ) -> TraceExporter {
+    ) -> TraceExporter<NativeCapabilities> {
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&url)
@@ -1097,7 +955,7 @@ mod tests {
             });
         }
 
-        builder.build().unwrap()
+        builder.build::<NativeCapabilities>().unwrap()
     }
 
     #[test]
@@ -1134,9 +992,7 @@ mod tests {
         ];
         let data = msgpack_encoder::v04::to_vec(&traces);
 
-        let _result = exporter
-            .send(data.as_ref(), 2)
-            .expect("failed to send trace");
+        let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
         // Collect all metrics
         let mut received_metrics = Vec::new();
@@ -1195,7 +1051,7 @@ mod tests {
         );
 
         let bad_payload = b"some_bad_payload".as_ref();
-        let result = exporter.send(bad_payload, 1);
+        let result = exporter.send(bad_payload);
 
         assert!(result.is_err());
 
@@ -1235,7 +1091,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let result = exporter.send(data.as_ref(), 1);
+        let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
 
@@ -1343,7 +1199,7 @@ mod tests {
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let result = exporter.send(data.as_ref(), 1);
+        let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
 
@@ -1448,9 +1304,7 @@ mod tests {
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
 
-        let _result = exporter
-            .send(data.as_ref(), 1)
-            .expect("failed to send trace");
+        let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
         // Try to read metrics - should timeout since none are sent
         let mut buf = [0; 1_000];
@@ -1464,10 +1318,13 @@ mod tests {
             }
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                    || e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::Interrupted =>
             {
-                // This is expected - no metrics should be sent when disabled
-                // WouldBlock on Unix, TimedOut on Windows
+                // This is expected - no metrics should be sent when disabled.
+                // WouldBlock on Unix, TimedOut on Windows.
+                // Interrupted can occur when signals interrupt the blocking
+                // recvfrom() syscall before the timeout expires.
             }
             Err(e) => panic!("Unexpected error reading from socket: {e}"),
         }
@@ -1490,7 +1347,7 @@ mod tests {
                 );
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1499,14 +1356,14 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let result = exporter.send(data.as_ref(), 1).unwrap();
+        let result = exporter.send(data.as_ref()).unwrap();
 
         assert_eq!(
             result,
@@ -1532,7 +1389,7 @@ mod tests {
                 .body(r#"{ "error": "Unavailable" }"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1541,20 +1398,20 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let code = match exporter.send(data.as_ref(), 1).unwrap_err() {
+        let code = match exporter.send(data.as_ref()).unwrap_err() {
             TraceExporterError::Request(e) => Some(e.status()),
             _ => None,
         }
         .unwrap();
 
-        assert_eq!(code, 500);
+        assert_eq!(code, http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
@@ -1567,7 +1424,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1576,14 +1433,14 @@ mod tests {
             .set_language("nodejs")
             .set_language_version("1.0")
             .set_language_interpreter("v8");
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
         let data = msgpack_encoder::v04::to_vec(&traces);
-        let err = exporter.send(data.as_ref(), 1);
+        let err = exporter.send(data.as_ref());
 
         assert!(err.is_err());
         assert_eq!(
@@ -1621,7 +1478,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1634,10 +1491,10 @@ mod tests {
                 heartbeat: 100,
                 ..Default::default()
             });
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
@@ -1645,15 +1502,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            std::thread::sleep(Duration::from_millis(100));
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1695,7 +1544,7 @@ mod tests {
 
         let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
         let traces = rmp_serde::to_vec(&v5).unwrap();
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
@@ -1703,15 +1552,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            std::thread::sleep(Duration::from_millis(100));
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1745,7 +1586,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1761,10 +1602,10 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V05);
 
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
@@ -1772,15 +1613,7 @@ mod tests {
 
         traces_endpoint.assert_calls(1);
         while metrics_endpoint.calls() == 0 {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            std::thread::sleep(Duration::from_millis(100));
         }
         metrics_endpoint.assert_calls(1);
     }
@@ -1805,12 +1638,12 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder.set_url(&server.url("/"));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
         let traces = vec![0x90];
         for _ in 0..2 {
-            let result = exporter.send(traces.as_ref(), 1).unwrap();
+            let result = exporter.send(traces.as_ref()).unwrap();
             let AgentResponse::Changed { body } = result else {
                 panic!("Expected Changed response");
             };
@@ -1840,19 +1673,19 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .enable_agent_rates_payload_version();
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
         let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
         assert_eq!(body, response_body);
 
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Unchanged = result else {
             panic!("Expected Unchanged response");
         };
@@ -1866,13 +1699,13 @@ mod tests {
                 .header("datadog-rates-payload-version", "def")
                 .body(response_body);
         });
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Changed { body } = result else {
             panic!("Expected Changed response");
         };
         assert_eq!(body, response_body);
 
-        let result = exporter.send(traces.as_ref(), 1).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
         let AgentResponse::Unchanged = result else {
             panic!("Expected Unchanged response");
         };
@@ -1932,7 +1765,7 @@ mod tests {
             then.delay(delay).status(status).body(response);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -1944,7 +1777,7 @@ mod tests {
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -1955,20 +1788,10 @@ mod tests {
 
         // Wait for the info fetcher to get the config
         while mock_info.calls() == 0 {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            std::thread::sleep(Duration::from_millis(100));
         }
 
-        let _ = exporter.send(data.as_ref(), 1).unwrap();
-
-        exporter.shutdown(None).unwrap();
+        let _ = exporter.send(data.as_ref()).unwrap();
 
         mock_traces.assert();
     }
@@ -1976,26 +1799,68 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
-        let exporter = TraceExporterBuilder::default().build().unwrap();
+        let exporter = TraceExporter::<NativeCapabilities>::builder()
+            .build::<NativeCapabilities>()
+            .unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
 
         let timeout = Some(42);
-        let mut builder = TraceExporterBuilder::default();
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder.set_connection_timeout(timeout);
 
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, 42);
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn stop_and_start_runtime() {
-        let builder = TraceExporterBuilder::default();
-        let exporter = builder.build().unwrap();
-        exporter.stop_worker();
-        exporter.run_worker().unwrap();
+    fn test_otlp_export_via_builder() {
+        let server = MockServer::start();
+        let mock_otlp = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/traces")
+                .header("Content-Type", "application/json");
+            then.status(200).body("");
+        });
+
+        let otlp_endpoint = format!("{}/v1/traces", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://127.0.0.1:8126")
+            .set_service("svc")
+            .set_env("env")
+            .set_tracer_version("1.0")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_language_interpreter("rustc")
+            .set_otlp_endpoint(&otlp_endpoint)
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            resource: BytesString::from_static("res"),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 0,
+            start: 1000,
+            duration: 100,
+            error: 0,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "OTLP send should succeed: {:?}",
+            result.err()
+        );
+        mock_otlp.assert();
     }
 }
 
@@ -2004,10 +1869,9 @@ mod single_threaded_tests {
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_trace_utils::msgpack_encoder;
-    use libdd_trace_utils::span::SpanBytes;
-    use std::time::Duration;
-    use tokio::time::sleep;
+    use libdd_trace_utils::span::v04::SpanBytes;
 
     #[cfg_attr(miri, ignore)]
     #[test]
@@ -2039,7 +1903,9 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
+
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -2050,8 +1916,9 @@ mod single_threaded_tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime.clone())
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             duration: 10,
@@ -2062,18 +1929,10 @@ mod single_threaded_tests {
 
         // Wait for the info fetcher to get the config
         while agent_info::get_agent_info().is_none() {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            std::thread::sleep(Duration::from_millis(100));
         }
 
-        let result = exporter.send(data.as_ref(), 1);
+        let result = exporter.send(data.as_ref());
         // Error received because server is returning an empty body.
         assert!(result.is_err());
 
@@ -2087,7 +1946,7 @@ mod single_threaded_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        exporter.shutdown(None).unwrap();
+        runtime.shutdown(None).unwrap();
 
         // Wait for the mock server to process the stats
         for _ in 0..1000 {
@@ -2139,7 +1998,9 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
         });
 
-        let mut builder = TraceExporterBuilder::default();
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
+
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -2150,8 +2011,9 @@ mod single_threaded_tests {
             .set_language_interpreter("v8")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime.clone())
             .enable_stats(Duration::from_secs(10));
-        let exporter = builder.build().unwrap();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         let trace_chunk = vec![SpanBytes {
             service: "test".into(),
@@ -2167,18 +2029,10 @@ mod single_threaded_tests {
         // Wait for agent_info to be present so that sending a trace will trigger the stats worker
         // to start
         while agent_info::get_agent_info().is_none() {
-            exporter
-                .runtime
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .block_on(async {
-                    sleep(Duration::from_millis(100)).await;
-                })
+            std::thread::sleep(Duration::from_millis(100));
         }
 
-        exporter.send(data.as_ref(), 1).unwrap();
+        exporter.send(data.as_ref()).unwrap();
 
         // Wait for the stats worker to be active before shutting down to avoid potential flaky
         // tests on CI where we shutdown before the stats worker had time to start
@@ -2190,7 +2044,7 @@ mod single_threaded_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        exporter
+        runtime
             .shutdown(Some(Duration::from_millis(5)))
             .unwrap_err(); // The shutdown should timeout
 

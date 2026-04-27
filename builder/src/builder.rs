@@ -123,19 +123,6 @@ impl Builder {
             .expect("Failed to create include directory");
     }
 
-    // TODO: maybe do this in module's build.rs
-    pub fn sanitize_libraries(&self) {
-        let datadog_lib_dir = Path::new(self.source_lib.as_ref());
-
-        let libs = fs::read_dir(datadog_lib_dir).unwrap();
-        for lib in libs.flatten() {
-            let name = lib.file_name().into_string().unwrap();
-            if name.ends_with(".so") {
-                arch::fix_rpath(lib.path().to_str().unwrap());
-            }
-        }
-    }
-
     pub fn add_cmake(&self) {
         let libs = arch::NATIVE_LIBS.to_owned();
         let cmake_dir: PathBuf = [&self.target_dir, "cmake"].iter().collect();
@@ -174,7 +161,7 @@ impl Builder {
     /// Copy license files to the target directory
     pub fn copy_license_files(&self) -> Result<()> {
         let project_root = project_root();
-        let license_files = ["LICENSE", "LICENSE-3rdparty.yml", "NOTICE"];
+        let license_files = ["LICENSE", "LICENSE-3rdparty.csv", "NOTICE"];
 
         for file in &license_files {
             let source_path = project_root.join(file);

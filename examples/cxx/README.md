@@ -1,12 +1,35 @@
-# CXX Bindings Example for libdd-crashtracker
+# CXX Bindings Examples
 
-This example demonstrates how to use the CXX bindings for the libdd-crashtracker crate, providing a safer and more idiomatic C++ API compared to the traditional C FFI.
+This directory contains C++ examples demonstrating the CXX bindings for libdatadog components.
 
-## Features
+CXX bindings provide a safer and more idiomatic C++ API compared to the traditional C FFI bindings, with automatic memory management and exception handling.
 
-The CXX bindings provide access to:
+## Examples
 
-### Core Types
+### Crashtracker (`crashinfo.cpp`)
+
+Demonstrates building crash reports using the CXX bindings for `libdd-crashtracker`.
+
+**Build and run:**
+
+Unix (Linux/macOS):
+```bash
+./build-and-run-crashinfo.sh
+```
+
+Windows:
+```powershell
+.\build-and-run-crashinfo.ps1
+```
+
+**Key features:**
+- Type-safe crash report builder API
+- Support for stack traces, frames, and metadata
+- Process and OS information
+- Automatic memory management
+- Exception-based error handling
+
+**Core Types:**
 - `CrashInfoBuilder` - Builder for constructing crash information
 - `StackFrame` - Individual stack frame with debug info and addresses
 - `StackTrace` - Collection of stack frames
@@ -15,115 +38,85 @@ The CXX bindings provide access to:
 - `ProcInfo` - Process information
 - `OsInfo` - Operating system information
 
-### Enums
-- `ErrorKind` - Type of error (Panic, UnhandledException, UnixSignal)
-- `BuildIdType` - Build ID format (GNU, GO, PDB, SHA1)
-- `FileType` - Binary file format (APK, ELF, PE)
+**Enums:**
+- `CxxErrorKind` - Type of error (Panic, UnhandledException, UnixSignal)
+- `CxxBuildIdType` - Build ID format (GNU, GO, PDB, SHA1)
+- `CxxFileType` - Binary file format (APK, ELF, PE)
 
-### Key API
+### Profiling (`profiling.cpp`)
 
-**Object Creation:**
-```cpp
-auto builder = CrashInfoBuilder::create();
-auto frame = StackFrame::create();
-auto stacktrace = StackTrace::create();
-```
+Demonstrates building profiling data and exporting to Datadog using the CXX bindings for `libdd-profiling`.
 
-**CrashInfoBuilder Methods:**
-- `set_kind(CxxErrorKind)` - Set error type (Panic, UnhandledException, UnixSignal)
-- `with_message(String)` - Set error message
-- `with_counter(String, i64)` - Add a named counter
-- `with_log_message(String, bool)` - Add a log message
-- `with_fingerprint(String)` - Set crash fingerprint
-- `with_incomplete(bool)` - Mark as incomplete
-- `set_metadata(Metadata)` - Set library metadata
-- `set_proc_info(ProcInfo)` - Set process information
-- `set_os_info(OsInfo)` - Set OS information
-- `add_stack(Box<StackTrace>)` - Add a stack trace
-- `with_timestamp_now()` - Set current timestamp
-- `with_file(String)` - Add a file to the report
+**Build and run:**
 
-**StackFrame Methods:**
-- `with_function(String)`, `with_file(String)`, `with_line(u32)`, `with_column(u32)` - Set debug info
-- `with_ip(usize)`, `with_sp(usize)` - Set instruction/stack pointers
-- `with_module_base_address(usize)`, `with_symbol_address(usize)` - Set base addresses
-- `with_build_id(String)` - Set build ID
-- `build_id_type(CxxBuildIdType)` - Set build ID format (GNU, GO, PDB, SHA1)
-- `file_type(CxxFileType)` - Set binary format (APK, ELF, PE)
-- `with_path(String)` - Set module path
-- `with_relative_address(usize)` - Set relative address
-
-**StackTrace Methods:**
-- `add_frame(Box<StackFrame>, bool)` - Add a frame (bool = incomplete)
-- `mark_complete()` - Mark trace as complete
-
-**Building & Output:**
-```cpp
-auto crash_info = crashinfo_build(std::move(builder));
-auto json = crash_info->to_json();
-```
-
-## Building and Running
-
-### Unix (Linux/macOS)
-
-The `build-and-run-crashinfo.sh` script handles the entire build process:
-
+Unix (Linux/macOS):
 ```bash
-./examples/cxx/build-and-run-crashinfo.sh
+./build-profiling.sh
 ```
 
-### Windows
-
-The `build-and-run-crashinfo.ps1` PowerShell script handles the build process on Windows:
-
+Windows:
 ```powershell
-.\examples\cxx\build-and-run-crashinfo.ps1
+.\build-profiling.ps1
 ```
 
-**Prerequisites for Windows:**
-- Either MSVC (via Visual Studio) or MinGW/LLVM with C++ compiler
-- PowerShell 5.0 or later (comes with Windows 10+)
-- Rust toolchain
+**Key features:**
+- Type-safe API for building profiles
+- Support for samples, locations, mappings, and labels
+- String interning for efficient memory usage
+- Upscaling rules (Poisson and Proportional)
+- Endpoint tracking for web service profiling
+- Pprof format serialization with zstd compression
+- **Export to Datadog** via agent or agentless mode
+- Support for attaching additional compressed files
+- Per-profile tags and metadata
+- Automatic memory management
+- Exception-based error handling
+- Modern C++20 syntax with designated initializers and `std::format`
 
-The build script will:
-1. Build libdd-crashtracker with the `cxx` feature enabled
-2. Find the CXX bridge headers and libraries
-3. Compile the C++ example (automatically detects MSVC or MinGW/Clang)
-4. Run the example and display the output
+**Core Types:**
+- `Profile` - Profile builder for collecting samples
+- `ProfileExporter` - Exporter for sending profiles to Datadog
+- `Tag` - Key-value tags for profile metadata
+- `AttachmentFile` - Additional file to attach to profile (name + data bytes)
 
-## Example Output
+**Export Modes:**
 
-The example creates a crash report with:
-- Error kind and message
-- Library metadata with tags
-- Process and OS information
-- A stack trace with multiple frames (debug info + binary addresses)
-- Counters and log messages
-- Timestamp
+By default, the example saves the profile to `profile.pprof`. To export to Datadog, set environment variables:
 
-The output is a JSON object that can be sent to Datadog's crash tracking service.
+1. **Agent mode**: Sends profiles to the local Datadog agent
+   ```bash
+   DD_AGENT_URL=http://localhost:8126 ./build-profiling.sh
+   ```
 
-## Notes
+2. **Agentless mode**: Sends profiles directly to Datadog intake
+   ```bash
+   DD_API_KEY=your-api-key DD_SITE=datadoghq.com ./build-profiling.sh
+   ```
 
-- The CXX bindings use `rust::String` types which need to be converted to `std::string` for use with standard C++ streams
-- All functions that can fail will use exceptions (standard C++ exception handling)
-- The bindings are type-safe and prevent many common C FFI errors
-- Memory is managed automatically through RAII and smart pointers
+**API Example:**
 
-## Comparison to C FFI
+See [`profiling.cpp`](profiling.cpp) for a complete example showing profile creation, sample collection, and exporting to Datadog with optional attachments and metadata.
 
-The CXX bindings provide several advantages over the traditional C FFI:
+**Requirements:**
+- C++20 compiler
+- For agent mode: Datadog agent running (default: localhost:8126)
+- For agentless mode: Valid Datadog API key
 
-1. **Type Safety**: No void pointers, proper type checking at compile time
-2. **Memory Safety**: Automatic memory management through smart pointers
-3. **Ergonomics**: More natural C++ idioms, no need for manual handle management
-4. **Error Handling**: Exceptions instead of error codes
-5. **String Handling**: Seamless `rust::String` ↔ C++ string interop
+## Build Scripts
+
+The examples use a consolidated build system:
+
+- **Unix (Linux/macOS)**: `build-and-run.sh <crate-name> <example-name>`
+- **Windows**: `build-and-run.ps1 -CrateName <crate-name> -ExampleName <example-name>`
+
+Convenience wrappers are provided for each example:
+- `build-and-run-crashinfo.sh` / `build-and-run-crashinfo.ps1`
+- `build-profiling.sh` / `build-profiling.ps1`
 
 ## Requirements
 
 - C++20 or later
 - Rust toolchain
+- C++ compiler (clang++ or g++)
 - Platform: macOS, Linux, or Windows
   - Windows: Requires MSVC (via Visual Studio) or MinGW/LLVM

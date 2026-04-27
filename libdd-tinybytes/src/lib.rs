@@ -7,6 +7,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(feature = "serde")]
+use serde::Serialize;
 use std::{
     borrow, cmp, fmt, hash,
     ops::{self, RangeBounds},
@@ -14,14 +16,11 @@ use std::{
     sync::atomic::AtomicUsize,
 };
 
-#[cfg(feature = "serde")]
-use serde::Serialize;
-
 /// Immutable bytes type with zero copy cloning and slicing.
 #[derive(Clone)]
+#[repr(C)] // fixed layout for ad-hoc conversion to slice
 pub struct Bytes {
-    ptr: NonNull<u8>,
-    len: usize,
+    data: NonNull<[u8]>,
     // The `bytes`` field is used to ensure that the underlying bytes are freed when there are no
     // more references to the `Bytes` object. For static buffers the field is `None`.
     bytes: Option<RefCountedCell>,
@@ -49,10 +48,26 @@ impl Bytes {
         len: usize,
         refcount: RefCountedCell,
     ) -> Self {
+        Self::from_raw(ptr, len, Some(refcount))
+    }
+
+    #[inline]
+    /// Creates a new `Bytes` from the given slice data and the refcount. Can be used after calling
+    /// into_raw().
+    ///
+    /// # Safety
+    ///
+    /// * the pointer should be valid for the given length
+    /// * the pointer should be valid for reads as long as the refcount or any of it's clone is not
+    ///   dropped
+    pub const unsafe fn from_raw(
+        ptr: NonNull<u8>,
+        len: usize,
+        bytes: Option<RefCountedCell>,
+    ) -> Self {
         Self {
-            ptr,
-            len,
-            bytes: Some(refcount),
+            data: NonNull::slice_from_raw_parts(ptr, len),
+            bytes,
         }
     }
 
@@ -66,9 +81,11 @@ impl Bytes {
     #[inline]
     pub const fn from_static(value: &'static [u8]) -> Self {
         Self {
-            // SAFETY: static slice always have a valid pointer and length
-            ptr: unsafe { NonNull::new_unchecked(value.as_ptr().cast_mut()) },
-            len: value.len(),
+            data: NonNull::slice_from_raw_parts(
+                // SAFETY: static slice always have a valid pointer and length
+                unsafe { NonNull::new_unchecked(value.as_ptr().cast_mut()) },
+                value.len(),
+            ),
             bytes: None,
         }
     }
@@ -81,13 +98,13 @@ impl Bytes {
     /// Returns the length of the `Bytes`.
     #[inline]
     pub const fn len(&self) -> usize {
-        self.len
+        self.data.len()
     }
 
     /// Returns `true` if the `Bytes` is empty.
     #[inline]
     pub const fn is_empty(&self) -> bool {
-        self.len == 0
+        self.data.len() == 0
     }
 
     /// Returns a slice of self for the provided range.
@@ -182,8 +199,8 @@ impl Bytes {
 
         let subset_start = subset.as_ptr() as usize;
         let subset_end = subset_start + subset.len();
-        let self_start = self.ptr.as_ptr() as usize;
-        let self_end = self_start + self.len;
+        let self_start = self.data.addr().get();
+        let self_end = self_start + self.data.len();
         if subset_start >= self_start && subset_end <= self_end {
             Some(self.safe_slice_ref(subset_start - self_start, subset_end - self_start))
         } else {
@@ -210,8 +227,13 @@ impl Bytes {
     }
 
     #[inline]
+    fn ptr(&self) -> NonNull<u8> {
+        self.data.cast::<u8>()
+    }
+
+    #[inline]
     fn safe_slice_ref(&self, start: usize, end: usize) -> Self {
-        if !(start <= end && end <= self.len) {
+        if !(start <= end && end <= self.len()) {
             #[allow(clippy::panic)]
             {
                 panic!("Out of bound slicing of Bytes instance")
@@ -224,8 +246,9 @@ impl Bytes {
         // points to ptr + start, then memory span is between ptr + start and (ptr + start) + (len -
         // start) = ptr + len
         Self {
-            ptr: unsafe { self.ptr.add(start) },
-            len: end - start,
+            data: NonNull::slice_from_raw_parts(unsafe { self.ptr().add(start) }, end - start),
+            // ptr: unsafe { self.ptr.add(start) },
+            // len: end - start,
             bytes: self.bytes.clone(),
         }
     }
@@ -233,7 +256,12 @@ impl Bytes {
     #[inline]
     fn as_slice(&self) -> &[u8] {
         // SAFETY: ptr is valid for the associated length
-        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast_const(), self.len()) }
+        unsafe { std::slice::from_raw_parts(self.ptr().as_ptr().cast_const(), self.len()) }
+    }
+
+    #[inline]
+    pub fn into_raw(self) -> (NonNull<u8>, usize, Option<RefCountedCell>) {
+        (self.ptr(), self.len(), self.bytes)
     }
 }
 

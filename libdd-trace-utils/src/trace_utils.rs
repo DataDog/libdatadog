@@ -4,15 +4,15 @@
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 use crate::span::v05::dict::SharedDict;
-use crate::span::{v05, SpanText};
+use crate::span::{v05, TraceData};
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
 use bytes::buf::Reader;
+use bytes::Buf;
 use http_body_util::BodyExt;
-use hyper::body::Buf;
-use libdd_common::{azure_app_services, hyper_migration};
+use libdd_common::azure_app_services;
 use libdd_trace_normalization::normalizer;
 use libdd_trace_protobuf::pb;
 use rmp::decode::read_array_len;
@@ -37,9 +37,11 @@ const MAX_STRING_DICT_SIZE: u32 = 25_000_000;
 const SPAN_ELEMENT_COUNT: usize = 12;
 
 /// First value of returned tuple is the payload size
-pub async fn get_traces_from_request_body(
-    body: hyper_migration::Body,
-) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
+pub async fn get_traces_from_request_body<B>(body: B) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)>
+where
+    B: http_body::Body,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     let buffer = body.collect().await?.aggregate();
     let size = buffer.remaining();
 
@@ -227,9 +229,13 @@ fn get_v05_string(
     }
 }
 
-pub async fn get_v05_traces_from_request_body(
-    body: hyper_migration::Body,
-) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)> {
+pub async fn get_v05_traces_from_request_body<B>(
+    body: B,
+) -> anyhow::Result<(usize, Vec<Vec<pb::Span>>)>
+where
+    B: http_body::Body,
+    B::Error: std::error::Error + Send + Sync + 'static,
+{
     let buffer = body.collect().await?.aggregate();
     let body_size = buffer.remaining();
     let mut reader = buffer.reader();
@@ -550,36 +556,16 @@ pub fn enrich_span_with_google_cloud_function_metadata(
 }
 
 pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
+    if span.name == "azure.apim" {
+        return;
+    }
+
     if let Some(aas_metadata) = &*azure_app_services::AAS_METADATA_FUNCTION {
-        let aas_tags = [
-            ("aas.resource.id", aas_metadata.get_resource_id()),
-            (
-                "aas.environment.instance_id",
-                aas_metadata.get_instance_id(),
-            ),
-            (
-                "aas.environment.instance_name",
-                aas_metadata.get_instance_name(),
-            ),
-            ("aas.subscription.id", aas_metadata.get_subscription_id()),
-            ("aas.environment.os", aas_metadata.get_operating_system()),
-            ("aas.environment.runtime", aas_metadata.get_runtime()),
-            (
-                "aas.environment.runtime_version",
-                aas_metadata.get_runtime_version(),
-            ),
-            (
-                "aas.environment.function_runtime",
-                aas_metadata.get_function_runtime_version(),
-            ),
-            ("aas.resource.group", aas_metadata.get_resource_group()),
-            ("aas.site.name", aas_metadata.get_site_name()),
-            ("aas.site.kind", aas_metadata.get_site_kind()),
-            ("aas.site.type", aas_metadata.get_site_type()),
-        ];
-        aas_tags.into_iter().for_each(|(name, value)| {
-            span.meta.insert(name.to_string(), value.to_string());
-        });
+        span.meta.extend(
+            aas_metadata
+                .get_function_tags()
+                .map(|(name, value)| (name.to_string(), value.to_string())),
+        );
     }
 }
 
@@ -597,8 +583,8 @@ macro_rules! parse_root_span_tags {
     }
 }
 
-pub fn collect_trace_chunks<T: SpanText>(
-    traces: Vec<Vec<crate::span::Span<T>>>,
+pub fn collect_trace_chunks<T: TraceData>(
+    traces: Vec<Vec<crate::span::v04::Span<T>>>,
     use_v05_format: bool,
 ) -> anyhow::Result<TraceChunks<T>> {
     if use_v05_format {
@@ -609,7 +595,7 @@ pub fn collect_trace_chunks<T: SpanText>(
             let v05_trace = trace.into_iter().try_fold(
                 Vec::with_capacity(trace_len),
                 |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
-                    acc.push(v05::from_span(span, &mut shared_dict)?);
+                    acc.push(v05::from_v04_span(span, &mut shared_dict)?);
                     Ok(acc)
                 },
             )?;
@@ -713,8 +699,8 @@ mod tests {
         span::SharedDictBytes,
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
-    use hyper::Request;
-    use libdd_common::Endpoint;
+    use http::Request;
+    use libdd_common::{http_common, Endpoint};
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {
@@ -724,36 +710,32 @@ mod tests {
 
     #[test]
     fn test_coalescing_does_not_exceed_max_size() {
-        let dummy = SendData::new(
-            MAX_PAYLOAD_SIZE / 5 + 1,
-            TracerPayloadCollection::V07(vec![pb::TracerPayload {
-                container_id: "".to_string(),
-                language_name: "".to_string(),
-                language_version: "".to_string(),
-                tracer_version: "".to_string(),
-                runtime_id: "".to_string(),
-                chunks: vec![pb::TraceChunk {
-                    priority: 0,
-                    origin: "".to_string(),
-                    spans: vec![],
+        fn dummy() -> SendData {
+            SendData::new(
+                MAX_PAYLOAD_SIZE / 5 + 1,
+                TracerPayloadCollection::V07(vec![pb::TracerPayload {
+                    container_id: "".to_string(),
+                    language_name: "".to_string(),
+                    language_version: "".to_string(),
+                    tracer_version: "".to_string(),
+                    runtime_id: "".to_string(),
+                    chunks: vec![pb::TraceChunk {
+                        priority: 0,
+                        origin: "".to_string(),
+                        spans: vec![],
+                        tags: Default::default(),
+                        dropped_trace: false,
+                    }],
                     tags: Default::default(),
-                    dropped_trace: false,
-                }],
-                tags: Default::default(),
-                env: "".to_string(),
-                hostname: "".to_string(),
-                app_version: "".to_string(),
-            }]),
-            TracerHeaderTags::default(),
-            &Endpoint::default(),
-        );
-        let coalesced = coalesce_send_data(vec![
-            dummy.clone(),
-            dummy.clone(),
-            dummy.clone(),
-            dummy.clone(),
-            dummy.clone(),
-        ]);
+                    env: "".to_string(),
+                    hostname: "".to_string(),
+                    app_version: "".to_string(),
+                }]),
+                TracerHeaderTags::default(),
+                &Endpoint::default(),
+            )
+        }
+        let coalesced = coalesce_send_data(vec![dummy(), dummy(), dummy(), dummy(), dummy()]);
         assert_eq!(
             5,
             coalesced
@@ -831,7 +813,7 @@ mod tests {
             )]],
         );
         let bytes = rmp_serde::to_vec(&data).unwrap();
-        let res = get_v05_traces_from_request_body(hyper_migration::Body::from(bytes)).await;
+        let res = get_v05_traces_from_request_body(http_common::Body::from(bytes)).await;
         assert!(res.is_ok());
         let (_, traces) = res.unwrap();
         let span = traces[0][0].clone();
@@ -931,7 +913,7 @@ mod tests {
         for (trace_input, output) in pairs {
             let bytes = rmp_serde::to_vec(&vec![&trace_input]).unwrap();
             let request = Request::builder()
-                .body(hyper_migration::Body::from(bytes))
+                .body(http_common::Body::from(bytes))
                 .unwrap();
             let res = get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
@@ -991,7 +973,7 @@ mod tests {
 
         let bytes = rmp_serde::to_vec(&trace_input).unwrap();
         let request = Request::builder()
-            .body(hyper_migration::Body::from(bytes))
+            .body(http_common::Body::from(bytes))
             .unwrap();
 
         let res = get_traces_from_request_body(request.into_body()).await;
@@ -1247,5 +1229,53 @@ mod tests {
             !decoded_span.meta.contains_key("problematic_key"),
             "Null value should be skipped, but key was present"
         );
+    }
+
+    #[test]
+    fn test_enrich_span_with_azure_function_metadata_adds_tags_for_non_apim() {
+        let mut span = create_test_span(1234, 12342, 12341, 1, false);
+        span.name = "azure.function".to_string();
+
+        enrich_span_with_azure_function_metadata(&mut span);
+
+        // If AAS_METADATA_FUNCTION is available, verify aas.* tags were added
+        // If not available (most test environments), this is a no-op
+        // This test primarily ensures the function doesn't skip non-apim spans
+        if azure_app_services::AAS_METADATA_FUNCTION.is_some() {
+            assert!(span.meta.contains_key("aas.resource.id"));
+            assert!(span.meta.contains_key("aas.environment.instance_id"));
+            assert!(span.meta.contains_key("aas.environment.instance_name"));
+            assert!(span.meta.contains_key("aas.subscription.id"));
+            assert!(span.meta.contains_key("aas.environment.os"));
+            assert!(span.meta.contains_key("aas.environment.runtime"));
+            assert!(span.meta.contains_key("aas.environment.runtime_version"));
+            assert!(span.meta.contains_key("aas.environment.function_runtime"));
+            assert!(span.meta.contains_key("aas.resource.group"));
+            assert!(span.meta.contains_key("aas.site.name"));
+            assert!(span.meta.contains_key("aas.site.kind"));
+            assert!(span.meta.contains_key("aas.site.type"));
+        }
+    }
+
+    #[test]
+    fn test_enrich_span_with_azure_function_metadata_skips_azure_apim() {
+        let mut span = create_test_span(1234, 12342, 12341, 1, false);
+        span.name = "azure.apim".to_string();
+
+        enrich_span_with_azure_function_metadata(&mut span);
+
+        // Verify no aas.* tags were added
+        assert!(!span.meta.contains_key("aas.resource.id"));
+        assert!(!span.meta.contains_key("aas.environment.instance_id"));
+        assert!(!span.meta.contains_key("aas.environment.instance_name"));
+        assert!(!span.meta.contains_key("aas.subscription.id"));
+        assert!(!span.meta.contains_key("aas.environment.os"));
+        assert!(!span.meta.contains_key("aas.environment.runtime"));
+        assert!(!span.meta.contains_key("aas.environment.runtime_version"));
+        assert!(!span.meta.contains_key("aas.environment.function_runtime"));
+        assert!(!span.meta.contains_key("aas.resource.group"));
+        assert!(!span.meta.contains_key("aas.site.name"));
+        assert!(!span.meta.contains_key("aas.site.kind"));
+        assert!(!span.meta.contains_key("aas.site.type"));
     }
 }

@@ -16,7 +16,7 @@ pub enum SamplerPriority {
     None = i8::MIN as isize,
 }
 
-fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
+pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
     anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
 

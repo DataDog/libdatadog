@@ -3,7 +3,7 @@
 
 use libdd_common_ffi::slice::{AsBytes, CharSlice};
 use libdd_tinybytes::{Bytes, BytesString};
-use libdd_trace_utils::span::{
+use libdd_trace_utils::span::v04::{
     AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes, SpanLinkBytes,
 };
 use std::borrow::Cow;

@@ -12,20 +12,19 @@ extern "C" {
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <memory>
-#include <optional>
 #include <string>
-#include <thread>
-#include <vector>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
+[[maybe_unused]]
 static ddog_CharSlice to_slice_c_char(const char *s, std::size_t size) {
   return {.ptr = s, .len = size};
 }
+[[maybe_unused]]
 static ddog_CharSlice to_slice_string(std::string const &s) {
   return {.ptr = s.data(), .len = s.length()};
 }
 
+[[maybe_unused]]
 static std::string to_string(ddog_CharSlice s) { return std::string(s.ptr, s.len); }
 
 void print_error(const ddog_Error &err) {
@@ -69,12 +68,13 @@ void wait_for_user(std::string s) {
 }
 
 int main(void) {
-  const ddog_prof_ValueType wall_time = {
-      .type_ = to_slice_c_char("wall-time"),
-      .unit = to_slice_c_char("nanoseconds"),
+  // Use the SampleType enum instead of ValueType struct
+  const ddog_prof_SampleType wall_time = DDOG_PROF_SAMPLE_TYPE_WALL_TIME;
+  const ddog_prof_Slice_SampleType sample_types = {&wall_time, 1};
+  const ddog_prof_Period period = {
+      .sample_type = wall_time,
+      .value = 60,
   };
-  const ddog_prof_Slice_ValueType sample_types = {&wall_time, 1};
-  const ddog_prof_Period period = {wall_time, 60};
 
   ddog_prof_Profile_NewResult new_result = ddog_prof_Profile_new(sample_types, &period);
   if (new_result.tag != DDOG_PROF_PROFILE_NEW_RESULT_OK) {

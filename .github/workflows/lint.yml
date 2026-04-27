@@ -10,6 +10,8 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Run actionlint
         uses: devops-actions/actionlint@c6744a34774e4e1c1df0ff66bdb07ec7ee480ca0 # 0.1.9
         with:
@@ -22,8 +24,10 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      - name: Install nightly-2024-12-16 toolchain and rustfmt
-        run: rustup install nightly-2024-12-16 && rustup default nightly-2024-12-16 && rustup component add rustfmt
+        with:
+          submodules: recursive
+      - name: Install nightly-2026-02-08 toolchain and rustfmt
+        run: rustup set profile minimal && rustup install nightly-2026-02-08 && rustup default nightly-2026-02-08 && rustup component add rustfmt
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
@@ -36,13 +40,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["1.84.1", "stable", "nightly-2024-12-16"]
+        rust_version: ["1.84.1", "stable", "nightly-2026-02-08"]
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
       - name: Install ${{ matrix.rust_version }} toolchain and clippy
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
+        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
@@ -55,7 +61,7 @@ jobs:
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
           # shellcheck disable=SC2046
-          cargo clippy --workspace --all-targets --all-features -- -D warnings 
+          cargo clippy --workspace --all-targets --all-features -- -D warnings $([ ${{ matrix.rust_version }} = 1.84.1 ] || echo -Aclippy::manual_is_multiple_of)
 
   licensecheck:
     runs-on: ubuntu-latest
@@ -69,69 +75,43 @@ jobs:
         # Exclude symbolizer-ffi from the checks (mostly imported code)
         run: '! find . \( -name "*.rs" -o -name "*.c" -o -name "*.sh" \)  -not -path "./symbolizer-ffi/*" -not -path "./datadog-ipc/plugins/*" -not -path "./datadog-ipc/tarpc/*" -print0 | xargs -0 licensecheck -c ".*" | grep -v "Apache License 2.0"'
 
-  # todo: fix upstream warnings; from the readme:
-  # The most common cause of missing licenses seems to be workspaces that
-  # don't include forward their license files. Go to the repo for the
-  # workspace and copy the relevant files from there.
-  # A package license may receive a confidence warning stating that
-  # cargo-bundle-licenses is "unsure" or "semi" confident. This means that
-  # when the found license was compared to a template license it was found to
-  # have diverged in more than a few words. You should verify that the licence
-  #  text is in fact correct in these cases.
   license-3rdparty:
     runs-on: ubuntu-latest
-    name: "Valid LICENSE-3rdparty.yml"
+    name: "Valid LICENSE-3rdparty.csv"
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-      - run: stat LICENSE-3rdparty.yml
-      - name: Cache
+      # Keep version in sync with: scripts/update_license_3rdparty.sh (TOOL_VERSION) and scripts/Dockerfile.license (ARG TOOL_VERSION)
+      - name: Cache dd-rust-license-tool
         uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # 4.2.2
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/db/
-            ~/.cargo/bin/
+            ~/.cargo/bin/dd-rust-license-tool
             ~/.cargo/.crates.toml
-          # cache key contains current version of cargo-bundle-licenses
-          # when upstream version is updated we can bump the cache key version,
-          # to cache the latest version of the tool
-          key: "v1-4.0.0"
-      # cargo-bundle-licenses v2.0 doesn't understand path differences due to
-      # sparse vs git index, so force git.
-      - run: mkdir -p .cargo && printf "[registries.crates-io]\nprotocol = \"git\"\n" > .cargo/config.toml
-      - run: cargo install --version "4.0.0" cargo-bundle-licenses
-      - name: "Generate new LICENSE-3rdparty.yml and check against the previous"
-        env:
-          CARGO_HOME: "/tmp/dd-cargo"
+            ~/.cargo/.crates2.json
+          key: dd-rust-license-tool-1.0.6-v2
+      - run: cargo install --list | grep -qF "dd-rust-license-tool v1.0.6" || cargo install dd-rust-license-tool --version "1.0.6" --locked
+      - name: Generate new LICENSE-3rdparty.csv and check against the previous
         run: |
-          # Run cargo bundle-licenses without directly checking against a previous snapshot
-          cargo bundle-licenses \
-            --format yaml \
-            --output /tmp/CI.yaml
-
-          # Normalize the paths in both files to ignore registry differences
-          sed -E 's/(registry\/src\/)[^\/]+/\1normalized_path/g' /tmp/CI.yaml > /tmp/CI_normalized.yaml
-          sed -E 's/(registry\/src\/)[^\/]+/\1normalized_path/g' LICENSE-3rdparty.yml > /tmp/LICENSE-3rdparty_normalized.yml
-
-          # Now perform the diff on the normalized files
-          if ! diff /tmp/CI_normalized.yaml /tmp/LICENSE-3rdparty_normalized.yml; then
-            echo "Differences detected (see above). You probably need to manually update the license files. To do so:"
-            echo "cargo install cargo-bundle-licenses"
-            echo "./scripts/update_license_3rdparty.sh"
-            echo "...and push a commit with the result. Also, bonus points if someone automates this, wink wink nudge nudge."
+          if ! dd-rust-license-tool dump > /tmp/CI.csv 2> /tmp/CI.error; then
+            echo "ERROR: dd-rust-license-tool dump failed! See error output below:"
+            cat /tmp/CI.error
             exit 1
           fi
-
+          if ! diff /tmp/CI.csv LICENSE-3rdparty.csv; then
+            echo "Differences detected in LICENSE-3rdparty.csv."
+            echo "Please run './scripts/update_license_3rdparty.sh' to update the file and commit the changes."
+            exit 1
+          fi
           echo "No differences found."
-
-
-      - name: export the generated license file on failure
+      - name: Export generated license file on failure
         if: failure()
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
-          name: LICENSE-3rdparty.yml
-          path: /tmp/CI.yaml
+          name: LICENSE-3rdparty.csv
+          path: /tmp/CI.csv
           overwrite: true
 
   codeowners-validator:

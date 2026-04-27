@@ -6,10 +6,10 @@ mod tracing_integration_tests {
     use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
+    use libdd_capabilities_impl::{HttpClientTrait, NativeCapabilities};
     #[cfg(target_os = "linux")]
     use libdd_common::connector::uds::socket_path_to_uri;
-    use libdd_common::hyper_migration::new_default_client;
-    use libdd_common::{hyper_migration, Endpoint};
+    use libdd_common::{http_common, Endpoint};
     use libdd_tinybytes::{Bytes, BytesString};
     use libdd_trace_utils::send_data::SendData;
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
@@ -117,8 +117,7 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let client = new_default_client();
-        let _result = data.send(&client).await;
+        let _result = data.send(&NativeCapabilities::new_client()).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
@@ -210,8 +209,7 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let client = new_default_client();
-        let _result = data.send(&client).await;
+        let _result = data.send(&NativeCapabilities::new_client()).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
@@ -248,8 +246,7 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let client = new_default_client();
-        let result = data.send(&client).await;
+        let result = data.send(&NativeCapabilities::new_client()).await;
 
         assert!(result.last_result.is_ok());
     }
@@ -330,8 +327,7 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let client = new_default_client();
-        let _result = data.send(&client).await;
+        let _result = data.send(&NativeCapabilities::new_client()).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
@@ -364,7 +360,7 @@ mod tracing_integration_tests {
             .get_uri_for_endpoint("v0.7/config", Some(snapshot_name))
             .await;
 
-        let res = hyper_migration::new_default_client()
+        let res = http_common::new_default_client()
             .get(uri)
             .await
             .expect("Failed to get remote config data from test agent");

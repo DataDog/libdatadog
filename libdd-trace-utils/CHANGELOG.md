@@ -1,5 +1,71 @@
 # Changelog
 
+
+
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v3.0.0..libdd-trace-utils-v3.0.1) - 2026-03-25
+
+### Changed
+- Fix previous version.
+
+
+
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.2..libdd-trace-utils-v3.0.0) - 2026-03-23
+
+### Changed
+
+- Change header name type to accept dynamic values ([#1722](https://github.com/datadog/libdatadog/issues/1722)) - ([4dd532f](https://github.com/datadog/libdatadog/commit/4dd532f2c15e928103fc441ab030bc8d94f070c0))
+
+### Fixed
+
+- Rename wrongly cased stats fields ([#1780](https://github.com/datadog/libdatadog/issues/1780)) - ([5ff99ff](https://github.com/datadog/libdatadog/commit/5ff99ff6c465a95a740a494f42cce258c0e80be8))
+
+
+## [2.0.2](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.1..libdd-trace-utils-v2.0.2) - 2026-03-16
+
+### Changed
+
+- Update dependencies ([#1734](https://github.com/DataDog/libdatadog/issues/1734)) - ([38dd71b](https://github.com/DataDog/libdatadog/commit/38dd71bd6fdac45ecab3d74ce1b4a827abae794a))
+
+
+
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.0..libdd-trace-utils-v2.0.1) - 2026-03-16
+
+### Added
+
+- Add two fields to ClientGroupedStats [SVLS-8627] ([#1630](https://github.com/datadog/libdatadog/issues/1630)) - ([7e909c0](https://github.com/datadog/libdatadog/commit/7e909c0910a15303eb90fdb3399211a3517d70c8))
+
+### Changed
+
+- Update bytes to 1.11.1 to address RUSTSEC-2026-0007 ([#1628](https://github.com/datadog/libdatadog/issues/1628)) - ([0b0863b](https://github.com/datadog/libdatadog/commit/0b0863b2afb7302fe02ea0af77cb9f98550e2a62))
+
+
+
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v1.0.0..libdd-trace-utils-v2.0.0) - 2026-02-23
+
+### Added
+
+- Introduce TraceData to unify text and binary data ([#1247](https://github.com/datadog/libdatadog/issues/1247)) - ([d430cbd](https://github.com/datadog/libdatadog/commit/d430cbd912d5300d521131392b86fc36a599aa27))
+- Allow sending trace stats using custom HTTP client ([#1345](https://github.com/datadog/libdatadog/issues/1345)) - ([c98467e](https://github.com/datadog/libdatadog/commit/c98467eb286c61b4483b5af5a33b268a55ccc6ff))
+- Unify Azure tags ([#1553](https://github.com/datadog/libdatadog/issues/1553)) - ([aa58f2d](https://github.com/datadog/libdatadog/commit/aa58f2d7f6db9278f94d9a9034caf215b90ccbe0))
+
+### Changed
+
+- Remove direct dependency on hyper client everywhere in common ([#1604](https://github.com/datadog/libdatadog/issues/1604)) - ([497e324](https://github.com/datadog/libdatadog/commit/497e324438614d0214e7991438062ca5de9f0a1f))
+- Bump the test agent version used for integration tests ([#1417](https://github.com/datadog/libdatadog/issues/1417)) - ([e7c2ff8](https://github.com/datadog/libdatadog/commit/e7c2ff864ff3ecca090abe07291a2207c9e413c7))
+- Remove manual changelog modifications ([#1472](https://github.com/datadog/libdatadog/issues/1472)) - ([d5f1bbf](https://github.com/datadog/libdatadog/commit/d5f1bbfac5850d1b4ecc9052772855fa33587459))
+- [SLES-2652] Log error details when trace request fails (2) ([#1441](https://github.com/datadog/libdatadog/issues/1441)) - ([8c830bf](https://github.com/datadog/libdatadog/commit/8c830bfe5164e6346de8d6c35fd97fdbaee9a16e))
+- Update `prost` crates ([#1426](https://github.com/datadog/libdatadog/issues/1426)) - ([14bab86](https://github.com/datadog/libdatadog/commit/14bab865cfab5151fd399c594ab8f67e8bc7dcf1))
+- [Serverless] Skip AAS metadata tagging when span is from API Management ([#1409](https://github.com/datadog/libdatadog/issues/1409)) - ([660c550](https://github.com/datadog/libdatadog/commit/660c550b6311a209d9cf7de762e54b6b7109bcdb))
+- Add changelog for every published crate ([#1396](https://github.com/datadog/libdatadog/issues/1396)) - ([5c4a024](https://github.com/datadog/libdatadog/commit/5c4a024598d6fe6cbd93a3e3dc9882848912064f))
+- Handle null span tag values ([#1394](https://github.com/datadog/libdatadog/issues/1394)) - ([3abff86](https://github.com/datadog/libdatadog/commit/3abff8639a2dfdaf8b81842d6e927f2ee37e895b))
+- [SVLS-7934] Log error details when trace request fails ([#1392](https://github.com/datadog/libdatadog/issues/1392)) - ([928e65f](https://github.com/datadog/libdatadog/commit/928e65f28db1174cabf9fd75efaaa94de661a8c5))
+- Fix trace utils clippy warning ([#1397](https://github.com/datadog/libdatadog/issues/1397)) - ([c9ff30b](https://github.com/datadog/libdatadog/commit/c9ff30b24f94447ead139f64066ffae9f095ebb3))
+
+### Fixed
+
+- Set hostname on stats from tracer to empty string ([#1530](https://github.com/datadog/libdatadog/issues/1530)) - ([52d45ca](https://github.com/datadog/libdatadog/commit/52d45ca907504fd72e6b416a00e1dfeaa2b61f74))
+- Undo commenting arg in docker cmd ([#1439](https://github.com/datadog/libdatadog/issues/1439)) - ([033991d](https://github.com/datadog/libdatadog/commit/033991d5beb9d17e82eadf0a98fdf489edc384da))
+
 ## 1.0.0 - 2025-11-18
 
 Initial release.

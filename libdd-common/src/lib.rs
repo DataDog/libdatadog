@@ -6,29 +6,39 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-use hyper::{
-    header::HeaderValue,
-    http::uri::{self},
-};
+use anyhow::Context;
+use http::uri;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::{Mutex, MutexGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod cc_utils;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod connector;
+#[cfg(feature = "reqwest")]
+pub mod dump_server;
 pub mod entity_id;
 #[macro_use]
 pub mod cstr;
+#[cfg(feature = "bench-utils")]
+pub mod bench_utils;
 pub mod config;
 pub mod error;
-pub mod hyper_migration;
+pub mod http_common;
+pub mod multipart;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod rate_limiter;
 pub mod tag;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod threading;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod timeout;
 pub mod unix_utils;
-pub mod worker;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.
@@ -81,12 +91,8 @@ impl<T> MutexExt<T> for Mutex<T> {
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
-    use hyper::{header::HeaderName, http::HeaderValue};
+    use http::{header::HeaderName, HeaderValue};
 
-    // These strings are defined separately to be used in context where &str are used to represent
-    // headers (e.g. SendData) while keeping a single source of truth.
-    pub const DATADOG_SEND_REAL_HTTP_STATUS_STR: &str = "datadog-send-real-http-status";
-    pub const DATADOG_TRACE_COUNT_STR: &str = "x-datadog-trace-count";
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
     pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";
 
@@ -98,7 +104,7 @@ pub mod header {
     /// If this is not set then the agent will always return a 200 regardless if the payload is
     /// dropped.
     pub const DATADOG_SEND_REAL_HTTP_STATUS: HeaderName =
-        HeaderName::from_static(DATADOG_SEND_REAL_HTTP_STATUS_STR);
+        HeaderName::from_static("datadog-send-real-http-status");
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
     pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
     pub const APPLICATION_MSGPACK: HeaderValue = HeaderValue::from_static(APPLICATION_MSGPACK_STR);
@@ -108,40 +114,47 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-pub type HttpClient = hyper_migration::GenericHttpClient<connector::Connector>;
-pub type GenericHttpClient<C> = hyper_migration::GenericHttpClient<C>;
-pub type HttpResponse = hyper_migration::HttpResponse;
-pub type HttpRequestBuilder = hyper::http::request::Builder;
+#[cfg(not(target_arch = "wasm32"))]
+pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type HttpResponse = http_common::HttpResponse;
+pub type HttpRequestBuilder = http::request::Builder;
+#[cfg(not(target_arch = "wasm32"))]
 pub trait Connect:
     hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static
 {
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static> Connect
     for C
 {
 }
 
 // Used by tag! macro
-use crate::entity_id::DD_EXTERNAL_ENV;
 pub use const_format;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
-    pub url: hyper::Uri,
+    pub url: http::Uri,
     pub api_key: Option<Cow<'static, str>>,
     pub timeout_ms: u64,
     /// Sets X-Datadog-Test-Session-Token header on any request
     pub test_token: Option<Cow<'static, str>>,
+    /// Use the system DNS resolver when building the HTTP client. If false, the default
+    /// in-process resolver is used.
+    #[serde(default)]
+    pub use_system_resolver: bool,
 }
 
 impl Default for Endpoint {
     fn default() -> Self {
         Endpoint {
-            url: hyper::Uri::default(),
+            url: http::Uri::default(),
             api_key: None,
             timeout_ms: Self::DEFAULT_TIMEOUT,
             test_token: None,
+            use_system_resolver: false,
         }
     }
 }
@@ -153,7 +166,7 @@ struct SerializedUri<'a> {
     path_and_query: Option<Cow<'a, str>>,
 }
 
-fn serialize_uri<S>(uri: &hyper::Uri, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_uri<S>(uri: &http::Uri, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -169,12 +182,12 @@ where
     uri.serialize(serializer)
 }
 
-fn deserialize_uri<'de, D>(deserializer: D) -> Result<hyper::Uri, D::Error>
+fn deserialize_uri<'de, D>(deserializer: D) -> Result<http::Uri, D::Error>
 where
     D: Deserializer<'de>,
 {
     let uri = SerializedUri::deserialize(deserializer)?;
-    let mut builder = hyper::Uri::builder();
+    let mut builder = http::Uri::builder();
     if let Some(v) = uri.authority {
         builder = builder.authority(v.deref());
     }
@@ -196,7 +209,7 @@ where
 ///     * For windows, interprets everything after windows: as path
 ///     * For unix, interprets everything after unix:// as path
 /// * For file scheme implementation will simply backfill missing authority section
-pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
+pub fn parse_uri(uri: &str) -> anyhow::Result<http::Uri> {
     if let Some(path) = uri.strip_prefix("unix://") {
         encode_uri_path_in_authority("unix", path)
     } else if let Some(path) = uri.strip_prefix("windows:") {
@@ -204,11 +217,11 @@ pub fn parse_uri(uri: &str) -> anyhow::Result<hyper::Uri> {
     } else if let Some(path) = uri.strip_prefix("file://") {
         encode_uri_path_in_authority("file", path)
     } else {
-        Ok(hyper::Uri::from_str(uri)?)
+        Ok(http::Uri::from_str(uri)?)
     }
 }
 
-fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hyper::Uri> {
+fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<http::Uri> {
     let mut parts = uri::Parts::default();
     parts.scheme = uri::Scheme::from_str(scheme).ok();
 
@@ -216,15 +229,11 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<hype
 
     parts.authority = uri::Authority::from_str(path.as_str()).ok();
     parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
-    Ok(hyper::Uri::from_parts(parts)?)
+    Ok(http::Uri::from_parts(parts)?)
 }
 
-pub fn decode_uri_path_in_authority(uri: &hyper::Uri) -> anyhow::Result<PathBuf> {
-    let path = hex::decode(
-        uri.authority()
-            .ok_or_else(|| anyhow::anyhow!("missing uri authority"))?
-            .as_str(),
-    )?;
+pub fn decode_uri_path_in_authority(uri: &http::Uri) -> anyhow::Result<PathBuf> {
+    let path = hex::decode(uri.authority().context("missing uri authority")?.as_str())?;
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;
@@ -243,41 +252,53 @@ impl Endpoint {
     /// Default value for the timeout field in milliseconds.
     pub const DEFAULT_TIMEOUT: u64 = 3_000;
 
+    /// Returns an iterator of optional endpoint-specific headers (api-key, test-token)
+    /// as (header_name, header_value) string tuples for any that are available.
+    pub fn get_optional_headers(&self) -> impl Iterator<Item = (&'static str, &str)> {
+        [
+            self.api_key.as_ref().map(|v| ("dd-api-key", v.as_ref())),
+            self.test_token
+                .as_ref()
+                .map(|v| ("x-datadog-test-session-token", v.as_ref())),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    /// Apply standard headers (user-agent, api-key, test-token, entity headers) to an
+    /// [`http::request::Builder`].
+    pub fn set_standard_headers(
+        &self,
+        mut builder: http::request::Builder,
+        user_agent: &str,
+    ) -> http::request::Builder {
+        builder = builder.header("user-agent", user_agent);
+        for (name, value) in self.get_optional_headers() {
+            builder = builder.header(name, value);
+        }
+        for (name, value) in entity_id::get_entity_headers() {
+            builder = builder.header(name, value);
+        }
+        builder
+    }
+
     /// Return a request builder with the following headers:
     /// - User agent
     /// - Api key
     /// - Container Id/Entity Id
     pub fn to_request_builder(&self, user_agent: &str) -> anyhow::Result<HttpRequestBuilder> {
-        let mut builder = hyper::Request::builder()
+        let mut builder = http::Request::builder()
             .uri(self.url.clone())
-            .header(hyper::header::USER_AGENT, user_agent);
+            .header(http::header::USER_AGENT, user_agent);
 
-        // Add the Api key header if available
-        if let Some(api_key) = &self.api_key {
-            builder = builder.header(header::DATADOG_API_KEY, HeaderValue::from_str(api_key)?);
+        // Add optional endpoint headers (api-key, test-token)
+        for (name, value) in self.get_optional_headers() {
+            builder = builder.header(name, value);
         }
 
-        // Add the test session token if available
-        if let Some(token) = &self.test_token {
-            builder = builder.header(
-                header::X_DATADOG_TEST_SESSION_TOKEN,
-                HeaderValue::from_str(token)?,
-            );
-        }
-
-        // Add the Container Id header if available
-        if let Some(container_id) = entity_id::get_container_id() {
-            builder = builder.header(header::DATADOG_CONTAINER_ID, container_id);
-        }
-
-        // Add the Entity Id header if available
-        if let Some(entity_id) = entity_id::get_entity_id() {
-            builder = builder.header(header::DATADOG_ENTITY_ID, entity_id);
-        }
-
-        // Add the External Env header if available
-        if let Some(external_env) = *DD_EXTERNAL_ENV {
-            builder = builder.header(header::DATADOG_EXTERNAL_ENV, external_env);
+        // Add entity-related headers (container-id, entity-id, external-env)
+        for (name, value) in entity_id::get_entity_headers() {
+            builder = builder.header(name, value);
         }
 
         Ok(builder)
@@ -293,7 +314,7 @@ impl Endpoint {
     }
 
     #[inline]
-    pub fn from_url(url: hyper::Uri) -> Endpoint {
+    pub fn from_url(url: http::Uri) -> Endpoint {
         Endpoint {
             url,
             ..Default::default()
@@ -302,5 +323,113 @@ impl Endpoint {
 
     pub fn is_file_endpoint(&self) -> bool {
         self.url.scheme_str() == Some("file")
+    }
+
+    /// Set a custom timeout for this endpoint.
+    /// If not called, uses the default timeout of 3000ms.
+    ///
+    /// # Arguments
+    /// * `timeout_ms` - Timeout in milliseconds. Pass 0 to use the default timeout (3000ms).
+    ///
+    /// # Returns
+    /// Self with the timeout set, allowing for method chaining
+    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.timeout_ms = if timeout_ms == 0 {
+            Self::DEFAULT_TIMEOUT
+        } else {
+            timeout_ms
+        };
+        self
+    }
+
+    /// Use the system DNS resolver when building the reqwest client. Only has effect for
+    /// HTTP(S) endpoints.
+    pub fn with_system_resolver(mut self, use_system_resolver: bool) -> Self {
+        self.use_system_resolver = use_system_resolver;
+        self
+    }
+
+    /// Creates a reqwest ClientBuilder configured for this endpoint.
+    ///
+    /// This method handles various endpoint schemes:
+    /// - `http`/`https`: Standard HTTP(S) endpoints
+    /// - `unix`: Unix domain sockets (Unix only)
+    /// - `windows`: Windows named pipes (Windows only)
+    /// - `file`: File dump endpoints for debugging (spawns a local server to capture requests)
+    ///
+    /// The default in-process resolver is used for DNS (fork-safe). To use the system DNS resolver
+    /// instead (less fork-safe), set [`Endpoint::use_system_resolver`] to true via
+    /// [`Endpoint::with_system_resolver`].
+    ///
+    /// # Returns
+    /// A tuple of (ClientBuilder, request_url) where:
+    /// - ClientBuilder is configured with the appropriate transport and timeout
+    /// - request_url is the URL string to use for HTTP requests
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The endpoint scheme is unsupported
+    /// - Path decoding fails
+    /// - The dump server fails to start (for file:// scheme)
+    #[cfg(feature = "reqwest")]
+    pub fn to_reqwest_client_builder(&self) -> anyhow::Result<(reqwest::ClientBuilder, String)> {
+        use anyhow::Context;
+
+        // Don't use proxies, as this calls `getenv` which is unsafe and not
+        // just in theory. It can cause crashes with PHP where php-fpm's env
+        // configuration will mutate the system environment (it doesn't pass
+        // it as part of the SAPI env, it changes the actual system env).
+        let mut builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .hickory_dns(!self.use_system_resolver)
+            .no_proxy();
+
+        let request_url = match self.url.scheme_str() {
+            // HTTP/HTTPS endpoints
+            Some("http") | Some("https") => self.url.to_string(),
+
+            // File dump endpoint (debugging) - uses platform-specific local transport
+            Some("file") => {
+                let output_path = decode_uri_path_in_authority(&self.url)
+                    .context("Failed to decode file path from URI")?;
+                let socket_or_pipe_path = dump_server::spawn_dump_server(output_path)?;
+
+                // Configure the client to use the local socket/pipe
+                #[cfg(unix)]
+                {
+                    builder = builder.unix_socket(socket_or_pipe_path);
+                }
+                #[cfg(windows)]
+                {
+                    builder = builder
+                        .windows_named_pipe(socket_or_pipe_path.to_string_lossy().to_string());
+                }
+
+                "http://localhost/".to_string()
+            }
+
+            // Unix domain sockets
+            #[cfg(unix)]
+            Some("unix") => {
+                use connector::uds::socket_path_from_uri;
+                let socket_path = socket_path_from_uri(&self.url)?;
+                builder = builder.unix_socket(socket_path);
+                format!("http://localhost{}", self.url.path())
+            }
+
+            // Windows named pipes
+            #[cfg(windows)]
+            Some("windows") => {
+                use connector::named_pipe::named_pipe_path_from_uri;
+                let pipe_path = named_pipe_path_from_uri(&self.url)?;
+                builder = builder.windows_named_pipe(pipe_path.to_string_lossy().to_string());
+                format!("http://localhost{}", self.url.path())
+            }
+
+            // Unsupported schemes
+            scheme => anyhow::bail!("Unsupported endpoint scheme: {:?}", scheme),
+        };
+
+        Ok((builder, request_url))
     }
 }

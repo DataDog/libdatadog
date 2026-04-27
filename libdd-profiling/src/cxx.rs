@@ -1,0 +1,1446 @@
+// Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+//! CXX bindings for profiling module - provides a safe and idiomatic C++ API
+
+#![allow(clippy::needless_lifetimes)]
+
+use crate::api;
+use crate::exporter;
+use crate::internal;
+
+// ============================================================================
+// CXX Bridge - C++ Bindings
+// ============================================================================
+
+/// cbindgen:ignore
+#[cxx::bridge(namespace = "datadog::profiling")]
+pub mod ffi {
+    // Shared types - CXX-friendly types
+    //
+    // This enum covers the ValueType entries supported by Datadog profilers:
+    // - dd-trace-rb (stack_recorder.c `all_value_types`)
+    // - dd-trace-py (dd_wrapper/include/types.hpp + dd_wrapper/src/profile.cpp value strings)
+    // - dd-trace-php (profiling/src/profiling/samples.rs I/O profiling sample types)
+    // - dd-trace-dotnet (sample type definitions for allocations, locks, CPU, walltime, exceptions,
+    //   live objects, HTTP requests)
+    // - pprof-nodejs (profile-serializer.ts value type functions)
+    //
+    // Experimental variants allow profilers to use custom sample types for testing
+    // and development without modifying this enum. They map to fixed (type, unit) pairs.
+    //
+    // LEGACY VARIANTS (prefer alternatives for consistency):
+    // - CpuLegacy (use CpuTime)
+    // - CpuSampleLegacy (use CpuSamples)
+    // - ExceptionLegacy (use ExceptionSamples)
+    // - ObjectsLegacy (use InuseObjects)
+    // - SpaceLegacy (use specific variants: InuseSpace, HeapSpace, AllocSpace)
+    // - WallLegacy (use WallTime)
+    enum SampleType {
+        AllocSamples,
+        AllocSamplesUnscaled,
+        AllocSize,
+        AllocSpace,
+        CpuTime,
+        CpuSamples,
+        CpuLegacy,       // LEGACY: Use CpuTime instead
+        CpuSampleLegacy, // LEGACY: Use CpuSamples instead
+        ExceptionSamples,
+        ExceptionLegacy, // LEGACY: Use ExceptionSamples instead
+        FileIoReadSize,
+        FileIoReadSizeSamples,
+        FileIoReadTime,
+        FileIoReadTimeSamples,
+        FileIoWriteSize,
+        FileIoWriteSizeSamples,
+        FileIoWriteTime,
+        FileIoWriteTimeSamples,
+        GpuAllocSamples,
+        GpuFlops,
+        GpuFlopsSamples,
+        GpuSamples,
+        GpuSpace,
+        GpuTime,
+        HeapLiveSamples,
+        HeapLiveSize,
+        HeapSpace,
+        InuseObjects,
+        InuseSpace,
+        LockAcquire,
+        LockAcquireWait,
+        LockCount,
+        LockRelease,
+        LockReleaseHold,
+        LockTime,
+        ObjectsLegacy, // LEGACY: Use InuseObjects instead
+        RequestTime,
+        Sample,
+        Tracepoint,
+        SocketReadSize,
+        SocketReadSizeSamples,
+        SocketReadTime,
+        SocketReadTimeSamples,
+        SocketWriteSize,
+        SocketWriteSizeSamples,
+        SocketWriteTime,
+        SocketWriteTimeSamples,
+        SpaceLegacy, // LEGACY: Use specific variants (InuseSpace, HeapSpace, AllocSpace) instead
+        Timeline,
+        WallSamples,
+        WallTime,
+        WallLegacy, // LEGACY: Use WallTime instead
+        ExperimentalCount,
+        ExperimentalNanoseconds,
+        ExperimentalBytes,
+    }
+
+    struct Period {
+        value_type: SampleType,
+        value: i64,
+    }
+
+    struct Mapping<'a> {
+        memory_start: u64,
+        memory_limit: u64,
+        file_offset: u64,
+        filename: &'a str,
+        build_id: &'a str,
+    }
+
+    struct Function<'a> {
+        name: &'a str,
+        system_name: &'a str,
+        filename: &'a str,
+    }
+
+    struct Location<'a> {
+        mapping: Mapping<'a>,
+        function: Function<'a>,
+        address: u64,
+        line: i64,
+    }
+
+    struct Label<'a> {
+        key: &'a str,
+        str: &'a str,
+        num: i64,
+        num_unit: &'a str,
+    }
+
+    struct Sample<'a> {
+        locations: Vec<Location<'a>>,
+        values: Vec<i64>,
+        labels: Vec<Label<'a>>,
+    }
+
+    struct Tag<'a> {
+        key: &'a str,
+        value: &'a str,
+    }
+
+    struct AttachmentFile<'a> {
+        name: &'a str,
+        data: &'a [u8],
+    }
+
+    // Opaque Rust types
+    extern "Rust" {
+        type Profile;
+        type ProfileExporter;
+        type ExporterManager;
+        type CancellationToken;
+
+        // CancellationToken factory and methods
+        fn new_cancellation_token() -> Box<CancellationToken>;
+        fn clone_token(self: &CancellationToken) -> Box<CancellationToken>;
+        fn cancel(self: &CancellationToken);
+        fn is_cancelled(self: &CancellationToken) -> bool;
+
+        // Static factory methods for Profile
+        #[Self = "Profile"]
+        fn create(sample_types: Vec<SampleType>, period: &Period) -> Result<Box<Profile>>;
+
+        // Profile methods
+        fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
+        fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> Result<()>;
+        fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> Result<()>;
+
+        // Upscaling rule methods (one for each variant)
+        fn add_upscaling_rule_poisson(
+            self: &mut Profile,
+            offset_values: &[usize],
+            label_name: &str,
+            label_value: &str,
+            sum_value_offset: usize,
+            count_value_offset: usize,
+            sampling_distance: u64,
+        ) -> Result<()>;
+
+        fn add_upscaling_rule_poisson_non_sample_type_count(
+            self: &mut Profile,
+            offset_values: &[usize],
+            label_name: &str,
+            label_value: &str,
+            sum_value_offset: usize,
+            count_value: u64,
+            sampling_distance: u64,
+        ) -> Result<()>;
+
+        fn add_upscaling_rule_proportional(
+            self: &mut Profile,
+            offset_values: &[usize],
+            label_name: &str,
+            label_value: &str,
+            scale: f64,
+        ) -> Result<()>;
+
+        fn reset(self: &mut Profile) -> Result<()>;
+        fn serialize_to_vec(self: &mut Profile) -> Result<Vec<u8>>;
+
+        // Static factory methods for ProfileExporter
+        #[Self = "ProfileExporter"]
+        fn create_agent_exporter(
+            profiling_library_name: &str,
+            profiling_library_version: &str,
+            family: &str,
+            tags: Vec<Tag>,
+            agent_url: &str,
+            timeout_ms: u64,
+            use_system_resolver: bool,
+        ) -> Result<Box<ProfileExporter>>;
+
+        #[Self = "ProfileExporter"]
+        #[allow(clippy::too_many_arguments)]
+        fn create_agentless_exporter(
+            profiling_library_name: &str,
+            profiling_library_version: &str,
+            family: &str,
+            tags: Vec<Tag>,
+            site: &str,
+            api_key: &str,
+            timeout_ms: u64,
+            use_system_resolver: bool,
+        ) -> Result<Box<ProfileExporter>>;
+
+        #[Self = "ProfileExporter"]
+        fn create_file_exporter(
+            profiling_library_name: &str,
+            profiling_library_version: &str,
+            family: &str,
+            tags: Vec<Tag>,
+            output_path: &str,
+        ) -> Result<Box<ProfileExporter>>;
+
+        // ProfileExporter methods
+        /// Sends a profile to Datadog.
+        ///
+        /// **Important**: This method resets the profile and sends the *previous* profile data.
+        /// After calling this, the profile will be empty and ready for new samples.
+        ///
+        /// # Arguments
+        /// * `profile` - Profile to send (will be consumed/reset, previous data is sent)
+        /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
+        /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
+        /// * `internal_metadata` - Internal metadata as JSON string (e.g., `{"key": "value"}`) See
+        ///   Datadog-internal "RFC: Attaching internal metadata to pprof profiles" Pass empty
+        ///   string "" if not needed
+        /// * `process_tags` - Process-level tags as comma-separated string (e.g.,
+        ///   "runtime:native,profiler_version:1.0") Pass empty string "" if not needed
+        /// * `info` - System/environment info as JSON string (e.g., `{"os": "linux", "arch":
+        ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
+        ///   if not needed
+        fn send_profile(
+            self: &mut ProfileExporter,
+            profile: &mut Profile,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+        ) -> Result<()>;
+
+        /// Sends a profile to Datadog with cancellation support.
+        ///
+        /// This is the same as `send_profile`, but allows cancelling the operation from another
+        /// thread using a cancellation token.
+        ///
+        /// **Important**: This method resets the profile and sends the *previous* profile data.
+        /// After calling this, the profile will be empty and ready for new samples.
+        ///
+        /// # Arguments
+        /// * `profile` - Profile to send (will be consumed/reset, previous data is sent)
+        /// * `files_to_compress` - Additional files to compress and attach (e.g., heap dumps)
+        /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
+        /// * `process_tags` - Process-level tags as comma-separated string (e.g.,
+        ///   "runtime:native,profiler_version:1.0") Pass empty string "" if not needed
+        /// * `internal_metadata` - Internal metadata as JSON string (e.g., `{"key": "value"}`) See
+        ///   Datadog-internal "RFC: Attaching internal metadata to pprof profiles" Pass empty
+        ///   string "" if not needed
+        /// * `info` - System/environment info as JSON string (e.g., `{"os": "linux", "arch":
+        ///   "x86_64"}`) See Datadog-internal "RFC: Pprof System Info Support" Pass empty string ""
+        ///   if not needed
+        /// * `cancel` - Cancellation token to cancel the send operation
+        #[allow(clippy::too_many_arguments)]
+        fn send_profile_with_cancellation(
+            self: &mut ProfileExporter,
+            profile: &mut Profile,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+            cancel: &CancellationToken,
+        ) -> Result<()>;
+
+        // ExporterManager methods
+        /// Creates a new ExporterManager with a background worker thread
+        #[Self = "ExporterManager"]
+        fn new_manager(exporter: Box<ProfileExporter>) -> Result<Box<ExporterManager>>;
+
+        /// Queue a profile to be sent asynchronously by the worker thread
+        ///
+        /// **Important**: This method resets the profile and queues the *previous* profile data.
+        /// After calling this, the profile will be empty and ready for new samples.
+        #[allow(clippy::too_many_arguments)]
+        fn queue_profile(
+            self: &ExporterManager,
+            profile: &mut Profile,
+            files_to_compress: Vec<AttachmentFile>,
+            additional_tags: Vec<Tag>,
+            process_tags: &str,
+            internal_metadata: &str,
+            info: &str,
+        ) -> Result<()>;
+
+        /// Abort the manager, stopping the worker thread
+        /// Transitions the manager from Active to Suspended state
+        fn abort(self: &mut ExporterManager) -> Result<()>;
+
+        /// Prefork: suspend the manager before forking
+        /// Transitions the manager from Active to Suspended state
+        fn prefork(self: &mut ExporterManager) -> Result<()>;
+
+        /// Postfork child: reinitialize manager in child process, discarding inflight requests
+        /// Transitions the manager from Suspended to Active state
+        fn postfork_child(self: &mut ExporterManager) -> Result<()>;
+
+        /// Postfork parent: reinitialize manager in parent process and re-queue inflight requests
+        /// Transitions the manager from Suspended to Active state
+        fn postfork_parent(self: &mut ExporterManager) -> Result<()>;
+    }
+}
+
+// ============================================================================
+// From Implementations - Convert CXX types to API types
+// ============================================================================
+
+impl TryFrom<ffi::SampleType> for api::SampleType {
+    type Error = anyhow::Error;
+
+    fn try_from(st: ffi::SampleType) -> Result<Self, Self::Error> {
+        Ok(match st {
+            ffi::SampleType::AllocSamples => api::SampleType::AllocSamples,
+            ffi::SampleType::AllocSamplesUnscaled => api::SampleType::AllocSamplesUnscaled,
+            ffi::SampleType::AllocSize => api::SampleType::AllocSize,
+            ffi::SampleType::AllocSpace => api::SampleType::AllocSpace,
+            ffi::SampleType::CpuTime => api::SampleType::CpuTime,
+            ffi::SampleType::CpuSamples => api::SampleType::CpuSamples,
+            ffi::SampleType::CpuLegacy => api::SampleType::CpuLegacy,
+            ffi::SampleType::CpuSampleLegacy => api::SampleType::CpuSampleLegacy,
+            ffi::SampleType::ExceptionSamples => api::SampleType::ExceptionSamples,
+            ffi::SampleType::ExceptionLegacy => api::SampleType::ExceptionLegacy,
+            ffi::SampleType::FileIoReadSize => api::SampleType::FileIoReadSize,
+            ffi::SampleType::FileIoReadSizeSamples => api::SampleType::FileIoReadSizeSamples,
+            ffi::SampleType::FileIoReadTime => api::SampleType::FileIoReadTime,
+            ffi::SampleType::FileIoReadTimeSamples => api::SampleType::FileIoReadTimeSamples,
+            ffi::SampleType::FileIoWriteSize => api::SampleType::FileIoWriteSize,
+            ffi::SampleType::FileIoWriteSizeSamples => api::SampleType::FileIoWriteSizeSamples,
+            ffi::SampleType::FileIoWriteTime => api::SampleType::FileIoWriteTime,
+            ffi::SampleType::FileIoWriteTimeSamples => api::SampleType::FileIoWriteTimeSamples,
+            ffi::SampleType::GpuAllocSamples => api::SampleType::GpuAllocSamples,
+            ffi::SampleType::GpuFlops => api::SampleType::GpuFlops,
+            ffi::SampleType::GpuFlopsSamples => api::SampleType::GpuFlopsSamples,
+            ffi::SampleType::GpuSamples => api::SampleType::GpuSamples,
+            ffi::SampleType::GpuSpace => api::SampleType::GpuSpace,
+            ffi::SampleType::GpuTime => api::SampleType::GpuTime,
+            ffi::SampleType::HeapLiveSamples => api::SampleType::HeapLiveSamples,
+            ffi::SampleType::HeapLiveSize => api::SampleType::HeapLiveSize,
+            ffi::SampleType::HeapSpace => api::SampleType::HeapSpace,
+            ffi::SampleType::InuseObjects => api::SampleType::InuseObjects,
+            ffi::SampleType::InuseSpace => api::SampleType::InuseSpace,
+            ffi::SampleType::LockAcquire => api::SampleType::LockAcquire,
+            ffi::SampleType::LockAcquireWait => api::SampleType::LockAcquireWait,
+            ffi::SampleType::LockCount => api::SampleType::LockCount,
+            ffi::SampleType::LockRelease => api::SampleType::LockRelease,
+            ffi::SampleType::LockReleaseHold => api::SampleType::LockReleaseHold,
+            ffi::SampleType::LockTime => api::SampleType::LockTime,
+            ffi::SampleType::ObjectsLegacy => api::SampleType::ObjectsLegacy,
+            ffi::SampleType::RequestTime => api::SampleType::RequestTime,
+            ffi::SampleType::Sample => api::SampleType::Sample,
+            ffi::SampleType::Tracepoint => api::SampleType::Tracepoint,
+            ffi::SampleType::SocketReadSize => api::SampleType::SocketReadSize,
+            ffi::SampleType::SocketReadSizeSamples => api::SampleType::SocketReadSizeSamples,
+            ffi::SampleType::SocketReadTime => api::SampleType::SocketReadTime,
+            ffi::SampleType::SocketReadTimeSamples => api::SampleType::SocketReadTimeSamples,
+            ffi::SampleType::SocketWriteSize => api::SampleType::SocketWriteSize,
+            ffi::SampleType::SocketWriteSizeSamples => api::SampleType::SocketWriteSizeSamples,
+            ffi::SampleType::SocketWriteTime => api::SampleType::SocketWriteTime,
+            ffi::SampleType::SocketWriteTimeSamples => api::SampleType::SocketWriteTimeSamples,
+            ffi::SampleType::SpaceLegacy => api::SampleType::SpaceLegacy,
+            ffi::SampleType::Timeline => api::SampleType::Timeline,
+            ffi::SampleType::WallSamples => api::SampleType::WallSamples,
+            ffi::SampleType::WallTime => api::SampleType::WallTime,
+            ffi::SampleType::WallLegacy => api::SampleType::WallLegacy,
+            ffi::SampleType::ExperimentalCount => api::SampleType::ExperimentalCount,
+            ffi::SampleType::ExperimentalNanoseconds => api::SampleType::ExperimentalNanoseconds,
+            ffi::SampleType::ExperimentalBytes => api::SampleType::ExperimentalBytes,
+            _ => anyhow::bail!("invalid SampleType discriminant from C++"),
+        })
+    }
+}
+
+impl TryFrom<&ffi::Period> for api::Period {
+    type Error = anyhow::Error;
+
+    fn try_from(period: &ffi::Period) -> Result<Self, Self::Error> {
+        Ok(api::Period {
+            sample_type: period.value_type.try_into()?,
+            value: period.value,
+        })
+    }
+}
+
+impl<'a> From<&ffi::Mapping<'a>> for api::Mapping<'a> {
+    fn from(mapping: &ffi::Mapping<'a>) -> Self {
+        api::Mapping {
+            memory_start: mapping.memory_start,
+            memory_limit: mapping.memory_limit,
+            file_offset: mapping.file_offset,
+            filename: mapping.filename,
+            build_id: mapping.build_id,
+        }
+    }
+}
+
+impl<'a> From<&ffi::Function<'a>> for api::Function<'a> {
+    fn from(func: &ffi::Function<'a>) -> Self {
+        api::Function {
+            name: func.name,
+            system_name: func.system_name,
+            filename: func.filename,
+        }
+    }
+}
+
+impl<'a> From<&ffi::Location<'a>> for api::Location<'a> {
+    fn from(loc: &ffi::Location<'a>) -> Self {
+        api::Location {
+            mapping: (&loc.mapping).into(),
+            function: (&loc.function).into(),
+            address: loc.address,
+            line: loc.line,
+        }
+    }
+}
+
+impl<'a> From<&ffi::Label<'a>> for api::Label<'a> {
+    fn from(label: &ffi::Label<'a>) -> Self {
+        api::Label {
+            key: label.key,
+            str: label.str,
+            num: label.num,
+            num_unit: label.num_unit,
+        }
+    }
+}
+
+impl<'a> From<&ffi::AttachmentFile<'a>> for exporter::File<'a> {
+    fn from(file: &ffi::AttachmentFile<'a>) -> Self {
+        exporter::File {
+            name: file.name,
+            bytes: file.data,
+        }
+    }
+}
+
+impl<'a> TryFrom<&ffi::Tag<'a>> for libdd_common::tag::Tag {
+    type Error = anyhow::Error;
+
+    fn try_from(tag: &ffi::Tag<'a>) -> Result<Self, Self::Error> {
+        libdd_common::tag::Tag::new(tag.key, tag.value)
+    }
+}
+
+// ============================================================================
+// CancellationToken - Wrapper around tokio_util::sync::CancellationToken
+// ============================================================================
+
+pub struct CancellationToken {
+    inner: tokio_util::sync::CancellationToken,
+}
+
+/// Creates a new cancellation token.
+pub fn new_cancellation_token() -> Box<CancellationToken> {
+    Box::new(CancellationToken {
+        inner: tokio_util::sync::CancellationToken::new(),
+    })
+}
+
+impl CancellationToken {
+    /// Clones the cancellation token.
+    ///
+    /// A cloned token is connected to the original token - either can be used
+    /// to cancel or check cancellation status. The useful part is that they have
+    /// independent lifetimes and can be dropped separately.
+    ///
+    /// This is useful for multi-threaded scenarios where one thread performs the
+    /// send operation while another thread can cancel it.
+    pub fn clone_token(&self) -> Box<CancellationToken> {
+        Box::new(CancellationToken {
+            inner: self.inner.clone(),
+        })
+    }
+
+    /// Cancels the token.
+    ///
+    /// Note that cancellation is a terminal state; calling cancel multiple times
+    /// has no additional effect.
+    pub fn cancel(&self) {
+        self.inner.cancel();
+    }
+
+    /// Returns true if the token has been cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.is_cancelled()
+    }
+}
+
+// ============================================================================
+// Profile - Wrapper around internal::Profile
+// ============================================================================
+
+pub struct Profile {
+    inner: internal::Profile,
+}
+
+impl Profile {
+    pub fn create(
+        sample_types: Vec<ffi::SampleType>,
+        period: &ffi::Period,
+    ) -> anyhow::Result<Box<Profile>> {
+        // Convert (fallibly) from CXX types to API types
+        let types: Vec<api::SampleType> = sample_types
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        let period_value: api::Period = period.try_into()?;
+
+        // Profile::try_new interns the strings
+        let inner = internal::Profile::try_new(&types, Some(period_value))?;
+
+        Ok(Box::new(Profile { inner }))
+    }
+
+    pub fn add_sample(&mut self, sample: &ffi::Sample) -> anyhow::Result<()> {
+        let api_sample = api::Sample {
+            locations: sample.locations.iter().map(Into::into).collect(),
+            values: &sample.values,
+            labels: sample.labels.iter().map(Into::into).collect(),
+        };
+
+        // Profile interns the strings
+        self.inner.try_add_sample(api_sample, None)?;
+        Ok(())
+    }
+
+    pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> anyhow::Result<()> {
+        self.inner
+            .add_endpoint(local_root_span_id, std::borrow::Cow::Borrowed(endpoint))
+    }
+
+    pub fn add_endpoint_count(&mut self, endpoint: &str, value: i64) -> anyhow::Result<()> {
+        self.inner
+            .add_endpoint_count(std::borrow::Cow::Borrowed(endpoint), value)
+    }
+
+    pub fn add_upscaling_rule_poisson(
+        &mut self,
+        offset_values: &[usize],
+        label_name: &str,
+        label_value: &str,
+        sum_value_offset: usize,
+        count_value_offset: usize,
+        sampling_distance: u64,
+    ) -> anyhow::Result<()> {
+        let upscaling_info = api::UpscalingInfo::Poisson {
+            sum_value_offset,
+            count_value_offset,
+            sampling_distance,
+        };
+        self.inner
+            .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+    }
+
+    pub fn add_upscaling_rule_poisson_non_sample_type_count(
+        &mut self,
+        offset_values: &[usize],
+        label_name: &str,
+        label_value: &str,
+        sum_value_offset: usize,
+        count_value: u64,
+        sampling_distance: u64,
+    ) -> anyhow::Result<()> {
+        let upscaling_info = api::UpscalingInfo::PoissonNonSampleTypeCount {
+            sum_value_offset,
+            count_value,
+            sampling_distance,
+        };
+        self.inner
+            .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+    }
+
+    pub fn add_upscaling_rule_proportional(
+        &mut self,
+        offset_values: &[usize],
+        label_name: &str,
+        label_value: &str,
+        scale: f64,
+    ) -> anyhow::Result<()> {
+        let upscaling_info = api::UpscalingInfo::Proportional { scale };
+        self.inner
+            .add_upscaling_rule(offset_values, label_name, label_value, upscaling_info)
+    }
+
+    pub fn reset(&mut self) -> anyhow::Result<()> {
+        // Reset and discard the old profile
+        self.inner.reset_and_return_previous()?;
+        Ok(())
+    }
+
+    pub fn serialize_to_vec(&mut self) -> anyhow::Result<Vec<u8>> {
+        // Reset the profile and get the old one to serialize
+        let old_profile = self.inner.reset_and_return_previous()?;
+        let end_time = Some(std::time::SystemTime::now());
+        let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+        Ok(encoded.buffer)
+    }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Helper to encode a profile and prepare arguments for sending/queuing.
+///
+/// Resets the profile and returns the encoded previous profile data along with
+/// converted arguments ready for the exporter APIs.
+#[allow(clippy::type_complexity)]
+fn prepare_profile_for_export<'a>(
+    profile: &mut Profile,
+    files_to_compress: Vec<ffi::AttachmentFile<'a>>,
+    additional_tags: Vec<ffi::Tag>,
+    process_tags: &'a str,
+    internal_metadata: &str,
+    info: &str,
+) -> anyhow::Result<(
+    internal::EncodedProfile,
+    Vec<exporter::File<'a>>,
+    Vec<libdd_common::tag::Tag>,
+    Option<&'a str>,
+    Option<serde_json::Value>,
+    Option<serde_json::Value>,
+)> {
+    let old_profile = profile.inner.reset_and_return_previous()?;
+    let end_time = Some(std::time::SystemTime::now());
+    let encoded = old_profile.serialize_into_compressed_pprof(end_time, None)?;
+
+    let files_to_compress_vec: Vec<exporter::File> =
+        files_to_compress.iter().map(Into::into).collect();
+
+    let additional_tags_vec: Vec<libdd_common::tag::Tag> = additional_tags
+        .iter()
+        .map(TryInto::try_into)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let internal_metadata_json = if internal_metadata.is_empty() {
+        None
+    } else {
+        Some(serde_json::from_str(internal_metadata)?)
+    };
+
+    let info_json = if info.is_empty() {
+        None
+    } else {
+        Some(serde_json::from_str(info)?)
+    };
+
+    let process_tags_opt = if process_tags.is_empty() {
+        None
+    } else {
+        Some(process_tags)
+    };
+
+    Ok((
+        encoded,
+        files_to_compress_vec,
+        additional_tags_vec,
+        process_tags_opt,
+        internal_metadata_json,
+        info_json,
+    ))
+}
+
+// ============================================================================
+// ProfileExporter - Wrapper around exporter::ProfileExporter
+// ============================================================================
+
+pub struct ProfileExporter {
+    inner: exporter::ProfileExporter,
+}
+
+impl ProfileExporter {
+    pub fn create_agent_exporter(
+        profiling_library_name: &str,
+        profiling_library_version: &str,
+        family: &str,
+        tags: Vec<ffi::Tag>,
+        agent_url: &str,
+        timeout_ms: u64,
+        use_system_resolver: bool,
+    ) -> anyhow::Result<Box<ProfileExporter>> {
+        let mut endpoint = exporter::config::agent(agent_url.parse()?)?;
+
+        // Set timeout if non-zero (0 means use default)
+        if timeout_ms > 0 {
+            endpoint.timeout_ms = timeout_ms;
+        }
+        endpoint = endpoint.with_system_resolver(use_system_resolver);
+
+        let tags_vec: Vec<libdd_common::tag::Tag> = tags
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let inner = exporter::ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags_vec,
+            endpoint,
+        )?;
+
+        Ok(Box::new(ProfileExporter { inner }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_agentless_exporter(
+        profiling_library_name: &str,
+        profiling_library_version: &str,
+        family: &str,
+        tags: Vec<ffi::Tag>,
+        site: &str,
+        api_key: &str,
+        timeout_ms: u64,
+        use_system_resolver: bool,
+    ) -> anyhow::Result<Box<ProfileExporter>> {
+        let mut endpoint = exporter::config::agentless(site, api_key.to_string())?;
+
+        // Set timeout if non-zero (0 means use default)
+        if timeout_ms > 0 {
+            endpoint.timeout_ms = timeout_ms;
+        }
+        endpoint = endpoint.with_system_resolver(use_system_resolver);
+
+        let tags_vec: Vec<libdd_common::tag::Tag> = tags
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let inner = exporter::ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags_vec,
+            endpoint,
+        )?;
+
+        Ok(Box::new(ProfileExporter { inner }))
+    }
+
+    pub fn create_file_exporter(
+        profiling_library_name: &str,
+        profiling_library_version: &str,
+        family: &str,
+        tags: Vec<ffi::Tag>,
+        output_path: &str,
+    ) -> anyhow::Result<Box<ProfileExporter>> {
+        let endpoint = exporter::config::file(output_path)?;
+
+        let tags_vec: Vec<libdd_common::tag::Tag> = tags
+            .iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let inner = exporter::ProfileExporter::new(
+            profiling_library_name,
+            profiling_library_version,
+            family,
+            tags_vec,
+            endpoint,
+        )?;
+
+        Ok(Box::new(ProfileExporter { inner }))
+    }
+
+    /// Sends a profile to Datadog.
+    ///
+    /// # Arguments
+    /// * `profile` - Profile to send (will be reset after sending)
+    /// * `files_to_compress` - Additional files to compress and attach
+    /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
+    /// * `internal_metadata` - Internal metadata as JSON string. Empty string if not needed.
+    ///   Example: `{"custom_field": "value", "version": "1.0"}`
+    /// * `info` - System/environment info as JSON string. Empty string if not needed. Example:
+    ///   `{"os": "linux", "arch": "x86_64", "kernel": "5.15.0"}`
+    pub fn send_profile(
+        &mut self,
+        profile: &mut Profile,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+    ) -> anyhow::Result<()> {
+        self.send_profile_impl(
+            profile,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+            None,
+        )
+    }
+
+    /// Sends a profile to Datadog with cancellation support.
+    ///
+    /// # Arguments
+    /// * `profile` - Profile to send (will be reset after sending)
+    /// * `files_to_compress` - Additional files to compress and attach
+    /// * `additional_tags` - Per-profile tags (in addition to exporter-level tags)
+    /// * `process_tags` - Process-level tags as comma-separated string. Empty string if not needed.
+    /// * `internal_metadata` - Internal metadata as JSON string. Empty string if not needed.
+    ///   Example: `{"custom_field": "value", "version": "1.0"}`
+    /// * `info` - System/environment info as JSON string. Empty string if not needed. Example:
+    ///   `{"os": "linux", "arch": "x86_64", "kernel": "5.15.0"}`
+    /// * `cancel` - Cancellation token to cancel the send operation
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_profile_with_cancellation(
+        &mut self,
+        profile: &mut Profile,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<()> {
+        self.send_profile_impl(
+            profile,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+            Some(&cancel.inner),
+        )
+    }
+
+    /// Internal implementation shared by send_profile and send_profile_with_cancellation
+    ///
+    /// Resets the profile and sends the previous profile data. This allows continuous
+    /// profiling where you keep adding samples to the current profile while the previous
+    /// period's data is being sent.
+    #[allow(clippy::too_many_arguments)]
+    fn send_profile_impl(
+        &mut self,
+        profile: &mut Profile,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+        cancel: Option<&tokio_util::sync::CancellationToken>,
+    ) -> anyhow::Result<()> {
+        let (
+            encoded,
+            files_to_compress_vec,
+            additional_tags_vec,
+            process_tags_opt,
+            internal_metadata_json,
+            info_json,
+        ) = prepare_profile_for_export(
+            profile,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+        )?;
+
+        let status = self.inner.send_blocking(
+            encoded,
+            &files_to_compress_vec,
+            &additional_tags_vec,
+            internal_metadata_json,
+            info_json,
+            process_tags_opt,
+            cancel,
+        )?;
+
+        anyhow::ensure!(
+            status.is_success(),
+            "Failed to export profile: HTTP {status}",
+        );
+
+        Ok(())
+    }
+}
+
+// ============================================================================
+// ExporterManager - Wrapper around exporter::ExporterManager
+// ============================================================================
+
+pub struct ExporterManager {
+    inner: exporter::ExporterManager,
+}
+
+impl ExporterManager {
+    pub fn new_manager(exporter: Box<ProfileExporter>) -> anyhow::Result<Box<ExporterManager>> {
+        let inner = exporter::ExporterManager::new(exporter.inner)?;
+        Ok(Box::new(ExporterManager { inner }))
+    }
+
+    /// Queue a profile to be sent asynchronously by the background worker thread.
+    ///
+    /// Resets the profile and queues the previous profile data for sending. This allows
+    /// continuous profiling where you keep adding samples to the current profile while the
+    /// previous period's data is being sent asynchronously.
+    pub fn queue_profile(
+        &self,
+        profile: &mut Profile,
+        files_to_compress: Vec<ffi::AttachmentFile>,
+        additional_tags: Vec<ffi::Tag>,
+        process_tags: &str,
+        internal_metadata: &str,
+        info: &str,
+    ) -> anyhow::Result<()> {
+        let (
+            encoded,
+            files_to_compress_vec,
+            additional_tags_vec,
+            process_tags_opt,
+            internal_metadata_json,
+            info_json,
+        ) = prepare_profile_for_export(
+            profile,
+            files_to_compress,
+            additional_tags,
+            process_tags,
+            internal_metadata,
+            info,
+        )?;
+
+        self.inner.queue(
+            encoded,
+            &files_to_compress_vec,
+            &additional_tags_vec,
+            internal_metadata_json,
+            info_json,
+            process_tags_opt,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn abort(&mut self) -> anyhow::Result<()> {
+        self.inner.abort()
+    }
+
+    pub fn prefork(&mut self) -> anyhow::Result<()> {
+        self.inner.prefork()
+    }
+
+    pub fn postfork_child(&mut self) -> anyhow::Result<()> {
+        self.inner.postfork_child()
+    }
+
+    pub fn postfork_parent(&mut self) -> anyhow::Result<()> {
+        self.inner.postfork_parent()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_LIB_NAME: &str = "dd-trace-test";
+    const TEST_LIB_VERSION: &str = "1.0.0";
+    const TEST_FAMILY: &str = "test";
+
+    fn create_test_profile() -> Box<Profile> {
+        let wall_time = ffi::SampleType::WallTime;
+        let period = ffi::Period {
+            value_type: wall_time,
+            value: 60,
+        };
+        Profile::create(vec![ffi::SampleType::WallTime], &period).unwrap()
+    }
+
+    fn create_test_location(address: u64, line: i64) -> ffi::Location<'static> {
+        ffi::Location {
+            mapping: ffi::Mapping {
+                memory_start: address & 0xFFFF0000,
+                memory_limit: (address & 0xFFFF0000) + 0x10000000,
+                file_offset: 0,
+                filename: "/usr/lib/libtest.so",
+                build_id: "abc123",
+            },
+            function: ffi::Function {
+                name: "test_function",
+                system_name: "_Z13test_functionv",
+                filename: "/src/test.cpp",
+            },
+            address,
+            line,
+        }
+    }
+
+    fn create_test_sample() -> ffi::Sample<'static> {
+        ffi::Sample {
+            locations: vec![create_test_location(0x10003000, 100)],
+            values: vec![1000000],
+            labels: vec![],
+        }
+    }
+
+    fn create_test_exporter() -> Box<ProfileExporter> {
+        ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![ffi::Tag {
+                key: "env",
+                value: "test",
+            }],
+            "http://localhost:1", // Port 1 unlikely to have server
+            100,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_profile_operations() {
+        let mut profile = create_test_profile();
+
+        // Verify profile starts empty
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should start with no samples"
+        );
+
+        // Add samples and verify they're tracked
+        let sample = create_test_sample();
+        profile.add_sample(&sample).unwrap();
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            1,
+            "Profile should have 1 sample after adding"
+        );
+
+        // Add another sample with different address
+        let sample2 = ffi::Sample {
+            locations: vec![create_test_location(0x20003000, 200)],
+            values: vec![2000000],
+            labels: vec![],
+        };
+        profile.add_sample(&sample2).unwrap();
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            2,
+            "Profile should have 2 samples"
+        );
+
+        // Test endpoints
+        profile.add_endpoint(12345, "/api/test").unwrap();
+        profile.add_endpoint(67890, "/api/other").unwrap();
+        profile.add_endpoint_count("/api/test", 100).unwrap();
+
+        // Test upscaling rules (verify they don't error)
+        profile
+            .add_upscaling_rule_poisson(&[0], "thread_id", "0", 0, 0, 1000000)
+            .unwrap();
+        profile
+            .add_upscaling_rule_proportional(&[0], "thread_id", "1", 100.0)
+            .unwrap();
+        profile
+            .add_upscaling_rule_poisson_non_sample_type_count(
+                &[0],
+                "thread_id",
+                "2",
+                0,
+                50,
+                1000000,
+            )
+            .unwrap();
+
+        // Serialize and verify output
+        let serialized = profile.serialize_to_vec().unwrap();
+        assert!(
+            serialized.len() > 100,
+            "Serialized profile should be non-trivial"
+        );
+
+        // Verify it's a valid pprof by checking for gzip/zstd magic bytes
+        assert!(
+            serialized.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) || // zstd magic
+            serialized.starts_with(&[0x1f, 0x8b]), // gzip magic
+            "Serialized profile should be compressed"
+        );
+
+        // After serialization (which resets), profile should be empty
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should be empty after serialize_to_vec"
+        );
+
+        // Add sample and test explicit reset
+        profile.add_sample(&sample).unwrap();
+        assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 1);
+        profile.reset().unwrap();
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should be empty after reset"
+        );
+    }
+
+    #[test]
+    fn test_exporter_create() {
+        // Test agent exporter with default timeout
+        assert!(ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![ffi::Tag {
+                key: "service",
+                value: "test"
+            }],
+            "http://localhost:8126",
+            0,
+            false,
+        )
+        .is_ok());
+
+        // Test with multiple tags and custom timeout
+        assert!(ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![
+                ffi::Tag {
+                    key: "service",
+                    value: "my-service"
+                },
+                ffi::Tag {
+                    key: "env",
+                    value: "prod"
+                },
+                ffi::Tag {
+                    key: "version",
+                    value: "2.0"
+                },
+            ],
+            "http://localhost:8126",
+            10000,
+            false,
+        )
+        .is_ok());
+
+        // Test agentless exporters with different sites
+        assert!(ProfileExporter::create_agentless_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            "datadoghq.com",
+            "fake-api-key",
+            5000,
+            false,
+        )
+        .is_ok());
+
+        assert!(ProfileExporter::create_agentless_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            "datadoghq.eu",
+            "fake-api-key",
+            0,
+            false,
+        )
+        .is_ok());
+
+        // Test with no tags
+        assert!(ProfileExporter::create_agent_exporter(
+            TEST_LIB_NAME,
+            TEST_LIB_VERSION,
+            TEST_FAMILY,
+            vec![],
+            "http://localhost:8126",
+            0,
+            false,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn test_type_conversions() {
+        // AttachmentFile conversion
+        let data = vec![1u8, 2, 3, 4, 5, 255, 128, 0];
+        let file: exporter::File = (&ffi::AttachmentFile {
+            name: "test.bin",
+            data: &data,
+        })
+            .into();
+        assert_eq!(file.name, "test.bin");
+        assert_eq!(file.bytes, data.as_slice());
+
+        // Tag conversion with special characters
+        let tag: libdd_common::tag::Tag = (&ffi::Tag {
+            key: "test-key.with_special:chars",
+            value: "test_value/with@special#chars",
+        })
+            .try_into()
+            .unwrap();
+        assert_eq!(
+            tag.as_ref(),
+            "test-key.with_special:chars:test_value/with@special#chars"
+        );
+
+        // Tag validation - empty key should fail
+        assert!(TryInto::<libdd_common::tag::Tag>::try_into(&ffi::Tag {
+            key: "",
+            value: "value"
+        })
+        .is_err());
+
+        // SampleType conversion
+        let st: api::SampleType = ffi::SampleType::CpuSamples.try_into().unwrap();
+        let vt: api::ValueType<'static> = st.into();
+        assert_eq!(vt.r#type, "cpu-samples");
+        assert_eq!(vt.unit, "count");
+
+        // Mapping conversion
+        let mapping: api::Mapping = (&ffi::Mapping {
+            memory_start: 0x1000,
+            memory_limit: 0x2000,
+            file_offset: 0x100,
+            filename: "/lib/test.so",
+            build_id: "build123",
+        })
+            .into();
+        assert_eq!(
+            (
+                mapping.memory_start,
+                mapping.memory_limit,
+                mapping.file_offset
+            ),
+            (0x1000, 0x2000, 0x100)
+        );
+        assert_eq!(
+            (mapping.filename, mapping.build_id),
+            ("/lib/test.so", "build123")
+        );
+
+        // Function conversion
+        let function: api::Function = (&ffi::Function {
+            name: "my_func",
+            system_name: "_Z7my_funcv",
+            filename: "/src/file.cpp",
+        })
+            .into();
+        assert_eq!(
+            (function.name, function.system_name, function.filename),
+            ("my_func", "_Z7my_funcv", "/src/file.cpp")
+        );
+
+        // Label conversion
+        let label: api::Label = (&ffi::Label {
+            key: "thread_id",
+            str: "",
+            num: 42,
+            num_unit: "thread",
+        })
+            .into();
+        assert_eq!(
+            (label.key, label.num, label.num_unit),
+            ("thread_id", 42, "thread")
+        );
+    }
+
+    #[test]
+    fn test_send_profile_with_attachments() {
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+
+        let mut exporter = create_test_exporter();
+        let attachment_data = br#"{"test": "data", "number": 123}"#.to_vec();
+
+        // Send with full parameters - should fail with connection error but build request correctly
+        let result = exporter.send_profile(
+            &mut profile,
+            vec![ffi::AttachmentFile {
+                name: "metadata.json",
+                data: &attachment_data,
+            }],
+            vec![
+                ffi::Tag {
+                    key: "profile_type",
+                    value: "cpu",
+                },
+                ffi::Tag {
+                    key: "runtime",
+                    value: "native",
+                },
+            ],
+            "language:rust,profiler_version:1.0",
+            r#"{"version": "1.0", "profiler": "test"}"#,
+            r#"{"os": "linux", "arch": "x86_64", "cores": 8}"#,
+        );
+
+        assert!(result.is_err(), "Should fail when no server available");
+        assert_eq!(
+            profile.inner.only_for_testing_num_aggregated_samples(),
+            0,
+            "Profile should be reset after send attempt"
+        );
+
+        // Test with empty optional parameters
+        profile.add_sample(&create_test_sample()).unwrap();
+        let result2 = exporter.send_profile(&mut profile, vec![], vec![], "", "", "");
+        assert!(
+            result2.is_err(),
+            "Should fail with empty optional params too"
+        );
+    }
+
+    #[test]
+    fn test_exporter_manager_create_and_abort() {
+        let exporter = create_test_exporter();
+        let mut manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Abort immediately
+        manager.abort().unwrap();
+    }
+
+    #[test]
+    fn test_exporter_manager_queue_and_abort() {
+        let exporter = create_test_exporter();
+        let manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Queue a profile
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+
+        manager
+            .queue_profile(&mut profile, vec![], vec![], "", "", "")
+            .unwrap();
+
+        // Give worker thread time to process
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Verify profile was reset
+        assert_eq!(profile.inner.only_for_testing_num_aggregated_samples(), 0);
+    }
+
+    #[test]
+    fn test_exporter_manager_prefork_and_postfork() {
+        let exporter = create_test_exporter();
+        let mut manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Queue some work
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        manager
+            .queue_profile(&mut profile, vec![], vec![], "", "", "")
+            .unwrap();
+
+        // Prefork
+        manager.prefork().unwrap();
+
+        // Postfork parent - should re-queue inflight
+        manager.postfork_parent().unwrap();
+
+        // Give time for processing
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Abort parent
+        manager.abort().unwrap();
+    }
+
+    #[test]
+    fn test_exporter_manager_postfork_child() {
+        let exporter = create_test_exporter();
+        let mut manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Queue some work
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+        manager
+            .queue_profile(&mut profile, vec![], vec![], "", "", "")
+            .unwrap();
+
+        // Prefork
+        manager.prefork().unwrap();
+
+        // Postfork child - should discard inflight
+        manager.postfork_child().unwrap();
+
+        // Child can queue its own work
+        let mut child_profile = create_test_profile();
+        child_profile.add_sample(&create_test_sample()).unwrap();
+        manager
+            .queue_profile(&mut child_profile, vec![], vec![], "", "", "")
+            .unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        manager.abort().unwrap();
+    }
+
+    #[test]
+    fn test_exporter_manager_cannot_use_after_abort() {
+        let exporter = create_test_exporter();
+        let mut manager = ExporterManager::new_manager(exporter).unwrap();
+
+        // Abort the manager
+        manager.abort().unwrap();
+
+        // Trying to queue after abort should fail
+        let mut profile = create_test_profile();
+        profile.add_sample(&create_test_sample()).unwrap();
+
+        let result = manager.queue_profile(&mut profile, vec![], vec![], "", "", "");
+        assert!(result.is_err(), "Should fail to queue after abort");
+        let error_msg = result.unwrap_err().to_string();
+        assert!(
+            error_msg.contains("Suspended") || error_msg.contains("state"),
+            "Error message should indicate manager is in Suspended state, got: {}",
+            error_msg
+        );
+    }
+}

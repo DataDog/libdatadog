@@ -1,11 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "telemetry")]
 use crate::telemetry::error::TelemetryError;
 use crate::trace_exporter::msgpack_decoder::decode::error::DecodeError;
-use hyper::http::StatusCode;
-use hyper::Error as HyperError;
-use libdd_common::hyper_migration;
+use http::StatusCode;
+use libdd_common::http_common;
 use rmp_serde::encode::Error as EncodeError;
 use std::error::Error;
 use std::fmt::{Debug, Display};
@@ -104,14 +104,7 @@ impl Error for NetworkError {
 }
 
 impl NetworkError {
-    fn new_hyper(kind: NetworkErrorKind, source: HyperError) -> Self {
-        Self {
-            kind,
-            source: source.into(),
-        }
-    }
-
-    fn new_hyper_util(kind: NetworkErrorKind, source: hyper_util::client::legacy::Error) -> Self {
+    fn new<E: Into<anyhow::Error>>(kind: NetworkErrorKind, source: E) -> Self {
         Self {
             kind,
             source: source.into(),
@@ -230,81 +223,38 @@ impl From<EncodeError> for TraceExporterError {
     }
 }
 
-impl From<hyper::http::uri::InvalidUri> for TraceExporterError {
-    fn from(value: hyper::http::uri::InvalidUri) -> Self {
+impl From<http::uri::InvalidUri> for TraceExporterError {
+    fn from(value: http::uri::InvalidUri) -> Self {
         TraceExporterError::Builder(BuilderErrorKind::InvalidUri(value.to_string()))
     }
 }
 
-impl From<hyper_migration::Error> for TraceExporterError {
-    fn from(err: hyper_migration::Error) -> Self {
+impl From<http_common::Error> for TraceExporterError {
+    fn from(err: http_common::Error) -> Self {
         match err {
-            hyper_migration::Error::Hyper(e) => e.into(),
-            hyper_migration::Error::Legacy(e) => e.into(),
-            hyper_migration::Error::Other(e) => TraceExporterError::Network(NetworkError {
+            http_common::Error::Client(e) => TraceExporterError::from(e),
+            http_common::Error::Other(e) => TraceExporterError::Network(NetworkError {
                 kind: NetworkErrorKind::Unknown,
                 source: e,
             }),
-            hyper_migration::Error::Infallible(e) => match e {},
+            http_common::Error::Infallible(e) => match e {},
         }
     }
 }
 
-impl From<hyper_util::client::legacy::Error> for TraceExporterError {
-    fn from(err: hyper_util::client::legacy::Error) -> Self {
-        if err.is_connect() {
-            return TraceExporterError::Network(NetworkError::new_hyper_util(
-                NetworkErrorKind::ConnectionClosed,
-                err,
-            ));
-        }
-        if let Some(e) = err.source().and_then(|e| e.downcast_ref::<HyperError>()) {
-            if e.is_parse() {
-                return TraceExporterError::Network(NetworkError::new_hyper_util(
-                    NetworkErrorKind::Parse,
-                    err,
-                ));
-            } else if e.is_canceled() {
-                return TraceExporterError::Network(NetworkError::new_hyper_util(
-                    NetworkErrorKind::Canceled,
-                    err,
-                ));
-            } else if e.is_incomplete_message() || e.is_body_write_aborted() {
-                return TraceExporterError::Network(NetworkError::new_hyper_util(
-                    NetworkErrorKind::Body,
-                    err,
-                ));
-            } else if e.is_parse_status() {
-                return TraceExporterError::Network(NetworkError::new_hyper_util(
-                    NetworkErrorKind::WrongStatus,
-                    err,
-                ));
-            } else if e.is_timeout() {
-                return TraceExporterError::Network(NetworkError::new_hyper_util(
-                    NetworkErrorKind::TimedOut,
-                    err,
-                ));
-            }
-        }
-        TraceExporterError::Network(NetworkError::new_hyper_util(NetworkErrorKind::Unknown, err))
-    }
-}
-
-impl From<HyperError> for TraceExporterError {
-    fn from(err: HyperError) -> Self {
-        if err.is_parse() {
-            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::Parse, err))
-        } else if err.is_canceled() {
-            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::Canceled, err))
-        } else if err.is_incomplete_message() || err.is_body_write_aborted() {
-            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::Body, err))
-        } else if err.is_parse_status() {
-            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::WrongStatus, err))
-        } else if err.is_timeout() {
-            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::TimedOut, err))
-        } else {
-            TraceExporterError::Network(NetworkError::new_hyper(NetworkErrorKind::Unknown, err))
-        }
+impl From<http_common::ClientError> for TraceExporterError {
+    fn from(err: http_common::ClientError) -> Self {
+        use http_common::ErrorKind;
+        let network_kind = match err.kind() {
+            ErrorKind::Closed => NetworkErrorKind::ConnectionClosed,
+            ErrorKind::Parse => NetworkErrorKind::Parse,
+            ErrorKind::Canceled => NetworkErrorKind::Canceled,
+            ErrorKind::Incomplete | ErrorKind::WriteAborted => NetworkErrorKind::Body,
+            ErrorKind::ParseStatus => NetworkErrorKind::WrongStatus,
+            ErrorKind::Timeout => NetworkErrorKind::TimedOut,
+            ErrorKind::Other => NetworkErrorKind::Unknown,
+        };
+        TraceExporterError::Network(NetworkError::new(network_kind, err))
     }
 }
 
@@ -320,6 +270,31 @@ impl From<std::io::Error> for TraceExporterError {
     }
 }
 
+impl From<http::Error> for TraceExporterError {
+    fn from(err: http::Error) -> Self {
+        TraceExporterError::Network(NetworkError {
+            kind: NetworkErrorKind::Parse,
+            source: err.into(),
+        })
+    }
+}
+
+impl From<libdd_capabilities::HttpError> for TraceExporterError {
+    fn from(err: libdd_capabilities::HttpError) -> Self {
+        TraceExporterError::Network(NetworkError {
+            kind: match &err {
+                libdd_capabilities::HttpError::Timeout => NetworkErrorKind::TimedOut,
+                libdd_capabilities::HttpError::Network(_) => NetworkErrorKind::ConnectionClosed,
+                libdd_capabilities::HttpError::ResponseBody(_) => NetworkErrorKind::Body,
+                libdd_capabilities::HttpError::InvalidRequest(_) => NetworkErrorKind::Parse,
+                libdd_capabilities::HttpError::Other(_) => NetworkErrorKind::Unknown,
+            },
+            source: anyhow::anyhow!("{}", err),
+        })
+    }
+}
+
+#[cfg(feature = "telemetry")]
 impl From<TelemetryError> for TraceExporterError {
     fn from(value: TelemetryError) -> Self {
         match value {

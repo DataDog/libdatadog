@@ -291,10 +291,7 @@ impl<'a> From<&'a Sample> for api::Sample<'a> {
 }
 
 #[track_caller]
-fn assert_sample_types_eq(
-    profile: &pprof::Profile,
-    expected_sample_types: &[owned_types::ValueType],
-) {
+fn assert_sample_types_eq(profile: &pprof::Profile, expected_sample_types: &[api::SampleType]) {
     assert_eq!(
         profile.sample_types.len(),
         expected_sample_types.len(),
@@ -305,11 +302,9 @@ fn assert_sample_types_eq(
         .iter()
         .zip(expected_sample_types.iter())
     {
-        assert_eq!(
-            *string_table_fetch(profile, typ.r#type),
-            *expected_typ.r#typ
-        );
-        assert_eq!(*string_table_fetch(profile, typ.unit), *expected_typ.unit);
+        let expected_vt: api::ValueType<'static> = (*expected_typ).into();
+        assert_eq!(*string_table_fetch(profile, typ.r#type), expected_vt.r#type);
+        assert_eq!(*string_table_fetch(profile, typ.unit), expected_vt.unit);
     }
 }
 
@@ -430,7 +425,7 @@ fn assert_samples_eq(
 fn fuzz_add_sample<'a>(
     timestamp: &Option<Timestamp>,
     sample: &'a Sample,
-    expected_sample_types: &[owned_types::ValueType],
+    expected_sample_types: &[api::SampleType],
     profile: &mut Profile,
     samples_with_timestamps: &mut Vec<&'a Sample>,
     samples_without_timestamps: &mut HashMap<(&'a [Location], &'a [Label]), Vec<i64>>,
@@ -508,7 +503,7 @@ fn fuzz_failure_001() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_fuzz_add_sample() {
-    let sample_types_gen = Vec::<owned_types::ValueType>::produce();
+    let sample_types_gen = Vec::<api::SampleType>::produce();
     let samples_gen = Vec::<(Option<Timestamp>, FuzzSample)>::produce();
 
     bolero::check!()
@@ -519,11 +514,7 @@ fn test_fuzz_add_sample() {
                 .map(|(tstamp, sample)| (*tstamp, Sample::from(sample)))
                 .collect::<Vec<_>>();
 
-            let sample_types: Vec<_> = expected_sample_types
-                .iter()
-                .map(api::ValueType::from)
-                .collect();
-            let mut expected_profile = Profile::new(&sample_types, None);
+            let mut expected_profile = Profile::new(expected_sample_types, None);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
@@ -558,9 +549,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
         .with_shrink_time(Duration::from_secs(60))
         .with_generator(sample_length_gen)
         .and_then(|sample_len| {
-            let sample_types = Vec::<owned_types::ValueType>::produce()
-                .with()
-                .len(sample_len);
+            let sample_types = Vec::<api::SampleType>::produce().with().len(sample_len);
 
             let timestamps = Option::<Timestamp>::produce();
             let locations = Vec::<Location>::produce();
@@ -579,8 +568,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
             (sample_types, samples)
         })
         .for_each(|(sample_types, samples)| {
-            let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
-            let mut profile = Profile::new(&api_sample_types, None);
+            let mut profile = Profile::new(sample_types, None);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
@@ -686,9 +674,7 @@ fn fuzz_api_function_calls() {
     bolero::check!()
         .with_generator(sample_length_gen)
         .and_then(|sample_len| {
-            let sample_types = Vec::<owned_types::ValueType>::produce()
-                .with()
-                .len(sample_len);
+            let sample_types = Vec::<api::SampleType>::produce().with().len(sample_len);
             let operations = Vec::<FuzzOperation>::produce();
 
             (sample_types, operations)
@@ -696,8 +682,7 @@ fn fuzz_api_function_calls() {
         .for_each(|(sample_types, operations)| {
             let operations = operations.iter().map(Operation::from).collect::<Vec<_>>();
 
-            let api_sample_types: Vec<_> = sample_types.iter().map(api::ValueType::from).collect();
-            let mut profile = Profile::new(&api_sample_types, None);
+            let mut profile = Profile::new(sample_types, None);
             let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();

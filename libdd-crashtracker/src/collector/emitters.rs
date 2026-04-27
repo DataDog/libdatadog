@@ -9,8 +9,10 @@ use crate::runtime_callback::{
     CallbackData,
 };
 use crate::shared::constants::*;
-use crate::{translate_si_code, CrashtrackerConfiguration, SignalNames, StacktraceCollection};
-use backtrace::Frame;
+use crate::{
+    translate_si_code, CrashtrackerConfiguration, ErrorKind, SignalNames, StackTrace,
+    StacktraceCollection,
+};
 use libc::{siginfo_t, ucontext_t};
 use std::{
     fs::File,
@@ -32,6 +34,99 @@ pub enum EmitterError {
     CounterError(#[from] crate::collector::counters::CounterError),
     #[error("Atomic set error: {0}")]
     AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
+}
+
+/// Crash-kind-specific data passed to `emit_crashreport`.
+///
+/// Each variant carries exactly the fields that are meaningful for that crash
+/// origin. the shared fields (config, metadata, procinfo, …) remain as plain
+/// function parameters
+pub(crate) enum CrashKindData {
+    UnixSignal {
+        sig_info: *const siginfo_t,
+        ucontext: *const ucontext_t,
+    },
+    UnhandledException {
+        stacktrace: StackTrace,
+    },
+}
+
+impl CrashKindData {
+    fn error_kind(&self) -> ErrorKind {
+        match self {
+            CrashKindData::UnixSignal { .. } => ErrorKind::UnixSignal,
+            CrashKindData::UnhandledException { .. } => ErrorKind::UnhandledException,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_crashreport(
+    pipe: &mut impl Write,
+    config: &CrashtrackerConfiguration,
+    config_str: &str,
+    metadata_string: &str,
+    message_ptr: *mut String,
+    crash: CrashKindData,
+    ppid: i32,
+    crashing_tid: libc::pid_t,
+) -> Result<(), EmitterError> {
+    // Crash-ping
+    // The receiver dispatches the crash ping as soon as it sees the metadata
+    // section, so try to emit message, siginfo, and kind before it to make sure
+    // we have an enhanced crash ping message
+    emit_config(pipe, config_str)?;
+    emit_message(pipe, message_ptr)?;
+
+    match &crash {
+        CrashKindData::UnixSignal { sig_info, .. } => {
+            emit_siginfo(pipe, *sig_info)?;
+        }
+        CrashKindData::UnhandledException { .. } => {
+            // Unhandled exceptions have no signal info
+        }
+    }
+
+    emit_kind(pipe, &crash.error_kind())?;
+    emit_metadata(pipe, metadata_string)?;
+
+    // Shared process context
+    emit_procinfo(pipe, ppid, crashing_tid)?;
+    emit_counters(pipe)?;
+    emit_spans(pipe)?;
+    consume_and_emit_additional_tags(pipe)?;
+    emit_traces(pipe)?;
+
+    #[cfg(target_os = "linux")]
+    emit_proc_self_maps(pipe)?;
+
+    // Stack trace emission
+    match crash {
+        CrashKindData::UnixSignal { ucontext, .. } => {
+            emit_ucontext(pipe, ucontext)?;
+            if config.resolve_frames() != StacktraceCollection::Disabled {
+                // SAFETY: `ucontext` comes from the signal handler and points to
+                // valid kernel-saved registers. This is called last so that even
+                // if the unwinder crashes, the other crash data has already been
+                // written. The crash handler is non-reentrant and single-threaded
+                unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), ucontext)? };
+            }
+            if is_runtime_callback_registered() {
+                emit_runtime_stack(pipe)?;
+            }
+        }
+        CrashKindData::UnhandledException { stacktrace } => {
+            // SAFETY: This branch only executes for unhandled exceptions, never
+            // from a signal handler
+            unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
+        }
+    }
+
+    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
+    pipe.flush()?;
+    Ok(())
 }
 
 /// Emit a stacktrace onto the given handle as formatted json.
@@ -41,137 +136,287 @@ pub enum EmitterError {
 /// ATOMICITY:
 ///     This function is not atomic. A crash during its execution may lead to
 ///     unexpected crash-handling behaviour.
-/// SIGNAL SAFETY:
-///     Getting a backtrace on rust is not guaranteed to be signal safe.
-///     https://github.com/rust-lang/backtrace-rs/issues/414
-///     Calculating the `ip` of the frames seems safe, but resolving the frames
-///     sometimes crashes.
 unsafe fn emit_backtrace_by_frames(
     w: &mut impl Write,
     resolve_frames: StacktraceCollection,
-    fault_ip: usize,
+    ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
-    // https://docs.rs/backtrace/latest/backtrace/index.html
     writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
 
-    // Absolute addresses appear to be safer to collect during a crash than debug info.
-    fn emit_absolute_addresses(w: &mut impl Write, frame: &Frame) -> Result<(), EmitterError> {
-        write!(w, "\"ip\": \"{:?}\"", frame.ip())?;
-        if let Some(module_base_address) = frame.module_base_address() {
-            write!(w, ", \"module_base_address\": \"{module_base_address:?}\"",)?;
-        }
-        write!(w, ", \"sp\": \"{:?}\"", frame.sp())?;
-        write!(w, ", \"symbol_address\": \"{:?}\"", frame.symbol_address())?;
-        Ok(())
+    // On macOS, backtrace::trace_unsynchronized fails in forked children because
+    // macOS restricts many APIs after fork-without-exec. Walk the frame pointer
+    // chain directly from the saved ucontext registers instead. The parent's
+    // stack memory is still readable in the forked child.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = resolve_frames;
+        // SAFETY: `ucontext` originates from the signal handler and points to
+        // the kernel-saved register snapshot. The caller guarantees we are in a
+        // crash-handling context where the parent's stack is still readable
+        // (copy-on-write after fork)
+        unsafe { emit_macos_backtrace_from_ucontext(w, ucontext)? };
     }
 
-    let mut ip_found = false;
-    loop {
-        backtrace::trace_unsynchronized(|frame| {
-            // Skip all stack frames until we encounter the determined crash instruction pointer
-            // (fault_ip). These initial frames belong exclusively to the crash tracker and the
-            // backtrace functionality and are therefore not relevant for troubleshooting.
-            let ip = frame.ip();
-            if ip as usize == fault_ip {
-                ip_found = true;
-            }
-            if !ip_found {
-                return true;
-            }
-            if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
-                backtrace::resolve_frame_unsynchronized(frame, |symbol| {
-                    #[allow(clippy::unwrap_used)]
-                    write!(w, "{{").unwrap();
-                    #[allow(clippy::unwrap_used)]
-                    emit_absolute_addresses(w, frame).unwrap();
-                    if let Some(column) = symbol.colno() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"column\": {column}").unwrap();
-                    }
-                    if let Some(file) = symbol.filename() {
-                        // The debug printer for path already wraps it in `"` marks.
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"file\": {file:?}").unwrap();
-                    }
-                    if let Some(function) = symbol.name() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"function\": \"{function}\"").unwrap();
-                    }
-                    if let Some(line) = symbol.lineno() {
-                        #[allow(clippy::unwrap_used)]
-                        write!(w, ", \"line\": {line}").unwrap();
-                    }
-                    #[allow(clippy::unwrap_used)]
-                    writeln!(w, "}}").unwrap();
-                    // Flush eagerly to ensure that each frame gets emitted even if the next one
-                    // fails
-                    #[allow(clippy::unwrap_used)]
-                    w.flush().unwrap();
-                });
-            } else {
-                #[allow(clippy::unwrap_used)]
-                write!(w, "{{").unwrap();
-                #[allow(clippy::unwrap_used)]
-                emit_absolute_addresses(w, frame).unwrap();
-                #[allow(clippy::unwrap_used)]
-                writeln!(w, "}}").unwrap();
-                // Flush eagerly to ensure that each frame gets emitted even if the next one fails
-                #[allow(clippy::unwrap_used)]
-                w.flush().unwrap();
-            }
-            true // keep going to the next frame
-        });
-        if ip_found {
-            break;
-        }
-        // emit anything at all, if the crashing frame is not found for some reason
-        ip_found = true;
-    }
+    // On Linux, use the bundled libunwind. unw_init_local2(cursor, ucontext, 0)
+    // seeds the unwinder from the saved CPU context that the OS captured at the
+    // moment of the crash, so we start already past the signal frame at the
+    // actual faulting instruction. This is essential on musl libc (Alpine
+    // Linux), where the signal trampoline provides no DWARF unwind info and
+    // libgcc's unwinder cannot cross the signal frame boundary.
+    #[cfg(target_os = "linux")]
+    // SAFETY: `ucontext` originates from the signal handler and points to the
+    // kernel-saved register snapshot. The caller guarantees single-threaded,
+    // non-reentrant crash-handler execution
+    unsafe {
+        emit_backtrace_via_libunwind(w, resolve_frames, ucontext)?
+    };
     writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
     w.flush()?;
     Ok(())
 }
 
-pub(crate) fn emit_crashreport(
-    pipe: &mut impl Write,
-    config: &CrashtrackerConfiguration,
-    config_str: &str,
-    metadata_string: &str,
-    sig_info: *const siginfo_t,
+/// Unwind the stack using the bundled libunwind, seeded from the OS-captured
+/// ucontext.
+///
+/// `unw_init_local2(cursor, ucontext, 0)` initialises the cursor from the
+/// register snapshot that the kernel saved at the moment of the fault. The
+/// unwinder therefore starts directly at the faulting instruction; it never
+/// has to walk backward through the signal trampoline frame.
+///
+/// This matters on musl libc (Alpine Linux x86_64): musl's signal trampoline
+/// does not carry DWARF unwind info, so libgcc's unwinder (used by the
+/// `backtrace` crate) cannot cross the frame boundary and gets stuck inside
+/// the signal handler. libunwind's local unwinder has no such limitation.
+///
+/// We choose to use step instead of backtrace2, because we want to eagerly flush
+/// frame by frame
+///
+/// For each frame we emit:
+///   - `ip`  / `sp`                             — always
+///   - `module_base_address` / `symbol_address` — when `dladdr` succeeds
+///   - `function`                               — for `EnabledWithInprocessSymbols`
+#[cfg(target_os = "linux")]
+unsafe fn emit_backtrace_via_libunwind(
+    w: &mut impl Write,
+    resolve_frames: StacktraceCollection,
     ucontext: *const ucontext_t,
-    ppid: i32,
 ) -> Result<(), EmitterError> {
-    emit_metadata(pipe, metadata_string)?;
-    emit_config(pipe, config_str)?;
-    emit_siginfo(pipe, sig_info)?;
-    emit_ucontext(pipe, ucontext)?;
-    emit_procinfo(pipe, ppid)?;
-    emit_counters(pipe)?;
-    emit_spans(pipe)?;
-    consume_and_emit_additional_tags(pipe)?;
-    emit_traces(pipe)?;
+    use libdd_libunwind_sys::{
+        unw_get_proc_name, unw_get_reg, unw_init_local2, unw_step, UnwCursor, UnwWord, UNW_REG_FP,
+        UNW_REG_IP, UNW_REG_SP,
+    };
 
-    #[cfg(target_os = "linux")]
-    emit_proc_self_maps(pipe)?;
-
-    // Getting a backtrace on rust is not guaranteed to be signal safe
-    // https://github.com/rust-lang/backtrace-rs/issues/414
-    // let current_backtrace = backtrace::Backtrace::new();
-    // In fact, if we look into the code here, we see mallocs.
-    // https://doc.rust-lang.org/src/std/backtrace.rs.html#332
-    // Do this last, so even if it crashes, we still get the other info.
-    if config.resolve_frames() != StacktraceCollection::Disabled {
-        let fault_ip = extract_ip(ucontext);
-        unsafe { emit_backtrace_by_frames(pipe, config.resolve_frames(), fault_ip)? };
+    if ucontext.is_null() {
+        return Ok(());
     }
 
-    if is_runtime_callback_registered() {
-        emit_runtime_stack(pipe)?;
+    // SAFETY: UnwCursor is a repr(C) struct of plain integers (`[u64; 127]`);
+    // all-zeros is a valid bit pattern
+    let mut cursor: UnwCursor = unsafe { std::mem::zeroed() };
+
+    // SAFETY: `cursor` is zeroed and is valid for initialization.
+    // `ucontext` was checked non-null above and points to the kernel-saved
+    // register snapshot captured by the signal handler. The const-to-mut cast
+    // is ok: libunwind only reads the context to seed the cursor
+    let ret = unsafe { unw_init_local2(&mut cursor, ucontext as *mut _, 1) };
+    if ret != 0 {
+        return Ok(());
     }
 
-    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
-    pipe.flush()?;
+    const MAX_FRAMES: usize = 512;
+    for _ in 0..MAX_FRAMES {
+        let mut ip: UnwWord = 0;
+        let mut sp: UnwWord = 0;
+        let mut fp: UnwWord = 0;
 
+        // SAFETY: `cursor` was successfully initialized by `unw_init_local2`
+        // and is advanced by `unw_step` at the end of each iteration.
+        // UNW_REG_IP and UNW_REG_SP are valid libunwind register constants
+        if unsafe { unw_get_reg(&mut cursor, UNW_REG_IP, &mut ip) } != 0 || ip == 0 {
+            break;
+        }
+        let _ = unsafe { unw_get_reg(&mut cursor, UNW_REG_SP, &mut sp) };
+        let _ = unsafe { unw_get_reg(&mut cursor, UNW_REG_FP, &mut fp) };
+
+        write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
+        write!(w, ", \"sp\": \"0x{sp:x}\"")?;
+        write!(w, ", \"fp\": \"0x{fp:x}\"")?;
+
+        // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
+        // all-zeros (null pointers, zero integers) is a valid representation
+        let mut dl_info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        // SAFETY: `ip` is a code address obtained from the unwinder.
+        // dladdr only reads ld.so internal tables (no allocation, no locks)
+        // making it safe to call from a signal handler
+        if unsafe { libc::dladdr(ip as *const libc::c_void, &mut dl_info) } != 0 {
+            if !dl_info.dli_fbase.is_null() {
+                write!(w, ", \"module_base_address\": \"{:?}\"", dl_info.dli_fbase)?;
+            }
+            if !dl_info.dli_saddr.is_null() {
+                write!(w, ", \"symbol_address\": \"{:?}\"", dl_info.dli_saddr)?;
+            }
+        }
+
+        if resolve_frames == StacktraceCollection::EnabledWithInprocessSymbols {
+            let mut name_buf: [libc::c_char; 256] = [0; 256];
+            // SAFETY: `cursor` is in a valid state (unw_get_reg succeeded).
+            // `name_buf` is a valid stack-allocated buffer with known length.
+            if unsafe {
+                unw_get_proc_name(
+                    &mut cursor,
+                    name_buf.as_mut_ptr(),
+                    name_buf.len(),
+                    std::ptr::null_mut(),
+                )
+            } == 0
+            {
+                // SAFETY: unw_get_proc_name returned 0 (success), guaranteeing
+                // a NUL-terminated string was written into name_buf.
+                let name = unsafe { std::ffi::CStr::from_ptr(name_buf.as_ptr()) };
+                if let Ok(s) = name.to_str() {
+                    write!(w, ", \"function\": \"{s}\"")?;
+                }
+            }
+        }
+
+        writeln!(w, "}}")?;
+        w.flush()?;
+
+        // SAFETY: `cursor` is in a valid state; unw_step advances to the next
+        // frame or returns <= 0 when no more frames remain.
+        if unsafe { unw_step(&mut cursor) } <= 0 {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Walk the frame pointer chain from the ucontext's saved registers.
+///
+/// After fork(), the child process has a copy-on-write view of the parent's
+/// stack memory, so the frame pointer chain from the crashed thread is still
+/// readable. This avoids depending on `backtrace::trace_unsynchronized` which
+/// uses macOS APIs that don't work in forked-but-not-exec'd children.
+///
+/// For each IP we call `dladdr` to resolve the symbol name, symbol address,
+/// and containing shared-object path. `dladdr` is safe here because it only
+/// reads dyld's internal data structures (no allocation, no Mach IPC).
+#[cfg(target_os = "macos")]
+unsafe fn emit_macos_backtrace_from_ucontext(
+    w: &mut impl Write,
+    ucontext: *const ucontext_t,
+) -> Result<(), EmitterError> {
+    if ucontext.is_null() {
+        return Ok(());
+    }
+    let mcontext = unsafe { (*ucontext).uc_mcontext };
+    if mcontext.is_null() {
+        return Ok(());
+    }
+
+    // SAFETY: pthread_self and pthread_get_stack{addr,size}_np are
+    // async-signal-safe on macOS and always succeed for the calling thread.
+    let thread = unsafe { libc::pthread_self() };
+    let stack_top = unsafe { libc::pthread_get_stackaddr_np(thread) } as usize;
+    let stack_size = unsafe { libc::pthread_get_stacksize_np(thread) };
+    let stack_bottom = stack_top.saturating_sub(stack_size);
+
+    let in_stack_bounds = |addr: usize, len: usize| -> bool {
+        let end = addr.saturating_add(len);
+        addr >= stack_bottom && end <= stack_top
+    };
+
+    // SAFETY: `mcontext` was checked non-null above and is the kernel-provided
+    // machine context from the signal handler's ucontext.
+    let ss = unsafe { &(*mcontext).__ss };
+    #[cfg(target_arch = "aarch64")]
+    let (pc, mut fp) = (ss.__pc as usize, ss.__fp as usize);
+    #[cfg(target_arch = "x86_64")]
+    let (pc, mut fp) = (ss.__rip as usize, ss.__rbp as usize);
+
+    // SAFETY: `pc` is a valid code address from the kernel-saved register state.
+    unsafe { emit_frame_with_dladdr(w, pc)? };
+
+    const MAX_FRAMES: usize = 512;
+    for _ in 0..MAX_FRAMES {
+        if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
+            break;
+        }
+        if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
+            break;
+        }
+        // SAFETY: `fp` is non-zero, properly aligned, and the two-word frame
+        // record [saved_fp, return_addr] lies within the validated thread stack
+        // bounds (checked by in_stack_bounds above). After fork(), the child
+        // has a copy-on-write view of the parent's stack memory.
+        let next_fp = unsafe { *(fp as *const usize) };
+        let return_addr = unsafe { *((fp + std::mem::size_of::<usize>()) as *const usize) };
+        if return_addr == 0 {
+            break;
+        }
+        // SAFETY: `return_addr` is a code address read from a validated
+        // in-bounds frame record on the thread stack.
+        unsafe { emit_frame_with_dladdr(w, return_addr)? };
+        if next_fp <= fp {
+            break;
+        }
+        fp = next_fp;
+    }
+
+    Ok(())
+}
+
+/// Emit a single stack frame, enriched with `dladdr` symbol information.
+#[cfg(target_os = "macos")]
+unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), EmitterError> {
+    // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
+    // all-zeros (null pointers, zero integers) is a valid representation.
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    // SAFETY: dladdr only reads dyld's internal data structures (no
+    // allocation, no Mach IPC) making it async-signal-safe. `ip` is a code
+    // address from the unwound stack or kernel-saved registers.
+    let resolved = unsafe { libc::dladdr(ip as *const libc::c_void, &mut info) } != 0;
+
+    write!(w, "{{\"ip\": \"0x{ip:x}\"")?;
+
+    if resolved {
+        if !info.dli_fbase.is_null() {
+            write!(w, ", \"module_base_address\": \"{:?}\"", info.dli_fbase)?;
+        }
+        if !info.dli_saddr.is_null() {
+            write!(w, ", \"symbol_address\": \"{:?}\"", info.dli_saddr)?;
+        }
+        if !info.dli_sname.is_null() {
+            // SAFETY: dladdr returned non-zero and dli_sname is non-null, so
+            // it points to a valid NUL-terminated C string in the shared
+            // library's string table (static lifetime, read-only).
+            let name = unsafe { std::ffi::CStr::from_ptr(info.dli_sname) };
+            if let Ok(s) = name.to_str() {
+                write!(w, ", \"function\": \"{s}\"")?;
+            }
+        }
+    }
+
+    writeln!(w, "}}")?;
+    w.flush()?;
+    Ok(())
+}
+
+/// SAFETY:
+///    This function is not safe to call from a signal handler.
+///    Although `serde_json::to_writer` does not technically allocate memory
+///    itself, it takes in `StackTrace` which is allocated and is only intended
+///    to be used in a non-signal-handler context
+unsafe fn emit_whole_stacktrace(
+    w: &mut impl Write,
+    stacktrace: StackTrace,
+) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE}")?;
+    let _ = serde_json::to_writer(&mut *w, &stacktrace);
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
+    w.flush()?;
     Ok(())
 }
 
@@ -179,6 +424,15 @@ fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError>
     writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
     writeln!(w, "{config_str}")?;
     writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
+    w.flush()?;
+    Ok(())
+}
+
+fn emit_kind<W: std::io::Write>(w: &mut W, kind: &ErrorKind) -> Result<(), EmitterError> {
+    writeln!(w, "{DD_CRASHTRACK_BEGIN_KIND}")?;
+    let _ = serde_json::to_writer(&mut *w, kind);
+    writeln!(w)?;
+    writeln!(w, "{DD_CRASHTRACK_END_KIND}")?;
     w.flush()?;
     Ok(())
 }
@@ -191,9 +445,22 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterEr
     Ok(())
 }
 
-fn emit_procinfo(w: &mut impl Write, pid: i32) -> Result<(), EmitterError> {
+fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
+    if !message_ptr.is_null() {
+        let message = unsafe { &*message_ptr };
+        if !message.trim().is_empty() {
+            writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
+            writeln!(w, "{message}")?;
+            writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
+            w.flush()?;
+        }
+    }
+    Ok(())
+}
+
+fn emit_procinfo(w: &mut impl Write, pid: i32, tid: libc::pid_t) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    writeln!(w, "{{\"pid\": {pid} }}")?;
+    writeln!(w, "{{\"pid\": {pid}, \"tid\": {tid} }}")?;
     writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
     w.flush()?;
     Ok(())
@@ -214,7 +481,48 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     }
     writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-    writeln!(w, "{:?}", unsafe { *ucontext })?;
+    let uc = unsafe { &*ucontext };
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let gregs = &uc.uc_mcontext.gregs;
+        write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
+        write!(w, "\"rip\": \"0x{:016x}\"", gregs[libc::REG_RIP as usize])?;
+        write!(w, ", \"rsp\": \"0x{:016x}\"", gregs[libc::REG_RSP as usize])?;
+        write!(w, ", \"rbp\": \"0x{:016x}\"", gregs[libc::REG_RBP as usize])?;
+        write!(w, ", \"rax\": \"0x{:016x}\"", gregs[libc::REG_RAX as usize])?;
+        write!(w, ", \"rbx\": \"0x{:016x}\"", gregs[libc::REG_RBX as usize])?;
+        write!(w, ", \"rcx\": \"0x{:016x}\"", gregs[libc::REG_RCX as usize])?;
+        write!(w, ", \"rdx\": \"0x{:016x}\"", gregs[libc::REG_RDX as usize])?;
+        write!(w, ", \"rsi\": \"0x{:016x}\"", gregs[libc::REG_RSI as usize])?;
+        write!(w, ", \"rdi\": \"0x{:016x}\"", gregs[libc::REG_RDI as usize])?;
+        write!(w, ", \"r8\": \"0x{:016x}\"", gregs[libc::REG_R8 as usize])?;
+        write!(w, ", \"r9\": \"0x{:016x}\"", gregs[libc::REG_R9 as usize])?;
+        write!(w, ", \"r10\": \"0x{:016x}\"", gregs[libc::REG_R10 as usize])?;
+        write!(w, ", \"r11\": \"0x{:016x}\"", gregs[libc::REG_R11 as usize])?;
+        write!(w, ", \"r12\": \"0x{:016x}\"", gregs[libc::REG_R12 as usize])?;
+        write!(w, ", \"r13\": \"0x{:016x}\"", gregs[libc::REG_R13 as usize])?;
+        write!(w, ", \"r14\": \"0x{:016x}\"", gregs[libc::REG_R14 as usize])?;
+        write!(w, ", \"r15\": \"0x{:016x}\"", gregs[libc::REG_R15 as usize])?;
+        // Preserve the full ucontext as a raw Debug string so that FPU state,
+        // signal mask, and alternate-stack info are not lost.
+        write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
+        writeln!(w, "}}")?;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        let mc = &uc.uc_mcontext;
+        write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
+        write!(w, "\"pc\": \"0x{:016x}\"", mc.pc)?;
+        write!(w, ", \"sp\": \"0x{:016x}\"", mc.sp)?;
+        for i in 0..31 {
+            write!(w, ", \"x{}\": \"0x{:016x}\"", i, mc.regs[i])?;
+        }
+        write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
+        writeln!(w, "}}")?;
+    }
+
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
     w.flush()?;
     Ok(())
@@ -236,6 +544,9 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
 ///     callbacks and writing to the provided stream. The runtime callback itself
 ///     must be signal safe.
 fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
+    // SAFETY: Reads from a global atomic pointer set during crashtracker
+    // initialization. The crash handler's non-reentrant execution model
+    // guarantees no concurrent modification.
     let callback = unsafe { get_registered_callback() };
 
     let callback = match callback {
@@ -251,6 +562,9 @@ fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
 
 fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
+    // SAFETY: The runtime callback was registered during initialization and
+    // must be signal-safe per its API contract. The crash handler's
+    // non-reentrant model ensures no concurrent invocation.
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
     w.flush()?;
@@ -259,6 +573,8 @@ fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> 
 
 fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), EmitterError> {
     writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING}")?;
+    // SAFETY: Same contract as emit_runtime_stack_by_frames — the callback
+    // was registered at init time and the crash handler runs non-reentrantly.
     unsafe { invoke_runtime_callback_with_writer(w)? };
     writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
     w.flush()?;
@@ -272,15 +588,64 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     }
     // On MacOS, the actual machine context is behind a second pointer.
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-    let mcontext = unsafe { *ucontext }.uc_mcontext;
+    let uc = unsafe { &*ucontext };
+    let mcontext = uc.uc_mcontext;
     writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
-    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-    write!(w, "{:?}", unsafe { *ucontext })?;
-    if !mcontext.is_null() {
-        // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-        write!(w, ", {:?}", unsafe { *mcontext })?;
+
+    if mcontext.is_null() {
+        // Fall back to raw Debug output if mcontext pointer is null.
+        write!(w, "{{\"arch\": \"")?;
+        #[cfg(target_arch = "x86_64")]
+        write!(w, "x86_64")?;
+        #[cfg(target_arch = "aarch64")]
+        write!(w, "aarch64")?;
+        write!(w, "\", \"registers\": {{}}")?;
+        write!(w, ", \"raw\": \"{:?}\"", uc)?;
+        writeln!(w, "}}")?;
+    } else {
+        // SAFETY: mcontext is non-null, provided by the signal handler.
+        let mc = unsafe { &*mcontext };
+        let ss = &mc.__ss;
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
+            write!(w, "\"rip\": \"0x{:016x}\"", ss.__rip)?;
+            write!(w, ", \"rsp\": \"0x{:016x}\"", ss.__rsp)?;
+            write!(w, ", \"rbp\": \"0x{:016x}\"", ss.__rbp)?;
+            write!(w, ", \"rax\": \"0x{:016x}\"", ss.__rax)?;
+            write!(w, ", \"rbx\": \"0x{:016x}\"", ss.__rbx)?;
+            write!(w, ", \"rcx\": \"0x{:016x}\"", ss.__rcx)?;
+            write!(w, ", \"rdx\": \"0x{:016x}\"", ss.__rdx)?;
+            write!(w, ", \"rsi\": \"0x{:016x}\"", ss.__rsi)?;
+            write!(w, ", \"rdi\": \"0x{:016x}\"", ss.__rdi)?;
+            write!(w, ", \"r8\": \"0x{:016x}\"", ss.__r8)?;
+            write!(w, ", \"r9\": \"0x{:016x}\"", ss.__r9)?;
+            write!(w, ", \"r10\": \"0x{:016x}\"", ss.__r10)?;
+            write!(w, ", \"r11\": \"0x{:016x}\"", ss.__r11)?;
+            write!(w, ", \"r12\": \"0x{:016x}\"", ss.__r12)?;
+            write!(w, ", \"r13\": \"0x{:016x}\"", ss.__r13)?;
+            write!(w, ", \"r14\": \"0x{:016x}\"", ss.__r14)?;
+            write!(w, ", \"r15\": \"0x{:016x}\"", ss.__r15)?;
+            write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
+            writeln!(w, "}}")?;
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
+            write!(w, "\"pc\": \"0x{:016x}\"", ss.__pc)?;
+            write!(w, ", \"sp\": \"0x{:016x}\"", ss.__sp)?;
+            write!(w, ", \"fp\": \"0x{:016x}\"", ss.__fp)?;
+            write!(w, ", \"lr\": \"0x{:016x}\"", ss.__lr)?;
+            for i in 0..29 {
+                write!(w, ", \"x{}\": \"0x{:016x}\"", i, ss.__x[i])?;
+            }
+            write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
+            writeln!(w, "}}")?;
+        }
     }
-    writeln!(w)?;
+
     writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
     w.flush()?;
     Ok(())
@@ -291,6 +656,8 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), Em
         return Err(EmitterError::NullSiginfo);
     }
 
+    // SAFETY: `sig_info` was checked non-null above and points to the
+    // kernel-provided siginfo_t from the signal handler.
     let si_signo = unsafe { (*sig_info).si_signo };
     let si_signo_human_readable: SignalNames = si_signo.into();
 
@@ -299,11 +666,14 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), Em
     // SIGILL, SIGFPE, SIGSEGV, SIGBUS, and SIGTRAP fill in si_addr with the address of the fault.
     let si_addr: Option<usize> = match si_signo {
         libc::SIGILL | libc::SIGFPE | libc::SIGSEGV | libc::SIGBUS | libc::SIGTRAP => {
+            // SAFETY: for these signal types, si_addr is defined and valid
+            // per sigaction(2). `sig_info` was checked non-null above.
             Some(unsafe { (*sig_info).si_addr() as usize })
         }
         _ => None,
     };
 
+    // SAFETY: `sig_info` was checked non-null and points to valid kernel data.
     let si_code = unsafe { (*sig_info).si_code };
     let si_code_human_readable = translate_si_code(si_signo, si_code);
 
@@ -373,86 +743,425 @@ fn emit_text_file(w: &mut impl Write, path: &str) -> Result<(), EmitterError> {
     Ok(())
 }
 
-fn extract_ip(ucontext: *const ucontext_t) -> usize {
-    unsafe {
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-        return (*(*ucontext).uc_mcontext).__ss.__rip as usize;
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        return (*(*ucontext).uc_mcontext).__ss.__pc as usize;
-
-        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-        return (*ucontext).uc_mcontext.gregs[libc::REG_RIP as usize] as usize;
-        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-        return (*ucontext).uc_mcontext.pc as usize;
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::StackFrame;
+
     use super::*;
     use std::str;
 
-    #[inline(never)]
-    fn inner_test_emit_backtrace_with_symbols(collection: StacktraceCollection) -> Vec<u8> {
-        let mut ip_of_test_fn = 0;
-        let mut skip = 3;
-        unsafe {
-            backtrace::trace_unsynchronized(|frame| {
-                ip_of_test_fn = frame.ip() as usize;
-                skip -= 1;
-                skip > 0
-            })
-        };
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_complete_stacktrace() {
+        // new_incomplete() starts with incomplete: true, which push_frame requires
+        let mut stacktrace = StackTrace::new_incomplete();
+        let mut stackframe1 = StackFrame::new();
+        stackframe1.with_ip(1234);
+        stackframe1.with_function("test_function1".to_string());
+        stackframe1.with_file("test_file1".to_string());
+
+        let mut stackframe2 = StackFrame::new();
+        stackframe2.with_ip(5678);
+        stackframe2.with_function("test_function2".to_string());
+        stackframe2.with_file("test_file2".to_string());
+
+        stacktrace.push_frame(stackframe1, true).unwrap();
+        stacktrace.push_frame(stackframe2, true).unwrap();
+
+        stacktrace.set_complete().unwrap();
+
+        let mut buf = Vec::new();
+        unsafe { emit_whole_stacktrace(&mut buf, stacktrace).expect("to work ;-)") };
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains("\"ip\":\"0x4d2\""));
+        assert!(out.contains("\"function\":\"test_function1\""));
+        assert!(out.contains("\"file\":\"test_file1\""));
+        assert!(out.contains("\"ip\":\"0x162e\""));
+        assert!(out.contains("\"function\":\"test_function2\""));
+        assert!(out.contains("\"file\":\"test_file2\""));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_nullptr() {
+        let mut buf = Vec::new();
+        emit_message(&mut buf, std::ptr::null_mut()).expect("to work ;-)");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message() {
+        let message = "test message";
+        let message_ptr = Box::into_raw(Box::new(message.to_string()));
+        let mut buf = Vec::new();
+        emit_message(&mut buf, message_ptr).expect("to work ;-)");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(out.contains("BEGIN_MESSAGE"));
+        assert!(out.contains("END_MESSAGE"));
+        assert!(out.contains(message));
+        // Clean up the allocated String
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_empty_string() {
+        let empty_message = String::new();
+        let message_ptr = Box::into_raw(Box::new(empty_message));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+
+        // Empty messages should not emit anything
+        assert!(buf.is_empty());
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_whitespace_only() {
+        // Whitespace-only messages should not be emitted
+        let whitespace_message = "   \n\t  ".to_string();
+        let message_ptr = Box::into_raw(Box::new(whitespace_message));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+
+        // Whitespace-only messages should not emit anything
+        assert!(buf.is_empty());
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_with_leading_trailing_whitespace() {
+        // Messages with content and whitespace should be emitted (with the whitespace)
+        let message_with_whitespace = "  error message  ".to_string();
+        let message_ptr = Box::into_raw(Box::new(message_with_whitespace.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        // Should emit markers and preserve whitespace in content
+        assert!(out.contains("BEGIN_MESSAGE"));
+        assert!(out.contains("END_MESSAGE"));
+        assert!(out.contains(&message_with_whitespace));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_with_newlines() {
+        let message_with_newlines = "line1\nline2\nline3".to_string();
+        let message_ptr = Box::into_raw(Box::new(message_with_newlines));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains("line1"));
+        assert!(out.contains("line2"));
+        assert!(out.contains("line3"));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_unicode() {
+        let unicode_message = "Hello 世界 🦀 Rust!".to_string();
+        let message_ptr = Box::into_raw(Box::new(unicode_message.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains(&unicode_message));
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_procinfo() {
+        let pid = unsafe { libc::getpid() };
+        let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
+        let mut buf = Vec::new();
+
+        emit_procinfo(&mut buf, pid, tid).expect("procinfo to emit");
+        let proc_info_block = str::from_utf8(&buf).expect("to be valid UTF8");
+        assert!(proc_info_block.contains(DD_CRASHTRACK_BEGIN_PROCINFO));
+        assert!(proc_info_block.contains(DD_CRASHTRACK_END_PROCINFO));
+
+        assert!(proc_info_block.contains(&format!("\"pid\": {pid}")));
+        assert!(proc_info_block.contains(&format!("\"tid\": {tid}")));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_very_long() {
+        let long_message = "x".repeat(100000); // 100KB
+        let message_ptr = Box::into_raw(Box::new(long_message.clone()));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        assert!(out.contains(&long_message[..100])); // At least first 100 chars
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    // We only test edge cases specific to this wrapper function here.
+    // The core unwinding logic is tested in the libunwind crate.
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_via_libunwind_null_ucontext() {
         let mut buf = Vec::new();
         unsafe {
-            emit_backtrace_by_frames(&mut buf, collection, ip_of_test_fn).expect("to work ;-)");
+            emit_backtrace_via_libunwind(
+                &mut buf,
+                StacktraceCollection::WithoutSymbols,
+                std::ptr::null(),
+            )
+            .expect("should handle null ucontext gracefully");
         }
-        buf
+        // With null ucontext, function should return early and emit nothing
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_backtrace_via_libunwind_unw_init_failure() {
+        // Test that when unw_init_local2 fails (e.g., with invalid context),
+        // the function returns Ok(()) gracefully without writing anything
+        let context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        let mut buf = Vec::new();
+
+        unsafe {
+            emit_backtrace_via_libunwind(&mut buf, StacktraceCollection::WithoutSymbols, &context)
+                .expect("should handle unw_init_local2 failure gracefully");
+        }
+
+        // When unw_init_local2 fails, function should return early without error
+        // Buffer should be empty since no frames were written
+        assert!(
+            buf.is_empty(),
+            "Function should return early on unw_init_local2 failure"
+        );
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_emit_backtrace_disabled() {
-        let buf = inner_test_emit_backtrace_with_symbols(StacktraceCollection::Disabled);
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains("BEGIN_STACKTRACE"));
-        assert!(out.contains("END_STACKTRACE"));
-        assert!(out.contains("\"ip\":"));
-        assert!(
-            !out.contains("\"column\":"),
-            "'column' key must not be emitted"
-        );
-        assert!(!out.contains("\"file\":"), "'file' key must not be emitted");
-        assert!(
-            !out.contains("\"function\":"),
-            "'function' key must not be emitted"
-        );
-        assert!(!out.contains("\"line\":"), "'line' key must not be emitted");
+    fn test_emit_ucontext_null_pointer() {
+        let mut buf = Vec::new();
+        let result = emit_ucontext(&mut buf, std::ptr::null());
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), EmitterError::NullUcontext));
+        assert!(buf.is_empty());
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     #[cfg_attr(miri, ignore)]
-    fn test_emit_backtrace_with_symbols() {
-        let buf = inner_test_emit_backtrace_with_symbols(
-            StacktraceCollection::EnabledWithInprocessSymbols,
-        );
-        // retrieve stack pointer for this function
-        let out = str::from_utf8(&buf).expect("to be valid UTF8");
-        assert!(out.contains("BEGIN_STACKTRACE"));
-        assert!(out.contains("END_STACKTRACE"));
-        // basic structure assertions
-        assert!(out.contains("\"column\":"), "'column' key missing");
-        assert!(out.contains("\"file\":"), "'file' key missing");
-        assert!(out.contains("\"function\":"), "'function' key missing");
-        assert!(out.contains("\"line\":"), "'line' key missing");
-        // filter assertions
-        assert!(
-            !out.contains("emitters::emit_backtrace_by_frames"),
-            "crashtracker itself must be filtered, found 'backtrace::backtrace::libunwind'"
-        );
-        assert!(
-            !out.contains("backtrace::backtrace"),
-            "crashtracker itself must be filtered away, found 'backtrace::backtrace'"
-        );
+    fn test_emit_ucontext_linux_valid() {
+        // Create a minimal valid ucontext_t with zeroed register values
+        let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+
+        // Set up some test register values
+        #[cfg(target_arch = "x86_64")]
+        {
+            // Set some register values for testing
+            context.uc_mcontext.gregs[libc::REG_RIP as usize] = 0x12345678;
+            context.uc_mcontext.gregs[libc::REG_RSP as usize] = 0x87654321;
+            context.uc_mcontext.gregs[libc::REG_RBP as usize] = 0xABCDEF00;
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            // Set some register values for testing
+            context.uc_mcontext.pc = 0x12345678;
+            context.uc_mcontext.sp = 0x87654321;
+            context.uc_mcontext.regs[0] = 0xABCDEF00;
+        }
+
+        let mut buf = Vec::new();
+        emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed");
+
+        let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
+
+        // Check that proper markers are present
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT));
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
+
+        // Check architecture is correct
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(output.contains("\"arch\": \"x86_64\""));
+            assert!(output.contains("\"registers\""));
+
+            // Check specific registers are present
+            assert!(output.contains("\"rip\""));
+            assert!(output.contains("\"rsp\""));
+            assert!(output.contains("\"rbp\""));
+            assert!(output.contains("\"rax\""));
+
+            // Check our test values are formatted correctly
+            assert!(output.contains("0x0000000012345678")); // rip
+            assert!(output.contains("0x0000000087654321")); // rsp
+            assert!(output.contains("0x00000000abcdef00")); // rbp
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert!(output.contains("\"arch\": \"aarch64\""));
+            assert!(output.contains("\"registers\""));
+
+            // Check specific registers are present
+            assert!(output.contains("\"pc\""));
+            assert!(output.contains("\"sp\""));
+            assert!(output.contains("\"x0\""));
+
+            // Check our test values are formatted correctly
+            assert!(output.contains("0x0000000012345678")); // pc
+            assert!(output.contains("0x0000000087654321")); // sp
+            assert!(output.contains("0x00000000abcdef00")); // x0
+        }
+
+        // Check that raw debug output is included
+        assert!(output.contains("\"raw\""));
+
+        // Verify it's valid JSON between the markers
+        let start_marker = crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT;
+        let end_marker = crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT;
+
+        let start_pos = output.find(start_marker).unwrap() + start_marker.len() + 1; // +1 for newline
+        let end_pos = output.find(end_marker).unwrap();
+        let json_part = output[start_pos..end_pos].trim();
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(json_part).expect("JSON between markers should be valid");
+
+        // Verify the JSON structure
+        assert!(parsed.is_object());
+        assert!(parsed["arch"].is_string());
+        assert!(parsed["registers"].is_object());
+        assert!(parsed["raw"].is_string());
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_ucontext_macos_valid() {
+        use libc::__darwin_ucontext;
+        // Create a minimal valid ucontext_t for macOS
+        let mut context: __darwin_ucontext = unsafe { std::mem::zeroed() };
+
+        // On macOS, we need to allocate mcontext and set up the pointer
+        let mut mcontext: libc::__darwin_mcontext64 = unsafe { std::mem::zeroed() };
+        context.uc_mcontext = &mut mcontext as *mut libc::__darwin_mcontext64;
+
+        // Set up some test register values
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe {
+                (*context.uc_mcontext).__ss.__rip = 0x12345678;
+                (*context.uc_mcontext).__ss.__rsp = 0x87654321;
+                (*context.uc_mcontext).__ss.__rbp = 0xABCDEF00;
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            unsafe {
+                (*context.uc_mcontext).__ss.__pc = 0x12345678;
+                (*context.uc_mcontext).__ss.__sp = 0x87654321;
+                (*context.uc_mcontext).__ss.__fp = 0xABCDEF00;
+            }
+        }
+
+        let mut buf = Vec::new();
+        emit_ucontext(&mut buf, &context as *const __darwin_ucontext)
+            .expect("emit_ucontext should succeed");
+
+        let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
+
+        // Check that proper markers are present
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT));
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
+
+        // Check architecture is correct
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(output.contains("\"arch\": \"x86_64\""));
+            assert!(output.contains("\"registers\""));
+
+            // Check specific registers are present
+            assert!(output.contains("\"rip\""));
+            assert!(output.contains("\"rsp\""));
+            assert!(output.contains("\"rbp\""));
+
+            // Check our test values are formatted correctly
+            assert!(output.contains("0x0000000012345678")); // rip
+            assert!(output.contains("0x0000000087654321")); // rsp
+            assert!(output.contains("0x00000000abcdef00")); // rbp
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            assert!(output.contains("\"arch\": \"aarch64\""));
+            assert!(output.contains("\"registers\""));
+
+            // Check specific registers are present
+            assert!(output.contains("\"pc\""));
+            assert!(output.contains("\"sp\""));
+            assert!(output.contains("\"fp\""));
+
+            // Check our test values are formatted correctly
+            assert!(output.contains("0x0000000012345678")); // pc
+            assert!(output.contains("0x0000000087654321")); // sp
+            assert!(output.contains("0x00000000abcdef00")); // fp
+        }
+
+        // Check that raw debug output is included
+        assert!(output.contains("\"raw\""));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_ucontext_macos_null_mcontext() {
+        // Test the fallback case when mcontext is null
+        let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        context.uc_mcontext = std::ptr::null_mut(); // Explicitly set to null
+
+        let mut buf = Vec::new();
+        emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed with null mcontext");
+
+        let output = str::from_utf8(&buf).expect("output should be valid UTF-8");
+
+        // Check that proper markers are present
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_BEGIN_UCONTEXT));
+        assert!(output.contains(crate::shared::constants::DD_CRASHTRACK_END_UCONTEXT));
+
+        // Should contain fallback information
+        assert!(output.contains("\"registers\": {}"));
+        assert!(output.contains("\"raw\""));
+
+        #[cfg(target_arch = "x86_64")]
+        assert!(output.contains("\"arch\": \"x86_64\""));
+
+        #[cfg(target_arch = "aarch64")]
+        assert!(output.contains("\"arch\": \"aarch64\""));
     }
 }

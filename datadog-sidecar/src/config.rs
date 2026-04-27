@@ -36,6 +36,8 @@ const ENV_SIDECAR_APPSEC_LOCK_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOCK_FILE_PA
 const ENV_SIDECAR_APPSEC_LOG_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOG_FILE_PATH";
 const ENV_SIDECAR_APPSEC_LOG_LEVEL: &str = "_DD_SIDECAR_APPSEC_LOG_LEVEL";
 
+const ENV_SIDECAR_PIPE_BUFFER_SIZE: &str = "_DD_SIDECAR_PIPE_BUFFER_SIZE";
+
 #[derive(Debug, Copy, Clone, Default)]
 pub enum IpcMode {
     #[default]
@@ -84,6 +86,9 @@ pub struct Config {
     pub crashtracker_endpoint: Option<Endpoint>,
     pub appsec_config: Option<AppSecConfig>,
     pub max_memory: usize,
+    /// Socket/pipe buffer size for IPC connections (bytes).
+    /// 0 means use the platform default.
+    pub pipe_buffer_size: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -118,14 +123,19 @@ impl Config {
         if let Ok(json) = serde_json::to_string(&self.crashtracker_endpoint) {
             res.insert(ENV_SIDECAR_CRASHTRACKER_ENDPOINT, json.into());
         }
-        if self.appsec_config.is_some() {
-            #[allow(clippy::unwrap_used)]
-            res.extend(self.appsec_config.as_ref().unwrap().to_env());
+        if let Some(appsec) = self.appsec_config.as_ref() {
+            res.extend(appsec.to_env());
         }
         if self.max_memory != 0 {
             res.insert(
                 ENV_SIDECAR_WATCHDOG_MAX_MEMORY,
                 format!("{}", self.max_memory).into(),
+            );
+        }
+        if self.pipe_buffer_size != 0 {
+            res.insert(
+                ENV_SIDECAR_PIPE_BUFFER_SIZE,
+                format!("{}", self.pipe_buffer_size).into(),
             );
         }
         res
@@ -223,6 +233,13 @@ impl FromEnv {
             .unwrap_or(0)
     }
 
+    fn pipe_buffer_size() -> usize {
+        std::env::var(ENV_SIDECAR_PIPE_BUFFER_SIZE)
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(0)
+    }
+
     fn crashtracker_endpoint() -> Option<Endpoint> {
         std::env::var(ENV_SIDECAR_CRASHTRACKER_ENDPOINT)
             .ok()
@@ -241,6 +258,7 @@ impl FromEnv {
             crashtracker_endpoint: Self::crashtracker_endpoint(),
             appsec_config: Self::appsec_config(),
             max_memory: Self::max_memory(),
+            pipe_buffer_size: Self::pipe_buffer_size(),
         }
     }
 
@@ -278,7 +296,7 @@ pub fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
 
         #[allow(clippy::unwrap_used)]
         Endpoint {
-            url: hyper::Uri::from_parts(parts).unwrap(),
+            url: http::Uri::from_parts(parts).unwrap(),
             api_key: Some(api_key.clone()),
             test_token: endpoint.test_token.clone(),
             ..*endpoint

@@ -3,7 +3,7 @@ on:
     pull_request:
     push:
       branches:
-        - main
+        - 'mq-working-branch-*'
 jobs:
     allchecks:
         runs-on: ubuntu-latest
@@ -16,4 +16,4 @@ jobs:
                 delay: '3'
                 retries: '45'
                 polling_interval: '1'
-                checks_exclude: 'devflow/merge'
+                checks_exclude: 'devflow/merge,dd-gitlab/default-pipeline,Rustfmt Auto / rustfmt'

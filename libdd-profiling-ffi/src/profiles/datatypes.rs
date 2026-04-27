@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
+use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileError, ProfileStatus};
 use anyhow::Context;
 use function_name::named;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use libdd_profiling::api::{self, ManagedStringId};
-use libdd_profiling::internal;
+use libdd_profiling::profiles::datatypes::{ProfilesDictionary, StringId2};
+use libdd_profiling::{api2, internal};
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;
@@ -94,27 +96,14 @@ impl From<anyhow::Result<internal::EncodedProfile>> for SerializeResult {
     }
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct ValueType<'a> {
-    pub type_: CharSlice<'a>,
-    pub unit: CharSlice<'a>,
-}
+/// Sample types supported by Datadog profilers.
+/// These correspond to the ValueType entries used in pprof profiles.
+/// Re-exported from libdd_profiling::api for FFI use.
+pub use api::SampleType;
 
-impl<'a> ValueType<'a> {
-    pub fn new(type_: &'a str, unit: &'a str) -> Self {
-        Self {
-            type_: type_.into(),
-            unit: unit.into(),
-        }
-    }
-}
-
-#[repr(C)]
-pub struct Period<'a> {
-    pub type_: ValueType<'a>,
-    pub value: i64,
-}
+/// Re-export Period from the API for consistency.
+/// The FFI Period is identical to the API Period.
+pub use api::Period;
 
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
@@ -215,6 +204,44 @@ pub struct Sample<'a> {
     pub labels: Slice<'a, Label<'a>>,
 }
 
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C)]
+pub struct Label2<'a> {
+    pub key: StringId2,
+
+    /// At most one of `.str` and `.num` should not be empty.
+    pub str: CharSlice<'a>,
+    pub num: i64,
+
+    /// Should only be present when num is present.
+    /// Specifies the units of num.
+    /// Use arbitrary string (for example, "requests") as a custom count unit.
+    /// If no unit is specified, consumer may apply heuristic to deduce the unit.
+    /// Consumers may also  interpret units like "bytes" and "kilobytes" as memory
+    /// units and units like "seconds" and "nanoseconds" as time units,
+    /// and apply appropriate unit conversions to these.
+    pub num_unit: CharSlice<'a>,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct Sample2<'a> {
+    /// The leaf is at locations[0].
+    pub locations: Slice<'a, api2::Location2>,
+
+    /// The type and unit of each value is defined by the corresponding
+    /// entry in Profile.sample_type. All samples must have the same
+    /// number of values, the same as the length of Profile.sample_type.
+    /// When aggregating multiple samples into a single sample, the
+    /// result has a list of values that is the element-wise sum of the
+    /// lists of the originals.
+    pub values: Slice<'a, i64>,
+
+    /// label includes additional context for this sample. It can include
+    /// things like a thread id, allocation size, etc
+    pub labels: Slice<'a, Label2<'a>>,
+}
+
 impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
     type Error = Utf8Error;
 
@@ -239,24 +266,6 @@ impl<'a> From<&'a Mapping<'a>> for api::StringIdMapping {
             file_offset: mapping.file_offset,
             filename: mapping.filename_id,
             build_id: mapping.build_id_id,
-        }
-    }
-}
-
-impl<'a> From<&'a ValueType<'a>> for api::ValueType<'a> {
-    fn from(vt: &'a ValueType<'a>) -> Self {
-        Self::new(
-            vt.type_.try_to_utf8().unwrap_or(""),
-            vt.unit.try_to_utf8().unwrap_or(""),
-        )
-    }
-}
-
-impl<'a> From<&'a Period<'a>> for api::Period<'a> {
-    fn from(period: &'a Period<'a>) -> Self {
-        Self {
-            r#type: api::ValueType::from(&period.type_),
-            value: period.value,
         }
     }
 }
@@ -383,7 +392,7 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 /// `ddog_prof_Profile_drop` when you are done with the profile.
 ///
 /// # Arguments
-/// * `sample_types`
+/// * `sample_types` - A slice of SampleType enums
 /// * `period` - Optional period of the profile. Passing None/null translates to zero values.
 /// * `start_time` - Optional time the profile started at. Passing None/null will use the current
 ///   time.
@@ -394,10 +403,65 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
 #[no_mangle]
 #[must_use]
 pub unsafe extern "C" fn ddog_prof_Profile_new(
-    sample_types: Slice<ValueType>,
+    sample_types: Slice<SampleType>,
     period: Option<&Period>,
 ) -> ProfileNewResult {
     profile_new(sample_types, period, None)
+}
+
+/// Create a new profile with the given sample types. Must call
+/// `ddog_prof_Profile_drop` when you are done with the profile.
+///
+/// # Arguments
+/// * `out` - a non-null pointer to an uninitialized Profile.
+/// * `dict`: a valid reference to a ProfilesDictionary handle.
+/// * `sample_types` - A slice of SampleType enums
+/// * `period` - Optional period of the profile. Passing None/null translates to zero values.
+///
+/// # Safety
+/// All slices must have pointers that are suitably aligned for their type
+/// and must have the correct number of elements for the slice.
+///
+/// The `dict` reference must be to a valid ProfilesDictionary handle. It may
+/// be an empty handle, but it must be a valid handle.
+///
+/// The `out` pointer must be non-null and suitable for pointer writes,
+/// including that it has the correct size and alignment.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_Profile_with_dictionary(
+    out: *mut Profile,
+    dict: &ArcHandle<ProfilesDictionary>,
+    sample_types: Slice<SampleType>,
+    period: Option<&Period>,
+) -> ProfileStatus {
+    ensure_non_null_out_parameter!(out);
+    match profile_with_dictionary(dict, sample_types, period) {
+        // SAFETY: checked that it isn't null above, the rest comes from this
+        // function's own safety conditions. Technically, our safety conditions
+        // don't require a null check, but we're being safe there.
+        Ok(profile) => unsafe {
+            out.write(profile);
+            ProfileStatus::OK
+        },
+        Err(e) => ProfileStatus::from(e),
+    }
+}
+
+unsafe fn profile_with_dictionary(
+    dict: &ArcHandle<ProfilesDictionary>,
+    sample_types: Slice<SampleType>,
+    period: Option<&Period>,
+) -> Result<Profile, ProfileError> {
+    let sample_types = sample_types.try_as_slice()?;
+    let dict = dict.try_clone_into_arc()?;
+
+    let period = period.copied();
+
+    match internal::Profile::try_new_with_dictionary(sample_types, period, dict) {
+        Ok(ok) => Ok(Profile::new(ok)),
+        Err(err) => Err(ProfileError::from(err)),
+    }
 }
 
 /// Same as `ddog_profile_new` but also configures a `string_storage` for the profile.
@@ -405,7 +469,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 #[must_use]
 /// TODO: @ivoanjo Should this take a `*mut ManagedStringStorage` like Profile APIs do?
 pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
-    sample_types: Slice<ValueType>,
+    sample_types: Slice<SampleType>,
     period: Option<&Period>,
     string_storage: ManagedStringStorage,
 ) -> ProfileNewResult {
@@ -413,22 +477,22 @@ pub unsafe extern "C" fn ddog_prof_Profile_with_string_storage(
 }
 
 unsafe fn profile_new(
-    sample_types: Slice<ValueType>,
+    sample_types: Slice<SampleType>,
     period: Option<&Period>,
     string_storage: Option<ManagedStringStorage>,
 ) -> ProfileNewResult {
-    let types: Vec<api::ValueType> = sample_types.into_slice().iter().map(Into::into).collect();
-    let period = period.map(Into::into);
+    let types = sample_types.into_slice();
+    let period = period.copied();
 
     let result = match string_storage {
-        None => internal::Profile::try_new(&types, period)
+        None => internal::Profile::try_new(types, period)
             .context("failed to initialize a profile without managed string storage"),
         Some(s) => {
             let string_storage = match get_inner_string_storage(s, true) {
                 Ok(string_storage) => string_storage,
                 Err(err) => return ProfileNewResult::Err(err.into()),
             };
-            internal::Profile::try_with_string_storage(&types, period, string_storage)
+            internal::Profile::try_with_string_storage(types, period, string_storage)
                 .context("failed to initialize a profile with managed string storage")
         }
     };
@@ -507,6 +571,42 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
     })()
     .context("ddog_prof_Profile_add failed")
     .into()
+}
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. All pointers inside the `sample` need to be valid for the duration
+/// of this call.
+///
+/// If successful, it returns the Ok variant.
+/// On error, it holds an error message in the error variant.
+///
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add2(
+    profile: *mut Profile,
+    sample: Sample2,
+    timestamp: Option<NonZeroI64>,
+) -> ProfileStatus {
+    ProfileStatus::from((|| {
+        let profile = profile_ptr_to_inner(profile)?;
+
+        let locations = sample.locations.try_as_slice()?;
+        let values = sample.values.try_as_slice()?;
+        let labels = sample.labels.try_as_slice()?;
+
+        let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
+            Ok(api2::Label {
+                key: label.key,
+                str: core::str::from_utf8(label.str.try_as_bytes()?)?,
+                num: label.num,
+                num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
+            })
+        });
+        profile
+            .try_add_sample2(locations, values, labels_iter, timestamp)
+            .context("ddog_prof_Profile_add failed")
+    })())
 }
 
 pub(crate) unsafe fn profile_ptr_to_inner<'a>(
@@ -803,9 +903,9 @@ mod tests {
     #[test]
     fn ctor_and_dtor() -> Result<(), Error> {
         unsafe {
-            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let sample_type = SampleType::CpuSamples;
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::from_raw_parts(sample_type, 1),
+                Slice::from_raw_parts(&sample_type, 1),
                 None,
             ))?;
             ddog_prof_Profile_drop(&mut profile);
@@ -816,9 +916,9 @@ mod tests {
     #[test]
     fn add_failure() -> Result<(), Error> {
         unsafe {
-            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let sample_type = SampleType::CpuSamples;
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::from_raw_parts(sample_type, 1),
+                Slice::from_raw_parts(&sample_type, 1),
                 None,
             ))?;
 
@@ -843,9 +943,9 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn aggregate_samples() -> anyhow::Result<()> {
         unsafe {
-            let sample_type: *const ValueType = &ValueType::new("samples", "count");
+            let sample_type = SampleType::CpuSamples;
             let mut profile = Result::from(ddog_prof_Profile_new(
-                Slice::from_raw_parts(sample_type, 1),
+                Slice::from_raw_parts(&sample_type, 1),
                 None,
             ))?;
 
@@ -905,9 +1005,9 @@ mod tests {
     }
 
     unsafe fn provide_distinct_locations_ffi() -> Profile {
-        let sample_type: *const ValueType = &ValueType::new("samples", "count");
+        let sample_type = SampleType::CpuSamples;
         let mut profile = Result::from(ddog_prof_Profile_new(
-            Slice::from_raw_parts(sample_type, 1),
+            Slice::from_raw_parts(&sample_type, 1),
             None,
         ))
         .unwrap();

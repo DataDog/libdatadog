@@ -19,11 +19,13 @@ mod unix {
     };
     use std::env;
     use std::path::Path;
+    use std::process;
     use std::time::Duration;
 
-    use libdd_common::{tag, Endpoint};
+    use libdd_common::tag;
     use libdd_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
+        StackFrame, StackTrace,
     };
 
     const TEST_COLLECTOR_TIMEOUT: Duration = Duration::from_secs(15);
@@ -43,7 +45,8 @@ mod unix {
     }
 
     pub fn main() -> anyhow::Result<()> {
-        let mut args = env::args().skip(1);
+        let raw_args: Vec<String> = env::args().collect();
+        let mut args = raw_args.iter().skip(1);
         let output_url = args.next().context("Unexpected number of arguments")?;
         let receiver_binary = args.next().context("Unexpected number of arguments")?;
         let output_dir = args.next().context("Unexpected number of arguments")?;
@@ -51,30 +54,63 @@ mod unix {
         let crash_typ = args.next().context("Missing crash type")?;
         anyhow::ensure!(args.next().is_none(), "unexpected extra arguments");
 
+        // For preload logger mode, ensure we actually start with LD_PRELOAD applied.
+        // Setting LD_PRELOAD after startup has no effect on the current process,
+        // so re-exec only if we weren't born with it
+        if mode_str == "runtime_preload_logger" && env::var_os("LD_PRELOAD").is_none() {
+            if let Some(so_path) = option_env!("PRELOAD_LOGGER_SO") {
+                let status = process::Command::new(&raw_args[0])
+                    .args(&raw_args[1..])
+                    .env("LD_PRELOAD", so_path)
+                    .status()
+                    .context("failed to re-exec with LD_PRELOAD")?;
+                let code = status.code().unwrap_or(1);
+                process::exit(code);
+            }
+        }
+
         let stderr_filename = format!("{output_dir}/out.stderr");
         let stdout_filename = format!("{output_dir}/out.stdout");
         let output_dir: &Path = output_dir.as_ref();
 
-        let endpoint = if output_url.is_empty() {
-            None
-        } else {
-            Some(Endpoint::from_slice(&output_url))
-        };
-
         // The configuration can be modified by a Behavior (testing plan), so it is mut here.
         // Unlike a normal harness, in this harness tests are run in individual processes, so race
         // issues are avoided.
-        let mut config = CrashtrackerConfiguration::new(
-            vec![],
-            true,
-            true,
-            endpoint,
-            crashtracker::StacktraceCollection::WithoutSymbols,
-            crashtracker::default_signals(),
-            Some(TEST_COLLECTOR_TIMEOUT),
-            Some("".to_string()),
-            true,
-        )?;
+        let stacktrace_collection = match env::var("DD_TEST_STACKTRACE_COLLECTION") {
+            Ok(val) => match val.as_str() {
+                "disabled" => crashtracker::StacktraceCollection::Disabled,
+                "without_symbols" => crashtracker::StacktraceCollection::WithoutSymbols,
+                "inprocess_symbols" => {
+                    crashtracker::StacktraceCollection::EnabledWithInprocessSymbols
+                }
+                "receiver_symbols" => {
+                    crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver
+                }
+                _ => crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
+            },
+            Err(_) => crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
+        };
+
+        // Ensure the receiver gets a timeout consistent with the collector's.
+        // In Debug builds the collector is slow, so the default 4 s receiver timeout
+        // can expire before DD_CRASHTRACK_DONE is sent.
+        if env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS").is_err() {
+            env::set_var(
+                "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
+                TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
+            );
+        }
+
+        let mut config = CrashtrackerConfiguration::builder()
+            .create_alt_stack(true)
+            .demangle_names(true)
+            .endpoint_url(output_url)
+            .resolve_frames(stacktrace_collection)
+            .signals(crashtracker::default_signals())
+            .timeout(TEST_COLLECTOR_TIMEOUT)
+            .unix_socket_path("".to_string())
+            .use_alt_stack(true)
+            .build()?;
 
         let metadata = Metadata {
             library_name: "libdatadog".to_owned(),
@@ -92,7 +128,7 @@ mod unix {
         };
 
         // Set the behavior of the test, run setup, and do the pre-init test
-        let behavior = get_behavior(&mode_str);
+        let behavior = get_behavior(mode_str);
         behavior.setup(output_dir, &mut config)?;
         behavior.pre(output_dir)?;
 
@@ -101,7 +137,7 @@ mod unix {
             CrashtrackerReceiverConfig::new(
                 vec![],
                 env::vars().collect(),
-                receiver_binary,
+                receiver_binary.to_string(),
                 Some(stderr_filename),
                 Some(stdout_filename),
             )?,
@@ -122,6 +158,31 @@ mod unix {
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,
             "raise_sigsegv" => raise(Signal::SIGSEGV)?,
+            "unhandled_exception" => {
+                let mut stacktrace = StackTrace::new_incomplete();
+                let mut stackframe1 = StackFrame::new();
+                stackframe1.with_ip(1234);
+                stackframe1.with_function("test_function1".to_string());
+                stackframe1.with_file("test_file1".to_string());
+
+                let mut stackframe2 = StackFrame::new();
+                stackframe2.with_ip(5678);
+                stackframe2.with_function("test_function2".to_string());
+                stackframe2.with_file("test_file2".to_string());
+
+                stacktrace.push_frame(stackframe1, true).unwrap();
+                stacktrace.push_frame(stackframe2, true).unwrap();
+
+                stacktrace.set_complete().unwrap();
+
+                crashtracker::report_unhandled_exception(
+                    Some("RuntimeException"),
+                    Some("\n an exception \n occured \n"),
+                    stacktrace,
+                )?;
+
+                process::exit(0);
+            }
             _ => anyhow::bail!("Unexpected crash_typ: {crash_typ}"),
         }
         crashtracker::end_op(crashtracker::OpTypes::ProfilerCollectingSample)?;

@@ -69,6 +69,7 @@ mod pyo3_impl {
         exceptions::PyTypeError,
         prelude::*,
         types::{PyBool, PyFloat, PyInt, PyString},
+        Borrowed,
     };
 
     /// Convert Python value to Attribute.
@@ -81,20 +82,22 @@ mod pyo3_impl {
     /// - `NoneType`
     ///
     /// Note that nesting is not currently supported and will throw an error.
-    impl<'py> FromPyObject<'py> for Attribute {
+    impl<'a, 'py> FromPyObject<'a, 'py> for Attribute {
+        type Error = PyErr;
+
         #[inline]
-        fn extract_bound(value: &Bound<'py, PyAny>) -> PyResult<Self> {
-            if let Ok(s) = value.downcast::<PyString>() {
+        fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+            if let Ok(s) = value.cast::<PyString>() {
                 return Ok(Attribute(AttributeImpl::String(s.to_cow()?.into())));
             }
             // In Python, Bool inherits from Int, so it must be checked first here.
-            if let Ok(s) = value.downcast::<PyBool>() {
+            if let Ok(s) = value.cast::<PyBool>() {
                 return Ok(Attribute(AttributeImpl::Boolean(s.is_true())));
             }
-            if let Ok(s) = value.downcast::<PyFloat>() {
+            if let Ok(s) = value.cast::<PyFloat>() {
                 return Ok(Attribute(AttributeImpl::Number(s.value())));
             }
-            if let Ok(s) = value.downcast::<PyInt>() {
+            if let Ok(s) = value.cast::<PyInt>() {
                 return Ok(Attribute(AttributeImpl::Number(s.extract::<f64>()?)));
             }
             if value.is_none() {

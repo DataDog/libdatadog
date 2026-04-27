@@ -3,11 +3,10 @@
 
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::{
-    map::read_map_len,
-    number::read_number_slice,
-    string::{handle_null_marker, read_string_ref},
+    buffer::Buffer, map::read_map_len, number::read_number, string::handle_null_marker,
 };
-use crate::span::{SpanBytes, SpanSlice};
+use crate::span::v04::{Span, SpanBytes, SpanSlice};
+use crate::span::DeserializableTraceData;
 use std::collections::HashMap;
 
 const PAYLOAD_LEN: u32 = 2;
@@ -70,20 +69,7 @@ const SPAN_ELEM_COUNT: u32 = 12;
 pub fn from_bytes(
     data: libdd_tinybytes::Bytes,
 ) -> Result<(Vec<Vec<SpanBytes>>, usize), DecodeError> {
-    let (traces_ref, size) = from_slice(data.as_ref())?;
-
-    #[allow(clippy::unwrap_used)]
-    let traces_owned = traces_ref
-        .iter()
-        .map(|trace| {
-            trace
-                .iter()
-                // Safe to unwrap since the spans use subslices of the `data` slice
-                .map(|span| span.try_to_bytes(&data).unwrap())
-                .collect()
-        })
-        .collect();
-    Ok((traces_owned, size))
+    from_buffer(&mut Buffer::new(data))
 }
 
 /// Decodes a slice of bytes into a `Vec<Vec<SpanSlice>>` object.
@@ -140,8 +126,18 @@ pub fn from_bytes(
 /// let decoded_span = &decoded_traces[0][0];
 /// assert_eq!("", decoded_span.name);
 /// ```
-pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), DecodeError> {
-    let data_elem = rmp::decode::read_array_len(&mut data)
+pub fn from_slice(data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), DecodeError> {
+    from_buffer(&mut Buffer::new(data))
+}
+
+#[allow(clippy::type_complexity)]
+fn from_buffer<T: DeserializableTraceData>(
+    data: &mut Buffer<T>,
+) -> Result<(Vec<Vec<Span<T>>>, usize), DecodeError>
+where
+    T::Text: Clone,
+{
+    let data_elem = rmp::decode::read_array_len(data.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to read payload len".to_string()))?;
 
     if data_elem != PAYLOAD_LEN {
@@ -150,21 +146,21 @@ pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), D
         ));
     }
 
-    let dict = deserialize_dict(&mut data)?;
+    let dict = deserialize_dict(data)?;
 
-    let trace_count = rmp::decode::read_array_len(&mut data)
+    let trace_count = rmp::decode::read_array_len(data.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to read trace len".to_string()))?;
 
-    let mut traces: Vec<Vec<SpanSlice>> = Vec::with_capacity(trace_count as usize);
+    let mut traces: Vec<Vec<Span<T>>> = Vec::with_capacity(trace_count as usize);
     let start_len = data.len();
 
     for _ in 0..trace_count {
-        let span_count = rmp::decode::read_array_len(&mut data)
+        let span_count = rmp::decode::read_array_len(data.as_mut_slice())
             .map_err(|_| DecodeError::InvalidFormat("Unable to read span len".to_string()))?;
-        let mut trace: Vec<SpanSlice> = Vec::with_capacity(span_count as usize);
+        let mut trace: Vec<Span<T>> = Vec::with_capacity(span_count as usize);
 
         for _ in 0..span_count {
-            let span = deserialize_span(&mut data, &dict)?;
+            let span = deserialize_span(data, &dict)?;
             trace.push(span);
         }
         traces.push(trace);
@@ -172,21 +168,29 @@ pub fn from_slice(mut data: &[u8]) -> Result<(Vec<Vec<SpanSlice<'_>>>, usize), D
     Ok((traces, start_len - data.len()))
 }
 
-fn deserialize_dict<'a>(data: &mut &'a [u8]) -> Result<Vec<&'a str>, DecodeError> {
-    let dict_len = rmp::decode::read_array_len(data)
+fn deserialize_dict<T: DeserializableTraceData>(
+    data: &mut Buffer<T>,
+) -> Result<Vec<T::Text>, DecodeError> {
+    let dict_len = rmp::decode::read_array_len(data.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to read dictionary len".to_string()))?;
 
-    let mut dict: Vec<&'a str> = Vec::with_capacity(dict_len as usize);
+    let mut dict: Vec<T::Text> = Vec::with_capacity(dict_len as usize);
     for _ in 0..dict_len {
-        let str = read_string_ref(data)?;
+        let str = data.read_string()?;
         dict.push(str);
     }
     Ok(dict)
 }
 
-fn deserialize_span<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<SpanSlice<'a>, DecodeError> {
-    let mut span = SpanSlice::default();
-    let span_len = rmp::decode::read_array_len(data)
+fn deserialize_span<T: DeserializableTraceData>(
+    data: &mut Buffer<T>,
+    dict: &[T::Text],
+) -> Result<Span<T>, DecodeError>
+where
+    T::Text: Clone,
+{
+    let mut span = Span::default();
+    let span_len = rmp::decode::read_array_len(data.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to read dictionary len".to_string()))?;
 
     if span_len != SPAN_ELEM_COUNT {
@@ -198,12 +202,12 @@ fn deserialize_span<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<SpanSlice<
     span.service = get_from_dict(data, dict)?;
     span.name = get_from_dict(data, dict)?;
     span.resource = get_from_dict(data, dict)?;
-    span.trace_id = read_number_slice::<u64>(data)? as u128;
-    span.span_id = read_number_slice(data)?;
-    span.parent_id = read_number_slice(data)?;
-    span.start = read_number_slice(data)?;
-    span.duration = read_number_slice(data)?;
-    span.error = read_number_slice(data)?;
+    span.trace_id = read_number::<_, u64>(data)? as u128;
+    span.span_id = read_number(data)?;
+    span.parent_id = read_number(data)?;
+    span.start = read_number(data)?;
+    span.duration = read_number(data)?;
+    span.error = read_number(data)?;
     span.meta = read_indexed_map_to_bytes_strings(data, dict)?;
     span.metrics = read_metrics(data, dict)?;
     span.r#type = get_from_dict(data, dict)?;
@@ -211,21 +215,30 @@ fn deserialize_span<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<SpanSlice<
     Ok(span)
 }
 
-fn get_from_dict<'a>(data: &mut &[u8], dict: &[&'a str]) -> Result<&'a str, DecodeError> {
-    let index: u32 = read_number_slice(data)?;
+fn get_from_dict<T: DeserializableTraceData>(
+    data: &mut Buffer<T>,
+    dict: &[T::Text],
+) -> Result<T::Text, DecodeError>
+where
+    T::Text: Clone,
+{
+    let index: u32 = read_number(data)?;
     match dict.get(index as usize) {
-        Some(value) => Ok(value),
+        Some(value) => Ok(value.clone()),
         None => Err(DecodeError::InvalidFormat(
             "Unable to locate string in the dictionary".to_string(),
         )),
     }
 }
 
-fn read_indexed_map_to_bytes_strings<'a>(
-    buf: &mut &[u8],
-    dict: &[&'a str],
-) -> Result<HashMap<&'a str, &'a str>, DecodeError> {
-    let len = rmp::decode::read_map_len(buf)
+fn read_indexed_map_to_bytes_strings<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+    dict: &[T::Text],
+) -> Result<HashMap<T::Text, T::Text>, DecodeError>
+where
+    T::Text: Clone,
+{
+    let len = rmp::decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
     #[allow(clippy::expect_used)]
@@ -238,10 +251,13 @@ fn read_indexed_map_to_bytes_strings<'a>(
     Ok(map)
 }
 
-fn read_metrics<'a>(
-    buf: &mut &[u8],
-    dict: &[&'a str],
-) -> Result<HashMap<&'a str, f64>, DecodeError> {
+fn read_metrics<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+    dict: &[T::Text],
+) -> Result<HashMap<T::Text, f64>, DecodeError>
+where
+    T::Text: Clone,
+{
     if handle_null_marker(buf) {
         return Ok(HashMap::default());
     }
@@ -251,7 +267,7 @@ fn read_metrics<'a>(
     let mut map = HashMap::with_capacity(len);
     for _ in 0..len {
         let k = get_from_dict(buf, dict)?;
-        let v = read_number_slice(buf)?;
+        let v = read_number(buf)?;
         map.insert(k, v);
     }
     Ok(map)
@@ -260,7 +276,9 @@ fn read_metrics<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span::SliceData;
     use std::collections::HashMap;
+
     type V05Span = (
         u8,
         u8,
@@ -297,7 +315,7 @@ mod tests {
     fn deserialize_dict_test() {
         let dict = vec!["foo", "bar", "baz"];
         let mpack = rmp_serde::to_vec(&dict).unwrap();
-        let mut payload = mpack.as_ref();
+        let mut payload = Buffer::<SliceData>::new(mpack.as_ref());
 
         let result = deserialize_dict(&mut payload).unwrap();
         assert_eq!(dict, result);

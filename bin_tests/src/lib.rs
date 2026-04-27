@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod artifacts;
 pub mod modes;
 pub mod test_runner;
 pub mod test_types;
@@ -10,15 +11,78 @@ use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync
 
 use once_cell::sync::OnceCell;
 
+/// Returns the base target directory (e.g., `/path/to/target`).
+/// This is cached for the lifetime of the process.
+fn get_base_target_dir() -> &'static PathBuf {
+    static BASE_TARGET_DIR: OnceCell<PathBuf> = OnceCell::new();
+    BASE_TARGET_DIR.get_or_init(|| {
+        // If the CARGO_TARGET_DIR env var is set, use that.
+        if let Ok(env_target_dir) = env::var("CARGO_TARGET_DIR") {
+            return PathBuf::from(env_target_dir);
+        }
+
+        // Otherwise, find the target directory by walking up from the current binary.
+        let test_bin_location = PathBuf::from(env::args().next().unwrap());
+        let mut location_components = test_bin_location.components().rev().peekable();
+        while let Some(c) = location_components.peek() {
+            if c.as_os_str() == "target" {
+                break;
+            }
+            location_components.next();
+        }
+        location_components.rev().collect::<PathBuf>()
+    })
+}
+
+/// Returns the target directory for a specific build configuration.
+/// For builds with variants (like panic_abort), returns a variant-specific subdirectory.
+fn get_target_dir_for_build(c: &ArtifactsBuild) -> PathBuf {
+    let base = get_base_target_dir().clone();
+
+    // If this is a variant build (e.g., panic_abort), use a variant-specific target directory
+    if c.panic_abort == Some(true) {
+        base.join("panic-abort")
+    } else {
+        base
+    }
+}
+
+/// Computes the path where the artifact will be located after building.
+pub fn compute_artifact_path(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
+    let target_dir = get_target_dir_for_build(c);
+
+    let mut artifact_path = target_dir;
+    artifact_path.push(match c.build_profile {
+        BuildProfile::Debug => "debug",
+        BuildProfile::Release => "release",
+    });
+
+    match c.artifact_type {
+        ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
+        ArtifactType::CDylib => {
+            let name = "lib".to_owned()
+                + c.lib_name_override
+                    .as_deref()
+                    .unwrap_or(&c.name.replace('-', "_"))
+                + "."
+                + shared_lib_extension(
+                    c.triple_target
+                        .as_deref()
+                        .unwrap_or(current_platform::CURRENT_PLATFORM),
+                )?;
+            artifact_path.push(name);
+        }
+    };
+    Ok(artifact_path)
+}
+
 /// This crate implements an abstraction over compilation with cargo with the purpose
 /// of testing full binaries or dynamic libraries, instead of just rust static libraries.
 ///
-/// The main entrypoint is `fn build_artifacts` which takes a list of artifacts to build,
-/// either executable crates, cdylib, or extra binaries, invokes cargo and return the path
-/// of the built artifact.
-///
-/// Builds are cached between invocations so that multiple tests can use the same artifact
-/// without doing expensive work twice.
+/// Artifacts are built upfront by the prebuild step via [`rebuild_artifacts`], which
+/// invokes `cargo build` and lets cargo handle staleness. Tests then use
+/// [`fetch_built_artifacts`] to look up the prebuilt paths, failing if any are missing
+/// (indicating the prebuild script needs to be updated).
 ///
 /// It is assumed that functions in this crate are invoked in the context of a cargo #[test]
 /// item, or a `cargo run` command to be able to locate artifacts built by cargo from the position
@@ -46,21 +110,44 @@ pub struct ArtifactsBuild {
     pub artifact_type: ArtifactType,
     pub build_profile: BuildProfile,
     pub triple_target: Option<String>,
+    pub panic_abort: Option<bool>,
 }
 
-fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
+fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
+    let artifact_path = compute_artifact_path(c)?;
+
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
+
+    // For variant builds (like panic_abort), use a separate target directory
+    // so they don't conflict with standard builds
+    let target_dir = get_target_dir_for_build(c);
+    if target_dir != *get_base_target_dir() {
+        build_cmd.arg("--target-dir").arg(&target_dir);
+    }
+
     if let BuildProfile::Release = c.build_profile {
         build_cmd.arg("--release");
     }
+
     match c.artifact_type {
         ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
         ArtifactType::Bin => build_cmd.arg("--bin"),
     };
+
+    if c.panic_abort == Some(true) {
+        let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+        let new_rustflags = if existing_rustflags.is_empty() {
+            "-C panic=abort".to_string()
+        } else {
+            format!("{} -C panic=abort", existing_rustflags)
+        };
+        build_cmd.env("RUSTFLAGS", new_rustflags);
+    }
+
     build_cmd.arg(&c.name);
 
-    let output = build_cmd.output().unwrap();
+    let output = build_cmd.output()?;
     if !output.status.success() {
         anyhow::bail!(
             "Cargo build failed: status code {:?}\nstderr:\n {}",
@@ -69,79 +156,52 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         );
     }
 
-    /// This static variable contains the path in which cargo puts it's build artifacts
-    /// This relies on the assumption that the current binary is assumed to not have been moved from
-    /// it's directory
-    static ARTIFACT_DIR: OnceCell<PathBuf> = OnceCell::new();
-    let artifact_dir = ARTIFACT_DIR.get_or_init(|| {
-        // If the CARGO_TARGET_DIR env var is set, then just use that.
-        if let Ok(env_target_dir) = env::var("CARGO_TARGET_DIR") {
-            return PathBuf::from(env_target_dir);
-        }
-
-        let test_bin_location = PathBuf::from(env::args().next().unwrap());
-        let mut location_components = test_bin_location.components().rev().peekable();
-        loop {
-            let Some(c) = location_components.peek() else {
-                break;
-            };
-            if c.as_os_str() == "target" {
-                break;
-            }
-            location_components.next();
-        }
-        location_components.rev().collect::<PathBuf>()
-    });
-
-    let mut artifact_path = artifact_dir.clone();
-    artifact_path.push(match c.build_profile {
-        BuildProfile::Debug => "debug",
-        BuildProfile::Release => "release",
-    });
-
-    match c.artifact_type {
-        ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
-        ArtifactType::CDylib => {
-            let name = "lib".to_owned()
-                + c.lib_name_override
-                    .as_deref()
-                    .unwrap_or(&c.name.replace('-', "_"))
-                + "."
-                + shared_lib_extension(
-                    c.triple_target
-                        .as_deref()
-                        .unwrap_or(current_platform::CURRENT_PLATFORM),
-                )?;
-            println!("NAME: {}", name);
-            artifact_path.push(name);
-        }
-    };
     Ok(artifact_path)
 }
 
-/// Caches and returns the path of the artifacts built by cargo
-/// This function should only be called from cargo tests
-pub fn build_artifacts<'b>(
+/// Returns the paths of prebuilt artifacts, failing if any are missing.
+/// Tests should use this: if an artifact doesn't exist, it means the prebuild
+/// script needs to be updated rather than silently building inline (which would
+/// slow down CI).
+pub fn fetch_built_artifacts<'b>(
+    crates: &[&'b ArtifactsBuild],
+) -> anyhow::Result<HashMap<&'b ArtifactsBuild, PathBuf>> {
+    let mut res = HashMap::new();
+    for &c in crates {
+        let artifact_path = compute_artifact_path(c)?;
+        anyhow::ensure!(
+            artifact_path.exists(),
+            "Prebuilt artifact not found at {path}. \
+             Add this artifact to `artifacts::all_prebuild_artifacts()` \
+             and re-run the prebuild step.",
+            path = artifact_path.display(),
+        );
+        res.insert(c, artifact_path);
+    }
+    Ok(res)
+}
+
+/// Invokes `cargo build` for each artifact, letting cargo's own dependency
+/// tracking decide whether recompilation is needed.
+pub fn rebuild_artifacts<'b>(
     crates: &[&'b ArtifactsBuild],
 ) -> anyhow::Result<HashMap<&'b ArtifactsBuild, PathBuf>> {
     static ARTIFACTS: OnceCell<Mutex<HashMap<ArtifactsBuild, PathBuf>>> = OnceCell::new();
 
     let mut res = HashMap::new();
-
     let artifacts = ARTIFACTS.get_or_init(|| Mutex::new(HashMap::new()));
     for &c in crates {
         let mut artifacts = artifacts.lock().unwrap();
         let artifacts = artifacts.deref_mut();
 
-        if artifacts.contains_key(c) {
-            res.insert(c, artifacts.get(c).unwrap().clone());
+        if let Some(p) = artifacts.get(c) {
+            res.insert(c, p.clone());
         } else {
-            let p = inner_build_artifact(c)?;
+            let p = cargo_build_artifact(c)?;
             res.insert(c, p.clone());
             artifacts.insert(c.clone(), p);
         }
     }
-
     Ok(res)
 }
 

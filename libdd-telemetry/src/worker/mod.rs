@@ -7,13 +7,14 @@ pub mod store;
 
 use crate::{
     config::Config,
-    data::{self, Application, Dependency, Host, Integration, Log, Payload, Telemetry},
+    data::{self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, Telemetry},
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
-use libdd_common::Endpoint;
-use libdd_common::{hyper_migration, tag::Tag, worker::Worker};
 
-use std::fmt::Debug;
+use async_trait::async_trait;
+use libdd_common::{http_common, tag::Tag};
+use libdd_shared_runtime::Worker;
+
 use std::iter::Sum;
 use std::ops::Add;
 use std::{
@@ -26,6 +27,7 @@ use std::{
     },
     time,
 };
+use std::{collections::HashSet, fmt::Debug, time::Duration};
 
 use crate::metrics::MetricBucketStats;
 use futures::{
@@ -89,6 +91,7 @@ pub enum TelemetryActions {
     AddDependency(Dependency),
     AddIntegration(Integration),
     AddLog((LogIdentifier, Log)),
+    AddEndpoint(Endpoint),
     Lifecycle(LifecycleAction),
     #[serde(skip)]
     CollectStats(oneshot::Sender<TelemetryWorkerStats>),
@@ -120,6 +123,7 @@ struct TelemetryWorkerData {
     dependencies: store::Store<Dependency>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
+    endpoints: HashSet<data::Endpoint>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
@@ -135,8 +139,10 @@ pub struct TelemetryWorker {
     seq_id: AtomicU64,
     runtime_id: String,
     client: Box<dyn http_client::HttpClient + Sync + Send>,
+    metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
+    next_action: Option<TelemetryActions>,
 }
 impl Debug for TelemetryWorker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -147,64 +153,75 @@ impl Debug for TelemetryWorker {
             .field("cancellation_token", &self.cancellation_token)
             .field("seq_id", &self.seq_id)
             .field("runtime_id", &self.runtime_id)
+            .field("metrics_flush_interval", &self.metrics_flush_interval)
             .field("deadlines", &self.deadlines)
             .field("data", &self.data)
             .finish()
     }
 }
 
+#[async_trait]
 impl Worker for TelemetryWorker {
-    // Runs a state machine that waits for actions, either from the worker's
-    // mailbox, or scheduled actions from the worker's deadline object.
+    async fn trigger(&mut self) {
+        if self.next_action.is_some() {
+            // An action is already available and hasn't been executed
+            return;
+        }
+        // Wait for the next action and store it
+        let action = self.recv_next_action().await;
+        self.next_action = Some(action);
+    }
+
+    // Processes a single action from the state machine
     async fn run(&mut self) {
-        debug!(
-            worker.flavor = ?self.flavor,
-            worker.runtime_id = %self.runtime_id,
-            "Starting telemetry worker"
-        );
-
-        loop {
-            if self.cancellation_token.is_cancelled() {
-                debug!(
-                    worker.runtime_id = %self.runtime_id,
-                    "Telemetry worker cancelled, shutting down"
-                );
-                return;
-            }
-
-            let action = self.recv_next_action().await;
+        // Take the action that was stored by trigger()
+        if let Some(action) = self.next_action.take() {
             debug!(
                 worker.runtime_id = %self.runtime_id,
                 action = ?action,
                 "Received telemetry action"
             );
 
-            let action_result = match self.flavor {
+            // When running as a [libdd_shared_runtime::Worker] Shutdown is handled by stopping the
+            // Worker from the handle and not by sending stop action
+            let _action_result = match self.flavor {
                 TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
                 TelemetryWorkerFlavor::MetricsLogs => {
                     self.dispatch_metrics_logs_action(action).await
                 }
             };
-
-            match action_result {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(()) => {
-                    debug!(
-                        worker.runtime_id = %self.runtime_id,
-                        worker.restartable = self.config.restartable,
-                        "Telemetry worker received break signal"
-                    );
-                    if !self.config.restartable {
-                        break;
-                    }
-                }
-            };
         }
+    }
 
-        debug!(
-            worker.runtime_id = %self.runtime_id,
-            "Telemetry worker stopped"
-        );
+    /// Reset the worker state in the child process after a fork.
+    ///
+    /// Discards inherited pending telemetry state and dedupe history without sending anything, and
+    /// drains the mailbox so that actions queued before the fork are not processed by the
+    /// child.
+    fn reset(&mut self) {
+        // Drain all actions queued in the mailbox before the fork.
+        while self.mailbox.try_recv().is_ok() {}
+
+        // Discard any action that was staged by the last trigger() call.
+        self.next_action = None;
+
+        // Clear all unbuffered telemetry data; the child must not send pre-fork data.
+        self.data.logs = store::QueueHashMap::default();
+        self.data.metric_buckets = MetricBuckets::default();
+        self.data.dependencies.clear();
+        self.data.integrations.clear();
+        self.data.configurations.clear();
+        self.data.endpoints.clear();
+    }
+
+    async fn shutdown(&mut self) {
+        let stop_action = TelemetryActions::Lifecycle(LifecycleAction::Stop);
+        let _action_result = match self.flavor {
+            TelemetryWorkerFlavor::Full => self.dispatch_action(stop_action).await,
+            TelemetryWorkerFlavor::MetricsLogs => {
+                self.dispatch_metrics_logs_action(stop_action).await
+            }
+        };
     }
 }
 
@@ -238,10 +255,9 @@ impl Add for TelemetryWorkerStats {
                 buckets: self.metric_buckets.buckets + rhs.metric_buckets.buckets,
                 series: self.metric_buckets.series + rhs.metric_buckets.series,
                 series_points: self.metric_buckets.series_points + rhs.metric_buckets.series_points,
-                distributions: self.metric_buckets.distributions
-                    + self.metric_buckets.distributions,
+                distributions: self.metric_buckets.distributions + rhs.metric_buckets.distributions,
                 distributions_points: self.metric_buckets.distributions_points
-                    + self.metric_buckets.distributions_points,
+                    + rhs.metric_buckets.distributions_points,
             },
         }
     }
@@ -350,20 +366,30 @@ impl TelemetryWorker {
                     }
                 }
             }
-            AddConfig(_) | AddDependency(_) | AddIntegration(_) | Lifecycle(ExtendedHeartbeat) => {}
+            AddConfig(_)
+            | AddDependency(_)
+            | AddIntegration(_)
+            | AddEndpoint(_)
+            | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
                 if !self.data.started {
                     return BREAK;
                 }
                 self.data.metric_buckets.flush_aggregates();
 
-                let observability_events = self.build_observability_batch();
-                if let Err(e) = self
-                    .send_payload(&data::Payload::MessageBatch(observability_events))
-                    .await
-                {
-                    self.log_err(&e);
+                let batch = self.build_observability_batch();
+                if !batch.is_empty() {
+                    let payload = data::Payload::MessageBatch(batch);
+                    match self.send_payload(&payload).await {
+                        Ok(()) => {
+                            if self.config.restartable {
+                                self.payload_sent_success(&payload)
+                            }
+                        }
+                        Err(e) => self.log_err(&e),
+                    }
                 }
+
                 self.data.started = false;
                 if !self.config.restartable {
                     self.deadlines.clear_pending();
@@ -407,6 +433,9 @@ impl TelemetryWorker {
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
             AddConfig(cfg) => self.data.configurations.insert(cfg),
+            AddEndpoint(endpoint) => {
+                self.data.endpoints.insert(endpoint);
+            }
             AddLog((identifier, log)) => {
                 let (l, new) = self.data.logs.get_mut_or_insert(identifier, log);
                 if !new {
@@ -460,9 +489,9 @@ impl TelemetryWorker {
                 self.data.integrations.unflush_stored();
                 self.data.configurations.unflush_stored();
 
-                let app_started = data::Payload::AppStarted(self.build_app_started());
-                match self.send_payload(&app_started).await {
-                    Ok(()) => self.payload_sent_success(&app_started),
+                let extended_hb = data::Payload::AppExtendedHeartbeat(self.build_app_started());
+                match self.send_payload(&extended_hb).await {
+                    Ok(()) => self.payload_sent_success(&extended_hb),
                     Err(err) => self.log_err(&err),
                 }
                 #[allow(clippy::unwrap_used)]
@@ -551,6 +580,18 @@ impl TelemetryWorker {
                 },
             ))
         }
+        if !self.data.endpoints.is_empty() {
+            payloads.push(data::Payload::AppEndpoints(data::AppEndpoints {
+                is_first: true,
+                endpoints: self
+                    .data
+                    .endpoints
+                    .iter()
+                    .map(|e| e.to_json_value().unwrap_or_default())
+                    .filter(|e| e.is_object())
+                    .collect(),
+            }));
+        }
         payloads
     }
 
@@ -559,7 +600,7 @@ impl TelemetryWorker {
         let mut payloads = Vec::new();
 
         let logs = self.build_logs();
-        if !logs.is_empty() {
+        if !logs.logs.is_empty() {
             payloads.push(data::Payload::Logs(logs));
         }
         let metrics = self.build_metrics_series();
@@ -595,7 +636,7 @@ impl TelemetryWorker {
                 },
                 common: context.common,
                 _type: context.metric_type,
-                interval: MetricBuckets::METRICS_FLUSH_INTERVAL.as_secs(),
+                interval: self.metrics_flush_interval.as_secs(),
             });
         }
         data::Distributions { series }
@@ -619,7 +660,7 @@ impl TelemetryWorker {
                 points,
                 common: context.common,
                 _type: context.metric_type,
-                interval: MetricBuckets::METRICS_FLUSH_INTERVAL.as_secs(),
+                interval: self.metrics_flush_interval.as_secs(),
             });
         }
 
@@ -653,13 +694,14 @@ impl TelemetryWorker {
                 .data
                 .configurations
                 .removed_flushed(p.configuration.len()),
+            AppEndpoints(_) => self.data.endpoints.clear(),
             MessageBatch(batch) => {
                 for p in batch {
                     self.payload_sent_success(p);
                 }
             }
             Logs(p) => {
-                for _ in p {
+                for _ in &p.logs {
                     self.data.logs.pop_front();
                 }
             }
@@ -668,10 +710,10 @@ impl TelemetryWorker {
         }
     }
 
-    fn build_logs(&self) -> Vec<Log> {
+    fn build_logs(&self) -> data::Logs {
         // TODO: change the data model to take a &[Log] so don't have to clone data here
         let logs = self.data.logs.iter().map(|(_, l)| l.clone()).collect();
-        logs
+        data::Logs { logs }
     }
 
     fn next_seq_id(&self) -> u64 {
@@ -704,10 +746,7 @@ impl TelemetryWorker {
         Ok(())
     }
 
-    fn build_request(
-        &self,
-        payload: &data::Payload,
-    ) -> anyhow::Result<hyper_migration::HttpRequest> {
+    fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http_common::HttpRequest> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
@@ -737,26 +776,31 @@ impl TelemetryWorker {
             )
             .header(
                 http_client::header::LIBRARY_LANGUAGE,
-                // Note: passing by ref here just causes the clone to happen underneath
                 tel.application.language_name.clone(),
             )
             .header(
                 http_client::header::LIBRARY_VERSION,
                 tel.application.tracer_version.clone(),
             );
+        let req = http_client::add_instrumentation_session_headers(
+            req,
+            self.config.session_id.as_deref(),
+            self.config.parent_session_id.as_deref(),
+            self.config.root_session_id.as_deref(),
+        );
 
-        let body = hyper_migration::Body::from(serialize::serialize(&tel)?);
+        let body = http_common::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
     }
 
     async fn send_request(
         &self,
-        req: hyper_migration::HttpRequest,
-    ) -> Result<hyper_migration::HttpResponse, hyper_migration::Error> {
+        req: http_common::HttpRequest,
+    ) -> Result<http_common::HttpResponse, http_common::Error> {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
-            Endpoint::DEFAULT_TIMEOUT
+            libdd_common::Endpoint::DEFAULT_TIMEOUT
         };
 
         debug!(
@@ -771,7 +815,7 @@ impl TelemetryWorker {
                     worker.runtime_id = %self.runtime_id,
                     "Telemetry request cancelled"
                 );
-                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request cancelled")))
+                Err(http_common::Error::Other(anyhow::anyhow!("Request cancelled")))
             },
             _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
                 debug!(
@@ -779,7 +823,7 @@ impl TelemetryWorker {
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
                 );
-                Err(hyper_migration::Error::Other(anyhow::anyhow!("Request timed out")))
+                Err(http_common::Error::Other(anyhow::anyhow!("Request timed out")))
             },
             r = self.client.request(req) => {
                 match r {
@@ -806,6 +850,59 @@ impl TelemetryWorker {
             metric_contexts: self.data.metric_contexts.lock().len() as u32,
             metric_buckets: self.data.metric_buckets.stats(),
         }
+    }
+
+    // Runs a state machine that waits for actions, either from the worker's
+    // mailbox, or scheduled actions from the worker's deadline object.
+    async fn run_loop(mut self) {
+        debug!(
+            worker.flavor = ?self.flavor,
+            worker.runtime_id = %self.runtime_id,
+            "Starting telemetry worker"
+        );
+
+        loop {
+            if self.cancellation_token.is_cancelled() {
+                debug!(
+                    worker.runtime_id = %self.runtime_id,
+                    "Telemetry worker cancelled, shutting down"
+                );
+                return;
+            }
+
+            let action = self.recv_next_action().await;
+            debug!(
+                worker.runtime_id = %self.runtime_id,
+                action = ?action,
+                "Received telemetry action"
+            );
+
+            let action_result = match self.flavor {
+                TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
+                TelemetryWorkerFlavor::MetricsLogs => {
+                    self.dispatch_metrics_logs_action(action).await
+                }
+            };
+
+            match action_result {
+                ControlFlow::Continue(()) => {}
+                ControlFlow::Break(()) => {
+                    debug!(
+                        worker.runtime_id = %self.runtime_id,
+                        worker.restartable = self.config.restartable,
+                        "Telemetry worker received break signal"
+                    );
+                    if !self.config.restartable {
+                        break;
+                    }
+                }
+            };
+        }
+
+        debug!(
+            worker.runtime_id = %self.runtime_id,
+            "Telemetry worker stopped"
+        );
     }
 }
 
@@ -846,8 +943,9 @@ pub struct TelemetryWorkerHandle {
     sender: mpsc::Sender<TelemetryActions>,
     shutdown: Arc<InnerTelemetryShutdown>,
     cancellation_token: CancellationToken,
-    // Used to spawn cancellation tasks
-    runtime: runtime::Handle,
+    // Used to spawn cancellation tasks. Should be None when running as a SharedRuntime worker,
+    // since the runtime is not guaranteed to exist for the lifetime of the worker.
+    runtime: Option<runtime::Handle>,
 
     contexts: MetricContexts,
 }
@@ -905,12 +1003,16 @@ impl TelemetryWorkerHandle {
     }
 
     fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
+        let Some(runtime) = &self.runtime else {
+            tracing::error!("Cannot schedule cancellation deadline: no runtime handle available");
+            return;
+        };
         let token = self.cancellation_token.clone();
         let f = async move {
             tokio::time::sleep_until(deadline.into()).await;
             token.cancel()
         };
-        self.runtime.spawn(f);
+        runtime.spawn(f);
     }
 
     pub fn wait_for_shutdown_deadline(&self, deadline: time::Instant) {
@@ -1015,6 +1117,7 @@ pub struct TelemetryWorkerBuilder {
     pub dependencies: store::Store<data::Dependency>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
+    pub endpoints: HashSet<data::Endpoint>,
     pub native_deps: bool,
     pub rust_shared_lib_deps: bool,
     pub config: Config,
@@ -1065,6 +1168,7 @@ impl TelemetryWorkerBuilder {
             dependencies: store::Store::new(MAX_ITEMS),
             integrations: store::Store::new(MAX_ITEMS),
             configurations: store::Store::new(MAX_ITEMS),
+            endpoints: HashSet::new(),
             native_deps: true,
             rust_shared_lib_deps: false,
             config: Config::default(),
@@ -1072,10 +1176,15 @@ impl TelemetryWorkerBuilder {
         }
     }
 
-    /// Build the corresponding worker and it's handle.
-    /// The runtime handle is wrapped in the worker handle and should be the one used to run the
-    /// worker task.
-    pub fn build_worker(self, tokio_runtime: Handle) -> (TelemetryWorkerHandle, TelemetryWorker) {
+    /// Build the corresponding worker and its handle.
+    ///
+    /// The optional runtime handle is stored in the worker handle and should be the one used to run
+    /// the worker task cancellation deadlines. Pass `None` when the worker will be run via a
+    /// [`SharedRuntime`](libdd_shared_runtime::SharedRuntime).
+    pub fn build_worker(
+        self,
+        tokio_runtime: Option<Handle>,
+    ) -> (TelemetryWorkerHandle, TelemetryWorker) {
         let (tx, mailbox) = mpsc::channel(5000);
         let shutdown = Arc::new(InnerTelemetryShutdown {
             is_shutdown: Mutex::new(false),
@@ -1085,7 +1194,11 @@ impl TelemetryWorkerBuilder {
         let token = CancellationToken::new();
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
+        let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
         let client = http_client::from_config(&config);
+
+        let metrics_flush_interval =
+            telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
 
         #[allow(clippy::unwrap_used)]
         let worker = TelemetryWorker {
@@ -1095,6 +1208,7 @@ impl TelemetryWorkerBuilder {
                 dependencies: self.dependencies,
                 integrations: self.integrations,
                 configurations: self.configurations,
+                endpoints: self.endpoints,
                 logs: store::QueueHashMap::default(),
                 metric_contexts: contexts.clone(),
                 metric_buckets: MetricBuckets::default(),
@@ -1108,18 +1222,17 @@ impl TelemetryWorkerBuilder {
                 .runtime_id
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             client,
+            metrics_flush_interval,
             deadlines: scheduler::Scheduler::new(vec![
-                (
-                    MetricBuckets::METRICS_FLUSH_INTERVAL,
-                    LifecycleAction::FlushMetricAggr,
-                ),
+                (metrics_flush_interval, LifecycleAction::FlushMetricAggr),
                 (telemetry_heartbeat_interval, LifecycleAction::FlushData),
                 (
-                    time::Duration::from_secs(60 * 60 * 24),
+                    telemetry_extended_heartbeat_interval,
                     LifecycleAction::ExtendedHeartbeat,
                 ),
             ]),
             cancellation_token: token.clone(),
+            next_action: None,
         };
 
         (
@@ -1128,6 +1241,7 @@ impl TelemetryWorkerBuilder {
                 shutdown,
                 cancellation_token: token,
                 runtime: tokio_runtime,
+
                 contexts,
             },
             worker,
@@ -1139,9 +1253,9 @@ impl TelemetryWorkerBuilder {
     pub fn spawn(self) -> (TelemetryWorkerHandle, JoinHandle<()>) {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        let (worker_handle, mut worker) = self.build_worker(tokio_runtime.clone());
+        let (worker_handle, worker) = self.build_worker(Some(tokio_runtime.clone()));
 
-        let join_handle = tokio_runtime.spawn(async move { worker.run().await });
+        let join_handle = tokio_runtime.spawn(async move { worker.run_loop().await });
 
         (worker_handle, join_handle)
     }
@@ -1151,10 +1265,10 @@ impl TelemetryWorkerBuilder {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let (handle, mut worker) = self.build_worker(runtime.handle().clone());
+        let (handle, worker) = self.build_worker(Some(runtime.handle().clone()));
         let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
-            runtime.block_on(worker.run());
+            runtime.block_on(worker.run_loop());
             runtime.shutdown_background();
             notify_shutdown.shutdown_finished();
         });
@@ -1165,7 +1279,13 @@ impl TelemetryWorkerBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::worker::TelemetryWorkerHandle;
+    use crate::data::Payload;
+    use crate::worker::http_client::header::{
+        DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
+    };
+    use crate::worker::{TelemetryWorker, TelemetryWorkerBuilder, TelemetryWorkerHandle};
+    use libdd_common::{http_common, Endpoint};
+    use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
     fn is_sync<T: Sync>(_: T) {}
@@ -1176,5 +1296,370 @@ mod tests {
         let _ = |h: TelemetryWorkerHandle| is_send(h);
         #[allow(clippy::redundant_closure)]
         let _ = |h: TelemetryWorkerHandle| is_sync(h);
+    }
+
+    fn test_worker(
+        session_id: Option<String>,
+        root_session_id: Option<String>,
+        parent_session_id: Option<String>,
+    ) -> TelemetryWorker {
+        let mut b = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        b.config
+            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
+            .unwrap();
+        b.runtime_id = Some("rid".into());
+        b.config.session_id = session_id;
+        b.config.parent_session_id = parent_session_id;
+        b.config.root_session_id = root_session_id;
+        let rt = Runtime::new().unwrap();
+        b.build_worker(Some(rt.handle().clone())).1
+    }
+
+    #[test]
+    fn telemetry_http_includes_dd_session_id() {
+        let req = test_worker(Some("sess".into()), None, None)
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+    }
+
+    #[test]
+    fn telemetry_http_omits_root_session_id_when_same_as_session_id() {
+        let req = test_worker(
+            Some("sess-id".into()),
+            Some("sess-id".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess-id"
+        );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+        assert_eq!(
+            req.headers()
+                .get(DD_PARENT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "parent"
+        );
+    }
+
+    #[test]
+    fn telemetry_http_omits_parent_session_id_when_same_as_session_id() {
+        let req = test_worker(
+            Some("sess-id".into()),
+            Some("root".into()),
+            Some("sess-id".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess-id"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "root"
+        );
+        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+    }
+
+    #[test]
+    fn telemetry_http_omits_session_family_without_valid_session_id() {
+        let assert_no_session_headers = |req: &http_common::HttpRequest| {
+            assert!(req.headers().get(DD_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+        };
+
+        let req = test_worker(None, Some("root".into()), Some("parent".into()))
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_no_session_headers(&req);
+
+        let req = test_worker(
+            Some(String::new()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_no_session_headers(&req);
+    }
+
+    #[test]
+    fn telemetry_http_includes_dd_session_root_and_parent_session_ids() {
+        let req = test_worker(
+            Some("sess".into()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "root"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_PARENT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "parent"
+        );
+    }
+
+    mod reset {
+        use super::super::*;
+        use crate::data::{
+            metrics::{MetricNamespace, MetricType},
+            Configuration, ConfigurationOrigin, Dependency, Endpoint, Integration, Log, LogLevel,
+        };
+        use libdd_shared_runtime::Worker;
+
+        fn build_test_worker() -> (TelemetryWorkerHandle, TelemetryWorker) {
+            let builder = TelemetryWorkerBuilder::new(
+                "hostname".to_string(),
+                "test-service".to_string(),
+                "rust".to_string(),
+                "1.0.0".to_string(),
+                "1.0.0".to_string(),
+            );
+            // build_worker requires a tokio Handle; tests using this must be #[tokio::test]
+            builder.build_worker(Some(tokio::runtime::Handle::current()))
+        }
+
+        fn make_log(id: u64, message: &str) -> (LogIdentifier, Log) {
+            (
+                LogIdentifier { identifier: id },
+                Log {
+                    message: message.to_string(),
+                    level: LogLevel::Warn,
+                    stack_trace: None,
+                    count: 1,
+                    tags: String::new(),
+                    is_sensitive: false,
+                    is_crash: false,
+                },
+            )
+        }
+
+        /// After reset(), pending buffered telemetry and dedupe history is cleared.
+        #[tokio::test]
+        async fn test_reset_clears_buffered_data() {
+            let (handle, mut worker) = build_test_worker();
+
+            // Populate every data field that reset() should clear.
+            worker.data.dependencies.insert(Dependency {
+                name: "dep".to_string(),
+                version: None,
+            });
+            worker.data.integrations.insert(Integration {
+                name: "integration".to_string(),
+                version: None,
+                enabled: true,
+                compatible: None,
+                auto_enabled: None,
+            });
+            worker.data.configurations.insert(Configuration {
+                name: "cfg".to_string(),
+                value: "true".to_string(),
+                origin: ConfigurationOrigin::Code,
+                config_id: None,
+                seq_id: None,
+            });
+            worker.data.endpoints.insert(Endpoint {
+                operation_name: "GET /health".to_string(),
+                resource_name: "/health".to_string(),
+                ..Default::default()
+            });
+            let (id, log) = make_log(42, "msg");
+            worker.data.logs.get_mut_or_insert(id, log);
+
+            // Register a metric context and add a data point.
+            let key = handle.register_metric_context(
+                "test.metric".to_string(),
+                vec![],
+                MetricType::Count,
+                false,
+                MetricNamespace::Tracers,
+            );
+            worker.data.metric_buckets.add_point(key, 1.0, vec![]);
+
+            worker.reset();
+
+            let stats = worker.stats();
+            assert_eq!(
+                stats.dependencies_stored, 0,
+                "dependency dedupe history should be cleared"
+            );
+            assert_eq!(
+                stats.dependencies_unflushed, 0,
+                "dependency pending queue should be cleared"
+            );
+            assert_eq!(
+                stats.integrations_stored, 0,
+                "integration dedupe history should be cleared"
+            );
+            assert_eq!(
+                stats.integrations_unflushed, 0,
+                "integration pending queue should be cleared"
+            );
+            assert_eq!(
+                stats.configurations_stored, 0,
+                "configuration dedupe history should be cleared"
+            );
+            assert_eq!(
+                stats.configurations_unflushed, 0,
+                "configuration pending queue should be cleared"
+            );
+            assert_eq!(stats.logs, 0, "logs should be cleared");
+            assert_eq!(
+                stats.metric_buckets.buckets, 0,
+                "metric buckets should be cleared"
+            );
+            assert_eq!(
+                stats.metric_buckets.series, 0,
+                "metric series should be cleared"
+            );
+            assert!(
+                worker.data.endpoints.is_empty(),
+                "endpoints should be cleared"
+            );
+            assert!(worker.next_action.is_none(), "next_action should be None");
+        }
+
+        /// After reset(), actions queued in the mailbox before the fork are discarded.
+        #[tokio::test]
+        async fn test_reset_drains_mailbox() {
+            let (handle, mut worker) = build_test_worker();
+
+            // Enqueue several actions that should be discarded.
+            handle
+                .try_send_msg(TelemetryActions::AddDependency(Dependency {
+                    name: "dep".to_string(),
+                    version: None,
+                }))
+                .unwrap();
+            let (id, log) = make_log(1, "pre-fork log");
+            handle
+                .try_send_msg(TelemetryActions::AddLog((id, log)))
+                .unwrap();
+
+            // Stage one action as if trigger() had already stored it.
+            worker.next_action = Some(TelemetryActions::Lifecycle(LifecycleAction::Start));
+
+            worker.reset();
+
+            // The mailbox must be empty and next_action cleared.
+            assert!(
+                worker.mailbox.try_recv().is_err(),
+                "mailbox should be empty"
+            );
+            assert!(worker.next_action.is_none(), "next_action should be None");
+            // None of the queued actions should have been applied to pending state.
+            let stats = worker.stats();
+            assert_eq!(
+                stats.dependencies_stored, 0,
+                "queued AddDependency must not be applied"
+            );
+            assert_eq!(
+                stats.dependencies_unflushed, 0,
+                "queued AddDependency must not be pending"
+            );
+            assert_eq!(stats.logs, 0, "queued AddLog must be discarded");
+        }
+
+        /// After reset(), the worker accepts new telemetry and processes it normally.
+        #[tokio::test]
+        async fn test_worker_accepts_new_data_after_reset() {
+            let (handle, mut worker) = build_test_worker();
+            worker.flavor = TelemetryWorkerFlavor::MetricsLogs;
+
+            // Populate state before reset – this data must not survive.
+            let (id, log) = make_log(99, "pre-fork");
+            worker.data.logs.get_mut_or_insert(id, log);
+
+            worker.reset();
+
+            // Send a new log from the child side.
+            let (id2, log2) = make_log(1, "post-fork");
+            handle
+                .try_send_msg(TelemetryActions::AddLog((id2, log2)))
+                .unwrap();
+
+            // Simulate one trigger() + run() cycle.
+            worker.trigger().await;
+            worker.run().await;
+
+            let stats = worker.stats();
+            // Only the new post-fork log should be buffered.
+            assert_eq!(stats.logs, 1, "only post-fork log should be present");
+        }
+
+        /// After reset(), lifecycle state needed to keep periodic flushing alive is preserved.
+        #[tokio::test]
+        async fn test_reset_preserves_started_and_deadlines() {
+            let (_handle, mut worker) = build_test_worker();
+
+            worker.data.started = true;
+            worker
+                .deadlines
+                .schedule_event(LifecycleAction::FlushMetricAggr)
+                .unwrap();
+            worker
+                .deadlines
+                .schedule_event(LifecycleAction::FlushData)
+                .unwrap();
+
+            let deadlines_before = worker.deadlines.deadlines.clone();
+
+            worker.reset();
+
+            assert!(worker.data.started, "started flag should be preserved");
+            assert_eq!(
+                worker.deadlines.deadlines.len(),
+                deadlines_before.len(),
+                "scheduled deadlines should be preserved"
+            );
+            for ((_, actual), (_, expected)) in worker
+                .deadlines
+                .deadlines
+                .iter()
+                .zip(deadlines_before.iter())
+            {
+                assert_eq!(
+                    actual, expected,
+                    "deadline kinds should be preserved across reset"
+                );
+            }
+        }
     }
 }

@@ -3,50 +3,22 @@
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
+use crate::{catch_panic, gen_error};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
 use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TelemetryConfig, TraceExporter as GenericTraceExporter, TraceExporterInputFormat,
+    TraceExporterOutputFormat,
 };
-use std::{ptr::NonNull, time::Duration};
-use tracing::{debug, error};
 
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
-use std::panic::{catch_unwind, AssertUnwindSafe};
+type TraceExporter = GenericTraceExporter<NativeCapabilities>;
 
-macro_rules! gen_error {
-    ($l:expr) => {
-        Some(Box::new(ExporterError::new($l, &$l.to_string())))
-    };
-}
-
-#[cfg(all(feature = "catch_panic", panic = "unwind"))]
-macro_rules! catch_panic {
-    ($f:expr, $err:expr) => {
-        match catch_unwind(AssertUnwindSafe(|| $f)) {
-            Ok(ret) => ret,
-            Err(info) => {
-                if let Some(s) = info.downcast_ref::<String>() {
-                    error!(error = %ErrorCode::Panic, s);
-                } else if let Some(s) = info.downcast_ref::<&str>() {
-                    error!(error = %ErrorCode::Panic, s);
-                } else {
-                    error!(error = %ErrorCode::Panic, "Unable to retrieve panic context");
-                }
-                $err
-            }
-        }
-    };
-}
-
-#[cfg(any(not(feature = "catch_panic"), panic = "abort"))]
-macro_rules! catch_panic {
-    ($f:expr, $err:expr) => {
-        $f
-    };
-}
+use libdd_shared_runtime::SharedRuntime;
+use std::{ptr::NonNull, sync::Arc, time::Duration};
+use tracing::debug;
 
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
@@ -98,8 +70,11 @@ pub struct TraceExporterConfig {
     client_computed_stats: bool,
     telemetry_cfg: Option<TelemetryConfig>,
     health_metrics_enabled: bool,
+    process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
+    shared_runtime: Option<Arc<SharedRuntime>>,
+    otlp_endpoint: Option<String>,
 }
 
 #[no_mangle]
@@ -389,6 +364,26 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_client_computed_stats(
     )
 }
 
+/// Sets the process tags to be included in the stats payload.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_process_tags(
+    config: Option<&mut TraceExporterConfig>,
+    process_tags: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(handle) = config {
+            handle.process_tags = match sanitize_string(process_tags) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Sets the `X-Datadog-Test-Session-Token` header. Only used for testing with the test agent.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
@@ -426,7 +421,66 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
     )
 }
 
+/// Sets a shared runtime for the TraceExporter to use for background workers.
+///
+/// `handle` must have been initialized with [`ddog_shared_runtime_new`].
+///
+/// When set, the exporter will use the provided runtime instead of creating its own.
+/// This allows multiple exporters (or other components) to share a single runtime.
+/// The config holds a clone of the `Arc` (increments the strong count), so the
+/// original handle remains valid and must still be freed with
+/// [`ddog_shared_runtime_free`].
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
+    config: Option<&mut TraceExporterConfig>,
+    handle: Option<NonNull<SharedRuntime>>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        match (config, handle) {
+            (Some(config), Some(handle)) => {
+                // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+                // Increment the strong count before reconstructing so the config's Arc
+                // is independent from the caller's handle.
+                Arc::increment_strong_count(handle.as_ptr());
+                config.shared_runtime = Some(Arc::from_raw(handle.as_ptr()));
+                None
+            }
+            _ => gen_error!(ErrorCode::InvalidArgument),
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+///
+/// When set, traces are sent to this URL in OTLP HTTP/JSON format instead of the Datadog
+/// agent. The host language is responsible for resolving the endpoint from its configuration
+/// (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
+    config: Option<&mut TraceExporterConfig>,
+    url: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.otlp_endpoint = match sanitize_string(url) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
+///
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
+/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
+/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
+/// OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///
@@ -456,6 +510,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_env(config.env.as_ref().unwrap_or(&"".to_string()))
                 .set_app_version(config.version.as_ref().unwrap_or(&"".to_string()))
                 .set_service(config.service.as_ref().unwrap_or(&"".to_string()))
+                .set_process_tags(config.process_tags.as_deref().unwrap_or(""))
                 .set_input_format(config.input_format)
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
@@ -476,6 +531,14 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if config.health_metrics_enabled {
                 builder.enable_health_metrics();
+            }
+
+            if let Some(runtime) = config.shared_runtime.clone() {
+                builder.set_shared_runtime(runtime);
+            }
+
+            if let Some(ref url) = config.otlp_endpoint {
+                builder.set_otlp_endpoint(url);
             }
 
             match builder.build() {
@@ -516,7 +579,6 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
 pub unsafe extern "C" fn ddog_trace_exporter_send(
     handle: Option<&TraceExporter>,
     trace: ByteSlice,
-    trace_count: usize,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
     let exporter = match handle {
@@ -525,7 +587,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send(
     };
 
     catch_panic!(
-        match exporter.send(&trace, trace_count) {
+        match exporter.send(&trace) {
             Ok(resp) => {
                 if let Some(result) = response_out {
                     result
@@ -546,7 +608,7 @@ mod tests {
     use crate::error::ddog_trace_exporter_error_free;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_trace_utils::span::SpanSlice;
+    use libdd_trace_utils::span::v04::SpanSlice;
     use std::{borrow::Borrow, mem::MaybeUninit};
 
     #[test]
@@ -571,6 +633,7 @@ mod tests {
             assert!(!cfg.compute_stats);
             assert!(cfg.telemetry_cfg.is_none());
             assert!(!cfg.health_metrics_enabled);
+            assert!(cfg.process_tags.is_none());
             assert!(cfg.test_session_token.is_none());
             assert!(cfg.connection_timeout.is_none());
 
@@ -761,6 +824,27 @@ mod tests {
     }
 
     #[test]
+    fn config_process_tags_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_set_process_tags(None, CharSlice::from("k:v"));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_process_tags(
+                config.as_mut(),
+                CharSlice::from("key1:val1,key2:val2"),
+            );
+
+            assert_eq!(error, None);
+
+            let cfg = config.unwrap();
+            assert_eq!(cfg.process_tags.as_ref().unwrap(), "key1:val1,key2:val2");
+        }
+    }
+
+    #[test]
     fn config_client_computed_stats_test() {
         unsafe {
             let error = ddog_trace_exporter_config_set_client_computed_stats(None, true);
@@ -899,7 +983,6 @@ mod tests {
             let ret = ddog_trace_exporter_send(
                 None,
                 trace,
-                0,
                 Some(NonNull::new_unchecked(&mut resp).cast()),
             );
 
@@ -973,7 +1056,6 @@ mod tests {
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
                 traces,
-                0,
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
             assert_eq!(ret, None);
@@ -1042,7 +1124,6 @@ mod tests {
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
                 traces,
-                0,
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
             mock_traces.assert();
@@ -1121,7 +1202,6 @@ mod tests {
             ret = ddog_trace_exporter_send(
                 Some(exporter.as_ref()),
                 traces,
-                0,
                 Some(NonNull::new_unchecked(&mut response).cast()),
             );
             mock_traces.assert();

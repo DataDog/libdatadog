@@ -4,13 +4,15 @@
 use regex::Regex;
 use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::LazyLock};
 
-const ALLOWED_IP_ADDRESSES: [&str; 4] = [
+const ALLOWED_IP_ADDRESSES: [&str; 5] = [
     // localhost
     "127.0.0.1",
     "::1",
     // link-local cloud provider metadata server addresses
     "169.254.169.254",
     "fd00:ec2::254",
+    // ECS task metadata
+    "169.254.170.2",
 ];
 
 const PREFIX_REGEX_LITERAL: &str = r"^((?:dnspoll|ftp|file|http|https):/{2,3})";
@@ -102,12 +104,8 @@ fn parse_ip(s: &str) -> Option<(&str, &str)> {
         match ch {
             '0'..='9' => continue,
             '.' | '-' | '_' => return parse_ip_v4(s, ch),
-            ':' | 'A'..='F' | 'a'..='f' => {
-                if s.parse::<Ipv6Addr>().is_ok() {
-                    return Some((s, ""));
-                } else {
-                    return None;
-                }
+            ':' | 'A'..='F' | 'a'..='f' if s.parse::<Ipv6Addr>().is_ok() => {
+                return Some((s, ""));
             }
             '[' => {
                 // Parse IPv6 in [host]:port format
@@ -195,6 +193,7 @@ mod tests {
             quantize_peer_ip_addresses("169.254.169.254"),
             "169.254.169.254"
         );
+        assert_eq!(quantize_peer_ip_addresses("169.254.170.2"), "169.254.170.2");
         // blocking cases
         assert_eq!(quantize_peer_ip_addresses(""), "");
         assert_eq!(quantize_peer_ip_addresses("foo.dog"), "foo.dog");

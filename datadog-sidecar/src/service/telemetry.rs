@@ -25,7 +25,7 @@ use zwohash::ZwoHasher;
 
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::ops::Sub;
 use std::sync::LazyLock;
 use std::time::SystemTime;
@@ -56,17 +56,34 @@ struct ComposerPackages {
 
 pub struct TelemetryCachedEntry {
     last_used: Instant,
-    pub client: Arc<Mutex<TelemetryCachedClient>>,
+    pub client: Arc<Mutex<Option<TelemetryCachedClient>>>,
 }
 
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
     pub shm_writer: OneWayShmWriter<NamedShmHandle>,
-    pub config_sent: bool,
-    pub buffered_integrations: HashSet<Integration>,
-    pub buffered_composer_paths: HashSet<PathBuf>,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
+    pub shared: TelemetryCachedClientShmData,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct TelemetryCachedClientShmData {
+    pub config_sent: bool,
+    pub integrations: HashSet<Integration>,
+    pub composer_paths: HashSet<PathBuf>,
+    pub last_endpoints_push: SystemTime,
+}
+
+impl Default for TelemetryCachedClientShmData {
+    fn default() -> Self {
+        TelemetryCachedClientShmData {
+            config_sent: false,
+            integrations: HashSet::new(),
+            composer_paths: HashSet::new(),
+            last_endpoints_push: SystemTime::UNIX_EPOCH,
+        }
+    }
 }
 
 impl TelemetryCachedClient {
@@ -75,7 +92,8 @@ impl TelemetryCachedClient {
         env: &str,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
-        get_config: impl FnOnce() -> libdd_telemetry::config::Config,
+        get_config: impl FnOnce() -> Config,
+        process_tags: Vec<Tag>,
     ) -> Self {
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
             service.to_string(),
@@ -86,32 +104,41 @@ impl TelemetryCachedClient {
 
         builder.runtime_id = Some(instance_id.runtime_id.clone());
         builder.application.env = Some(env.to_string());
+        builder.application.process_tags = (!process_tags.is_empty()).then(|| {
+            process_tags
+                .iter()
+                .map(|tag| tag.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        });
         let config = get_config();
         builder.config = config.clone();
 
         let (handle, _join) = builder.spawn();
+        info!("spawned telemetry worker {config:?}");
 
-        info!("spawning telemetry worker {config:?}");
+        let worker = handle.clone();
+        tokio::spawn(async move {
+            worker
+                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
+                .await
+                .ok();
+        });
+
         Self {
-            worker: handle.clone(),
+            worker: handle,
             shm_writer: {
                 #[allow(clippy::unwrap_used)]
                 OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)).unwrap()
             },
-            config_sent: false,
-            buffered_integrations: HashSet::new(),
-            buffered_composer_paths: HashSet::new(),
+            shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
         }
     }
 
     pub fn write_shm_file(&self) {
-        if let Ok(buf) = bincode::serialize(&(
-            &self.config_sent,
-            &self.buffered_integrations,
-            &self.buffered_composer_paths,
-        )) {
+        if let Ok(buf) = bincode::serialize(&self.shared) {
             self.shm_writer.write(&buf);
         } else {
             warn!("Failed to serialize telemetry data for shared memory");
@@ -136,9 +163,10 @@ impl TelemetryCachedClient {
     pub fn to_telemetry_point(
         &self,
         (name, val, tags): (String, f64, Vec<Tag>),
-    ) -> TelemetryActions {
-        #[allow(clippy::unwrap_used)]
-        TelemetryActions::AddPoint((val, *self.telemetry_metrics.get(&name).unwrap(), tags))
+    ) -> Option<TelemetryActions> {
+        self.telemetry_metrics
+            .get(&name)
+            .map(|context_key| TelemetryActions::AddPoint((val, *context_key, tags)))
     }
 
     pub fn process_actions(
@@ -149,12 +177,15 @@ impl TelemetryCachedClient {
         for action in sidecar_actions {
             match action {
                 SidecarAction::Telemetry(t) => actions.push(t),
-                SidecarAction::RegisterTelemetryMetric(metric) => self.register_metric(metric),
                 SidecarAction::AddTelemetryMetricPoint(point) => {
-                    actions.push(self.to_telemetry_point(point));
+                    let metric_name = point.0.clone();
+                    if let Some(telemetry_action) = self.to_telemetry_point(point) {
+                        actions.push(telemetry_action);
+                    } else {
+                        warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                    }
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
-                SidecarAction::ClearQueueId => {}                // handled separately
             }
         }
         actions
@@ -204,7 +235,10 @@ impl TelemetryCachedClient {
                     // cheap way to avoid unbounded caching
                     const CACHE_INTERVAL: u64 = 2000;
                     let last_clean = LAST_CACHE_CLEAN.load(Ordering::Relaxed);
-                    let now_secs = Instant::now().elapsed().as_secs();
+                    let now_secs = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
                     if now_secs > last_clean + CACHE_INTERVAL
                         && LAST_CACHE_CLEAN
                             .compare_exchange(
@@ -289,56 +323,43 @@ impl TelemetryCachedClientSet {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: F,
-    ) -> Arc<Mutex<TelemetryCachedClient>>
+        process_tags: Vec<Tag>,
+    ) -> Arc<Mutex<Option<TelemetryCachedClient>>>
     where
-        F: FnOnce() -> libdd_telemetry::config::Config,
+        F: FnOnce() -> Config,
     {
         let key = (service.to_string(), env.to_string());
 
         let mut map = self.inner.lock_or_panic();
 
         if let Some(existing) = map.get_mut(&key) {
-            existing.last_used = Instant::now();
-            tokio::spawn({
-                let worker = existing.client.lock_or_panic().worker.clone();
-                async move {
-                    worker
-                        .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                        .await
-                        .ok();
-                }
-            });
-
-            info!("Reusing existing telemetry client for {key:?}");
-            return existing.client.clone();
+            if existing.client.lock_or_panic().is_some() {
+                existing.last_used = Instant::now();
+                info!("Reusing existing telemetry client for {key:?}");
+                return existing.client.clone();
+            }
+            // Dead (None) entry — fall through to replace it with a fresh client.
         }
 
-        let entry = TelemetryCachedEntry {
-            last_used: Instant::now(),
-            client: Arc::new(Mutex::new(TelemetryCachedClient::new(
-                service,
-                env,
-                instance_id,
-                runtime_meta,
-                get_config,
-            ))),
-        };
-
-        let entry = map.entry(key.clone()).or_insert(entry);
-
-        tokio::spawn({
-            let worker = entry.client.lock_or_panic().worker.clone();
-            async move {
-                worker
-                    .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-                    .await
-                    .ok();
-            }
-        });
+        let new_client = Arc::new(Mutex::new(Some(TelemetryCachedClient::new(
+            service,
+            env,
+            instance_id,
+            runtime_meta,
+            get_config,
+            process_tags,
+        ))));
+        map.insert(
+            key.clone(),
+            TelemetryCachedEntry {
+                last_used: Instant::now(),
+                client: new_client.clone(),
+            },
+        );
 
         info!("Created new telemetry client for {key:?}");
 
-        entry.client.clone()
+        new_client
     }
 
     pub fn remove_telemetry_client(&self, service: &str, env: &str) {
@@ -365,11 +386,18 @@ pub fn path_for_telemetry(service: &str, env: &str) -> CString {
 }
 
 #[derive(Debug)]
+pub enum InternalTelemetryAction {
+    TelemetryAction(TelemetryActions),
+    RegisterTelemetryMetric(MetricContext),
+    AddMetricPoint((f64, String, Vec<Tag>)),
+}
+
+#[derive(Debug)]
 pub struct InternalTelemetryActions {
     pub instance_id: InstanceId,
     pub service_name: String,
     pub env_name: String,
-    pub actions: Vec<TelemetryActions>,
+    pub actions: Vec<InternalTelemetryAction>,
 }
 
 pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryActions>> {
@@ -379,15 +407,20 @@ pub fn get_telemetry_action_sender() -> Result<mpsc::Sender<InternalTelemetryAct
         .ok_or_else(|| anyhow!("Telemetry action sender not initialized"))
 }
 
-pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
-    info!("Starting telemetry action receiver task...");
-
-    // create mpsc pair and set TELEMETRY_ACTION_SENDER
-    let (tx, mut rx) = mpsc::channel(1000);
+pub(crate) fn init_telemetry_sender() -> Option<mpsc::Receiver<InternalTelemetryActions>> {
+    let (tx, rx) = mpsc::channel(1000);
     if TELEMETRY_ACTION_SENDER.set(tx).is_err() {
-        warn!("Failed to set telemetry action sender");
-        return;
+        warn!("Telemetry action sender already initialized");
+        return None;
     }
+    Some(rx)
+}
+
+pub(crate) async fn telemetry_action_receiver_task(
+    sidecar: SidecarServer,
+    mut rx: mpsc::Receiver<InternalTelemetryActions>,
+) {
+    info!("Starting telemetry action receiver task...");
 
     while let Some(actions) = rx.recv().await {
         let telemetry_client = get_telemetry_client(
@@ -396,16 +429,51 @@ pub(crate) async fn telemetry_action_receiver_task(sidecar: SidecarServer) {
             &actions.service_name,
             &actions.env_name,
         );
-        let client = telemetry_client.lock_or_panic().worker.clone();
+        let Some(client) = telemetry_client
+            .lock_or_panic()
+            .as_ref()
+            .map(|t| t.worker.clone())
+        else {
+            continue;
+        };
 
-        for action in actions.actions {
-            let action_str = format!("{action:?}");
-            match client.send_msg(action).await {
-                Ok(_) => {
-                    debug!("Sent telemetry action to TelemetryWorker: {action_str}");
+        for it_action in actions.actions {
+            match it_action {
+                InternalTelemetryAction::TelemetryAction(action) => {
+                    let action_str = format!("{action:?}");
+                    match client.send_msg(action).await {
+                        Ok(_) => {
+                            debug!("Sent telemetry action to TelemetryWorker: {action_str}");
+                        }
+                        Err(e) => {
+                            warn!("Failed to send telemetry action {action_str} to TelemetryWorker: {e}");
+                        }
+                    }
                 }
-                Err(e) => {
-                    warn!("Failed to send telemetry action {action_str} to TelemetryWorker: {e}");
+                InternalTelemetryAction::RegisterTelemetryMetric(metric) => {
+                    debug!("Registered telemetry metric: {metric:?}");
+                    if let Some(t) = telemetry_client.lock_or_panic().as_mut() {
+                        t.register_metric(metric);
+                    }
+                }
+                InternalTelemetryAction::AddMetricPoint((value, name, tags)) => {
+                    let metric_name = name.clone();
+                    let actions_point_opt = {
+                        telemetry_client
+                            .lock_or_panic()
+                            .as_ref()
+                            .and_then(|t| t.to_telemetry_point((name, value, tags)))
+                    };
+                    if let Some(actions_point) = actions_point_opt {
+                        match client.send_msg(actions_point).await {
+                            Ok(_) => {}
+                            Err(e) => {
+                                warn!("Failed to send telemetry point to TelemetryWorker: {e}");
+                            }
+                        }
+                    } else {
+                        warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
+                    }
                 }
             }
         }
@@ -418,7 +486,7 @@ fn get_telemetry_client(
     instance_id: &InstanceId,
     service_name: &str,
     env_name: &str,
-) -> Arc<Mutex<TelemetryCachedClient>> {
+) -> Arc<Mutex<Option<TelemetryCachedClient>>> {
     let session = sidecar.get_session(&instance_id.session_id);
     let trace_config = session.get_trace_config();
     let runtime_meta = RuntimeMetadata::new(
@@ -440,6 +508,8 @@ fn get_telemetry_client(
             })
     };
 
+    let process_tags = session.process_tags.lock_or_panic().clone();
+
     TelemetryCachedClientSet::get_or_create(
         &sidecar.telemetry_clients,
         service_name,
@@ -447,5 +517,6 @@ fn get_telemetry_client(
         instance_id,
         &runtime_meta,
         get_config,
+        process_tags,
     )
 }

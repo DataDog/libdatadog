@@ -10,11 +10,11 @@ use crate::data::Probe;
 use datadog_live_debugger::debugger_defs::{
     Capture as DebuggerCaptureAlias, Capture, Captures, DebuggerData, DebuggerPayload, Diagnostics,
     DiagnosticsError, Entry, Fields, ProbeMetadata, ProbeMetadataLocation, ProbeStatus, Snapshot,
-    SnapshotEvaluationError, SnapshotStackFrame, Value as DebuggerValueAlias,
+    SnapshotEvaluationError, SnapshotStackFrame, Throwable, Value as DebuggerValueAlias,
 };
 use datadog_live_debugger::sender::generate_new_id;
 use datadog_live_debugger::{
-    add_redacted_name, add_redacted_type, is_redacted_name, is_redacted_type,
+    add_excluded_name, add_redacted_name, add_redacted_type, is_redacted_name, is_redacted_type,
 };
 use libdd_common_ffi::slice::AsBytes;
 
@@ -103,6 +103,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
         ddsource: Cow::Borrowed("dd_debugger"),
         timestamp,
         message: None,
+        process_tags: None,
         debugger: DebuggerData::Snapshot(Snapshot {
             captures: Some(Captures {
                 r#return: Some(Capture::default()),
@@ -125,7 +126,7 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
             }),
             language: language.to_utf8_lossy(),
             id: id.to_utf8_lossy(),
-            exception_capture_id: Some(exception_id.to_utf8_lossy()),
+            exception_id: Some(exception_id.to_utf8_lossy()),
             exception_hash: Some(exception_hash.to_utf8_lossy()),
             frame_index: Some(frame_index),
             timestamp,
@@ -154,6 +155,15 @@ pub extern "C" fn ddog_create_exception_snapshot<'a>(
     }
 }
 
+/// Returns a mutable pointer to the last DebuggerPayload in the Vec.
+/// Used to push stack frames to exception replay snapshots after creation.
+#[no_mangle]
+pub extern "C" fn ddog_vec_last_debugger_payload<'a>(
+    buffer: &'a mut Vec<DebuggerPayload<'a>>,
+) -> Option<&'a mut DebuggerPayload<'a>> {
+    buffer.last_mut()
+}
+
 #[no_mangle]
 pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
     probe: &'a Probe,
@@ -161,6 +171,7 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
     service: CharSlice<'a>,
     language: CharSlice<'a>,
     timestamp: u64,
+    process_tags: CharSlice<'a>,
 ) -> Box<DebuggerPayload<'a>> {
     Box::new(DebuggerPayload {
         service: service.to_utf8_lossy(),
@@ -177,6 +188,11 @@ pub extern "C" fn ddog_create_log_probe_snapshot<'a>(
             timestamp,
             ..Default::default()
         }),
+        process_tags: if process_tags.is_empty() {
+            None
+        } else {
+            Some(process_tags.to_utf8_lossy())
+        },
     })
 }
 
@@ -259,6 +275,12 @@ pub unsafe extern "C" fn ddog_snapshot_add_redacted_name(name: CharSlice) {
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_snapshot_add_excluded_name(name: CharSlice) {
+    add_excluded_name(name.as_bytes())
+}
+
+#[no_mangle]
 pub extern "C" fn ddog_snapshot_redacted_type(name: CharSlice) -> bool {
     is_redacted_type(name.as_bytes())
 }
@@ -267,6 +289,51 @@ pub extern "C" fn ddog_snapshot_redacted_type(name: CharSlice) -> bool {
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_snapshot_add_redacted_type(name: CharSlice) {
     add_redacted_type(name.as_bytes())
+}
+
+#[no_mangle]
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn ddog_snapshot_set_throwable<'a, 'b: 'a>(
+    capture: &mut DebuggerCapture<'a>,
+    throwable_type: CharSlice<'b>,
+    message: CharSlice<'b>,
+) {
+    capture.0.throwable = Some(Throwable {
+        r#type: throwable_type.to_utf8_lossy(),
+        message: message.to_utf8_lossy(),
+        stacktrace: Vec::new(),
+    });
+}
+
+#[no_mangle]
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn ddog_snapshot_throwable_add_frame<'a, 'b: 'a>(
+    capture: &mut DebuggerCapture<'a>,
+    file: CharSlice<'b>,
+    function: CharSlice<'b>,
+    line: i64,
+) {
+    if let Some(throwable) = &mut capture.0.throwable {
+        throwable.stacktrace.push(SnapshotStackFrame {
+            file_name: file.to_utf8_lossy(),
+            function: function.to_utf8_lossy(),
+            line_number: line,
+            column_number: None,
+        });
+    }
+}
+
+#[no_mangle]
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn ddog_snapshot_add_capture_fields<'a, 'b: 'a, 'c: 'a>(
+    capture: &mut DebuggerCapture<'a>,
+    name: CharSlice<'b>,
+    value: CaptureValue<'c>,
+) {
+    capture
+        .0
+        .capture_expressions
+        .insert(name.to_utf8_lossy(), value.into());
 }
 
 #[no_mangle]
@@ -344,7 +411,7 @@ fn ddog_snapshot_push_stack_frame_internal<'a, 'b: 'a, 'c: 'a>(
     snapshot.stack.push(SnapshotStackFrame {
         file_name: file_name.to_utf8_lossy(),
         function: if !type_name.is_empty() {
-            Cow::Owned(format!("{}::{}", function_name, type_name.to_utf8_lossy()))
+            Cow::Owned(format!("{}::{}", type_name.to_utf8_lossy(), function_name))
         } else {
             function_name
         },
@@ -425,6 +492,7 @@ pub extern "C" fn ddog_evaluation_error_snapshot<'a>(
             evaluation_errors: *errors,
             ..Default::default()
         }),
+        process_tags: None,
     })
 }
 
@@ -505,6 +573,7 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
             })
         }),
         debugger: DebuggerData::Diagnostics(diagnostics),
+        process_tags: None,
     }
 }
 

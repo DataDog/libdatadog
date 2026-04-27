@@ -12,8 +12,12 @@ use crate::profiles::collections::StringRef;
 /// another, even if it happens to work by implementation detail. There is an
 /// exception is for well-known strings, which are considered present in every
 /// string set.
+///
+/// Equality and hashing are defined by pointer identity, so they are only
+/// meaningful when comparing ids that originate from the same
+/// `ProfilesDictionary`.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct StringId2(*mut StringHeader);
 
 /// Represents what StringIds point to. Its definition is intentionally
@@ -43,13 +47,20 @@ impl StringId2 {
     pub fn is_empty(&self) -> bool {
         self.0.is_null()
     }
+
+    /// Creates a [`StringId2`] from the [`StringRef`]. This is an associated
+    /// method so that it can be marked const and used in const contexts such
+    /// as static initializers.
+    pub const fn from(s: StringRef) -> Self {
+        // SAFETY: every StringRef is a valid StringId2 (but not the other way
+        // because of null).
+        unsafe { core::mem::transmute::<StringRef, StringId2>(s) }
+    }
 }
 
 impl From<StringRef> for StringId2 {
     fn from(s: StringRef) -> Self {
-        // SAFETY: every StringRef is a valid StringId2 (but not the other way
-        // because of null).
-        unsafe { core::mem::transmute::<StringRef, StringId2>(s) }
+        StringId2::from(s)
     }
 }
 

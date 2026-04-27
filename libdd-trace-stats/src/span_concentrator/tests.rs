@@ -4,7 +4,7 @@
 use crate::span_concentrator::aggregation::OwnedAggregationKey;
 
 use super::*;
-use libdd_trace_utils::span::{trace_utils::compute_top_level_span, SpanSlice};
+use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
 use rand::{thread_rng, Rng};
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
@@ -877,6 +877,173 @@ fn test_peer_tags_aggregation() {
     );
 }
 
+/// Test that internal spans with _dd.base_service use it as their sole peer tag
+#[test]
+fn test_base_service_peer_tag() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        // Regular internal span without base_service (no peer tags)
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "internal.operation",
+            0,
+            &[],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Internal span with _dd.base_service (should have base_service as peer tag)
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            75,
+            5,
+            "A1",
+            "internal.with.base.service",
+            0,
+            &[("_dd.base_service", "original-service")],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Another internal span with same _dd.base_service (should aggregate together)
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            50,
+            5,
+            "A1",
+            "internal.with.base.service",
+            0,
+            &[("_dd.base_service", "original-service")],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Internal span with different _dd.base_service (should be separate group)
+        get_test_span_with_meta(
+            now,
+            4,
+            0,
+            60,
+            5,
+            "A1",
+            "internal.with.base.service",
+            0,
+            &[("_dd.base_service", "other-service")],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Client span with _dd.base_service and other peer tags enabled
+        // (should use configured peer tags, not base_service)
+        get_test_span_with_meta(
+            now,
+            5,
+            0,
+            80,
+            5,
+            "A1",
+            "SELECT * FROM users",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("_dd.base_service", "ignored-for-client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec!["db.instance".to_string(), "db.system".to_string()],
+    );
+
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+
+    let expected = vec![
+        // Internal span without base_service - no peer tags
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "internal.operation".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Internal spans with _dd.base_service="original-service" - aggregated with base_service
+        // peer tag
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "internal.with.base.service".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            peer_tags: vec!["_dd.base_service:original-service".to_string()],
+            duration: 125,
+            hits: 2,
+            top_level_hits: 2,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Internal span with _dd.base_service="other-service" - separate group
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "internal.with.base.service".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            peer_tags: vec!["_dd.base_service:other-service".to_string()],
+            duration: 60,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Client span - uses configured peer tags, not base_service
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "SELECT * FROM users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            peer_tags: vec![
+                "db.instance:i-1234".to_string(),
+                "db.system:postgres".to_string(),
+            ],
+            duration: 80,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    let stats = concentrator.flush(flushtime, false);
+    assert_counts_equal(
+        expected,
+        stats
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
 #[test]
 fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![
@@ -1131,6 +1298,30 @@ fn test_pb_span() {
                 span_events: vec![],
             }
         },
+        // Grpc span
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("span.kind".to_string(), "client".to_string());
+            meta.insert("rpc.grpc.status_code".to_string(), "aborted".to_string());
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "rpc.grpc".to_string(),
+                resource: "serviceName.methodName".to_string(),
+                trace_id: 1,
+                span_id: 3,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 50) as i64,
+                duration: 300,
+                error: 0,
+                r#type: "rpc".to_string(),
+                meta,
+                metrics: std::collections::HashMap::new(),
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
     ];
 
     libdd_trace_utils::trace_utils::compute_top_level_span(pb_spans.as_mut_slice());
@@ -1206,6 +1397,20 @@ fn test_pb_span() {
             hits: 1,
             top_level_hits: 0,
             errors: 1,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            name: "rpc.grpc".to_string(),
+            resource: "serviceName.methodName".to_string(),
+            http_status_code: 0,
+            r#type: "rpc".to_string(),
+            hits: 1,
+            errors: 0,
+            duration: 300,
+            span_kind: "client".to_string(),
+            grpc_status_code: "10".to_string(),
             is_trace_root: pb::Trilean::False.into(),
             ..Default::default()
         },

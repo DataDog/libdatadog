@@ -3,9 +3,8 @@
 
 use crate::arch;
 use crate::module::Module;
-use crate::utils::project_root;
+use crate::utils::{adjust_extern_symbols, project_root, wait_for_success};
 use anyhow::Result;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
@@ -18,7 +17,7 @@ pub struct Common {
 
 impl Module for Common {
     fn build(&self) -> Result<()> {
-        let mut cargo = Command::new("cargo")
+        let cargo = Command::new("cargo")
             .env("RUSTFLAGS", arch::RUSTFLAGS.join(" "))
             .current_dir(project_root())
             .args([
@@ -33,7 +32,7 @@ impl Module for Common {
             .spawn()
             .expect("failed to spawn cargo");
 
-        cargo.wait().expect("Cargo failed");
+        wait_for_success(cargo, "Cargo");
         Ok(())
     }
 
@@ -41,7 +40,8 @@ impl Module for Common {
         let target_path: PathBuf = [self.target_include.as_ref(), "common.h"].iter().collect();
 
         let origin_path: PathBuf = [self.source_include.as_ref(), "common.h"].iter().collect();
-        fs::copy(origin_path, target_path).expect("Failed to copy common.h");
+        adjust_extern_symbols(&origin_path, &target_path).expect("Failed to adjust extern symbols");
+
         Ok(())
     }
 }
