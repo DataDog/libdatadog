@@ -73,6 +73,8 @@ pub struct SessionConfig {
     pub hostname: String,
     /// Process-level service name (from `DD_SERVICE`), used as the stats concentrator key.
     pub root_service: String,
+    pub root_session_id: Option<String>,
+    pub parent_session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
