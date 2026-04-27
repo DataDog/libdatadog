@@ -4,7 +4,7 @@
 #[cfg(test)]
 mod tracing_integration_tests {
     use datadog_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
-    use datadog_tracer_flare::{
+    use libdd_tracer_flare::{
         run_remote_config_listener, FlareAction, LogLevel, TracerFlareManager,
     };
     use httpmock::prelude::{MockServer, POST};
