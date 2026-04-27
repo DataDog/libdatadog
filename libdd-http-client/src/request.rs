@@ -136,8 +136,13 @@ impl HttpRequest {
 
     /// Append headers to this request.
     #[inline]
-    pub fn with_headers<'a, K, V>(mut self, it: impl IntoIterator<Item = (K, V)>) -> Self where K: Into<String>, V: Into<String> {
-        self.headers.extend(it.into_iter().map(|(k, v)| (k.into(), v.into())));
+    pub fn with_headers<'a, K, V>(mut self, it: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.headers
+            .extend(it.into_iter().map(|(k, v)| (k.into(), v.into())));
         self
     }
 

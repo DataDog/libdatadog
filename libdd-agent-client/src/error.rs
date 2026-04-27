@@ -3,9 +3,9 @@
 
 //! Error types for [`crate::AgentClient`].
 
-use std::io::{Error, ErrorKind};
 use bytes::Bytes;
 use libdd_http_client::HttpClientError;
+use std::io::{Error, ErrorKind};
 use thiserror::Error;
 
 /// Errors that can occur when building an [`crate::AgentClient`].
