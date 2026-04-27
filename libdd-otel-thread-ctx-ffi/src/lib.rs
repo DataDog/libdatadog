@@ -3,8 +3,7 @@
 
 //! FFI bindings for the OTel thread-level context publisher.
 //!
-//! All symbols are only available on Linux, since the TLSDESC TLS mechanism
-//! required by the spec is Linux-specific.
+//! All symbols are only available on Linux, since spec is currently Linux-specific.
 
 #[cfg(target_os = "linux")]
 pub use linux::*;
