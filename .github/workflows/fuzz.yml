@@ -26,7 +26,7 @@ jobs:
       run: |
         ALL_FUZZ='["libdd-alloc", "libdd-profiling", "libdd-common-ffi", "libdd-trace-utils"]'
         if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
-          FILTERED=$(echo "$AFFECTED_CRATES" | jq --argjson affected "$ALL_FUZZ" '[.[] | select(IN($affected[]))]')
+          FILTERED=$(echo "$AFFECTED_CRATES" | jq -c --argjson affected "$ALL_FUZZ" '[.[] | select(IN($affected[]))]')
           COUNT=$(echo "$FILTERED" | jq 'length')
         else
           FILTERED="$ALL_FUZZ"
