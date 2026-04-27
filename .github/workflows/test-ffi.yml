@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - mq-working-branch-*
+  schedule:
+    - cron: '0 6 * * *'
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.84.1
