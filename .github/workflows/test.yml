@@ -104,15 +104,10 @@ jobs:
           docker-images: false
           swap-storage: true
       # Building (and testing) libdd-otel-thread-ctx-ffi requires a custom
-      # linker step, which requires lld (v19+) to be available.
+      # linker step, which requires lld to be available.
       - name: Install LLD
         if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euxo pipefail
-          sudo apt-get install -y lld-20
-          sudo ln -s /usr/bin/ld.lld-20 /usr/bin/ld.lld
-          sudo chmod 777 /usr/bin/ld.lld
+        run: sudo apt-get install -y lld
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
