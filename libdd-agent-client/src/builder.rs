@@ -3,13 +3,11 @@
 
 //! Builder for [`crate::AgentClient`].
 
-use std::collections::HashMap;
-use std::env;
+#[cfg(windows)]
+use std::ffi::OsString;
 #[cfg(unix)]
 use std::path::PathBuf;
-use std::time::Duration;
-#[cfg(windows)]
-use OsString;
+use std::{collections::HashMap, env, time::Duration};
 
 use libdd_http_client::RetryConfig;
 
@@ -372,6 +370,8 @@ impl AgentClientBuilder {
     /// Read container / entity-ID headers from the host environment. Always injects
     /// `Datadog-External-Env` when `DD_EXTERNAL_ENV` is set.
     fn container_headers() -> Vec<(String, String)> {
+        use libdd_common::entity_id;
+
         let mut headers = Vec::new();
 
         if let Ok(env) = env::var("DD_EXTERNAL_ENV") {
@@ -379,8 +379,6 @@ impl AgentClientBuilder {
                 headers.push(("Datadog-External-Env".to_string(), env));
             }
         }
-
-        use libdd_common::entity_id;
 
         if let Some(container_id) = entity_id::get_container_id() {
             headers.push(("Datadog-Container-Id".to_string(), container_id.to_owned()));
