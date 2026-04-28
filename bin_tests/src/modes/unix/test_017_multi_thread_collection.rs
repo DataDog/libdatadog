@@ -3,16 +3,6 @@
 
 //! Tests that the crashtracker collects stack information for all threads, not
 //! just the crashing thread.
-//!
-//! Two named background threads are spawned with distinct, recognisable call
-//! chains so that the captured stacks are visually interesting and clearly
-//! distinguishable in the crash report.
-//!
-//! ct_worker_0: worker_entry_0 -> wait_for_work_0 -> spin_loop
-//! ct_worker_1: worker_entry_1 -> wait_for_work_1 -> spin_loop
-//!
-//! All intermediate functions are #[inline(never)] so they appear as distinct
-//! frames in the libunwind output.
 
 use crate::modes::behavior::Behavior;
 use libdd_crashtracker::CrashtrackerConfiguration;
@@ -23,34 +13,21 @@ use std::time::Duration;
 
 pub struct Test;
 
+// Black box to prevent compiler optim
 #[inline(never)]
-fn wait_for_work_0() {
-    // Distinct black_box constant prevents the linker's identical-code-folding
-    // pass from merging wait_for_work_0 and wait_for_work_1 into one symbol.
-    let _ = std::hint::black_box(10u64);
+fn worker_fn_0() {
     loop {
+        std::hint::black_box(0u64);
         std::hint::spin_loop();
     }
 }
 
 #[inline(never)]
-fn worker_entry_0() {
-    let _ = std::hint::black_box(20u64);
-    wait_for_work_0();
-}
-
-#[inline(never)]
-fn wait_for_work_1() {
-    let _ = std::hint::black_box(11u64);
+fn worker_fn_1() {
     loop {
+        std::hint::black_box(1u64);
         std::hint::spin_loop();
     }
-}
-
-#[inline(never)]
-fn worker_entry_1() {
-    let _ = std::hint::black_box(21u64);
-    wait_for_work_1();
 }
 
 impl Behavior for Test {
@@ -68,10 +45,7 @@ impl Behavior for Test {
         Ok(())
     }
 
-    /// Spawn two named worker threads with distinct call chains, then leak the
-    /// handles so the threads outlive post() and are still live when the crash fires.
     fn post(&self, _output_dir: &Path) -> anyhow::Result<()> {
-        // 2 workers + 1 for this (main) thread.
         let barrier = Arc::new(Barrier::new(3));
 
         let b0 = Arc::clone(&barrier);
@@ -79,7 +53,7 @@ impl Behavior for Test {
             .name("ct_worker_0".to_string())
             .spawn(move || {
                 b0.wait();
-                worker_entry_0();
+                worker_fn_0();
             })?;
 
         let b1 = Arc::clone(&barrier);
@@ -87,7 +61,7 @@ impl Behavior for Test {
             .name("ct_worker_1".to_string())
             .spawn(move || {
                 b1.wait();
-                worker_entry_1();
+                worker_fn_1();
             })?;
 
         barrier.wait();
