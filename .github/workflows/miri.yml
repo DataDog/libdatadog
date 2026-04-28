@@ -7,6 +7,8 @@ on:
     branches:
       - main
       - mq-working-branch-*
+  schedule:
+    - cron: '0 6 * * *'
 
 jobs:
   setup:

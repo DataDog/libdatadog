@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - mq-working-branch-*
+  schedule:
+    - cron: '0 6 * * *'
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.84.1
@@ -214,7 +216,7 @@ jobs:
     needs: setup
     if: needs.setup.outputs.packages-count != '0'
     concurrency:
-      group: ci-${{ github.ref }}-${{ matrix.target }}
+      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-${{ matrix.target }}
       cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     runs-on:
       labels: ubuntu-latest-16-cores

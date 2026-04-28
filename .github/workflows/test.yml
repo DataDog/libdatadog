@@ -9,6 +9,8 @@ on:
     branches:
       - main
       - mq-working-branch-*
+  schedule:
+    - cron: '0 6 * * *'
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.84.1
@@ -270,7 +272,7 @@ jobs:
       PACKAGES: ${{ needs.setup.outputs.packages }}
       CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
     concurrency:
-      group: ci-${{ github.ref }}-cross-centos7
+      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
       - name: Free Disk Space
@@ -362,7 +364,7 @@ jobs:
     name: "exporter_e2e tests (no CA certificates)"
     runs-on: ubuntu-latest
     concurrency:
-      group: ci-${{ github.ref }}-no-certs-exporter
+      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-no-certs-exporter
       cancel-in-progress: true
     steps:
       - name: Checkout
@@ -409,7 +411,7 @@ jobs:
     name: "cargo check --target wasm32-unknown-unknown"
     runs-on: ubuntu-latest
     concurrency:
-      group: ci-${{ github.ref }}-wasm
+      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-wasm
       cancel-in-progress: true
     steps:
       - name: Checkout sources
