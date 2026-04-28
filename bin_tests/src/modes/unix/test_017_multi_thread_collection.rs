@@ -8,8 +8,8 @@
 //! chains so that the captured stacks are visually interesting and clearly
 //! distinguishable in the crash report.
 //!
-//! ct_worker_0: worker_entry_0 -> wait_for_work_0 -> thread::sleep
-//! ct_worker_1: worker_entry_1 -> wait_for_work_1 -> thread::sleep
+//! ct_worker_0: worker_entry_0 -> wait_for_work_0 -> spin_loop
+//! ct_worker_1: worker_entry_1 -> wait_for_work_1 -> spin_loop
 //!
 //! All intermediate functions are #[inline(never)] so they appear as distinct
 //! frames in the libunwind output.
@@ -25,8 +25,12 @@ pub struct Test;
 
 #[inline(never)]
 fn wait_for_work_0() {
+    // Distinct black_box constant prevents the linker's identical-code-folding
+    // pass from merging wait_for_work_0 and wait_for_work_1 into one symbol.
     let _ = std::hint::black_box(10u64);
-    thread::sleep(Duration::from_secs(300));
+    loop {
+        std::hint::spin_loop();
+    }
 }
 
 #[inline(never)]
@@ -38,7 +42,9 @@ fn worker_entry_0() {
 #[inline(never)]
 fn wait_for_work_1() {
     let _ = std::hint::black_box(11u64);
-    thread::sleep(Duration::from_secs(300));
+    loop {
+        std::hint::spin_loop();
+    }
 }
 
 #[inline(never)]
