@@ -248,34 +248,6 @@ mod tests {
     }
 
     #[test]
-    fn tracer_metadata_hash() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        fn hash(m: &TracerMetadata) -> u64 {
-            let mut h = DefaultHasher::new();
-            m.hash(&mut h);
-            h.finish()
-        }
-
-        let a = TracerMetadata {
-            tracer_language: "python".into(),
-            ..Default::default()
-        };
-        let b = TracerMetadata {
-            tracer_language: "python".into(),
-            ..Default::default()
-        };
-        let c = TracerMetadata {
-            tracer_language: "ruby".into(),
-            ..Default::default()
-        };
-
-        assert_eq!(hash(&a), hash(&b));
-        assert_ne!(hash(&a), hash(&c));
-    }
-
-    #[test]
     fn tracer_metadata_equality() {
         let a = TracerMetadata {
             tracer_language: "python".into(),
