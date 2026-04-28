@@ -395,6 +395,24 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
     }
 }
 
+fn sample_uses_string_ids(sample: &Sample<'_>) -> bool {
+    fn has_id(id: ManagedStringId) -> bool {
+        id != ManagedStringId::empty()
+    }
+
+    sample.locations.as_slice().iter().any(|location| {
+        has_id(location.mapping.filename_id)
+            || has_id(location.mapping.build_id_id)
+            || has_id(location.function.name_id)
+            || has_id(location.function.system_name_id)
+            || has_id(location.function.filename_id)
+    }) || sample
+        .labels
+        .as_slice()
+        .iter()
+        .any(|label| has_id(label.key_id) || has_id(label.str_id) || has_id(label.num_unit_id))
+}
+
 /// Create a new profile with the given sample types. Must call
 /// `ddog_prof_Profile_drop` when you are done with the profile.
 ///
@@ -565,10 +583,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
 ) -> ProfileResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
-        let uses_string_ids = sample
-            .labels
-            .first()
-            .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
+        let uses_string_ids = sample_uses_string_ids(&sample);
 
         if uses_string_ids {
             profile.add_string_id_sample(sample.into(), timestamp)
@@ -600,10 +615,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_tracked_allocation(
 ) -> ProfileResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
-        let uses_string_ids = sample
-            .labels
-            .first()
-            .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
+        let uses_string_ids = sample_uses_string_ids(&sample);
 
         if uses_string_ids {
             profile.add_tracked_string_id_allocation(sample.into(), timestamp, ptr as u64)
@@ -989,6 +1001,23 @@ pub unsafe extern "C" fn ddog_prof_Profile_untrack_allocation(profile: *mut Prof
 mod tests {
     use super::*;
 
+    fn new_string_storage() -> ManagedStringStorage {
+        match crate::string_storage::ddog_prof_ManagedStringStorage_new() {
+            crate::string_storage::ManagedStringStorageNewResult::Ok(storage) => storage,
+            crate::string_storage::ManagedStringStorageNewResult::Err(err) => panic!("{err}"),
+        }
+    }
+
+    unsafe fn intern_string(storage: ManagedStringStorage, value: &str) -> ManagedStringId {
+        match crate::string_storage::ddog_prof_ManagedStringStorage_intern(
+            storage,
+            CharSlice::from(value),
+        ) {
+            crate::string_storage::ManagedStringStorageInternResult::Ok(id) => id,
+            crate::string_storage::ManagedStringStorageInternResult::Err(err) => panic!("{err}"),
+        }
+    }
+
     #[test]
     fn ctor_and_dtor() -> Result<(), Error> {
         unsafe {
@@ -1281,6 +1310,103 @@ mod tests {
             ))?;
 
             ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn tracked_allocation_ffi_detects_string_id_locations_without_labels() -> Result<(), Error> {
+        unsafe {
+            let storage = new_string_storage();
+            let sample_types = [
+                SampleType::AllocSamples,
+                SampleType::AllocSize,
+                SampleType::HeapLiveSamples,
+                SampleType::HeapLiveSize,
+            ];
+            let mut profile = Result::from(ddog_prof_Profile_with_string_storage(
+                Slice::from_raw_parts(sample_types.as_ptr(), sample_types.len()),
+                None,
+                storage,
+            ))?;
+
+            Result::from(ddog_prof_Profile_configure_heap_live(
+                &mut profile,
+                HeapLiveConfig {
+                    max_tracked_allocations: 16,
+                    excluded_label_keys: Slice::empty(),
+                },
+            ))?;
+
+            let mapping_filename_id = intern_string(storage, "php");
+            let mapping_build_id = intern_string(storage, "build-id");
+            let function_name_id = intern_string(storage, "alloc_fn");
+            let function_filename_id = intern_string(storage, "alloc.php");
+
+            let string_id_locations = [Location {
+                mapping: Mapping {
+                    filename_id: mapping_filename_id,
+                    build_id_id: mapping_build_id,
+                    ..Default::default()
+                },
+                function: Function {
+                    name_id: function_name_id,
+                    system_name_id: function_name_id,
+                    filename_id: function_filename_id,
+                    ..Default::default()
+                },
+                line: 7,
+                ..Default::default()
+            }];
+            let tracked_values = [1, 128, 0, 0];
+            let string_id_sample = Sample {
+                locations: Slice::from(string_id_locations.as_slice()),
+                values: Slice::from(tracked_values.as_slice()),
+                labels: Slice::empty(),
+            };
+
+            Result::from(ddog_prof_Profile_add_tracked_allocation(
+                &mut profile,
+                string_id_sample,
+                None,
+                0x1234,
+            ))?;
+
+            let direct_locations = [Location {
+                mapping: Mapping {
+                    filename: "php".into(),
+                    build_id: "build-id".into(),
+                    ..Default::default()
+                },
+                function: Function {
+                    name: "alloc_fn".into(),
+                    system_name: "alloc_fn".into(),
+                    filename: "alloc.php".into(),
+                    ..Default::default()
+                },
+                line: 7,
+                ..Default::default()
+            }];
+            let direct_values = [2, 256, 0, 0];
+            let direct_sample = Sample {
+                locations: Slice::from(direct_locations.as_slice()),
+                values: Slice::from(direct_values.as_slice()),
+                labels: Slice::empty(),
+            };
+
+            Result::from(ddog_prof_Profile_add(&mut profile, direct_sample, None))?;
+
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                1
+            );
+
+            ddog_prof_Profile_drop(&mut profile);
+            crate::string_storage::ddog_prof_ManagedStringStorage_drop(storage);
             Ok(())
         }
     }
