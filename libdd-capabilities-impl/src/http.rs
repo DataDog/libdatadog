@@ -4,6 +4,8 @@
 //! Native HTTP client implementation backed by hyper.
 
 mod native {
+    use std::sync::{Arc, OnceLock};
+
     use libdd_capabilities::http::{HttpClientCapability, HttpError};
     use libdd_capabilities::maybe_send::MaybeSend;
     use libdd_common::connector::Connector;
@@ -13,19 +15,21 @@ mod native {
 
     #[derive(Clone)]
     pub struct NativeHttpClient {
-        client: GenericHttpClient<Connector>,
+        client: Arc<OnceLock<GenericHttpClient<Connector>>>,
     }
 
     impl std::fmt::Debug for NativeHttpClient {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("NativeHttpClient").finish()
+            f.debug_struct("NativeHttpClient")
+                .field("initialized", &self.client.get().is_some())
+                .finish()
         }
     }
 
     impl HttpClientCapability for NativeHttpClient {
         fn new_client() -> Self {
             Self {
-                client: new_default_client(),
+                client: Arc::new(OnceLock::new()),
             }
         }
 
@@ -35,7 +39,7 @@ mod native {
             req: http::Request<bytes::Bytes>,
         ) -> impl std::future::Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
         {
-            let client = self.client.clone();
+            let client = self.client.get_or_init(new_default_client).clone();
             async move {
                 let hyper_req = req.map(Body::from_bytes);
 
