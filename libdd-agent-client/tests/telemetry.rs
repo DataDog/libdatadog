@@ -8,6 +8,7 @@ use httpmock::prelude::*;
 use libdd_agent_client::TelemetryRequest;
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn posts_to_telemetry_proxy() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -30,6 +31,7 @@ async fn posts_to_telemetry_proxy() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn injects_per_request_headers() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {

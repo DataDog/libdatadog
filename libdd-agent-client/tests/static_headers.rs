@@ -8,6 +8,7 @@ use httpmock::prelude::*;
 use libdd_agent_client::{AgentClient, LanguageMetadata, TraceFormat, TraceSendOptions};
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn language_metadata_headers_injected_on_all_requests() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -35,6 +36,7 @@ async fn language_metadata_headers_injected_on_all_requests() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn test_token_injected_when_set() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
