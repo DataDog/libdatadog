@@ -7,6 +7,7 @@ use bytes::Bytes;
 use httpmock::prelude::*;
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn puts_to_correct_endpoint() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
@@ -23,6 +24,7 @@ async fn puts_to_correct_endpoint() {
 }
 
 #[tokio::test]
+#[cfg_attr(miri, ignore)]
 async fn sets_gzip_encoding() {
     let server = MockServer::start();
     let mock = server.mock(|when, then| {
