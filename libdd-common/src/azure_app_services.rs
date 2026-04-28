@@ -29,7 +29,7 @@ enum AzureContext {
 /// Snapshot of the process environment as captured at exec time.
 ///
 /// On Linux we parse `/proc/self/environ` (a kernel-managed snapshot of the
-/// initial `envp` block) instead of calling `getenv()`. This avoids the
+/// initial `envp` block) instead of calling `getenv`. This avoids the
 /// well-known race between libc's `getenv(3)` and `setenv(3)` from another
 /// thread, which has been observed to crash `ddog_prof_Exporter_new` when an
 /// embedder (e.g. dd-trace-py via `os.environ[...] = ...`) mutates the
