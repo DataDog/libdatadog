@@ -1460,18 +1460,11 @@ mod tests {
         b.build_worker(Some(tokio::runtime::Handle::current())).1
     }
 
-    /// Invariant for the `Full` flavor: every event that has a delay entry in the
-    /// scheduler's `delays` catalog must be scheduled by `Lifecycle(Start)`. An event
-    /// with a delay but no initial schedule will sit in `delays` forever without ever
-    /// entering the `deadlines` queue, so its handler never fires — the original
-    /// `app-extended-heartbeat` bug.
-    ///
-    /// Keep this as an invariant (walk `delays`) rather than an enumeration of specific
-    /// variants so that adding a new periodic `LifecycleAction` can't silently regress.
+    /// Every event with a delay must be scheduled on Start; otherwise it sits in
+    /// `delays` forever and its handler never fires. Walking `delays` (rather than
+    /// enumerating variants) guards against future periodic actions regressing.
     #[tokio::test]
-    // dispatch_action(Start) issues an `app-started` HTTP request via the reqwest
-    // client, which miri cannot run.
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore)] // reqwest in dispatch_action
     async fn full_flavor_start_schedules_every_periodic_action() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
 
@@ -1484,26 +1477,19 @@ mod tests {
         let scheduled: Vec<LifecycleAction> =
             worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
 
-        assert!(
-            !delays.is_empty(),
-            "test precondition: scheduler should register at least one periodic action",
-        );
+        assert!(!delays.is_empty(), "scheduler should have periodic actions");
         for ev in &delays {
             assert!(
                 scheduled.contains(ev),
-                "event {ev:?} has a delay catalog entry but was not scheduled on Start; \
-                 scheduled={scheduled:?}",
+                "{ev:?} has a delay but was not scheduled on Start; scheduled={scheduled:?}",
             );
         }
     }
 
-    /// The `MetricsLogs` flavor intentionally excludes lifecycle events (app-started,
-    /// heartbeats, extended heartbeats). This is a negative regression guard: if a
-    /// future change starts emitting lifecycle telemetry from the metrics-only flavor,
-    /// this test will flag it so the decision is explicit.
+    /// `MetricsLogs` flavor intentionally excludes lifecycle events. Negative guard
+    /// so any future change emitting them from this flavor has to update the test.
     #[tokio::test]
-    // build_worker constructs an http client via reqwest, which miri cannot run.
-    #[cfg_attr(miri, ignore)]
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     async fn metrics_logs_flavor_start_does_not_schedule_extended_heartbeat() {
         let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::MetricsLogs);
 
@@ -1514,17 +1500,11 @@ mod tests {
         let scheduled: Vec<LifecycleAction> =
             worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
 
-        assert!(
-            scheduled.contains(&LifecycleAction::FlushMetricAggr),
-            "MetricsLogs Start should schedule FlushMetricAggr; scheduled={scheduled:?}",
-        );
-        assert!(
-            scheduled.contains(&LifecycleAction::FlushData),
-            "MetricsLogs Start should schedule FlushData; scheduled={scheduled:?}",
-        );
+        assert!(scheduled.contains(&LifecycleAction::FlushMetricAggr));
+        assert!(scheduled.contains(&LifecycleAction::FlushData));
         assert!(
             !scheduled.contains(&LifecycleAction::ExtendedHeartbeat),
-            "MetricsLogs flavor intentionally excludes ExtendedHeartbeat; scheduled={scheduled:?}",
+            "MetricsLogs should not schedule ExtendedHeartbeat; scheduled={scheduled:?}",
         );
     }
 
