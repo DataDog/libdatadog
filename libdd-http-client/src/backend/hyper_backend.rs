@@ -149,10 +149,10 @@ impl super::Backend for HyperBackend {
         transport: TransportConfig,
         allow_connection_pooling: bool,
     ) -> Result<Self, HttpClientError> {
-        let builder = http_common::client_builder();
+        let mut builder = http_common::client_builder();
 
         if !allow_connection_pooling {
-            builder = builder.pool_max_idle_per_host(0);
+            builder.pool_max_idle_per_host(0);
         }
 
         Ok(Self {
