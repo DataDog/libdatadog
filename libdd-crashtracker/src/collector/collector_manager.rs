@@ -57,8 +57,8 @@ impl Collector {
                     tid,
                 );
             }
-            child_pid if child_pid > 0 => Ok(Self {
-                handle: ProcessHandle::new(receiver.handle.uds_fd, Some(child_pid)),
+            pid if pid > 0 => Ok(Self {
+                handle: ProcessHandle::new(receiver.handle.uds_fd, Some(pid)),
             }),
             code => {
                 // Error
