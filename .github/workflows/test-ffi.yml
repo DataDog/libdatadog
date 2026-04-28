@@ -103,6 +103,13 @@ jobs:
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
 
+      - name: Install Go (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: 'stable'
+          cache: false
+
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         env:

@@ -4,7 +4,7 @@ use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 use std::default::Default;
 
 /// This struct MUST be backward compatible.
-#[derive(serde::Serialize, Debug)]
+#[derive(serde::Serialize, Debug, PartialEq, Eq)]
 pub struct TracerMetadata {
     /// Version of the schema.
     pub schema_version: u8,
@@ -245,6 +245,25 @@ mod tests {
             .find(|kv| kv.key == key)?
             .value
             .as_ref()
+    }
+
+    #[test]
+    fn tracer_metadata_equality() {
+        let a = TracerMetadata {
+            tracer_language: "python".into(),
+            ..Default::default()
+        };
+        let b = TracerMetadata {
+            tracer_language: "python".into(),
+            ..Default::default()
+        };
+        let c = TracerMetadata {
+            tracer_language: "ruby".into(),
+            ..Default::default()
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
     }
 
     #[test]
