@@ -33,6 +33,7 @@ pub struct HttpClientConfig {
     timeout: Duration,
     treat_http_errors_as_errors: bool,
     retry: Option<RetryConfig>,
+    allow_connection_pooling: bool,
 }
 
 impl HttpClientConfig {
@@ -44,6 +45,7 @@ impl HttpClientConfig {
             timeout,
             treat_http_errors_as_errors: true,
             retry: None,
+            allow_connection_pooling: true,
         }
     }
 
@@ -66,27 +68,44 @@ impl HttpClientConfig {
     pub fn retry(&self) -> Option<&RetryConfig> {
         self.retry.as_ref()
     }
+
+    /// Whether connection pooling can be used, when available. See
+    /// [HttpClientBuilder::allow_connection_pooling].
+    pub fn allow_connection_pooling(&self) -> bool {
+        self.allow_connection_pooling
+    }
 }
 
 /// Builder for [`crate::HttpClient`].
 ///
 /// Obtain via [`crate::HttpClient::builder`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct HttpClientBuilder {
     base_url: Option<String>,
     timeout: Option<Duration>,
     treat_http_errors_as_errors: bool,
     retry: Option<RetryConfig>,
     transport: TransportConfig,
+    allow_connection_pooling: bool,
+}
+
+impl Default for HttpClientBuilder {
+    fn default() -> Self {
+        Self {
+            base_url: Default::default(),
+            timeout: Default::default(),
+            treat_http_errors_as_errors: true,
+            retry: Default::default(),
+            transport: Default::default(),
+            allow_connection_pooling: true,
+        }
+    }
 }
 
 impl HttpClientBuilder {
     /// Create a new builder with default settings.
     pub fn new() -> Self {
-        Self {
-            treat_http_errors_as_errors: true,
-            ..Default::default()
-        }
+        Self::default()
     }
 
     /// Set the base URL.
@@ -136,6 +155,20 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Allow connection pooling. Defaults to `true`.
+    ///
+    /// Note that whether pooling is actually used depends on the HTTP backend of
+    /// [libdd_http_client], though both currently available backends (reqwest and hyper) support
+    /// pooling. This setting should be understood as: if set to `true`, the default behavior of the
+    /// underlying backend will be selected, which might or might not do connection pooling by
+    /// default. If set to `false`, we guarantee no connection pooling will happen.
+    ///
+    /// This setting is used by the Agent-level HTTP client.
+    pub fn allow_connection_pooling(mut self, allow: bool) -> Self {
+        self.allow_connection_pooling = allow;
+        self
+    }
+
     /// Build the [`crate::HttpClient`].
     ///
     /// Returns [`crate::HttpClientError::InvalidConfig`] if required fields
@@ -152,6 +185,7 @@ impl HttpClientBuilder {
             timeout,
             treat_http_errors_as_errors: self.treat_http_errors_as_errors,
             retry: self.retry,
+            allow_connection_pooling: self.allow_connection_pooling,
         };
         crate::HttpClient::from_config_and_transport(config, self.transport)
     }

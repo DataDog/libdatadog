@@ -20,6 +20,7 @@ impl super::Backend for ReqwestBackend {
     fn new(
         timeout: std::time::Duration,
         transport: TransportConfig,
+        allow_connection_pooling: bool,
     ) -> Result<Self, HttpClientError> {
         let mut builder = reqwest::Client::builder().timeout(timeout);
 
@@ -33,6 +34,10 @@ impl super::Backend for ReqwestBackend {
             TransportConfig::WindowsNamedPipe(pipe) => {
                 builder = builder.windows_named_pipe(pipe);
             }
+        }
+
+        if !allow_connection_pooling {
+            builder = builder.pool_max_idle_per_host(0);
         }
 
         let client = builder

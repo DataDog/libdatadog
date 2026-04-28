@@ -46,7 +46,11 @@ impl HttpClient {
         config: HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
-        let backend = BackendImpl::new(config.timeout(), transport)?;
+        let backend = BackendImpl::new(
+            config.timeout(),
+            transport,
+            config.allow_connection_pooling(),
+        )?;
         Ok(Self { backend, config })
     }
 

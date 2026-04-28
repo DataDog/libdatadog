@@ -147,9 +147,18 @@ impl super::Backend for HyperBackend {
     fn new(
         _timeout: std::time::Duration,
         transport: TransportConfig,
+        allow_connection_pooling: bool,
     ) -> Result<Self, HttpClientError> {
-        let client = http_common::client_builder().build(Connector::default());
-        Ok(Self { client, transport })
+        let builder = http_common::client_builder();
+
+        if !allow_connection_pooling {
+            builder = builder.pool_max_idle_per_host(0);
+        }
+
+        Ok(Self {
+            client: builder.build(Connector::default()),
+            transport,
+        })
     }
 
     async fn send(

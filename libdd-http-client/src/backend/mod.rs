@@ -16,7 +16,11 @@ pub(crate) mod reqwest_backend;
 /// Backend`.
 pub(crate) trait Backend: Sized {
     /// Construct a new backend with the given timeout and transport.
-    fn new(timeout: Duration, transport: config::TransportConfig) -> Result<Self, HttpClientError>;
+    fn new(
+        timeout: Duration,
+        transport: config::TransportConfig,
+        allow_connection_pooling: bool,
+    ) -> Result<Self, HttpClientError>;
 
     /// Send an HTTP request and return the response.
     async fn send(
