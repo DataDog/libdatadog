@@ -64,7 +64,11 @@ impl std::fmt::Display for PtraceError {
         match self {
             PtraceError::Enumeration(e) => write!(f, "Failed to enumerate threads: {}", e),
             PtraceError::Attach(tid, errno) => {
-                write!(f, "Failed to attach to thread {}: errno {}", tid, errno)
+                if *errno == libc::ETIMEDOUT {
+                    write!(f, "Thread {} did not enter ptrace-stop within timeout", tid)
+                } else {
+                    write!(f, "Failed to attach to thread {}: errno {}", tid, errno)
+                }
             }
             PtraceError::Detach(tid, errno) => {
                 write!(f, "Failed to detach from thread {}: errno {}", tid, errno)
@@ -92,9 +96,21 @@ pub fn enumerate_threads(pid: libc::pid_t) -> Result<Vec<libc::pid_t>, PtraceErr
     Ok(tids)
 }
 
-/// Attach to a thread using PTRACE_SEIZE + PTRACE_INTERRUPT, then wait for it to stop.
+/// Attach to a thread using PTRACE_SEIZE + PTRACE_INTERRUPT, then wait for it
+/// to enter ptrace-stop state before returning.
 ///
-/// After this call the thread is stopped and ready for register reads and remote unwinding.
+/// The mechanism used to wait differs by C runtime:
+///
+/// - **glibc**: `waitpid(tid, …, __WALL)` — the standard ptrace synchronisation primitive.  glibc
+///   correctly routes CLONE_THREAD ptrace-stop events to the tracer's waitpid queue even when the
+///   tracer is not the thread's parent.
+///
+/// - **musl** (Alpine Linux): `waitpid` blocks indefinitely here because musl does not route
+///   CLONE_THREAD ptrace-stop notifications to a non-parent tracer's waitpid queue the same way
+///   glibc does.  Instead we poll `/proc/<tid>/status` for the `t` (tracing stop) state.  The Linux
+///   ptrace(2) man page explicitly states that a ptrace-stopped tracee does not need to be waited
+///   on before the tracer can read or write it, so no `waitpid` call is required at all on this
+///   path.
 fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
     // SAFETY: PTRACE_SEIZE attaches without stopping the thread
     let result = unsafe {
@@ -125,12 +141,54 @@ fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
         return Err(PtraceError::Attach(tid, errno));
     }
 
-    // Wait for the stop signal to be delivered
-    let mut status = 0;
-    // SAFETY: waitpid with valid tid
-    unsafe { libc::waitpid(tid, &mut status, 0) };
+    wait_for_stop(tid)
+}
 
+/// glibc: consume the ptrace-stop event via `waitpid`.
+#[cfg(not(target_env = "musl"))]
+fn wait_for_stop(tid: libc::pid_t) -> Result<(), PtraceError> {
+    let mut status = 0;
+    // SAFETY: waitpid with a valid tid; __WALL is needed to observe stops on
+    // CLONE_THREAD threads even when specifying a specific TID.
+    unsafe { libc::waitpid(tid, &mut status, libc::__WALL) };
     Ok(())
+}
+
+/// musl / Alpine: poll `/proc/<tid>/status` for the ptrace-stop state.
+///
+/// `waitpid` is not used because musl does not route CLONE_THREAD ptrace-stop
+/// events to a non-parent tracer's wait queue, causing it to block forever.
+/// Reading the proc filesystem is non-blocking and always accurate
+#[cfg(target_env = "musl")]
+fn wait_for_stop(tid: libc::pid_t) -> Result<(), PtraceError> {
+    const TIMEOUT: Duration = Duration::from_millis(200);
+
+    let path = format!("/proc/{}/status", tid);
+    let deadline = Instant::now() + TIMEOUT;
+
+    while Instant::now() < deadline {
+        let stopped = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| {
+                content
+                    .lines()
+                    .find(|l| l.starts_with("State:"))
+                    // "State:\t<char> (<description>)" — second token is the state char
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .map(|s| matches!(s, "t" | "T"))
+            })
+            .unwrap_or(false);
+
+        if stopped {
+            return Ok(());
+        }
+        std::hint::spin_loop();
+    }
+
+    // Thread did not stop within the deadline — detach so the caller can skip
+    // it rather than stalling the rest of the collection.
+    let _ = detach_thread(tid);
+    Err(PtraceError::Attach(tid, libc::ETIMEDOUT))
 }
 
 fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
@@ -150,7 +208,7 @@ fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
     Ok(())
 }
 
-/// Capture the full stack trace for a stopped thread using libunwind remote unwinding.
+/// Capture the full stack trace for a stopped thread using libunwind remote unwinding
 ///
 /// The thread must already be stopped (via `attach_thread`) before calling this.
 /// The caller is responsible for detaching after this returns.
