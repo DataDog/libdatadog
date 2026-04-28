@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use regex::Regex;
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 const WEBSITE_OWNER_NAME: &str = "WEBSITE_OWNER_NAME";
@@ -25,7 +27,8 @@ enum AzureContext {
     AzureAppService,
 }
 
-/// Snapshot of the process environment as captured at exec time.
+/// Snapshot of the AAS-relevant subset of the process environment, captured at
+/// exec time.
 ///
 /// On Linux we parse `/proc/self/environ` (a kernel-managed snapshot of the
 /// initial `envp` block) instead of calling `getenv`. This avoids the
@@ -39,11 +42,36 @@ enum AzureContext {
 /// needs — every Azure App Services / Functions variable we inspect is set by
 /// the platform before the process starts.
 ///
+/// **Only the AAS variable names listed in [`AAS_VAR_NAMES`] are retained**;
+/// all other entries (which on real AAS deployments commonly include unrelated
+/// app secrets, API keys, connection strings, etc.) are dropped at parse time
+/// so we don't keep a long-lived in-memory copy of them.
+///
 /// On non-Linux platforms we fall back to `std::env::var`. AAS deployments are
 /// almost exclusively Linux containers, and Windows' `GetEnvironmentVariableW`
 /// (which `std::env::var` uses) is itself thread-safe.
 #[cfg(target_os = "linux")]
 static PROC_ENVIRON: LazyLock<HashMap<String, String>> = LazyLock::new(read_proc_self_environ);
+
+/// AAS-related variable names this module reads. Only entries with one of
+/// these names are kept in [`PROC_ENVIRON`]; everything else from
+/// `/proc/self/environ` is dropped at parse time.
+#[cfg(target_os = "linux")]
+const AAS_VAR_NAMES: &[&str] = &[
+    WEBSITE_OWNER_NAME,
+    WEBSITE_SITE_NAME,
+    WEBSITE_RESOURCE_GROUP,
+    SITE_EXTENSION_VERSION,
+    WEBSITE_OS,
+    INSTANCE_NAME,
+    INSTANCE_ID,
+    SERVICE_CONTEXT,
+    FUNCTIONS_WORKER_RUNTIME,
+    FUNCTIONS_WORKER_RUNTIME_VERSION,
+    FUNCTIONS_EXTENSION_VERSION,
+    DD_AZURE_RESOURCE_GROUP,
+    WEBSITE_SKU,
+];
 
 #[cfg(target_os = "linux")]
 fn read_proc_self_environ() -> HashMap<String, String> {
@@ -61,7 +89,10 @@ fn read_proc_self_environ() -> HashMap<String, String> {
             Err(_) => continue,
         };
         if let Some(eq) = s.find('=') {
-            map.insert(s[..eq].to_string(), s[eq + 1..].to_string());
+            let key = &s[..eq];
+            if AAS_VAR_NAMES.contains(&key) {
+                map.insert(key.to_string(), s[eq + 1..].to_string());
+            }
         }
     }
     map
