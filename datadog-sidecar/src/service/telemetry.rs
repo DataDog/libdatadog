@@ -103,6 +103,7 @@ impl TelemetryCachedClient {
         );
 
         builder.runtime_id = Some(instance_id.runtime_id.clone());
+
         builder.application.env = Some(env.to_string());
         builder.application.process_tags = (!process_tags.is_empty()).then(|| {
             process_tags

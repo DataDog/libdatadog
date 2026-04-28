@@ -504,7 +504,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rustc-hash 2.1.1",
+ "rustc-hash",
  "shlex",
  "syn 2.0.87",
 ]
@@ -1597,24 +1597,6 @@ version = "0.0.1"
 dependencies = [
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "datadog-tracer-flare"
-version = "32.0.0"
-dependencies = [
- "anyhow",
- "bytes",
- "datadog-remote-config",
- "http",
- "httpmock",
- "libdd-common",
- "libdd-trace-utils",
- "serde_json",
- "tempfile",
- "tokio",
- "walkdir",
- "zip",
 ]
 
 [[package]]
@@ -2840,7 +2822,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2850,7 +2832,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "http",
@@ -2861,7 +2843,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "3.0.2"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3178,7 +3160,7 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "reqwest",
- "rustc-hash 1.1.0",
+ "rustc-hash",
  "rustls",
  "rustls-platform-verifier",
  "serde",
@@ -3414,6 +3396,24 @@ dependencies = [
  "tracing",
  "urlencoding",
  "zstd",
+]
+
+[[package]]
+name = "libdd-tracer-flare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "datadog-remote-config",
+ "http",
+ "httpmock",
+ "libdd-common",
+ "libdd-trace-utils",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "walkdir",
+ "zip",
 ]
 
 [[package]]
@@ -4744,12 +4744,6 @@ name = "rustc-demangle"
 version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "989e6739f80c4ad5b13e0fd7fe89531180375b18520cc8c82080e4dc4035b84f"
-
-[[package]]
-name = "rustc-hash"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
 name = "rustc-hash"

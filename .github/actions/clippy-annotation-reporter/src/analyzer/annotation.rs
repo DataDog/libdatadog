@@ -3,9 +3,9 @@
 
 //! Functions for finding and parsing clippy annotations
 
-use crate::analyzer::crate_detection::get_crate_for_file;
 use crate::analyzer::ClippyAnnotation;
 use anyhow::{Context, Result};
+use ci_shared::crate_detection::get_crate_for_file;
 use regex::Regex;
 use std::collections::HashMap;
 use std::rc::Rc;

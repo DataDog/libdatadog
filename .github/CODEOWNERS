@@ -2,6 +2,7 @@
 # Rules are evaluated in order. Later matches override earlier ones.
 # More specific patterns at the bottom override general patterns above.
 
+.claude/                             @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
 .codecov.yml                         @DataDog/apm-common-components-core
 .cargo/*                             @DataDog/libdatadog-core
@@ -32,7 +33,6 @@ datadog-remote-config                @DataDog/libdatadog-php @DataDog/libdatadog
 datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-ffi                  @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-macros               @DataDog/libdatadog-php
-datadog-tracer-flare                 @DataDog/libdatadog-apm
 deny.toml                            @DataDog/libdatadog
 docker-bake.hcl                      @DataDog/apm-common-components-core
 docs                                 @DataDog/libdatadog
@@ -57,6 +57,7 @@ libdd-trace-obfuscation              @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-protobuf                 @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-stats                    @DataDog/apm-common-components-core
 libdd-trace-utils                    @DataDog/serverless @DataDog/libdatadog-apm
+libdd-tracer-flare                   @DataDog/libdatadog-apm
 LICENSE*                             @DataDog/libdatadog
 license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
@@ -66,6 +67,7 @@ repository.datadog.yml               @DataDog/apm-common-components-core
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
 scripts/commits-since-release.sh     @DataDog/libdatadog-core
+scripts/create-release.sh            @DataDog/apm-common-components-core
 scripts/crates-to-package.sh         @DataDog/libdatadog-core
 scripts/major-bumps-level.sh         @DataDog/libdatadog-core
 scripts/publication-order.sh         @DataDog/libdatadog-core
