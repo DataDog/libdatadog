@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use regex::Regex;
-use std::collections::HashMap;
 use std::sync::LazyLock;
 
 const WEBSITE_OWNER_NAME: &str = "WEBSITE_OWNER_NAME";
