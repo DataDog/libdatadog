@@ -499,15 +499,13 @@ impl TelemetryWorker {
                     Ok(()) => self.payload_sent_success(&extended_hb),
                     Err(err) => self.log_err(&err),
                 }
+                // Only re-schedule self. Resetting `FlushData` here would replace its
+                // existing deadline with `now + heartbeat_interval`, starving FlushData
+                // when `extended_heartbeat_interval < heartbeat_interval` because each
+                // ExtendedHeartbeat firing pushes FlushData out before it can fire.
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
-                    .schedule_events(
-                        &mut [
-                            LifecycleAction::FlushData,
-                            LifecycleAction::ExtendedHeartbeat,
-                        ]
-                        .into_iter(),
-                    )
+                    .schedule_event(LifecycleAction::ExtendedHeartbeat)
                     .unwrap();
             }
             Lifecycle(Stop) => {
@@ -1505,6 +1503,47 @@ mod tests {
         assert!(
             !scheduled.contains(&LifecycleAction::ExtendedHeartbeat),
             "MetricsLogs should not schedule ExtendedHeartbeat; scheduled={scheduled:?}",
+        );
+    }
+
+    /// Regression: when `extended_heartbeat_interval < heartbeat_interval`, the
+    /// ExtendedHeartbeat handler must not reset FlushData's deadline. If it did, each
+    /// firing would push FlushData to `now + heartbeat_interval` and the next
+    /// (sooner) ExtendedHeartbeat would push it again — starving FlushData forever.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in dispatch_action
+    async fn extended_heartbeat_does_not_reset_flush_data() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let flush_data_before = worker
+            .deadlines
+            .deadlines
+            .iter()
+            .find(|(_, k)| *k == LifecycleAction::FlushData)
+            .map(|(d, _)| *d)
+            .expect("FlushData scheduled on Start");
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(
+                LifecycleAction::ExtendedHeartbeat,
+            ))
+            .await;
+
+        let flush_data_after = worker
+            .deadlines
+            .deadlines
+            .iter()
+            .find(|(_, k)| *k == LifecycleAction::FlushData)
+            .map(|(d, _)| *d)
+            .expect("FlushData should still be scheduled after ExtendedHeartbeat fires");
+
+        assert_eq!(
+            flush_data_before, flush_data_after,
+            "ExtendedHeartbeat must not reset FlushData's deadline",
         );
     }
 
