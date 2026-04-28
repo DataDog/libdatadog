@@ -536,15 +536,15 @@ impl Profile {
     /// Returns the previous Profile on success.
     #[inline]
     pub fn reset_and_return_previous(&mut self) -> anyhow::Result<Profile> {
-        // Inject heap-live samples into current profile before swapping.
-        // This makes tracked allocations appear in the serialized output.
-        self.inject_heap_live_samples()?;
-
         let current_active_samples = self.sample_block()?;
         anyhow::ensure!(
             current_active_samples == 0,
             "Can't rotate the profile, there are still active samples. Drain them and try again."
         );
+
+        // Inject heap-live samples into current profile before swapping.
+        // This makes tracked allocations appear in the serialized output.
+        self.inject_heap_live_samples()?;
 
         let profiles_dictionary_translator = self
             .profiles_dictionary_translator
@@ -1331,6 +1331,45 @@ mod heap_live_tests {
         let pprof = roundtrip_to_pprof(old).unwrap();
         // Only the original sample, no heap-live injection
         assert_eq!(pprof.samples.len(), 1);
+    }
+
+    #[test]
+    fn heap_live_failed_reset_does_not_inject_before_retry() {
+        let sample_types = heap_live_sample_types();
+        let mut profile = Profile::new(&sample_types, None);
+        profile.configure_heap_live(4096, &[]).unwrap();
+
+        let mapping = make_mapping();
+        let locations = make_locations(mapping);
+
+        let sample = api::Sample {
+            locations,
+            values: &[1, 128, 0, 0],
+            labels: vec![],
+        };
+
+        profile
+            .add_tracked_allocation(sample, None, 0x2500)
+            .expect("add to succeed");
+
+        profile.sample_start().unwrap();
+        let err = match profile.reset_and_return_previous() {
+            Ok(_) => panic!("reset should wait for active samples"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("still active samples"));
+
+        profile.untrack_allocation(0x2500);
+        profile.sample_end().unwrap();
+
+        let old = profile
+            .reset_and_return_previous()
+            .expect("retry should succeed after active sample drains");
+
+        let pprof = roundtrip_to_pprof(old).unwrap();
+        let samples = sorted_samples(&pprof);
+        let found_values: Vec<Vec<i64>> = samples.iter().map(|s| s.values.clone()).collect();
+        assert_eq!(found_values, vec![vec![1, 128, 0, 0]]);
     }
 
     #[test]
