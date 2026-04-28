@@ -96,12 +96,12 @@ jobs:
         if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # 1.3.1
         with:
-          tool-cache: false
+          tool-cache: true
           android: true
           dotnet: true
           haskell: true
           large-packages: true
-          docker-images: false
+          docker-images: true
           swap-storage: true
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
