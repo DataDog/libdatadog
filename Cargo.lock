@@ -1600,24 +1600,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "datadog-tracer-flare"
-version = "32.0.0"
-dependencies = [
- "anyhow",
- "bytes",
- "datadog-remote-config",
- "http",
- "httpmock",
- "libdd-common",
- "libdd-trace-utils",
- "serde_json",
- "tempfile",
- "tokio",
- "walkdir",
- "zip",
-]
-
-[[package]]
 name = "debugid"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3414,6 +3396,24 @@ dependencies = [
  "tracing",
  "urlencoding",
  "zstd",
+]
+
+[[package]]
+name = "libdd-tracer-flare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "datadog-remote-config",
+ "http",
+ "httpmock",
+ "libdd-common",
+ "libdd-trace-utils",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "walkdir",
+ "zip",
 ]
 
 [[package]]

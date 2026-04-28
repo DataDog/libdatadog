@@ -82,7 +82,7 @@ jobs:
       CARGO_INCREMENTAL: 0
       PACKAGES: ${{ needs.setup.outputs.packages }}
       CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
-      TRACING_CRATES: "libdd-data-pipeline libdd-trace-utils datadog-tracer-flare"
+      TRACING_CRATES: "libdd-data-pipeline libdd-trace-utils libdd-tracer-flare"
     strategy:
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-15]
