@@ -194,8 +194,9 @@ impl AgentClientBuilder {
         let retry = self.retry.unwrap_or_else(default_retry_config);
 
         // Build the underlying HTTP client.
-        let http = Self::build_http_client(transport, timeout, retry)
-            .map_err(|e| BuildError::HttpClient(e.to_string()))?;
+        let http =
+            Self::build_http_client(transport, timeout, retry, self.allow_connection_pooling)
+                .map_err(|e| BuildError::HttpClient(e.to_string()))?;
 
         // Pre-compute all static headers that are injected on every request.
         let static_headers =
@@ -208,6 +209,7 @@ impl AgentClientBuilder {
         transport: AgentTransport,
         timeout: Duration,
         retry: RetryConfig,
+        allow_connection_pooling: bool,
     ) -> Result<libdd_http_client::HttpClient, libdd_http_client::HttpClientError> {
         let base_url = match &transport {
             AgentTransport::Http { host, port } => format!("http://{}:{}", host, port),
@@ -224,6 +226,7 @@ impl AgentClientBuilder {
             // This allows methods like `agent_info` to interpret 404 as Ok(None) rather than
             // an error, and avoids retrying on HTTP 4xx/5xx.
             .treat_http_errors_as_errors(false)
+            .allow_connection_pooling(allow_connection_pooling)
             .retry(retry);
 
         match transport {
