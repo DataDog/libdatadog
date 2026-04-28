@@ -64,11 +64,7 @@ impl std::fmt::Display for PtraceError {
         match self {
             PtraceError::Enumeration(e) => write!(f, "Failed to enumerate threads: {}", e),
             PtraceError::Attach(tid, errno) => {
-                if *errno == libc::ETIMEDOUT {
-                    write!(f, "Thread {} did not enter ptrace-stop within timeout", tid)
-                } else {
-                    write!(f, "Failed to attach to thread {}: errno {}", tid, errno)
-                }
+                write!(f, "Failed to attach to thread {}: errno {}", tid, errno)
             }
             PtraceError::Detach(tid, errno) => {
                 write!(f, "Failed to detach from thread {}: errno {}", tid, errno)
@@ -96,40 +92,16 @@ pub fn enumerate_threads(pid: libc::pid_t) -> Result<Vec<libc::pid_t>, PtraceErr
     Ok(tids)
 }
 
-/// Poll `/proc/<tid>/status` until the thread enters ptrace-stop state (`t`).
+/// Wait for a thread to enter ptrace-stop after `PTRACE_INTERRUPT`.
 ///
-/// The Linux ptrace(2) man page states that a ptrace-stopped tracee does not
-/// need to be waited on via `waitpid` before the tracer can read or write it —
-/// the proc-filesystem state is sufficient.  Using `waitpid` instead causes it
-/// to block indefinitely when the receiver is not the parent of the stopped
-/// thread (which is always the case here), so we avoid it entirely.
+/// Uses `waitpid` with `__WALL`, which is the standard mechanism for
+/// observing ptrace-stop events even on threads created with `CLONE_THREAD`.
 fn wait_for_stop(tid: libc::pid_t) -> Result<(), PtraceError> {
-    const TIMEOUT: Duration = Duration::from_millis(200);
-
-    let path = format!("/proc/{}/status", tid);
-    let deadline = Instant::now() + TIMEOUT;
-
-    while Instant::now() < deadline {
-        // "State:\t<char> (<description>)" — second whitespace token is the char.
-        let stopped = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|c| {
-                c.lines()
-                    .find(|l| l.starts_with("State:"))
-                    .and_then(|l| l.split_whitespace().nth(1))
-                    .map(|s| matches!(s, "t" | "T"))
-            })
-            .unwrap_or(false);
-
-        if stopped {
-            return Ok(());
-        }
-        std::hint::spin_loop();
-    }
-
-    // Timed out detach so the caller skips this thread rather than stalling.
-    let _ = detach_thread(tid);
-    Err(PtraceError::Attach(tid, libc::ETIMEDOUT))
+    let mut status = 0i32;
+    // SAFETY: waitpid with a valid tid; __WALL observes stops on CLONE_THREAD
+    // threads regardless of whether the tracer is the thread's parent.
+    unsafe { libc::waitpid(tid, &mut status, libc::__WALL) };
+    Ok(())
 }
 
 /// Attach to a thread using PTRACE_SEIZE + PTRACE_INTERRUPT, then wait for it
