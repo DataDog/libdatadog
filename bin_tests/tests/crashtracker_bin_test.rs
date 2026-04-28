@@ -270,13 +270,6 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
-        // Each worker must have a multi-frame stack trace.
-        //
-        // The workers sleep in thread::sleep -> wait_for_work_N -> worker_entry_N.
-        // With libunwind remote unwinding, we expect the full call chain rather than
-        // a single syscall frame. We verify:
-        //   - More than one frame was captured.
-        //   - At least one frame contains the worker's entry function by name.
         for expected in ["ct_worker_0", "ct_worker_1"] {
             let worker = threads
                 .iter()
@@ -294,20 +287,20 @@ fn test_crash_tracking_multi_thread_collection() {
                 frames.len()
             );
 
-            let entry_fn = if expected == "ct_worker_0" {
-                "worker_entry_0"
+            let worker_fn = if expected == "ct_worker_0" {
+                "worker_fn_0"
             } else {
-                "worker_entry_1"
+                "worker_fn_1"
             };
-            let has_entry_frame = frames.iter().any(|f| {
+            let has_worker_frame = frames.iter().any(|f| {
                 f["function"]
                     .as_str()
-                    .map(|name| name.contains(entry_fn))
+                    .map(|name| name.contains(worker_fn))
                     .unwrap_or(false)
             });
             assert!(
-                has_entry_frame,
-                "{expected} stack should contain a frame for '{entry_fn}' but got: {frames:?}"
+                has_worker_frame,
+                "{expected} stack should contain a frame for '{worker_fn}' but got: {frames:?}"
             );
         }
 
