@@ -50,6 +50,11 @@ pub(crate) enum CrashKindData {
     },
     UnhandledException {
         stacktrace: StackTrace,
+        message: *mut String,
+    },
+    Panic {
+        stacktrace: *mut StackTrace,
+        message: *mut String,
     },
 }
 
@@ -58,6 +63,7 @@ impl CrashKindData {
         match self {
             CrashKindData::UnixSignal { .. } => ErrorKind::UnixSignal,
             CrashKindData::UnhandledException { .. } => ErrorKind::UnhandledException,
+            CrashKindData::Panic { .. } => ErrorKind::Panic,
         }
     }
 }
@@ -68,7 +74,6 @@ pub(crate) fn emit_crashreport(
     config: &CrashtrackerConfiguration,
     config_str: &str,
     metadata_string: &str,
-    message_ptr: *mut String,
     crash: CrashKindData,
     ppid: i32,
     crashing_tid: libc::pid_t,
@@ -78,14 +83,22 @@ pub(crate) fn emit_crashreport(
     // section, so try to emit message, siginfo, and kind before it to make sure
     // we have an enhanced crash ping message
     emit_config(pipe, config_str)?;
-    emit_message(pipe, message_ptr)?;
 
     match &crash {
         CrashKindData::UnixSignal { sig_info, .. } => {
             emit_siginfo(pipe, *sig_info)?;
         }
-        CrashKindData::UnhandledException { .. } => {
-            // Unhandled exceptions have no signal info
+        CrashKindData::UnhandledException {
+            message,
+            stacktrace: _,
+        } => {
+            emit_message(pipe, *message)?;
+        }
+        CrashKindData::Panic {
+            message,
+            stacktrace: _,
+        } => {
+            emit_message(pipe, *message)?;
         }
     }
 
@@ -117,10 +130,13 @@ pub(crate) fn emit_crashreport(
                 emit_runtime_stack(pipe)?;
             }
         }
-        CrashKindData::UnhandledException { stacktrace } => {
+        CrashKindData::UnhandledException { stacktrace, .. } => {
             // SAFETY: This branch only executes for unhandled exceptions, never
             // from a signal handler
             unsafe { emit_whole_stacktrace(pipe, stacktrace)? };
+        }
+        CrashKindData::Panic { stacktrace, .. } => {
+            unsafe { emit_whole_stacktrace(pipe, (*stacktrace).clone())? };
         }
     }
 
