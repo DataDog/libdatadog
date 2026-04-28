@@ -42,7 +42,7 @@ cxx = ["dep:cxx", "dep:cxx-build"]
 blazesym = "=0.2.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-libdd-libunwind-sys = { git = "https://github.com/DataDog/libdatadog-libunwind", branch = "gyuheon0h/remote-unwind-api" }
+libdd-libunwind-sys = "1.0.1"
 
 [dependencies]
 anyhow = "1.0"

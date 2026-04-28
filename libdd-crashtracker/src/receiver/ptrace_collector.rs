@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use libdd_libunwind_sys::{
     UnwAddrSpaceT, UnwCursor, UnwWord, _UPT_accessors, _UPT_create, _UPT_destroy,
     unw_create_addr_space, unw_destroy_addr_space, unw_get_proc_name_remote, unw_get_reg_remote,
-    unw_init_remote, unw_step_remote, UNW_REG_FP, UNW_REG_IP, UNW_REG_SP,
+    unw_init_remote, unw_step_remote, UNW_REG_IP, UNW_REG_SP,
 };
 
 use crate::crash_info::{StackFrame, StackTrace};
@@ -100,7 +100,13 @@ fn wait_for_stop(tid: libc::pid_t) -> Result<(), PtraceError> {
     let mut status = 0i32;
     // SAFETY: waitpid with a valid tid; __WALL observes stops on CLONE_THREAD
     // threads regardless of whether the tracer is the thread's parent.
-    unsafe { libc::waitpid(tid, &mut status, libc::__WALL) };
+    let ret = unsafe { libc::waitpid(tid, &mut status, libc::__WALL) };
+    if ret == -1 || !libc::WIFSTOPPED(status) {
+        return Err(PtraceError::Attach(tid, unsafe {
+            *libc::__errno_location()
+        }));
+    }
+
     Ok(())
 }
 
@@ -136,7 +142,11 @@ fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
         return Err(PtraceError::Attach(tid, errno));
     }
 
-    wait_for_stop(tid)
+    if let Err(e) = wait_for_stop(tid) {
+        let _ = detach_thread(tid);
+        return Err(e);
+    }
+    Ok(())
 }
 
 fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
@@ -203,14 +213,12 @@ fn unwind_remote_thread(
     for _ in 0..MAX_FRAMES {
         let mut ip: UnwWord = 0;
         let mut sp: UnwWord = 0;
-        let mut fp: UnwWord = 0;
 
         // SAFETY: cursor is initialized; unw_get_reg_remote reads from target via ptrace
         if unsafe { unw_get_reg_remote(&mut cursor, UNW_REG_IP, &mut ip) } != 0 || ip == 0 {
             break;
         }
         let _ = unsafe { unw_get_reg_remote(&mut cursor, UNW_REG_SP, &mut sp) };
-        let _ = unsafe { unw_get_reg_remote(&mut cursor, UNW_REG_FP, &mut fp) };
 
         let mut frame = StackFrame {
             ip: Some(format!("0x{:x}", ip)),
@@ -276,7 +284,6 @@ fn unwind_remote_thread(
 
 /// Attach to a thread, capture its full stack trace using remote libunwind, then detach.
 pub fn capture_thread_context(
-    _pid: libc::pid_t,
     tid: libc::pid_t,
     resolve_frames: crate::StacktraceCollection,
 ) -> Result<CapturedThreadContext, PtraceError> {
@@ -284,16 +291,17 @@ pub fn capture_thread_context(
 
     let stack_trace = unwind_remote_thread(tid, resolve_frames);
 
-    detach_thread(tid)?;
+    // Best-effort detach: if this fails the thread stays in ptrace-stop, but the
+    // receiver exiting will clean it up. Don't discard a good stack trace over it.
+    let _ = detach_thread(tid);
 
     Ok(CapturedThreadContext { stack_trace })
 }
 
-/// Stream thread contexts to a callback, one at a time, without intermediate storage
+/// Stream thread contexts to a callback, one at a time, without intermediate storage.
 ///
 /// For each non-crashing thread the callback receives the TID and an optional
-/// `CapturedThreadContext` (None if attachment or unwinding failed). The callback
-/// returns `true` to continue or `false` to stop early
+/// `CapturedThreadContext` (None if attachment or unwinding failed).
 pub fn stream_thread_contexts<F>(
     parent_pid: libc::pid_t,
     crashing_tid: libc::pid_t,
@@ -303,7 +311,7 @@ pub fn stream_thread_contexts<F>(
     mut callback: F,
 ) -> Result<(), PtraceError>
 where
-    F: FnMut(libc::pid_t, Option<&CapturedThreadContext>) -> bool,
+    F: FnMut(libc::pid_t, Option<&CapturedThreadContext>),
 {
     let start_time = Instant::now();
     let tids = enumerate_threads(parent_pid)?;
@@ -321,14 +329,9 @@ where
             break;
         }
 
-        let context = capture_thread_context(parent_pid, tid, resolve_frames).ok();
-
-        let should_continue = callback(tid, context.as_ref());
+        let context = capture_thread_context(tid, resolve_frames).ok();
+        callback(tid, context.as_ref());
         processed += 1;
-
-        if !should_continue {
-            break;
-        }
     }
 
     Ok(())

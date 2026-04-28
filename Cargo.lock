@@ -3093,8 +3093,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-libunwind-sys"
-version = "1.0.0"
-source = "git+https://github.com/DataDog/libdatadog-libunwind?branch=gyuheon0h%2Fremote-unwind-api#5e54c7a99830648e7cf53e9e49c4329b75766d15"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67c70c2c81b1bc8b09c4fa61ce68b98db340d91e7718cc9beda6e0b694d476e1"
 dependencies = [
  "cc",
  "libc",

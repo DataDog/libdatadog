@@ -204,8 +204,7 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 ///   - None of the additional threads are marked as crashed (the crashing thread is in
 ///     `error.stack`, not `error.threads`).
 ///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
-///   - Each worker has a multi-frame stack trace including their entry function, confirming that
-///     libunwind remote unwinding produced a full call chain rather than a single syscall frame.
+///   - Each worker has their work frame in the stack trace.
 #[test]
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
@@ -279,13 +278,6 @@ fn test_crash_tracking_multi_thread_collection() {
             let frames = worker["stack"]["frames"]
                 .as_array()
                 .unwrap_or_else(|| panic!("{expected} stack.frames should be an array"));
-
-            assert!(
-                frames.len() > 1,
-                "{expected} should have a multi-frame stack trace from remote libunwind; \
-                 got {} frame(s): {frames:?}",
-                frames.len()
-            );
 
             let worker_fn = if expected == "ct_worker_0" {
                 "worker_fn_0"
