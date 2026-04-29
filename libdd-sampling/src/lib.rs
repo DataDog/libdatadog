@@ -26,6 +26,9 @@ pub(crate) mod sampling_rule;
 pub(crate) mod sampling_rule_config;
 pub(crate) mod types;
 
+#[cfg(feature = "v04_span")]
+pub mod v04_span;
+
 // Re-export key types for convenience
 pub use agent_service_sampler::ServicesSampler;
 pub use datadog_sampler::{DatadogSampler, SamplingRulesCallback};

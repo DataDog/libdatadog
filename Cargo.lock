@@ -3219,6 +3219,8 @@ name = "libdd-sampling"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "libdd-common",
+ "libdd-trace-utils",
  "lru",
  "serde",
  "serde_json",
