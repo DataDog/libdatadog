@@ -15,6 +15,12 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-agent-client
 [lib]
 bench = false
 
+[features]
+default = ["https", "reqwest-backend"]
+https = ["libdd-http-client/https"]
+reqwest-backend = ["libdd-http-client/reqwest-backend"]
+hyper-backend = ["libdd-http-client/hyper-backend"]
+
 [dependencies]
 bytes = "1.4"
 flate2 = "1"
@@ -22,7 +28,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
 tokio = { version = "1.23", features = ["rt"] }
-libdd-http-client = { version = "32.0", path = "../libdd-http-client" }
+libdd-http-client = { version = "32.0", path = "../libdd-http-client", default-features = false }
 libdd-common = { version = "4.0", path = "../libdd-common", default-features = false }
 
 [dev-dependencies]
