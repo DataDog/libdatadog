@@ -24,14 +24,6 @@ impl<T: Clone + Eq> Scheduler<T> {
         Some((*i, key))
     }
 
-    pub fn schedule_events(&mut self, events: &mut impl Iterator<Item = T>) -> Result<(), T> {
-        let now = self.now.now();
-        for ev in events {
-            self.schedule_event_with_from(ev, now)?;
-        }
-        Ok(())
-    }
-
     fn schedule_event_with_from(&mut self, event: T, from: Instant) -> Result<(), T> {
         let (delay, _) = match self.delays.iter().find(|(_, k)| k == &event) {
             Some(s) => s,
@@ -108,9 +100,9 @@ mod tests {
             (Duration::from_millis(40), 2),
         ]);
         scheduler.now = Now::Mock(start);
-        scheduler
-            .schedule_events(&mut [0, 1, 2].into_iter())
-            .unwrap();
+        scheduler.schedule_event(0).unwrap();
+        scheduler.schedule_event(1).unwrap();
+        scheduler.schedule_event(2).unwrap();
 
         scheduler.now = Now::Mock(start + Duration::from_millis(9));
         expect_scheduled(
