@@ -504,7 +504,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "regex",
- "rustc-hash 2.1.1",
+ "rustc-hash",
  "shlex",
  "syn 2.0.87",
 ]
@@ -696,7 +696,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1465,7 +1465,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1525,6 +1525,7 @@ dependencies = [
  "http-body-util",
  "httpmock",
  "libc",
+ "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
@@ -1596,24 +1597,6 @@ version = "0.0.1"
 dependencies = [
  "quote",
  "syn 2.0.87",
-]
-
-[[package]]
-name = "datadog-tracer-flare"
-version = "31.0.0"
-dependencies = [
- "anyhow",
- "bytes",
- "datadog-remote-config",
- "http",
- "httpmock",
- "libdd-common",
- "libdd-trace-utils",
- "serde_json",
- "tempfile",
- "tokio",
- "walkdir",
- "zip",
 ]
 
 [[package]]
@@ -2850,7 +2833,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2860,22 +2843,24 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "http",
+ "http-body-util",
  "libdd-capabilities",
  "libdd-common",
 ]
 
 [[package]]
 name = "libdd-common"
-version = "3.0.2"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "bytes",
  "cc",
  "const_format",
+ "criterion",
  "futures",
  "futures-core",
  "futures-util",
@@ -2889,7 +2874,6 @@ dependencies = [
  "hyper-util",
  "indexmap 2.12.1",
  "libc",
- "libdd-capabilities",
  "maplit",
  "mime",
  "multer",
@@ -2912,7 +2896,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2966,7 +2950,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3024,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3049,7 +3033,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3071,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3145,7 +3129,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3191,7 +3175,7 @@ dependencies = [
  "prost",
  "rand 0.8.5",
  "reqwest",
- "rustc-hash 1.1.0",
+ "rustc-hash",
  "rustls",
  "rustls-platform-verifier",
  "serde",
@@ -3257,7 +3241,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3293,7 +3277,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3427,6 +3411,24 @@ dependencies = [
  "tracing",
  "urlencoding",
  "zstd",
+]
+
+[[package]]
+name = "libdd-tracer-flare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "datadog-remote-config",
+ "http",
+ "httpmock",
+ "libdd-common",
+ "libdd-trace-utils",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "walkdir",
+ "zip",
 ]
 
 [[package]]
@@ -4766,12 +4768,6 @@ checksum = "989e6739f80c4ad5b13e0fd7fe89531180375b18520cc8c82080e4dc4035b84f"
 
 [[package]]
 name = "rustc-hash"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
-
-[[package]]
-name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
@@ -5530,7 +5526,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5972,7 +5968,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "31.0.0"
+version = "32.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

@@ -29,6 +29,7 @@ on:
           - libdd-trace-protobuf
           - libdd-trace-stats
           - libdd-trace-utils
+          - libdd-tracer-flare
       main_start_ref:
         description: >
           Optional git ref to cut the release from: commit SHA (short or full), branch name,
@@ -561,6 +562,7 @@ jobs:
             NAME=$(echo "$bump" | jq -r '.name')
             TAG=$(echo "$bump" | jq -r '.prev_tag')
             NEXT_TAG=$(echo "$bump" | jq -r '.tag')
+            VERSION=$(echo "$bump" | jq -r '.version')
             CRATE_PATH=$(echo "$bump" | jq -r '.path')
             INITIAL_RELEASE=$(echo "$bump" | jq -r '.initial_release')
 
@@ -571,7 +573,7 @@ jobs:
               if [ ! -f "$CRATE_PATH/CHANGELOG.md" ]; then
                 echo "Creating CHANGELOG.md for $NAME..."
                 RELEASE_DATE=$(date +%Y-%m-%d)
-                printf '# Changelog\n\n\n## %s - %s\n\nInitial release.\n' "$LEVEL" "$RELEASE_DATE" > "$CRATE_PATH/CHANGELOG.md"
+                printf '# Changelog\n\n\n## %s - %s\n\nInitial release.\n' "$VERSION" "$RELEASE_DATE" > "$CRATE_PATH/CHANGELOG.md"
                 
                 git add "$CRATE_PATH/CHANGELOG.md"
                 git commit -m "chore(release): update CHANGELOG.md for $NAME"

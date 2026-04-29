@@ -44,7 +44,7 @@ pub(crate) mod tracing;
 
 #[cfg(windows)]
 pub use remote_configs::RemoteConfigNotifyFunction;
-pub use sidecar_interface::DynamicInstrumentationConfigState;
+pub use sidecar_interface::{DynamicInstrumentationConfigState, SidecarFlushOptions};
 pub use telemetry::{get_telemetry_action_sender, InternalTelemetryActions};
 pub(crate) use telemetry::{init_telemetry_sender, telemetry_action_receiver_task};
 
@@ -73,6 +73,8 @@ pub struct SessionConfig {
     pub hostname: String,
     /// Process-level service name (from `DD_SERVICE`), used as the stats concentrator key.
     pub root_service: String,
+    pub root_session_id: Option<String>,
+    pub parent_session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

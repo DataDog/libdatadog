@@ -26,11 +26,13 @@ sha2 = "0.10"
 either = "1.13.0"
 tokio = { version = "1.23", features = [
     "rt",
+    "sync",
+    "time",
 ], default-features = false }
 uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
-libdd-capabilities = { path = "../libdd-capabilities", version = "0.1.0" }
-libdd-common = { version = "3.0.2", path = "../libdd-common", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "1.0.0" }
+libdd-common = { version = "4.0.0", path = "../libdd-common", default-features = false }
 libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
 libdd-telemetry = { version = "4.0.0", path = "../libdd-telemetry", default-features = false, optional = true}
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
@@ -44,7 +46,7 @@ libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
-libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -53,9 +55,15 @@ uuid = { version = "1", features = ["js"] }
 [lib]
 bench = false
 
+[[bench]]
+name = "trace_buffer"
+harness = false
+path = "benches/trace_buffer.rs"
+
 [dev-dependencies]
-libdd-capabilities-impl = { version = "0.1.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
+libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
 libdd-trace-utils = { path = "../libdd-trace-utils", features = [
