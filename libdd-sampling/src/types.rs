@@ -47,6 +47,18 @@ pub trait AttributeLike {
     fn value(&self) -> &Self::Value;
 }
 
+impl<T: AttributeLike> AttributeLike for &T {
+    type Value = T::Value;
+
+    fn key(&self) -> &str {
+        (**self).key()
+    }
+
+    fn value(&self) -> &Self::Value {
+        (**self).value()
+    }
+}
+
 /// A trait for extracting typed values from attribute values.
 ///
 /// Provides methods for converting attribute values to common types used in sampling logic.
@@ -86,7 +98,9 @@ pub trait AttributeFactory {
 /// resource name, and status codes used by sampling rules.
 pub trait SpanProperties {
     /// The type of attribute that implements `AttributeLike`.
-    type Attribute: AttributeLike;
+    type Attribute<'a>: AttributeLike
+    where
+        Self: 'a;
 
     /// Returns the operation name for the span.
     ///
@@ -115,9 +129,7 @@ pub trait SpanProperties {
     fn status_code(&self) -> Option<u32>;
 
     /// Returns an iterator over span attributes.
-    fn attributes<'a>(&'a self) -> impl Iterator<Item = &'a Self::Attribute>
-    where
-        Self: 'a;
+    fn attributes(&self) -> impl Iterator<Item = Self::Attribute<'_>> + '_;
 
     /// Returns an alternate key for the given attribute key.
     ///

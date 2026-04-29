@@ -293,7 +293,10 @@ mod tests {
     }
 
     impl crate::types::SpanProperties for TestSpan {
-        type Attribute = TestAttr;
+        type Attribute<'a>
+            = &'a TestAttr
+        where
+            Self: 'a;
 
         fn operation_name(&self) -> Cow<'_, str> {
             Cow::Borrowed(self.name)
@@ -310,10 +313,7 @@ mod tests {
         fn status_code(&self) -> Option<u32> {
             self.status_code
         }
-        fn attributes<'a>(&'a self) -> impl Iterator<Item = &'a TestAttr>
-        where
-            Self: 'a,
-        {
+        fn attributes(&self) -> impl Iterator<Item = &TestAttr> + '_ {
             self.attrs.iter()
         }
         fn get_alternate_key<'b>(&self, key: &'b str) -> Option<Cow<'b, str>> {
@@ -362,9 +362,21 @@ mod tests {
     #[test]
     fn test_from_configs_preserves_provenance() {
         let configs = vec![
-            SamplingRuleConfig { sample_rate: 1.0, provenance: "customer".into(), ..Default::default() },
-            SamplingRuleConfig { sample_rate: 0.5, provenance: "dynamic".into(), ..Default::default() },
-            SamplingRuleConfig { sample_rate: 0.1, provenance: "default".into(), ..Default::default() },
+            SamplingRuleConfig {
+                sample_rate: 1.0,
+                provenance: "customer".into(),
+                ..Default::default()
+            },
+            SamplingRuleConfig {
+                sample_rate: 0.5,
+                provenance: "dynamic".into(),
+                ..Default::default()
+            },
+            SamplingRuleConfig {
+                sample_rate: 0.1,
+                provenance: "default".into(),
+                ..Default::default()
+            },
         ];
         let rules = SamplingRule::from_configs(configs);
         assert_eq!(rules[0].provenance, "customer");
@@ -377,7 +389,10 @@ mod tests {
     #[test]
     fn test_matches_http_status_code_rule_matching() {
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("http.status_code".into(), "200".into())])),
             None,
         );
@@ -389,7 +404,10 @@ mod tests {
     #[test]
     fn test_matches_http_status_code_rule_not_matching() {
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("http.status_code".into(), "200".into())])),
             None,
         );
@@ -401,7 +419,10 @@ mod tests {
     #[test]
     fn test_matches_http_status_code_absent_returns_false() {
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("http.status_code".into(), "200".into())])),
             None,
         );
@@ -412,8 +433,14 @@ mod tests {
     #[test]
     fn test_matches_http_response_status_code_key() {
         let rule = SamplingRule::new(
-            1.0, None, None, None,
-            Some(HashMap::from([("http.response.status_code".into(), "404".into())])),
+            1.0,
+            None,
+            None,
+            None,
+            Some(HashMap::from([(
+                "http.response.status_code".into(),
+                "404".into(),
+            )])),
             None,
         );
         let mut span = make_span("op", "svc", "res");
@@ -424,7 +451,10 @@ mod tests {
     #[test]
     fn test_matches_http_status_code_wildcard() {
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("http.status_code".into(), "2*".into())])),
             None,
         );
@@ -440,12 +470,21 @@ mod tests {
         // Rule uses DD key "http.method"; span stores OTel key "http.request.method"
         // with alternate mapping back to "http.method"
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("http.method".into(), "POST".into())])),
             None,
         );
         let mut span = make_span("op", "svc", "res");
-        span.attrs = vec![TestAttr { key: "http.request.method", value: TestValue { value: "POST", is_metric: false } }];
+        span.attrs = vec![TestAttr {
+            key: "http.request.method",
+            value: TestValue {
+                value: "POST",
+                is_metric: false,
+            },
+        }];
         span.alternates = vec![("http.request.method", "http.method")];
         assert!(rule.matches(&span));
     }
@@ -453,12 +492,21 @@ mod tests {
     #[test]
     fn test_matches_alternate_key_value_mismatch() {
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("http.method".into(), "POST".into())])),
             None,
         );
         let mut span = make_span("op", "svc", "res");
-        span.attrs = vec![TestAttr { key: "http.request.method", value: TestValue { value: "GET", is_metric: false } }];
+        span.attrs = vec![TestAttr {
+            key: "http.request.method",
+            value: TestValue {
+                value: "GET",
+                is_metric: false,
+            },
+        }];
         span.alternates = vec![("http.request.method", "http.method")];
         assert!(!rule.matches(&span));
     }
@@ -467,12 +515,21 @@ mod tests {
     fn test_matches_non_http_tag_no_alternate_fallback() {
         // Non-http. keys do NOT fall through to alternate-key scan
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("custom.tag".into(), "value".into())])),
             None,
         );
         let mut span = make_span("op", "svc", "res");
-        span.attrs = vec![TestAttr { key: "some.other.key", value: TestValue { value: "value", is_metric: false } }];
+        span.attrs = vec![TestAttr {
+            key: "some.other.key",
+            value: TestValue {
+                value: "value",
+                is_metric: false,
+            },
+        }];
         span.alternates = vec![("some.other.key", "custom.tag")];
         assert!(!rule.matches(&span));
     }
@@ -482,24 +539,42 @@ mod tests {
     #[test]
     fn test_match_attribute_value_non_integer_float_wildcard_matches() {
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("score".into(), "*".into())])),
             None,
         );
         let mut span = make_span("op", "svc", "res");
-        span.attrs = vec![TestAttr { key: "score", value: TestValue { value: "3.14", is_metric: true } }];
+        span.attrs = vec![TestAttr {
+            key: "score",
+            value: TestValue {
+                value: "3.14",
+                is_metric: true,
+            },
+        }];
         assert!(rule.matches(&span));
     }
 
     #[test]
     fn test_match_attribute_value_non_integer_float_non_wildcard_no_match() {
         let rule = SamplingRule::new(
-            1.0, None, None, None,
+            1.0,
+            None,
+            None,
+            None,
             Some(HashMap::from([("score".into(), "3.14".into())])),
             None,
         );
         let mut span = make_span("op", "svc", "res");
-        span.attrs = vec![TestAttr { key: "score", value: TestValue { value: "3.14", is_metric: true } }];
+        span.attrs = vec![TestAttr {
+            key: "score",
+            value: TestValue {
+                value: "3.14",
+                is_metric: true,
+            },
+        }];
         assert!(!rule.matches(&span));
     }
 

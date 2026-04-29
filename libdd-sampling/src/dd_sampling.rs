@@ -257,10 +257,22 @@ mod tests {
 
     #[test]
     fn test_priority_from_str() {
-        assert_eq!("1".parse::<SamplingPriority>().unwrap(), priority::AUTO_KEEP);
-        assert_eq!("0".parse::<SamplingPriority>().unwrap(), priority::AUTO_REJECT);
-        assert_eq!("2".parse::<SamplingPriority>().unwrap(), priority::USER_KEEP);
-        assert_eq!("-1".parse::<SamplingPriority>().unwrap(), priority::USER_REJECT);
+        assert_eq!(
+            "1".parse::<SamplingPriority>().unwrap(),
+            priority::AUTO_KEEP
+        );
+        assert_eq!(
+            "0".parse::<SamplingPriority>().unwrap(),
+            priority::AUTO_REJECT
+        );
+        assert_eq!(
+            "2".parse::<SamplingPriority>().unwrap(),
+            priority::USER_KEEP
+        );
+        assert_eq!(
+            "-1".parse::<SamplingPriority>().unwrap(),
+            priority::USER_REJECT
+        );
         assert!("not_a_number".parse::<SamplingPriority>().is_err());
         assert!("999".parse::<SamplingPriority>().is_err()); // overflows i8
     }
@@ -281,8 +293,14 @@ mod tests {
         // DEFAULT and AGENT_RATE_BY_SERVICE use AUTO priority
         assert_eq!(mechanism::DEFAULT.to_priority(true), priority::AUTO_KEEP);
         assert_eq!(mechanism::DEFAULT.to_priority(false), priority::AUTO_REJECT);
-        assert_eq!(mechanism::AGENT_RATE_BY_SERVICE.to_priority(true), priority::AUTO_KEEP);
-        assert_eq!(mechanism::AGENT_RATE_BY_SERVICE.to_priority(false), priority::AUTO_REJECT);
+        assert_eq!(
+            mechanism::AGENT_RATE_BY_SERVICE.to_priority(true),
+            priority::AUTO_KEEP
+        );
+        assert_eq!(
+            mechanism::AGENT_RATE_BY_SERVICE.to_priority(false),
+            priority::AUTO_REJECT
+        );
         assert_eq!(mechanism::APPSEC.to_priority(true), priority::AUTO_KEEP);
         assert_eq!(mechanism::APPSEC.to_priority(false), priority::AUTO_REJECT);
     }
@@ -290,13 +308,31 @@ mod tests {
     #[test]
     fn test_mechanism_to_priority_user_pair() {
         // Rule-based mechanisms use USER priority
-        assert_eq!(mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_priority(true), priority::USER_KEEP);
-        assert_eq!(mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_priority(false), priority::USER_REJECT);
-        assert_eq!(mechanism::REMOTE_USER_TRACE_SAMPLING_RULE.to_priority(true), priority::USER_KEEP);
-        assert_eq!(mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_priority(true), priority::USER_KEEP);
+        assert_eq!(
+            mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_priority(true),
+            priority::USER_KEEP
+        );
+        assert_eq!(
+            mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_priority(false),
+            priority::USER_REJECT
+        );
+        assert_eq!(
+            mechanism::REMOTE_USER_TRACE_SAMPLING_RULE.to_priority(true),
+            priority::USER_KEEP
+        );
+        assert_eq!(
+            mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_priority(true),
+            priority::USER_KEEP
+        );
         assert_eq!(mechanism::MANUAL.to_priority(true), priority::USER_KEEP);
-        assert_eq!(mechanism::SPAN_SAMPLING_RULE.to_priority(false), priority::USER_REJECT);
-        assert_eq!(mechanism::DATA_JOBS_MONITORING.to_priority(true), priority::USER_KEEP);
+        assert_eq!(
+            mechanism::SPAN_SAMPLING_RULE.to_priority(false),
+            priority::USER_REJECT
+        );
+        assert_eq!(
+            mechanism::DATA_JOBS_MONITORING.to_priority(true),
+            priority::USER_KEEP
+        );
     }
 
     #[test]
@@ -320,7 +356,10 @@ mod tests {
         assert_eq!(mechanism::OTLP_INGEST_PROBABILISTIC_SAMPLING.to_cow(), "-9");
         assert_eq!(mechanism::DATA_JOBS_MONITORING.to_cow(), "-10");
         assert_eq!(mechanism::REMOTE_USER_TRACE_SAMPLING_RULE.to_cow(), "-11");
-        assert_eq!(mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_cow(), "-12");
+        assert_eq!(
+            mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_cow(),
+            "-12"
+        );
         // Unknown mechanism falls back to Display
         assert_eq!(SamplingMechanism::from_u8(99).to_cow(), "-99");
     }
@@ -329,15 +368,30 @@ mod tests {
     fn test_mechanism_display() {
         assert_eq!(mechanism::DEFAULT.to_string(), "-0");
         assert_eq!(mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_string(), "-3");
-        assert_eq!(mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_string(), "-12");
+        assert_eq!(
+            mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_string(),
+            "-12"
+        );
     }
 
     #[test]
     fn test_mechanism_from_str() {
-        assert_eq!("-0".parse::<SamplingMechanism>().unwrap(), mechanism::DEFAULT);
-        assert_eq!("-1".parse::<SamplingMechanism>().unwrap(), mechanism::AGENT_RATE_BY_SERVICE);
-        assert_eq!("-3".parse::<SamplingMechanism>().unwrap(), mechanism::LOCAL_USER_TRACE_SAMPLING_RULE);
-        assert_eq!("-12".parse::<SamplingMechanism>().unwrap(), mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE);
+        assert_eq!(
+            "-0".parse::<SamplingMechanism>().unwrap(),
+            mechanism::DEFAULT
+        );
+        assert_eq!(
+            "-1".parse::<SamplingMechanism>().unwrap(),
+            mechanism::AGENT_RATE_BY_SERVICE
+        );
+        assert_eq!(
+            "-3".parse::<SamplingMechanism>().unwrap(),
+            mechanism::LOCAL_USER_TRACE_SAMPLING_RULE
+        );
+        assert_eq!(
+            "-12".parse::<SamplingMechanism>().unwrap(),
+            mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE
+        );
     }
 
     #[test]
