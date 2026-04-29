@@ -162,8 +162,6 @@ impl HttpClientBuilder {
     /// pooling. This setting should be understood as: if set to `true`, the default behavior of the
     /// underlying backend will be selected, which might or might not do connection pooling by
     /// default. If set to `false`, we guarantee no connection pooling will happen.
-    ///
-    /// This setting is used by the Agent-level HTTP client.
     pub fn allow_connection_pooling(mut self, allow: bool) -> Self {
         self.allow_connection_pooling = allow;
         self
