@@ -145,13 +145,12 @@ fn map_hyper_error(e: hyper_util::client::legacy::Error) -> HttpClientError {
 
 impl super::Backend for HyperBackend {
     fn new(
-        _timeout: std::time::Duration,
+        client_config: &HttpClientConfig,
         transport: TransportConfig,
-        allow_connection_pooling: bool,
     ) -> Result<Self, HttpClientError> {
         let mut builder = http_common::client_builder();
 
-        if !allow_connection_pooling {
+        if !client_config.allow_connection_pooling() {
             builder.pool_max_idle_per_host(0);
         }
 
