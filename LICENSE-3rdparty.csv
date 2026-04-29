@@ -343,7 +343,6 @@ rmp,https://github.com/3Hren/msgpack-rust,MIT,Evgeny Safronov <division494@gmail
 rmp-serde,https://github.com/3Hren/msgpack-rust,MIT,Evgeny Safronov <division494@gmail.com>
 rmpv,https://github.com/3Hren/msgpack-rust,MIT,Evgeny Safronov <division494@gmail.com>
 rustc-demangle,https://github.com/rust-lang/rustc-demangle,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
-rustc-hash,https://github.com/rust-lang-nursery/rustc-hash,Apache-2.0 OR MIT,The Rust Project Developers
 rustc-hash,https://github.com/rust-lang/rustc-hash,Apache-2.0 OR MIT,The Rust Project Developers
 rustix,https://github.com/bytecodealliance/rustix,Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT,"Dan Gohman <dev@sunfishcode.online>, Jakub Konka <kubkon@jakubkonka.com>"
 rustls,https://github.com/rustls/rustls,Apache-2.0 OR ISC OR MIT,The rustls Authors

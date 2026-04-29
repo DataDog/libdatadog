@@ -113,6 +113,8 @@ fn test_ddog_sidecar_register_app() {
             &process_tags,
             "".into(),
             "".into(),
+            "".into(),
+            "".into(),
         )
         .unwrap_none();
 
@@ -165,6 +167,8 @@ fn test_ddog_sidecar_register_app() {
             false,
             false,
             &process_tags,
+            "".into(),
+            "".into(),
             "".into(),
             "".into(),
         )

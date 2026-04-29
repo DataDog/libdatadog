@@ -29,6 +29,7 @@ on:
           - libdd-trace-protobuf
           - libdd-trace-stats
           - libdd-trace-utils
+          - libdd-tracer-flare
       main_start_ref:
         description: >
           Optional git ref to cut the release from: commit SHA (short or full), branch name,

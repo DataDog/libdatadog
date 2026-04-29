@@ -88,9 +88,9 @@ component_management:
       paths:
         - libdd-trace-utils
     - component_id: tracer-flare  # this is an identifier that should not be changed
-      name: datadog-tracer-flare  # this is a display name, and can be changed freely
+      name: libdd-tracer-flare  # this is a display name, and can be changed freely
       paths:
-        - datadog-tracer-flare
+        - libdd-tracer-flare
     - component_id: datadog-log
       name: libdd-log
       paths:
