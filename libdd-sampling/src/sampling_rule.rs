@@ -241,6 +241,286 @@ impl From<&str> for RuleProvenance {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sampling_rule_config::SamplingRuleConfig;
+    use std::borrow::Cow;
+
+    // Minimal SpanProperties impl for unit testing sampling_rule logic.
+    struct TestSpan {
+        name: &'static str,
+        service: &'static str,
+        resource: &'static str,
+        status_code: Option<u32>,
+        // (key, value_str, is_metric) — is_metric=true gives a float value
+        attrs: Vec<TestAttr>,
+        // alternate key mapping: (stored_key, alternate_dd_key)
+        alternates: Vec<(&'static str, &'static str)>,
+    }
+
+    struct TestAttr {
+        key: &'static str,
+        value: TestValue,
+    }
+
+    struct TestValue {
+        value: &'static str,
+        is_metric: bool,
+    }
+
+    impl crate::types::ValueLike for TestValue {
+        fn extract_float(&self) -> Option<f64> {
+            if self.is_metric {
+                self.value.parse().ok()
+            } else {
+                None
+            }
+        }
+        fn extract_string(&self) -> Option<Cow<'_, str>> {
+            Some(Cow::Borrowed(self.value))
+        }
+    }
+
+    impl crate::types::AttributeLike for TestAttr {
+        type Value = TestValue;
+        fn key(&self) -> &str {
+            self.key
+        }
+        fn value(&self) -> &TestValue {
+            &self.value
+        }
+    }
+
+    impl crate::types::SpanProperties for TestSpan {
+        type Attribute = TestAttr;
+
+        fn operation_name(&self) -> Cow<'_, str> {
+            Cow::Borrowed(self.name)
+        }
+        fn service(&self) -> Cow<'_, str> {
+            Cow::Borrowed(self.service)
+        }
+        fn env(&self) -> Cow<'_, str> {
+            Cow::Borrowed("")
+        }
+        fn resource(&self) -> Cow<'_, str> {
+            Cow::Borrowed(self.resource)
+        }
+        fn status_code(&self) -> Option<u32> {
+            self.status_code
+        }
+        fn attributes<'a>(&'a self) -> impl Iterator<Item = &'a TestAttr>
+        where
+            Self: 'a,
+        {
+            self.attrs.iter()
+        }
+        fn get_alternate_key<'b>(&self, key: &'b str) -> Option<Cow<'b, str>> {
+            self.alternates
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, alt)| Cow::Borrowed(*alt))
+        }
+    }
+
+    fn make_span(name: &'static str, service: &'static str, resource: &'static str) -> TestSpan {
+        TestSpan {
+            name,
+            service,
+            resource,
+            status_code: None,
+            attrs: vec![],
+            alternates: vec![],
+        }
+    }
+
+    // --- from_configs ---
+
+    #[test]
+    fn test_from_configs_empty() {
+        let rules = SamplingRule::from_configs(vec![]);
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn test_from_configs_single() {
+        let config = SamplingRuleConfig {
+            sample_rate: 0.5,
+            service: Some("svc".into()),
+            name: Some("op.*".into()),
+            resource: None,
+            tags: HashMap::new(),
+            provenance: "customer".into(),
+        };
+        let rules = SamplingRule::from_configs(vec![config]);
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].sample_rate, 0.5);
+        assert_eq!(rules[0].provenance, "customer");
+    }
+
+    #[test]
+    fn test_from_configs_preserves_provenance() {
+        let configs = vec![
+            SamplingRuleConfig { sample_rate: 1.0, provenance: "customer".into(), ..Default::default() },
+            SamplingRuleConfig { sample_rate: 0.5, provenance: "dynamic".into(), ..Default::default() },
+            SamplingRuleConfig { sample_rate: 0.1, provenance: "default".into(), ..Default::default() },
+        ];
+        let rules = SamplingRule::from_configs(configs);
+        assert_eq!(rules[0].provenance, "customer");
+        assert_eq!(rules[1].provenance, "dynamic");
+        assert_eq!(rules[2].provenance, "default");
+    }
+
+    // --- HTTP status code matching ---
+
+    #[test]
+    fn test_matches_http_status_code_rule_matching() {
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("http.status_code".into(), "200".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.status_code = Some(200);
+        assert!(rule.matches(&span));
+    }
+
+    #[test]
+    fn test_matches_http_status_code_rule_not_matching() {
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("http.status_code".into(), "200".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.status_code = Some(404);
+        assert!(!rule.matches(&span));
+    }
+
+    #[test]
+    fn test_matches_http_status_code_absent_returns_false() {
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("http.status_code".into(), "200".into())])),
+            None,
+        );
+        let span = make_span("op", "svc", "res"); // no status_code
+        assert!(!rule.matches(&span));
+    }
+
+    #[test]
+    fn test_matches_http_response_status_code_key() {
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("http.response.status_code".into(), "404".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.status_code = Some(404);
+        assert!(rule.matches(&span));
+    }
+
+    #[test]
+    fn test_matches_http_status_code_wildcard() {
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("http.status_code".into(), "2*".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.status_code = Some(201);
+        assert!(rule.matches(&span));
+    }
+
+    // --- Alternate key (OTel → DD) matching ---
+
+    #[test]
+    fn test_matches_alternate_key_found() {
+        // Rule uses DD key "http.method"; span stores OTel key "http.request.method"
+        // with alternate mapping back to "http.method"
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("http.method".into(), "POST".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.attrs = vec![TestAttr { key: "http.request.method", value: TestValue { value: "POST", is_metric: false } }];
+        span.alternates = vec![("http.request.method", "http.method")];
+        assert!(rule.matches(&span));
+    }
+
+    #[test]
+    fn test_matches_alternate_key_value_mismatch() {
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("http.method".into(), "POST".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.attrs = vec![TestAttr { key: "http.request.method", value: TestValue { value: "GET", is_metric: false } }];
+        span.alternates = vec![("http.request.method", "http.method")];
+        assert!(!rule.matches(&span));
+    }
+
+    #[test]
+    fn test_matches_non_http_tag_no_alternate_fallback() {
+        // Non-http. keys do NOT fall through to alternate-key scan
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("custom.tag".into(), "value".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.attrs = vec![TestAttr { key: "some.other.key", value: TestValue { value: "value", is_metric: false } }];
+        span.alternates = vec![("some.other.key", "custom.tag")];
+        assert!(!rule.matches(&span));
+    }
+
+    // --- Float attribute matching ---
+
+    #[test]
+    fn test_match_attribute_value_non_integer_float_wildcard_matches() {
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("score".into(), "*".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.attrs = vec![TestAttr { key: "score", value: TestValue { value: "3.14", is_metric: true } }];
+        assert!(rule.matches(&span));
+    }
+
+    #[test]
+    fn test_match_attribute_value_non_integer_float_non_wildcard_no_match() {
+        let rule = SamplingRule::new(
+            1.0, None, None, None,
+            Some(HashMap::from([("score".into(), "3.14".into())])),
+            None,
+        );
+        let mut span = make_span("op", "svc", "res");
+        span.attrs = vec![TestAttr { key: "score", value: TestValue { value: "3.14", is_metric: true } }];
+        assert!(!rule.matches(&span));
+    }
+
+    // --- RuleProvenance ---
+
+    #[test]
+    fn test_rule_provenance_from_str() {
+        assert_eq!(RuleProvenance::from("customer"), RuleProvenance::Customer);
+        assert_eq!(RuleProvenance::from("dynamic"), RuleProvenance::Dynamic);
+        assert_eq!(RuleProvenance::from("default"), RuleProvenance::Default);
+        assert_eq!(RuleProvenance::from("unknown"), RuleProvenance::Default);
+        assert_eq!(RuleProvenance::from(""), RuleProvenance::Default);
+    }
+
+    #[test]
+    fn test_rule_provenance_ordering() {
+        assert!(RuleProvenance::Customer < RuleProvenance::Dynamic);
+        assert!(RuleProvenance::Dynamic < RuleProvenance::Default);
+    }
+}
+
 /// Helper struct for representing i64 values as ValueLike
 struct ValueI64(i64);
 
