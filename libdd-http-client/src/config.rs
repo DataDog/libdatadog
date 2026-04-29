@@ -158,7 +158,7 @@ impl HttpClientBuilder {
     /// Allow connection pooling. Defaults to `true`.
     ///
     /// Note that whether pooling is actually used depends on the HTTP backend of
-    /// [libdd_http_client], though both currently available backends (reqwest and hyper) support
+    /// [crate], though both currently available backends (reqwest and hyper) support
     /// pooling. This setting should be understood as: if set to `true`, the default behavior of the
     /// underlying backend will be selected, which might or might not do connection pooling by
     /// default. If set to `false`, we guarantee no connection pooling will happen.
