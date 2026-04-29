@@ -1,0 +1,23 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-sampling"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+description = "Core sampling logic for Datadog tracing"
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+hashbrown = { workspace = true }
+foldhash = { workspace = true }
+lru = "0.16.3"
+
+[dev-dependencies]
+criterion = "0.5"
