@@ -2839,6 +2839,7 @@ dependencies = [
  "http-body-util",
  "libdd-capabilities",
  "libdd-common",
+ "tokio",
 ]
 
 [[package]]
@@ -3218,6 +3219,7 @@ dependencies = [
  "async-trait",
  "futures",
  "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "tokio",
  "tokio-util",

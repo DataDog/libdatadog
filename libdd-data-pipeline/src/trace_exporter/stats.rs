@@ -10,11 +10,11 @@
 #[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability, SpawnCapability};
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
-use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{SharedRuntime, SpawnRuntimeContext, WorkerHandle};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
@@ -71,12 +71,19 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
 /// Start the stats exporter and enable stats computation
 ///
 /// Should only be used if the agent enabled stats computation
-pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 'static>(
+pub(crate) fn start_stats_computation<
+    C: HttpClientCapability
+        + SleepCapability
+        + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
+        + MaybeSend
+        + Sync
+        + 'static,
+>(
     ctx: &StatsContext,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
-    client: H,
+    capabilities: C,
 ) -> anyhow::Result<()> {
     if let StatsComputationStatus::DisabledByAgent { bucket_size } = **client_side_stats.load() {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
@@ -90,7 +97,7 @@ pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 's
             bucket_size,
             &stats_concentrator,
             client_side_stats,
-            client,
+            capabilities,
         )?;
     }
     Ok(())
@@ -98,23 +105,30 @@ pub(crate) fn start_stats_computation<H: HttpClientTrait + MaybeSend + Sync + 's
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Create stats exporter and worker, start the worker, and update the state
-fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static>(
+fn create_and_start_stats_worker<
+    C: HttpClientCapability
+        + SleepCapability
+        + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
+        + MaybeSend
+        + Sync
+        + 'static,
+>(
     ctx: &StatsContext,
     bucket_size: Duration,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    client: H,
+    capabilities: C,
 ) -> anyhow::Result<()> {
-    let stats_exporter = StatsExporter::<H>::new(
+    let stats_exporter = StatsExporter::<C>::new(
         bucket_size,
         stats_concentrator.clone(),
         StatsMetadata::from(ctx.metadata.clone()),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
-        client,
+        capabilities.clone(),
     );
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter, false)
+        .spawn_worker(stats_exporter, false, &capabilities)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
@@ -153,11 +167,18 @@ pub(crate) fn stop_stats_computation(
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Handle stats computation when agent changes from disabled to enabled
-pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sync + 'static>(
+pub(crate) fn handle_stats_disabled_by_agent<
+    C: HttpClientCapability
+        + SleepCapability
+        + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
+        + MaybeSend
+        + Sync
+        + 'static,
+>(
     ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
-    client: H,
+    capabilities: C,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         let status = start_stats_computation(
@@ -165,7 +186,7 @@ pub(crate) fn handle_stats_disabled_by_agent<H: HttpClientTrait + MaybeSend + Sy
             client_side_stats,
             get_span_kinds_for_stats(agent_info),
             agent_info.info.peer_tags.clone().unwrap_or_default(),
-            client,
+            capabilities,
         );
         match status {
             Ok(()) => debug!("Client-side stats enabled"),

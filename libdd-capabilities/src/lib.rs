@@ -5,8 +5,12 @@
 
 pub mod http;
 pub mod maybe_send;
+pub mod sleep;
+pub mod spawn;
 
-pub use self::http::{HttpClientTrait, HttpError};
+pub use self::http::{HttpClientCapability, HttpError};
+pub use self::sleep::SleepCapability;
+pub use self::spawn::{SpawnCapability, SpawnError};
 pub use ::http::{Request, Response};
 pub use bytes::Bytes;
 pub use maybe_send::MaybeSend;
