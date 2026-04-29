@@ -33,11 +33,11 @@ impl LanguageMetadata {
         }
     }
 
-    /// Produces the `User-Agent` string passed to `Endpoint::to_request_builder()`.
+    /// Produces the `User-Agent` header.
     ///
     /// Format: `dd-trace-<language>/<tracer_version>`, e.g. `dd-trace-python/2.18.0`.
     #[inline]
-    pub fn user_agent(&self) -> String {
+    pub(crate) fn user_agent(&self) -> String {
         format!("dd-trace-{}/{}", self.language, self.tracer_version)
     }
 }

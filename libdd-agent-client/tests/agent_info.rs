@@ -62,4 +62,5 @@ async fn extracts_container_tags_hash_header() {
         .unwrap()
         .unwrap();
     assert_eq!(info.container_tags_hash.as_deref(), Some("abc123"));
+    assert!(!info.client_drop_p0s);
 }
