@@ -17,14 +17,12 @@ pub struct AgentInfo {
     /// Agent version string, if reported.
     pub version: Option<String>,
     /// Parsed from the `Datadog-Container-Tags-Hash` response header.
-    ///
-    /// Used by dd-trace-py to compute the base tag hash (`agent.py:17-23`).
     pub container_tags_hash: Option<String>,
     /// Value of the `Datadog-Agent-State` response header from the last `/info` fetch.
     ///
     /// The agent updates this opaque token whenever its internal state changes (e.g. a
-    /// configuration reload). Clients that poll `/info` periodically can skip re-parsing
-    /// the response body by comparing this value to the one returned by the previous call
-    /// and only acting when it differs.
+    /// configuration reload). Clients that poll `/info` periodically can skip re-parsing the
+    /// response body by comparing this value to the one returned by the previous call and only act
+    /// when it differs.
     pub state_hash: Option<String>,
 }

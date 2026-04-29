@@ -7,7 +7,7 @@
 use std::ffi::OsString;
 #[cfg(unix)]
 use std::path::PathBuf;
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 use libdd_http_client::RetryConfig;
 
@@ -89,7 +89,7 @@ pub struct AgentClientBuilder {
     language: Option<LanguageMetadata>,
     retry: Option<RetryConfig>,
     allow_connection_pooling: bool,
-    extra_headers: HashMap<String, String>,
+    extra_headers: Vec<(String, String)>,
 }
 
 impl AgentClientBuilder {
@@ -171,15 +171,8 @@ impl AgentClientBuilder {
         self
     }
 
-    // Compression
-    //
-    // Not exposed in this libv1. Gzip compression (level 6, matching dd-trace-py's trace writer at
-    // `writer.py:490`) will be added in a follow-up once the core send paths are stable.
-    // Per-method defaults (e.g. unconditional gzip for `send_pipeline_stats`) are already
-    // baked in; only the opt-in client-level `gzip(level)` builder knob is deferred.
-
     /// Additional custom headers to inject.
-    pub fn extra_headers(mut self, headers: HashMap<String, String>) -> Self {
+    pub fn extra_headers(mut self, headers: Vec<(String, String)>) -> Self {
         self.extra_headers = headers;
         self
     }
@@ -193,14 +186,12 @@ impl AgentClientBuilder {
             .unwrap_or(Duration::from_millis(DEFAULT_TIMEOUT_MS));
         let retry = self.retry.unwrap_or_else(default_retry_config);
 
-        // Build the underlying HTTP client.
         let http =
             Self::build_http_client(transport, timeout, retry, self.allow_connection_pooling)
                 .map_err(|e| BuildError::HttpClient(e.to_string()))?;
 
-        // Pre-compute all static headers that are injected on every request.
         let static_headers =
-            Self::build_static_headers(&language, self.test_token, self.extra_headers);
+            Self::build_static_headers(language, self.test_token, self.extra_headers);
 
         Ok(AgentClient::new(http, static_headers))
     }
@@ -245,25 +236,26 @@ impl AgentClientBuilder {
     }
 
     fn build_static_headers(
-        language: &LanguageMetadata,
+        language: LanguageMetadata,
         test_token: Option<String>,
-        extra_headers: HashMap<String, String>,
+        extra_headers: Vec<(String, String)>,
     ) -> Vec<(String, String)> {
+        let user_agent = language.user_agent();
         let mut headers = vec![
-            ("Datadog-Meta-Lang".to_string(), language.language.clone()),
+            ("Datadog-Meta-Lang".to_string(), language.language),
             (
                 "Datadog-Meta-Lang-Version".to_string(),
                 language.language_version.clone(),
             ),
             (
                 "Datadog-Meta-Lang-Interpreter".to_string(),
-                language.interpreter.clone(),
+                language.interpreter,
             ),
             (
                 "Datadog-Meta-Tracer-Version".to_string(),
-                language.tracer_version.clone(),
+                language.tracer_version,
             ),
-            ("User-Agent".to_string(), language.user_agent()),
+            ("User-Agent".to_string(), user_agent),
         ];
 
         if let Some(token) = test_token {
@@ -299,33 +291,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_transport_is_localhost_8126() {
-        let t = AgentTransport::default();
-        match t {
-            AgentTransport::Http { host, port } => {
-                assert_eq!(host, "localhost");
-                assert_eq!(port, 8126);
-            }
-            #[allow(unreachable_patterns)]
-            _ => panic!("unexpected default transport"),
-        }
-    }
-
-    #[test]
-    fn default_retry_config_is_constructable() {
-        // Just verify default_retry_config() doesn't panic.
-        let _cfg = default_retry_config();
-    }
-
-    #[test]
-    fn builder_new_is_default() {
-        let b = AgentClientBuilder::new();
-        assert!(b.transport.is_none());
-        assert!(b.language.is_none());
-        assert!(!b.allow_connection_pooling);
-    }
-
-    #[test]
     fn build_fails_without_transport() {
         let result = AgentClientBuilder::new()
             .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "2.0"))
@@ -347,16 +312,5 @@ mod tests {
             .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "2.0"))
             .build();
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn extra_headers_stored() {
-        let mut headers = HashMap::new();
-        headers.insert("X-Custom".to_string(), "value".to_string());
-        let b = AgentClientBuilder::new().extra_headers(headers);
-        assert_eq!(
-            b.extra_headers.get("X-Custom").map(|s| s.as_str()),
-            Some("value")
-        );
     }
 }

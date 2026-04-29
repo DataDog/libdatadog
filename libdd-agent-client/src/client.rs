@@ -252,7 +252,7 @@ fn check_status(response: libdd_http_client::HttpResponse) -> Result<(), SendErr
     }
 }
 
-/// Gzip-compress `payload` at level 6 (matching dd-trace-py's trace writer).
+/// Gzip-compress `payload` at level 6.
 fn gzip_compress(payload: Bytes) -> Result<Bytes, SendError> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::new(6));
     encoder
@@ -299,6 +299,25 @@ mod tests {
         assert!(keys.contains(&"Datadog-Meta-Lang"));
         assert!(keys.contains(&"Datadog-Meta-Lang-Version"));
         assert!(keys.contains(&"User-Agent"));
+    }
+
+    #[test]
+    fn extra_headers_propagated() {
+        ensure_crypto_provider();
+        let client = AgentClient::builder()
+            .http("localhost", 80)
+            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "2.0"))
+            .extra_headers(vec![("X-Custom".to_owned(), "custom value".to_owned())])
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            client
+                .static_headers
+                .iter()
+                .find_map(|(key, value)| (key == "X-Custom").then_some(value.as_str())),
+            Some("custom value")
+        );
     }
 
     #[test]
