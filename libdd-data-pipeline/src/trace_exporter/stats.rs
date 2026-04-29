@@ -220,23 +220,22 @@ fn update_obfuscation_config(
         StatsComputationStatus::Enabled { .. }
     ) {
         let obfuscation_active = is_obfuscation_active(agent_info);
-        std::borrow::Borrow::<ArcSwap<StatsComputationObfuscationConfig>>::borrow(
-            &client_side_stats.obfuscation_config,
-        )
-        .store(Arc::new(StatsComputationObfuscationConfig {
-            enabled: obfuscation_active,
-            sql_obfuscation_mode: agent_info
+        let sql_obfuscation_mode = (|| {
+            agent_info
                 .info
                 .config
-                .as_ref()
-                .and_then(|config| {
-                    config
-                        .obfuscation
-                        .as_ref()
-                        .map(|obfuscation_cfg| obfuscation_cfg.sql_obfuscation_mode)
-                })
-                .unwrap_or_default(),
-        }));
+                .as_ref()?
+                .obfuscation
+                .as_ref()?
+                .sql_obfuscation_mode
+        })()
+        .unwrap_or_default();
+        client_side_stats
+            .obfuscation_config
+            .store(Arc::new(StatsComputationObfuscationConfig {
+                enabled: obfuscation_active,
+                sql_obfuscation_mode,
+            }));
     }
 }
 

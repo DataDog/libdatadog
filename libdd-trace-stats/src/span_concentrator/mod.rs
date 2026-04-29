@@ -130,55 +130,49 @@ impl SpanConcentrator {
 
     /// Add a span into the concentrator, by computing stats if the span is eligible for stats
     /// computation.
-    pub fn add_span<'a, T>(&'a mut self, span: &'a T)
-    where
-        T: StatSpan<'a>,
-    {
-        // If the span is eligible for stats computation
-        if is_span_eligible(span, self.span_kinds_stats_computed.as_slice()) {
-            let mut bucket_timestamp =
-                align_timestamp((span.start() + span.duration()) as u64, self.bucket_size);
-            // If the span is to old we aggregate it in the latest bucket instead of
-            // creating a new one
-            if bucket_timestamp < self.oldest_timestamp {
-                bucket_timestamp = self.oldest_timestamp;
-            }
-            #[cfg(feature = "stats-obfuscation")]
-            let mut resource_name = span.resource().to_owned();
-            #[cfg(not(feature = "stats-obfuscation"))]
-            let resource_name = span.resource().to_owned();
-
-            #[cfg(feature = "stats-obfuscation")]
-            if self.obfuscation_config.load().enabled {
-                let dbms_hint: Option<&str> = span.get_meta("db.type");
-                if let Some(obfuscated_resource) =
-                    libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
-                        span.r#type(),
-                        span.resource(),
-                        dbms_hint,
-                        self.obfuscation_config.load().sql_obfuscation_mode,
-                    )
-                {
-                    resource_name = obfuscated_resource;
-                };
-            }
-
-            let agg_key = BorrowedAggregationKey::from_span(
-                resource_name,
+    pub fn add_span<'a>(&'a mut self, span: &'a impl StatSpan<'a>) {
+        if !is_span_eligible(span, self.span_kinds_stats_computed.as_slice()) {
+            return;
+        }
+        let mut bucket_timestamp =
+            align_timestamp((span.start() + span.duration()) as u64, self.bucket_size);
+        // If the span is to old we aggregate it in the latest bucket instead of
+        // creating a new one
+        if bucket_timestamp < self.oldest_timestamp {
+            bucket_timestamp = self.oldest_timestamp;
+        }
+        let obfuscated_resource = self.compute_obfuscated_span(span);
+        let agg_key = match obfuscated_resource.as_deref() {
+            Some(res) => BorrowedAggregationKey::from_obfuscated_span(
+                res,
                 span,
                 self.peer_tag_keys.as_slice(),
+            ),
+            None => BorrowedAggregationKey::from_span(span, self.peer_tag_keys.as_slice()),
+        };
+        self.buckets
+            .entry(bucket_timestamp)
+            .or_insert(StatsBucket::new(bucket_timestamp))
+            .insert(
+                agg_key,
+                span.duration(),
+                span.is_error(),
+                span.has_top_level(),
             );
+    }
 
-            self.buckets
-                .entry(bucket_timestamp)
-                .or_insert(StatsBucket::new(bucket_timestamp))
-                .insert(
-                    agg_key,
-                    span.duration(),
-                    span.is_error(),
-                    span.has_top_level(),
-                );
+    fn compute_obfuscated_span<'a>(&self, span: &'a impl StatSpan<'a>) -> Option<String> {
+        #[cfg(feature = "stats-obfuscation")]
+        if self.obfuscation_config.load().enabled {
+            let dbms_hint: Option<&str> = span.get_meta("db.type");
+            return libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
+                span.r#type(),
+                span.resource(),
+                dbms_hint,
+                self.obfuscation_config.load().sql_obfuscation_mode,
+            );
         }
+        None
     }
 
     /// Flush all stats bucket except for the `buffer_len` most recent. If `force` is true, flush

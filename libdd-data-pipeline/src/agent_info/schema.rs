@@ -67,8 +67,8 @@ pub struct ObfuscationConfig {
     pub sql_exec_plan: bool,
     pub sql_exec_plan_normalize: bool,
     #[cfg(feature = "stats-obfuscation")]
-    #[serde(default)]
-    pub sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
+    // Option because it might not exist with old agents
+    pub sql_obfuscation_mode: Option<libdd_trace_obfuscation::sql::SqlObfuscationMode>,
     pub http: HttpObfuscationConfig,
     pub remove_stack_traces: bool,
     pub redis: RedisObfuscationConfig,

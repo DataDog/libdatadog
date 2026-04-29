@@ -26,7 +26,7 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
 #[derive(Clone, Hash, PartialEq, Eq)]
 /// Represent a stats aggregation key borrowed from span data
 pub(super) struct BorrowedAggregationKey<'a> {
-    resource_name: String,
+    resource_name: &'a str,
     service_name: &'a str,
     operation_name: &'a str,
     span_type: &'a str,
@@ -61,7 +61,7 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
             service_source,
         }: &OwnedAggregationKey,
     ) -> bool {
-        &self.resource_name == resource_name
+        self.resource_name == resource_name
             && self.service_name == service_name
             && self.operation_name == operation_name
             && self.span_type == span_type
@@ -210,11 +210,20 @@ impl<'a> BorrowedAggregationKey<'a> {
     ///
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub(super) fn from_span<T: StatSpan<'a>>(
-        resource_name: String,
-        span: &'a T,
-        peer_tag_keys: &'a [String],
-    ) -> Self {
+    pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
+        Self::from_obfuscated_span(span.resource(), span, peer_tag_keys)
+    }
+
+    pub(crate) fn from_obfuscated_span<'b, T>(
+        resource_name: &'a str,
+        span: &'b T,
+        peer_tag_keys: &'b [String],
+    ) -> BorrowedAggregationKey<'a>
+    where
+        T: StatSpan<'b>,
+        // resource_name is a temporary string on the stack the span will outlive it
+        'b: 'a,
+    {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
@@ -911,8 +920,7 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            let borrowed_key =
-                BorrowedAggregationKey::from_span(span.resource().to_owned(), &span, &[]);
+            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[]);
             assert_eq!(
                 OwnedAggregationKey::from(&borrowed_key),
                 expected_key,
@@ -925,11 +933,7 @@ mod tests {
         }
 
         for (span, expected_key) in test_cases_with_peer_tags {
-            let borrowed_key = BorrowedAggregationKey::from_span(
-                span.resource().to_owned(),
-                &span,
-                test_peer_tags.as_slice(),
-            );
+            let borrowed_key = BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice());
             assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
             assert_eq!(
                 get_hash(&borrowed_key),
