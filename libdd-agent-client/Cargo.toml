@@ -8,7 +8,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Datadog-agent-specialized HTTP client: language metadata injection, per-endpoint send methods, retry, and compression"
+description = "A Datadog-agent-specialized HTTP client library"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-agent-client"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-agent-client"
 
