@@ -26,3 +26,4 @@ libdd-common = { version = "4.0.0", path = "../libdd-common", default-features =
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["rt-multi-thread"] }
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "1.0.0" }
