@@ -30,7 +30,12 @@ pub use worker::Worker;
 /// `C: SpawnCapability<RuntimeContext = SpawnRuntimeContext>` so the constraint
 /// is satisfied on every target without `#[cfg]` on individual where clauses.
 #[cfg(not(target_arch = "wasm32"))]
-pub type SpawnRuntimeContext = tokio::runtime::Handle;
+use libdd_capabilities::SpawnCapability;
+#[cfg(not(target_arch = "wasm32"))]
+use libdd_capabilities_impl::NativeSpawnCapability;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub type SpawnRuntimeContext = <NativeSpawnCapability as SpawnCapability>::RuntimeContext;
 
 /// See the non-wasm variant for documentation.
 #[cfg(target_arch = "wasm32")]
