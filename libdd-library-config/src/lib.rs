@@ -416,7 +416,7 @@ pub struct LibraryConfig {
 }
 
 #[derive(Debug)]
-/// This struct is used to hold configuration item data in a BTreeMap, while the name of
+/// This struct is used to hold configuration item data in a map, while the name of
 /// the configuration is the key used for deduplication
 struct LibraryConfigVal {
     value: String,
