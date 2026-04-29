@@ -101,22 +101,16 @@ impl<'a> AttributeLike for SpanAttribute<'a> {
     }
 }
 
-/// Span properties extracted from a v04 `Span<T>`, with attributes pre-collected.
-///
-/// Pre-collection is required because [`SpanProperties::attributes`] must return
-/// `impl Iterator<Item = &Self::Attribute>` — items need to exist in memory to be referenced.
-pub struct V04SpanProperties<'a> {
-    name: &'a str,
-    service: &'a str,
-    resource: &'a str,
+/// Span properties borrowing from a v04 `Span<T>`.
+pub struct V04SpanProperties<'a, T: TraceData> {
+    span: &'a Span<T>,
     env: Option<&'a str>,
     status_code: Option<u32>,
-    attributes: Vec<SpanAttribute<'a>>,
 }
 
-impl<'a> V04SpanProperties<'a> {
+impl<'a, T: TraceData> V04SpanProperties<'a, T> {
     /// Builds span properties by borrowing from `span` for lifetime `'a`.
-    pub fn from_span<T: TraceData>(span: &'a Span<T>) -> Self {
+    pub fn from_span(span: &'a Span<T>) -> Self {
         let env = span.meta.get("env").map(|v| v.borrow());
 
         let status_code = span
@@ -132,39 +126,26 @@ impl<'a> V04SpanProperties<'a> {
                     .and_then(|s| s.borrow().parse().ok())
             });
 
-        let attributes = span
-            .meta
-            .iter()
-            .map(|(k, v)| SpanAttribute {
-                key: k.borrow(),
-                value: SpanAttributeValue::Meta(v.borrow()),
-            })
-            .chain(span.metrics.iter().map(|(k, v)| SpanAttribute {
-                key: k.borrow(),
-                value: SpanAttributeValue::Metric(*v),
-            }))
-            .collect();
-
         V04SpanProperties {
-            name: span.name.borrow(),
-            service: span.service.borrow(),
-            resource: span.resource.borrow(),
+            span,
             env,
             status_code,
-            attributes,
         }
     }
 }
 
-impl<'a> SpanProperties for V04SpanProperties<'a> {
-    type Attribute = SpanAttribute<'a>;
+impl<'a, T: TraceData> SpanProperties for V04SpanProperties<'a, T> {
+    type Attribute<'b>
+        = SpanAttribute<'b>
+    where
+        Self: 'b;
 
     fn operation_name(&self) -> Cow<'_, str> {
-        Cow::Borrowed(self.name)
+        Cow::Borrowed(self.span.name.borrow())
     }
 
     fn service(&self) -> Cow<'_, str> {
-        Cow::Borrowed(self.service)
+        Cow::Borrowed(self.span.service.borrow())
     }
 
     fn env(&self) -> Cow<'_, str> {
@@ -172,18 +153,25 @@ impl<'a> SpanProperties for V04SpanProperties<'a> {
     }
 
     fn resource(&self) -> Cow<'_, str> {
-        Cow::Borrowed(self.resource)
+        Cow::Borrowed(self.span.resource.borrow())
     }
 
     fn status_code(&self) -> Option<u32> {
         self.status_code
     }
 
-    fn attributes<'b>(&'b self) -> impl Iterator<Item = &'b Self::Attribute>
-    where
-        Self: 'b,
-    {
-        self.attributes.iter()
+    fn attributes(&self) -> impl Iterator<Item = SpanAttribute<'_>> + '_ {
+        self.span
+            .meta
+            .iter()
+            .map(|(k, v)| SpanAttribute {
+                key: k.borrow(),
+                value: SpanAttributeValue::Meta(v.borrow()),
+            })
+            .chain(self.span.metrics.iter().map(|(k, v)| SpanAttribute {
+                key: k.borrow(),
+                value: SpanAttributeValue::Metric(*v),
+            }))
     }
 
     fn get_alternate_key<'b>(&self, _key: &'b str) -> Option<Cow<'b, str>> {
@@ -204,7 +192,7 @@ pub struct V04SamplingData<'a, T: TraceData> {
 impl<'a, T: TraceData> SamplingData for V04SamplingData<'a, T> {
     type TraceId = u128;
     type Properties<'b>
-        = V04SpanProperties<'b>
+        = V04SpanProperties<'b, T>
     where
         Self: 'b;
 
@@ -218,7 +206,7 @@ impl<'a, T: TraceData> SamplingData for V04SamplingData<'a, T> {
 
     fn with_span_properties<S, R, F>(&self, s: &S, f: F) -> R
     where
-        F: for<'b> Fn(&S, &V04SpanProperties<'b>) -> R,
+        F: for<'b> Fn(&S, &V04SpanProperties<'b, T>) -> R,
     {
         let props = V04SpanProperties::from_span(self.span);
         f(s, &props)

@@ -463,7 +463,10 @@ mod tests {
     }
 
     impl<'a> SpanProperties for TestSpan<'a> {
-        type Attribute = TestAttribute;
+        type Attribute<'b>
+            = &'b TestAttribute
+        where
+            Self: 'b;
 
         fn operation_name(&self) -> Cow<'_, str> {
             self.get_operation_name()
@@ -505,10 +508,7 @@ mod tests {
                 })
         }
 
-        fn attributes<'b>(&'b self) -> impl Iterator<Item = &'b Self::Attribute>
-        where
-            Self: 'b,
-        {
+        fn attributes(&self) -> impl Iterator<Item = &TestAttribute> + '_ {
             self.attributes.iter()
         }
 
