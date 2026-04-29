@@ -262,4 +262,27 @@ mod tests {
             .unwrap();
         assert!(!client.config().treat_http_errors_as_errors());
     }
+
+    #[test]
+    fn builder_allow_connection_pooling_defaults_true() {
+        ensure_crypto_provider();
+        let client = HttpClientBuilder::new()
+            .base_url("http://localhost".to_owned())
+            .timeout(Duration::from_secs(1))
+            .build()
+            .unwrap();
+        assert!(client.config().allow_connection_pooling());
+    }
+
+    #[test]
+    fn builder_allow_connection_pooling_set_false() {
+        ensure_crypto_provider();
+        let client = HttpClientBuilder::new()
+            .base_url("http://localhost".to_owned())
+            .timeout(Duration::from_secs(1))
+            .allow_connection_pooling(false)
+            .build()
+            .unwrap();
+        assert!(!client.config().allow_connection_pooling());
+    }
 }
