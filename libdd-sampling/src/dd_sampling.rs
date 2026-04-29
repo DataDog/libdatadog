@@ -224,3 +224,126 @@ struct PriorityPair {
     keep: SamplingPriority,
     reject: SamplingPriority,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- SamplingPriority ---
+
+    #[test]
+    fn test_priority_into_i8() {
+        assert_eq!(priority::AUTO_KEEP.into_i8(), 1);
+        assert_eq!(priority::AUTO_REJECT.into_i8(), 0);
+        assert_eq!(priority::USER_KEEP.into_i8(), 2);
+        assert_eq!(priority::USER_REJECT.into_i8(), -1);
+    }
+
+    #[test]
+    fn test_priority_is_keep() {
+        assert!(priority::AUTO_KEEP.is_keep());
+        assert!(priority::USER_KEEP.is_keep());
+        assert!(!priority::AUTO_REJECT.is_keep());
+        assert!(!priority::USER_REJECT.is_keep());
+    }
+
+    #[test]
+    fn test_priority_display() {
+        assert_eq!(priority::AUTO_KEEP.to_string(), "1");
+        assert_eq!(priority::AUTO_REJECT.to_string(), "0");
+        assert_eq!(priority::USER_KEEP.to_string(), "2");
+        assert_eq!(priority::USER_REJECT.to_string(), "-1");
+    }
+
+    #[test]
+    fn test_priority_from_str() {
+        assert_eq!("1".parse::<SamplingPriority>().unwrap(), priority::AUTO_KEEP);
+        assert_eq!("0".parse::<SamplingPriority>().unwrap(), priority::AUTO_REJECT);
+        assert_eq!("2".parse::<SamplingPriority>().unwrap(), priority::USER_KEEP);
+        assert_eq!("-1".parse::<SamplingPriority>().unwrap(), priority::USER_REJECT);
+        assert!("not_a_number".parse::<SamplingPriority>().is_err());
+        assert!("999".parse::<SamplingPriority>().is_err()); // overflows i8
+    }
+
+    // --- SamplingMechanism ---
+
+    #[test]
+    fn test_mechanism_into_u8() {
+        assert_eq!(mechanism::DEFAULT.into_u8(), 0);
+        assert_eq!(mechanism::AGENT_RATE_BY_SERVICE.into_u8(), 1);
+        assert_eq!(mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.into_u8(), 3);
+        assert_eq!(mechanism::REMOTE_USER_TRACE_SAMPLING_RULE.into_u8(), 11);
+        assert_eq!(mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.into_u8(), 12);
+    }
+
+    #[test]
+    fn test_mechanism_to_priority_auto_pair() {
+        // DEFAULT and AGENT_RATE_BY_SERVICE use AUTO priority
+        assert_eq!(mechanism::DEFAULT.to_priority(true), priority::AUTO_KEEP);
+        assert_eq!(mechanism::DEFAULT.to_priority(false), priority::AUTO_REJECT);
+        assert_eq!(mechanism::AGENT_RATE_BY_SERVICE.to_priority(true), priority::AUTO_KEEP);
+        assert_eq!(mechanism::AGENT_RATE_BY_SERVICE.to_priority(false), priority::AUTO_REJECT);
+        assert_eq!(mechanism::APPSEC.to_priority(true), priority::AUTO_KEEP);
+        assert_eq!(mechanism::APPSEC.to_priority(false), priority::AUTO_REJECT);
+    }
+
+    #[test]
+    fn test_mechanism_to_priority_user_pair() {
+        // Rule-based mechanisms use USER priority
+        assert_eq!(mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_priority(true), priority::USER_KEEP);
+        assert_eq!(mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_priority(false), priority::USER_REJECT);
+        assert_eq!(mechanism::REMOTE_USER_TRACE_SAMPLING_RULE.to_priority(true), priority::USER_KEEP);
+        assert_eq!(mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_priority(true), priority::USER_KEEP);
+        assert_eq!(mechanism::MANUAL.to_priority(true), priority::USER_KEEP);
+        assert_eq!(mechanism::SPAN_SAMPLING_RULE.to_priority(false), priority::USER_REJECT);
+        assert_eq!(mechanism::DATA_JOBS_MONITORING.to_priority(true), priority::USER_KEEP);
+    }
+
+    #[test]
+    fn test_mechanism_to_priority_unknown_falls_back_to_auto() {
+        let unknown = SamplingMechanism::from_u8(99);
+        assert_eq!(unknown.to_priority(true), priority::AUTO_KEEP);
+        assert_eq!(unknown.to_priority(false), priority::AUTO_REJECT);
+    }
+
+    #[test]
+    fn test_mechanism_to_cow() {
+        assert_eq!(mechanism::DEFAULT.to_cow(), "-0");
+        assert_eq!(mechanism::AGENT_RATE_BY_SERVICE.to_cow(), "-1");
+        assert_eq!(mechanism::REMOTE_RATE.to_cow(), "-2");
+        assert_eq!(mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_cow(), "-3");
+        assert_eq!(mechanism::MANUAL.to_cow(), "-4");
+        assert_eq!(mechanism::APPSEC.to_cow(), "-5");
+        assert_eq!(mechanism::REMOTE_RATE_USER.to_cow(), "-6");
+        assert_eq!(mechanism::REMOTE_RATE_DATADOG.to_cow(), "-7");
+        assert_eq!(mechanism::SPAN_SAMPLING_RULE.to_cow(), "-8");
+        assert_eq!(mechanism::OTLP_INGEST_PROBABILISTIC_SAMPLING.to_cow(), "-9");
+        assert_eq!(mechanism::DATA_JOBS_MONITORING.to_cow(), "-10");
+        assert_eq!(mechanism::REMOTE_USER_TRACE_SAMPLING_RULE.to_cow(), "-11");
+        assert_eq!(mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_cow(), "-12");
+        // Unknown mechanism falls back to Display
+        assert_eq!(SamplingMechanism::from_u8(99).to_cow(), "-99");
+    }
+
+    #[test]
+    fn test_mechanism_display() {
+        assert_eq!(mechanism::DEFAULT.to_string(), "-0");
+        assert_eq!(mechanism::LOCAL_USER_TRACE_SAMPLING_RULE.to_string(), "-3");
+        assert_eq!(mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE.to_string(), "-12");
+    }
+
+    #[test]
+    fn test_mechanism_from_str() {
+        assert_eq!("-0".parse::<SamplingMechanism>().unwrap(), mechanism::DEFAULT);
+        assert_eq!("-1".parse::<SamplingMechanism>().unwrap(), mechanism::AGENT_RATE_BY_SERVICE);
+        assert_eq!("-3".parse::<SamplingMechanism>().unwrap(), mechanism::LOCAL_USER_TRACE_SAMPLING_RULE);
+        assert_eq!("-12".parse::<SamplingMechanism>().unwrap(), mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE);
+    }
+
+    #[test]
+    fn test_mechanism_from_str_errors() {
+        assert!("not_a_number".parse::<SamplingMechanism>().is_err());
+        assert!("1".parse::<SamplingMechanism>().is_err()); // positive not allowed
+        assert!("-99999".parse::<SamplingMechanism>().is_err()); // overflows u8
+    }
+}
