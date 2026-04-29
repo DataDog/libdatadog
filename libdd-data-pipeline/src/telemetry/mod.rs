@@ -92,6 +92,24 @@ impl TelemetryClientBuilder {
         self
     }
 
+    /// `dd-session-id` header (with non-empty session id).
+    pub fn set_session_id(mut self, id: &str) -> Self {
+        self.config.session_id = Some(id.to_string());
+        self
+    }
+
+    /// `dd-root-session-id` (omitted if equal to session id).
+    pub fn set_root_session_id(mut self, id: &str) -> Self {
+        self.config.root_session_id = Some(id.to_string());
+        self
+    }
+
+    /// `dd-parent-session-id` (omitted if equal to session id).
+    pub fn set_parent_session_id(mut self, id: &str) -> Self {
+        self.config.parent_session_id = Some(id.to_string());
+        self
+    }
+
     /// Sets the debug enabled flag for the telemetry client.
     pub fn set_debug_enabled(mut self, debug: bool) -> Self {
         self.config.debug_enabled = debug;
@@ -870,6 +888,60 @@ mod tests {
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
 
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
+    }
+
+    /// Instrumentation session headers on telemetry requests match trace exporter configuration.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn session_headers_telemetry_test() {
+        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let server = MockServer::start();
+        let mut telemetry_srv = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes(r#""runtime_id":"foo""#)
+                .body_includes(
+                    r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#,
+                )
+                .header("dd-session-id", "sess-e2e")
+                .header("dd-root-session-id", "root-e2e")
+                .header("dd-parent-session-id", "parent-e2e");
+            then.status(200).body("");
+        });
+        let (client, worker) = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_runtime_id("foo")
+            .set_url(&server.url("/"))
+            .set_heartbeat(100)
+            .set_debug_enabled(true)
+            .set_session_id("sess-e2e")
+            .set_root_session_id("root-e2e")
+            .set_parent_session_id("parent-e2e")
+            .build();
+        let handle = shared_runtime
+            .spawn_worker(worker, true)
+            .expect("Failed to spawn worker");
+        shared_runtime
+            .block_on(async {
+                client.start().await;
+                client
+                    .send(&SendPayloadTelemetry {
+                        requests_count: 1,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                sleep(Duration::from_millis(100)).await;
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
                     poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
