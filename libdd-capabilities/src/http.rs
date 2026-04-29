@@ -24,7 +24,7 @@ pub enum HttpError {
     Other(anyhow::Error),
 }
 
-pub trait HttpClientTrait {
+pub trait HttpClientTrait: Clone + std::fmt::Debug {
     fn new_client() -> Self;
 
     fn request(

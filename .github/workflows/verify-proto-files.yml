@@ -46,7 +46,7 @@ jobs:
         run: |
           ../../../.github/workflows/diff-proto-files.sh --file idx/span.proto --tag ${{ env.DATADOG_AGENT_TAG }}
       - name: Install ${{ env.rust_version }} toolchain
-        run: rustup install ${{ env.rust_version }} && rustup default ${{ env.rust_version }}
+        run: rustup set profile minimal && rustup install ${{ env.rust_version }} && rustup default ${{ env.rust_version }}
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:

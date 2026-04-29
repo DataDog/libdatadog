@@ -225,12 +225,7 @@ fn per_test_env(name: &str, project_root: &Path, work_dir: &Path) -> Vec<(String
 
 fn expected_failures() -> &'static HashMap<&'static str, &'static str> {
     static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    MAP.get_or_init(|| {
-        HashMap::from([(
-            "trace_exporter",
-            "expects trace data, fails on empty buffer",
-        )])
-    })
+    MAP.get_or_init(HashMap::new)
 }
 
 // Test data directories to symlink into work directory

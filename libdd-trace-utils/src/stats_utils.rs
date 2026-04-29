@@ -135,7 +135,7 @@ mod mini_agent_tests {
                                 0,
                                 0
                             ],
-                            "GrpcStatusCode": "0",
+                            "GRPCStatusCode": "0",
                             "HTTPMethod": "GET",
                             "HTTPEndpoint": "/test"
                         }

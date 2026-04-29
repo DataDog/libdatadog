@@ -20,8 +20,25 @@ trigger_internal_build:
     LIBDATADOG_COMMIT_BEFORE_SHA: $CI_COMMIT_BEFORE_SHA
     LIBDATADOG_COMMIT_TITLE: $CI_COMMIT_TITLE
     LIBDATADOG_ENABLE_MACOS_JOBS: "false"
+    LIBDATADOG_IS_RELEASE_BRANCH: "false"
+    LIBDATADOG_IS_HOTFIX_BRANCH: "false"
   rules:
-    - if: '$CI_MERGE_REQUEST_LABELS =~ /run-macos-tests/'
+    - if: '$CI_COMMIT_BRANCH =~ /^release\//'
+      variables:
+        LIBDATADOG_IS_RELEASE_BRANCH: "true"
+      when: always
+    - if: '$CI_COMMIT_BRANCH =~ /^hotfix\//'
+      variables:
+        LIBDATADOG_IS_RELEASE_BRANCH: "true"
+        LIBDATADOG_IS_HOTFIX_BRANCH: "true"
+      when: always
+    - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^release\//'
+      when: always
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      variables:
+        LIBDATADOG_ENABLE_MACOS_JOBS: "true"
+      when: always
+    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
       variables:
         LIBDATADOG_ENABLE_MACOS_JOBS: "true"
       when: always

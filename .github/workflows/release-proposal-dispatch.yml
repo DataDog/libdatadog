@@ -7,15 +7,21 @@ on:
         required: true
         type: choice
         options:
+          - libdd-alloc
+          - libdd-capabilities
+          - libdd-capabilities-impl
           - libdd-common
           - libdd-crashtracker
           - libdd-data-pipeline
           - libdd-ddsketch
           - libdd-dogstatsd-client
+          - libdd-http-client
           - libdd-library-config
           - libdd-log
+          - libdd-otel-thread-ctx
           - libdd-profiling
           - libdd-profiling-protobuf
+          - libdd-shared-runtime
           - libdd-telemetry
           - libdd-tinybytes
           - libdd-trace-normalization
@@ -23,6 +29,22 @@ on:
           - libdd-trace-protobuf
           - libdd-trace-stats
           - libdd-trace-utils
+          - libdd-tracer-flare
+      main_start_ref:
+        description: >
+          Optional git ref to cut the release from: commit SHA (short or full), branch name,
+          tag, or refs/... (e.g. main, v1.2.3, origin/main). Leave empty to use latest
+          origin/main.
+        required: false
+        type: string
+        default: ''
+      bypass_standard_checks:
+        description: >
+          Skip ongoing-proposal checks. Proposal branches use prefix
+          release-proposal-testing so they do not collide with normal release-proposal/* runs.
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: release-proposal-dispatch-group
@@ -30,10 +52,8 @@ concurrency:
 
 env:
   MAIN_BRANCH: main
-  RELEASE_BRANCH: release
-  PROPOSAL_BRANCH_PREFIX: release-proposal
-  GIT_USER_NAME: "dd-octo-sts[bot]"
-  GIT_USER_EMAIL: "200755185+dd-octo-sts[bot]@users.noreply.github.com"
+  RELEASE_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-testing' || 'release' }}
+  PROPOSAL_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-proposal-testing' || 'release-proposal' }}
 
 jobs:
   check-proposal-ongoing:
@@ -45,15 +65,19 @@ jobs:
           fetch-tags: true
       - name: Check if a release proposal is ongoing
         run: |
-          # Check if there are any branches with the prefix "${{ env.PROPOSAL_BRANCH_PREFIX }}"
-          EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*")
-          if [ -n "$EXISTING_BRANCHES" ]; then
-            echo "Error: A release proposal is ongoing. Please cancel it or wait for it to be merged." >&2
-            echo "Existing branches:"
-            echo "$EXISTING_BRANCHES"
-            exit 1
+          if [ "${{ inputs.bypass_standard_checks }}" = "true" ]; then
+            echo "Skipping ongoing release proposal checks."
+          else
+            # Check if there are any proposal branches or ephemeral release branches (release/*/*)
+            EXISTING_BRANCHES=$(git branch -r --list "origin/${{ env.PROPOSAL_BRANCH_PREFIX }}/*" "origin/${{ env.RELEASE_BRANCH_PREFIX }}/*/*")
+            if [ -n "$EXISTING_BRANCHES" ]; then
+              echo "Error: A release proposal is ongoing. Please cancel it or wait for it to be merged." >&2
+              echo "Existing branches:"
+              echo "$EXISTING_BRANCHES"
+              exit 1
+            fi
+            echo "No release proposal is ongoing."
           fi
-          echo "No release proposal is ongoing."
 
   check-membership:
     permissions:
@@ -83,60 +107,18 @@ jobs:
             echo "User is not part of apm-common-components-core"
             exit 1
           fi
-    
-  update-release-branch:
-    permissions:
-      id-token: write # Enable OIDC
-      contents: write
-    runs-on: ubuntu-latest
-    needs: check-membership
-    steps:
-      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
-        id: octo-sts
-        with:
-          scope: DataDog/libdatadog
-          policy: self.write.pr
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-        with:
-          token: ${{ steps.octo-sts.outputs.token }}
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Configure Git identity for dd-octo-sts GitHub App
-        env:
-          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
-        run: |
-
-          git config --global user.name "$GIT_USER_NAME"
-          git config --global user.email "$GIT_USER_EMAIL"
-
-      - name: Merge the main branch into the release branch
-        run: |
-          git fetch origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}" --tags
-          git checkout "${{ env.RELEASE_BRANCH }}"
-
-          if ! git merge origin/"${{ env.MAIN_BRANCH }}"; then
-            echo "Error: Cannot merge ${{ env.MAIN_BRANCH }} into ${{ env.RELEASE_BRANCH }}" >&2
-            echo "There are merge conflicts or the branches have diverged." >&2
-            echo "If you have recently launched another release, it is possible that ${{ env.MAIN_BRANCH }} branch is not yet updated with the ${{ env.RELEASE_BRANCH }} changes." >&2
-            echo "Please try again later." >&2
-            exit 1
-          fi
-
-          git push origin "${{ env.RELEASE_BRANCH }}" --tags
-  
   cargo-release:
     permissions:
       id-token: write # Enable OIDC
       pull-requests: write
       contents: write
-    needs: update-release-branch
+    needs: check-membership
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          ref: ${{ env.RELEASE_BRANCH }}
+          ref: ${{ env.MAIN_BRANCH }}
           fetch-depth: 0
           fetch-tags: true
       - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
@@ -163,30 +145,166 @@ jobs:
         with:
           tool: cargo-semver-checks@0.45.0
       
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr    
+
       - name: Configure Git for signing
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GITHUB_ACTOR: ${{ github.actor }}
         run: |
-          git config --global user.name "${{ env.GIT_USER_NAME }}"
-          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
+          # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
+          GITHUB_USER_RESPONSE=$(curl -s -H "Authorization: token ${GH_TOKEN}" "https://api.github.com/users/${GITHUB_ACTOR}")
+          GIT_USER_NAME=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.login // empty')
+          GIT_USER_ID=$(echo "${GITHUB_USER_RESPONSE}" | jq -r '.id // empty')
+          if [[ -z "$GIT_USER_NAME" ]]; then
+            GIT_USER_NAME="${GITHUB_ACTOR}"
+            GIT_USER_EMAIL="${GITHUB_ACTOR}@users.noreply.github.com"
+          else
+            GIT_USER_EMAIL="${GIT_USER_ID}+${GIT_USER_NAME}@users.noreply.github.com"
+          fi
+          echo "GIT_USER_NAME: $GIT_USER_NAME"
+          echo "GIT_USER_EMAIL: $GIT_USER_EMAIL"
+          git config --global user.name "$GIT_USER_NAME"
+          git config --global user.email "$GIT_USER_EMAIL"
+
+      - name: Snapshot scripts from workflow revision
+        run: |
+          set -euo pipefail
+          # workflow_dispatch runs the workflow file from the branch selected in the UI; github.sha is that commit.
+          # main_start_ref may be older and not contain scripts/ — always run release tooling from the workflow revision.
+          WF_SHA="${{ github.sha }}"
+          git fetch --no-tags origin "$WF_SHA" 2>/dev/null || true
+          if ! git rev-parse -q --verify "${WF_SHA}^{commit}" >/dev/null; then
+            echo "Error: could not resolve workflow revision ${WF_SHA}." >&2
+            exit 1
+          fi
+          DEST="/tmp/workflow-scripts-libdatadog"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          git archive "$WF_SHA" scripts | tar -x -C "$DEST"
+          echo "WORKFLOW_SCRIPTS_ROOT=${DEST}/scripts" >> "$GITHUB_ENV"
+          echo "Release scripts pinned to workflow revision $(git rev-parse --short "$WF_SHA") (${WF_SHA})"
+
+      - name: Optionally checkout at a specific git ref
+        env:
+          MAIN_START_REF: ${{ inputs.main_start_ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin "${{ env.MAIN_BRANCH }}" --tags --prune
+
+          resolve_to_commit() {
+            local r="$1"
+            local c=""
+            # Already a commit or resolvable locally
+            c=$(git rev-parse -q --verify "${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            # Remote branch: origin/<name>
+            c=$(git rev-parse -q --verify "origin/${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            # Tag
+            c=$(git rev-parse -q --verify "refs/tags/${r}^{commit}" 2>/dev/null) || true
+            if [ -n "$c" ]; then
+              echo "$c"
+              return 0
+            fi
+            return 1
+          }
+
+          if [ -n "${MAIN_START_REF// }" ]; then
+            REF=$(echo "$MAIN_START_REF" | tr -d '[:space:]')
+            if [ -z "$REF" ]; then
+              echo "Error: main_start_ref is whitespace-only." >&2
+              exit 1
+            fi
+            # Try to fetch the ref from origin (branches, tags, and SHA objects)
+            git fetch origin "$REF" 2>/dev/null || true
+
+            COMMIT=""
+            COMMIT=$(resolve_to_commit "$REF") || true
+            if [ -z "$COMMIT" ]; then
+              # e.g. short SHA or ref only present after full fetch
+              git fetch origin "$REF:$REF" 2>/dev/null || true
+              COMMIT=$(resolve_to_commit "$REF") || true
+            fi
+            if [ -z "$COMMIT" ]; then
+              echo "Error: could not resolve git ref to a commit: $REF" >&2
+              echo "Try a full SHA, a branch/tag name on origin, or refs/heads/... / refs/tags/..." >&2
+              exit 1
+            fi
+            # Hotfix releases use the hotfix branch itself as the ephemeral branch.
+            # If a hotfix branch name was provided and exists on origin, check it out as a branch
+            # (not a detached commit) so later steps can use it as a PR base.
+            if [[ "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]] && git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
+              git checkout -B "$REF" "origin/$REF"
+              echo "Release cut from hotfix branch '$REF' -> $(git rev-parse --short HEAD) ($(git log -1 --oneline))"
+            else
+              git checkout "$COMMIT"
+              echo "Release cut from ref '$REF' -> $COMMIT ($(git log -1 --oneline))"
+            fi
+          else
+            git checkout "${{ env.MAIN_BRANCH }}"
+            git reset --hard "origin/${{ env.MAIN_BRANCH }}"
+            echo "Release cut from origin/${{ env.MAIN_BRANCH }} tip ($(git rev-parse --short HEAD))."
+          fi
+      
+      - name: Create ephemeral release branch
+        id: ephemeral-branch
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          MAIN_START_REF="${{ inputs.main_start_ref }}"
+          REF="$(echo "${MAIN_START_REF:-}" | tr -d '[:space:]')"
+
+          if [[ -n "$REF" && "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]]; then
+            # Hotfix: use the hotfix branch itself as the ephemeral branch (no new branch created).
+            if ! git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
+              echo "Error: hotfix branch does not exist on origin: $REF" >&2
+              exit 1
+            fi
+            EPHEMERAL_BRANCH="$REF"
+            echo "Hotfix mode: using existing branch as ephemeral base: $EPHEMERAL_BRANCH"
+            echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "is_hotfix=true" >> "$GITHUB_OUTPUT"
+          else
+            EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
+            git checkout -b "$EPHEMERAL_BRANCH"
+            git push origin "$EPHEMERAL_BRANCH"
+            echo "Ephemeral release branch created: $EPHEMERAL_BRANCH branch ($(git rev-parse --short HEAD))"
+            echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
+            echo "is_hotfix=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
 
       - name: Get publication order for crate and dependencies
         run: |
           echo "Getting publication order for ${{ inputs.crate }}..."
           
           # Get the publication order as JSON and save to file
-          ./scripts/publication-order.sh --format=json "${{ inputs.crate }}" > /tmp/crates.json
+          "${WORKFLOW_SCRIPTS_ROOT}/publication-order.sh" --format=json "${{ inputs.crate }}" > /tmp/crates.json
           echo "Publication order:"
           cat /tmp/crates.json
       
       - name: Get commits since last release for each crate
+        id: commits-since-release
         run: |
           # Get commits since release for each crate and save to file
-          ./scripts/commits-since-release.sh "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
+          "${WORKFLOW_SCRIPTS_ROOT}/commits-since-release.sh" "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
           
-          # Capture release branch tip now (while HEAD=release). Use this in Release version bumps
+          # Capture ephemeral release branch tip now. Use this in Release version bumps
           # so tag/merge-base resolution uses the same ref the script used.
           git rev-parse HEAD > /tmp/release_head_sha
           echo "Release branch HEAD (saved for later): $(cat /tmp/release_head_sha)"
-
+          echo "release_head_sha=$(cat /tmp/release_head_sha)" >> "$GITHUB_OUTPUT"
+          
           # Display json output
           jq . /tmp/commits-by-crate.json
 
@@ -202,14 +320,14 @@ jobs:
           # previous steps.
           # Assure we have the full history, 2147483647 is the highest integer number that
           # git accepts.
-          git fetch --depth=2147483647 --tags origin "${{ env.MAIN_BRANCH }}" "${{ env.RELEASE_BRANCH }}"
+          git fetch --depth=2147483647 --tags origin "${{ env.MAIN_BRANCH }}" "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"
 
-          git checkout "${{ env.RELEASE_BRANCH }}"
-          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          git checkout "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"
+          TIMESTAMP="${{ steps.ephemeral-branch.outputs.timestamp }}"
           BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
           git checkout -b "$BRANCH_NAME"
           git push origin "$BRANCH_NAME" --tags
-          echo "Branch created: $BRANCH_NAME from ${{ env.RELEASE_BRANCH }} branch"
+          echo "Branch created: $BRANCH_NAME from ${{ steps.ephemeral-branch.outputs.ephemeral_branch }} branch"
           echo "branch_name=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
           
       - name: Release version bumps
@@ -244,8 +362,9 @@ jobs:
             COMMITS=$(echo "$crate" | jq -r '.commits')
             INITIAL_RELEASE=false
 
-            # if there are no commits, skip the release
-            if [ "$COMMITS" = "[]" ]; then
+            # if there are no commits and there is an existing tag, skip the release                                                                                      
+            # (new crates with no previous tag proceed to the initial release path)
+            if [ "$COMMITS" = "[]" ] && [ "$TAG_EXISTS" = "true" ]; then                                                                                                  
               echo "No commits since last release for $NAME, skipping release"
               continue
             fi
@@ -296,12 +415,22 @@ jobs:
               LATEST_TAG=$(git tag -l "$TAG_PREFIX*" --sort=-v:refname | head -1)
               if [ "$LATEST_TAG" != "$TAG" ]; then
                 echo "Tag $TAG is not the latest. Latest is: $LATEST_TAG. main branch has the latest release for $NAME"
-                echo "Skipping release for $NAME"
-                continue
+
+                # do not skip the release for hotfix branches
+                if [ "${{ steps.ephemeral-branch.outputs.is_hotfix }}" = "true" ]; then
+                  echo "Continuing with the release for $NAME because it is a hotfix"
+                else
+                  if [ "${{ inputs.bypass_standard_checks }}" = "false" ]; then
+                    echo "Skipping release for $NAME"
+                    continue
+                  else
+                    echo "Continuing with the release for $NAME because bypass_standard_checks is true"
+                  fi
+                fi
               fi
 
               echo "Executing semver-level.sh for $NAME since $RANGE (tag: $TAG)..."
-              SEMVER_LEVEL=$(./scripts/semver-level.sh "$NAME" "refs/tags/$TAG" 2>&1)
+              SEMVER_LEVEL=$("${WORKFLOW_SCRIPTS_ROOT}/semver-level.sh" "$NAME" "refs/tags/$TAG" 2>&1)
               echo "Semver level: $SEMVER_LEVEL"
 
               LEVEL=$(echo "$SEMVER_LEVEL" | jq -r '.level')
@@ -310,33 +439,155 @@ jobs:
               cargo release version -p "$NAME" --prev-tag-name "$TAG" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
 
             else
-              RANGE="$ORIGINAL_HEAD"
-              echo "No previous release tag for $NAME, using $ORIGINAL_HEAD as range"
+              echo "No previous release tag for $NAME, preparing initial release..."
 
               # Use the version from the crate metadata
-              LEVEL=$(echo "$crate" | jq -r '.version')
-
+              VERSION=$(echo "$crate" | jq -r '.version')
+              LEVEL="major"
+              TAG=""
+              RANGE=""
+              
               # fail when the version is not an initial release
-              if [ "$LEVEL" != "1.0.0" ] && [ "$LEVEL" != "0.1.0" ]; then
-                echo "Error: $NAME is not a 1.0.0 or 0.1.0 release" >&2
+              if [ "$VERSION" != "0.1.0" ]; then
+                echo "Error: $NAME is not a 0.1.0 release" >&2
                 exit 1
               fi
 
               INITIAL_RELEASE=true
 
               echo "Executing cargo release for $NAME with level $LEVEL..."
-              cargo release version -p "$NAME" -x $LEVEL --no-confirm
-
-              # if CHANGELOG.md does not exist, create it
-              if [ ! -f "$CRATE_PATH/CHANGELOG.md" ]; then
-                echo "Creating CHANGELOG.md for $NAME..."
-                touch "$CRATE_PATH/CHANGELOG.md"
-              fi
+              cargo release version -p "$NAME" --allow-branch "$BRANCH_NAME" -x $LEVEL --no-confirm
             fi
             
-            # Update the CHANGELOG.md
+            # Commit the changes
+            cargo release commit --no-confirm -x
+            
             NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
             NEXT_TAG="$TAG_PREFIX$NEXT_VERSION"
+
+            # Add to results array
+            jq --arg name "$NAME" \
+            --arg level "$LEVEL" \
+            --arg tag "$NEXT_TAG" \
+            --arg prev_tag "$TAG" \
+            --arg version "$NEXT_VERSION" \
+            --arg range "$RANGE" \
+            --argjson commits "$COMMITS" \
+            --arg path "$CRATE_PATH" \
+            --arg initial_release "$INITIAL_RELEASE" \
+            '. += [{"name": $name, "level": $level, "tag": $tag, "prev_tag": $prev_tag, "version": $version, "range": $range, "commits": $commits, "path": $path, "initial_release": $initial_release}]' \
+              /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
+          done
+
+          # Check if there are commits to push
+          if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
+            echo "No changes to push. Cancelling the workflow."
+            exit 1
+          fi
+
+          # Output the results
+          echo "API changes summary:"
+          jq . /tmp/api-changes.json
+
+      - name: Update version for crates with libdd-* direct dependency major bumps since last release
+        run: |
+          set -euo pipefail
+          BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
+
+          # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch the job checkout.
+          MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
+          WF_SHA="${{ github.sha }}"
+
+          git worktree add --detach "$MAJOR_BUMPS_WT" "$WF_SHA"
+          set +e
+          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/api-changes.json ) \
+            > /tmp/api-changes-with-major-bumps-pre-commit.json
+          MB_RC=$?
+          git worktree remove --force "$MAJOR_BUMPS_WT" || true
+          set -e
+          if [[ "$MB_RC" -ne 0 ]]; then
+            echo "Major bumps level script failed with code $MB_RC"
+            echo "Major bumps level script output:"
+            cat /tmp/api-changes-with-major-bumps-pre-commit.json
+            exit "$MB_RC"
+          fi
+
+          # Full same crate list as api-changes.json; rows updated in place when a major bump is applied.
+          cp /tmp/api-changes-with-major-bumps-pre-commit.json /tmp/api-changes-with-major-bumps.json
+
+          # iterate over the major bumps and check the major bumps and update the version
+          jq -c '.[]' /tmp/api-changes-with-major-bumps-pre-commit.json | while read -r bump; do
+            NAME=$(echo "$bump" | jq -r '.name')
+            PREV_TAG=$(echo "$bump" | jq -r '.prev_tag')
+            TAG=$(echo "$bump" | jq -r '.tag')
+            VERSION=$(echo "$bump" | jq -r '.version')
+            MAJOR_BUMPS=$(echo "$bump" | jq -r '.major_bumps')
+
+            if [ "$MAJOR_BUMPS" != "[]" ]; then
+              echo "Updating version for $NAME with major bumps: $MAJOR_BUMPS"
+              cargo release version -p "$NAME" --prev-tag-name "$PREV_TAG" --allow-branch "$BRANCH_NAME" -x major --no-confirm
+              
+              git commit -am "chore(release): update version for $NAME with major bumps"
+
+              NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
+              NEXT_TAG="$NAME-v$NEXT_VERSION"
+
+              echo "Updating tag $TAG to $NEXT_TAG and version $VERSION to $NEXT_VERSION for $NAME"
+
+              jq --arg name "$NAME" \
+                --arg nl "major" \
+                --arg version "$NEXT_VERSION" \
+                --arg tag "$NEXT_TAG" \
+                'map(if .name == $name then . + {level: $nl, version: $version, tag: $tag} else . end)' \
+                /tmp/api-changes-with-major-bumps.json > /tmp/api-changes-with-major-bumps.tmp \
+                && mv /tmp/api-changes-with-major-bumps.tmp /tmp/api-changes-with-major-bumps.json
+            fi
+          done
+
+          # Output the results
+          echo "API changes with major bumps summary:"
+          jq . /tmp/api-changes-with-major-bumps.json
+      
+      - name: Generate CHANGELOGS
+        id: generate-changelogs
+        run: |
+          set -euo pipefail
+          ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
+
+          echo "Generating CHANGELOGS"
+
+          jq -c '.[]' /tmp/api-changes-with-major-bumps.json | while read -r bump; do
+            COMMITS=$(echo "$bump" | jq -r '.commits')
+            RANGE=$(echo "$bump" | jq -r '.range')
+            NAME=$(echo "$bump" | jq -r '.name')
+            TAG=$(echo "$bump" | jq -r '.prev_tag')
+            NEXT_TAG=$(echo "$bump" | jq -r '.tag')
+            VERSION=$(echo "$bump" | jq -r '.version')
+            CRATE_PATH=$(echo "$bump" | jq -r '.path')
+            INITIAL_RELEASE=$(echo "$bump" | jq -r '.initial_release')
+
+            if [ "$INITIAL_RELEASE" = "true" ]; then
+              echo "Initial release for $NAME"
+
+              # Use the existing CHANGELOG.md if present, otherwise create a minimal one
+              if [ ! -f "$CRATE_PATH/CHANGELOG.md" ]; then
+                echo "Creating CHANGELOG.md for $NAME..."
+                RELEASE_DATE=$(date +%Y-%m-%d)
+                printf '# Changelog\n\n\n## %s - %s\n\nInitial release.\n' "$VERSION" "$RELEASE_DATE" > "$CRATE_PATH/CHANGELOG.md"
+                
+                git add "$CRATE_PATH/CHANGELOG.md"
+                git commit -m "chore(release): update CHANGELOG.md for $NAME"
+              else
+                echo "Using existing CHANGELOG.md for $NAME..."
+              fi
+              continue
+            fi
+
+            # FIXME: $COMMITS could be empty if there are no commits since last release
+            if [ "$COMMITS" = "[]" ]; then
+              echo "No commits since last release for $NAME, skipping CHANGELOG generation"
+              continue
+            fi
 
             # Build a tight range from commits already found by commits-since-release.sh.
             # This will save some time analising unnecessary commits and prevent unrelated commits
@@ -371,33 +622,29 @@ jobs:
                "$CLIFF_CONTEXT_FILE" > "$CLIFF_FILTERED_FILE"
             git cliff --from-context "$CLIFF_FILTERED_FILE" -u -v --prepend "$CRATE_PATH/CHANGELOG.md"
             rm -f "$CLIFF_CONTEXT_FILE" "$CLIFF_HASHES_FILE" "$CLIFF_FILTERED_FILE"
+
             git add "$CRATE_PATH/CHANGELOG.md"
-
-            # Commit the changes
-            cargo release commit --no-confirm -x
-
-            # Add to results array
-            jq --arg name "$NAME" \
-            --arg level "$LEVEL" \
-            --arg tag "$NEXT_TAG" \
-            --arg version "$NEXT_VERSION" \
-            --arg initial_release "$INITIAL_RELEASE" \
-            '. += [{"name": $name, "level": $level, "tag": $tag, "version": $version, "initial_release": $initial_release}]' \
-              /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
+            git commit -m "chore(release): update CHANGELOG.md for $NAME"
           done
 
           # Check if there are commits to push
-          if git diff --quiet "${{ env.RELEASE_BRANCH }}"; then
+          if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
             echo "No changes to push. Cancelling the workflow."
             exit 1
           fi
 
-          echo "Pushing branch $BRANCH_NAME to origin..."
-          git push origin "$BRANCH_NAME"
+          # Oldest → newest (chronological). Plain `git log` is newest-first; commit-headless should receive
+          # parent → child order so replays/signing match git history. Space-separated SHAs for the action.
+          COMMITS=$(git log --reverse "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
+          echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
-          # Output the results
-          echo "API changes summary:"
-          jq . /tmp/api-changes.json
+      - name: Push commits
+        uses: DataDog/commit-headless@action/v2.0.3
+        with:
+          branch: ${{ steps.proposal-branch.outputs.branch_name }}
+          head-sha: ${{ steps.commits-since-release.outputs.release_head_sha }}
+          command: push
+          commits: "${{ steps.generate-changelogs.outputs.commits }}"
 
       - name: Upload release data
         uses: actions/upload-artifact@v4
@@ -406,18 +653,32 @@ jobs:
           path: |
             /tmp/commits-by-crate.json
             /tmp/api-changes.json
+            /tmp/api-changes-with-major-bumps.json
           retention-days: 1
 
       - name: Cleanup on failure
-        if: failure() && steps.proposal-branch.outputs.branch_name != ''
+        if: failure() && (steps.proposal-branch.outputs.branch_name != '' || steps.ephemeral-branch.outputs.ephemeral_branch != '')
         run: |
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
-          echo "Job failed, deleting branch $BRANCH_NAME..."
-          git push origin --delete "$BRANCH_NAME" || echo "Failed to delete branch (may not exist on remote)"
+          if [ -n "$BRANCH_NAME" ]; then
+            echo "Job failed, deleting branch $BRANCH_NAME..."
+            git push origin --delete "$BRANCH_NAME" || echo "Failed to delete branch (may not exist on remote)"
+          fi
+          EPHEMERAL_BRANCH="${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"
+          if [ -n "$EPHEMERAL_BRANCH" ]; then
+            if [ "${{ steps.ephemeral-branch.outputs.is_hotfix }}" = "true" ]; then
+              echo "Hotfix mode: not deleting ephemeral base branch $EPHEMERAL_BRANCH"
+            else
+              echo "Deleting ephemeral release branch $EPHEMERAL_BRANCH..."
+              git push origin --delete "$EPHEMERAL_BRANCH" || echo "Failed to delete ephemeral branch (may not exist on remote)"
+            fi
+          fi
 
     outputs:
       branch_name: ${{ steps.proposal-branch.outputs.branch_name }}
-
+      ephemeral_branch: ${{ steps.ephemeral-branch.outputs.ephemeral_branch }}
+      is_hotfix: ${{ steps.ephemeral-branch.outputs.is_hotfix }}
+          
   create-pr:
     needs: cargo-release
     runs-on: ubuntu-latest
@@ -436,7 +697,6 @@ jobs:
           name: release-dispatch-data
           path: /tmp
 
-
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
         with:
@@ -446,51 +706,94 @@ jobs:
       - name: Create a PR
         env:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          MAIN_START_REF: ${{ inputs.main_start_ref }}
+          MAIN_BRANCH: ${{ env.MAIN_BRANCH }}
+          BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
+          PROPOSAL_BRANCH_PREFIX: ${{ env.PROPOSAL_BRANCH_PREFIX }}
+          RELEASE_BRANCH_PREFIX: ${{ env.RELEASE_BRANCH_PREFIX }}
         run: |
           BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
-                    
-          # Generate the PR body by merging commits and API changes
+          EPHEMERAL_BRANCH="${{ needs.cargo-release.outputs.ephemeral_branch }}"
+
+          HOTFIX_NOTE=""
+          if [ "${{ needs.cargo-release.outputs.is_hotfix }}" = "true" ] && [ -n "$EPHEMERAL_BRANCH" ]; then
+            HOTFIX_NOTE=$'### :adhesive_bandage: Hotfix\n\n'"This is a **hotfix** release proposal. The pull request targets \`$EPHEMERAL_BRANCH\`."$'\n\n'
+          fi
+
+          NON_DEFAULT=""
+          if [ -n "$MAIN_START_REF" ]; then
+            NON_DEFAULT="${NON_DEFAULT}"$'\n### :exclamation: Cut from non-default ref\n\n'"This proposal was generated from \`$MAIN_START_REF\` instead of the default latest \`origin/$MAIN_BRANCH\`."$'\n'
+          fi
+          if [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then
+            NON_DEFAULT="${NON_DEFAULT}"$'\n### :test_tube: Non-default workflow options\n\n'"**bypass_standard_checks** was enabled: the ongoing-proposal branch guard was skipped; branches use proposal prefix \`$PROPOSAL_BRANCH_PREFIX\` and release prefix \`$RELEASE_BRANCH_PREFIX\`. Crates whose resolved git tag is not the latest SemVer tag for that crate are still included (normally skipped)."$'\n'
+          fi
+          if [ -n "$NON_DEFAULT" ]; then
+            NON_DEFAULT="${NON_DEFAULT}"$'\n\n'
+          fi
+
+          # PR body from api-changes-with-major-bumps.json (same crates as api-changes.json; tags/versions updated after libdd major bumps).
           # Note: read returns 1 when it reaches EOF, which is expected for heredocs
           read -r -d '' JQ_FILTER << 'EOF' || true
-          .[] | select((.commits | length) > 0) |
-          . as $crate |
-          ($api[0] | map(select(.name == $crate.name)) | first // {
-            level: "skipped because there were no changes to the public API"
-          }) as $api_info |
-          [
-            "## \($crate.name)",
-            "",
-            (if $api_info.version then "**Next version:** `\($api_info.version)`\n" else null end),
-            "**Semver bump:** `\($api_info.level)`",
-            (if $api_info.tag then "**Tag:** `\($api_info.tag)`\n" else null end),
-            (if $api_info.initial_release == "true" then
-              "**Warning:** this is an initial release. Please verify that the version and commits included are correct.\n"
-            else null end),
-            (if ($crate.commits | length) > 0 then "### Commits\n\n" + ($crate.commits | map("- \(.subject)") | join("\n")) else null end)
-          ] | map(select(. != null and . != "")) | join("\n")
+          [ $api[0][]
+            | [
+                "## \(.name)",
+                "",
+                (if .version then "**Next version:** `\(.version)`" else null end),
+                "**Semver bump:** `\(.level)`",
+                (if .tag then "**Tag:** `\(.tag)`\n" else null end),
+                (if (.major_bumps // [] | length) > 0 then
+                  "### :warning: major bump forced due to:\n\n"
+                  + ((.major_bumps // []) | map("- `\(.dependency)`: \(.previous_req) → \(.current_req)") | join("\n"))
+                  + "\n"
+                else null end),
+                (if .initial_release == "true" then
+                  "**Warning:** this is an initial release. Please verify that the version and commits included are correct.\n"
+                else null end),
+                (if (.commits | length) > 0 then "### Commits\n\n" + (.commits | map("- \(.subject)") | join("\n")) else null end)
+              ]
+              | map(select(. != null and . != ""))
+              | join("\n")
+          ]
+          | join("\n\n")
           EOF
 
-          PR_BODY=$(jq -r --slurpfile api /tmp/api-changes.json "$JQ_FILTER" /tmp/commits-by-crate.json)
-          
+          COMMITS_AND_API_BODY=$(jq -nr --slurpfile api /tmp/api-changes-with-major-bumps.json "$JQ_FILTER")
+
           PR_BODY="# Release proposal for ${{ inputs.crate }} and its dependencies
 
           This PR contains version bumps based on public API changes and commits since last release.
 
-          ${PR_BODY}"
+          ${HOTFIX_NOTE}${NON_DEFAULT}${COMMITS_AND_API_BODY}"
           
-          echo "PR_BODY: $PR_BODY"
+          echo "$PR_BODY" > /tmp/pr-body.md
+          echo "PR body written to /tmp/pr-body.md (length: $(wc -c < /tmp/pr-body.md) bytes)"
 
           # NOTE: the PR title is used to filter gitlab CI jobs. If you change it, you need to update the gitlab CI job filter.
           gh pr create \
             --head "$BRANCH_NAME" \
             --title "chore(release): proposal for ${{ inputs.crate }}" \
-            --body "$PR_BODY" \
+            --body-file /tmp/pr-body.md \
             --label "release-proposal" \
-            --base "${{ env.RELEASE_BRANCH }}"
+            --label "skip-metadata-check" \
+            --label "skip-changelog-check" \
+            --label "skip-pr-title-semver-check" \
+            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
+            --draft
 
       - name: Cleanup on failure
-        if: failure() && needs.cargo-release.outputs.branch_name != ''
+        if: failure() && (needs.cargo-release.outputs.branch_name != '' || needs.cargo-release.outputs.ephemeral_branch != '')
         run: |
           BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
-          echo "Job failed, deleting branch $BRANCH_NAME..."
-          git push origin --delete "$BRANCH_NAME" || echo "Failed to delete branch (may not exist on remote)"
+          if [ -n "$BRANCH_NAME" ]; then
+            echo "Job failed, deleting branch $BRANCH_NAME..."
+            git push origin --delete "$BRANCH_NAME" || echo "Failed to delete branch (may not exist on remote)"
+          fi
+          EPHEMERAL_BRANCH="${{ needs.cargo-release.outputs.ephemeral_branch }}"
+          if [ -n "$EPHEMERAL_BRANCH" ]; then
+            if [ "${{ needs.cargo-release.outputs.is_hotfix }}" = "true" ]; then
+              echo "Hotfix mode: not deleting ephemeral base branch $EPHEMERAL_BRANCH"
+            else
+              echo "Deleting ephemeral release branch $EPHEMERAL_BRANCH..."
+              git push origin --delete "$EPHEMERAL_BRANCH" || echo "Failed to delete ephemeral branch (may not exist on remote)"
+            fi
+          fi

@@ -6,7 +6,7 @@ mod tracing_integration_tests {
     use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities_impl::{HttpClientTrait, NativeCapabilities};
     #[cfg(target_os = "linux")]
     use libdd_common::connector::uds::socket_path_to_uri;
     use libdd_common::{http_common, Endpoint};
@@ -117,7 +117,7 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let _result = data.send::<DefaultHttpClient>().await;
+        let _result = data.send(&NativeCapabilities::new_client()).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
@@ -209,7 +209,7 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let _result = data.send::<DefaultHttpClient>().await;
+        let _result = data.send(&NativeCapabilities::new_client()).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
@@ -246,7 +246,7 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let result = data.send::<DefaultHttpClient>().await;
+        let result = data.send(&NativeCapabilities::new_client()).await;
 
         assert!(result.last_result.is_ok());
     }
@@ -327,7 +327,7 @@ mod tracing_integration_tests {
             &endpoint,
         );
 
-        let _result = data.send::<DefaultHttpClient>().await;
+        let _result = data.send(&NativeCapabilities::new_client()).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }

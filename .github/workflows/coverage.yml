@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '0 6 * * *'
 
 jobs:
   coverage:
@@ -29,7 +31,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install Rust
-        run: rustup install nightly-2026-02-08 && rustup default nightly-2026-02-08
+        run: rustup set profile minimal && rustup install nightly-2026-02-08 && rustup default nightly-2026-02-08
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
@@ -50,3 +52,11 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           fail_ci_if_error: true
+      - name: Upload coverage to Datadog
+        if: always()
+        continue-on-error: true
+        uses: DataDog/coverage-upload-github-action@d2cf302a39c05e0ad22063360a2bf6ce0cc4906c # v1
+        with:
+          api_key: ${{ secrets.DATADOG_API_KEY }}
+          files: lcov.info
+          format: lcov

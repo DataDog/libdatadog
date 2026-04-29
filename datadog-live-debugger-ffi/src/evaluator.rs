@@ -161,7 +161,7 @@ impl<'e> datadog_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
         (self.eval.length)(self.context, value)
     }
 
-    fn try_enumerate(&mut self, value: &'e c_void) -> ResultValue<Vec<&'e c_void>> {
+    fn try_enumerate(&mut self, value: &'e c_void) -> ResultValue<Vec<(&'e c_void, &'e c_void)>> {
         let collection = (self.eval.try_enumerate)(self.context, value);
         if collection.count < 0 {
             Err(if collection.count == EVALUATOR_RESULT_REDACTED as isize {
@@ -170,15 +170,18 @@ impl<'e> datadog_live_debugger::Evaluator<'e, c_void> for EvalCtx<'e> {
                 ResultError::Invalid
             })
         } else {
-            // We need to copy, Vec::from_raw_parts with only free in the allocator would be
-            // unstable...
-            let mut vec = Vec::with_capacity(collection.count as usize);
+            // elements are interleaved key-value pairs: [k0, v0, k1, v1, ...]
+            // count is the number of pairs (not the number of raw pointers)
+            let count = collection.count as usize;
+            let mut vec = Vec::with_capacity(count);
             unsafe {
-                vec.extend_from_slice(std::slice::from_raw_parts(
-                    collection.elements as *const &c_void,
-                    collection.count as usize,
-                ))
-            };
+                let ptrs = collection.elements as *const *const c_void;
+                for i in 0..count {
+                    let key = &**ptrs.add(i * 2);
+                    let val = &**ptrs.add(i * 2 + 1);
+                    vec.push((key, val));
+                }
+            }
             (collection.free)(collection);
             Ok(vec)
         }

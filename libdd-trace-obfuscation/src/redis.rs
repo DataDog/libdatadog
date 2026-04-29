@@ -6,22 +6,41 @@ use crate::redis_tokenizer::{RedisTokenType, RedisTokenizer};
 const REDIS_TRUNCATION_MARK: &str = "...";
 const MAX_REDIS_NB_COMMANDS: usize = 3;
 
+/// Uppercase a single char to match Go's unicode.ToUpper (Unicode 15.0).
+/// Rust uses Unicode 16.0 which added case pairs for U+16E80–U+16EFF (Bamum Supplement)
+/// that Go 1.25 doesn't know about — keep those chars unchanged to match Go.
+fn go_toupper(c: char) -> char {
+    if (0x16E80..=0x16EFF).contains(&(c as u32)) {
+        return c;
+    }
+    let mut upper = c.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(u), None) => u,
+        _ => c,
+    }
+}
+
 /// Returns a quantized version of a Redis query, keeping only up to 3 command names.
 pub fn quantize_redis_string(query: &str) -> String {
     let mut commands: Vec<String> = Vec::with_capacity(MAX_REDIS_NB_COMMANDS);
     let mut truncated = false;
 
-    for raw_line in query.lines() {
+    // Split on '\n' only (like Go's strings.IndexByte), preserving '\r' in line content
+    for raw_line in query.split('\n') {
         if commands.len() >= MAX_REDIS_NB_COMMANDS {
             break;
         }
 
-        let line = raw_line.trim();
+        // Go's QuantizeRedisString trims only ASCII spaces (strings.Trim(rawLine, " ")),
+        // not all whitespace. Use trim_matches(' ') to match that behavior.
+        let line = raw_line.trim_matches(' ');
         if line.is_empty() {
             continue;
         }
 
-        let mut tokens = line.split_whitespace();
+        // Go splits on spaces only (strings.SplitN(line, " ", 3)), not all whitespace.
+        // Use split(' ').filter to match that behavior and preserve tab tokens.
+        let mut tokens = line.split(' ').filter(|s| !s.is_empty());
         let Some(first) = tokens.next() else { continue };
 
         if first.ends_with(REDIS_TRUNCATION_MARK) {
@@ -29,7 +48,7 @@ pub fn quantize_redis_string(query: &str) -> String {
             continue;
         }
 
-        let cmd = first.to_ascii_uppercase();
+        let cmd: String = first.chars().map(go_toupper).collect();
         let command = match cmd.as_bytes() {
             b"CLIENT" | b"CLUSTER" | b"COMMAND" | b"CONFIG" | b"DEBUG" | b"SCRIPT" => {
                 match tokens.next() {
@@ -37,7 +56,9 @@ pub fn quantize_redis_string(query: &str) -> String {
                         truncated = true;
                         continue;
                     }
-                    Some(sub) => format!("{cmd} {}", sub.to_ascii_uppercase()),
+                    Some(sub) => {
+                        format!("{cmd} {}", sub.chars().map(go_toupper).collect::<String>())
+                    }
                     None => cmd,
                 }
             }
@@ -59,6 +80,8 @@ pub fn quantize_redis_string(query: &str) -> String {
 }
 
 pub fn obfuscate_redis_string(cmd: &str) -> String {
+    // Go's newRedisTokenizer calls bytes.TrimSpace before tokenizing
+    let cmd = cmd.trim();
     let mut tokenizer = RedisTokenizer::new(cmd);
     let s = &mut String::new();
     let mut cmd: Option<&str> = None;
@@ -333,6 +356,11 @@ mod tests {
             expected    ["CLIENT LIST"];
         ]
         [
+            test_name   [test_quantize_redis_string_client_truncated]
+            input       ["CLIENT ..."]
+            expected    ["..."];
+        ]
+        [
             test_name   [test_quantize_redis_string_get_lowercase]
             input       ["get my_key"]
             expected    ["GET"];
@@ -416,6 +444,27 @@ mod tests {
             test_name   [test_quantize_redis_string_unknown]
             input       ["UNKNOWN 123"]
             expected    ["UNKNOWN"];
+        ]
+        [
+            test_name   [fuzzing_3286489773]
+            input       ["ꭺ"]
+            expected    ["Ꭺ"];
+        ]
+        [
+            test_name   [fuzzing_2812552373]
+            input       ["\t"]
+            expected    ["\t"];
+        ]
+        [
+            test_name   [fuzzing_crlf]
+            input       ["\r\n"]
+            // Split on \n specifically, not newlines, to copy agent's behaviour
+            expected    ["\r"];
+        ]
+        [
+            test_name   [fuzzing_box_char]
+            input       ["𖺻"]
+            expected    ["𖺻"];
         ]
     )]
     #[test]
@@ -936,6 +985,16 @@ SET k ?"#];
             test_name   [test_obfuscate_all_redis_args_17]
             input       ["bitfield key SET key value incrby 3"]
             expected    ["bitfield ? SET ? incrby ?"];
+        ]
+        [
+            test_name   [test_obfuscate_fuzzing_unicode]
+            input       ["\u{00b}ჸ"]
+            expected    ["ჸ"];
+        ]
+        [
+            test_name   [test_obfuscate_fuzzing_whitespaces]
+            input       ["ჸ\n\tჸ"]
+            expected    ["ჸ ?"];
         ]
     )]
     #[test]

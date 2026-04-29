@@ -85,6 +85,11 @@ compute_semver_results() {
             DETAILS=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
             log_verbose "Detected semver violations (major change)" >&2
             log_verbose "$SEMVER_OUTPUT" >&2
+        elif echo "$SEMVER_OUTPUT" | grep -qF "package \`$crate\` not found"; then
+            # The crate doesn't exist in the baseline — it's a new crate being added
+            LEVEL="minor"
+            REASON="New crate (not present in baseline)"
+            log_verbose "New crate '$crate' not found in baseline, treating as minor change" >&2
         else
             echo "Error running cargo-semver-checks: $SEMVER_OUTPUT" >&2
             exit $SEMVER_EXIT_CODE

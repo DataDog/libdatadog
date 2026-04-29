@@ -10,11 +10,12 @@ use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
 use libdd_capabilities::HttpClientTrait;
 use libdd_common::{
     header::{
-        APPLICATION_MSGPACK_STR, APPLICATION_PROTOBUF_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR,
-        DATADOG_TRACE_COUNT_STR,
+        APPLICATION_MSGPACK, APPLICATION_PROTOBUF, DATADOG_SEND_REAL_HTTP_STATUS,
+        DATADOG_TRACE_COUNT,
     },
     Endpoint,
 };
@@ -59,14 +60,16 @@ use zstd::stream::write::Encoder;
 ///     send_data.set_retry_strategy(retry_strategy);
 ///
 ///     // Send the data (caller picks the HTTP client implementation)
-///     let result = send_data.send::<libdd_capabilities_impl::DefaultHttpClient>().await;
+///     use libdd_capabilities::HttpClientTrait;
+///     let client = libdd_capabilities_impl::NativeCapabilities::new_client();
+///     let result = send_data.send(&client).await;
 /// }
 /// ```
 pub struct SendData {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize, // have a rough size estimate to force flushing if it's large
     target: Endpoint,
-    headers: HashMap<&'static str, String>,
+    headers: HeaderMap,
     retry_strategy: RetryStrategy,
     #[cfg(feature = "compression")]
     compression: Compression,
@@ -83,7 +86,7 @@ pub struct SendDataBuilder {
     pub(crate) tracer_payloads: TracerPayloadCollection,
     pub(crate) size: usize,
     target: Endpoint,
-    headers: HashMap<&'static str, String>,
+    headers: HeaderMap,
     retry_strategy: RetryStrategy,
     #[cfg(feature = "compression")]
     compression: Compression,
@@ -96,8 +99,8 @@ impl SendDataBuilder {
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
     ) -> SendDataBuilder {
-        let mut headers: HashMap<&'static str, String> = tracer_header_tags.into();
-        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
+        let mut headers: HeaderMap = tracer_header_tags.into();
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, HeaderValue::from_static("1"));
         SendDataBuilder {
             tracer_payloads: tracer_payload,
             size,
@@ -158,8 +161,8 @@ impl SendData {
         tracer_header_tags: TracerHeaderTags,
         target: &Endpoint,
     ) -> SendData {
-        let mut headers: HashMap<&'static str, String> = tracer_header_tags.into();
-        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
+        let mut headers: HeaderMap = tracer_header_tags.into();
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, HeaderValue::from_static("1"));
         SendData {
             tracer_payloads: tracer_payload,
             size,
@@ -221,32 +224,35 @@ impl SendData {
     /// # Returns
     ///
     /// A `SendDataResult` instance containing the result of the operation.
-    pub async fn send<H: HttpClientTrait>(&self) -> SendDataResult {
-        self.send_internal::<H>(None).await
+    pub async fn send<H: HttpClientTrait>(&self, client: &H) -> SendDataResult {
+        self.send_internal(client, None).await
     }
 
     async fn send_internal<H: HttpClientTrait>(
         &self,
+        client: &H,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         if self.use_protobuf() {
-            self.send_with_protobuf::<H>(endpoint).await
+            self.send_with_protobuf(client, endpoint).await
         } else {
-            self.send_with_msgpack::<H>(endpoint).await
+            self.send_with_msgpack(client, endpoint).await
         }
     }
 
     async fn send_payload<H: HttpClientTrait>(
         &self,
+        client: &H,
         chunks: u64,
         payload: Vec<u8>,
-        headers: HashMap<&'static str, String>,
+        headers: HeaderMap,
         endpoint: Option<&Endpoint>,
     ) -> (SendWithRetryResult, u64, u64) {
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
-            send_with_retry::<H>(
+            send_with_retry(
+                client,
                 endpoint.unwrap_or(&self.target),
                 payload,
                 &headers,
@@ -263,7 +269,7 @@ impl SendData {
     }
 
     #[cfg(feature = "compression")]
-    fn compress_payload(&self, payload: Vec<u8>, headers: &mut HashMap<&str, String>) -> Vec<u8> {
+    fn compress_payload(&self, payload: Vec<u8>, headers: &mut HeaderMap) -> Vec<u8> {
         match self.compression {
             Compression::Zstd(level) => {
                 let result = (|| -> std::io::Result<Vec<u8>> {
@@ -274,7 +280,10 @@ impl SendData {
 
                 match result {
                     Ok(compressed_payload) => {
-                        headers.insert("Content-Encoding", "zstd".to_string());
+                        headers.insert(
+                            http::header::CONTENT_ENCODING,
+                            HeaderValue::from_static("zstd"),
+                        );
                         compressed_payload
                     }
                     Err(_) => payload,
@@ -286,6 +295,7 @@ impl SendData {
 
     async fn send_with_protobuf<H: HttpClientTrait>(
         &self,
+        client: &H,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -311,10 +321,16 @@ impl SendData {
                 #[cfg(not(feature = "compression"))]
                 let final_payload = serialized_trace_payload;
 
-                request_headers.insert("content-type", APPLICATION_PROTOBUF_STR.to_string());
+                request_headers.insert(CONTENT_TYPE, APPLICATION_PROTOBUF);
 
                 let (response, bytes_sent, chunks) = self
-                    .send_payload::<H>(chunks, final_payload, request_headers, endpoint.as_ref())
+                    .send_payload(
+                        client,
+                        chunks,
+                        final_payload,
+                        request_headers,
+                        endpoint.as_ref(),
+                    )
                     .await;
 
                 result.update(response, bytes_sent, chunks);
@@ -327,6 +343,7 @@ impl SendData {
 
     async fn send_with_msgpack<H: HttpClientTrait>(
         &self,
+        client: &H,
         endpoint: Option<Endpoint>,
     ) -> SendDataResult {
         let mut result = SendDataResult::default();
@@ -338,15 +355,17 @@ impl SendData {
                     #[allow(clippy::unwrap_used)]
                     let chunks = u64::try_from(tracer_payload.chunks.len()).unwrap();
                     let mut headers = self.headers.clone();
-                    headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                    headers.insert("content-type", APPLICATION_MSGPACK_STR.to_string());
+                    headers.reserve(2);
+                    headers.insert(DATADOG_TRACE_COUNT, chunks.into());
+                    headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
                     let payload = match rmp_serde::to_vec_named(tracer_payload) {
                         Ok(p) => p,
                         Err(e) => return result.error(anyhow!(e)),
                     };
 
-                    futures.push(self.send_payload::<H>(
+                    futures.push(self.send_payload(
+                        client,
                         chunks,
                         payload,
                         headers,
@@ -358,26 +377,40 @@ impl SendData {
                 #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
-                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                headers.insert("content-type", APPLICATION_MSGPACK_STR.to_string());
+                headers.reserve(2);
+                headers.insert(DATADOG_TRACE_COUNT, chunks.into());
+                headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
                 let payload = msgpack_encoder::v04::to_vec(payload);
 
-                futures.push(self.send_payload::<H>(chunks, payload, headers, endpoint.as_ref()));
+                futures.push(self.send_payload(
+                    client,
+                    chunks,
+                    payload,
+                    headers,
+                    endpoint.as_ref(),
+                ));
             }
             TracerPayloadCollection::V05(payload) => {
                 #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
                 let mut headers = self.headers.clone();
-                headers.insert(DATADOG_TRACE_COUNT_STR, chunks.to_string());
-                headers.insert("content-type", APPLICATION_MSGPACK_STR.to_string());
+                headers.reserve(2);
+                headers.insert(DATADOG_TRACE_COUNT, chunks.into());
+                headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
                 let payload = match rmp_serde::to_vec(payload) {
                     Ok(p) => p,
                     Err(e) => return result.error(anyhow!(e)),
                 };
 
-                futures.push(self.send_payload::<H>(chunks, payload, headers, endpoint.as_ref()));
+                futures.push(self.send_payload(
+                    client,
+                    chunks,
+                    payload,
+                    headers,
+                    endpoint.as_ref(),
+                ));
             }
         }
 
@@ -427,7 +460,8 @@ mod tests {
     use crate::tracer_header_tags::TracerHeaderTags;
     use httpmock::prelude::*;
     use httpmock::MockServer;
-    use libdd_capabilities_impl::DefaultHttpClient;
+    use libdd_capabilities::HttpClientTrait;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb::Span;
     use std::collections::HashMap;
@@ -548,8 +582,8 @@ mod tests {
         assert_eq!(data.target.api_key, None);
         assert_eq!(data.target.url.path(), "/foo/bar");
 
-        for (key, value) in HashMap::from(header_tags) {
-            assert_eq!(data.headers.get(key).unwrap(), &value);
+        for (key, value) in &HeaderMap::from(header_tags) {
+            assert_eq!(data.headers.get(key), Some(value));
         }
     }
 
@@ -584,11 +618,14 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status().as_u16(), 202);
+        assert_eq!(
+            res.last_result.unwrap().status(),
+            http::StatusCode::ACCEPTED
+        );
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -629,11 +666,14 @@ mod tests {
         );
 
         let data_payload_len = compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status().as_u16(), 202);
+        assert_eq!(
+            res.last_result.unwrap().status(),
+            http::StatusCode::ACCEPTED
+        );
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -652,7 +692,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(DATADOG_TRACE_COUNT_STR, "1")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "1")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -688,11 +728,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
+        assert_eq!(res.last_result.unwrap().status(), http::StatusCode::OK);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -711,7 +751,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(DATADOG_TRACE_COUNT_STR, "1")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "1")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -746,11 +786,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_async().await;
 
-        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
+        assert_eq!(res.last_result.unwrap().status(), http::StatusCode::OK);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -790,11 +830,11 @@ mod tests {
         );
 
         let data_payload_len = rmp_compute_payload_len(&data.tracer_payloads);
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_calls_async(2).await;
 
-        assert_eq!(res.last_result.unwrap().status().as_u16(), 200);
+        assert_eq!(res.last_result.unwrap().status(), http::StatusCode::OK);
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
@@ -831,12 +871,15 @@ mod tests {
             },
         );
 
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_calls_async(5).await;
 
         assert!(res.last_result.is_ok());
-        assert_eq!(res.last_result.unwrap().status().as_u16(), 500);
+        assert_eq!(
+            res.last_result.unwrap().status(),
+            http::StatusCode::INTERNAL_SERVER_ERROR
+        );
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 1);
@@ -863,7 +906,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         assert!(res.last_result.is_err());
         match std::env::consts::OS {
@@ -896,7 +939,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(POST)
-                    .header(DATADOG_TRACE_COUNT_STR, "2")
+                    .header(DATADOG_TRACE_COUNT.as_str(), "2")
                     .header("Content-type", "application/msgpack")
                     .header("datadog-meta-lang", header_tags.lang)
                     .header(
@@ -930,7 +973,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_calls_async(5).await;
 
@@ -972,7 +1015,7 @@ mod tests {
             },
         );
 
-        let res = data.send::<DefaultHttpClient>().await;
+        let res = data.send(&NativeCapabilities::new_client()).await;
 
         mock.assert_calls_async(10).await;
 

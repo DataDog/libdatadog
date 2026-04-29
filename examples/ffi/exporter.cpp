@@ -52,14 +52,25 @@ int main(int argc, char *argv[]) {
       .function =
           {
               .name = DDOG_CHARSLICE_C_BARE("{main}"),
+              .name_id = { .value = 0 },
+              .system_name = DDOG_CHARSLICE_C_BARE(""),
+              .system_name_id = { .value = 0 }, 
               .filename = DDOG_CHARSLICE_C_BARE("/srv/example/index.php"),
+              .filename_id = { .value = 0 },
           },
+        .address = 0,
+        .line = 0,
   };
 
   int64_t value = 10;
   const ddog_prof_Label label = {
       .key = DDOG_CHARSLICE_C_BARE("language"),
+      .key_id = { .value = 0 },
       .str = DDOG_CHARSLICE_C_BARE("php"),
+      .str_id = { .value = 0 },
+      .num = 0,
+      .num_unit = DDOG_CHARSLICE_C_BARE(""),
+      .num_unit_id = { .value = 0 },
   };
   ddog_prof_Sample sample = {
       .locations = {&root_location, 1},
@@ -134,6 +145,18 @@ int main(int argc, char *argv[]) {
 
   auto cancel = ddog_CancellationToken_new();
   auto cancel_for_background_thread = ddog_CancellationToken_clone(&cancel);
+
+  // Eagerly initialize the tokio runtime. This is optional, but required
+  // to avoid race conditions if another thread might be using the
+  // the cancellation token at the same time as the profile is being sent
+  // (as is the case here).
+  ddog_VoidResult init_result = ddog_prof_Exporter_init_runtime(exporter);
+  if (init_result.tag != DDOG_VOID_RESULT_OK) {
+    print_error("Failed to initialize exporter runtime: ", init_result.err);
+    ddog_Error_drop(&init_result.err);
+    ddog_prof_Exporter_drop(exporter);
+    return 1;
+  }
 
   // As an example of CancellationToken usage, here we create a background
   // thread that sleeps for some time and then cancels a request early (e.g.

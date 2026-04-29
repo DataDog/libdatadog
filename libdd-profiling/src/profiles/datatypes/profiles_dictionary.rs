@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::profiles::collections::{ParallelSet, ParallelStringSet, SetError};
+use crate::profiles::collections::{ParallelSet, ParallelStringSet, SetError, StringRef};
 use crate::profiles::datatypes::{
     Function, Function2, FunctionId2, Mapping, Mapping2, MappingId2, StringId2,
 };
@@ -75,6 +75,24 @@ impl ProfilesDictionary {
         Ok(string_ref.into())
     }
 
+    /// Returns the string for the given id.
+    ///
+    /// # Safety
+    /// The `id` must belong to this dictionary's string set. The returned
+    /// `&str` borrows from the dictionary's internal storage and must not
+    /// outlive it.
+    pub unsafe fn get_str(&self, id: StringId2) -> &str {
+        unsafe { self.strings.get(StringRef::from(id)) }
+    }
+
+    /// Returns the function for the given id, or `Function2::default()` if the id is empty.
+    ///
+    /// # Safety
+    /// The `id` must belong to this dictionary.
+    pub unsafe fn get_func(&self, id: FunctionId2) -> Function2 {
+        unsafe { id.read() }.unwrap_or_default()
+    }
+
     pub fn functions(&self) -> &FunctionSet {
         &self.functions
     }
@@ -103,6 +121,46 @@ mod tests {
         unsafe {
             assert_eq!(dict.strings().get(id.into()), expected);
         }
+    }
+
+    #[test]
+    fn get_str_round_trip() {
+        let dict = ProfilesDictionary::try_new().unwrap();
+        let id = dict.try_insert_str2("hello").unwrap();
+        assert_eq!(unsafe { dict.get_str(id) }, "hello");
+    }
+
+    #[test]
+    fn get_str_empty_id() {
+        let dict = ProfilesDictionary::try_new().unwrap();
+        assert_eq!(unsafe { dict.get_str(StringId2::EMPTY) }, "");
+    }
+
+    #[test]
+    fn get_func_round_trip() {
+        let dict = ProfilesDictionary::try_new().unwrap();
+        let name_id = dict.try_insert_str2("my_func").unwrap();
+        let system_name_id = dict.try_insert_str2("_my_func").unwrap();
+        let file_name_id = dict.try_insert_str2("lib.rs").unwrap();
+        let function = Function2 {
+            name: name_id,
+            system_name: system_name_id,
+            file_name: file_name_id,
+        };
+        let id = dict.try_insert_function2(function).unwrap();
+        let got = unsafe { dict.get_func(id) };
+        assert_string_id_eq(got.name, name_id);
+        assert_string_id_eq(got.system_name, system_name_id);
+        assert_string_id_eq(got.file_name, file_name_id);
+    }
+
+    #[test]
+    fn get_func_empty_id() {
+        let dict = ProfilesDictionary::try_new().unwrap();
+        let got = unsafe { dict.get_func(FunctionId2::default()) };
+        assert!(got.name.is_empty());
+        assert!(got.system_name.is_empty());
+        assert!(got.file_name.is_empty());
     }
 
     proptest! {

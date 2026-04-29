@@ -3,9 +3,12 @@
 
 use crate::handles::{HandlesTransport, TransferHandles};
 use crate::platform::{mmap_handle, munmap_handle, OwnedFileHandle, PlatformHandle};
+use crate::AtomicOption;
 #[cfg(feature = "tiny-bytes")]
 use libdd_tinybytes::UnderlyingBytes;
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use std::{ffi::CString, io, ptr::NonNull};
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -37,15 +40,16 @@ pub(crate) struct ShmPath {
 
 pub struct NamedShmHandle {
     pub(crate) inner: ShmHandle,
-    pub(crate) path: Option<ShmPath>,
+    pub(crate) path: AtomicOption<Box<ShmPath>>,
 }
 
 impl NamedShmHandle {
-    pub fn get_path(&self) -> &[u8] {
-        if let Some(ref shm_path) = &self.path {
-            shm_path.name.as_bytes()
-        } else {
-            b""
+    /// # Safety
+    /// Must not be called concurrently with `unlink()`.
+    pub unsafe fn get_path(&self) -> &[u8] {
+        match self.path.as_option() {
+            Some(shm_path) => shm_path.name.to_bytes(),
+            None => b"",
         }
     }
 }
@@ -87,10 +91,19 @@ where
         unsafe {
             self.set_mapping_size(size)?;
         }
-        nix::unistd::ftruncate(
-            self.get_shm().handle.as_owned_fd()?,
-            self.get_shm().size as libc::off_t,
+        let new_size = self.get_shm().size as libc::off_t;
+        let fd = self.get_shm().handle.as_owned_fd()?;
+        // Use fallocate on Linux to eagerly commit the new pages: ENOSPC at resize time is
+        // recoverable; a later SIGBUS mid-execution is not.
+        #[cfg(target_os = "linux")]
+        nix::fcntl::fallocate(
+            fd.as_raw_fd(),
+            nix::fcntl::FallocateFlags::empty(),
+            0,
+            new_size,
         )?;
+        #[cfg(not(target_os = "linux"))]
+        nix::unistd::ftruncate(&fd, new_size)?;
         Ok(())
     }
     /// # Safety
@@ -131,6 +144,16 @@ impl FileBackedHandle for NamedShmHandle {
     }
 }
 
+impl MappedMem<NamedShmHandle> {
+    /// Unlink the backing SHM file from the filesystem so new openers get `ENOENT`.
+    /// Existing mappings remain valid.  On Windows the mapping is managed by the OS
+    /// via handle reference counts and there is no filesystem entry to remove.
+    #[cfg(unix)]
+    pub fn unlink(&self) {
+        self.mem.unlink();
+    }
+}
+
 impl<T: MemoryHandle> MappedMem<T> {
     pub fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr.as_ptr().cast(), self.mem.get_size()) }
@@ -152,7 +175,9 @@ impl<T: MemoryHandle> AsRef<[u8]> for MappedMem<T> {
 }
 
 impl MappedMem<NamedShmHandle> {
-    pub fn get_path(&self) -> &[u8] {
+    /// # Safety
+    /// Must not be called concurrently with `unlink()`.
+    pub unsafe fn get_path(&self) -> &[u8] {
         self.mem.get_path()
     }
 }
@@ -167,9 +192,10 @@ impl<T: FileBackedHandle> From<MappedMem<T>> for ShmHandle {
 }
 
 impl From<MappedMem<NamedShmHandle>> for NamedShmHandle {
-    fn from(mut handle: MappedMem<NamedShmHandle>) -> NamedShmHandle {
+    fn from(handle: MappedMem<NamedShmHandle>) -> NamedShmHandle {
+        let path = handle.mem.path.take().into();
         NamedShmHandle {
-            path: handle.mem.path.take(),
+            path,
             inner: handle.into(),
         }
     }

@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-common"
-version = "2.0.1"
+version = "4.0.0"
 description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
@@ -16,7 +16,6 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-libdd-capabilities = { path = "../libdd-capabilities" }
 anyhow = "1.0"
 futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
@@ -33,13 +32,27 @@ regex = "1.5"
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
-reqwest = { version = "0.13", features = ["rustls", "hickory-dns"], default-features = false, optional = true }
-rustls-native-certs = { version = "0.8.1", optional = true }
+# Use rustls-no-provider instead of rustls to avoid reqwest forcing aws-lc-rs as the crypto
+# backend. We install the ring provider explicitly in connector/mod.rs instead.
+reqwest = { version = "0.13.2", features = ["rustls-no-provider", "hickory-dns"], default-features = false, optional = true }
+criterion = { version = "0.5.1", optional = true }
+# Pinned to <0.8.3: version 0.8.3+ pulls in openssl-probe@0.2 which probes multiple
+# certificate directories and parses individual cert files instead of loading a single
+# bundle, adding unnecessary I/O overhead in latency-sensitive environments.
+rustls-native-certs = { version = ">=0.8.1, <0.8.3", optional = true }
 thiserror = "1.0"
 tokio-rustls = { version = "0.26", default-features = false, optional = true }
 serde = { version = "1.0", features = ["derive"] }
 static_assertions = "1.1.0"
 const_format = "0.2.34"
+# Declare rustls and hyper-rustls without a crypto provider. The provider is
+# selected via features: `https` enables ring, `fips` enables aws-lc-rs.
+rustls = { version = "0.23.37", default-features = false, optional = true }
+hyper-rustls = { version = "0.27.7", default-features = false, features = [
+    "native-tokio",
+    "http1",
+    "tls12",
+], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 hyper = { workspace = true }
@@ -63,22 +76,6 @@ features = [
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.29", features = ["process"] }
-rustls = { version = "0.23", default-features = false, optional = true, features = ["aws-lc-rs"] }
-hyper-rustls = { version = "0.27", default-features = false, features = [
-    "native-tokio",
-    "http1",
-    "tls12",
-    "aws-lc-rs",
-], optional = true }
-
-[target.'cfg(not(unix))'.dependencies]
-rustls = { version = "0.23", default-features = false, optional = true, features = ["ring"] }
-hyper-rustls = { version = "0.27", default-features = false, features = [
-    "native-tokio",
-    "http1",
-    "tls12",
-    "ring",
-], optional = true }
 
 [dev-dependencies]
 httparse = "1.9"
@@ -89,22 +86,26 @@ multer = "3.1"
 bytes = "1.11.1"
 rand = "0.8"
 tempfile = "3.8"
-rusty-fork = "0.3"
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
 
 [features]
 default = ["https"]
-https = ["tokio-rustls", "rustls", "hyper-rustls", "rustls-native-certs"]
+# TLS plumbing without a crypto provider. Use `https` or `fips` to select one.
+tls-core = ["tokio-rustls", "rustls", "hyper-rustls", "rustls-native-certs"]
+# Default HTTPS: ring as crypto provider
+https = ["tls-core", "rustls/ring", "hyper-rustls/ring"]
 use_webpki_roots = ["hyper-rustls/webpki-roots"]
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["https", "hyper-rustls/fips"]
+fips = ["tls-core", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging
 reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
 test-utils = ["dep:httparse", "dep:rand", "dep:mime", "dep:multer"]
+# Enable benchmark utilities (ReportingAllocator, Criterion allocation measurement)
+bench-utils = ["dep:criterion"]
 
 [lints.rust]
 # We run coverage checks in our github actions. These checks are run with

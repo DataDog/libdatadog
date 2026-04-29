@@ -1,12 +1,78 @@
 name: Test
-on: [push]
+on:
+  pull_request:
+    types: ['opened', 'edited', 'reopened', 'synchronize']
+    branches-ignore:
+      - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
+      - release
+  push:
+    branches:
+      - main
+      - mq-working-branch-*
+  schedule:
+    - cron: '0 6 * * *'
 env:
   CARGO_TERM_COLOR: always
   RUST_VERSION: 1.84.1
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      packages-count: ${{ steps.set-packages.outputs.packages-count }}
+      packages: ${{ steps.set-packages.outputs.packages }}
+      crashtracker-feature: ${{ steps.set-packages.outputs.crashtracker-feature }}
+      run-test-spawn: ${{ steps.set-packages.outputs.run-test-spawn }}
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0
+    - name: Get crates report
+      id: changed-crates
+      uses: ./.github/actions/crates-reporter
+    - name: Set unit test packages
+      id: set-packages
+      env:
+        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
+        CHANGED_CRATES_COUNT: ${{ steps.changed-crates.outputs.crates_count }}
+        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
+      run: |
+        if [[ "$CHANGED_CRATES_STATUS" == "skipped" ]]; then
+          COUNT="1"
+          PACKAGES=""
+          CRASHTRACKER_FEATURE="--features libdd-crashtracker/generate-unit-test-files"
+          RUN_TEST_SPAWN="true"
+        elif [[ "$CHANGED_CRATES_COUNT" == "0" ]]; then
+          COUNT="0"
+          PACKAGES=""
+          CRASHTRACKER_FEATURE=""
+          RUN_TEST_SPAWN="false"
+        else
+          UNIT_CRATES=$(echo "$AFFECTED_CRATES" | jq '[.[] | select(. != "builder")]')
+          COUNT=$(echo "$UNIT_CRATES" | jq 'length')
+          PACKAGES=$(echo "$UNIT_CRATES" | jq -r 'map("-p " + .) | join(" ")')
+          if echo "$UNIT_CRATES" | jq -e 'any(. == "libdd-crashtracker")' > /dev/null; then
+            CRASHTRACKER_FEATURE="--features libdd-crashtracker/generate-unit-test-files"
+          else
+            CRASHTRACKER_FEATURE=""
+          fi
+          if echo "$UNIT_CRATES" | jq -e 'any(. == "test_spawn_from_lib")' > /dev/null; then
+            RUN_TEST_SPAWN="true"
+          else
+            RUN_TEST_SPAWN="false"
+          fi
+        fi
+        {
+          echo "packages-count=$COUNT"
+          echo "packages=$PACKAGES"
+          echo "crashtracker-feature=$CRASHTRACKER_FEATURE"
+          echo "run-test-spawn=$RUN_TEST_SPAWN"
+        } >> $GITHUB_OUTPUT
+
   test:
-    name: "cargo test --workspace #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    name: "cargo test #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0'
     runs-on: ${{ matrix.platform }}
     permissions:
       checks: write
@@ -14,6 +80,9 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
+      PACKAGES: ${{ needs.setup.outputs.packages }}
+      CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
+      TRACING_CRATES: "libdd-data-pipeline libdd-trace-utils libdd-tracer-flare"
     strategy:
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-15]
@@ -40,7 +109,7 @@ jobs:
           submodules: recursive
       - name: Install Rust ${{ matrix.rust_version }}
         if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
+        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
         # On Windows run happens in a PowerShell, so start bash explicitly
         run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
@@ -48,6 +117,12 @@ jobs:
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.96
+      - name: Install Go (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: 'stable'
+          cache: false
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
@@ -56,19 +131,72 @@ jobs:
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo build --workspace --exclude builder --verbose"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo build"
         shell: bash
-        run: cargo build --workspace --exclude builder --verbose
-      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'"
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            cargo build --workspace --exclude builder --verbose
+          else
+            # word splitting on $PACKAGES is intentional
+            # shellcheck disable=SC2086
+            cargo build $PACKAGES --verbose
+          fi
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
-        run: cargo test --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --doc --verbose && cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            # shellcheck disable=SC2086
+            cargo test --workspace $CRASHTRACKER_FEATURE --exclude builder --doc --verbose
+            # shellcheck disable=SC2086
+            cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
+            cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+          else
+            # shellcheck disable=SC2086
+            cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
+            # shellcheck disable=SC2086
+            cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose -E '!test(tracing_integration_tests::)'
+            if echo "$PACKAGES" | grep -q "libdd-http-client"; then
+              cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
+            fi
+          fi
         env:
           RUST_BACKTRACE: full
-      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'"
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --all-features"
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            cargo nextest run --workspace --all-features --exclude builder --exclude test_spawn_from_lib --verbose -E '!test(tracing_integration_tests::)'
+          else
+            # shellcheck disable=SC2086
+            cargo nextest run $PACKAGES --all-features --verbose -E '!test(tracing_integration_tests::) & !package(test_spawn_from_lib)'
+          fi
+        env:
+          RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] Tracing integration tests"
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files --exclude builder --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            # shellcheck disable=SC2086
+            for crate in $TRACING_CRATES; do
+              PACKAGES="$PACKAGES -p $crate"
+            done
+            cargo nextest run $PACKAGES --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+          else
+            TRACING_PACKAGES=""
+            for crate in $TRACING_CRATES; do
+              if echo "$PACKAGES" | grep -qw -- "-p $crate"; then
+                TRACING_PACKAGES="$TRACING_PACKAGES -p $crate"
+              fi
+            done
+            if [[ -z "$TRACING_PACKAGES" ]]; then
+              echo "No tracing integration test crates found in PACKAGES, skipping."
+            else
+              # shellcheck disable=SC2086
+              cargo nextest run $TRACING_PACKAGES --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+            fi
+          fi
         env:
           RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
@@ -88,21 +216,6 @@ jobs:
           report_paths: "target/nextest/ci/junit.xml"
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
-      # We're using not-that-ideal XSLT here as this change, because it must be done over 17+ repos.
-      # It's a workaround until this gets integrated into a better place, such as datadog-ci or the backend.
-      #
-      # * ticket: https://datadoghq.atlassian.net/browse/APMSP-2610
-      # * RFC: https://docs.google.com/document/d/1OaX_h09fCXWmK_1ADrwvilt8Yt5h4WjC7UUAdS3Y3uw/edit?pli=1&tab=t.0#heading=h.tfy5viz7rz2
-      - name: Add final_status property
-        if: success() || failure()
-        shell: bash
-        run: |
-          which xsltproc || sudo apt-get install -y xsltproc
-          echo "Fixing target/nextest/ci/junit.xml"
-          tmp_file="$(mktemp)"
-          xsltproc --output "$tmp_file" ".github/workflows/add_final_status.xsl" "target/nextest/ci/junit.xml"
-          mv "$tmp_file" "target/nextest/ci/junit.xml"
-
       - name: Upload test results to Datadog
         if: success() || failure()
         shell: bash
@@ -133,13 +246,13 @@ jobs:
           ACTUAL_CHECKSUM=$($CHECKSUM_CMD "$OUTPUT" | cut -d' ' -f1)
           echo "Expected checksum: $EXPECTED_CHECKSUM"
           echo "Actual checksum: $ACTUAL_CHECKSUM"
-          
+
           if [ "$ACTUAL_CHECKSUM" != "$EXPECTED_CHECKSUM" ]; then
             echo "Checksum verification failed!"
             exit 1
           fi
           echo "Checksum verification passed"
-          
+
           # Upload test results
           ./"$OUTPUT" junit upload \
             --service libdatadog \
@@ -150,158 +263,16 @@ jobs:
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
 
-  ffi:
-    name: "FFI #${{ matrix.platform }} ${{ matrix.rust_version }}"
-    runs-on: ${{ matrix.platform }}
-    env:
-      CARGO_TERM_COLOR: always
-      CARGO_INCREMENTAL: 0
-    strategy:
-      matrix:
-        platform: [windows-latest, ubuntu-latest, macos-15]
-        rust_version: [""]
-        include:
-          - platform: "ubuntu-latest"
-            rust_version: "${RUST_VERSION}"
-          - platform: "ubuntu-latest"
-            flags: "-C relocation-model=pic"
-          - platform: "macos-15"
-            flags: "-C relocation-model=pic"
-          - platform: "windows-latest"
-            flags: "-C target-feature=+crt-static"
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
-        with:
-          submodules: recursive
-      - name: Setup output dir
-        shell: bash
-        run: |
-          WORKSPACE_PATH=${{ github.workspace }}
-          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-             WORKSPACE_PATH=$(cygpath -ua '${{ github.workspace }}')
-          fi
-          echo "LIBDD_OUTPUT_FOLDER=$WORKSPACE_PATH/artifacts" >> $GITHUB_ENV
-      - name: Free Disk Space (Ubuntu only)
-        if: runner.os == 'Linux' && matrix.platform == 'ubuntu-latest'
-        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # 1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: true
-      - name: Install Rust ${{ matrix.rust_version }}
-        if: matrix.rust_version != ''
-        run: rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
-
-      - id: rust-version
-        # On Windows run happens in a PowerShell, so start bash explicitly
-        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
-
-      - name: Cache [rust]
-        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
-        env:
-          RUSTFLAGS: "${{ matrix.flags }}"
-        with:
-          cache-targets: true # cache build artifacts
-          cache-bin: true # cache the ~/.cargo/bin directory
-      - name: "Generate profiling FFI"
-        shell: bash
-        env:
-          RUSTFLAGS: "${{ matrix.flags }}"
-        run: |
-          cargo run --bin release --release -- --out $LIBDD_OUTPUT_FOLDER
-      - name: 'Publish libdatadog'
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # 4.6.1
-        # Only upload the artifacts built with the default Rust version
-        if: (success() || failure()) && matrix.rust_version == ''
-        with:
-          if-no-files-found: error
-          name: libdatadog.${{ matrix.platform }}
-          path: ${{ github.workspace }}/artifacts
-          retention-days: 1
-      - name: "(Windows) Test building Profiling C bindings - dynamic link vc runtime"
-        if: matrix.platform == 'windows-latest'
-        shell: bash
-        run: |
-          set -e
-          rm -rf examples/ffi/build_dll
-          mkdir examples/ffi/build_dll
-          cd examples/ffi/build_dll
-          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=DLL
-          cmake --build .
-      - name: "(Windows) Test building Profiling C bindings - static link vc runtime"
-        if: matrix.platform == 'windows-latest'
-        shell: bash
-        run: |
-          set -e
-          rm -rf examples/ffi/build_static
-          mkdir examples/ffi/build_static
-          cd examples/ffi/build_static
-          cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DVCRUNTIME_LINK_TYPE=STATIC
-          cmake --build .
-      - name: "Test building Profiling C bindings"
-        shell: bash
-        if: matrix.platform != 'windows-latest'
-        run: |
-          set -e
-          mkdir examples/ffi/build
-          cd examples/ffi/build
-          # Add BUILD_SYMBOLIZER variable only for Linux platforms
-          if [[ "${{ matrix.platform }}" == "ubuntu-latest" ]]; then
-            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER -DBUILD_SYMBOLIZER=true
-          else
-            cmake -S .. -DDatadog_ROOT=$LIBDD_OUTPUT_FOLDER
-          fi
-          cmake --build .
-      - name: "Run FFI examples"
-        shell: bash
-        if: matrix.platform != 'windows-latest'
-        run: |
-          cargo ffi-test --skip-build
-      - name: "(Windows) Run FFI examples"
-        shell: bash
-        if: matrix.platform == 'windows-latest'
-        run: |
-          cargo ffi-test
-      - name: "Test building CXX bindings - Crashinfo (Unix)"
-        shell: bash
-        if: matrix.platform != 'windows-latest'
-        run: |
-          set -e
-          cd examples/cxx
-          ./build-and-run-crashinfo.sh
-      - name: "Test building CXX bindings - Profiling (Unix)"
-        shell: bash
-        if: matrix.platform != 'windows-latest'
-        run: |
-          set -e
-          cd examples/cxx
-          ./build-profiling.sh
-      - name: "Setup MSVC (Windows)"
-        if: matrix.platform == 'windows-latest'
-        uses: ilammy/msvc-dev-cmd@v1
-      - name: "Test building CXX bindings - Crashinfo (Windows)"
-        shell: pwsh
-        if: matrix.platform == 'windows-latest'
-        run: |
-          cd examples/cxx
-          .\build-and-run-crashinfo.ps1
-      - name: "Test building CXX bindings - Profiling (Windows)"
-        shell: pwsh
-        if: matrix.platform == 'windows-latest'
-        run: |
-          cd examples/cxx
-          .\build-profiling.ps1
-
   cross-centos7:
     name: Test x86_64-unknown-linux-gnu on centOS7 docker image
+    needs: setup
+    if: needs.setup.outputs.packages-count != '0'
     runs-on: ubuntu-latest
+    env:
+      PACKAGES: ${{ needs.setup.outputs.packages }}
+      CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
     concurrency:
-      group: ci-${{ github.ref }}-cross-centos7
+      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-cross-centos7
       cancel-in-progress: true
     steps:
       - name: Free Disk Space
@@ -329,20 +300,26 @@ jobs:
         # Run docker as a user, not the default root
         # Mount and use the runner's toolchain as it's the same arch
         # exclude tracing integration tests since they require docker in docker to run a test-agent
-        run: >-
-          docker run --rm
-          --user "$(id -u):$(id -g)" 
-          -v "${{ github.workspace }}:/workspace"
-          -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo"
-          -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup"
-          -e CARGO_HOME=/usr/local/cargo
-          -e RUSTUP_HOME=/usr/local/rustup
-          -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-          -w /workspace
-          libdatadog-centos7
-          cargo nextest run --workspace --features libdd-crashtracker/generate-unit-test-files
-          --exclude builder --profile ci
-          -E '!test(tracing_integration_tests::)'
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            # shellcheck disable=SC2086
+            NEXTEST_CMD="cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci -E '!test(tracing_integration_tests::)'"
+          else
+            # shellcheck disable=SC2086
+            NEXTEST_CMD="cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci -E '!test(tracing_integration_tests::)'"
+          fi
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo" \
+            -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup" \
+            -e CARGO_HOME=/usr/local/cargo \
+            -e RUSTUP_HOME=/usr/local/rustup \
+            -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            -w /workspace \
+            libdatadog-centos7 \
+            sh -c "$NEXTEST_CMD"
       - name: Add file attributes to JUnit XML
         if: success() || failure()
         run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml
@@ -383,32 +360,72 @@ jobs:
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
 
-  ffi_bake:
-    strategy:
-      matrix:
-        target: [alpine-build] # debian-build-aarch64 is oom killed at the moment
-    name: "FFI ${{ matrix.target }} via docker bake"
+  no-certs-exporter:
+    name: "exporter_e2e tests (no CA certificates)"
+    runs-on: ubuntu-latest
     concurrency:
-      group: ci-${{ github.ref }}-${{ matrix.target }}
-      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-    runs-on:
-      labels: ubuntu-latest-16-cores
-      group: APM Larger Runners
+      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-no-certs-exporter
+      cancel-in-progress: true
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           submodules: recursive
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # 3.10.0
+      - name: Pre-fetch dependencies (requires network/certs on the runner)
+        run: cargo fetch
+      - name: Build no-certs Docker image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
-          buildkitd-config: .github/buildkitd-16-cores.toml
-      - name: Build and Generate FFI
-        uses: docker/bake-action@4ba453fbc2db7735392b93edf935aaf9b1e8f747 # 6.5.0
+          context: .
+          file: tools/docker/Dockerfile.no-certs
+          tags: libdatadog-no-certs
+          load: true
+          cache-from: type=gha,scope=no-certs-docker
+          cache-to: type=gha,scope=no-certs-docker,mode=max
+      - name: "cargo test exporter_e2e (no CA certificates)"
+        # Mount the runner's Rust toolchain and cargo cache — no network needed inside.
+        # The container has no CA certificates, reproducing minimal environments like
+        # bare ubuntu:20.04. Regression test for 9a61cae82 which unconditionally loaded
+        # the system cert store even for plain HTTP/unix endpoints.
+        run: >-
+          docker run --rm
+          --user "$(id -u):$(id -g)"
+          -v "${{ github.workspace }}:/workspace"
+          -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo"
+          -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup"
+          -e CARGO_HOME=/usr/local/cargo
+          -e RUSTUP_HOME=/usr/local/rustup
+          -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          -w /workspace
+          libdatadog-no-certs
+          cargo test -p libdd-profiling --test exporter_e2e
+
+  wasm:
+    name: "cargo check --target wasm32-unknown-unknown"
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-wasm
+      cancel-in-progress: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          targets: ${{ matrix.target }}
-          # Caching is useful, when it works. We are routinely hanging, maybe this:
-          # https://github.com/docker/buildx/issues/537
-          #set: |
-          #  *.cache-from=type=gha,scope=${{ matrix.target }}
-          #  *.cache-to=type=gha,mode=max,scope=${{ matrix.target }}
+          submodules: recursive
+      - name: Install wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true
+          cache-bin: true
+      - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
+        run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
+        env:
+          RUSTFLAGS: "-D warnings -A unused-imports -A dead-code -A unused-variables"
