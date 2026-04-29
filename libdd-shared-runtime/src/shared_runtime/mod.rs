@@ -168,7 +168,7 @@ fn build_runtime() -> Result<Runtime, io::Error> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        Builder::new_current_thread().enable_all().build()
+        Builder::new_current_thread().build()
     }
 }
 
