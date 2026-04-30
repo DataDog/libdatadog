@@ -608,7 +608,17 @@ impl Configurator {
         label: &str,
         debug_messages: &mut Vec<String>,
     ) -> Result<StableConfig, anyhow::Error> {
-        let bytes = match reader.read(path) {
+        // Safety net per the `ConfigRead` trait contract: a custom reader that fails to enforce
+        // `MAX_CONFIG_FILE_SIZE` is downgraded to `TooLarge` so we can't be pushed into a multi-GB
+        // parse.
+        let result = reader.read(path).and_then(|b| {
+            if b.len() > MAX_CONFIG_FILE_SIZE {
+                Err(ConfigReadError::TooLarge)
+            } else {
+                Ok(b)
+            }
+        });
+        let bytes = match result {
             Ok(bytes) => bytes,
             Err(ConfigReadError::NotFound) => return Ok(StableConfig::default()),
             Err(ConfigReadError::TooLarge) => {

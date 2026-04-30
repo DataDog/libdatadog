@@ -61,8 +61,10 @@ impl ConfigRead for StdConfigRead {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(ConfigReadError::NotFound),
             Err(e) => return Err(ConfigReadError::Io(e)),
         };
+        // Compare as u64 first so 32-bit targets can't truncate an oversized length down
+        // into the allowed range.
         let len = match file.metadata() {
-            Ok(m) if m.len() as usize > MAX_CONFIG_FILE_SIZE => {
+            Ok(m) if m.len() > MAX_CONFIG_FILE_SIZE as u64 => {
                 return Err(ConfigReadError::TooLarge)
             }
             Ok(m) => m.len() as usize,
@@ -70,6 +72,10 @@ impl ConfigRead for StdConfigRead {
         };
         let mut buf = Vec::with_capacity(len);
         io::Read::read_to_end(&mut &file, &mut buf).map_err(ConfigReadError::Io)?;
+        // TOCTOU: the file may have grown between metadata() and read_to_end().
+        if buf.len() > MAX_CONFIG_FILE_SIZE {
+            return Err(ConfigReadError::TooLarge);
+        }
         Ok(buf)
     }
 }

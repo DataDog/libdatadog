@@ -144,7 +144,12 @@ jobs:
       - name: "[${{ steps.rust-version.outputs.version}}] cargo check no_std (library-config)"
         if: runner.os == 'Linux'
         shell: bash
-        run: cargo check -p libdd-library-config --no-default-features && cargo check -p libdd-library-config-ffi --no-default-features
+        # libdd-library-config-ffi only sets `#![no_std]` under `no_std_entry`, which itself
+        # requires `panic = "abort"`; the --config flag scopes that to this check without
+        # affecting the workspace profile.
+        run: |
+          cargo check -p libdd-library-config --no-default-features
+          cargo check -p libdd-library-config-ffi --no-default-features --features no_std_entry --config 'profile.dev.panic="abort"'
       - name: "[${{ steps.rust-version.outputs.version}}] cargo test (doc) and cargo nextest run"
         shell: bash
         # Run doc tests with cargo test and run tests with nextest and generate junit.xml
