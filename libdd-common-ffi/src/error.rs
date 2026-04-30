@@ -76,6 +76,12 @@ impl From<&str> for Error {
     }
 }
 
+impl From<&std::ffi::CStr> for Error {
+    fn from(value: &std::ffi::CStr) -> Self {
+        Self::from(value.to_string_lossy().into_owned())
+    }
+}
+
 impl From<anyhow::Error> for Error {
     fn from(value: anyhow::Error) -> Self {
         // {:#} is the "alternate" format, see:
