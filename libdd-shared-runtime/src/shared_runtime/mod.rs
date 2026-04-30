@@ -25,11 +25,8 @@ use tracing::{debug, error};
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use core::pin::Pin;
-    use core::task::{Context, Poll};
-    use libdd_capabilities::spawn::{SpawnCapability, SpawnError};
-    use libdd_capabilities::MaybeSend;
-    use std::future::Future;
+    use libdd_capabilities::spawn::SpawnCapability;
+    use libdd_capabilities_impl::NativeSpawnCapability;
     use std::sync::atomic::Ordering;
     use tokio::runtime::{Builder, Runtime};
 
@@ -38,40 +35,6 @@ mod native {
             .worker_threads(1)
             .enable_all()
             .build()
-    }
-
-    /// Internal spawner for fork recovery paths.
-    ///
-    /// The runtime handle is passed at spawn time via [`SpawnCapability::RuntimeContext`],
-    /// not stored, so the spawner is always using the current (potentially rebuilt) runtime.
-    #[derive(Clone, Debug)]
-    pub(crate) struct RuntimeSpawner;
-
-    pub(crate) struct RuntimeJoinHandle<T>(tokio::task::JoinHandle<T>);
-
-    impl<T> Future for RuntimeJoinHandle<T> {
-        type Output = Result<T, SpawnError>;
-
-        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<T, SpawnError>> {
-            match Pin::new(&mut self.get_mut().0).poll(cx) {
-                Poll::Ready(Ok(val)) => Poll::Ready(Ok(val)),
-                Poll::Ready(Err(e)) => Poll::Ready(Err(SpawnError::new(e.to_string()))),
-                Poll::Pending => Poll::Pending,
-            }
-        }
-    }
-
-    impl SpawnCapability for RuntimeSpawner {
-        type RuntimeContext = tokio::runtime::Handle;
-        type JoinHandle<T: MaybeSend + 'static> = RuntimeJoinHandle<T>;
-
-        fn spawn<F, T>(&self, future: F, ctx: &tokio::runtime::Handle) -> RuntimeJoinHandle<T>
-        where
-            F: Future<Output = T> + MaybeSend + 'static,
-            T: MaybeSend + 'static,
-        {
-            RuntimeJoinHandle(ctx.spawn(future))
-        }
     }
 
     impl SharedRuntime {
@@ -204,7 +167,7 @@ mod native {
                 .clone();
             drop(runtime_lock);
 
-            let spawner = RuntimeSpawner;
+            let spawner = NativeSpawnCapability;
             let mut workers_lock = self.workers.lock_or_panic();
 
             for worker_entry in workers_lock.iter_mut() {
@@ -234,7 +197,7 @@ mod native {
                 .clone();
             drop(runtime_lock);
 
-            let spawner = RuntimeSpawner;
+            let spawner = NativeSpawnCapability;
             let mut workers_lock = self.workers.lock_or_panic();
 
             workers_lock.retain(|entry| entry.restart_on_fork);
@@ -296,9 +259,6 @@ mod native {
         }
     }
 }
-
-#[cfg(all(not(target_arch = "wasm32"), test))]
-pub(crate) use native::RuntimeSpawner;
 
 type BoxedWorker = Box<dyn Worker + Sync>;
 
@@ -533,6 +493,7 @@ impl SharedRuntime {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use libdd_capabilities_impl::NativeSpawnCapability;
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::time::Duration;
     use tokio::time::sleep;
@@ -578,7 +539,7 @@ mod tests {
     #[test]
     fn test_spawn_worker() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = RuntimeSpawner;
+        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
         let result = shared_runtime.spawn_worker(worker, true, &spawner);
@@ -598,7 +559,7 @@ mod tests {
     fn test_worker_handle_stop() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = RuntimeSpawner;
+        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
         let handle = shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
@@ -628,7 +589,7 @@ mod tests {
     #[test]
     fn test_before_and_after_fork_parent() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = RuntimeSpawner;
+        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
         shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
@@ -660,7 +621,7 @@ mod tests {
     #[test]
     fn test_after_fork_child() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = RuntimeSpawner;
+        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
         shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
@@ -692,7 +653,7 @@ mod tests {
     #[test]
     fn test_shutdown() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = RuntimeSpawner;
+        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
         shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
@@ -717,7 +678,7 @@ mod tests {
     #[test]
     fn test_after_fork_child_drops_worker_not_restart_on_fork() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = RuntimeSpawner;
+        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
         shared_runtime

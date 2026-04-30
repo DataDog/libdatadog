@@ -202,7 +202,7 @@ mod tests {
     use tokio::{runtime::Builder, time::sleep};
 
     use super::*;
-    use crate::shared_runtime::RuntimeSpawner;
+    use libdd_capabilities_impl::NativeSpawnCapability;
     use std::{
         sync::mpsc::{channel, Sender},
         time::Duration,
@@ -233,7 +233,7 @@ mod tests {
         let worker = TestWorker { state: 0, sender };
         let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
         let handle = runtime.handle().clone();
-        let spawner = RuntimeSpawner;
+        let spawner = NativeSpawnCapability;
         let mut pausable_worker = PausableWorker::new(worker);
 
         pausable_worker.start(&spawner, &handle).unwrap();
