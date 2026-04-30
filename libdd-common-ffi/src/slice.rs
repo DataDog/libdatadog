@@ -22,15 +22,34 @@ use {
 };
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, thiserror::Error)]
+#[derive(Clone, Copy, Debug)]
 pub enum SliceConversionError {
-    #[error("length was too large")]
     LargeLength,
-    #[error("null pointer with non-zero length")]
     NullPointer,
-    #[error("pointer was not aligned for the type")]
     MisalignedPointer,
 }
+
+impl SliceConversionError {
+    /// Single source of truth for the error message; consumed by both `Display` and
+    /// `FfiSafeErrorMessage::as_ffi_str`.
+    fn message(&self) -> &'static core::ffi::CStr {
+        match self {
+            SliceConversionError::LargeLength => c"length was too large",
+            SliceConversionError::NullPointer => c"null pointer with non-zero length",
+            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
+        }
+    }
+}
+
+impl core::fmt::Display for SliceConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // SAFETY: every arm of `message()` is a c-str literal — valid UTF-8 by construction.
+        let s = unsafe { core::str::from_utf8_unchecked(self.message().to_bytes()) };
+        f.write_str(s)
+    }
+}
+
+impl core::error::Error for SliceConversionError {}
 
 // Gated on `std` because `FfiSafeErrorMessage` lives in `libdd-common`, which is std-only.
 #[cfg(feature = "std")]
@@ -38,11 +57,7 @@ pub enum SliceConversionError {
 /// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
 unsafe impl FfiSafeErrorMessage for SliceConversionError {
     fn as_ffi_str(&self) -> &'static core::ffi::CStr {
-        match self {
-            SliceConversionError::LargeLength => c"length was too large",
-            SliceConversionError::NullPointer => c"null pointer with non-zero length",
-            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
-        }
+        self.message()
     }
 }
 

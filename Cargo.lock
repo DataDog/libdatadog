@@ -2909,7 +2909,6 @@ dependencies = [
  "hyper",
  "libdd-common",
  "serde",
- "thiserror 2.0.17",
 ]
 
 [[package]]
