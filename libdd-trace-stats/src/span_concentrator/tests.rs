@@ -70,11 +70,11 @@ fn get_test_span_with_meta<'a>(
         now, span_id, parent_id, duration, offset, service, resource, error,
     );
     for (k, v) in meta {
-        span.meta.insert(*k, *v);
+        span.meta.push((*k, *v));
     }
-    span.metrics = HashMap::new();
+    span.metrics = Vec::new();
     for (k, v) in metrics {
-        span.metrics.insert(*k, *v);
+        span.metrics.push((*k, *v));
     }
     span
 }
@@ -649,7 +649,7 @@ fn test_ignore_partial_spans() {
         .get_mut(0)
         .unwrap()
         .metrics
-        .insert("_dd.partial_version", 830604.0);
+        .push(("_dd.partial_version", 830604.0));
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
@@ -1049,119 +1049,119 @@ fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "server")]),
+                meta: vec![("span.kind", "server")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "consumer")]),
+                meta: vec![("span.kind", "consumer")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "client")]),
+                meta: vec![("span.kind", "client")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "producer")]),
+                meta: vec![("span.kind", "producer")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "internal")]),
+                meta: vec![("span.kind", "internal")],
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "SERVER")]),
+                meta: vec![("span.kind", "SERVER")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CONSUMER")]),
+                meta: vec![("span.kind", "CONSUMER")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CLIENT")]),
+                meta: vec![("span.kind", "CLIENT")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "PRODUCER")]),
+                meta: vec![("span.kind", "PRODUCER")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "INTERNAL")]),
+                meta: vec![("span.kind", "INTERNAL")],
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "SerVER")]),
+                meta: vec![("span.kind", "SerVER")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "ConSUMeR")]),
+                meta: vec![("span.kind", "ConSUMeR")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CLiENT")]),
+                meta: vec![("span.kind", "CLiENT")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "PROducER")]),
+                meta: vec![("span.kind", "PROducER")],
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "INtERNAL")]),
+                meta: vec![("span.kind", "INtERNAL")],
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "")]),
+                meta: vec![("span.kind", "")],
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([]),
+                meta: vec![],
                 ..Default::default()
             },
             false,

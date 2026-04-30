@@ -477,7 +477,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind".into(), "client".into())]),
+                    meta: Vec::from([("span.kind".into(), "client".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -498,7 +498,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: Vec::from([
                         ("span.kind".into(), "client".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                     ]),
@@ -522,7 +522,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: Vec::from([
                         ("span.kind".into(), "producer".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
@@ -549,7 +549,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: Vec::from([
                         ("span.kind".into(), "server".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
@@ -575,7 +575,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.origin".into(), "synthetics-browser".into())]),
+                    meta: Vec::from([("_dd.origin".into(), "synthetics-browser".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -596,7 +596,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "418".into())]),
+                    meta: Vec::from([("http.status_code".into(), "418".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -618,7 +618,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "x".into())]),
+                    meta: Vec::from([("http.status_code".into(), "x".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -639,7 +639,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    metrics: HashMap::from([("http.status_code".into(), 418.0)]),
+                    metrics: Vec::from([("http.status_code".into(), 418.0)]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -661,7 +661,7 @@ mod tests {
                     resource: "GET /api/v1/users".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: Vec::from([
                         ("http.method".into(), "GET".into()),
                         ("http.route".into(), "/api/v1/users".into()),
                     ]),
@@ -687,7 +687,7 @@ mod tests {
                     resource: "POST /users/create".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: Vec::from([
                         ("http.method".into(), "POST".into()),
                         ("http.route".into(), "/users/create".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
@@ -709,7 +709,7 @@ mod tests {
             // Span with grpc status from meta as named string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "OK".into())]),
+                    meta: Vec::from([("rpc.grpc.status_code".into(), "OK".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -722,7 +722,7 @@ mod tests {
             // Span with grpc status from meta as numeric string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "14".into())]),
+                    meta: Vec::from([("rpc.grpc.status_code".into(), "14".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -735,7 +735,7 @@ mod tests {
             // Span with grpc status from meta with StatusCode. prefix
             (
                 SpanBytes {
-                    meta: HashMap::from([("grpc.code".into(), "StatusCode.UNAVAILABLE".into())]),
+                    meta: Vec::from([("grpc.code".into(), "StatusCode.UNAVAILABLE".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -748,11 +748,11 @@ mod tests {
             // Span with grpc status from metrics takes precedence over meta
             (
                 SpanBytes {
-                    meta: HashMap::from([(
+                    meta: Vec::from([(
                         "rpc.grpc.status_code".into(),
                         "PERMISSION_DENIED".into(),
                     )]),
-                    metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
+                    metrics: Vec::from([("rpc.grpc.status_code".into(), 2.0)]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -765,7 +765,7 @@ mod tests {
             // Span with grpc status from metrics via secondary key
             (
                 SpanBytes {
-                    metrics: HashMap::from([("grpc.code".into(), 3.0)]),
+                    metrics: Vec::from([("grpc.code".into(), 3.0)]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -778,7 +778,7 @@ mod tests {
             // Span with invalid grpc status string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
+                    meta: Vec::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -795,7 +795,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "redis".into())]),
+                    meta: Vec::from([("_dd.svc_src".into(), "redis".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -816,7 +816,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
+                    meta: Vec::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -866,7 +866,7 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
+                    meta: Vec::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -887,7 +887,7 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: Vec::from([
                         ("span.kind", "producer"),
                         ("aws.s3.bucket", "bucket-a"),
                         ("db.instance", "dynamo.test.us1"),
@@ -918,7 +918,7 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: Vec::from([
                         ("span.kind", "server"),
                         ("aws.s3.bucket", "bucket-a"),
                         ("db.instance", "dynamo.test.us1"),

@@ -191,7 +191,7 @@ mod tracing_integration_tests {
         root_span.name = BytesString::from("test_send_data_v04_trace_meta_struct_snapshot_01");
         root_span.r#type = BytesString::from("web");
         root_span.meta_struct =
-            HashMap::from([(BytesString::from("appsec"), Bytes::from(meta_struct_data))]);
+            vec![(BytesString::from("appsec"), Bytes::from(meta_struct_data))];
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![root_span]]).unwrap();
 
