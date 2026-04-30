@@ -1,9 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use std::{
-    collections::HashMap,
-    time::{self, Duration, SystemTime},
-};
+use std::time::{self, Duration, SystemTime};
 
 use criterion::{criterion_group, Criterion};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
@@ -15,13 +12,13 @@ fn get_bucket_start(now: SystemTime, n: u64) -> i64 {
 }
 
 fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> SpanBytes {
-    let mut metrics = HashMap::from([("_dd.measured".into(), 1.0)]);
+    let mut metrics = vec![("_dd.measured".into(), 1.0)];
     if span_id == 1 {
-        metrics.insert("_dd.top_level".into(), 1.0);
+        metrics.push(("_dd.top_level".into(), 1.0));
     }
-    let mut meta = HashMap::from([("db_name".into(), "postgres".into())]);
+    let mut meta = vec![("db_name".into(), "postgres".into())];
     if span_id % 3 == 0 {
-        meta.insert("bucket_s3".into(), "aws_bucket".into());
+        meta.push(("bucket_s3".into(), "aws_bucket".into()));
     }
     SpanBytes {
         trace_id: trace_id as u128,

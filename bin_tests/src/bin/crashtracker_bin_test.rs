@@ -86,10 +86,20 @@ mod unix {
                 "receiver_symbols" => {
                     crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver
                 }
-                _ => crashtracker::StacktraceCollection::WithoutSymbols,
+                _ => crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
             },
-            Err(_) => crashtracker::StacktraceCollection::WithoutSymbols,
+            Err(_) => crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
         };
+
+        // Ensure the receiver gets a timeout consistent with the collector's.
+        // In Debug builds the collector is slow, so the default 4 s receiver timeout
+        // can expire before DD_CRASHTRACK_DONE is sent.
+        if env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS").is_err() {
+            env::set_var(
+                "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
+                TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
+            );
+        }
 
         let mut config = CrashtrackerConfiguration::builder()
             .create_alt_stack(true)
@@ -167,7 +177,7 @@ mod unix {
 
                 crashtracker::report_unhandled_exception(
                     Some("RuntimeException"),
-                    Some("an exception occured"),
+                    Some("\n an exception \n occured \n"),
                     stacktrace,
                 )?;
 

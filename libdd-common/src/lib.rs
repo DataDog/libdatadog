@@ -14,7 +14,6 @@ use std::sync::{Mutex, MutexGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
-pub mod capabilities;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
@@ -24,9 +23,12 @@ pub mod dump_server;
 pub mod entity_id;
 #[macro_use]
 pub mod cstr;
+#[cfg(feature = "bench-utils")]
+pub mod bench_utils;
 pub mod config;
 pub mod error;
 pub mod http_common;
+pub mod multipart;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod rate_limiter;
 pub mod tag;
@@ -37,7 +39,6 @@ pub mod threading;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod timeout;
 pub mod unix_utils;
-pub mod worker;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
 /// poisoned.
@@ -92,10 +93,6 @@ pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use http::{header::HeaderName, HeaderValue};
 
-    // These strings are defined separately to be used in context where &str are used to represent
-    // headers (e.g. SendData) while keeping a single source of truth.
-    pub const DATADOG_SEND_REAL_HTTP_STATUS_STR: &str = "datadog-send-real-http-status";
-    pub const DATADOG_TRACE_COUNT_STR: &str = "x-datadog-trace-count";
     pub const APPLICATION_MSGPACK_STR: &str = "application/msgpack";
     pub const APPLICATION_PROTOBUF_STR: &str = "application/x-protobuf";
 
@@ -107,7 +104,7 @@ pub mod header {
     /// If this is not set then the agent will always return a 200 regardless if the payload is
     /// dropped.
     pub const DATADOG_SEND_REAL_HTTP_STATUS: HeaderName =
-        HeaderName::from_static(DATADOG_SEND_REAL_HTTP_STATUS_STR);
+        HeaderName::from_static("datadog-send-real-http-status");
     pub const DATADOG_API_KEY: HeaderName = HeaderName::from_static("dd-api-key");
     pub const APPLICATION_JSON: HeaderValue = HeaderValue::from_static("application/json");
     pub const APPLICATION_MSGPACK: HeaderValue = HeaderValue::from_static(APPLICATION_MSGPACK_STR);
@@ -378,9 +375,14 @@ impl Endpoint {
     pub fn to_reqwest_client_builder(&self) -> anyhow::Result<(reqwest::ClientBuilder, String)> {
         use anyhow::Context;
 
+        // Don't use proxies, as this calls `getenv` which is unsafe and not
+        // just in theory. It can cause crashes with PHP where php-fpm's env
+        // configuration will mutate the system environment (it doesn't pass
+        // it as part of the SAPI env, it changes the actual system env).
         let mut builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(self.timeout_ms))
-            .hickory_dns(!self.use_system_resolver);
+            .hickory_dns(!self.use_system_resolver)
+            .no_proxy();
 
         let request_url = match self.url.scheme_str() {
             // HTTP/HTTPS endpoints

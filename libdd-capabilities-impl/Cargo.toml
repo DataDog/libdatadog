@@ -3,18 +3,28 @@
 
 [package]
 name = "libdd-capabilities-impl"
-version = "0.1.0"
-edition = "2021"
+version = "1.0.0"
 description = "Native implementations of libdd-capabilities traits"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities-impl"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities-impl"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["lib"]
 bench = false
 
 [dependencies]
-libdd-capabilities = { path = "../libdd-capabilities" }
-libdd-common = { path = "../libdd-common" }
-hyper = { workspace = true }
+bytes = "1"
 http = "1"
-bytes = "1.4"
+libdd-capabilities = { path = "../libdd-capabilities", version = "1.0.0" }
+libdd-common = { path = "../libdd-common", version = "4.0.0", default-features = false }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 http-body-util = "0.1"
+
+[features]
+default = ["https"]
+https = ["libdd-common/https"]
+fips = ["libdd-common/fips"]

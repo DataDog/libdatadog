@@ -78,7 +78,16 @@ impl ProfileExporter {
         mut tags: Vec<Tag>,
         endpoint: Endpoint,
     ) -> anyhow::Result<Self> {
-        let tls_config = super::tls::cached_tls_config()?;
+        // For HTTPS, use the cached platform TLS config (loads system CA certs).
+        // For all other schemes (http, unix, windows, file), provide a minimal
+        // config with an empty root store so reqwest doesn't attempt to load
+        // system CA certificates itself — which fails in minimal container
+        // environments. TLS will never be negotiated on those transports anyway.
+        let tls_config = if endpoint.url.scheme_str() == Some("https") {
+            super::tls::cached_tls_config()?
+        } else {
+            super::tls::empty_tls_config()?
+        };
         // Pre-build all static headers
         let mut headers = reqwest::header::HeaderMap::new();
 
@@ -152,6 +161,26 @@ impl ProfileExporter {
     /// - Using the async [`send`] method directly from within a tokio runtime
     ///
     /// [`send`]: ProfileExporter::send
+    /// Initializes the tokio runtime for blocking operations.
+    ///
+    /// This method lazily creates a single-threaded tokio runtime. It can be called
+    /// before `send_blocking` to ensure the runtime is ready ahead of time.
+    ///
+    /// # Thread Affinity
+    ///
+    /// **Important**: The runtime uses `new_current_thread()`, which has thread affinity.
+    /// This method should be called from the same thread that will later call `send_blocking`.
+    pub fn init_runtime(&mut self) -> anyhow::Result<()> {
+        if self.runtime.is_none() {
+            self.runtime = Some(
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?,
+            );
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn send_blocking(
         &mut self,
@@ -163,13 +192,7 @@ impl ProfileExporter {
         process_tags: Option<&str>,
         cancel: Option<&CancellationToken>,
     ) -> anyhow::Result<reqwest::StatusCode> {
-        if self.runtime.is_none() {
-            self.runtime = Some(
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()?,
-            );
-        }
+        self.init_runtime()?;
 
         Ok(self
             .runtime

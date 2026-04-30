@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::{self, Read, Write};
+use std::io::{self, BufWriter, Read, Write};
 
 /// This type wraps a [`Vec`] to provide a [`Write`] interface that has a max
 /// capacity that won't be exceeded. Additionally, it gracefully handles
@@ -90,6 +90,10 @@ pub trait ProfileCodec {
     ) -> io::Result<Self::Encoder>;
 
     fn finish(encoder: Self::Encoder) -> io::Result<Vec<u8>>;
+
+    /// Returns the recommended input buffer size for the encoder.
+    /// Used to size the `BufWriter` that wraps the encoder.
+    fn recommended_input_buf_size() -> usize;
 }
 
 #[allow(unused)]
@@ -108,6 +112,10 @@ impl ProfileCodec for NoopProfileCodec {
 
     fn finish(encoder: Self::Encoder) -> io::Result<Vec<u8>> {
         Ok(encoder.into())
+    }
+
+    fn recommended_input_buf_size() -> usize {
+        0
     }
 }
 
@@ -131,6 +139,10 @@ impl ProfileCodec for ZstdProfileCodec {
             Ok(buffer) => Ok(buffer.into()),
             Err((_enc, error)) => Err(error),
         }
+    }
+
+    fn recommended_input_buf_size() -> usize {
+        zstd::Encoder::<SizeRestrictedBuffer>::recommended_input_size()
     }
 }
 
@@ -202,7 +214,7 @@ pub type DefaultObservationCodec = NoopObservationCodec;
 
 /// Used to compress profile data.
 pub struct Compressor<C: ProfileCodec = DefaultProfileCodec> {
-    encoder: C::Encoder,
+    encoder: BufWriter<C::Encoder>,
 }
 
 impl<C: ProfileCodec> Compressor<C> {
@@ -218,13 +230,17 @@ impl<C: ProfileCodec> Compressor<C> {
         compression_level: i32,
     ) -> io::Result<Compressor<C>> {
         Ok(Compressor {
-            encoder: C::new_encoder(size_hint, max_capacity, compression_level)?,
+            encoder: BufWriter::with_capacity(
+                C::recommended_input_buf_size(),
+                C::new_encoder(size_hint, max_capacity, compression_level)?,
+            ),
         })
     }
 
     /// Finish the compression, and return the compressed data.
     pub fn finish(self) -> io::Result<Vec<u8>> {
-        C::finish(self.encoder)
+        let encoder = self.encoder.into_inner().map_err(|e| e.into_error())?;
+        C::finish(encoder)
     }
 }
 

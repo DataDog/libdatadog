@@ -132,6 +132,24 @@ impl ThinStr<'static> {
             },
         }
     }
+
+    pub const fn thread_id() -> ThinStr<'static> {
+        ThinStr {
+            inner: ThinSlice {
+                thin_ptr: THREAD_ID.as_thin_ptr(),
+                _marker: PhantomData,
+            },
+        }
+    }
+
+    pub const fn thread_name() -> ThinStr<'static> {
+        ThinStr {
+            inner: ThinSlice {
+                thin_ptr: THREAD_NAME.as_thin_ptr(),
+                _marker: PhantomData,
+            },
+        }
+    }
 }
 
 impl Default for ThinStr<'static> {
@@ -527,6 +545,8 @@ static END_TIMESTAMP_NS: ConstString<16> = ConstString::new("end_timestamp_ns");
 static LOCAL_ROOT_SPAN_ID: ConstString<18> = ConstString::new("local root span id");
 static TRACE_ENDPOINT: ConstString<14> = ConstString::new("trace endpoint");
 static SPAN_ID: ConstString<7> = ConstString::new("span id");
+static THREAD_ID: ConstString<9> = ConstString::new("thread id");
+static THREAD_NAME: ConstString<11> = ConstString::new("thread name");
 
 #[cfg(test)]
 mod tests {

@@ -11,8 +11,6 @@ pub struct Experimental {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub additional_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ucontext: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_stack: Option<RuntimeStack>,
 }
 
@@ -26,11 +24,6 @@ impl Experimental {
         self
     }
 
-    pub fn with_ucontext(mut self, ucontext: String) -> Self {
-        self.ucontext = Some(ucontext);
-        self
-    }
-
     pub fn with_runtime_stack(mut self, runtime_stack: RuntimeStack) -> Self {
         self.runtime_stack = Some(runtime_stack);
         self
@@ -41,7 +34,6 @@ impl UnknownValue for Experimental {
     fn unknown_value() -> Self {
         Self {
             additional_tags: vec![],
-            ucontext: None,
             runtime_stack: None,
         }
     }

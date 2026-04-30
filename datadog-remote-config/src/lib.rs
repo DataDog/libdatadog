@@ -32,6 +32,7 @@ pub struct Target {
     pub env: String,
     pub app_version: String,
     pub tags: Vec<Tag>,
+    pub process_tags: Vec<Tag>,
 }
 
 #[repr(C)]
@@ -81,5 +82,6 @@ pub enum RemoteConfigCapabilities {
     ApmTracingEnableLiveDebugging = 41,
     AsmDdMulticonfig = 42,
     AsmTraceTaggingRules = 43,
+    ApmTracingMulticonfig = 45,
     FfeFlagConfigurationRules = 46,
 }

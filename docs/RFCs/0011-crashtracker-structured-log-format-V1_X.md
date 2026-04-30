@@ -4,7 +4,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ## Summary
 
-This document consolidates and describes the complete evolution of the crashinfo data format from version 1.0 through 1.4. It serves as the authoritative specification for the crashtracker structured log format, replacing RFCs 0005-0009. Future minor version modifications will be included in this revisable document.
+This document consolidates and describes the complete evolution of the crashinfo data format from version 1.0 through 1.6. It serves as the authoritative specification for the crashtracker structured log format, replacing RFCs 0005-0009. Future minor version modifications will be included in this revisable document.
 
 ## Motivation
 
@@ -18,9 +18,9 @@ As a structured format, it avoids the ambiguity of standard semi-structured stac
 Due to the use of native extensions, it is possible for a single stack-trace to include frames from multiple languages (e.g. python may call C code, which calls Rust code, etc).
 Having a single structured format allows us to work across languages.
 
-## Current Format (Version 1.4)
+## Current Format (Version 1.6)
 
-This section describes the current format (version 1.4), which incorporates all features from versions 1.0 through 1.4. A natural language description of the json format is given here. An example is given in Appendix A, and the schema is given in Appendix B.
+This section describes the current format (version 1.6), which incorporates all features from versions 1.0 through 1.6. A natural language description of the json format is given here. An example is given in Appendix A, and the schema is given in Appendix B.
 
 Any field not listed as "Required" is optional. Consumers MUST accept json with elided optional fields.
 
@@ -32,12 +32,14 @@ Parsers SHOULD therefore accept unexpected fields, either by ignoring them, or b
 
 ### Version Compatibility
 
-Consumers of the crash data format SHOULD be designed to handle all versions from 1.0 to 1.4. The version is indicated by the `data_schema_version` field. Key compatibility considerations:
+Consumers of the crash data format SHOULD be designed to handle all versions from 1.0 to 1.6. The version is indicated by the `data_schema_version` field. Key compatibility considerations:
 - Version 1.0: Base format
 - Version 1.1+: Stacktraces may include an `incomplete` field
 - Version 1.2+: Root level may include an `experimental` field
 - Version 1.3+: Stackframes may include a `comments` field
 - Version 1.4+: Stackframes may include a `mangled_name` field
+- Version 1.5+: Error objects may include a `thread_name` field
+- Version 1.6+: Root level may include a `ucontext` field for UNIX signal crashes
 
 ### Fields
 
@@ -45,7 +47,7 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
   A map of names to integer values.
   At present, this is used by the profiler to track which operations were active at the time of the crash.
 - `data_schema_version`: **[required]**
-  A string containing the semver ID of the crashtracker data schema. Current versions: "1.0", "1.1", "1.2", "1.3", "1.4".
+  A string containing the semver ID of the crashtracker data schema. Current versions: "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6".
 - `experimental`: **[optional]** *[Added in v1.2]*
   Any valid JSON object can be used as the value here.
   Note that the object MUST be valid JSON.
@@ -132,6 +134,17 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
   - `si_signo_human_readable`: **[required]**
     The signal name, e.g. "SIGSEGV".
     Follows the naming convention in [the manpage](https://man7.org/linux/man-pages/man7/signal.7.html).
+- `ucontext`: **[optional]**
+  UNIX signal based collectors only: CPU register state captured from the `ucontext_t` structure at the time of the crash signal.
+  - `arch`: **[optional]**
+    Target architecture, e.g. "x86_64" or "aarch64".
+  - `registers`: **[required]**
+    A map of register names to their hexadecimal string values.
+    Register names follow the platform conventions (e.g., "rip", "rsp", "rbp" for x86_64; "pc", "sp", "x0", "x1" for aarch64).
+    Values are formatted as zero-padded 16-character hexadecimal strings, e.g. "0x00007f7e11d3a2b0".
+  - `raw`: **[optional]**
+    The complete debug-formatted string representation of the ucontext structure.
+    Preserves FPU state, signal mask, alternate-stack info, and other details not captured in the structured registers.
 - `span_ids`: **[optional]**
   A vector representing active span ids at the time of program crash.
   The collector MAY cap the number of spans that it tracks.
@@ -276,7 +289,7 @@ This section documents the evolution of the crashtracker structured log format a
 **Motivation:** When symbol names are demangled for readability, the original mangled names are lost. This makes debugging difficult when mangled names are needed (e.g., comparing against compiler-generated symbols). The `mangled_name` field preserves the original mangled name when demangling occurs.
 
 ### Version 1.5
-*Added thread_name to `ErrorData`
+*Added thread_name to `ErrorData`*
 
 **Changes from v1.4:**
 - Added `thread_name` field to `Error` objects (optional string)
@@ -284,15 +297,24 @@ This section documents the evolution of the crashtracker structured log format a
 
 **Motivation:** Having access to thread name of the crashing thread helps debugging, especially within multithreaded programs.
 
+### Version 1.6
+*Added ucontext field*
+
+**Changes from v1.5:**
+- Added `ucontext` field at root level (optional object for UNIX signal crashes)
+- Updated `data_schema_version` to "1.6"
+
+**Motivation:** CPU register state at the time of crash provides critical debugging information for low-level crashes. The ucontext structure captured by UNIX signal handlers contains register values, FPU state, signal masks, and alternate stack information that can help developers understand the exact processor state when the crash occurred.
+
 ## Appendix A: Example output
 
 An example crash report in version 1.0 format is [available here](artifacts/0005-crashtracker-example.json).
 
-Note: This example uses version 1.0 format. Version 1.1+ may include additional fields such as `incomplete` in stacktraces, `experimental` at the root level, `comments` in stackframes, and `mangled_name` in stackframes.
+Note: This example uses version 1.0 format. Version 1.1+ may include additional fields such as `incomplete` in stacktraces, `experimental` at the root level, `comments` in stackframes, `mangled_name` in stackframes, `thread_name` in error objects, and `ucontext` at the root level for UNIX signal crashes.
 
 ## Appendix B: Json Schema
 
-The current JSON schema (version 1.5) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json).
+The current JSON schema (version 1.6) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_6.json).
 
 Historical schemas are also available:
 - [Version 1.0 schema](artifacts/0005-crashtracker-schema.json)
@@ -300,3 +322,4 @@ Historical schemas are also available:
 - [Version 1.2 schema](artifacts/0007-crashtracker-schema.json)
 - [Version 1.3 schema](artifacts/0008-crashtracker-schema.json)
 - [Version 1.4 schema](artifacts/0009-crashtracker-schema.json)
+- [Version 1.5 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json)

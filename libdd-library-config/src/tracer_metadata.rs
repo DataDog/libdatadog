@@ -4,7 +4,7 @@ use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 use std::default::Default;
 
 /// This struct MUST be backward compatible.
-#[derive(serde::Serialize, Debug)]
+#[derive(serde::Serialize, Debug, PartialEq, Eq)]
 pub struct TracerMetadata {
     /// Version of the schema.
     pub schema_version: u8,
@@ -33,6 +33,21 @@ pub struct TracerMetadata {
     /// Container id seen by the application.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub container_id: Option<String>,
+    /// Ordered list of attribute key names for thread-level context records. Key indices from
+    /// thread context records index into this table. Set to `None` to disable thread-level related
+    /// attributes to the process-level context.
+    ///
+    /// If set to `Some`, the first key will be automatically set to `datadog.local_root_span_id`
+    /// in the OTel process context, because the thread context handling elsewhere in libdatadog
+    /// relies on this key's index to be zero. Only set additional keys in
+    /// `threadlocal_attribute_keys`; the root span id is considered to always be here implicitly.
+    ///
+    /// This field is specific to OTel process context. It is ignored for (de)serialization, and is
+    /// only used when converting to an OTel process context in
+    /// [TracerMetadata::to_otel_process_ctx].
+    #[cfg(feature = "otel-thread-ctx")]
+    #[serde(skip)]
+    pub threadlocal_attribute_keys: Option<Vec<String>>,
 }
 
 impl Default for TracerMetadata {
@@ -48,6 +63,8 @@ impl Default for TracerMetadata {
             service_version: None,
             process_tags: None,
             container_id: None,
+            #[cfg(feature = "otel-thread-ctx")]
+            threadlocal_attribute_keys: None,
         }
     }
 }
@@ -57,7 +74,12 @@ impl TracerMetadata {
     const OTEL_SDK_NAME: &str = "libdatadog";
 
     pub fn to_otel_process_ctx(&self) -> otel_proto::common::v1::ProcessContext {
-        use otel_proto::common::v1::{any_value, AnyValue, KeyValue};
+        #[cfg(feature = "otel-thread-ctx")]
+        use otel_proto::common::v1::ArrayValue;
+        use otel_proto::{
+            common::v1::{any_value, AnyValue, KeyValue, ProcessContext},
+            resource::v1::Resource,
+        };
 
         fn key_value(key: &'static str, val: String) -> KeyValue {
             KeyValue {
@@ -89,21 +111,52 @@ impl TracerMetadata {
             service_version,
             process_tags,
             container_id,
+            #[cfg(feature = "otel-thread-ctx")]
+            threadlocal_attribute_keys,
         } = self;
 
-        otel_proto::common::v1::ProcessContext {
-            resource: Some(otel_proto::resource::v1::Resource {
-                attributes: vec![
-                    key_value_opt("service.name", service_name),
-                    key_value_opt("service.instance.id", runtime_id),
-                    key_value_opt("service.version", service_version),
-                    key_value_opt("deployment.environment.name", service_env),
-                    key_value("telemetry.sdk.language", tracer_language.clone()),
-                    key_value("telemetry.sdk.version", tracer_version.clone()),
-                    key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
-                    key_value("host.name", hostname.clone()),
-                    key_value_opt("container.id", container_id),
-                ],
+        #[cfg_attr(not(feature = "otel-thread-ctx"), allow(unused_mut))]
+        let mut attributes = vec![
+            key_value_opt("service.name", service_name),
+            key_value_opt("service.instance.id", runtime_id),
+            key_value_opt("service.version", service_version),
+            key_value_opt("deployment.environment.name", service_env),
+            key_value("telemetry.sdk.language", tracer_language.clone()),
+            key_value("telemetry.sdk.version", tracer_version.clone()),
+            key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
+            key_value("host.name", hostname.clone()),
+            key_value_opt("container.id", container_id),
+        ];
+
+        #[cfg(feature = "otel-thread-ctx")]
+        if let Some(threadlocal_attribute_keys) = threadlocal_attribute_keys.as_ref() {
+            attributes.push(key_value(
+                "threadlocal.schema_version",
+                "tlsdesc_v1_dev".to_owned(),
+            ));
+
+            attributes.push(KeyValue {
+                key: "threadlocal.attribute_key_map".to_owned(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::ArrayValue(ArrayValue {
+                        values: std::iter::once(AnyValue {
+                            value: Some(any_value::Value::StringValue(
+                                "datadog.local_root_span_id".to_owned(),
+                            )),
+                        })
+                        .chain(threadlocal_attribute_keys.iter().map(|k| AnyValue {
+                            value: Some(any_value::Value::StringValue(k.clone())),
+                        }))
+                        .collect(),
+                    })),
+                }),
+                key_ref: 0,
+            });
+        }
+
+        ProcessContext {
+            resource: Some(Resource {
+                attributes,
                 dropped_attributes_count: 0,
                 entity_refs: vec![],
             }),
@@ -176,3 +229,95 @@ mod other {
 pub use linux::*;
 #[cfg(not(target_os = "linux"))]
 pub use other::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(feature = "otel-thread-ctx")]
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value;
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::{AnyValue, ProcessContext};
+
+    fn find_attr<'a>(ctx: &'a ProcessContext, key: &str) -> Option<&'a AnyValue> {
+        ctx.resource
+            .as_ref()?
+            .attributes
+            .iter()
+            .find(|kv| kv.key == key)?
+            .value
+            .as_ref()
+    }
+
+    #[test]
+    fn tracer_metadata_equality() {
+        let a = TracerMetadata {
+            tracer_language: "python".into(),
+            ..Default::default()
+        };
+        let b = TracerMetadata {
+            tracer_language: "python".into(),
+            ..Default::default()
+        };
+        let c = TracerMetadata {
+            tracer_language: "ruby".into(),
+            ..Default::default()
+        };
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn threadlocal_attrs_absent_when_keys_empty() {
+        let ctx = TracerMetadata::default().to_otel_process_ctx();
+
+        assert!(find_attr(&ctx, "threadlocal.schema_version").is_none());
+        assert!(find_attr(&ctx, "threadlocal.attribute_key_map").is_none());
+    }
+
+    #[cfg(feature = "otel-thread-ctx")]
+    #[test]
+    fn threadlocal_attrs_present_with_correct_values() {
+        let ctx = TracerMetadata {
+            threadlocal_attribute_keys: Some(vec![
+                "span.id".to_owned(),
+                "trace.id".to_owned(),
+                "custom.key".to_owned(),
+            ]),
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+
+        // Schema version attribute
+        let schema_version = find_attr(&ctx, "threadlocal.schema_version")
+            .expect("threadlocal.schema_version should be present");
+        assert_eq!(
+            schema_version.value,
+            Some(any_value::Value::StringValue("tlsdesc_v1_dev".to_owned()))
+        );
+
+        // Key map attribute: ordered array of key name strings
+        let key_map = find_attr(&ctx, "threadlocal.attribute_key_map")
+            .expect("threadlocal.attribute_key_map should be present");
+        let array = match &key_map.value {
+            Some(any_value::Value::ArrayValue(a)) => a,
+            other => panic!("expected ArrayValue, got {:?}", other),
+        };
+        let keys: Vec<&str> = array
+            .values
+            .iter()
+            .map(|v| match &v.value {
+                Some(any_value::Value::StringValue(s)) => s.as_str(),
+                other => panic!("expected StringValue, got {:?}", other),
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "datadog.local_root_span_id",
+                "span.id",
+                "trace.id",
+                "custom.key"
+            ]
+        );
+    }
+}

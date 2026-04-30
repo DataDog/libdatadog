@@ -8,7 +8,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 /// Enum representing the type of backoff to use for the delay between retries.
-/// ```
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum RetryBackoffType {
@@ -18,6 +17,12 @@ pub enum RetryBackoffType {
     Constant,
     /// The delay is doubled for each attempt.
     Exponential,
+    /// No delay between retries. Intended for wasm where `tokio::time::sleep` is unavailable.
+    /// Should be paired with `max_retries: 0` to avoid spamming the target.
+    ///
+    /// Temporary workaround: a proper solution would introduce a `SleepTrait` capability so that
+    /// wasm can delegate to a JS-side timer (e.g. `setTimeout`).
+    Disabled,
 }
 
 /// Struct representing the retry strategy for sending data.
@@ -40,11 +45,23 @@ pub struct RetryStrategy {
 
 impl Default for RetryStrategy {
     fn default() -> Self {
-        RetryStrategy {
-            max_retries: 5,
-            delay_ms: Duration::from_millis(100),
-            backoff_type: RetryBackoffType::Exponential,
-            jitter: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            RetryStrategy {
+                max_retries: 5,
+                delay_ms: Duration::from_millis(100),
+                backoff_type: RetryBackoffType::Exponential,
+                jitter: None,
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            RetryStrategy {
+                max_retries: 0,
+                delay_ms: Duration::ZERO,
+                backoff_type: RetryBackoffType::Disabled,
+                jitter: None,
+            }
         }
     }
 }
@@ -93,12 +110,17 @@ impl RetryStrategy {
     ///
     /// * `attempt`: The number of the current attempt (1-indexed).
     pub(crate) async fn delay(&self, attempt: u32) {
+        if matches!(self.backoff_type, RetryBackoffType::Disabled) {
+            return;
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             let delay = match self.backoff_type {
                 RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
                 RetryBackoffType::Constant => self.delay_ms,
                 RetryBackoffType::Linear => self.delay_ms + (self.delay_ms * (attempt - 1)),
+                RetryBackoffType::Disabled => unreachable!(),
             };
 
             if let Some(jitter) = self.jitter {

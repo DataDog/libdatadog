@@ -46,24 +46,45 @@ fn insert_hashmap<V>(map: &mut HashMap<BytesString, V>, key: CharSlice, value: V
 }
 
 #[inline]
-fn remove_hashmap<V>(map: &mut HashMap<BytesString, V>, key: CharSlice) {
+fn insert_vec_pairs<V>(vec: &mut Vec<(BytesString, V)>, key: CharSlice, value: V) {
+    if key.is_empty() {
+        return;
+    }
     let bytes_str_key = convert_char_slice_to_bytes_string(key);
-    map.remove(&bytes_str_key);
+    if let Some(slot) = vec.iter_mut().find(|(k, _)| k == &bytes_str_key) {
+        slot.1 = value;
+    } else {
+        vec.push((bytes_str_key, value));
+    }
 }
 
 #[inline]
-fn exists_hashmap<V>(map: &HashMap<BytesString, V>, key: CharSlice) -> bool {
+fn remove_vec_pairs<V>(vec: &mut Vec<(BytesString, V)>, key: CharSlice) {
     let bytes_str_key = convert_char_slice_to_bytes_string(key);
-    map.contains_key(&bytes_str_key)
+    if let Some(idx) = vec.iter().position(|(k, _)| k == &bytes_str_key) {
+        vec.swap_remove(idx);
+    }
+}
+
+#[inline]
+fn exists_vec_pairs<V>(vec: &[(BytesString, V)], key: CharSlice) -> bool {
+    let bytes_str_key = convert_char_slice_to_bytes_string(key);
+    vec.iter().any(|(k, _)| k == &bytes_str_key)
+}
+
+#[inline]
+fn get_vec_pairs<'a, V>(vec: &'a [(BytesString, V)], key: &BytesString) -> Option<&'a V> {
+    vec.iter().find(|(k, _)| k == key).map(|(_, v)| v)
 }
 
 #[allow(clippy::missing_safety_doc)]
-unsafe fn get_hashmap_keys<V>(
-    map: &HashMap<BytesString, V>,
+unsafe fn get_vec_pairs_keys<V>(
+    vec: &[(BytesString, V)],
     out_count: &mut usize,
 ) -> *mut CharSlice<'static> {
-    let mut keys: Vec<&str> = map.keys().map(|b| b.as_str()).collect();
+    let mut keys: Vec<&str> = vec.iter().map(|(k, _)| k.as_str()).collect();
     keys.sort_unstable();
+    keys.dedup();
 
     let mut slices = Vec::with_capacity(keys.len());
     for key in keys {
@@ -177,8 +198,8 @@ pub extern "C" fn ddog_trace_new_span_with_capacities(
         new_vector_push(
             trace,
             SpanBytes {
-                meta: HashMap::with_capacity(meta_size),
-                metrics: HashMap::with_capacity(metrics_size),
+                meta: Vec::with_capacity(meta_size),
+                metrics: Vec::with_capacity(metrics_size),
                 ..SpanBytes::default()
             },
         )
@@ -312,7 +333,7 @@ pub extern "C" fn ddog_get_span_error(span: &mut SpanBytes) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn ddog_add_span_meta(span: &mut SpanBytes, key: CharSlice, value: CharSlice) {
-    insert_hashmap(
+    insert_vec_pairs(
         &mut span.meta,
         key,
         BytesString::from_slice(value.as_bytes()).unwrap_or_default(),
@@ -321,15 +342,16 @@ pub extern "C" fn ddog_add_span_meta(span: &mut SpanBytes, key: CharSlice, value
 
 #[no_mangle]
 pub extern "C" fn ddog_del_span_meta(span: &mut SpanBytes, key: CharSlice) {
-    remove_hashmap(&mut span.meta, key);
+    remove_vec_pairs(&mut span.meta, key);
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_get_span_meta(span: &mut SpanBytes, key: CharSlice) -> CharSlice<'static> {
     let bytes_str_key = convert_char_slice_to_bytes_string(key);
-    match span.meta.get(&bytes_str_key) {
+    match get_vec_pairs(&span.meta, &bytes_str_key) {
         Some(value) => unsafe {
-            CharSlice::from_raw_parts(value.as_str().as_ptr().cast(), value.as_str().len())
+            let s = value.as_str();
+            CharSlice::from_raw_parts(s.as_ptr().cast(), s.len())
         },
         None => CharSlice::empty(),
     }
@@ -337,7 +359,7 @@ pub extern "C" fn ddog_get_span_meta(span: &mut SpanBytes, key: CharSlice) -> Ch
 
 #[no_mangle]
 pub extern "C" fn ddog_has_span_meta(span: &mut SpanBytes, key: CharSlice) -> bool {
-    exists_hashmap(&span.meta, key)
+    exists_vec_pairs(&span.meta, key)
 }
 
 #[no_mangle]
@@ -345,17 +367,17 @@ pub extern "C" fn ddog_span_meta_get_keys(
     span: &mut SpanBytes,
     out_count: &mut usize,
 ) -> *mut CharSlice<'static> {
-    unsafe { get_hashmap_keys(&span.meta, out_count) }
+    unsafe { get_vec_pairs_keys(&span.meta, out_count) }
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_add_span_metrics(span: &mut SpanBytes, key: CharSlice, val: f64) {
-    insert_hashmap(&mut span.metrics, key, val);
+    insert_vec_pairs(&mut span.metrics, key, val);
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_del_span_metrics(span: &mut SpanBytes, key: CharSlice) {
-    remove_hashmap(&mut span.metrics, key);
+    remove_vec_pairs(&mut span.metrics, key);
 }
 
 #[no_mangle]
@@ -365,7 +387,7 @@ pub extern "C" fn ddog_get_span_metrics(
     result: &mut f64,
 ) -> bool {
     let bytes_str_key = convert_char_slice_to_bytes_string(key);
-    match span.metrics.get(&bytes_str_key) {
+    match get_vec_pairs(&span.metrics, &bytes_str_key) {
         Some(&value) => {
             *result = value;
             true
@@ -376,7 +398,7 @@ pub extern "C" fn ddog_get_span_metrics(
 
 #[no_mangle]
 pub extern "C" fn ddog_has_span_metrics(span: &mut SpanBytes, key: CharSlice) -> bool {
-    exists_hashmap(&span.metrics, key)
+    exists_vec_pairs(&span.metrics, key)
 }
 
 #[no_mangle]
@@ -384,12 +406,12 @@ pub extern "C" fn ddog_span_metrics_get_keys(
     span: &mut SpanBytes,
     out_count: &mut usize,
 ) -> *mut CharSlice<'static> {
-    unsafe { get_hashmap_keys(&span.metrics, out_count) }
+    unsafe { get_vec_pairs_keys(&span.metrics, out_count) }
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_add_span_meta_struct(span: &mut SpanBytes, key: CharSlice, val: CharSlice) {
-    insert_hashmap(
+    insert_vec_pairs(
         &mut span.meta_struct,
         key,
         Bytes::copy_from_slice(val.as_bytes()),
@@ -398,7 +420,7 @@ pub extern "C" fn ddog_add_span_meta_struct(span: &mut SpanBytes, key: CharSlice
 
 #[no_mangle]
 pub extern "C" fn ddog_del_span_meta_struct(span: &mut SpanBytes, key: CharSlice) {
-    remove_hashmap(&mut span.meta_struct, key);
+    remove_vec_pairs(&mut span.meta_struct, key);
 }
 
 #[no_mangle]
@@ -407,7 +429,7 @@ pub extern "C" fn ddog_get_span_meta_struct(
     key: CharSlice,
 ) -> CharSlice<'static> {
     let bytes_str_key = convert_char_slice_to_bytes_string(key);
-    match span.meta_struct.get(&bytes_str_key) {
+    match get_vec_pairs(&span.meta_struct, &bytes_str_key) {
         Some(value) => unsafe { CharSlice::from_raw_parts(value.as_ptr().cast(), value.len()) },
         None => CharSlice::empty(),
     }
@@ -415,7 +437,7 @@ pub extern "C" fn ddog_get_span_meta_struct(
 
 #[no_mangle]
 pub extern "C" fn ddog_has_span_meta_struct(span: &mut SpanBytes, key: CharSlice) -> bool {
-    exists_hashmap(&span.meta_struct, key)
+    exists_vec_pairs(&span.meta_struct, key)
 }
 
 #[no_mangle]
@@ -423,7 +445,7 @@ pub extern "C" fn ddog_span_meta_struct_get_keys(
     span: &mut SpanBytes,
     out_count: &mut usize,
 ) -> *mut CharSlice<'static> {
-    unsafe { get_hashmap_keys(&span.meta_struct, out_count) }
+    unsafe { get_vec_pairs_keys(&span.meta_struct, out_count) }
 }
 
 #[no_mangle]

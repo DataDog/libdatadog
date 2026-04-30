@@ -12,10 +12,10 @@
 
 pub mod agent_info;
 mod health_metrics;
-mod pausable_worker;
-#[allow(missing_docs)]
-pub mod stats_exporter;
+pub(crate) mod otlp;
 #[cfg(feature = "telemetry")]
 pub(crate) mod telemetry;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod trace_buffer;
 #[allow(missing_docs)]
 pub mod trace_exporter;

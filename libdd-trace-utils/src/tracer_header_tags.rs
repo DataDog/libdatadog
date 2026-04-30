@@ -1,10 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use http::HeaderMap;
-use http::HeaderValue;
+use http::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 macro_rules! parse_string_header {
     (
@@ -29,11 +27,11 @@ pub struct TracerHeaderTags<'a> {
     pub lang_vendor: &'a str,
     pub tracer_version: &'a str,
     pub container_id: &'a str,
-    // specifies that the client has marked top-level spans, when set. Any non-empty value will
-    // mean 'yes'.
+    // specifies that the client has marked top-level spans, when set. If the header is present
+    // this value will resolve to 'true'
     pub client_computed_top_level: bool,
-    // specifies whether the client has computed stats so that the agent doesn't have to. Any
-    // non-empty value will mean 'yes'.
+    // specifies whether the client has computed stats so that the agent doesn't have to. If the
+    // header is present and is non-empty this value will resolve to 'true'
     pub client_computed_stats: bool,
     // number of trace chunks dropped in the tracer
     pub dropped_p0_traces: usize,
@@ -41,58 +39,79 @@ pub struct TracerHeaderTags<'a> {
     pub dropped_p0_spans: usize,
 }
 
-impl<'a> From<TracerHeaderTags<'a>> for HashMap<&'static str, String> {
-    fn from(tags: TracerHeaderTags<'a>) -> HashMap<&'static str, String> {
-        let mut headers = HashMap::from([
-            ("datadog-meta-lang", tags.lang.to_string()),
-            ("datadog-meta-lang-version", tags.lang_version.to_string()),
-            (
-                "datadog-meta-lang-interpreter",
-                tags.lang_interpreter.to_string(),
-            ),
-            (
-                "datadog-meta-lang-interpreter-vendor",
-                tags.lang_vendor.to_string(),
-            ),
-            (
-                "datadog-meta-tracer-version",
-                tags.tracer_version.to_string(),
-            ),
-            ("datadog-container-id", tags.container_id.to_string()),
-            (
-                "datadog-client-computed-stats",
-                if tags.client_computed_stats {
-                    "true".to_string()
-                } else {
-                    String::new()
-                },
-            ),
-            (
-                "datadog-client-computed-top-level",
-                if tags.client_computed_top_level {
-                    "true".to_string()
-                } else {
-                    String::new()
-                },
-            ),
-            (
-                "datadog-client-dropped-p0-traces",
-                if tags.dropped_p0_traces > 0 {
-                    tags.dropped_p0_traces.to_string()
-                } else {
-                    String::new()
-                },
-            ),
-            (
-                "datadog-client-dropped-p0-spans",
-                if tags.dropped_p0_spans > 0 {
-                    tags.dropped_p0_spans.to_string()
-                } else {
-                    String::new()
-                },
-            ),
-        ]);
-        headers.retain(|_, v| !v.is_empty());
+impl<'a> From<TracerHeaderTags<'a>> for HeaderMap {
+    fn from(tags: TracerHeaderTags<'a>) -> HeaderMap {
+        let mut headers = HeaderMap::with_capacity(10);
+        fn try_insert(
+            h: &mut HeaderMap,
+            key: HeaderName,
+            v: impl TryInto<HeaderValue> + AsRef<[u8]>,
+        ) {
+            if v.as_ref().is_empty() {
+                return;
+            }
+            if let Ok(v) = v.try_into() {
+                h.insert(key, v);
+            }
+        }
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-lang"),
+            tags.lang,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-lang-version"),
+            tags.lang_version,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-lang-interpreter"),
+            tags.lang_interpreter,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-lang-interpreter-vendor"),
+            tags.lang_vendor,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-meta-tracer-version"),
+            tags.tracer_version,
+        );
+        try_insert(
+            &mut headers,
+            HeaderName::from_static("datadog-container-id"),
+            tags.container_id,
+        );
+        if tags.client_computed_stats {
+            try_insert(
+                &mut headers,
+                HeaderName::from_static("datadog-client-computed-stats"),
+                HeaderValue::from_static("true"),
+            );
+        }
+        if tags.client_computed_top_level {
+            try_insert(
+                &mut headers,
+                HeaderName::from_static("datadog-client-computed-top-level"),
+                HeaderValue::from_static("true"),
+            );
+        }
+        if tags.dropped_p0_traces > 0 {
+            try_insert(
+                &mut headers,
+                HeaderName::from_static("datadog-client-dropped-p0-traces"),
+                tags.dropped_p0_traces.to_string(),
+            );
+        }
+        if tags.dropped_p0_spans > 0 {
+            try_insert(
+                &mut headers,
+                HeaderName::from_static("datadog-client-dropped-p0-spans"),
+                tags.dropped_p0_spans.to_string(),
+            );
+        }
         headers
     }
 }
@@ -114,8 +133,8 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
         if headers.get("datadog-client-computed-top-level").is_some() {
             tags.client_computed_top_level = true;
         }
-        if headers.get("datadog-client-computed-stats").is_some() {
-            tags.client_computed_stats = true;
+        if let Some(v) = headers.get("datadog-client-computed-stats") {
+            tags.client_computed_stats = !v.to_str().unwrap_or_default().is_empty();
         }
         if let Some(count) = headers.get("datadog-client-dropped-p0-traces") {
             tags.dropped_p0_traces = count
@@ -135,6 +154,10 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
 mod tests {
     use super::*;
 
+    fn get<'a>(m: &'a HeaderMap, key: &str) -> Option<&'a str> {
+        m.get(key).and_then(|v| v.to_str().ok())
+    }
+
     #[test]
     fn tags_to_hashmap() {
         let header_tags = TracerHeaderTags {
@@ -150,29 +173,27 @@ mod tests {
             dropped_p0_spans: 120,
         };
 
-        let map: HashMap<&'static str, String> = header_tags.into();
+        let map: HeaderMap = header_tags.into();
 
         assert_eq!(map.len(), 10);
-        assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
-        assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
+        assert_eq!(get(&map, "datadog-meta-lang"), Some("test-lang"));
+        assert_eq!(get(&map, "datadog-meta-lang-version"), Some("2.0"));
         assert_eq!(
-            map.get("datadog-meta-lang-interpreter").unwrap(),
-            "interpreter"
+            get(&map, "datadog-meta-lang-interpreter"),
+            Some("interpreter")
         );
         assert_eq!(
-            map.get("datadog-meta-lang-interpreter-vendor").unwrap(),
-            "vendor"
+            get(&map, "datadog-meta-lang-interpreter-vendor"),
+            Some("vendor")
         );
-        assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
-        assert_eq!(map.get("datadog-container-id").unwrap(), "id");
-        assert_eq!(
-            map.get("datadog-client-computed-top-level").unwrap(),
-            "true"
-        );
-        assert_eq!(map.get("datadog-client-computed-stats").unwrap(), "true");
-        assert_eq!(map.get("datadog-client-dropped-p0-traces").unwrap(), "12");
-        assert_eq!(map.get("datadog-client-dropped-p0-spans").unwrap(), "120");
+        assert_eq!(get(&map, "datadog-meta-tracer-version"), Some("1.0"));
+        assert_eq!(get(&map, "datadog-container-id"), Some("id"));
+        assert_eq!(get(&map, "datadog-client-computed-top-level"), Some("true"));
+        assert_eq!(get(&map, "datadog-client-computed-stats"), Some("true"));
+        assert_eq!(get(&map, "datadog-client-dropped-p0-traces"), Some("12"));
+        assert_eq!(get(&map, "datadog-client-dropped-p0-spans"), Some("120"));
     }
+
     #[test]
     fn tags_to_hashmap_empty_value() {
         let header_tags = TracerHeaderTags {
@@ -188,25 +209,25 @@ mod tests {
             dropped_p0_traces: 0,
         };
 
-        let map: HashMap<&'static str, String> = header_tags.into();
+        let map: HeaderMap = header_tags.into();
 
         assert_eq!(map.len(), 5);
-        assert_eq!(map.get("datadog-meta-lang").unwrap(), "test-lang");
-        assert_eq!(map.get("datadog-meta-lang-version").unwrap(), "2.0");
+        assert_eq!(get(&map, "datadog-meta-lang"), Some("test-lang"));
+        assert_eq!(get(&map, "datadog-meta-lang-version"), Some("2.0"));
         assert_eq!(
-            map.get("datadog-meta-lang-interpreter").unwrap(),
-            "interpreter"
+            get(&map, "datadog-meta-lang-interpreter"),
+            Some("interpreter")
         );
         assert_eq!(
-            map.get("datadog-meta-lang-interpreter-vendor").unwrap(),
-            "vendor"
+            get(&map, "datadog-meta-lang-interpreter-vendor"),
+            Some("vendor")
         );
-        assert_eq!(map.get("datadog-meta-tracer-version").unwrap(), "1.0");
-        assert_eq!(map.get("datadog-container-id"), None);
-        assert_eq!(map.get("datadog-client-computed-top-level"), None);
-        assert_eq!(map.get("datadog-client-computed-stats"), None);
-        assert_eq!(map.get("datadog-client-dropped-p0-traces"), None);
-        assert_eq!(map.get("datadog-client-dropped-p0-spans"), None);
+        assert_eq!(get(&map, "datadog-meta-tracer-version"), Some("1.0"));
+        assert_eq!(get(&map, "datadog-container-id"), None);
+        assert_eq!(get(&map, "datadog-client-computed-top-level"), None);
+        assert_eq!(get(&map, "datadog-client-computed-stats"), None);
+        assert_eq!(get(&map, "datadog-client-dropped-p0-traces"), None);
+        assert_eq!(get(&map, "datadog-client-dropped-p0-spans"), None);
     }
 
     #[test]
@@ -240,5 +261,27 @@ mod tests {
         assert!(!tags.client_computed_top_level);
         assert_eq!(tags.dropped_p0_traces, 12);
         assert_eq!(tags.dropped_p0_spans, 0);
+    }
+
+    #[test]
+    fn test_header_map_to_tags_computed_stats_empty_string() {
+        let val = "";
+        let mut header_map = HeaderMap::new();
+        header_map.insert("datadog-client-computed-stats", val.parse().unwrap());
+        let tags: TracerHeaderTags = (&header_map).into();
+        assert!(
+            !tags.client_computed_stats,
+            "expected client_computed_stats=false for datadog-client-computed-stats header value {val:?}"
+        );
+    }
+
+    #[test]
+    fn test_header_map_to_tags_computed_stats_not_set() {
+        let header_map = HeaderMap::new();
+        let tags: TracerHeaderTags = (&header_map).into();
+        assert!(
+            !tags.client_computed_stats,
+            "expected client_computed_stats=false when datadog-client-computed-stats header is not set"
+        );
     }
 }

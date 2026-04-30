@@ -9,12 +9,16 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
-
 use libdd_data_pipeline::trace_exporter::{
-    TelemetryConfig, TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TelemetryConfig, TraceExporter as GenericTraceExporter, TraceExporterInputFormat,
+    TraceExporterOutputFormat,
 };
-use std::{ptr::NonNull, time::Duration};
-use tracing::{debug, error};
+
+type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+
+use libdd_shared_runtime::SharedRuntime;
+use std::{ptr::NonNull, sync::Arc, time::Duration};
+use tracing::debug;
 
 #[inline]
 fn sanitize_string(str: CharSlice) -> Result<String, Box<ExporterError>> {
@@ -69,6 +73,8 @@ pub struct TraceExporterConfig {
     process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
+    shared_runtime: Option<Arc<SharedRuntime>>,
+    otlp_endpoint: Option<String>,
 }
 
 #[no_mangle]
@@ -415,7 +421,66 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
     )
 }
 
+/// Sets a shared runtime for the TraceExporter to use for background workers.
+///
+/// `handle` must have been initialized with [`ddog_shared_runtime_new`].
+///
+/// When set, the exporter will use the provided runtime instead of creating its own.
+/// This allows multiple exporters (or other components) to share a single runtime.
+/// The config holds a clone of the `Arc` (increments the strong count), so the
+/// original handle remains valid and must still be freed with
+/// [`ddog_shared_runtime_free`].
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
+    config: Option<&mut TraceExporterConfig>,
+    handle: Option<NonNull<SharedRuntime>>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        match (config, handle) {
+            (Some(config), Some(handle)) => {
+                // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
+                // Increment the strong count before reconstructing so the config's Arc
+                // is independent from the caller's handle.
+                Arc::increment_strong_count(handle.as_ptr());
+                config.shared_runtime = Some(Arc::from_raw(handle.as_ptr()));
+                None
+            }
+            _ => gen_error!(ErrorCode::InvalidArgument),
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Enables OTLP HTTP/JSON export and sets the endpoint URL.
+///
+/// When set, traces are sent to this URL in OTLP HTTP/JSON format instead of the Datadog
+/// agent. The host language is responsible for resolving the endpoint from its configuration
+/// (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this function.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
+    config: Option<&mut TraceExporterConfig>,
+    url: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.otlp_endpoint = match sanitize_string(url) {
+                Ok(s) => Some(s),
+                Err(e) => return Some(e),
+            };
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
+///
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
+/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
+/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
+/// OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///
@@ -423,13 +488,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 /// * `config` - The configuration used to set up the TraceExporter handle.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_new(
-    out_handle: NonNull<Box<TraceExporter<NativeCapabilities>>>,
+    out_handle: NonNull<Box<TraceExporter>>,
     config: Option<&TraceExporterConfig>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         if let Some(config) = config {
             // let config = &*ptr;
-            let mut builder = TraceExporter::<NativeCapabilities>::builder();
+            let mut builder = TraceExporter::builder();
             builder
                 .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
                 .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
@@ -468,6 +533,14 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 builder.enable_health_metrics();
             }
 
+            if let Some(runtime) = config.shared_runtime.clone() {
+                builder.set_shared_runtime(runtime);
+            }
+
+            if let Some(ref url) = config.otlp_endpoint {
+                builder.set_otlp_endpoint(url);
+            }
+
             match builder.build() {
                 Ok(exporter) => {
                     out_handle.as_ptr().write(Box::new(exporter));
@@ -488,7 +561,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ///
 /// * handle - The handle to the TraceExporter instance.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter<NativeCapabilities>>) {
+pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter>) {
     let _ = catch_panic!(handle.shutdown(None), Ok(()));
 }
 
@@ -504,7 +577,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_free(handle: Box<TraceExporter<Nati
 /// * `response_out` - Optional handle to store a pointer to the agent response information.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send(
-    handle: Option<&TraceExporter<NativeCapabilities>>,
+    handle: Option<&TraceExporter>,
     trace: ByteSlice,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
@@ -858,8 +931,7 @@ mod tests {
             );
             assert_eq!(error, None);
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
 
             let ret = ddog_trace_exporter_new(
                 NonNull::new_unchecked(&mut ptr).cast(),
@@ -890,8 +962,7 @@ mod tests {
 
             ddog_trace_exporter_error_free(error);
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
 
             let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
 
@@ -971,8 +1042,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
             let mut response: MaybeUninit<Box<ExporterResponse>> = MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
@@ -1039,8 +1109,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
 
@@ -1118,8 +1187,7 @@ mod tests {
                 ..Default::default()
             };
 
-            let mut ptr: MaybeUninit<Box<TraceExporter<NativeCapabilities>>> =
-                MaybeUninit::uninit();
+            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
             let mut ret =
                 ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
 
