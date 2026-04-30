@@ -13,44 +13,44 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 
 /// Integer keys for the top-level V1 trace payload map.
-#[repr(u8)]
-enum TraceKey {
-    Chunks = 11,
+mod trace_key {
+    pub const ENV_REF: u8 = 7;
+    pub const HOSTNAME_REF: u8 = 8;
+    pub const APP_VERSION_REF: u8 = 9;
+    pub const CHUNKS: u8 = 11;
 }
 
 /// Integer keys for V1 chunk-level fields.
-#[repr(u8)]
-enum ChunkKey {
-    Priority = 1,
-    Origin = 2,
-    Spans = 4,
-    TraceId = 6,
+mod chunk_key {
+    pub const PRIORITY: u8 = 1;
+    pub const ORIGIN: u8 = 2;
+    pub const SPANS: u8 = 4;
+    pub const TRACE_ID: u8 = 6;
+    /// Sampling mechanism (previously the `_dd.p.dm` span tag).
+    pub const SAMPLING_MECHANISM: u8 = 7;
 }
 
 /// Streaming string intern table.
 ///
 /// The first time a string is written, it is emitted as a msgpack `str` and assigned an
 /// incrementing integer ID. On subsequent occurrences only the ID is emitted as a msgpack `uint`.
-/// ID 0 is reserved for the empty string (written as fixint `0`).
+/// ID 0 is reserved for the empty string (pre-inserted in the constructor).
 ///
 /// The string table is scoped per payload: each `to_vec` / `write_to_slice` call starts with a
 /// fresh table so deduplication is payload-local.
 pub(crate) struct StringTable {
     seen: HashMap<String, u32>,
-    next_id: u32,
 }
 
 impl StringTable {
     fn new() -> Self {
-        Self {
-            seen: HashMap::new(),
-            next_id: 1,
-        }
+        let mut seen = HashMap::new();
+        seen.insert(String::new(), 0);
+        Self { seen }
     }
 
     /// Writes `s` to `writer` using string interning.
     ///
-    /// - Empty string → fixint `0`
     /// - First occurrence of `s` → msgpack `str`, ID recorded for future references
     /// - Subsequent occurrence → msgpack `uint` carrying the previously assigned ID
     pub(crate) fn write_interned<W: RmpWrite, S: AsRef<str>>(
@@ -59,15 +59,10 @@ impl StringTable {
         s: S,
     ) -> Result<(), ValueWriteError<W::Error>> {
         let s = s.as_ref();
-        if s.is_empty() {
-            write_uint8(writer, 0)?;
-            return Ok(());
-        }
         if let Some(&id) = self.seen.get(s) {
             write_uint(writer, id as u64)?;
         } else {
-            let id = self.next_id;
-            self.next_id += 1;
+            let id = self.seen.len() as u32;
             self.seen.insert(s.to_string(), id);
             write_str(writer, s)?;
         }
@@ -75,34 +70,83 @@ impl StringTable {
     }
 }
 
+/// Promoted fields extracted from the payload's spans, written at the top-level map.
+struct PayloadAttrs<'a> {
+    env: Option<&'a str>,
+    hostname: Option<&'a str>,
+    app_version: Option<&'a str>,
+}
+
+fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(traces: &'a [S]) -> PayloadAttrs<'a>
+where
+    T::Text: 'a,
+{
+    let mut env = None;
+    let mut hostname = None;
+    let mut app_version = None;
+
+    'outer: for trace in traces {
+        for span in trace.as_ref() {
+            if env.is_none() {
+                env = span.meta.get("env").map(|v| v.borrow());
+            }
+            if hostname.is_none() {
+                hostname = span.meta.get("_dd.hostname").map(|v| v.borrow());
+            }
+            if app_version.is_none() {
+                app_version = span.meta.get("version").map(|v| v.borrow());
+            }
+            if env.is_some() && hostname.is_some() && app_version.is_some() {
+                break 'outer;
+            }
+        }
+    }
+
+    PayloadAttrs { env, hostname, app_version }
+}
+
 /// Promoted fields extracted from spans and written at the chunk level.
-struct ChunkAttrs {
+struct ChunkAttrs<'a> {
     /// Full 128-bit trace ID (encodes as 16-byte big-endian binary).
     trace_id: u128,
     /// Sampling priority from `_sampling_priority_v1` metric on the root span.
     sampling_priority: Option<i32>,
     /// Origin tag from `_dd.origin` meta on the root span.
-    origin: Option<String>,
+    origin: Option<&'a str>,
+    /// Sampling mechanism from `_dd.p.dm` meta on the root span.
+    sampling_mechanism: Option<u32>,
 }
 
-fn extract_chunk_attrs<T: TraceData>(spans: &[Span<T>]) -> ChunkAttrs {
+fn extract_chunk_attrs<'a, T: TraceData>(spans: &'a [Span<T>]) -> ChunkAttrs<'a>
+where
+    T::Text: 'a,
+{
     let mut trace_id = 0u128;
     let mut sampling_priority = None;
-    let mut origin: Option<String> = None;
+    let mut origin = None;
+    let mut sampling_mechanism = None;
 
     for span in spans {
-        // Any span gives us the trace_id.
         trace_id = span.trace_id;
 
-        // Chunk-level attributes come from the root span (parent_id == 0).
-        if span.parent_id == 0 {
-            // HashMap::get accepts &Q where K: Borrow<Q>; T::Text: Borrow<str> so &str works.
+        // Root span: either no parent in this chunk, or tagged _dd.top_level=1 (remote parent).
+        let is_root = span.parent_id == 0
+            || span.metrics.get("_dd.top_level").copied().unwrap_or(0.0) == 1.0;
+
+        if is_root {
             if let Some(v) = span.metrics.get("_sampling_priority_v1") {
                 sampling_priority = Some(*v as i32);
             }
             if let Some(v) = span.meta.get("_dd.origin") {
-                origin = Some(v.borrow().to_owned());
+                origin = Some(v.borrow());
             }
+            // _dd.p.dm is a signed integer sampling mechanism code stored as a string.
+            if let Some(v) = span.meta.get("_dd.p.dm") {
+                if let Ok(dm) = v.borrow().parse::<i32>() {
+                    sampling_mechanism = Some(dm as u32);
+                }
+            }
+            break;
         }
     }
 
@@ -110,6 +154,7 @@ fn extract_chunk_attrs<T: TraceData>(spans: &[Span<T>]) -> ChunkAttrs {
         trace_id,
         sampling_priority,
         origin,
+        sampling_mechanism,
     }
 }
 
@@ -118,7 +163,10 @@ fn extract_chunk_attrs<T: TraceData>(spans: &[Span<T>]) -> ChunkAttrs {
 /// Top-level format:
 /// ```text
 /// Map {
-///   TraceKey::Chunks (11) → Array[Chunk, ...]
+///   trace_key::ENV_REF      (7)  → str|uint       // optional, interned
+///   trace_key::HOSTNAME_REF (8)  → str|uint       // optional, interned
+///   trace_key::APP_VERSION  (9)  → str|uint       // optional, interned
+///   trace_key::CHUNKS       (11) → Array[Chunk, ...]
 /// }
 /// ```
 fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
@@ -126,11 +174,31 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
 ) -> Result<(), ValueWriteError<W::Error>> {
     let mut table = StringTable::new();
+    let payload_attrs = extract_payload_attrs(traces);
 
-    // Top-level map contains only the chunks array for now.
-    write_map_len(writer, 1)?;
-    write_uint8(writer, TraceKey::Chunks as u8)?;
+    let map_len = 1u32 // chunks always present
+        + payload_attrs.env.is_some() as u32
+        + payload_attrs.hostname.is_some() as u32
+        + payload_attrs.app_version.is_some() as u32;
 
+    write_map_len(writer, map_len)?;
+
+    if let Some(env) = payload_attrs.env {
+        write_uint8(writer, trace_key::ENV_REF)?;
+        table.write_interned(writer, env)?;
+    }
+
+    if let Some(hostname) = payload_attrs.hostname {
+        write_uint8(writer, trace_key::HOSTNAME_REF)?;
+        table.write_interned(writer, hostname)?;
+    }
+
+    if let Some(app_version) = payload_attrs.app_version {
+        write_uint8(writer, trace_key::APP_VERSION_REF)?;
+        table.write_interned(writer, app_version)?;
+    }
+
+    write_uint8(writer, trace_key::CHUNKS)?;
     write_array_len(writer, traces.len() as u32)?;
     for trace in traces {
         encode_chunk(writer, trace.as_ref(), &mut table)?;
@@ -143,10 +211,11 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 ///
 /// ```text
 /// Map {
-///   ChunkKey::TraceId  (6) → bin[16]       // 128-bit big-endian
-///   ChunkKey::Origin   (2) → str|uint       // optional, interned
-///   ChunkKey::Priority (1) → int            // optional
-///   ChunkKey::Spans    (4) → Array[Span, ...]
+///   chunk_key::TRACE_ID           (6) → bin[16]       // 128-bit big-endian
+///   chunk_key::ORIGIN             (2) → str|uint       // optional, interned
+///   chunk_key::PRIORITY           (1) → int            // optional
+///   chunk_key::SAMPLING_MECHANISM (7) → uint           // optional
+///   chunk_key::SPANS              (4) → Array[Span, ...]
 /// }
 /// ```
 fn encode_chunk<W: RmpWrite, T: TraceData>(
@@ -158,25 +227,30 @@ fn encode_chunk<W: RmpWrite, T: TraceData>(
 
     let fields = 2u32 // trace_id + spans are always present
         + attrs.origin.is_some() as u32
-        + attrs.sampling_priority.is_some() as u32;
+        + attrs.sampling_priority.is_some() as u32
+        + attrs.sampling_mechanism.is_some() as u32;
 
     write_map_len(writer, fields)?;
 
-    // 128-bit trace ID as 16-byte big-endian binary.
-    write_uint8(writer, ChunkKey::TraceId as u8)?;
+    write_uint8(writer, chunk_key::TRACE_ID)?;
     write_bin(writer, &attrs.trace_id.to_be_bytes())?;
 
-    if let Some(ref origin) = attrs.origin {
-        write_uint8(writer, ChunkKey::Origin as u8)?;
-        table.write_interned(writer, origin.as_str())?;
+    if let Some(origin) = attrs.origin {
+        write_uint8(writer, chunk_key::ORIGIN)?;
+        table.write_interned(writer, origin)?;
     }
 
     if let Some(priority) = attrs.sampling_priority {
-        write_uint8(writer, ChunkKey::Priority as u8)?;
+        write_uint8(writer, chunk_key::PRIORITY)?;
         write_sint(writer, priority as i64)?;
     }
 
-    write_uint8(writer, ChunkKey::Spans as u8)?;
+    if let Some(mechanism) = attrs.sampling_mechanism {
+        write_uint8(writer, chunk_key::SAMPLING_MECHANISM)?;
+        write_uint(writer, mechanism as u64)?;
+    }
+
+    write_uint8(writer, chunk_key::SPANS)?;
     write_array_len(writer, spans.len() as u32)?;
     for span in spans {
         span_v04::encode_span(writer, span, table)?;
@@ -190,6 +264,7 @@ fn encode_chunk<W: RmpWrite, T: TraceData>(
 /// # Errors
 /// Returns a `ValueWriteError` if the underlying writer fails.
 pub fn write_to_slice<T: TraceData, S: AsRef<[Span<T>]>>(
+    // &mut &mut [u8] lets the caller see the slice shrink as bytes are written.
     slice: &mut &mut [u8],
     traces: &[S],
 ) -> Result<(), ValueWriteError> {
@@ -207,16 +282,14 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    #[allow(clippy::expect_used)]
-    encode_payload(&mut buf, traces).expect("infallible: the error is std::convert::Infallible");
+    let _ = encode_payload(&mut buf, traces);
     buf.into_vec()
 }
 
 /// Returns the number of bytes the V1 payload for `traces` would occupy.
-pub fn to_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
+pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
     let mut counter = super::CountLength(0);
-    #[allow(clippy::expect_used)]
-    encode_payload(&mut counter, traces).expect("infallible: CountLength never fails");
+    let _ = encode_payload(&mut counter, traces);
     counter.0
 }
 
@@ -324,14 +397,74 @@ mod tests {
     }
 
     #[test]
-    fn test_to_len_matches_to_vec() {
+    fn test_to_encoded_byte_len_matches_to_vec() {
         let spans = vec![
             make_span("svc", "op", 1, 1, 0),
             make_span("svc", "child", 1, 2, 1),
         ];
         let traces = vec![spans];
         let encoded = to_vec(&traces);
-        let len = to_len(&traces);
+        let len = to_encoded_byte_len(&traces);
         assert_eq!(encoded.len() as u32, len);
+    }
+
+    #[test]
+    fn test_remote_parent_root_span_top_level() {
+        // A span with a non-zero parent_id but _dd.top_level=1.0 is a root in its chunk.
+        let mut metrics = HashMap::new();
+        metrics.insert(BytesString::from_static("_dd.top_level"), 1.0f64);
+        metrics.insert(BytesString::from_static("_sampling_priority_v1"), 2.0f64);
+
+        let root = SpanBytes {
+            service: BytesString::from_slice(b"svc").unwrap(),
+            name: BytesString::from_slice(b"op").unwrap(),
+            resource: BytesString::from_slice(b"res").unwrap(),
+            trace_id: 123,
+            span_id: 42,
+            parent_id: 999, // remote parent — not in this chunk
+            start: 1000,
+            duration: 100,
+            metrics,
+            ..Default::default()
+        };
+
+        let encoded = to_vec(&[vec![root]]);
+        assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn test_payload_promoted_fields() {
+        let mut meta = HashMap::new();
+        meta.insert(BytesString::from_static("env"), BytesString::from_static("prod"));
+        meta.insert(BytesString::from_static("version"), BytesString::from_static("1.2.3"));
+        meta.insert(
+            BytesString::from_static("_dd.hostname"),
+            BytesString::from_static("my-host"),
+        );
+
+        let span = SpanBytes {
+            service: BytesString::from_slice(b"svc").unwrap(),
+            name: BytesString::from_slice(b"op").unwrap(),
+            resource: BytesString::from_slice(b"res").unwrap(),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 1000,
+            duration: 100,
+            meta,
+            ..Default::default()
+        };
+
+        let encoded = to_vec(&[vec![span]]);
+        let prod_bytes = b"prod";
+        assert!(
+            encoded.windows(prod_bytes.len()).any(|w| w == prod_bytes),
+            "env 'prod' should appear in payload"
+        );
+        let host_bytes = b"my-host";
+        assert!(
+            encoded.windows(host_bytes.len()).any(|w| w == host_bytes),
+            "hostname 'my-host' should appear in payload"
+        );
     }
 }

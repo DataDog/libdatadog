@@ -78,7 +78,7 @@ impl<'a> TraceSerializer<'a> {
                     tracer_payload::TraceChunks::V04(traces) => {
                         Ok(tracer_payload::TraceChunks::V1(traces))
                     }
-                    other => Ok(other),
+                    _ => unreachable!(),
                 }
             }
             format => {

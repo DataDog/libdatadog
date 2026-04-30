@@ -68,9 +68,9 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
     write_uint8(writer, SpanKey::SpanLinks as u8)?;
     rmp::encode::write_array_len(writer, span_links.len() as u32)?;
 
-    for link in span_links.iter() {
+    for link in span_links {
         let trace_id_128 = ((link.trace_id_high as u128) << 64) | link.trace_id as u128;
-        let link_len = 1 /* trace_id (always) */
+        let link_len = 1 // trace_id (always)
             + (link.span_id != 0) as u32
             + (!link.attributes.is_empty()) as u32
             + (!link.tracestate.borrow().is_empty()) as u32
@@ -121,8 +121,8 @@ pub fn encode_span_events<W: RmpWrite, T: TraceData>(
     write_uint8(writer, SpanKey::SpanEvents as u8)?;
     rmp::encode::write_array_len(writer, span_events.len() as u32)?;
 
-    for event in span_events.iter() {
-        let event_len = 2 /* time_unix_nano, name */
+    for event in span_events {
+        let event_len = 2 // time_unix_nano, name
             + (!event.attributes.is_empty()) as u32;
 
         rmp::encode::write_map_len(writer, event_len)?;
@@ -193,7 +193,7 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
         AttributeAnyValue::Array(array) => {
             write_uint8(writer, 6u8)?; // Array
             rmp::encode::write_array_len(writer, array.len() as u32)?;
-            for v in array.iter() {
+            for v in array {
                 encode_array_element(writer, v, table)?;
             }
         }
@@ -210,7 +210,6 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
 /// - `trace_id` is not encoded in the span (it belongs to the chunk).
 /// - `error` is encoded as a boolean.
 /// - String values use streaming string interning via `StringTable`.
-#[inline(always)]
 pub fn encode_span<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span: &Span<T>,
@@ -218,7 +217,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 ) -> Result<(), ValueWriteError<W::Error>> {
     let has_attributes =
         !span.meta.is_empty() || !span.metrics.is_empty() || !span.meta_struct.is_empty();
-    let span_len = 2 /* span_id, start — always present */
+    let span_len = 2 // span_id, start — always present
         + (!span.service.borrow().is_empty()) as u32
         + (!span.name.borrow().is_empty()) as u32
         + (!span.resource.borrow().is_empty()) as u32
