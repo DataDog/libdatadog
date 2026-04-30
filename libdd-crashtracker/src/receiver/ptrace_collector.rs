@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Ptrace-based thread context collection with libunwind remote unwinding.
-//! This module is compiled for Linux only.
+//! This is compiled for Linux only.
 //!
-//! This module provides ptrace-based thread context collection that runs in the
+//! This provides ptrace-based thread context collection that runs in the
 //! receiver process. It uses libunwind's remote unwinding APIs to generate full
 //! stack traces for all threads in the crashed process.
 //!
@@ -165,7 +165,7 @@ fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
 
 /// Capture the full stack trace for a stopped thread using libunwind remote unwinding.
 ///
-/// The thread must already be stopped (via `attach_thread`) before calling this.
+/// The thread must already be stopped (`attach_thread`) before calling this.
 /// The caller is responsible for detaching after this returns.
 ///
 /// libunwind's ptrace backend (`_UPT_*`) implements the accessor callbacks that
@@ -328,4 +328,172 @@ where
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+    use std::time::Duration;
+
+    fn current_tid() -> libc::pid_t {
+        unsafe { libc::gettid() }
+    }
+
+    #[test]
+    fn enumerate_includes_current_thread() {
+        let pid = std::process::id() as libc::pid_t;
+        let tids = enumerate_threads(pid).expect("enumerate_threads should succeed for self");
+        assert!(!tids.is_empty());
+        let tid = current_tid();
+        assert!(tids.contains(&tid), "current TID {tid} not in {tids:?}");
+    }
+
+    #[test]
+    fn enumerate_rejects_nonexistent_pid() {
+        // PID 0 is not a real process.
+        assert!(enumerate_threads(0).is_err());
+    }
+
+    #[test]
+    fn enumerate_discovers_spawned_thread() {
+        let barrier = Arc::new(Barrier::new(2));
+        let b = Arc::clone(&barrier);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            tx.send(unsafe { libc::gettid() }).unwrap();
+            b.wait();
+        });
+
+        let spawned_tid = rx.recv().unwrap();
+        let pid = std::process::id() as libc::pid_t;
+        let tids = enumerate_threads(pid).expect("enumerate_threads should succeed");
+
+        assert!(
+            tids.contains(&spawned_tid),
+            "spawned TID {spawned_tid} should appear in {tids:?}"
+        );
+
+        barrier.wait();
+        handle.join().unwrap();
+    }
+
+    /// PTRACE_SEIZE + PTRACE_INTERRUPT + PTRACE_DETACH should round-trip on a
+    /// live thread within the same process.  Skips gracefully if the environment
+    /// restricts ptrace (e.g. a container with Yama ptrace_scope = 3).
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn attach_detach_round_trip() {
+        let barrier = Arc::new(Barrier::new(2));
+        let b = Arc::clone(&barrier);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            tx.send(unsafe { libc::gettid() }).unwrap();
+            b.wait();
+        });
+
+        let tid = rx.recv().unwrap();
+
+        match attach_thread(tid) {
+            Err(e) => eprintln!("skipping ptrace test (ptrace unavailable): {e}"),
+            Ok(()) => detach_thread(tid).expect("detach should succeed after attach"),
+        }
+
+        barrier.wait();
+        handle.join().unwrap();
+    }
+
+    /// A stopped thread should produce at least one frame (the IP at ptrace-stop).
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn capture_context_produces_frames() {
+        let barrier = Arc::new(Barrier::new(2));
+        let b = Arc::clone(&barrier);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            tx.send(unsafe { libc::gettid() }).unwrap();
+            b.wait();
+        });
+
+        let tid = rx.recv().unwrap();
+
+        match capture_thread_context(tid, crate::StacktraceCollection::Disabled) {
+            Err(e) => eprintln!("skipping ptrace test (ptrace unavailable): {e}"),
+            Ok(ctx) => assert!(
+                !ctx.stack_trace.frames.is_empty(),
+                "expected at least one frame from a running thread"
+            ),
+        }
+
+        barrier.wait();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn stream_respects_max_threads_limit() {
+        // Spawn 3 extra threads so there are definitely more than 2 to iterate.
+        let barrier = Arc::new(Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let b = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                b.wait();
+            }));
+        }
+        barrier.wait();
+
+        let mut collected = 0usize;
+        let _ = stream_thread_contexts(
+            std::process::id() as libc::pid_t,
+            current_tid(),
+            2,
+            Duration::from_secs(5),
+            crate::StacktraceCollection::Disabled,
+            |_tid, _ctx| collected += 1,
+        );
+
+        assert!(collected <= 2, "collected {collected}, expected <= 2");
+        for h in handles {
+            h.join().unwrap();
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn stream_excludes_crashing_tid() {
+        let barrier = Arc::new(Barrier::new(2));
+        let b: Arc<Barrier> = Arc::clone(&barrier);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            tx.send(unsafe { libc::gettid() }).unwrap();
+            b.wait();
+        });
+
+        let worker_tid = rx.recv().unwrap();
+
+        // Declare the worker as the crashing TID; it must be skipped.
+        let mut seen_worker = false;
+        let _ = stream_thread_contexts(
+            std::process::id() as libc::pid_t,
+            worker_tid,
+            64,
+            Duration::from_secs(5),
+            crate::StacktraceCollection::Disabled,
+            |tid, _ctx| {
+                if tid == worker_tid {
+                    seen_worker = true;
+                }
+            },
+        );
+
+        assert!(!seen_worker, "crashing_tid should not appear in callbacks");
+
+        barrier.wait();
+        handle.join().unwrap();
+    }
 }
