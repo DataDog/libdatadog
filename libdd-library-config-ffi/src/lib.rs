@@ -125,8 +125,6 @@ pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 
-/// All std-only items live in this module so the `#[cfg(feature = "std")]` gate is
-/// applied once at the module boundary instead of being repeated on every item.
 #[cfg(feature = "std")]
 mod std_api {
     use super::*;
@@ -277,34 +275,32 @@ mod std_api {
         })
     }
 
+    /// Wraps a `&'static str` path constant as a `ffi::CStr<'static>` by appending a
+    /// compile-time NUL terminator.
+    ///
+    /// SAFETY: `constcat::concat!` appends a literal "\0", guaranteeing a single trailing
+    /// null. The caller is responsible for ensuring the path constant has no interior nulls.
+    macro_rules! static_path_cstr {
+        ($path:expr) => {
+            ffi::CStr::from_std(unsafe {
+                let path: &'static str = constcat::concat!($path, "\0");
+                std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
+            })
+        };
+    }
+
     #[no_mangle]
-    /// Returns a static null-terminated string with the path to the managed stable config yaml config
-    /// file
+    /// Returns a static null-terminated string with the path to the managed stable config yaml
+    /// config file
     pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'static> {
-        // SAFETY: constcat! appends a literal "\0", guaranteeing a single null terminator
-        // at the end. The path constant contains no interior null bytes.
-        ffi::CStr::from_std(unsafe {
-            let path: &'static str = constcat::concat!(
-                lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH,
-                "\0"
-            );
-            std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
-        })
+        static_path_cstr!(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH)
     }
 
     #[no_mangle]
     /// Returns a static null-terminated string with the path to the local stable config yaml config
     /// file
     pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'static> {
-        // SAFETY: constcat! appends a literal "\0", guaranteeing a single null terminator
-        // at the end. The path constant contains no interior null bytes.
-        ffi::CStr::from_std(unsafe {
-            let path: &'static str = constcat::concat!(
-                lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH,
-                "\0"
-            );
-            std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
-        })
+        static_path_cstr!(lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH)
     }
 
     #[no_mangle]
@@ -312,7 +308,6 @@ mod std_api {
         match &mut config_result {
             LibraryConfigLoggedResult::Ok(_) => {}
             LibraryConfigLoggedResult::Err(err) => {
-                // Use the internal error clearing function for defensive cleanup
                 libdd_common_ffi::clear_error(err);
             }
         }
