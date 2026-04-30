@@ -4,7 +4,7 @@ use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 use std::default::Default;
 
 /// This struct MUST be backward compatible.
-#[derive(serde::Serialize, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, Debug, PartialEq, Eq, Hash)]
 pub struct TracerMetadata {
     /// Version of the schema.
     pub schema_version: u8,

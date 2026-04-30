@@ -19,6 +19,7 @@ derive_more = { version = "2.0.0", default-features = false, features = ["from",
 log = { version = "0.4.21", default-features = false, features = ["kv", "kv_serde"] }
 md5 = { version = "0.7.0", default-features = false }
 regex = "1.10.4"
+semver = "1.0"
 serde-bool = { version = "0.1.3", default-features = false }
 serde_with = { version = "3.11.0", default-features = false, features = ["base64", "hex", "macros"] }
 thiserror = { version = "2.0.3", default-features = false }
