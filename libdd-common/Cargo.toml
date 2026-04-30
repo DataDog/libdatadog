@@ -29,6 +29,7 @@ bytes = { version = "1.11.1" }
 pin-project = "1"
 rand = { version = "0.8", optional = true }
 regex = "1.5"
+regex-lite = { version = "0.1", optional = true }
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.
 # The default resolver can hold locks or other global state that can cause deadlocks
 # or corruption when the process forks (e.g., in PHP-FPM or other forking environments).
@@ -98,6 +99,8 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 # Enable this feature to enable stubbing of cgroup
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = []
+# Use regex-lite instead of regex for smaller binary size
+regex-lite = ["dep:regex-lite"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["tls-core", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging

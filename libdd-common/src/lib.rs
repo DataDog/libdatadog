@@ -21,6 +21,7 @@ pub mod connector;
 #[cfg(feature = "reqwest")]
 pub mod dump_server;
 pub mod entity_id;
+pub mod regex_engine;
 #[macro_use]
 pub mod cstr;
 #[cfg(feature = "bench-utils")]
