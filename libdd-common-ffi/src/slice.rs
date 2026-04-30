@@ -32,6 +32,7 @@ pub enum SliceConversionError {
     MisalignedPointer,
 }
 
+// Gated on `std` because `FfiSafeErrorMessage` lives in `libdd-common`, which is std-only.
 #[cfg(feature = "std")]
 /// # Safety
 /// All strings are valid UTF-8 (enforced by using c-str literals in Rust).

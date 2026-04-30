@@ -44,66 +44,12 @@ mod no_std_support {
 pub mod tracer_metadata;
 
 use libdd_common_ffi::{self as ffi, slice::AsBytes};
-#[cfg(feature = "std")]
-use libdd_common_ffi::{CString, Error};
 
 #[cfg(not(feature = "std"))]
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 
 use ffi::CharSlice;
 use libdd_library_config::{self as lib_config, LibraryConfigSource};
-
-#[cfg(all(feature = "std", feature = "catch_panic", panic = "unwind"))]
-use std::panic::{catch_unwind, AssertUnwindSafe};
-
-#[cfg(all(feature = "std", feature = "catch_panic", panic = "unwind"))]
-macro_rules! catch_panic {
-    ($f:expr) => {
-        match catch_unwind(AssertUnwindSafe(|| $f)) {
-            Ok(ret) => ret,
-            Err(info) => {
-                let panic_msg = if let Some(s) = info.downcast_ref::<&'static str>() {
-                    s.to_string()
-                } else if let Some(s) = info.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "Unable to retrieve panic context".to_string()
-                };
-                LibraryConfigLoggedResult::Err(Error::from(format!(
-                    "FFI function panicked: {}",
-                    panic_msg
-                )))
-            }
-        }
-    };
-}
-
-#[cfg(all(feature = "std", any(not(feature = "catch_panic"), panic = "abort")))]
-macro_rules! catch_panic {
-    ($f:expr) => {
-        $f
-    };
-}
-
-#[cfg(feature = "std")]
-/// A result type that includes debug/log messages along with the data
-#[repr(C)]
-pub struct OkResult {
-    pub value: ffi::Vec<LibraryConfig>,
-    pub logs: CString,
-}
-
-#[cfg(feature = "std")]
-#[repr(C)]
-pub enum LibraryConfigLoggedResult {
-    Ok(OkResult),
-    Err(Error),
-}
-
-// TODO: Centos 6 build
-// Trust me it works bro
-// #[cfg(linux)]
-// std::arch::global_asm!(".symver memcpy,memcpy@GLIBC_2.2.5");
 
 #[repr(C)]
 pub struct ProcessInfo<'a> {
@@ -130,49 +76,6 @@ pub struct LibraryConfig {
     pub config_id: ffi::CString,
 }
 
-impl LibraryConfig {
-    fn vec_to_ffi(
-        configs: Vec<lib_config::LibraryConfig>,
-    ) -> Result<ffi::Vec<Self>, alloc::ffi::NulError> {
-        let cfg: Vec<LibraryConfig> = configs
-            .into_iter()
-            .map(|c| {
-                Ok(LibraryConfig {
-                    name: ffi::CString::new(c.name)?,
-                    value: ffi::CString::new(c.value)?,
-                    source: c.source,
-                    config_id: ffi::CString::new(c.config_id.unwrap_or_default())?,
-                })
-            })
-            .collect::<Result<Vec<_>, alloc::ffi::NulError>>()?;
-        Ok(ffi::Vec::from_std(cfg))
-    }
-
-    #[cfg(feature = "std")]
-    fn logged_result_to_ffi_with_messages(
-        result: libdd_library_config::LoggedResult<Vec<lib_config::LibraryConfig>, anyhow::Error>,
-    ) -> LibraryConfigLoggedResult {
-        match result {
-            libdd_library_config::LoggedResult::Ok(configs, logs) => {
-                match Self::vec_to_ffi(configs) {
-                    Ok(ffi_configs) => {
-                        let messages = logs.join("\n");
-                        let cstring_logs = CString::new_or_empty(messages);
-                        LibraryConfigLoggedResult::Ok(OkResult {
-                            value: ffi_configs,
-                            logs: cstring_logs,
-                        })
-                    }
-                    Err(err) => LibraryConfigLoggedResult::Err(Error::from(err.to_string())),
-                }
-            }
-            libdd_library_config::LoggedResult::Err(err) => {
-                LibraryConfigLoggedResult::Err(err.into())
-            }
-        }
-    }
-}
-
 pub struct Configurator<'a> {
     inner: lib_config::Configurator,
     language: CharSlice<'a>,
@@ -180,8 +83,6 @@ pub struct Configurator<'a> {
     local_path: Option<ffi::CStr<'a>>,
     process_info: Option<lib_config::ProcessInfo>,
 }
-
-// type FfiConfigurator<'a>  = Configurator<'a>;
 
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_new(
@@ -221,107 +122,202 @@ pub extern "C" fn ddog_library_configurator_with_process_info<'a>(
     c.process_info = Some(p.ffi_to_rs());
 }
 
-#[cfg(feature = "std")]
-#[no_mangle]
-pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Configurator) {
-    c.process_info = Some(lib_config::ProcessInfo::detect_global(
-        c.language.to_utf8_lossy().into_owned(),
-    ));
-}
-
 #[no_mangle]
 pub extern "C" fn ddog_library_configurator_drop(_: Box<Configurator>) {}
 
+/// All std-only items live in this module so the `#[cfg(feature = "std")]` gate is
+/// applied once at the module boundary instead of being repeated on every item.
 #[cfg(feature = "std")]
-#[no_mangle]
-pub extern "C" fn ddog_library_configurator_get(
-    configurator: &Configurator,
-) -> LibraryConfigLoggedResult {
-    catch_panic!({
-        let local_path = configurator
-            .local_path
-            .as_ref()
-            .and_then(|p| p.into_std().to_str().ok())
-            .unwrap_or(lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH);
-        let fleet_path = configurator
-            .fleet_path
-            .as_ref()
-            .and_then(|p| p.into_std().to_str().ok())
-            .unwrap_or(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH);
-        let detected_process_info;
-        let process_info = match configurator.process_info {
-            Some(ref p) => p,
-            None => {
-                detected_process_info = lib_config::ProcessInfo::detect_global(
-                    configurator.language.to_utf8_lossy().into_owned(),
-                );
-                &detected_process_info
+mod std_api {
+    use super::*;
+    use libdd_common_ffi::{CString, Error};
+
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
+    macro_rules! catch_panic {
+        ($f:expr) => {
+            match catch_unwind(AssertUnwindSafe(|| $f)) {
+                Ok(ret) => ret,
+                Err(info) => {
+                    let panic_msg = if let Some(s) = info.downcast_ref::<&'static str>() {
+                        s.to_string()
+                    } else if let Some(s) = info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unable to retrieve panic context".to_string()
+                    };
+                    LibraryConfigLoggedResult::Err(Error::from(format!(
+                        "FFI function panicked: {}",
+                        panic_msg
+                    )))
+                }
             }
         };
+    }
 
-        let result = configurator.inner.get_config_from_file(
-            local_path.as_ref(),
-            fleet_path.as_ref(),
-            process_info,
-        );
+    #[cfg(any(not(feature = "catch_panic"), panic = "abort"))]
+    macro_rules! catch_panic {
+        ($f:expr) => {
+            $f
+        };
+    }
 
-        LibraryConfig::logged_result_to_ffi_with_messages(result)
-    })
-}
+    /// A result type that includes debug/log messages along with the data
+    #[repr(C)]
+    pub struct OkResult {
+        pub value: ffi::Vec<LibraryConfig>,
+        pub logs: CString,
+    }
 
-#[cfg(feature = "std")]
-#[no_mangle]
-/// Returns a static null-terminated string, containing the name of the environment variable
-/// associated with the library configuration
-pub extern "C" fn ddog_library_config_source_to_string(
-    name: LibraryConfigSource,
-) -> ffi::CStr<'static> {
-    ffi::CStr::from_std(match name {
-        LibraryConfigSource::LocalStableConfig => libdd_common::cstr!("local_stable_config"),
-        LibraryConfigSource::FleetStableConfig => libdd_common::cstr!("fleet_stable_config"),
-    })
-}
+    #[repr(C)]
+    pub enum LibraryConfigLoggedResult {
+        Ok(OkResult),
+        Err(Error),
+    }
 
-#[cfg(feature = "std")]
-#[no_mangle]
-/// Returns a static null-terminated string with the path to the managed stable config yaml config
-/// file
-pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'static> {
-    // SAFETY: constcat! appends a literal "\0", guaranteeing a single null terminator
-    // at the end. The path constant contains no interior null bytes.
-    ffi::CStr::from_std(unsafe {
-        let path: &'static str = constcat::concat!(
-            lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH,
-            "\0"
-        );
-        std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
-    })
-}
+    impl LibraryConfig {
+        fn rs_vec_to_ffi(
+            configs: Vec<lib_config::LibraryConfig>,
+        ) -> Result<ffi::Vec<Self>, alloc::ffi::NulError> {
+            let cfg: Vec<LibraryConfig> = configs
+                .into_iter()
+                .map(|c| {
+                    Ok(LibraryConfig {
+                        name: ffi::CString::new(c.name)?,
+                        value: ffi::CString::new(c.value)?,
+                        source: c.source,
+                        config_id: ffi::CString::new(c.config_id.unwrap_or_default())?,
+                    })
+                })
+                .collect::<Result<Vec<_>, alloc::ffi::NulError>>()?;
+            Ok(ffi::Vec::from_std(cfg))
+        }
 
-#[cfg(feature = "std")]
-#[no_mangle]
-/// Returns a static null-terminated string with the path to the local stable config yaml config
-/// file
-pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'static> {
-    // SAFETY: constcat! appends a literal "\0", guaranteeing a single null terminator
-    // at the end. The path constant contains no interior null bytes.
-    ffi::CStr::from_std(unsafe {
-        let path: &'static str = constcat::concat!(
-            lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH,
-            "\0"
-        );
-        std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
-    })
-}
+        fn logged_result_to_ffi_with_messages(
+            result: libdd_library_config::LoggedResult<
+                Vec<lib_config::LibraryConfig>,
+                anyhow::Error,
+            >,
+        ) -> LibraryConfigLoggedResult {
+            match result {
+                libdd_library_config::LoggedResult::Ok(configs, logs) => {
+                    match Self::rs_vec_to_ffi(configs) {
+                        Ok(ffi_configs) => {
+                            let messages = logs.join("\n");
+                            let cstring_logs = CString::new_or_empty(messages);
+                            LibraryConfigLoggedResult::Ok(OkResult {
+                                value: ffi_configs,
+                                logs: cstring_logs,
+                            })
+                        }
+                        Err(err) => LibraryConfigLoggedResult::Err(Error::from(err.to_string())),
+                    }
+                }
+                libdd_library_config::LoggedResult::Err(err) => {
+                    LibraryConfigLoggedResult::Err(err.into())
+                }
+            }
+        }
+    }
 
-#[cfg(feature = "std")]
-#[no_mangle]
-pub extern "C" fn ddog_library_config_drop(mut config_result: LibraryConfigLoggedResult) {
-    match &mut config_result {
-        LibraryConfigLoggedResult::Ok(_) => {}
-        LibraryConfigLoggedResult::Err(err) => {
-            // Use the internal error clearing function for defensive cleanup
-            libdd_common_ffi::clear_error(err);
+    #[no_mangle]
+    pub extern "C" fn ddog_library_configurator_with_detect_process_info(c: &mut Configurator) {
+        c.process_info = Some(lib_config::ProcessInfo::detect_global(
+            c.language.to_utf8_lossy().into_owned(),
+        ));
+    }
+
+    #[no_mangle]
+    pub extern "C" fn ddog_library_configurator_get(
+        configurator: &Configurator,
+    ) -> LibraryConfigLoggedResult {
+        catch_panic!({
+            let local_path = configurator
+                .local_path
+                .as_ref()
+                .and_then(|p| p.into_std().to_str().ok())
+                .unwrap_or(lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH);
+            let fleet_path = configurator
+                .fleet_path
+                .as_ref()
+                .and_then(|p| p.into_std().to_str().ok())
+                .unwrap_or(lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH);
+            let detected_process_info;
+            let process_info = match configurator.process_info {
+                Some(ref p) => p,
+                None => {
+                    detected_process_info = lib_config::ProcessInfo::detect_global(
+                        configurator.language.to_utf8_lossy().into_owned(),
+                    );
+                    &detected_process_info
+                }
+            };
+
+            let result = configurator.inner.get_config_from_file(
+                local_path.as_ref(),
+                fleet_path.as_ref(),
+                process_info,
+            );
+
+            LibraryConfig::logged_result_to_ffi_with_messages(result)
+        })
+    }
+
+    #[no_mangle]
+    /// Returns a static null-terminated string, containing the name of the environment variable
+    /// associated with the library configuration
+    pub extern "C" fn ddog_library_config_source_to_string(
+        name: LibraryConfigSource,
+    ) -> ffi::CStr<'static> {
+        ffi::CStr::from_std(match name {
+            LibraryConfigSource::LocalStableConfig => libdd_common::cstr!("local_stable_config"),
+            LibraryConfigSource::FleetStableConfig => libdd_common::cstr!("fleet_stable_config"),
+        })
+    }
+
+    #[no_mangle]
+    /// Returns a static null-terminated string with the path to the managed stable config yaml config
+    /// file
+    pub extern "C" fn ddog_library_config_fleet_stable_config_path() -> ffi::CStr<'static> {
+        // SAFETY: constcat! appends a literal "\0", guaranteeing a single null terminator
+        // at the end. The path constant contains no interior null bytes.
+        ffi::CStr::from_std(unsafe {
+            let path: &'static str = constcat::concat!(
+                lib_config::Configurator::FLEET_STABLE_CONFIGURATION_PATH,
+                "\0"
+            );
+            std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
+        })
+    }
+
+    #[no_mangle]
+    /// Returns a static null-terminated string with the path to the local stable config yaml config
+    /// file
+    pub extern "C" fn ddog_library_config_local_stable_config_path() -> ffi::CStr<'static> {
+        // SAFETY: constcat! appends a literal "\0", guaranteeing a single null terminator
+        // at the end. The path constant contains no interior null bytes.
+        ffi::CStr::from_std(unsafe {
+            let path: &'static str = constcat::concat!(
+                lib_config::Configurator::LOCAL_STABLE_CONFIGURATION_PATH,
+                "\0"
+            );
+            std::ffi::CStr::from_bytes_with_nul_unchecked(path.as_bytes())
+        })
+    }
+
+    #[no_mangle]
+    pub extern "C" fn ddog_library_config_drop(mut config_result: LibraryConfigLoggedResult) {
+        match &mut config_result {
+            LibraryConfigLoggedResult::Ok(_) => {}
+            LibraryConfigLoggedResult::Err(err) => {
+                // Use the internal error clearing function for defensive cleanup
+                libdd_common_ffi::clear_error(err);
+            }
         }
     }
 }
+
+#[cfg(feature = "std")]
+pub use std_api::*;

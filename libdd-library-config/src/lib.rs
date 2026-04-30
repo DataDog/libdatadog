@@ -718,7 +718,6 @@ impl Configurator {
         process_info: &ProcessInfo,
         cfg: &mut BTreeMap<String, LibraryConfigVal>,
     ) -> LoggedResult<(), anyhow::Error> {
-        let config_id = stable_config.config_id.clone();
         // Phase 1: take host default config
         cfg.extend(
             mem::take(&mut stable_config.apm_configuration_default)
@@ -732,7 +731,7 @@ impl Configurator {
                         LibraryConfigVal {
                             value: v,
                             source,
-                            config_id: config_id.clone(),
+                            config_id: stable_config.config_id.clone(),
                         },
                     )
                 }),
@@ -760,7 +759,6 @@ impl Configurator {
             return LoggedResult::Ok((), messages);
         };
 
-        let config_id = stable_config.config_id.clone();
         for (name, config_val) in configs.0.iter() {
             let value = match matcher.template_config(config_val) {
                 Ok(v) => v,
@@ -771,7 +769,7 @@ impl Configurator {
                 LibraryConfigVal {
                     value,
                     source,
-                    config_id: config_id.clone(),
+                    config_id: stable_config.config_id.clone(),
                 },
             );
         }
