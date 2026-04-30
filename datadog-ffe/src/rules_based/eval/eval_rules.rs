@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::rules_based::{
-    ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire},
+    ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire, SemverComparisonOperator},
     Attribute, EvaluationContext,
 };
 
@@ -61,6 +61,22 @@ impl ConditionCheck {
                 let is_null = !is_present;
                 is_null == *expected_null
             }
+            ConditionCheck::SemverComparison {
+                operator,
+                comparand,
+            } => {
+                let attr_str = attribute?.as_str()?;
+                let attr_version = semver::Version::parse(attr_str.as_ref()).ok()?;
+                let ordering = attr_version.cmp(comparand);
+                match operator {
+                    SemverComparisonOperator::Eq => ordering.is_eq(),
+                    SemverComparisonOperator::Neq => !ordering.is_eq(),
+                    SemverComparisonOperator::Lt => ordering.is_lt(),
+                    SemverComparisonOperator::Lte => ordering.is_le(),
+                    SemverComparisonOperator::Gt => ordering.is_gt(),
+                    SemverComparisonOperator::Gte => ordering.is_ge(),
+                }
+            }
         };
 
         Some(result)
@@ -72,7 +88,7 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use crate::rules_based::{
-        ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire},
+        ufc::{ComparisonOperator, Condition, ConditionCheck, RuleWire, SemverComparisonOperator},
         EvaluationContext,
     };
 
@@ -286,5 +302,98 @@ mod tests {
             Some("key".into()),
             Arc::new(HashMap::from([("name".into(), "alice".into())]))
         )));
+    }
+
+    fn semver(s: &str) -> semver::Version {
+        semver::Version::parse(s).unwrap()
+    }
+
+    #[test]
+    fn semver_eq() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Eq,
+            comparand: semver("1.2.3"),
+        };
+        assert!(check.eval(Some(&"1.2.3".into())));
+        assert!(!check.eval(Some(&"1.2.4".into())));
+        assert!(!check.eval(Some(&"1.2.2".into())));
+        assert!(!check.eval(None));
+    }
+
+    #[test]
+    fn semver_neq() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Neq,
+            comparand: semver("1.2.3"),
+        };
+        assert!(!check.eval(Some(&"1.2.3".into())));
+        assert!(check.eval(Some(&"1.2.4".into())));
+        assert!(!check.eval(None));
+    }
+
+    #[test]
+    fn semver_lt() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Lt,
+            comparand: semver("2.0.0"),
+        };
+        assert!(check.eval(Some(&"1.9.9".into())));
+        assert!(!check.eval(Some(&"2.0.0".into())));
+        assert!(!check.eval(Some(&"2.0.1".into())));
+    }
+
+    #[test]
+    fn semver_lte() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Lte,
+            comparand: semver("2.0.0"),
+        };
+        assert!(check.eval(Some(&"1.9.9".into())));
+        assert!(check.eval(Some(&"2.0.0".into())));
+        assert!(!check.eval(Some(&"2.0.1".into())));
+    }
+
+    #[test]
+    fn semver_gt() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Gt,
+            comparand: semver("1.0.0"),
+        };
+        assert!(check.eval(Some(&"1.0.1".into())));
+        assert!(!check.eval(Some(&"1.0.0".into())));
+        assert!(!check.eval(Some(&"0.9.9".into())));
+    }
+
+    #[test]
+    fn semver_gte() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Gte,
+            comparand: semver("1.0.0"),
+        };
+        assert!(check.eval(Some(&"1.0.1".into())));
+        assert!(check.eval(Some(&"1.0.0".into())));
+        assert!(!check.eval(Some(&"0.9.9".into())));
+    }
+
+    #[test]
+    fn semver_prerelease_ordering() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Lt,
+            comparand: semver("1.0.0"),
+        };
+        assert!(check.eval(Some(&"1.0.0-alpha".into())));
+        assert!(check.eval(Some(&"1.0.0-beta.1".into())));
+        assert!(!check.eval(Some(&"1.0.0".into())));
+    }
+
+    #[test]
+    fn semver_invalid_attribute_returns_false() {
+        let check = ConditionCheck::SemverComparison {
+            operator: SemverComparisonOperator::Gte,
+            comparand: semver("1.0.0"),
+        };
+        assert!(!check.eval(Some(&"not-a-version".into())));
+        assert!(!check.eval(Some(&"1.2".into())));
+        assert!(!check.eval(None));
     }
 }
