@@ -242,6 +242,13 @@ pub struct Sample2<'a> {
     pub labels: Slice<'a, Label2<'a>>,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct HeapLiveConfig<'a> {
+    pub max_tracked_allocations: usize,
+    pub excluded_label_keys: Slice<'a, CharSlice<'a>>,
+}
+
 impl<'a> TryFrom<&'a Mapping<'a>> for api::Mapping<'a> {
     type Error = Utf8Error;
 
@@ -386,6 +393,24 @@ impl<'a> From<Sample<'a>> for api::StringIdSample<'a> {
             labels: sample.labels.as_slice().iter().map(Into::into).collect(),
         }
     }
+}
+
+fn sample_uses_string_ids(sample: &Sample<'_>) -> bool {
+    fn has_id(id: ManagedStringId) -> bool {
+        id != ManagedStringId::empty()
+    }
+
+    sample.locations.as_slice().iter().any(|location| {
+        has_id(location.mapping.filename_id)
+            || has_id(location.mapping.build_id_id)
+            || has_id(location.function.name_id)
+            || has_id(location.function.system_name_id)
+            || has_id(location.function.filename_id)
+    }) || sample
+        .labels
+        .as_slice()
+        .iter()
+        .any(|label| has_id(label.key_id) || has_id(label.str_id) || has_id(label.num_unit_id))
 }
 
 /// Create a new profile with the given sample types. Must call
@@ -558,10 +583,7 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
 ) -> ProfileResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
-        let uses_string_ids = sample
-            .labels
-            .first()
-            .is_some_and(|label| label.key.is_empty() && label.key_id.value > 0);
+        let uses_string_ids = sample_uses_string_ids(&sample);
 
         if uses_string_ids {
             profile.add_string_id_sample(sample.into(), timestamp)
@@ -570,6 +592,38 @@ pub unsafe extern "C" fn ddog_prof_Profile_add(
         }
     })()
     .context("ddog_prof_Profile_add failed")
+    .into()
+}
+
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. All pointers inside the `sample` need to be valid for the duration
+/// of this call.
+///
+/// If successful, it returns the Ok variant.
+/// On error, it holds an error message in the error variant.
+///
+/// # Arguments
+/// * `ptr` - The allocation pointer to retain for heap-live profiling.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add_tracked_allocation(
+    profile: *mut Profile,
+    sample: Sample,
+    timestamp: Option<NonZeroI64>,
+    ptr: usize,
+) -> ProfileResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let uses_string_ids = sample_uses_string_ids(&sample);
+
+        if uses_string_ids {
+            profile.add_tracked_string_id_allocation(sample.into(), timestamp, ptr as u64)
+        } else {
+            profile.add_tracked_allocation(sample.try_into()?, timestamp, ptr as u64)
+        }
+    })()
+    .context("ddog_prof_Profile_add_tracked_allocation failed")
     .into()
 }
 /// # Safety
@@ -896,9 +950,73 @@ pub unsafe extern "C" fn ddog_prof_Profile_reset(profile: *mut Profile) -> Profi
     .into()
 }
 
+/// Configure heap-live allocation tracking on this profile. Tracked allocations
+/// are automatically injected during profile reset and survive across resets.
+///
+/// # Arguments
+/// * `profile` - A mutable reference to the profile.
+/// * `config` - Heap-live tracking configuration. Required sample types are derived from the
+///   profile schema and validated here.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. `config.excluded_label_keys` must be a valid `Slice<CharSlice>`.
+/// This call is _NOT_ thread-safe.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_configure_heap_live(
+    profile: *mut Profile,
+    config: HeapLiveConfig,
+) -> ProfileResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let labels: Vec<&str> = config
+            .excluded_label_keys
+            .iter()
+            .map(|cs| cs.try_to_utf8())
+            .collect::<Result<Vec<_>, _>>()?;
+        profile.configure_heap_live(config.max_tracked_allocations, &labels)
+    })()
+    .context("ddog_prof_Profile_configure_heap_live failed")
+    .into()
+}
+
+/// Remove a tracked heap-live allocation by pointer. No-op if heap-live
+/// tracking is disabled or the pointer is not tracked.
+///
+/// # Arguments
+/// * `profile` - A mutable reference to the profile.
+/// * `ptr` - The pointer value of the allocation to untrack.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. This call is _NOT_ thread-safe.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_untrack_allocation(profile: *mut Profile, ptr: usize) {
+    if let Ok(profile) = profile_ptr_to_inner(profile) {
+        profile.untrack_allocation(ptr as u64);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn new_string_storage() -> ManagedStringStorage {
+        match crate::string_storage::ddog_prof_ManagedStringStorage_new() {
+            crate::string_storage::ManagedStringStorageNewResult::Ok(storage) => storage,
+            crate::string_storage::ManagedStringStorageNewResult::Err(err) => panic!("{err}"),
+        }
+    }
+
+    unsafe fn intern_string(storage: ManagedStringStorage, value: &str) -> ManagedStringId {
+        match crate::string_storage::ddog_prof_ManagedStringStorage_intern(
+            storage,
+            CharSlice::from(value),
+        ) {
+            crate::string_storage::ManagedStringStorageInternResult::Ok(id) => id,
+            crate::string_storage::ManagedStringStorageInternResult::Err(err) => panic!("{err}"),
+        }
+    }
 
     #[test]
     fn ctor_and_dtor() -> Result<(), Error> {
@@ -1092,6 +1210,204 @@ mod tests {
     fn distinct_locations_ffi() {
         unsafe {
             ddog_prof_Profile_drop(&mut provide_distinct_locations_ffi());
+        }
+    }
+
+    #[test]
+    fn configure_heap_live_ffi_requires_expected_sample_types() -> Result<(), Error> {
+        unsafe {
+            let sample_types = [SampleType::AllocSamples, SampleType::AllocSize];
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(sample_types.as_ptr(), sample_types.len()),
+                None,
+            ))?;
+
+            let result = Result::from(ddog_prof_Profile_configure_heap_live(
+                &mut profile,
+                HeapLiveConfig {
+                    max_tracked_allocations: 16,
+                    excluded_label_keys: Slice::empty(),
+                },
+            ));
+            assert!(result.unwrap_err().to_string().contains("HeapLiveSamples"));
+
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn add_tracked_allocation_ffi_requires_configuration() -> Result<(), Error> {
+        unsafe {
+            let sample_types = [
+                SampleType::AllocSamples,
+                SampleType::AllocSize,
+                SampleType::HeapLiveSamples,
+                SampleType::HeapLiveSize,
+            ];
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(sample_types.as_ptr(), sample_types.len()),
+                None,
+            ))?;
+
+            let values = [1, 128, 0, 0];
+            let sample = Sample {
+                locations: Slice::empty(),
+                values: Slice::from(values.as_slice()),
+                labels: Slice::empty(),
+            };
+
+            let result = Result::from(ddog_prof_Profile_add_tracked_allocation(
+                &mut profile,
+                sample,
+                None,
+                0x1234,
+            ));
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("heap-live tracking is not configured for this profile"));
+
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn configure_heap_live_and_add_tracked_allocation_ffi() -> Result<(), Error> {
+        unsafe {
+            let sample_types = [
+                SampleType::AllocSamples,
+                SampleType::AllocSize,
+                SampleType::HeapLiveSamples,
+                SampleType::HeapLiveSize,
+            ];
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(sample_types.as_ptr(), sample_types.len()),
+                None,
+            ))?;
+
+            Result::from(ddog_prof_Profile_configure_heap_live(
+                &mut profile,
+                HeapLiveConfig {
+                    max_tracked_allocations: 16,
+                    excluded_label_keys: Slice::empty(),
+                },
+            ))?;
+
+            let values = [1, 128, 0, 0];
+            let sample = Sample {
+                locations: Slice::empty(),
+                values: Slice::from(values.as_slice()),
+                labels: Slice::empty(),
+            };
+
+            Result::from(ddog_prof_Profile_add_tracked_allocation(
+                &mut profile,
+                sample,
+                None,
+                0x1234,
+            ))?;
+
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn tracked_allocation_ffi_detects_string_id_locations_without_labels() -> Result<(), Error> {
+        unsafe {
+            let storage = new_string_storage();
+            let sample_types = [
+                SampleType::AllocSamples,
+                SampleType::AllocSize,
+                SampleType::HeapLiveSamples,
+                SampleType::HeapLiveSize,
+            ];
+            let mut profile = Result::from(ddog_prof_Profile_with_string_storage(
+                Slice::from_raw_parts(sample_types.as_ptr(), sample_types.len()),
+                None,
+                storage,
+            ))?;
+
+            Result::from(ddog_prof_Profile_configure_heap_live(
+                &mut profile,
+                HeapLiveConfig {
+                    max_tracked_allocations: 16,
+                    excluded_label_keys: Slice::empty(),
+                },
+            ))?;
+
+            let mapping_filename_id = intern_string(storage, "php");
+            let mapping_build_id = intern_string(storage, "build-id");
+            let function_name_id = intern_string(storage, "alloc_fn");
+            let function_filename_id = intern_string(storage, "alloc.php");
+
+            let string_id_locations = [Location {
+                mapping: Mapping {
+                    filename_id: mapping_filename_id,
+                    build_id_id: mapping_build_id,
+                    ..Default::default()
+                },
+                function: Function {
+                    name_id: function_name_id,
+                    system_name_id: function_name_id,
+                    filename_id: function_filename_id,
+                    ..Default::default()
+                },
+                line: 7,
+                ..Default::default()
+            }];
+            let tracked_values = [1, 128, 0, 0];
+            let string_id_sample = Sample {
+                locations: Slice::from(string_id_locations.as_slice()),
+                values: Slice::from(tracked_values.as_slice()),
+                labels: Slice::empty(),
+            };
+
+            Result::from(ddog_prof_Profile_add_tracked_allocation(
+                &mut profile,
+                string_id_sample,
+                None,
+                0x1234,
+            ))?;
+
+            let direct_locations = [Location {
+                mapping: Mapping {
+                    filename: "php".into(),
+                    build_id: "build-id".into(),
+                    ..Default::default()
+                },
+                function: Function {
+                    name: "alloc_fn".into(),
+                    system_name: "alloc_fn".into(),
+                    filename: "alloc.php".into(),
+                    ..Default::default()
+                },
+                line: 7,
+                ..Default::default()
+            }];
+            let direct_values = [2, 256, 0, 0];
+            let direct_sample = Sample {
+                locations: Slice::from(direct_locations.as_slice()),
+                values: Slice::from(direct_values.as_slice()),
+                labels: Slice::empty(),
+            };
+
+            Result::from(ddog_prof_Profile_add(&mut profile, direct_sample, None))?;
+
+            assert_eq!(
+                profile
+                    .inner
+                    .as_ref()
+                    .unwrap()
+                    .only_for_testing_num_aggregated_samples(),
+                1
+            );
+
+            ddog_prof_Profile_drop(&mut profile);
+            crate::string_storage::ddog_prof_ManagedStringStorage_drop(storage);
+            Ok(())
         }
     }
 }
