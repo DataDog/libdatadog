@@ -30,8 +30,6 @@ pub enum SliceConversionError {
 }
 
 impl SliceConversionError {
-    /// Single source of truth for the error message; consumed by both `Display` and
-    /// `FfiSafeErrorMessage::as_ffi_str`.
     fn message(&self) -> &'static core::ffi::CStr {
         match self {
             SliceConversionError::LargeLength => c"length was too large",
