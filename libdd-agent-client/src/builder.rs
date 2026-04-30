@@ -41,6 +41,14 @@ pub enum AgentTransport {
         /// Port number.
         port: u16,
     },
+    /// HTTPS over TCP.
+    #[cfg(feature = "https")]
+    Https {
+        /// Hostname or IP address.
+        host: String,
+        /// Port number.
+        port: u16,
+    },
     /// Unix Domain Socket.
     ///
     /// HTTP requests are still formed with `Host: localhost`. The socket path governs only the
@@ -73,8 +81,9 @@ impl Default for AgentTransport {
 ///
 /// # Required fields
 ///
-/// - Transport: one of [`AgentClientBuilder::http`], [`AgentClientBuilder::unix_socket`],
-///   [`AgentClientBuilder::windows_named_pipe`], [`AgentClientBuilder::transport`].
+/// - Transport: one of [`AgentClientBuilder::http`], [`AgentClientBuilder::https`],
+///   [`AgentClientBuilder::unix_socket`], [`AgentClientBuilder::windows_named_pipe`],
+///   [`AgentClientBuilder::transport`].
 /// - [`AgentClientBuilder::language_metadata`].
 ///
 /// # Test tokens
@@ -107,6 +116,15 @@ impl AgentClientBuilder {
     /// Convenience: HTTP over TCP.
     pub fn http(self, host: impl Into<String>, port: u16) -> Self {
         self.transport(AgentTransport::Http {
+            host: host.into(),
+            port,
+        })
+    }
+
+    /// Convenience: HTTPS over TCP.
+    #[cfg(feature = "https")]
+    pub fn https(self, host: impl Into<String>, port: u16) -> Self {
+        self.transport(AgentTransport::Https {
             host: host.into(),
             port,
         })
@@ -204,6 +222,8 @@ impl AgentClientBuilder {
     ) -> Result<libdd_http_client::HttpClient, libdd_http_client::HttpClientError> {
         let base_url = match &transport {
             AgentTransport::Http { host, port } => format!("http://{}:{}", host, port),
+            #[cfg(feature = "https")]
+            AgentTransport::Https { host, port } => format!("https://{}:{}", host, port),
             #[cfg(unix)]
             AgentTransport::UnixSocket { .. } => "http://localhost".to_string(),
             #[cfg(windows)]
@@ -222,6 +242,8 @@ impl AgentClientBuilder {
 
         match transport {
             AgentTransport::Http { .. } => {}
+            #[cfg(feature = "https")]
+            AgentTransport::Https { .. } => {}
             #[cfg(unix)]
             AgentTransport::UnixSocket { path } => {
                 builder = builder.unix_socket(path);
