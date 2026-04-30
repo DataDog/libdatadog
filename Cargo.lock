@@ -1363,6 +1363,7 @@ dependencies = [
  "md5",
  "pyo3",
  "regex",
+ "semver",
  "serde",
  "serde-bool",
  "serde_json",
