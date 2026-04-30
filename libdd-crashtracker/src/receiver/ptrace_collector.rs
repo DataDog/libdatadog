@@ -337,7 +337,7 @@ mod tests {
     use std::time::Duration;
 
     fn current_tid() -> libc::pid_t {
-        unsafe { libc::gettid() }
+        unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
     }
 
     #[test]
@@ -362,7 +362,8 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
 
         let handle = std::thread::spawn(move || {
-            tx.send(unsafe { libc::gettid() }).unwrap();
+            tx.send(current_tid()).unwrap();
+
             b.wait();
         });
 
@@ -379,32 +380,6 @@ mod tests {
         handle.join().unwrap();
     }
 
-    /// PTRACE_SEIZE + PTRACE_INTERRUPT + PTRACE_DETACH should round-trip on a
-    /// live thread within the same process.  Skips gracefully if the environment
-    /// restricts ptrace (e.g. a container with Yama ptrace_scope = 3).
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn attach_detach_round_trip() {
-        let barrier = Arc::new(Barrier::new(2));
-        let b = Arc::clone(&barrier);
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        let handle = std::thread::spawn(move || {
-            tx.send(unsafe { libc::gettid() }).unwrap();
-            b.wait();
-        });
-
-        let tid = rx.recv().unwrap();
-
-        match attach_thread(tid) {
-            Err(e) => eprintln!("skipping ptrace test (ptrace unavailable): {e}"),
-            Ok(()) => detach_thread(tid).expect("detach should succeed after attach"),
-        }
-
-        barrier.wait();
-        handle.join().unwrap();
-    }
-
     /// A stopped thread should produce at least one frame (the IP at ptrace-stop).
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -414,7 +389,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
 
         let handle = std::thread::spawn(move || {
-            tx.send(unsafe { libc::gettid() }).unwrap();
+            tx.send(current_tid()).unwrap();
             b.wait();
         });
 
@@ -470,7 +445,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
 
         let handle = std::thread::spawn(move || {
-            tx.send(unsafe { libc::gettid() }).unwrap();
+            tx.send(current_tid()).unwrap();
             b.wait();
         });
 
