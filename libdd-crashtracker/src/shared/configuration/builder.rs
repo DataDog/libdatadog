@@ -5,7 +5,7 @@ use libdd_common::Endpoint;
 use std::borrow::Cow;
 use std::time::Duration;
 
-use super::{CrashtrackerConfiguration, StacktraceCollection};
+use super::{default_max_threads, CrashtrackerConfiguration, StacktraceCollection};
 
 #[derive(Debug, Default)]
 pub struct CrashtrackerConfigurationBuilder {
@@ -154,7 +154,7 @@ impl CrashtrackerConfigurationBuilder {
             create_alt_stack: self.create_alt_stack,
             use_alt_stack: self.use_alt_stack,
             endpoint,
-            max_threads: self.max_threads.unwrap_or(128),
+            max_threads: self.max_threads.unwrap_or(default_max_threads()),
             resolve_frames: self.resolve_frames,
             signals,
             timeout,

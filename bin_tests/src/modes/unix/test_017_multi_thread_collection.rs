@@ -13,11 +13,11 @@ use std::time::Duration;
 
 pub struct Test;
 
-// Black box to prevent compiler optim
+// Black box to prevent compiler optimization
 #[inline(never)]
 fn worker_fn_0() {
     loop {
-        std::hint::black_box(0x17_00u64); // 0x17 = test 017; _00 = thread 0
+        std::hint::black_box(0x17_00u64);
         std::hint::spin_loop();
     }
 }
@@ -25,7 +25,7 @@ fn worker_fn_0() {
 #[inline(never)]
 fn worker_fn_1() {
     loop {
-        std::hint::black_box(0x17_01u64); // 0x17 = test 017; _01 = thread 1
+        std::hint::black_box(0x17_01u64);
         std::hint::spin_loop();
     }
 }

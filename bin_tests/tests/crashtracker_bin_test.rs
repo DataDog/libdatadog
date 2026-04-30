@@ -220,11 +220,6 @@ fn test_crash_tracking_multi_thread_collection() {
 
     let validator: ValidatorFn = Box::new(|payload, _fixtures| {
         let error = &payload["error"];
-        // assert!(
-        //     false,
-        //     "{}",
-        //     serde_json::to_string_pretty(error).unwrap_or_default()
-        // );
         let threads = error["threads"]
             .as_array()
             .expect("error.threads should be a JSON array");
