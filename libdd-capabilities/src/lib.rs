@@ -10,7 +10,7 @@ pub mod spawn;
 
 pub use self::http::{HttpClientCapability, HttpError};
 pub use self::sleep::SleepCapability;
-pub use self::spawn::{SpawnCapability, SpawnError};
+pub use self::spawn::SpawnError;
 pub use ::http::{Request, Response};
 pub use bytes::Bytes;
 pub use maybe_send::MaybeSend;

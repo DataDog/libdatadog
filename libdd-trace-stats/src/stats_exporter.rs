@@ -373,7 +373,7 @@ mod tests {
             caps.clone(),
         );
         let _handle = shared_runtime
-            .spawn_worker(stats_exporter, true, &caps)
+            .spawn_worker(stats_exporter, true)
             .expect("Failed to spawn worker");
 
         // Wait for stats to be flushed
@@ -415,7 +415,7 @@ mod tests {
         );
 
         let _handle = shared_runtime
-            .spawn_worker(stats_exporter, true, &caps)
+            .spawn_worker(stats_exporter, true)
             .expect("Failed to spawn worker");
 
         shared_runtime.shutdown(None).unwrap();

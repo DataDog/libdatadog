@@ -25,8 +25,7 @@ use tracing::{debug, error};
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use libdd_capabilities::spawn::SpawnCapability;
-    use libdd_capabilities_impl::NativeSpawnCapability;
+    use libdd_capabilities::spawn::SpawnError;
     use std::sync::atomic::Ordering;
     use tokio::runtime::{Builder, Runtime};
 
@@ -60,7 +59,7 @@ mod native {
                 .clone())
         }
 
-        /// Spawn a PausableWorker using the provided spawn capability.
+        /// Spawn a PausableWorker on this runtime.
         ///
         /// The worker will be tracked by this SharedRuntime and will be paused/resumed
         /// during fork operations (native only).
@@ -69,14 +68,10 @@ mod native {
         ///
         /// # Errors
         /// Returns an error if the worker cannot be started.
-        pub fn spawn_worker<
-            T: Worker + Sync + 'static,
-            S: SpawnCapability<RuntimeContext = tokio::runtime::Handle> + 'static,
-        >(
+        pub fn spawn_worker<T: Worker + Sync + 'static>(
             &self,
             worker: T,
             restart_on_fork: bool,
-            spawner: &S,
         ) -> Result<WorkerHandle, SharedRuntimeError> {
             let boxed_worker: BoxedWorker = Box::new(worker);
             debug!(?boxed_worker, "Spawning worker on SharedRuntime");
@@ -94,7 +89,11 @@ mod native {
             let mut workers_guard = self.workers.lock_or_panic();
 
             if let Some(ref handle) = runtime_handle {
-                if let Err(e) = pausable_worker.start(spawner, handle) {
+                let h = handle.clone();
+                if let Err(e) = pausable_worker.start(|future| {
+                    let jh = h.spawn(future);
+                    Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
+                }) {
                     return Err(e.into());
                 }
             }
@@ -167,11 +166,14 @@ mod native {
                 .clone();
             drop(runtime_lock);
 
-            let spawner = NativeSpawnCapability;
             let mut workers_lock = self.workers.lock_or_panic();
 
             for worker_entry in workers_lock.iter_mut() {
-                worker_entry.worker.start(&spawner, &handle)?;
+                let h = handle.clone();
+                worker_entry.worker.start(|future| {
+                    let jh = h.spawn(future);
+                    Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
+                })?;
             }
 
             Ok(())
@@ -197,14 +199,17 @@ mod native {
                 .clone();
             drop(runtime_lock);
 
-            let spawner = NativeSpawnCapability;
             let mut workers_lock = self.workers.lock_or_panic();
 
             workers_lock.retain(|entry| entry.restart_on_fork);
 
             for worker_entry in workers_lock.iter_mut() {
                 worker_entry.worker.reset();
-                worker_entry.worker.start(&spawner, &handle)?;
+                let h = handle.clone();
+                worker_entry.worker.start(|future| {
+                    let jh = h.spawn(future);
+                    Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
+                })?;
             }
 
             Ok(())
@@ -384,8 +389,8 @@ impl From<io::Error> for SharedRuntimeError {
 /// spawned on it. It provides methods to safely pause workers before forking and
 /// restart them after fork in both parent and child processes.
 ///
-/// On wasm32, no tokio runtime is created. Workers are spawned via the caller-provided
-/// [`SpawnCapability`] which delegates to `spawn_local` on the JS event loop.
+/// On wasm32, no tokio runtime is created. Workers are spawned via `spawn_local`
+/// on the JS event loop.
 ///
 /// # Mutex lock order
 /// When locking both [Self::runtime] and [Self::workers], the mutex must be locked in the order of
@@ -402,7 +407,7 @@ impl SharedRuntime {
     /// Create a new SharedRuntime.
     ///
     /// On native, this creates a tokio multi-thread runtime. On wasm32, no runtime
-    /// is created (workers are spawned on the JS event loop via [`SpawnCapability`]).
+    /// is created (workers are spawned on the JS event loop via `spawn_local`).
     ///
     /// # Errors
     /// Returns an error if the tokio runtime cannot be created (native only).
@@ -422,18 +427,12 @@ impl SharedRuntime {
         }
     }
 
-    /// Spawn a PausableWorker using the provided spawn capability (wasm variant).
-    ///
-    /// On wasm the runtime context is `()` — workers are spawned on the JS event loop.
+    /// Spawn a PausableWorker on the JS event loop (wasm variant).
     #[cfg(target_arch = "wasm32")]
-    pub fn spawn_worker<
-        T: Worker + Sync + 'static,
-        S: libdd_capabilities::spawn::SpawnCapability<RuntimeContext = ()> + 'static,
-    >(
+    pub fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
         restart_on_fork: bool,
-        spawner: &S,
     ) -> Result<WorkerHandle, SharedRuntimeError> {
         use std::sync::atomic::Ordering;
 
@@ -443,7 +442,12 @@ impl SharedRuntime {
 
         let mut workers_guard = self.workers.lock_or_panic();
 
-        if let Err(e) = pausable_worker.start(spawner, &()) {
+        if let Err(e) = pausable_worker.start(|future| {
+            use futures_util::FutureExt;
+            let (remote, handle) = future.remote_handle();
+            wasm_bindgen_futures::spawn_local(remote);
+            Box::pin(async { Ok(handle.await) })
+        }) {
             return Err(e.into());
         }
 
@@ -493,7 +497,6 @@ impl SharedRuntime {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use libdd_capabilities_impl::NativeSpawnCapability;
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::time::Duration;
     use tokio::time::sleep;
@@ -539,10 +542,9 @@ mod tests {
     #[test]
     fn test_spawn_worker() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
-        let result = shared_runtime.spawn_worker(worker, true, &spawner);
+        let result = shared_runtime.spawn_worker(worker, true);
         assert!(result.is_ok());
         assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
 
@@ -559,10 +561,9 @@ mod tests {
     fn test_worker_handle_stop() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
-        let handle = shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
+        let handle = shared_runtime.spawn_worker(worker, true).unwrap();
         assert_eq!(shared_runtime.workers.lock_or_panic().len(), 1);
 
         // Wait for at least one run before stopping
@@ -589,10 +590,9 @@ mod tests {
     #[test]
     fn test_before_and_after_fork_parent() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
+        shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Let the worker run until state > 0 so that preservation is observable
         let mut state_before_fork = 0;
@@ -621,10 +621,9 @@ mod tests {
     #[test]
     fn test_after_fork_child() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
+        shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Let the worker run until state > 0 so that the reset is observable
         let mut state_before_fork = 0;
@@ -653,10 +652,9 @@ mod tests {
     #[test]
     fn test_shutdown() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker, true, &spawner).unwrap();
+        shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Wait for at least one run before shutting down
         receiver
@@ -678,12 +676,9 @@ mod tests {
     #[test]
     fn test_after_fork_child_drops_worker_not_restart_on_fork() {
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeSpawnCapability;
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime
-            .spawn_worker(worker, false, &spawner)
-            .unwrap();
+        shared_runtime.spawn_worker(worker, false).unwrap();
 
         // Wait for the worker to run at least once
         receiver

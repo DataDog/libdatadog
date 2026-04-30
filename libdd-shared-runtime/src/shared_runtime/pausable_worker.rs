@@ -5,7 +5,7 @@
 
 use crate::worker::Worker;
 use core::pin::Pin;
-use libdd_capabilities::spawn::{SpawnCapability, SpawnError};
+use libdd_capabilities::spawn::SpawnError;
 use libdd_capabilities::MaybeSend;
 use std::fmt::Display;
 use std::future::Future;
@@ -14,8 +14,12 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 #[cfg(not(target_arch = "wasm32"))]
-type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, SpawnError>> + Send>>;
+type WorkerFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+#[cfg(target_arch = "wasm32")]
+type WorkerFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
 
+#[cfg(not(target_arch = "wasm32"))]
+type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, SpawnError>> + Send>>;
 #[cfg(target_arch = "wasm32")]
 type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, SpawnError>>>>;
 
@@ -75,19 +79,15 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
         Self::Paused { worker }
     }
 
-    /// Start the worker using the given spawn capability.
+    /// Start the worker using the given spawn function.
     ///
-    /// The worker's main loop will be spawned via the provided spawner.
-    /// `ctx` is the platform-specific runtime context (e.g. `tokio::runtime::Handle`
-    /// on native, `()` on wasm).
-    pub fn start<S: SpawnCapability>(
+    /// The worker's main loop will be spawned via the provided closure.
+    /// `SharedRuntime` constructs the appropriate platform-specific closure
+    /// (tokio on native, spawn_local on wasm).
+    pub fn start(
         &mut self,
-        spawner: &S,
-        ctx: &S::RuntimeContext,
-    ) -> Result<(), PausableWorkerError>
-    where
-        S::JoinHandle<T>: 'static,
-    {
+        spawn_fn: impl FnOnce(WorkerFuture<T>) -> WorkerJoinHandle<T>,
+    ) -> Result<(), PausableWorkerError> {
         match self {
             PausableWorker::Running { .. } => Ok(()),
             PausableWorker::Paused { worker: _ } => {
@@ -99,48 +99,38 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                     return Ok(());
                 };
 
-                // Worker is temporarily in an invalid state, but since this block is failsafe it
-                // will be replaced by a valid state.
                 let stop_token = CancellationToken::new();
                 let cloned_token = stop_token.clone();
-                let handle = spawner.spawn(
-                    async move {
-                        // First iteration using initial_trigger
+                let future = Box::pin(async move {
+                    // First iteration using initial_trigger
+                    select! {
+                        biased;
+                        _ = cloned_token.cancelled() => {
+                            return worker;
+                        }
+                        _ = worker.initial_trigger() => {
+                            worker.run().await;
+                        }
+                    }
+
+                    // Regular iterations
+                    loop {
                         select! {
-                            // Always check for cancellation first, to reduce time-to-pause in
-                            // case the initial trigger is always ready.
                             biased;
                             _ = cloned_token.cancelled() => {
-                                return worker;
+                                break;
                             }
-                            _ = worker.initial_trigger() => {
+                            _ = worker.trigger() => {
                                 worker.run().await;
                             }
                         }
+                    }
+                    worker
+                });
 
-                        // Regular iterations
-                        loop {
-                            select! {
-                                // Always check for cancellation first, to reduce time-to-pause
-                                // in case the trigger is always ready.
-                                biased;
-                                _ = cloned_token.cancelled() => {
-                                    break;
-                                }
-                                _ = worker.trigger() => {
-                                    worker.run().await;
-                                }
-                            }
-                        }
-                        worker
-                    },
-                    ctx,
-                );
+                let handle = spawn_fn(future);
 
-                *self = PausableWorker::Running {
-                    handle: Box::pin(handle),
-                    stop_token,
-                };
+                *self = PausableWorker::Running { handle, stop_token };
                 Ok(())
             }
             PausableWorker::InvalidState => Err(PausableWorkerError::InvalidState),
@@ -199,14 +189,25 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
+    use libdd_capabilities::spawn::SpawnError;
     use tokio::{runtime::Builder, time::sleep};
 
     use super::*;
-    use libdd_capabilities_impl::NativeSpawnCapability;
     use std::{
         sync::mpsc::{channel, Sender},
         time::Duration,
     };
+
+    fn tokio_spawn_fn(
+        handle: &tokio::runtime::Handle,
+    ) -> impl FnOnce(WorkerFuture<Box<dyn Worker + Sync>>) -> WorkerJoinHandle<Box<dyn Worker + Sync>>
+    {
+        let h = handle.clone();
+        move |future| {
+            let jh = h.spawn(future);
+            Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
+        }
+    }
 
     /// Test worker incrementing the state and sending it with the sender.
     #[derive(Debug)]
@@ -233,10 +234,10 @@ mod tests {
         let worker = TestWorker { state: 0, sender };
         let runtime = Builder::new_multi_thread().enable_time().build().unwrap();
         let handle = runtime.handle().clone();
-        let spawner = NativeSpawnCapability;
-        let mut pausable_worker = PausableWorker::new(worker);
+        let mut pausable_worker: PausableWorker<Box<dyn Worker + Sync>> =
+            PausableWorker::new(Box::new(worker));
 
-        pausable_worker.start(&spawner, &handle).unwrap();
+        pausable_worker.start(tokio_spawn_fn(&handle)).unwrap();
 
         assert_eq!(receiver.recv().unwrap(), 0);
         runtime.block_on(async { pausable_worker.pause().await.unwrap() });
@@ -245,7 +246,7 @@ mod tests {
         for message in receiver.try_iter() {
             next_message = message + 1;
         }
-        pausable_worker.start(&spawner, &handle).unwrap();
+        pausable_worker.start(tokio_spawn_fn(&handle)).unwrap();
         assert_eq!(receiver.recv().unwrap(), next_message);
     }
 }

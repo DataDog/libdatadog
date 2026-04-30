@@ -29,3 +29,7 @@ regex-lite = ["libdd-common/regex-lite"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "1.0.0" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+futures-util = { version = "0.3", default-features = false, features = ["channel"] }

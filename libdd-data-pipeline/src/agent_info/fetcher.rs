@@ -167,7 +167,7 @@ async fn fetch_and_hash_response<H: HttpClientCapability>(
 /// );
 /// // Start the fetcher on a shared runtime
 /// let runtime = libdd_shared_runtime::SharedRuntime::new()?;
-/// runtime.spawn_worker(fetcher, true, &capabilities)?;
+/// runtime.spawn_worker(fetcher, true)?;
 ///
 /// // Get the Arc to access the info
 /// let agent_info_arc = agent_info::get_agent_info();
@@ -580,10 +580,7 @@ mod single_threaded_tests {
         );
         assert!(agent_info::get_agent_info().is_none());
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeCapabilities::new();
-        shared_runtime
-            .spawn_worker(fetcher, true, &spawner)
-            .unwrap();
+        shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Wait until the info is fetched
         let start = std::time::Instant::now();
@@ -666,10 +663,7 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeCapabilities::new();
-        shared_runtime
-            .spawn_worker(fetcher, true, &spawner)
-            .unwrap();
+        shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the new agent state
         let response = http::Response::builder()
@@ -750,10 +744,7 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        let spawner = NativeCapabilities::new();
-        shared_runtime
-            .spawn_worker(fetcher, true, &spawner)
-            .unwrap();
+        shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the same agent state
         let response = http::Response::builder()

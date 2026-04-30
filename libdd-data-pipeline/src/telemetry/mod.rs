@@ -328,7 +328,7 @@ mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use libdd_capabilities::HttpError;
-    use libdd_capabilities_impl::NativeCapabilities;
+
     use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
     use libdd_trace_utils::test_utils::poll_for_mock_hits;
     // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
@@ -350,9 +350,8 @@ mod tests {
             .set_heartbeat(100)
             .set_debug_enabled(true)
             .build();
-        let spawner = NativeCapabilities::new();
         let handle = runtime
-            .spawn_worker(worker, true, &spawner)
+            .spawn_worker(worker, true)
             .expect("Failed to spawn worker");
         (client, handle)
     }
