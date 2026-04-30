@@ -77,7 +77,9 @@ struct PayloadAttrs<'a> {
     app_version: Option<&'a str>,
 }
 
-fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(traces: &'a [S]) -> PayloadAttrs<'a>
+fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(
+    traces: &'a [S],
+) -> PayloadAttrs<'a>
 where
     T::Text: 'a,
 {
@@ -102,7 +104,11 @@ where
         }
     }
 
-    PayloadAttrs { env, hostname, app_version }
+    PayloadAttrs {
+        env,
+        hostname,
+        app_version,
+    }
 }
 
 /// Promoted fields extracted from spans and written at the chunk level.
@@ -130,8 +136,8 @@ where
         trace_id = span.trace_id;
 
         // Root span: either no parent in this chunk, or tagged _dd.top_level=1 (remote parent).
-        let is_root = span.parent_id == 0
-            || span.metrics.get("_dd.top_level").copied().unwrap_or(0.0) == 1.0;
+        let is_root =
+            span.parent_id == 0 || span.metrics.get("_dd.top_level").copied().unwrap_or(0.0) == 1.0;
 
         if is_root {
             if let Some(v) = span.metrics.get("_sampling_priority_v1") {
@@ -435,8 +441,14 @@ mod tests {
     #[test]
     fn test_payload_promoted_fields() {
         let mut meta = HashMap::new();
-        meta.insert(BytesString::from_static("env"), BytesString::from_static("prod"));
-        meta.insert(BytesString::from_static("version"), BytesString::from_static("1.2.3"));
+        meta.insert(
+            BytesString::from_static("env"),
+            BytesString::from_static("prod"),
+        );
+        meta.insert(
+            BytesString::from_static("version"),
+            BytesString::from_static("1.2.3"),
+        );
         meta.insert(
             BytesString::from_static("_dd.hostname"),
             BytesString::from_static("my-host"),
