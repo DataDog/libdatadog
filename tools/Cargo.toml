@@ -20,9 +20,12 @@ cargo_metadata = "0.18"
 clap = { version = "4.0", features = ["derive"] }
 colored = "2"
 quick-xml = "0.37"
-regex = "1"
+libdd-common = { path = "../libdd-common", default-features = false }
 toml = "0.8"
 wait-timeout = "0.2"
+
+[features]
+regex-lite = ["libdd-common/regex-lite"]
 
 [[bin]]
 name = "dedup_headers"

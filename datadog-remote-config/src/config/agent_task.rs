@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[cfg(feature = "test")]
 use serde::Serialize;
 
-use regex::Regex;
+use libdd_common::regex_engine::Regex;
 use serde::de::{self, Deserializer};
 
 fn deserialize_case_id<'de, D>(deserializer: D) -> Result<String, D::Error>

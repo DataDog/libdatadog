@@ -328,6 +328,9 @@ mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use libdd_capabilities::HttpError;
+    // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
+    // requires `Into<HttpMockRegex>`, which is only implemented for
+    // `regex::Regex`, not `regex_lite::Regex`.
     use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
     use libdd_trace_utils::test_utils::poll_for_mock_hits;
     use regex::Regex;

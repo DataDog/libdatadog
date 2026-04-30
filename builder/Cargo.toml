@@ -29,6 +29,7 @@ library-config = []
 log = []
 ddsketch = []
 ffe = []
+regex-lite = ["libdd-common/regex-lite"]
 
 [lib]
 bench = false
@@ -44,7 +45,7 @@ tar = "0.4.45"
 tools = { path = "../tools" }
 toml = "0.8.19"
 serde = "1.0.209"
-regex = "1.10"
+libdd-common = { path = "../libdd-common", default-features = false }
 
 [[bin]]
 name = "release"

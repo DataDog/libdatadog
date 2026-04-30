@@ -473,7 +473,6 @@ dependencies = [
  "nix 0.29.0",
  "once_cell",
  "os_info",
- "regex",
  "serde_json",
  "serial_test",
  "strum",
@@ -710,8 +709,8 @@ dependencies = [
  "anyhow",
  "build_common",
  "cmake",
+ "libdd-common",
  "pico-args",
- "regex",
  "serde",
  "tar",
  "toml",
@@ -1359,10 +1358,10 @@ dependencies = [
  "derive_more",
  "env_logger",
  "faststr",
+ "libdd-common",
  "log",
  "md5",
  "pyo3",
- "regex",
  "semver",
  "serde",
  "serde-bool",
@@ -1438,7 +1437,6 @@ dependencies = [
  "libdd-common",
  "libdd-data-pipeline",
  "percent-encoding",
- "regex",
  "regex-automata",
  "serde",
  "serde_json",
@@ -1494,7 +1492,6 @@ dependencies = [
  "libdd-common",
  "libdd-trace-protobuf",
  "manual_future",
- "regex",
  "serde",
  "serde_json",
  "serde_with",
@@ -2871,6 +2868,7 @@ dependencies = [
  "pin-project",
  "rand 0.8.5",
  "regex",
+ "regex-lite",
  "reqwest",
  "rustls",
  "rustls-native-certs",
@@ -3314,7 +3312,6 @@ dependencies = [
  "libdd-trace-utils",
  "log",
  "percent-encoding",
- "regex",
  "serde",
  "serde_json",
 ]
@@ -4636,6 +4633,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
+
+[[package]]
 name = "regex-syntax"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5945,8 +5948,8 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "colored",
+ "libdd-common",
  "quick-xml",
- "regex",
  "toml",
  "wait-timeout",
 ]
