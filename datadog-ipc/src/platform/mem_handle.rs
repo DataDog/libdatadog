@@ -96,12 +96,16 @@ where
         // Use fallocate on Linux to eagerly commit the new pages: ENOSPC at resize time is
         // recoverable; a later SIGBUS mid-execution is not.
         #[cfg(target_os = "linux")]
-        nix::fcntl::fallocate(
+        match nix::fcntl::fallocate(
             fd.as_raw_fd(),
             nix::fcntl::FallocateFlags::empty(),
             0,
             new_size,
-        )?;
+        ) {
+            Err(nix::Error::EPERM | nix::Error::ENOSYS) => nix::unistd::ftruncate(fd, new_size)?,
+            Err(e) => return Err(e.into()),
+            Ok(_) => {}
+        }
         #[cfg(not(target_os = "linux"))]
         nix::unistd::ftruncate(&fd, new_size)?;
         Ok(())
