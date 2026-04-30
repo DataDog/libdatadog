@@ -509,16 +509,29 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
-    // Collect thread contexts if enabled; this is done here in the receiver
-    // because the parent process stays alive until the receiver completes
+    // Thread collection is budgeted against the *remaining* receiver timeout;
+    // whatever time is left after reading the crash data from stdin.
+    // This makes sure the total receiver lifetime is bounded by the configured
+    // timeout, and we always emit whatever threads were collected before
+    // the deadline rather than silently discarding them.
     #[cfg(target_os = "linux")]
     if config.collect_all_threads() {
         if let Some(proc_info) = builder.proc_info.as_ref() {
             let parent_pid = proc_info.pid;
             let crashing_tid = proc_info.tid;
-            if let Err(e) =
-                collect_and_add_thread_contexts(&mut builder, &config, parent_pid, crashing_tid)
-            {
+            // remaining_budget: time left on the receiver's clock after stdin.
+            // If we never received a first line (deadline is None) use zero so
+            // collection is skipped; there is nothing to attach to anyway.
+            let remaining_budget = deadline
+                .map(|d| d.saturating_duration_since(Instant::now()))
+                .unwrap_or(Duration::ZERO);
+            if let Err(e) = collect_and_add_thread_contexts(
+                &mut builder,
+                &config,
+                parent_pid,
+                crashing_tid,
+                remaining_budget,
+            ) {
                 let _ = builder
                     .with_log_message(format!("Failed to collect thread contexts: {e}"), true);
             }
@@ -546,16 +559,18 @@ fn collect_and_add_thread_contexts(
     config: &CrashtrackerConfiguration,
     parent_pid: u32,
     crashing_tid: Option<u32>,
+    budget: Duration,
 ) -> anyhow::Result<()> {
     use crate::crash_info::ThreadData;
     use crate::receiver::ptrace_collector::stream_thread_contexts;
-    use std::time::Duration;
 
     let crashing_tid = crashing_tid.unwrap_or(0) as i32;
     let parent_pid = parent_pid as i32;
 
-    // Timeout for ptrace collection: half the overall crash timeout, capped at 200ms
-    let context_timeout = Duration::from_millis((config.timeout().as_millis() / 2).min(200) as u64);
+    // Use the remaining receiver budget
+    // When this expires, stream_thread_contexts stops and returns the threads
+    // collected so far, which are still emitted in the report.
+    let context_timeout = budget;
 
     let mut collected_threads = Vec::new();
 
@@ -613,21 +628,25 @@ fn read_thread_state(pid: i32, tid: i32) -> Option<String> {
 fn enrich_thread_name(builder: &mut CrashInfoBuilder) -> anyhow::Result<()> {
     use std::{fs, path::PathBuf};
 
-    if builder.error.thread_name.is_none() {
-        if let Some(proc_info) = builder.proc_info.as_ref() {
-            if let Some(tid) = proc_info.tid {
-                let pid = proc_info.pid;
-                let path = PathBuf::from(format!("/proc/{pid}/task/{tid}/comm"));
-                if let Ok(comm) = fs::read_to_string(&path) {
-                    let thread_name = comm.trim_end_matches('\n');
-                    if !thread_name.is_empty() {
-                        builder.with_thread_name(thread_name.to_string())?;
-                    }
-                }
-            }
-        }
+    if builder.error.thread_name.is_some() {
+        return Ok(());
     }
-
+    let Some(proc_info) = builder.proc_info.as_ref() else {
+        return Ok(());
+    };
+    let Some(tid) = proc_info.tid else {
+        return Ok(());
+    };
+    let pid = proc_info.pid;
+    let path = PathBuf::from(format!("/proc/{pid}/task/{tid}/comm"));
+    let Ok(comm) = fs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let thread_name = comm.trim_end_matches('\n');
+    if thread_name.is_empty() {
+        return Ok(());
+    }
+    builder.with_thread_name(thread_name.to_string())?;
     Ok(())
 }
 
