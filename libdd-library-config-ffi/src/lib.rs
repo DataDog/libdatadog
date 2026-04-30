@@ -40,7 +40,6 @@ mod no_std_support {
     pub extern "C" fn rust_eh_personality() {}
 }
 
-#[cfg(feature = "std")]
 pub mod tracer_metadata;
 
 use libdd_common_ffi::{self as ffi, slice::AsBytes};

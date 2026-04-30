@@ -17,8 +17,6 @@ pub use cstr::*;
 pub use slice::{CharSlice, Slice};
 pub use vec::Vec;
 
-// These modules are std-only; their inner `#![cfg(feature = "std")]` strips the contents
-// in no_std builds, so the `pub mod` declarations stay unconditional.
 pub mod array_queue;
 pub mod endpoint;
 mod error;
