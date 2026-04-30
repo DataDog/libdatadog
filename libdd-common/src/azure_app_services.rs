@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use regex::Regex;
-use std::env;
+#[cfg(target_os = "linux")]
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
 const WEBSITE_OWNER_NAME: &str = "WEBSITE_OWNER_NAME";
@@ -26,10 +27,91 @@ enum AzureContext {
     AzureAppService,
 }
 
+/// Snapshot of the AAS-relevant subset of the process environment, captured at
+/// exec time.
+///
+/// On Linux we parse `/proc/self/environ` (a kernel-managed snapshot of the
+/// initial `envp` block) instead of calling `getenv`. This avoids the
+/// well-known race between libc's `getenv(3)` and `setenv(3)` from another
+/// thread, which has been observed to crash `ddog_prof_Exporter_new` when an
+/// embedder (e.g. dd-trace-py via `os.environ[...] = ...`) mutates the
+/// environment concurrently with our AAS detection.
+///
+/// `/proc/self/environ` only contains variables present at `execve()` time;
+/// later `setenv` calls are not reflected. That is exactly what AAS detection
+/// needs — every Azure App Services / Functions variable we inspect is set by
+/// the platform before the process starts.
+///
+/// **Only the AAS variable names listed in [`AAS_VAR_NAMES`] are retained**;
+/// all other entries (which on real AAS deployments commonly include unrelated
+/// app secrets, API keys, connection strings, etc.) are dropped at parse time
+/// so we don't keep a long-lived in-memory copy of them.
+///
+/// On non-Linux platforms we fall back to `std::env::var`. AAS deployments are
+/// almost exclusively Linux containers, and Windows' `GetEnvironmentVariableW`
+/// (which `std::env::var` uses) is itself thread-safe.
+#[cfg(target_os = "linux")]
+static PROC_ENVIRON: LazyLock<HashMap<String, String>> = LazyLock::new(read_proc_self_environ);
+
+/// AAS-related variable names this module reads. Only entries with one of
+/// these names are kept in [`PROC_ENVIRON`]; everything else from
+/// `/proc/self/environ` is dropped at parse time.
+#[cfg(target_os = "linux")]
+const AAS_VAR_NAMES: &[&str] = &[
+    WEBSITE_OWNER_NAME,
+    WEBSITE_SITE_NAME,
+    WEBSITE_RESOURCE_GROUP,
+    SITE_EXTENSION_VERSION,
+    WEBSITE_OS,
+    INSTANCE_NAME,
+    INSTANCE_ID,
+    SERVICE_CONTEXT,
+    FUNCTIONS_WORKER_RUNTIME,
+    FUNCTIONS_WORKER_RUNTIME_VERSION,
+    FUNCTIONS_EXTENSION_VERSION,
+    DD_AZURE_RESOURCE_GROUP,
+    WEBSITE_SKU,
+];
+
+#[cfg(target_os = "linux")]
+fn read_proc_self_environ() -> HashMap<String, String> {
+    let bytes = match std::fs::read("/proc/self/environ") {
+        Ok(b) => b,
+        Err(_) => return HashMap::new(),
+    };
+    let mut map = HashMap::new();
+    for entry in bytes.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let s = match std::str::from_utf8(entry) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        if let Some(eq) = s.find('=') {
+            let key = &s[..eq];
+            if AAS_VAR_NAMES.contains(&key) {
+                map.insert(key.to_string(), s[eq + 1..].to_string());
+            }
+        }
+    }
+    map
+}
+
+fn read_aas_var(name: &str) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        PROC_ENVIRON.get(name).cloned()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::env::var(name).ok()
+    }
+}
+
 macro_rules! get_trimmed_env_var {
     ($name:expr) => {
-        env::var($name)
-            .ok()
+        crate::azure_app_services::read_aas_var($name)
             .map(|v| v.trim().to_string())
             .filter(|s| !s.is_empty())
     };
@@ -912,11 +994,12 @@ mod tests {
     }
 
     #[test]
-    fn test_get_trimmed_env_var_empty_string() {
-        env::remove_var("TEST_VAR_NONE");
-        assert_eq!(get_trimmed_env_var!("TEST_VAR_NONE"), None);
-
-        env::set_var("TEST_VAR_EMPTY_STRING", "");
-        assert_eq!(get_trimmed_env_var!("TEST_VAR_EMPTY_STRING"), None);
+    fn test_get_trimmed_env_var_missing() {
+        // The proc-environ snapshot is frozen at exec time, so we can't inject
+        // an empty value here. Just verify the missing-var path returns None.
+        assert_eq!(
+            get_trimmed_env_var!("__LIBDD_AAS_DEFINITELY_NOT_SET__"),
+            None
+        );
     }
 }
