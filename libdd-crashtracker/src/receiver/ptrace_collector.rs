@@ -38,9 +38,6 @@ use libdd_libunwind_sys::{
 
 use crate::crash_info::{StackFrame, StackTrace};
 
-/// Maximum number of threads to collect contexts for
-const MAX_TRACKED_THREADS: usize = 128;
-
 /// Maximum number of stack frames to capture per thread
 const MAX_FRAMES: usize = 512;
 
@@ -173,9 +170,6 @@ fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
 ///
 /// libunwind's ptrace backend (`_UPT_*`) implements the accessor callbacks that
 /// libunwind uses to read memory and registers from the target process via ptrace.
-/// `unw_create_addr_space` wires those accessors into a remote address space
-/// `unw_init_remote` seeds a cursor from the thread's current register state
-/// `unw_step_remote` walks each frame, reading the target's stack memory via ptrace
 fn unwind_remote_thread(
     tid: libc::pid_t,
     resolve_frames: crate::StacktraceCollection,
@@ -315,7 +309,6 @@ where
 {
     let start_time = Instant::now();
     let tids = enumerate_threads(parent_pid)?;
-    let max_count = max_threads.min(MAX_TRACKED_THREADS);
     let mut processed = 0;
 
     for tid in tids {
@@ -325,7 +318,7 @@ where
         if tid == crashing_tid {
             continue;
         }
-        if processed >= max_count {
+        if processed >= max_threads {
             break;
         }
 

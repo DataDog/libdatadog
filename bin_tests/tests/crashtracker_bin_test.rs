@@ -21,7 +21,8 @@ use bin_tests::{
     ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
+    default_max_threads, CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames,
+    StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -295,6 +296,40 @@ fn test_crash_tracking_multi_thread_collection() {
                 "{expected} stack should contain a frame for '{worker_fn}' but got: {frames:?}"
             );
         }
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+/// Spawns default max threads and verifies the crash report contains all of them.
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_thread_limit() {
+    const THREAD_COUNT: usize = default_max_threads();
+
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::ThreadLimit,
+        CrashType::NullDeref,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
+        let threads = payload["error"]["threads"]
+            .as_array()
+            .expect("error.threads should be a JSON array");
+
+        let thread_count = threads.len();
+
+        assert!(
+            thread_count >= THREAD_COUNT,
+            "expected at least {THREAD_COUNT} threads, got {thread_count} \
+             (total captured: {thread_count})"
+        );
 
         Ok(())
     });

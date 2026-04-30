@@ -45,8 +45,8 @@ pub struct CrashtrackerConfiguration {
     use_alt_stack: bool,
 }
 
-fn default_max_threads() -> usize {
-    512
+pub const fn default_max_threads() -> usize {
+    2048
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

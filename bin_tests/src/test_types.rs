@@ -21,6 +21,7 @@ pub enum TestMode {
     RuntimePreloadLogger,
     ErrnoPreservation,
     MultiThreadCollection,
+    ThreadLimit,
 }
 
 impl TestMode {
@@ -43,6 +44,7 @@ impl TestMode {
             Self::RuntimePreloadLogger => "runtime_preload_logger",
             Self::ErrnoPreservation => "errno_preservation",
             Self::MultiThreadCollection => "multi_thread_collection",
+            Self::ThreadLimit => "thread_limit",
         }
     }
 
@@ -65,6 +67,7 @@ impl TestMode {
             Self::RuntimePreloadLogger,
             Self::ErrnoPreservation,
             Self::MultiThreadCollection,
+            Self::ThreadLimit,
         ]
     }
 }
@@ -96,6 +99,7 @@ impl std::str::FromStr for TestMode {
             "runtime_preload_logger" => Ok(Self::RuntimePreloadLogger),
             "errno_preservation" => Ok(Self::ErrnoPreservation),
             "multi_thread_collection" => Ok(Self::MultiThreadCollection),
+            "thread_limit" => Ok(Self::ThreadLimit),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }
