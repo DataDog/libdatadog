@@ -241,6 +241,19 @@ impl From<&str> for RuleProvenance {
     }
 }
 
+/// Helper struct for representing i64 values as ValueLike
+struct ValueI64(i64);
+
+impl ValueLike for ValueI64 {
+    fn extract_float(&self) -> Option<f64> {
+        Some(self.0 as f64)
+    }
+
+    fn extract_string(&self) -> Option<std::borrow::Cow<'_, str>> {
+        Some(std::borrow::Cow::Owned(self.0.to_string()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -593,18 +606,5 @@ mod tests {
     fn test_rule_provenance_ordering() {
         assert!(RuleProvenance::Customer < RuleProvenance::Dynamic);
         assert!(RuleProvenance::Dynamic < RuleProvenance::Default);
-    }
-}
-
-/// Helper struct for representing i64 values as ValueLike
-struct ValueI64(i64);
-
-impl ValueLike for ValueI64 {
-    fn extract_float(&self) -> Option<f64> {
-        Some(self.0 as f64)
-    }
-
-    fn extract_string(&self) -> Option<std::borrow::Cow<'_, str>> {
-        Some(std::borrow::Cow::Owned(self.0.to_string()))
     }
 }

@@ -7,6 +7,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-sampling"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-sampling"
 description = "Core sampling logic for Datadog tracing"
 authors.workspace = true
@@ -25,12 +26,12 @@ required-features = ["v04_span"]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 lru = "0.16.3"
-libdd-trace-utils = { path = "../libdd-trace-utils", optional = true }
+libdd-trace-utils = { path = "../libdd-trace-utils", version = "3.0.1", optional = true }
 
 [features]
 v04_span = ["dep:libdd-trace-utils"]
 
 [dev-dependencies]
 criterion = "0.5"
-libdd-common = { path = "../libdd-common", features = ["bench-utils"] }
-libdd-trace-utils = { path = "../libdd-trace-utils" }
+libdd-common = { path = "../libdd-common", version = "4.0.0", features = ["bench-utils"] }
+libdd-trace-utils = { path = "../libdd-trace-utils", version = "3.0.1" }

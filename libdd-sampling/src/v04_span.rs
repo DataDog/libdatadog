@@ -134,7 +134,7 @@ impl<'a, T: TraceData> V04SpanProperties<'a, T> {
     }
 }
 
-impl<'a, T: TraceData> SpanProperties for V04SpanProperties<'a, T> {
+impl<T: TraceData> SpanProperties for V04SpanProperties<'_, T> {
     type Attribute<'b>
         = SpanAttribute<'b>
     where
@@ -189,7 +189,7 @@ pub struct V04SamplingData<'a, T: TraceData> {
     pub span: &'a Span<T>,
 }
 
-impl<'a, T: TraceData> SamplingData for V04SamplingData<'a, T> {
+impl<T: TraceData> SamplingData for V04SamplingData<'_, T> {
     type TraceId = u128;
     type Properties<'b>
         = V04SpanProperties<'b, T>
@@ -286,9 +286,9 @@ mod tests {
 
     #[test]
     fn test_span_attribute_value_metric() {
-        let val = SpanAttributeValue::Metric(3.14);
-        assert_eq!(val.extract_float(), Some(3.14));
-        assert_eq!(val.extract_string(), Some(Cow::Owned("3.14".to_string())));
+        let val = SpanAttributeValue::Metric(1.5);
+        assert_eq!(val.extract_float(), Some(1.5));
+        assert_eq!(val.extract_string(), Some(Cow::Owned("1.5".to_string())));
     }
 
     #[test]
@@ -521,9 +521,11 @@ mod tests {
     #[test]
     fn test_integration_tags_apply_to_span() {
         let sampler = DatadogSampler::new(vec![], 100);
-        let mut span = Span::<SliceData<'static>>::default();
-        span.name = "op";
-        span.service = "svc";
+        let span = Span::<SliceData<'static>> {
+            name: "op",
+            service: "svc",
+            ..Default::default()
+        };
 
         let data = V04SamplingData {
             is_parent_sampled: None,

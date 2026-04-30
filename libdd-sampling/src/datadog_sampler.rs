@@ -462,7 +462,7 @@ mod tests {
         }
     }
 
-    impl<'a> SpanProperties for TestSpan<'a> {
+    impl SpanProperties for TestSpan<'_> {
         type Attribute<'b>
             = &'b TestAttribute
         where
@@ -544,7 +544,7 @@ mod tests {
         }
     }
 
-    impl<'a> SamplingData for TestSamplingData<'a> {
+    impl SamplingData for TestSamplingData<'_> {
         type TraceId = TestTraceId;
         type Properties<'b>
             = TestSpan<'b>
