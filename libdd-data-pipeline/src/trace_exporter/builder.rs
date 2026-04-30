@@ -17,10 +17,10 @@ use crate::trace_exporter::{
     TraceExporterOutputFormat, TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability, SpawnCapability};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use libdd_shared_runtime::{SharedRuntime, SpawnRuntimeContext};
+use libdd_shared_runtime::SharedRuntime;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -263,14 +263,7 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn build<
-        C: HttpClientCapability
-            + SleepCapability
-            + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
-            + MaybeSend
-            + Sync
-            + 'static,
-    >(
+    pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -326,7 +319,7 @@ impl TraceExporterBuilder {
             let (info_fetcher, observer) =
                 AgentInfoFetcher::<C>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
             let handle = shared_runtime
-                .spawn_worker(info_fetcher, false, &capabilities)
+                .spawn_worker(info_fetcher, false)
                 .map_err(|e| {
                     TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                         e.to_string(),
@@ -367,13 +360,11 @@ impl TraceExporterBuilder {
             });
             match telemetry {
                 Some(Ok((client_tel, worker))) => {
-                    let handle = shared_runtime
-                        .spawn_worker(worker, false, &capabilities)
-                        .map_err(|e| {
-                            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                                e.to_string(),
-                            ))
-                        })?;
+                    let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?;
                     shared_runtime.block_on(client_tel.start()).map_err(|e| {
                         TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                             e.to_string(),

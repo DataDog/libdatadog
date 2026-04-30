@@ -24,5 +24,6 @@ tracing = { version = "0.1", default-features = false }
 libdd-capabilities = { path = "../libdd-capabilities", version = "1.0.0" }
 libdd-common = { version = "4.0.0", path = "../libdd-common", default-features = false }
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "1.0.0" }
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+futures-util = { version = "0.3", default-features = false, features = ["channel"] }

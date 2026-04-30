@@ -16,14 +16,14 @@ use std::time::Duration;
 
 pub use http::NativeHttpClient;
 use libdd_capabilities::{http::HttpError, MaybeSend};
-pub use libdd_capabilities::{HttpClientCapability, SleepCapability, SpawnCapability};
+pub use libdd_capabilities::{HttpClientCapability, SleepCapability};
 pub use sleep::NativeSleepCapability;
-pub use spawn::{NativeJoinHandle, NativeSpawnCapability};
+pub use spawn::NativeSpawnCapability; // kept for backwards compatibility
 
 /// Bundle struct for native platform capabilities.
 ///
-/// Delegates to [`NativeHttpClient`] for HTTP, [`NativeSleepCapability`] for
-/// sleep, and [`NativeSpawnCapability`] for task spawning.
+/// Delegates to [`NativeHttpClient`] for HTTP and [`NativeSleepCapability`] for
+/// sleep. Task spawning is handled internally by `SharedRuntime`.
 ///
 /// Individual capability traits keep minimal per-function bounds (e.g.
 /// functions that only need HTTP require just `H: HttpClientCapability`, not the
@@ -33,7 +33,6 @@ pub use spawn::{NativeJoinHandle, NativeSpawnCapability};
 pub struct NativeCapabilities {
     http: NativeHttpClient,
     sleep: NativeSleepCapability,
-    spawn: NativeSpawnCapability,
 }
 
 impl Default for NativeCapabilities {
@@ -47,7 +46,6 @@ impl NativeCapabilities {
         Self {
             http: NativeHttpClient::new_client(),
             sleep: NativeSleepCapability,
-            spawn: NativeSpawnCapability,
         }
     }
 }
@@ -57,7 +55,6 @@ impl HttpClientCapability for NativeCapabilities {
         Self {
             http: NativeHttpClient::new_client(),
             sleep: NativeSleepCapability,
-            spawn: NativeSpawnCapability,
         }
     }
 
@@ -72,18 +69,5 @@ impl HttpClientCapability for NativeCapabilities {
 impl SleepCapability for NativeCapabilities {
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + MaybeSend {
         self.sleep.sleep(duration)
-    }
-}
-
-impl SpawnCapability for NativeCapabilities {
-    type RuntimeContext = tokio::runtime::Handle;
-    type JoinHandle<T: MaybeSend + 'static> = NativeJoinHandle<T>;
-
-    fn spawn<F, T>(&self, future: F, ctx: &tokio::runtime::Handle) -> NativeJoinHandle<T>
-    where
-        F: Future<Output = T> + MaybeSend + 'static,
-        T: MaybeSend + 'static,
-    {
-        self.spawn.spawn(future, ctx)
     }
 }

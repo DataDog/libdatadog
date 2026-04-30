@@ -10,11 +10,11 @@
 #[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability, SpawnCapability};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
-use libdd_shared_runtime::{SharedRuntime, SpawnRuntimeContext, WorkerHandle};
+use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
@@ -72,12 +72,7 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
 ///
 /// Should only be used if the agent enabled stats computation
 pub(crate) fn start_stats_computation<
-    C: HttpClientCapability
-        + SleepCapability
-        + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
-        + MaybeSend
-        + Sync
-        + 'static,
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 >(
     ctx: &StatsContext,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
@@ -106,12 +101,7 @@ pub(crate) fn start_stats_computation<
 #[cfg(not(target_arch = "wasm32"))]
 /// Create stats exporter and worker, start the worker, and update the state
 fn create_and_start_stats_worker<
-    C: HttpClientCapability
-        + SleepCapability
-        + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
-        + MaybeSend
-        + Sync
-        + 'static,
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 >(
     ctx: &StatsContext,
     bucket_size: Duration,
@@ -128,7 +118,7 @@ fn create_and_start_stats_worker<
     );
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter, false, &capabilities)
+        .spawn_worker(stats_exporter, false)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
@@ -168,12 +158,7 @@ pub(crate) fn stop_stats_computation(
 #[cfg(not(target_arch = "wasm32"))]
 /// Handle stats computation when agent changes from disabled to enabled
 pub(crate) fn handle_stats_disabled_by_agent<
-    C: HttpClientCapability
-        + SleepCapability
-        + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
-        + MaybeSend
-        + Sync
-        + 'static,
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 >(
     ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,

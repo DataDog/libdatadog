@@ -13,8 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability, SpawnCapability};
-use libdd_shared_runtime::SpawnRuntimeContext;
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_shared_runtime::Worker;
 
 use crate::trace_exporter::{
@@ -569,39 +568,18 @@ pub trait Export<T>: Send + Debug {
 }
 
 #[derive(Debug)]
-pub struct DefaultExport<
-    C: HttpClientCapability
-        + SleepCapability
-        + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
-        + MaybeSend
-        + Sync
-        + 'static,
-> {
+pub struct DefaultExport<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
     trace_exporter: TraceExporter<C>,
 }
 
-impl<
-        C: HttpClientCapability
-            + SleepCapability
-            + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
-            + MaybeSend
-            + Sync
-            + 'static,
-    > DefaultExport<C>
-{
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> DefaultExport<C> {
     pub fn new(trace_exporter: TraceExporter<C>) -> Self {
         Self { trace_exporter }
     }
 }
 
-impl<
-        C: HttpClientCapability
-            + SleepCapability
-            + SpawnCapability<RuntimeContext = SpawnRuntimeContext>
-            + MaybeSend
-            + Sync
-            + 'static,
-    > Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C>
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
+    Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C>
 {
     fn export_trace_chunks(
         &mut self,
@@ -723,7 +701,6 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::SharedRuntime;
 
     use crate::trace_buffer::{Export, TraceBuffer, TraceBufferConfig};
@@ -777,8 +754,7 @@ mod tests {
             ),
             Box::new(AssertExporter(assert_export, sem.clone())),
         );
-        rt.spawn_worker(worker, true, &NativeCapabilities::new())
-            .unwrap();
+        rt.spawn_worker(worker, true).unwrap();
         (rt, sem, sender)
     }
 
