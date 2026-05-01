@@ -1,7 +1,6 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -34,8 +33,6 @@ pub struct Assignment {
 
     /// Whether this assignment is part of an experiment and should be logged.
     pub do_log: bool,
-    /// Extra logging information for this assignment.
-    pub extra_logging: Arc<HashMap<String, String>>,
 }
 
 /// Enum representing values assigned to a subject as a result of feature flag evaluation.
