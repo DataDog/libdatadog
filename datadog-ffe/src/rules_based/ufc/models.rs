@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use libdd_common::regex_engine::Regex;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
