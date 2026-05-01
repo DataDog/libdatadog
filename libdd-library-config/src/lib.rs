@@ -1,14 +1,29 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(not(feature = "std"), no_std)]
+extern crate alloc;
+
+mod config_read;
+pub use config_read::*;
+
 pub mod otel_process_ctx;
 pub mod tracer_metadata;
 
-use std::borrow::Cow;
-use std::cell::OnceCell;
-use std::collections::HashMap;
-use std::ops::Deref;
+use alloc::borrow::Cow;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cell::OnceCell;
+use core::mem;
+use core::ops::Deref;
+
+#[cfg(feature = "std")]
+use std::env;
+#[cfg(feature = "std")]
 use std::path::Path;
-use std::{env, fs, io, mem};
 
 /// This struct holds maps used to match and template configurations.
 ///
@@ -20,17 +35,17 @@ use std::{env, fs, io, mem};
 ///  * envs: Splits env variables with format KEY=VALUE
 ///  * args: Splits args with format key=value. If the arg doesn't contain an '=', skip it
 struct MatchMaps<'a> {
-    tags: &'a HashMap<String, String>,
-    env_map: OnceCell<HashMap<&'a str, &'a str>>,
-    args_map: OnceCell<HashMap<&'a str, &'a str>>,
+    tags: &'a BTreeMap<String, String>,
+    env_map: OnceCell<BTreeMap<&'a str, &'a str>>,
+    args_map: OnceCell<BTreeMap<&'a str, &'a str>>,
 }
 
 impl<'a> MatchMaps<'a> {
-    fn env(&self, process_info: &'a ProcessInfo) -> &HashMap<&'a str, &'a str> {
+    fn env(&self, process_info: &'a ProcessInfo) -> &BTreeMap<&'a str, &'a str> {
         self.env_map.get_or_init(|| {
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             for e in &process_info.envp {
-                let Ok(s) = std::str::from_utf8(e.deref()) else {
+                let Ok(s) = core::str::from_utf8(e.deref()) else {
                     continue;
                 };
                 let (k, v) = match s.split_once('=') {
@@ -43,11 +58,11 @@ impl<'a> MatchMaps<'a> {
         })
     }
 
-    fn args(&self, process_info: &'a ProcessInfo) -> &HashMap<&str, &str> {
+    fn args(&self, process_info: &'a ProcessInfo) -> &BTreeMap<&str, &str> {
         self.args_map.get_or_init(|| {
-            let mut map = HashMap::new();
+            let mut map = BTreeMap::new();
             for arg in &process_info.args {
-                let Ok(arg) = std::str::from_utf8(arg.deref()) else {
+                let Ok(arg) = core::str::from_utf8(arg.deref()) else {
                     continue;
                 };
                 // Split args between key and value on '='
@@ -66,7 +81,7 @@ struct Matcher<'a> {
 }
 
 impl<'a> Matcher<'a> {
-    fn new(process_info: &'a ProcessInfo, tags: &'a HashMap<String, String>) -> Self {
+    fn new(process_info: &'a ProcessInfo, tags: &'a BTreeMap<String, String>) -> Self {
         Self {
             process_info,
             match_maps: MatchMaps {
@@ -121,7 +136,7 @@ impl<'a> Matcher<'a> {
     ///
     /// For instance:
     ///
-    /// with the following varriable definition, var = "abc" var2 = "def", this transforms \
+    /// with the following variable definition, var = "abc" var2 = "def", this transforms \
     /// "foo_{{ var }}_bar_{{ var2 }}" -> "foo_abc_bar_def"
     fn template_config(&'a self, config_val: &str) -> anyhow::Result<String> {
         let mut rest = config_val;
@@ -145,7 +160,7 @@ impl<'a> Matcher<'a> {
                     template_map_key(index, self.match_maps.args(self.process_info))
                 }
                 "tags" => template_map_key(index, self.match_maps.tags),
-                _ => std::borrow::Cow::Borrowed("UNDEFINED"),
+                _ => Cow::Borrowed("UNDEFINED"),
             };
             templated.push_str(&val);
             rest = tail;
@@ -186,6 +201,7 @@ pub struct ProcessInfo {
     pub language: Vec<u8>,
 }
 
+#[cfg(feature = "std")]
 fn process_envp() -> Vec<Vec<u8>> {
     #[allow(clippy::unnecessary_filter_map)]
     env::vars_os()
@@ -211,6 +227,7 @@ fn process_envp() -> Vec<Vec<u8>> {
         .collect()
 }
 
+#[cfg(feature = "std")]
 fn process_args() -> Vec<Vec<u8>> {
     #[allow(clippy::unnecessary_filter_map)]
     env::args_os()
@@ -229,6 +246,7 @@ fn process_args() -> Vec<Vec<u8>> {
 }
 
 impl ProcessInfo {
+    #[cfg(feature = "std")]
     pub fn detect_global(language: String) -> Self {
         let envp = process_envp();
         let args = process_args();
@@ -244,7 +262,8 @@ impl ProcessInfo {
 ///
 /// This type has a custom serde Deserialize implementation from maps:
 /// * It skips invalid/unknown keys in the map
-/// * Since the storage is a Boxed slice and not a Hashmap, it doesn't over-allocate
+/// * Since the storage is a Boxed slice and not a map, it doesn't over-allocate
+/// * Duplicate keys are preserved; when later inserted into a BTreeMap, the last entry wins
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ConfigMap(Box<[(String, String)]>);
 
@@ -257,8 +276,8 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
         impl<'de> serde::de::Visitor<'de> for ConfigMapVisitor {
             type Value = ConfigMap;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct ConfigMap(HashMap<String, String>)")
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                formatter.write_str("a string-to-string map")
             }
 
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
@@ -353,7 +372,7 @@ struct StableConfig {
 
     // Phase 2
     #[serde(default)]
-    tags: HashMap<String, String>,
+    tags: BTreeMap<String, String>,
     #[serde(default)]
     rules: Vec<Rule>,
 }
@@ -395,7 +414,7 @@ pub struct LibraryConfig {
 }
 
 #[derive(Debug)]
-/// This struct is used to hold configuration item data in a Hashmap, while the name of
+/// This struct is used to hold configuration item data in a map, while the name of
 /// the configuration is the key used for deduplication
 struct LibraryConfigVal {
     value: String,
@@ -495,13 +514,9 @@ impl Configurator {
     }
 
     fn parse_stable_config_slice(&self, buf: &[u8]) -> LoggedResult<StableConfig, anyhow::Error> {
-        let stable_config = if buf.is_empty() {
-            StableConfig::default()
-        } else {
-            match serde_yaml::from_slice(buf) {
-                Ok(config) => config,
-                Err(e) => return LoggedResult::Err(e.into()),
-            }
+        let stable_config = match yaml_serde::from_slice::<StableConfig>(buf) {
+            Ok(config) => config,
+            Err(e) => return LoggedResult::Err(e.into()),
         };
 
         let messages = if self.debug_logs {
@@ -515,7 +530,8 @@ impl Configurator {
         LoggedResult::Ok(stable_config, messages)
     }
 
-    fn parse_stable_config_file<F: io::Read>(
+    #[cfg(all(feature = "std", test))]
+    fn parse_stable_config_file<F: std::io::Read>(
         &self,
         mut f: F,
     ) -> LoggedResult<StableConfig, anyhow::Error> {
@@ -524,92 +540,55 @@ impl Configurator {
             Ok(_) => {}
             Err(e) => return LoggedResult::Err(e.into()),
         }
-        self.parse_stable_config_slice(utils::trim_bytes(&buffer))
+        self.parse_stable_config_slice(&buffer)
     }
 
+    #[cfg(feature = "std")]
     pub fn get_config_from_file(
         &self,
         path_local: &Path,
         path_managed: &Path,
         process_info: &ProcessInfo,
     ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
+        self.get_config_from_reader(
+            &StdConfigRead,
+            path_local.to_string_lossy(),
+            path_managed.to_string_lossy(),
+            process_info,
+        )
+    }
+
+    /// Load configuration using a custom [`ConfigRead`] implementation.
+    ///
+    /// This is the primary entry point for no_std or virtual-filesystem
+    /// environments. The reader controls how files are fetched; the
+    /// configurator handles parsing, layering, and rule evaluation.
+    pub fn get_config_from_reader(
+        &self,
+        reader: &impl ConfigRead,
+        local_path: impl AsRef<str>,
+        fleet_path: impl AsRef<str>,
+        process_info: &ProcessInfo,
+    ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
+        let local_path = local_path.as_ref();
+        let fleet_path = fleet_path.as_ref();
         let mut debug_messages = Vec::new();
         if self.debug_logs {
             debug_messages.push("Reading stable configuration from files:".to_string());
-            debug_messages.push(format!("\tlocal: {path_local:?}"));
-            debug_messages.push(format!("\tfleet: {path_managed:?}"));
+            debug_messages.push(format!("\tlocal: {local_path:?}"));
+            debug_messages.push(format!("\tfleet: {fleet_path:?}"));
         }
 
-        let local_config = match fs::File::open(path_local) {
-            Ok(file) => {
-                match file.metadata() {
-                    Ok(metadata) => {
-                        // Fail if the file is > 100mb
-                        if metadata.len() > 1024 * 1024 * 100 {
-                            debug_messages.push(
-                                "failed to read local config file: file is too large (> 100mb)"
-                                    .to_string(),
-                            );
-                            StableConfig::default()
-                        } else {
-                            match self.parse_stable_config_file(file) {
-                                LoggedResult::Ok(config, logs) => {
-                                    debug_messages.extend(logs);
-                                    config
-                                }
-                                LoggedResult::Err(e) => return LoggedResult::Err(e),
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return LoggedResult::Err(
-                            anyhow::Error::from(e).context("failed to get file metadata"),
-                        )
-                    }
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
-            Err(e) => {
-                return LoggedResult::Err(
-                    anyhow::Error::from(e).context("failed to open config file"),
-                )
-            }
-        };
-        let fleet_config = match fs::File::open(path_managed) {
-            Ok(file) => {
-                match file.metadata() {
-                    Ok(metadata) => {
-                        // Fail if the file is > 100mb
-                        if metadata.len() > 1024 * 1024 * 100 {
-                            debug_messages.push(
-                                "failed to read fleet config file: file is too large (> 100mb)"
-                                    .to_string(),
-                            );
-                            StableConfig::default()
-                        } else {
-                            match self.parse_stable_config_file(file) {
-                                LoggedResult::Ok(config, logs) => {
-                                    debug_messages.extend(logs);
-                                    config
-                                }
-                                LoggedResult::Err(e) => return LoggedResult::Err(e),
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        return LoggedResult::Err(
-                            anyhow::Error::from(e).context("failed to get file metadata"),
-                        )
-                    }
-                }
-            }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => StableConfig::default(),
-            Err(e) => {
-                return LoggedResult::Err(
-                    anyhow::Error::from(e).context("failed to open config file"),
-                )
-            }
-        };
+        let local_config =
+            match self.read_config_source(reader, local_path, "local", &mut debug_messages) {
+                Ok(config) => config,
+                Err(e) => return LoggedResult::Err(e),
+            };
+        let fleet_config =
+            match self.read_config_source(reader, fleet_path, "fleet", &mut debug_messages) {
+                Ok(config) => config,
+                Err(e) => return LoggedResult::Err(e),
+            };
 
         match self.get_config(local_config, fleet_config, process_info) {
             LoggedResult::Ok(configs, msgs) => {
@@ -620,23 +599,42 @@ impl Configurator {
         }
     }
 
-    pub fn get_config_from_bytes(
+    fn read_config_source(
         &self,
-        s_local: &[u8],
-        s_managed: &[u8],
-        process_info: ProcessInfo,
-    ) -> anyhow::Result<Vec<LibraryConfig>> {
-        let local_config = match self.parse_stable_config_slice(s_local) {
-            LoggedResult::Ok(config, _) => config,
-            LoggedResult::Err(e) => return Err(e),
-        };
-        let fleet_config = match self.parse_stable_config_slice(s_managed) {
-            LoggedResult::Ok(config, _) => config,
-            LoggedResult::Err(e) => return Err(e),
+        reader: &impl ConfigRead,
+        path: &str,
+        label: &str,
+        debug_messages: &mut Vec<String>,
+    ) -> Result<StableConfig, anyhow::Error> {
+        // Safety net per the `ConfigRead` trait contract: a custom reader that fails to enforce
+        // `MAX_CONFIG_FILE_SIZE` is downgraded to `TooLarge` so we can't be pushed into a multi-GB
+        // parse.
+        let result = reader.read(path).and_then(|b| {
+            if b.len() > MAX_CONFIG_FILE_SIZE {
+                Err(ConfigReadError::TooLarge)
+            } else {
+                Ok(b)
+            }
+        });
+        let bytes = match result {
+            Ok(bytes) => bytes,
+            Err(ConfigReadError::NotFound) => return Ok(StableConfig::default()),
+            Err(ConfigReadError::TooLarge) => {
+                debug_messages.push(format!(
+                    "failed to read {label} config file: file is too large (> 100mb)"
+                ));
+                return Ok(StableConfig::default());
+            }
+            Err(ConfigReadError::Io(e)) => {
+                anyhow::bail!("failed to read {label} config file: {e}")
+            }
         };
 
-        match self.get_config(local_config, fleet_config, &process_info) {
-            LoggedResult::Ok(configs, _) => Ok(configs),
+        match self.parse_stable_config_slice(&bytes) {
+            LoggedResult::Ok(config, logs) => {
+                debug_messages.extend(logs);
+                Ok(config)
+            }
             LoggedResult::Err(e) => Err(e),
         }
     }
@@ -662,7 +660,7 @@ impl Configurator {
             ));
         }
 
-        let mut cfg = HashMap::new();
+        let mut cfg = BTreeMap::new();
         // First get local configuration
         match self.get_single_source_config(
             local_config,
@@ -726,7 +724,7 @@ impl Configurator {
         mut stable_config: StableConfig,
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
-        cfg: &mut HashMap<String, LibraryConfigVal>,
+        cfg: &mut BTreeMap<String, LibraryConfigVal>,
     ) -> LoggedResult<(), anyhow::Error> {
         // Phase 1: take host default config
         cfg.extend(
@@ -757,7 +755,7 @@ impl Configurator {
         stable_config: StableConfig,
         source: LibraryConfigSource,
         process_info: &ProcessInfo,
-        library_config: &mut HashMap<String, LibraryConfigVal>,
+        library_config: &mut BTreeMap<String, LibraryConfigVal>,
     ) -> LoggedResult<(), anyhow::Error> {
         let matcher = Matcher::new(process_info, &stable_config.tags);
         let Some(configs) = matcher.find_stable_config(&stable_config) else {
@@ -796,41 +794,32 @@ impl Configurator {
 
 use utils::Get;
 mod utils {
-    use std::collections::HashMap;
-
-    /// Removes leading and trailing ascci whitespaces from a byte slice
-    pub(crate) fn trim_bytes(mut b: &[u8]) -> &[u8] {
-        while b.first().map(u8::is_ascii_whitespace).unwrap_or(false) {
-            b = &b[1..];
-        }
-        while b.last().map(u8::is_ascii_whitespace).unwrap_or(false) {
-            b = &b[..b.len() - 1];
-        }
-        b
-    }
+    use alloc::collections::BTreeMap;
+    use alloc::string::String;
 
     /// Helper trait so we don't have to duplicate code for
-    /// HashMap<&str, &str> and HashMap<String, String>
+    /// BTreeMap<&str, &str> and BTreeMap<String, String>
     pub(crate) trait Get {
         fn get(&self, k: &str) -> Option<&str>;
     }
 
-    impl Get for HashMap<&str, &str> {
+    impl Get for BTreeMap<&str, &str> {
         fn get(&self, k: &str) -> Option<&str> {
             self.get(k).copied()
         }
     }
 
-    impl Get for HashMap<String, String> {
+    impl Get for BTreeMap<String, String> {
         fn get(&self, k: &str) -> Option<&str> {
             self.get(k).map(|v| v.as_str())
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
-    use std::{collections::HashMap, io::Write, path::Path};
+    use alloc::collections::BTreeMap;
+    use std::{io::Write, path::Path};
 
     use super::{Configurator, LoggedResult, ProcessInfo};
     use crate::{
@@ -849,8 +838,17 @@ mod tests {
             language: b"java".to_vec(),
         };
         let configurator = Configurator::new(true);
+        let local_config = configurator
+            .parse_stable_config_slice(local_cfg)
+            .data()
+            .unwrap();
+        let fleet_config = configurator
+            .parse_stable_config_slice(fleet_cfg)
+            .data()
+            .unwrap();
         let mut actual = configurator
-            .get_config_from_bytes(local_cfg, fleet_cfg, process_info)
+            .get_config(local_config, fleet_config, &process_info)
+            .data()
             .unwrap();
 
         // Sort by name for determinism
@@ -913,16 +911,16 @@ mod tests {
         let temp_local_path = temp_local_file.into_temp_path();
         let temp_fleet_path = temp_fleet_file.into_temp_path();
         let result = configurator.get_config_from_file(
-            temp_local_path.to_str().unwrap().as_ref(),
-            temp_fleet_path.to_str().unwrap().as_ref(),
+            temp_local_path.as_ref(),
+            temp_fleet_path.as_ref(),
             &ProcessInfo {
                 args: vec![b"-jar HelloWorld.jar".to_vec()],
                 envp: vec![b"ENV=VAR".to_vec()],
                 language: b"java".to_vec(),
             },
         );
-        let local_path: &Path = temp_local_path.to_str().unwrap().as_ref();
-        let fleet_path: &Path = temp_fleet_path.to_str().unwrap().as_ref();
+        let local_path: &Path = temp_local_path.as_ref();
+        let fleet_path: &Path = temp_fleet_path.as_ref();
         match result {
             LoggedResult::Ok(configs, logs) => {
                 assert_eq!(configs, vec![]);
@@ -1207,6 +1205,26 @@ rules:
     }
 
     #[test]
+    fn test_parse_comment_only_yaml() {
+        let configurator = Configurator::new(true);
+        let result = configurator.parse_stable_config_slice(b"# this is a comment\n");
+        match result {
+            LoggedResult::Ok(config, _) => assert_eq!(config, StableConfig::default()),
+            LoggedResult::Err(e) => panic!("Expected success, got: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_empty_yaml() {
+        let configurator = Configurator::new(true);
+        let result = configurator.parse_stable_config_slice(b"");
+        match result {
+            LoggedResult::Ok(config, _) => assert_eq!(config, StableConfig::default()),
+            LoggedResult::Err(e) => panic!("Expected success, got: {e:?}"),
+        }
+    }
+
+    #[test]
     fn test_parse_static_config() {
         let mut tmp = tempfile::NamedTempFile::new().unwrap();
         tmp.reopen()
@@ -1237,7 +1255,7 @@ rules:
             StableConfig {
                 config_id: None,
                 apm_configuration_default: ConfigMap::default(),
-                tags: HashMap::default(),
+                tags: BTreeMap::default(),
                 rules: vec![Rule {
                     selectors: vec![Selector {
                         origin: Origin::Language,
@@ -1266,7 +1284,7 @@ rules:
             envp: vec![b"ENV=VAR".to_vec()],
             language: b"java".to_vec(),
         };
-        let tags = HashMap::new();
+        let tags = BTreeMap::new();
         let matcher = Matcher::new(&process_info, &tags);
 
         let test_cases = &[
@@ -1328,12 +1346,12 @@ rules:
             language: b"java".to_vec(),
         };
         let configurator = Configurator::new(true);
-        let config = configurator
-            .get_config_from_bytes(
+        let local_config = configurator
+            .parse_stable_config_slice(
                 b"
 config_id: abc
 tags:
-  cluster_name: my_cluster 
+  cluster_name: my_cluster
 rules:
 - selectors:
   - origin: language
@@ -1342,6 +1360,11 @@ rules:
   configuration:
     DD_SERVICE: local
 ",
+            )
+            .data()
+            .unwrap();
+        let fleet_config = configurator
+            .parse_stable_config_slice(
                 b"
 config_id: def
 rules:
@@ -1351,8 +1374,12 @@ rules:
     operator: equals
   configuration:
     DD_SERVICE: managed",
-                process_info,
             )
+            .data()
+            .unwrap();
+        let config = configurator
+            .get_config(local_config, fleet_config, &process_info)
+            .data()
             .unwrap();
         assert_eq!(
             config,
@@ -1363,5 +1390,100 @@ rules:
                 config_id: Some("def".to_string()),
             }]
         );
+    }
+}
+
+#[cfg(test)]
+mod config_read_tests {
+    use alloc::collections::BTreeMap;
+    use alloc::format;
+    use alloc::string::{String, ToString};
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    use super::{ConfigRead, ConfigReadError, Configurator, ProcessInfo};
+
+    /// In-memory reader for testing the `ConfigRead` trait without filesystem access.
+    struct MemReader {
+        files: BTreeMap<String, Result<Vec<u8>, ConfigReadError<String>>>,
+    }
+
+    impl MemReader {
+        fn new() -> Self {
+            Self {
+                files: BTreeMap::new(),
+            }
+        }
+
+        fn with_file(mut self, path: &str, content: &[u8]) -> Self {
+            self.files.insert(path.to_string(), Ok(content.to_vec()));
+            self
+        }
+
+        fn with_error(mut self, path: &str, err: ConfigReadError<String>) -> Self {
+            self.files.insert(path.to_string(), Err(err));
+            self
+        }
+    }
+
+    impl ConfigRead for MemReader {
+        type IoError = String;
+
+        fn read(&self, path: &str) -> Result<Vec<u8>, ConfigReadError<String>> {
+            match self.files.get(path) {
+                Some(Ok(bytes)) => Ok(bytes.clone()),
+                Some(Err(ConfigReadError::NotFound)) => Err(ConfigReadError::NotFound),
+                Some(Err(ConfigReadError::TooLarge)) => Err(ConfigReadError::TooLarge),
+                Some(Err(ConfigReadError::Io(e))) => Err(ConfigReadError::Io(e.clone())),
+                None => Err(ConfigReadError::NotFound),
+            }
+        }
+    }
+
+    fn java_process_info() -> ProcessInfo {
+        ProcessInfo {
+            args: vec![b"-jar".to_vec(), b"app.jar".to_vec()],
+            envp: vec![b"DD_ENV=prod".to_vec()],
+            language: b"java".to_vec(),
+        }
+    }
+
+    #[test]
+    fn reader_too_large_skipped() {
+        let reader = MemReader::new()
+            .with_error("/local", ConfigReadError::TooLarge)
+            .with_file(
+                "/fleet",
+                b"apm_configuration_default:\n  DD_SERVICE: fleet-svc",
+            );
+
+        let configurator = Configurator::new(true);
+        let result =
+            configurator.get_config_from_reader(&reader, "/local", "/fleet", &java_process_info());
+
+        // TooLarge is non-fatal: should still get fleet config
+        let logs = result.logs().to_vec();
+        let configs = result.data().unwrap();
+
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].name, "DD_SERVICE");
+        assert_eq!(configs[0].value, "fleet-svc");
+        assert!(logs.iter().any(|l| l.contains("too large")));
+    }
+
+    #[test]
+    fn reader_io_error_aborts() {
+        let reader = MemReader::new().with_error(
+            "/local",
+            ConfigReadError::Io("permission denied".to_string()),
+        );
+
+        let configurator = Configurator::new(false);
+        let result =
+            configurator.get_config_from_reader(&reader, "/local", "/fleet", &java_process_info());
+
+        let err = result.data().unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("permission denied"), "got: {msg}");
     }
 }

@@ -108,6 +108,13 @@ opt-level = 3
 incremental = false
 codegen-units = 1
 
+# Used by the no_std CI check on libdd-library-config-ffi: the `no_std_entry` feature
+# requires `panic = "abort"` (it provides the panic_handler / rust_eh_personality), and the
+# default workspace dev profile inherits panic=unwind.
+[profile.no-std-dev]
+inherits = "dev"
+panic = "abort"
+
 [patch.crates-io]
 # proptest pulls in a dependency on libm, which changes the runtime of some math functions
 # so benchmarks are not measuring the same thing as the release build. This patch removes

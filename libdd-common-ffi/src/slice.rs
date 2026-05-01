@@ -1,16 +1,25 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use core::ffi::c_char;
+use core::fmt::{Debug, Display, Formatter};
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
 use core::slice;
-use libdd_common::error::FfiSafeErrorMessage;
-use serde::ser::Error;
-use serde::Serializer;
-use std::borrow::Cow;
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
-use std::os::raw::c_char;
-use std::str::Utf8Error;
+use core::str::Utf8Error;
+
+#[cfg(not(feature = "std"))]
+use alloc::{
+    borrow::Cow,
+    string::{String, ToString},
+    vec::Vec,
+};
+
+#[cfg(feature = "std")]
+use {
+    libdd_common::error::FfiSafeErrorMessage, serde::ser::Error, serde::Serializer,
+    std::borrow::Cow,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -18,6 +27,36 @@ pub enum SliceConversionError {
     LargeLength,
     NullPointer,
     MisalignedPointer,
+}
+
+impl SliceConversionError {
+    fn message(&self) -> &'static core::ffi::CStr {
+        match self {
+            SliceConversionError::LargeLength => c"length was too large",
+            SliceConversionError::NullPointer => c"null pointer with non-zero length",
+            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
+        }
+    }
+}
+
+impl core::fmt::Display for SliceConversionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // SAFETY: every arm of `message()` is a c-str literal — valid UTF-8 by construction.
+        let s = unsafe { core::str::from_utf8_unchecked(self.message().to_bytes()) };
+        f.write_str(s)
+    }
+}
+
+impl core::error::Error for SliceConversionError {}
+
+// Gated on `std` because `FfiSafeErrorMessage` lives in `libdd-common`, which is std-only.
+#[cfg(feature = "std")]
+/// # Safety
+/// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
+unsafe impl FfiSafeErrorMessage for SliceConversionError {
+    fn as_ffi_str(&self) -> &'static core::ffi::CStr {
+        self.message()
+    }
 }
 
 #[repr(C)]
@@ -34,25 +73,6 @@ pub struct Slice<'a, T: 'a> {
     _marker: PhantomData<&'a [T]>,
 }
 
-/// # Safety
-/// All strings are valid UTF-8 (enforced by using c-str literals in Rust).
-unsafe impl FfiSafeErrorMessage for SliceConversionError {
-    fn as_ffi_str(&self) -> &'static std::ffi::CStr {
-        match self {
-            SliceConversionError::LargeLength => c"length was too large",
-            SliceConversionError::NullPointer => c"null pointer with non-zero length",
-            SliceConversionError::MisalignedPointer => c"pointer was not aligned for the type",
-        }
-    }
-}
-impl Display for SliceConversionError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(self.as_rust_str(), f)
-    }
-}
-
-impl core::error::Error for SliceConversionError {}
-
 impl<'a, T: 'a> core::ops::Deref for Slice<'a, T> {
     type Target = [T];
 
@@ -62,7 +82,7 @@ impl<'a, T: 'a> core::ops::Deref for Slice<'a, T> {
 }
 
 impl<T: Debug> Debug for Slice<'_, T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         self.as_slice().fmt(f)
     }
 }
@@ -106,7 +126,7 @@ pub trait AsBytes<'a> {
 
     #[inline]
     fn try_to_utf8(&self) -> Result<&'a str, Utf8Error> {
-        std::str::from_utf8(self.as_bytes())
+        core::str::from_utf8(self.as_bytes())
     }
 
     fn try_to_string(&self) -> Result<String, Utf8Error> {
@@ -127,7 +147,7 @@ pub trait AsBytes<'a> {
     /// # Safety
     /// Must only be used when the underlying data was already confirmed to be utf8.
     unsafe fn assume_utf8(&self) -> &'a str {
-        std::str::from_utf8_unchecked(self.as_bytes())
+        core::str::from_utf8_unchecked(self.as_bytes())
     }
 }
 
@@ -184,7 +204,7 @@ impl<'a, T: 'a> Slice<'a, T> {
     }
 
     /// # Safety
-    /// Uphold the same safety requirements as [std::str::from_raw_parts].
+    /// Uphold the same safety requirements as [`core::slice::from_raw_parts`].
     /// However, it is allowed but not recommended to provide a null pointer
     /// when the len is 0.
     pub const unsafe fn from_raw_parts(ptr: *const T, len: usize) -> Self {
@@ -260,6 +280,7 @@ where
     }
 }
 
+#[cfg(feature = "std")]
 impl<'a, T> serde::Serialize for Slice<'a, T>
 where
     Slice<'a, T>: AsBytes<'a>,
@@ -276,8 +297,8 @@ impl<'a, T> Display for Slice<'a, T>
 where
     Slice<'a, T>: AsBytes<'a>,
 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.try_to_utf8().map_err(|_| std::fmt::Error)?)
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.try_to_utf8().map_err(|_| core::fmt::Error)?)
     }
 }
 
