@@ -104,7 +104,6 @@ impl Flag {
             value: split.value.clone(),
             variation_key: split.variation_key.clone(),
             allocation_key: allocation.key.clone(),
-            extra_logging: split.extra_logging.clone(),
             reason,
             do_log: allocation.do_log,
         })
