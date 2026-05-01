@@ -224,6 +224,12 @@ fn test_crash_tracking_multi_thread_collection() {
             .as_array()
             .expect("error.threads should be a JSON array");
 
+        // assert!(
+        //     false,
+        //     "{}",
+        //     serde_json::to_string_pretty(error).unwrap_or_default()
+        // );
+
         let thread_names: Vec<&str> = threads
             .iter()
             .map(|t| t["name"].as_str().unwrap_or("<none>"))

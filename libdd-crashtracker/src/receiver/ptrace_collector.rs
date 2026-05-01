@@ -90,9 +90,6 @@ pub fn enumerate_threads(pid: libc::pid_t) -> Result<Vec<libc::pid_t>, PtraceErr
 }
 
 /// Wait for a thread to enter ptrace-stop after `PTRACE_INTERRUPT`.
-///
-/// Uses `waitpid` with `__WALL`, which is the standard mechanism for
-/// observing ptrace-stop events even on threads created with `CLONE_THREAD`.
 fn wait_for_stop(tid: libc::pid_t) -> Result<(), PtraceError> {
     let mut status = 0i32;
     // SAFETY: waitpid with a valid tid; __WALL observes stops on CLONE_THREAD
@@ -167,9 +164,6 @@ fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
 ///
 /// The thread must already be stopped (`attach_thread`) before calling this.
 /// The caller is responsible for detaching after this returns.
-///
-/// libunwind's ptrace backend (`_UPT_*`) implements the accessor callbacks that
-/// libunwind uses to read memory and registers from the target process via ptrace.
 fn unwind_remote_thread(
     tid: libc::pid_t,
     resolve_frames: crate::StacktraceCollection,
@@ -292,7 +286,7 @@ pub fn capture_thread_context(
     Ok(CapturedThreadContext { stack_trace })
 }
 
-/// Stream thread contexts to a callback, one at a time, without intermediate storage.
+/// Stream thread contexts to a callback one at a time
 ///
 /// For each non-crashing thread the callback receives the TID and an optional
 /// `CapturedThreadContext` (None if attachment or unwinding failed).
@@ -344,9 +338,7 @@ mod tests {
     fn enumerate_includes_current_thread() {
         let pid = std::process::id() as libc::pid_t;
         let tids = enumerate_threads(pid).expect("enumerate_threads should succeed for self");
-        assert!(!tids.is_empty());
-        let tid = current_tid();
-        assert!(tids.contains(&tid), "current TID {tid} not in {tids:?}");
+        assert!(tids.contains(&pid), "main thread TID {pid} not in {tids:?}");
     }
 
     #[test]

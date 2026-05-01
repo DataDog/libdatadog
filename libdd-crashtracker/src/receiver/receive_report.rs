@@ -574,15 +574,15 @@ fn collect_and_add_thread_contexts(
 
     let mut collected_threads = Vec::new();
 
-    let _ = stream_thread_contexts(
+    stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
         context_timeout,
         config.resolve_frames(),
         |tid, captured_context| {
-            let name = read_thread_name(parent_pid, tid).unwrap_or_else(|| tid.to_string());
-            let state = read_thread_state(parent_pid, tid);
+            let (name, state) = read_thread_stat(parent_pid, tid);
+            let name = name.unwrap_or_else(|| tid.to_string());
 
             let stack = match captured_context {
                 Some(ctx) => ctx.stack_trace.clone(),
@@ -596,7 +596,7 @@ fn collect_and_add_thread_contexts(
                 state,
             });
         },
-    );
+    )?;
 
     if !collected_threads.is_empty() {
         let _ = builder.with_threads(collected_threads);
@@ -605,23 +605,34 @@ fn collect_and_add_thread_contexts(
     Ok(())
 }
 
+/// Read thread name and state from a single `/proc/{pid}/task/{tid}/stat` file.
+///
+/// The stat file format is: `pid (comm) state ...`
+/// `comm` (the thread name) is enclosed between the first `(` and the last `)`
+/// The state character immediately follows the closing `)`.
 #[cfg(target_os = "linux")]
-fn read_thread_name(pid: i32, tid: i32) -> Option<String> {
-    use std::fs;
-    let path = format!("/proc/{pid}/task/{tid}/comm");
-    fs::read_to_string(&path)
-        .ok()
-        .map(|s| s.trim_end_matches('\n').to_string())
-}
+fn read_thread_stat(pid: i32, tid: i32) -> (Option<String>, Option<String>) {
+    let content = match std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat")) {
+        Ok(c) => c,
+        Err(_) => return (None, None),
+    };
 
-#[cfg(target_os = "linux")]
-fn read_thread_state(pid: i32, tid: i32) -> Option<String> {
-    use std::fs;
-    let path = format!("/proc/{pid}/task/{tid}/stat");
-    fs::read_to_string(&path).ok().and_then(|content| {
-        // The state is the 3rd field in /proc/pid/stat
-        content.split_whitespace().nth(2).map(|s| s.to_string())
-    })
+    let name_start = match content.find('(') {
+        Some(i) => i,
+        None => return (None, None),
+    };
+    let name_end = match content.rfind(')') {
+        Some(i) => i,
+        None => return (None, None),
+    };
+
+    let name = Some(content[name_start + 1..name_end].to_string());
+    let state = content[name_end + 1..]
+        .split_whitespace()
+        .next()
+        .map(|s| s.to_string());
+
+    (name, state)
 }
 
 #[cfg(target_os = "linux")]
