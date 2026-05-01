@@ -330,6 +330,9 @@ mod tests {
     use libdd_capabilities::HttpError;
     use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
     use libdd_trace_utils::test_utils::poll_for_mock_hits;
+    // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
+    // requires `Into<HttpMockRegex>`, which is only implemented for
+    // `regex::Regex`, not `regex_lite::Regex`.
     use regex::Regex;
     use tokio::time::sleep;
 

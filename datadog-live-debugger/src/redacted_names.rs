@@ -3,7 +3,7 @@
 
 #![allow(invalid_reference_casting)]
 
-use regex_automata::dfa::regex::Regex;
+use libdd_common::regex_engine::Regex;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
@@ -164,7 +164,7 @@ pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
             regex_str.push('|')
         }
         let name = String::from_utf8_lossy(name);
-        regex_str.push_str(regex::escape(&name[..name.len() - 1]).as_str());
+        regex_str.push_str(libdd_common::regex_engine::escape(&name[..name.len() - 1]).as_str());
         regex_str.push_str(".*");
     } else {
         let added_types = &mut (*(&*ADDED_REDACTED_TYPES as *const Vec<Vec<u8>>).cast_mut());
@@ -211,7 +211,7 @@ pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {
     if REDACTED_TYPES.contains(name) {
         true
     } else if !REDACTED_WILDCARD_TYPES_PATTERN.is_empty() {
-        REDACTED_TYPES_REGEX.is_match(name)
+        std::str::from_utf8(name).map_or(false, |s| REDACTED_TYPES_REGEX.is_match(s))
     } else {
         false
     }

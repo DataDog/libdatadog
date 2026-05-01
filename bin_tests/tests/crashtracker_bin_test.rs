@@ -738,7 +738,7 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 
         // Check for location format (file:line:column) - always present in Debug builds
         // Location should end with pattern like " (path/file.rs:123:45)"
-        let location_regex = regex::Regex::new(r" \(.+?:\d+:\d+\)$").unwrap();
+        let location_regex = libdd_common::regex_engine::Regex::new(r" \(.+?:\d+:\d+\)$").unwrap();
         assert!(
             location_regex.is_match(message),
             "Expected panic message to end with location ' (file:line:column)', got: {}",

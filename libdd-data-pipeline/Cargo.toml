@@ -64,6 +64,7 @@ path = "benches/trace_buffer.rs"
 libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
 libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
+regex = "1.5"
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
 libdd-trace-utils = { path = "../libdd-trace-utils", features = [
@@ -71,7 +72,6 @@ libdd-trace-utils = { path = "../libdd-trace-utils", features = [
 ] }
 httpmock = "0.8.0-alpha.1"
 rand = "0.8.5"
-regex = "1.5"
 tempfile = "3.3.0"
 tokio = { version = "1.23", features = [
     "rt",
@@ -90,3 +90,4 @@ https = [
     "libdd-dogstatsd-client/https",
 ]
 test-utils = []
+regex-lite = ["libdd-common/regex-lite"]
