@@ -531,7 +531,7 @@ mod tests {
                 total
             }
             TracerPayloadCollection::V04(payloads) => {
-                msgpack_encoder::v04::to_len(payloads) as usize
+                msgpack_encoder::v04::to_encoded_byte_len(payloads) as usize
             }
             TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
         }

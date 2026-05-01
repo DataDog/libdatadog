@@ -82,6 +82,7 @@ pub enum TraceExporterOutputFormat {
     #[default]
     V04,
     V05,
+    V1,
 }
 
 impl TraceExporterOutputFormat {
@@ -92,6 +93,7 @@ impl TraceExporterOutputFormat {
             match self {
                 TraceExporterOutputFormat::V04 => "/v0.4/traces",
                 TraceExporterOutputFormat::V05 => "/v0.5/traces",
+                TraceExporterOutputFormat::V1 => "/v1.0/traces",
             },
         )
     }
