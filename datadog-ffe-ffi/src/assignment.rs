@@ -49,7 +49,17 @@ impl ResolutionDetails {
             })
             .collect();
 
-        let flag_metadata = Vec::new();
+        let mut flag_metadata = Vec::new();
+        if let Ok(value) = (*inner).as_ref() {
+            flag_metadata.push(KeyValue {
+                key: BorrowedStr::borrow_static("__dd_allocation_key"),
+                // SAFETY: The returned BorrowedStr does not outlive the source string v. The
+                // source string v lives in the pinned Assignment inside `inner`, which is owned
+                // by ResolutionDetails and will not move (guaranteed by Pin) or be modified (we
+                // only hold shared references).
+                value: unsafe { BorrowedStr::borrow_from_str(&value.allocation_key) },
+            });
+        }
 
         ResolutionDetails {
             inner,
@@ -268,6 +278,13 @@ impl BorrowedStr {
             ptr: s.as_ptr(),
             len: s.len(),
         }
+    }
+
+    /// Borrow string from `s`.
+    #[inline]
+    fn borrow_static(s: &'static str) -> BorrowedStr {
+        // SAFETY: static string outlives any scope, so borrowing from it is safe.
+        unsafe { BorrowedStr::borrow_from_str(s) }
     }
 
     #[inline]
