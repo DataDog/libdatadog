@@ -5283,6 +5283,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1de1d4f81173b03af4c0cbed3c898f6bff5b870e4a7f5d6f4057d62a7a4b686e"
 
 [[package]]
+name = "size-benchmark"
+version = "32.0.0"
+dependencies = [
+ "datadog-ffe-ffi",
+ "glob",
+ "libdd-common-ffi",
+ "libdd-crashtracker-ffi",
+ "libdd-data-pipeline-ffi",
+ "libdd-ddsketch-ffi",
+ "libdd-library-config-ffi",
+ "libdd-log-ffi",
+ "libdd-profiling-ffi",
+ "libdd-shared-runtime-ffi",
+ "libdd-telemetry-ffi",
+ "symbolizer-ffi",
+ "syn 2.0.87",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

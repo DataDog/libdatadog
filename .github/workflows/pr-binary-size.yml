@@ -1,0 +1,62 @@
+name: Binary Size
+
+on:
+  pull_request:
+
+jobs:
+  binary-size:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0  # need full history to check out base ref
+
+      - name: Install nightly + rust-src
+        run: rustup toolchain install nightly --component rust-src
+
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          prefix-key: v0-rust-binary-size
+          cache-targets: true
+          cache-on-failure: true
+          workspaces: ". -> target"
+
+      - name: Compare binary size
+        run: |
+          BASE=$(git merge-base origin/main HEAD)
+          bash size-benchmark/compare-size.sh \
+            --base "$BASE" \
+            --head ${{ github.sha }} \
+            --output size-report.md
+
+      - name: Post PR comment
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('size-report.md', 'utf8');
+            const marker = '<!-- binary-size-report -->';
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.data.find(c => c.body.includes(marker));
+            const fullBody = marker + '\n' + body;
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: fullBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: fullBody,
+              });
+            }

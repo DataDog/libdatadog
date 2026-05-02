@@ -1,0 +1,31 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "size-benchmark"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "size-benchmark"
+path = "src/main.rs"
+
+[build-dependencies]
+glob = "0.3.1"
+syn = { version = "2.0.87", features = ["full", "parsing"] }
+
+[dependencies]
+libdd-common-ffi = { path = "../libdd-common-ffi" }
+libdd-profiling-ffi = { path = "../libdd-profiling-ffi" }
+libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi" }
+libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi" }
+libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi" }
+libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi" }
+libdd-library-config-ffi = { path = "../libdd-library-config-ffi" }
+libdd-log-ffi = { path = "../libdd-log-ffi" }
+datadog-ffe-ffi = { path = "../datadog-ffe-ffi" }
+symbolizer-ffi = { path = "../symbolizer-ffi" }
+libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi" }

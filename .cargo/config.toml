@@ -9,3 +9,4 @@
 # 2. Compile the C/C++ examples using CMake
 # 3. Run each example and report pass/fail
 ffi-test = "run --package tools --bin ffi_test --"
+
