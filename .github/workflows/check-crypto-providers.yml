@@ -11,7 +11,7 @@ env:
   CARGO_INCREMENTAL: 0
 jobs:
   check-crypto-providers:
-    name: "ring + aws-lc-rs are not both pulled into any libdd-* crate"
+    name: "ring + aws-lc-rs are not both pulled into any workspace crate"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources

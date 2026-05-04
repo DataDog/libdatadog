@@ -2,17 +2,19 @@
 # Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 # SPDX-License-Identifier: Apache-2.0
 #
-# Asserts that no libdd-* crate ends up with both `ring` and `aws-lc-rs` in
+# Asserts that no workspace crate ends up with both `ring` and `aws-lc-rs` in
 # its runtime dependency graph at the same time.
 #
 # Mixing both backends bloats release binaries (e.g. datadog-lambda-extension
 # pulls a few hundred KiB of unused crypto) and breaks downstream FIPS
 # compliance checks. See #1816 and #1872 for the original gating work.
 #
-# For every libdd-* crate the check runs:
+# Iterates every workspace member (libdd-* and the datadog-* / sidecar /
+# remote-config / live-debugger / etc. crates that depend transitively on
+# libdd-common) and runs:
 #   * default feature set (whatever `cargo` picks)
-#   * `--no-default-features --features fips` if the crate has a `fips` feature
-#   * `--no-default-features --features https` if the crate has an `https` feature
+#   * `--no-default-features --features fips` if the crate exposes `fips`
+#   * `--no-default-features --features https` if the crate exposes `https`
 #
 # Each crate is resolved against its own Cargo.toml so workspace-level feature
 # unification from other members does not skew the result, and dev-deps are
@@ -96,7 +98,13 @@ check() {
 errors=0
 checked=0
 
-for manifest in libdd-*/Cargo.toml; do
+# Enumerate all workspace members (libdd-* and the datadog-* / sidecar /
+# live-debugger / remote-config / ffi crates) via `cargo metadata` so we
+# don't have to hardcode prefixes or maintain an allow-list.
+manifests=$(cargo metadata --no-deps --format-version 1 \
+    | python3 -c 'import json,sys; m=json.load(sys.stdin); print("\n".join(p["manifest_path"] for p in m["packages"]))')
+
+for manifest in $manifests; do
     crate="$(basename "$(dirname "$manifest")")"
     checked=$((checked + 1))
 
