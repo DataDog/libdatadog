@@ -6,6 +6,7 @@
 //! span.
 
 use hashbrown::HashMap;
+use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
 use std::borrow::Borrow;
@@ -79,19 +80,13 @@ impl<T> FixedAggregationKey<T> {
 /// Represent a stats aggregation key borrowed from span data
 pub(super) struct BorrowedAggregationKey<'a> {
     fixed: FixedAggregationKey<&'a str>,
-    peer_tags: Vec<(&'a str, &'a str)>,
+    peer_tags: Vec<(String, String)>,
 }
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     #[inline]
     fn equivalent(&self, other: &OwnedAggregationKey) -> bool {
-        self.fixed == other.fixed.convert(|s| s)
-            && self.peer_tags.len() == other.peer_tags.len()
-            && self
-                .peer_tags
-                .iter()
-                .zip(other.peer_tags.iter())
-                .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
+        self.fixed == other.fixed.convert(|s| s) && self.peer_tags == other.peer_tags
     }
 }
 
@@ -112,11 +107,7 @@ impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
     fn from(value: &BorrowedAggregationKey<'_>) -> Self {
         OwnedAggregationKey {
             fixed: value.fixed.convert(str::to_owned),
-            peer_tags: value
-                .peer_tags
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
+            peer_tags: value.peer_tags.clone(),
         }
     }
 }
@@ -205,14 +196,17 @@ impl<'a> BorrowedAggregationKey<'a> {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
-            // of `peer_tag_keys`
+            // of `peer_tag_keys`. IP address values are quantized to reduce cardinality.
             peer_tag_keys
                 .iter()
-                .filter_map(|key| Some(((key.as_str()), (span.get_meta(key.as_str())?))))
+                .filter_map(|key| {
+                    let value = span.get_meta(key.as_str())?;
+                    Some((key.clone(), quantize_peer_ip_addresses(value).into_owned()))
+                })
                 .collect()
         } else if let Some(base_service) = span.get_meta("_dd.base_service") {
             // Internal spans with a base service override use only _dd.base_service as peer tag
-            vec![("_dd.base_service", base_service)]
+            vec![("_dd.base_service".to_string(), base_service.to_string())]
         } else {
             vec![]
         };
@@ -959,6 +953,80 @@ mod tests {
                 get_hash(&OwnedAggregationKey::from(&borrowed_key))
             );
         }
+    }
+
+    #[test]
+    fn test_peer_tag_ip_quantization_in_aggregation_key() {
+        let peer_tag_keys = vec!["peer.hostname".to_string(), "db.instance".to_string()];
+
+        // IPv4 address peer tag gets replaced with blocked-ip-address
+        let span_ipv4 = SpanSlice {
+            service: "service",
+            name: "op",
+            resource: "res",
+            span_id: 1,
+            parent_id: 0,
+            meta: HashMap::from([
+                ("span.kind", "client"),
+                ("peer.hostname", "10.1.2.3"),
+                ("db.instance", "my-db"),
+            ]),
+            ..Default::default()
+        };
+        let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys);
+        let owned = OwnedAggregationKey::from(&key);
+        assert_eq!(
+            owned.peer_tags,
+            vec![
+                (
+                    "peer.hostname".to_string(),
+                    "blocked-ip-address".to_string()
+                ),
+                ("db.instance".to_string(), "my-db".to_string()),
+            ]
+        );
+
+        // IPv6 address peer tag gets replaced with blocked-ip-address
+        let span_ipv6 = SpanSlice {
+            service: "service",
+            name: "op",
+            resource: "res",
+            span_id: 1,
+            parent_id: 0,
+            meta: HashMap::from([
+                ("span.kind", "client"),
+                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+            ]),
+            ..Default::default()
+        };
+        let ipv6_keys = vec!["peer.hostname".to_string()];
+        let key = BorrowedAggregationKey::from_span(&span_ipv6, &ipv6_keys);
+        let owned = OwnedAggregationKey::from(&key);
+        assert_eq!(
+            owned.peer_tags,
+            vec![(
+                "peer.hostname".to_string(),
+                "blocked-ip-address".to_string()
+            )]
+        );
+
+        // Non-IP peer tags pass through unchanged
+        let span_non_ip = SpanSlice {
+            service: "service",
+            name: "op",
+            resource: "res",
+            span_id: 1,
+            parent_id: 0,
+            meta: HashMap::from([("span.kind", "client"), ("db.instance", "dynamo.test.us1")]),
+            ..Default::default()
+        };
+        let non_ip_keys = vec!["db.instance".to_string()];
+        let key = BorrowedAggregationKey::from_span(&span_non_ip, &non_ip_keys);
+        let owned = OwnedAggregationKey::from(&key);
+        assert_eq!(
+            owned.peer_tags,
+            vec![("db.instance".to_string(), "dynamo.test.us1".to_string())]
+        );
     }
 
     #[test]

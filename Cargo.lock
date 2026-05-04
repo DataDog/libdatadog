@@ -3348,6 +3348,7 @@ dependencies = [
  "libdd-common",
  "libdd-ddsketch",
  "libdd-shared-runtime",
+ "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
  "rand 0.8.5",
