@@ -119,7 +119,6 @@ pub(crate) enum StdinState {
     Ucontext,
     Waiting,
     WholeStackTrace,
-    ThreadName(Option<String>),
     // StackFrame is always emitted as one stream of all the frames but StackString
     // may have lines that we need to accumulate depending on runtime (e.g. Python)
     RuntimeStackFrame(Vec<StackFrame>),
@@ -290,22 +289,6 @@ fn process_line(
             StdinState::StackTrace
         }
 
-        StdinState::ThreadName(thread_name) if line.starts_with(DD_CRASHTRACK_END_THREAD_NAME) => {
-            if let Some(thread_name) = thread_name {
-                builder.with_thread_name(thread_name)?;
-            } else {
-                builder.with_log_message(
-                    "Thread name block ended without content".to_string(),
-                    true,
-                )?;
-            }
-            StdinState::Waiting
-        }
-        StdinState::ThreadName(_) => {
-            let name = line.trim_end_matches('\n').to_string();
-            StdinState::ThreadName(Some(name))
-        }
-
         StdinState::TraceIds if line.starts_with(DD_CRASHTRACK_END_TRACE_IDS) => {
             StdinState::Waiting
         }
@@ -355,9 +338,6 @@ fn process_line(
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_TRACE_IDS) => {
             StdinState::TraceIds
-        }
-        StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_THREAD_NAME) => {
-            StdinState::ThreadName(None)
         }
         StdinState::Waiting if line.starts_with(DD_CRASHTRACK_BEGIN_UCONTEXT) => {
             StdinState::Ucontext
@@ -529,6 +509,35 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
+    // Thread collection is budgeted against the *remaining* receiver timeout;
+    // whatever time is left after reading the crash data from stdin.
+    // This makes sure the total receiver lifetime is bounded by the configured
+    // timeout, and we always emit whatever threads were collected before
+    // the deadline rather than silently discarding them.
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() && builder.error.kind != Some(ErrorKind::UnhandledException) {
+        if let Some(proc_info) = builder.proc_info.as_ref() {
+            let parent_pid = proc_info.pid;
+            let crashing_tid = proc_info.tid;
+            // remaining_budget: time left on the receiver's clock after stdin.
+            // If we never received a first line (deadline is None) use zero so
+            // collection is skipped; there is nothing to attach to anyway.
+            let remaining_budget = deadline
+                .map(|d| d.saturating_duration_since(Instant::now()))
+                .unwrap_or(Duration::ZERO);
+            if let Err(e) = collect_and_add_thread_contexts(
+                &mut builder,
+                &config,
+                parent_pid,
+                crashing_tid,
+                remaining_budget,
+            ) {
+                let _ = builder
+                    .with_log_message(format!("Failed to collect thread contexts: {e}"), true);
+            }
+        }
+    }
+
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
@@ -542,6 +551,88 @@ pub(crate) async fn receive_report_from_stream(
     }
 
     Ok(Some((config, crash_info)))
+}
+
+#[cfg(target_os = "linux")]
+fn collect_and_add_thread_contexts(
+    builder: &mut CrashInfoBuilder,
+    config: &CrashtrackerConfiguration,
+    parent_pid: u32,
+    crashing_tid: Option<u32>,
+    budget: Duration,
+) -> anyhow::Result<()> {
+    use crate::crash_info::ThreadData;
+    use crate::receiver::ptrace_collector::stream_thread_contexts;
+
+    let crashing_tid = crashing_tid.unwrap_or(0) as i32;
+    let parent_pid = parent_pid as i32;
+
+    // Use the remaining receiver budget
+    // When this expires, stream_thread_contexts stops and returns the threads
+    // collected so far, which are still emitted in the report.
+    let context_timeout = budget;
+
+    let mut collected_threads = Vec::new();
+
+    stream_thread_contexts(
+        parent_pid,
+        crashing_tid,
+        config.max_threads(),
+        context_timeout,
+        config.resolve_frames(),
+        |tid, captured_context| {
+            let (name, state) = read_thread_stat(parent_pid, tid);
+            let name = name.unwrap_or_else(|| tid.to_string());
+
+            let stack = match captured_context {
+                Some(ctx) => ctx.stack_trace.clone(),
+                None => crate::crash_info::StackTrace::empty(),
+            };
+
+            collected_threads.push(ThreadData {
+                crashed: false,
+                name,
+                stack,
+                state,
+            });
+        },
+    )?;
+
+    if !collected_threads.is_empty() {
+        let _ = builder.with_threads(collected_threads);
+    }
+
+    Ok(())
+}
+
+/// Read thread name and state from a single `/proc/{pid}/task/{tid}/stat` file.
+///
+/// The stat file format is: `pid (comm) state ...`
+/// `comm` (the thread name) is enclosed between the first `(` and the last `)`
+/// The state character immediately follows the closing `)`.
+#[cfg(target_os = "linux")]
+fn read_thread_stat(pid: i32, tid: i32) -> (Option<String>, Option<String>) {
+    let content = match std::fs::read_to_string(format!("/proc/{pid}/task/{tid}/stat")) {
+        Ok(c) => c,
+        Err(_) => return (None, None),
+    };
+
+    let name_start = match content.find('(') {
+        Some(i) => i,
+        None => return (None, None),
+    };
+    let name_end = match content.rfind(')') {
+        Some(i) => i,
+        None => return (None, None),
+    };
+
+    let name = Some(content[name_start + 1..name_end].to_string());
+    let state = content[name_end + 1..]
+        .split_whitespace()
+        .next()
+        .map(|s| s.to_string());
+
+    (name, state)
 }
 
 #[cfg(target_os = "linux")]

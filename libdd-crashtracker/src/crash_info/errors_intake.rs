@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use crate::{OsInfo, SigInfo, Ucontext};
 
 use super::{
-    build_crash_ping_message, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace,
+    build_crash_ping_message, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, ThreadData,
     TARGET_TRIPLE,
 };
 use anyhow::Context;
@@ -253,6 +253,8 @@ pub struct ErrorObject {
     pub stack: Option<StackTrace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threads: Option<Vec<ThreadData>>,
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -430,6 +432,7 @@ impl ErrorsIntakePayload {
                 is_crash: Some(true),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: crash_info.experimental.clone(),
+                threads: Some(crash_info.error.threads.clone()),
             },
             trace_id: None,
             ucontext: crash_info.ucontext.clone(),
@@ -496,6 +499,7 @@ impl ErrorsIntakePayload {
                 is_crash: Some(false),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: None,
+                threads: None,
             },
             sig_info: sig_info.cloned(),
             trace_id: None,

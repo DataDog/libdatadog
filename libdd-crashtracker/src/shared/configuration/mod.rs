@@ -30,15 +30,23 @@ pub enum StacktraceCollection {
 pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
     additional_files: Vec<String>,
+    #[serde(default)]
+    collect_all_threads: bool,
     create_alt_stack: bool,
     // Whether to demangle symbol names in stack traces
     demangle_names: bool,
     endpoint: Option<Endpoint>,
+    #[serde(default = "default_max_threads")]
+    max_threads: usize,
     resolve_frames: StacktraceCollection,
     signals: Vec<i32>,
     timeout: Duration,
     unix_socket_path: Option<String>,
     use_alt_stack: bool,
+}
+
+pub const fn default_max_threads() -> usize {
+    2048
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -84,8 +92,16 @@ impl CrashtrackerConfiguration {
         &self.additional_files
     }
 
+    pub fn collect_all_threads(&self) -> bool {
+        self.collect_all_threads
+    }
+
     pub fn create_alt_stack(&self) -> bool {
         self.create_alt_stack
+    }
+
+    pub fn max_threads(&self) -> usize {
+        self.max_threads
     }
 
     pub fn use_alt_stack(&self) -> bool {
@@ -114,6 +130,14 @@ impl CrashtrackerConfiguration {
 
     pub fn demangle_names(&self) -> bool {
         self.demangle_names
+    }
+
+    pub fn set_collect_all_threads(&mut self, collect: bool) {
+        self.collect_all_threads = collect;
+    }
+
+    pub fn set_max_threads(&mut self, max: usize) {
+        self.max_threads = max;
     }
 
     pub fn set_create_alt_stack(&mut self, create_alt_stack: bool) -> anyhow::Result<()> {
