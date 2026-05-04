@@ -15,6 +15,7 @@ bench = false
 default = ["tracing"]
 tracing = ["tracing/std"]
 https = ["libdd-common/https"]
+fips = ["libdd-common/fips"]
 
 [dependencies]
 anyhow = { version = "1.0" }
