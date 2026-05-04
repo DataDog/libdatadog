@@ -55,7 +55,9 @@ pulls() {
     local output rc
     output=$(cargo tree --manifest-path "$manifest" --edges no-dev "$@" -i "$pkg" 2>&1) && rc=0 || rc=$?
 
-    if [[ "$output" =~ ^"$pkg"" v" ]]; then
+    # The tree heading line is "<pkg> v<version>" — match it line-anchored so
+    # `Downloading crates...` progress noise printed first does not throw us off.
+    if grep -qE "^${pkg} v[0-9]" <<<"$output"; then
         return 0
     fi
     if [[ "$output" == *"nothing to print"* ]] || \
