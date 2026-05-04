@@ -1,13 +1,54 @@
 name: Miri test
 on:
+  pull_request:
+    branches-ignore:
+      - release
   push:
+    branches:
+      - main
+      - mq-working-branch-*
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      crates: ${{ steps.set-crates.outputs.crates }}
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0
+    - name: Get crates report
+      id: changed-crates
+      uses: ./.github/actions/crates-reporter
+    - name: Set crates to run Miri on
+      id: set-crates
+      env:
+        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
+        CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
+        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
+      run: |
+        if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
+          echo "This is a pull request event, running Miri on changed and affected crates"
+          echo "Changed crates: $CHANGED_CRATES"
+          echo "Affected crates: $AFFECTED_CRATES"
+
+          # create a list of crates from the affected crates
+          CRATES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
+          [[ -z "$CRATES" || "$CRATES" == '""' ]] && CRATES=""
+        else
+          echo "This is a push event, running Miri on all crates"
+          CRATES="--workspace"
+        fi
+        echo "Crates: $CRATES"
+        echo "crates=$CRATES" >> $GITHUB_OUTPUT
+
   run-miri:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         partition: [1, 2, 3, 4, 5]
+    needs: setup
+    if: ${{ needs.setup.outputs.crates != '' }}
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
@@ -30,6 +71,6 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --partition count:${{ matrix.partition }}/5
+      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"

@@ -90,7 +90,7 @@ mod https {
 
     /// Ensures the rustls default CryptoProvider is installed (ring for non-FIPS).
     /// In FIPS mode, the caller must install the FIPS provider before any TLS use.
-    #[cfg(any(not(feature = "fips"), coverage))]
+    #[cfg(feature = "https")]
     fn ensure_crypto_provider_initialized() {
         use std::sync::Once;
 
@@ -103,7 +103,7 @@ mod https {
 
     /// In FIPS mode, the caller must install the FIPS-compliant crypto provider
     /// (e.g., aws-lc-rs FIPS) before any TLS connections are established.
-    #[cfg(all(feature = "fips", not(coverage)))]
+    #[cfg(not(feature = "https"))]
     fn ensure_crypto_provider_initialized() {}
 
     #[cfg(feature = "use_webpki_roots")]

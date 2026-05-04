@@ -23,6 +23,8 @@ pub mod dump_server;
 pub mod entity_id;
 #[macro_use]
 pub mod cstr;
+#[cfg(feature = "bench-utils")]
+pub mod bench_utils;
 pub mod config;
 pub mod error;
 pub mod http_common;
