@@ -140,19 +140,34 @@ where
             span.parent_id == 0 || span.metrics.get("_dd.top_level").copied().unwrap_or(0.0) == 1.0;
 
         if is_root {
-            if let Some(v) = span.metrics.get("_sampling_priority_v1") {
-                sampling_priority = Some(*v as i32);
-            }
-            if let Some(v) = span.meta.get("_dd.origin") {
-                origin = Some(v.borrow());
-            }
-            // _dd.p.dm is a signed integer sampling mechanism code stored as a string.
-            if let Some(v) = span.meta.get("_dd.p.dm") {
-                if let Ok(dm) = v.borrow().parse::<i32>() {
-                    sampling_mechanism = Some(dm as u32);
-                }
-            }
+            // Root span is authoritative: its values supersede any non-root fallback,
+            // including absence (a field missing on the root should not be filled from non-roots).
+            sampling_priority = span.metrics.get("_sampling_priority_v1").map(|v| *v as i32);
+            origin = span.meta.get("_dd.origin").map(|v| v.borrow());
+            // _dd.p.dm is a signed integer stored as a string; unsigned_abs preserves the
+            // magnitude.
+            sampling_mechanism = span
+                .meta
+                .get("_dd.p.dm")
+                .and_then(|v| v.borrow().parse::<i32>().ok())
+                .map(|dm| dm.unsigned_abs());
             break;
+        }
+
+        // No root found yet — accumulate fallback values from non-root spans (partial flush).
+        // Root span values will override these if a root is eventually encountered.
+        if sampling_priority.is_none() {
+            sampling_priority = span.metrics.get("_sampling_priority_v1").map(|v| *v as i32);
+        }
+        if origin.is_none() {
+            origin = span.meta.get("_dd.origin").map(|v| v.borrow());
+        }
+        if sampling_mechanism.is_none() {
+            sampling_mechanism = span
+                .meta
+                .get("_dd.p.dm")
+                .and_then(|v| v.borrow().parse::<i32>().ok())
+                .map(|dm| dm.unsigned_abs());
         }
     }
 

@@ -26,6 +26,10 @@ pub(super) enum SpanKey {
     Type = 10,
     SpanLinks = 11,
     SpanEvents = 12,
+    Env = 13,
+    Version = 14,
+    Component = 15,
+    Kind = 16,
 }
 
 /// Integer keys for V1 span link fields.
@@ -54,6 +58,18 @@ pub(super) enum AnyValueKey {
     Bool = 2,
     Double = 3,
     Bytes = 5,
+}
+
+/// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
+fn span_kind_from_str(s: &str) -> Option<u32> {
+    match s {
+        "internal" => Some(1),
+        "server" => Some(2),
+        "client" => Some(3),
+        "producer" => Some(4),
+        "consumer" => Some(5),
+        _ => None,
+    }
 }
 
 /// Encodes span links into the V1 format.
@@ -98,7 +114,7 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
 
         if !link.attributes.is_empty() {
             write_uint8(writer, SpanLinkKey::Attributes as u8)?;
-            rmp::encode::write_map_len(writer, link.attributes.len() as u32)?;
+            rmp::encode::write_array_len(writer, link.attributes.len() as u32 * 3)?;
             for (k, v) in link.attributes.iter() {
                 table.write_interned(writer, k.borrow())?;
                 write_uint8(writer, AnyValueKey::String as u8)?;
@@ -147,7 +163,7 @@ fn encode_span_event_attributes<W: RmpWrite, T: TraceData>(
     event: &SpanEvent<T>,
     table: &mut StringTable,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    rmp::encode::write_map_len(writer, event.attributes.len() as u32)?;
+    rmp::encode::write_array_len(writer, event.attributes.len() as u32 * 3)?;
     for (k, attribute) in event.attributes.iter() {
         table.write_interned(writer, k.borrow())?;
         encode_attribute_any_value(writer, attribute, table)?;
@@ -205,18 +221,35 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
 ///
 /// Key differences from v0.4:
 /// - Uses integer keys for all fields.
-/// - `meta` and `metrics` are combined into a single `attributes` map with type-tagged values.
+/// - `meta` and `metrics` are combined into a single `attributes` array (encoded as flat triplets:
+///   key, type, value) with type-tagged values. Promoted meta fields are excluded.
 /// - `meta_struct` bytes are included in `attributes` as `Bytes` values.
 /// - `trace_id` is not encoded in the span (it belongs to the chunk).
 /// - `error` is encoded as a boolean.
+/// - `env`, `version`, `component`, `span.kind` are promoted from meta to dedicated span fields.
 /// - String values use streaming string interning via `StringTable`.
 pub fn encode_span<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span: &Span<T>,
     table: &mut StringTable,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    let has_attributes =
-        !span.meta.is_empty() || !span.metrics.is_empty() || !span.meta_struct.is_empty();
+    // Extract promoted fields from meta — these get dedicated span-level keys and must
+    // not appear in the attributes array.
+    let env = span.meta.get("env").map(|v| v.borrow());
+    let version = span.meta.get("version").map(|v| v.borrow());
+    let component = span.meta.get("component").map(|v| v.borrow());
+    let kind = span
+        .meta
+        .get("span.kind")
+        .and_then(|v| span_kind_from_str(v.borrow()));
+
+    let is_promoted =
+        |k: &T::Text| matches!(k.borrow(), "env" | "version" | "component" | "span.kind");
+
+    let non_promoted_meta = span.meta.iter().filter(|(k, _)| !is_promoted(k)).count() as u32;
+    let attr_count = non_promoted_meta + span.metrics.len() as u32 + span.meta_struct.len() as u32;
+    let has_attributes = attr_count > 0;
+
     let span_len = 2 // span_id, start — always present
         + (!span.service.borrow().is_empty()) as u32
         + (!span.name.borrow().is_empty()) as u32
@@ -227,7 +260,11 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
         + (span.error != 0) as u32
         + has_attributes as u32
         + (!span.span_links.is_empty()) as u32
-        + (!span.span_events.is_empty()) as u32;
+        + (!span.span_events.is_empty()) as u32
+        + env.is_some() as u32
+        + version.is_some() as u32
+        + component.is_some() as u32
+        + kind.is_some() as u32;
 
     rmp::encode::write_map_len(writer, span_len)?;
 
@@ -273,12 +310,15 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     }
 
     if has_attributes {
-        let attr_count =
-            span.meta.len() as u32 + span.metrics.len() as u32 + span.meta_struct.len() as u32;
+        // Attributes are encoded as a flat array of triplets: [key, type, value, ...].
+        // Length is 3× the number of key-value pairs (per V1 spec).
         write_uint8(writer, SpanKey::Attributes as u8)?;
-        rmp::encode::write_map_len(writer, attr_count)?;
+        rmp::encode::write_array_len(writer, attr_count * 3)?;
 
         for (k, v) in span.meta.iter() {
+            if is_promoted(k) {
+                continue;
+            }
             table.write_interned(writer, k.borrow())?;
             write_uint8(writer, AnyValueKey::String as u8)?;
             table.write_interned(writer, v.borrow())?;
@@ -303,6 +343,24 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 
     if !span.span_events.is_empty() {
         encode_span_events(writer, &span.span_events, table)?;
+    }
+
+    // Promoted span-level fields (env, version, component, span.kind → kind uint32).
+    if let Some(v) = env {
+        write_uint8(writer, SpanKey::Env as u8)?;
+        table.write_interned(writer, v)?;
+    }
+    if let Some(v) = version {
+        write_uint8(writer, SpanKey::Version as u8)?;
+        table.write_interned(writer, v)?;
+    }
+    if let Some(v) = component {
+        write_uint8(writer, SpanKey::Component as u8)?;
+        table.write_interned(writer, v)?;
+    }
+    if let Some(k) = kind {
+        write_uint8(writer, SpanKey::Kind as u8)?;
+        write_uint(writer, k as u64)?;
     }
 
     Ok(())
