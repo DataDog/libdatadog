@@ -46,8 +46,10 @@ impl HttpClient {
         config: HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
-        let backend = BackendImpl::new(config.timeout(), transport)?;
-        Ok(Self { backend, config })
+        Ok(Self {
+            backend: BackendImpl::new(&config, transport)?,
+            config,
+        })
     }
 
     /// The client's configuration.

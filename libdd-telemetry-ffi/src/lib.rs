@@ -23,6 +23,7 @@ macro_rules! c_setters {
         paste::paste! {
             $(
                 #[no_mangle]
+                #[allow(clippy::missing_safety_doc)]
                 pub unsafe extern "C" fn [<ddog_ $object_name _with_ $property_type_name_snakecase _ $path $(_ $path_rest)* >](
                     $object_name: &mut $object_ty,
                     param: $property_type,
@@ -39,6 +40,7 @@ macro_rules! c_setters {
             }
 
             #[no_mangle]
+            #[allow(clippy::missing_safety_doc)]
             #[doc=concat!(
                 "\n Sets a property from it's string value.\n\n",
                 " Available properties:\n\n",
@@ -61,6 +63,7 @@ macro_rules! c_setters {
             }
 
             #[no_mangle]
+            #[allow(clippy::missing_safety_doc)]
             #[doc=concat!(
                 "\n Sets a property from it's string value.\n\n",
                 " Available properties:\n\n",
