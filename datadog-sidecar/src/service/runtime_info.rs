@@ -133,7 +133,6 @@ impl ActiveApplication {
         &mut self,
         remote_configs: &RemoteConfigs,
         session: &SessionInfo,
-        instance_id: InstanceId,
         notify_target: RemoteConfigNotifyTarget,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) {
@@ -150,7 +149,7 @@ impl ActiveApplication {
                 remote_configs.add_runtime(
                     options,
                     *session.remote_config_interval.lock_or_panic(),
-                    instance_id.runtime_id,
+                    session.session_id.clone(),
                     notify_target,
                     self.env.clone().expect("set_metadata was called before"),
                     self.service_name

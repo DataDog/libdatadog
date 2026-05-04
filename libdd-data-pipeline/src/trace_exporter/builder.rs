@@ -13,8 +13,9 @@ use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TraceExporter, TraceExporterError, TraceExporterInputFormat,
-    TraceExporterOutputFormat, TracerMetadata, INFO_ENDPOINT,
+    add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
+    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TracerMetadata,
+    INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
@@ -54,6 +55,7 @@ pub struct TraceExporterBuilder {
     peer_tags: Vec<String>,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
+    telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     shared_runtime: Option<Arc<SharedRuntime>>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
@@ -216,6 +218,15 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Sets optional instrumentation session headers on telemetry requests (`dd-session-id`, etc.).
+    pub fn set_telemetry_instrumentation_sessions(
+        &mut self,
+        sessions: TelemetryInstrumentationSessions,
+    ) -> &mut Self {
+        self.telemetry_instrumentation_sessions = sessions;
+        self
+    }
+
     /// Set a shared runtime used by the exporter for background workers.
     pub fn set_shared_runtime(&mut self, shared_runtime: Arc<SharedRuntime>) -> &mut Self {
         self.shared_runtime = Some(shared_runtime);
@@ -302,9 +313,14 @@ impl TraceExporterBuilder {
             let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
             let (info_fetcher, info_response_observer) =
                 AgentInfoFetcher::<H>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
-            let info_fetcher_handle = shared_runtime.spawn_worker(info_fetcher).map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?;
+            let info_fetcher_handle =
+                shared_runtime
+                    .spawn_worker(info_fetcher, false)
+                    .map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?;
 
             if let Some(bucket_size) = self.stats_bucket_size {
                 stats = StatsComputationStatus::DisabledByAgent { bucket_size };
@@ -312,6 +328,7 @@ impl TraceExporterBuilder {
 
             #[cfg(feature = "telemetry")]
             let (telemetry_client, telemetry_handle) = {
+                let sessions = self.telemetry_instrumentation_sessions;
                 let telemetry = self.telemetry.map(|telemetry_config| {
                     let mut builder = TelemetryClientBuilder::default()
                         .set_language(&self.language)
@@ -326,11 +343,20 @@ impl TraceExporterBuilder {
                     if let Some(id) = telemetry_config.runtime_id {
                         builder = builder.set_runtime_id(&id);
                     }
+                    if let Some(ref id) = sessions.session_id {
+                        builder = builder.set_session_id(id);
+                    }
+                    if let Some(ref id) = sessions.root_session_id {
+                        builder = builder.set_root_session_id(id);
+                    }
+                    if let Some(ref id) = sessions.parent_session_id {
+                        builder = builder.set_parent_session_id(id);
+                    }
                     Ok(builder.build())
                 });
                 match telemetry {
                     Some(Ok((client, worker))) => {
-                        let handle = shared_runtime.spawn_worker(worker).map_err(|e| {
+                        let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
                             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                                 e.to_string(),
                             ))

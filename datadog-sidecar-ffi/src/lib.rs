@@ -28,7 +28,7 @@ use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
@@ -361,8 +361,11 @@ pub extern "C" fn ddog_sidecar_ping(transport: &mut Box<SidecarTransport>) -> Ma
 }
 
 #[no_mangle]
-pub extern "C" fn ddog_sidecar_flush_traces(transport: &mut Box<SidecarTransport>) -> MaybeError {
-    try_c!(blocking::flush_traces(transport));
+pub extern "C" fn ddog_sidecar_flush(
+    transport: &mut Box<SidecarTransport>,
+    options: SidecarFlushOptions,
+) -> MaybeError {
+    try_c!(blocking::flush(transport, options));
 
     MaybeError::None
 }
@@ -629,6 +632,8 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     process_tags: &libdd_common_ffi::Vec<Tag>,
     hostname: ffi::CharSlice,
     root_service: ffi::CharSlice,
+    root_session_id: ffi::CharSlice,
+    parent_session_id: ffi::CharSlice,
 ) -> MaybeError {
     let session_id_str: String = session_id.to_utf8_lossy().into();
     let session_config = SessionConfig {
@@ -673,6 +678,16 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         span_kinds_stats_computed: vec![],
         hostname: hostname.to_utf8_lossy().into(),
         root_service: root_service.to_utf8_lossy().into(),
+        root_session_id: if root_session_id.is_empty() {
+            None
+        } else {
+            Some(root_session_id.to_utf8_lossy().into())
+        },
+        parent_session_id: if parent_session_id.is_empty() {
+            None
+        } else {
+            Some(parent_session_id.to_utf8_lossy().into())
+        },
     };
     #[cfg(unix)]
     try_c!(blocking::set_session_config(

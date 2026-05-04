@@ -114,7 +114,7 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
     );
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter)
+        .spawn_worker(stats_exporter, false)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.

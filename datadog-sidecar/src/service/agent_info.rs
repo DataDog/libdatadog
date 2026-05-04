@@ -16,7 +16,7 @@ use datadog_ipc::platform::NamedShmHandle;
 use futures::future::Shared;
 use futures::FutureExt;
 use http::uri::PathAndQuery;
-use libdd_common::DefaultHttpClient;
+use libdd_capabilities_impl::DefaultHttpClient;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};

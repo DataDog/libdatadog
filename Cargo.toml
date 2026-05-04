@@ -29,7 +29,7 @@ members = [
   "libdd-trace-protobuf",
   "libdd-trace-utils",
   "libdd-trace-stats",
-  "datadog-tracer-flare",
+  "libdd-tracer-flare",
   "libdd-capabilities",
   "libdd-capabilities-impl",
   "libdd-common",
@@ -71,7 +71,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.84.1"
 edition = "2021"
-version = "31.0.0"
+version = "32.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 

@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-capabilities"
-version = "0.1.0"
+version = "1.0.0"
 description = "Portable capability traits for cross-platform libdatadog"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-capabilities"

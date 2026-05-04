@@ -237,7 +237,7 @@ impl TracerFlareManager {
     /// # Examples
     ///
     /// ```rust no_run
-    /// use datadog_tracer_flare::{TracerFlareManager, FlareAction};
+    /// use libdd_tracer_flare::{TracerFlareManager, FlareAction};
     /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
     ///
     /// #[tokio::main]
@@ -318,7 +318,7 @@ impl TracerFlareManager {
     /// # Examples
     ///
     /// ```rust no_run
-    /// use datadog_tracer_flare::{TracerFlareManager, FlareAction};
+    /// use libdd_tracer_flare::{TracerFlareManager, FlareAction};
     /// use datadog_remote_config::config::agent_task::{AgentTaskFile, AgentTask};
     ///
     /// let tracer_flare = TracerFlareManager::default();

@@ -54,6 +54,14 @@ use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
 
+/// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
+#[derive(Debug, Default, Clone)]
+pub struct TelemetryInstrumentationSessions {
+    pub session_id: Option<String>,
+    pub root_session_id: Option<String>,
+    pub parent_session_id: Option<String>,
+}
+
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -430,7 +438,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
     #[cfg(feature = "test-utils")]
-    pub fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
+    pub async fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
         loop {
             if std::time::Instant::now().duration_since(start) > timeout {
@@ -439,7 +447,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             if agent_info::get_agent_info().is_some() {
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 

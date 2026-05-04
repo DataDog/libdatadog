@@ -1,0 +1,69 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+name: 'Get Changed Crates'
+description: 'Detects which Rust crates have changed files in a PR or push'
+
+outputs:
+  status:
+    description: 'Exit status of the action (e.g. success, skipped)'
+    value: ${{ steps.detect.outputs.status }}
+  crates:
+    description: 'JSON array of changed crates with name, version, path and manifest'
+    value: ${{ steps.detect.outputs.crates }}
+  crates_count:
+    description: 'Number of changed crates'
+    value: ${{ steps.detect.outputs.crates_count }}
+  affected_crates:
+    description: 'Affected crates by the changes'
+    value: ${{ steps.detect.outputs.affected_crates }}
+  affected_crates_count:
+    description: 'Number of affected crates by the changes'
+    value: ${{ steps.detect.outputs.affected_crates_count }}
+  base_ref:
+    description: 'The base ref used for comparison'
+    value: ${{ steps.detect.outputs.base_ref }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Rust
+      if: ${{ github.event_name == 'pull_request' }}
+      shell: bash
+      run: rustup install stable && rustup default stable
+
+    - name: Fetch all branches
+      if: ${{ github.event_name == 'pull_request' }}
+      shell: bash
+      run: |
+        git fetch --all
+        echo "Available branches:"
+        git branch -a
+
+    - name: Build change reporter
+      if: ${{ github.event_name == 'pull_request' }}
+      shell: bash
+      run: |
+        cd ${{ github.action_path }}/..
+        cargo build --release -p crates-reporter
+
+    - name: Run change reporter
+      id: detect
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_REF: ${{ github.base_ref }}
+        PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      run: |
+        if [[ "$EVENT_NAME" != "pull_request" ]]; then
+          echo "status=skipped" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        if echo "$PR_LABELS" | jq -e 'any(. == "run-all-tests")' > /dev/null 2>&1; then
+          echo "Label 'run-all-tests' detected, skipping change detection"
+          echo "status=skipped" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        if ! RUST_LOG=debug ${{ github.action_path }}/../target/release/crates-reporter $PR_BASE_REF; then
+          echo "status=skipped" >> $GITHUB_OUTPUT
+        fi
