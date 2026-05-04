@@ -40,16 +40,32 @@ crate_has_feature() {
 # 0 if `package` is in the runtime dep graph of `manifest`. Resolved against
 # the crate's manifest in isolation, with dev-deps excluded.
 #
-# `cargo tree -i` exits 0 with a "nothing to print" warning when the package
-# exists in the workspace but is NOT pulled by the target crate, and exits
-# non-zero only when the package id is unknown entirely. Match the package
-# heading line directly instead of relying on the exit code alone.
+# `cargo tree -i` has three observed outcomes:
+#   - exit 0, output starts with "<pkg> v..."         → pulled
+#   - exit 0, output contains "nothing to print"      → not pulled (in workspace
+#                                                       but not in this graph)
+#   - exit non-zero, "did not match any packages"     → not pulled (not in
+#                                                       workspace at all)
+# Anything else (transient registry / git failures, manifest errors, etc.)
+# is surfaced as a hard error so the guard cannot silently pass when
+# dependency resolution itself broke.
 pulls() {
     local manifest="$1" pkg="$2"
     shift 2
-    local output
-    output=$(cargo tree --manifest-path "$manifest" --edges no-dev "$@" -i "$pkg" 2>&1) || return 1
-    [[ "$output" =~ ^"$pkg"" v" ]]
+    local output rc
+    output=$(cargo tree --manifest-path "$manifest" --edges no-dev "$@" -i "$pkg" 2>&1) && rc=0 || rc=$?
+
+    if [[ "$output" =~ ^"$pkg"" v" ]]; then
+        return 0
+    fi
+    if [[ "$output" == *"nothing to print"* ]] || \
+       [[ "$output" == *"did not match any packages"* ]]; then
+        return 1
+    fi
+
+    echo "ERROR: cargo tree failed for $(basename "$(dirname "$manifest")") -i $pkg (exit $rc):" >&2
+    echo "$output" | sed 's/^/  /' >&2
+    exit 2
 }
 
 tree_for() {
