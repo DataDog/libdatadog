@@ -4,8 +4,8 @@
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
 use rmp::encode::{
-    write_bin, write_bool, write_f64, write_i64, write_sint, write_u64, write_uint, write_uint8,
-    RmpWrite, ValueWriteError,
+    write_bin, write_bool, write_f64, write_sint, write_u64, write_uint, write_uint8, RmpWrite,
+    ValueWriteError,
 };
 use std::borrow::Borrow;
 
@@ -287,7 +287,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     write_u64(writer, span.span_id)?;
 
     write_uint8(writer, SpanKey::Start as u8)?;
-    write_i64(writer, span.start)?;
+    write_u64(writer, span.start as u64)?;
 
     if span.parent_id != 0 {
         write_uint8(writer, SpanKey::ParentId as u8)?;
@@ -296,7 +296,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 
     if span.duration != 0 {
         write_uint8(writer, SpanKey::Duration as u8)?;
-        write_i64(writer, span.duration)?;
+        write_u64(writer, span.duration as u64)?;
     }
 
     if span.error != 0 {

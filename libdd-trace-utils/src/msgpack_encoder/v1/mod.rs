@@ -17,6 +17,8 @@ mod trace_key {
     pub const ENV_REF: u8 = 7;
     pub const HOSTNAME_REF: u8 = 8;
     pub const APP_VERSION_REF: u8 = 9;
+    /// Payload-level attributes map (e.g. `_dd.apm_mode`, `_dd.git.commit.sha`).
+    pub const ATTRIBUTES: u8 = 10;
     pub const CHUNKS: u8 = 11;
 }
 
@@ -75,6 +77,10 @@ struct PayloadAttrs<'a> {
     env: Option<&'a str>,
     hostname: Option<&'a str>,
     app_version: Option<&'a str>,
+    /// `_dd.apm_mode` span tag, promoted to payload-level attributes.
+    apm_mode: Option<&'a str>,
+    /// `_dd.git.commit.sha` span tag, promoted to payload-level attributes.
+    git_commit_sha: Option<&'a str>,
 }
 
 fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(
@@ -86,6 +92,8 @@ where
     let mut env = None;
     let mut hostname = None;
     let mut app_version = None;
+    let mut apm_mode = None;
+    let mut git_commit_sha = None;
 
     'outer: for trace in traces {
         for span in trace.as_ref() {
@@ -98,7 +106,18 @@ where
             if app_version.is_none() {
                 app_version = span.meta.get("version").map(|v| v.borrow());
             }
-            if env.is_some() && hostname.is_some() && app_version.is_some() {
+            if apm_mode.is_none() {
+                apm_mode = span.meta.get("_dd.apm_mode").map(|v| v.borrow());
+            }
+            if git_commit_sha.is_none() {
+                git_commit_sha = span.meta.get("_dd.git.commit.sha").map(|v| v.borrow());
+            }
+            if env.is_some()
+                && hostname.is_some()
+                && app_version.is_some()
+                && apm_mode.is_some()
+                && git_commit_sha.is_some()
+            {
                 break 'outer;
             }
         }
@@ -108,6 +127,8 @@ where
         env,
         hostname,
         app_version,
+        apm_mode,
+        git_commit_sha,
     }
 }
 
@@ -187,6 +208,7 @@ where
 ///   trace_key::ENV_REF      (7)  → str|uint       // optional, interned
 ///   trace_key::HOSTNAME_REF (8)  → str|uint       // optional, interned
 ///   trace_key::APP_VERSION  (9)  → str|uint       // optional, interned
+///   trace_key::ATTRIBUTES   (10) → Array[...]     // optional, flat triplets: key, type, value
 ///   trace_key::CHUNKS       (11) → Array[Chunk, ...]
 /// }
 /// ```
@@ -197,10 +219,15 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     let mut table = StringTable::new();
     let payload_attrs = extract_payload_attrs(traces);
 
+    let attr_count =
+        payload_attrs.apm_mode.is_some() as u32 + payload_attrs.git_commit_sha.is_some() as u32;
+    let has_attributes = attr_count > 0;
+
     let map_len = 1u32 // chunks always present
         + payload_attrs.env.is_some() as u32
         + payload_attrs.hostname.is_some() as u32
-        + payload_attrs.app_version.is_some() as u32;
+        + payload_attrs.app_version.is_some() as u32
+        + has_attributes as u32;
 
     write_map_len(writer, map_len)?;
 
@@ -217,6 +244,23 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     if let Some(app_version) = payload_attrs.app_version {
         write_uint8(writer, trace_key::APP_VERSION_REF)?;
         table.write_interned(writer, app_version)?;
+    }
+
+    if has_attributes {
+        // Encoded as a flat array of triplets: [key, type_uint, value, ...]
+        // String values use type discriminant 1.
+        write_uint8(writer, trace_key::ATTRIBUTES)?;
+        write_array_len(writer, attr_count * 3)?;
+        if let Some(v) = payload_attrs.apm_mode {
+            table.write_interned(writer, "_dd.apm_mode")?;
+            write_uint8(writer, span_v04::AnyValueKey::String as u8)?;
+            table.write_interned(writer, v)?;
+        }
+        if let Some(v) = payload_attrs.git_commit_sha {
+            table.write_interned(writer, "_dd.git.commit.sha")?;
+            write_uint8(writer, span_v04::AnyValueKey::String as u8)?;
+            table.write_interned(writer, v)?;
+        }
     }
 
     write_uint8(writer, trace_key::CHUNKS)?;
@@ -492,6 +536,69 @@ mod tests {
         assert!(
             encoded.windows(host_bytes.len()).any(|w| w == host_bytes),
             "hostname 'my-host' should appear in payload"
+        );
+    }
+
+    #[test]
+    fn test_payload_attributes_apm_mode_and_git_commit_sha() {
+        let mut meta = HashMap::new();
+        meta.insert(
+            BytesString::from_static("_dd.apm_mode"),
+            BytesString::from_static("ssi"),
+        );
+        meta.insert(
+            BytesString::from_static("_dd.git.commit.sha"),
+            BytesString::from_static("abc123"),
+        );
+
+        let span = SpanBytes {
+            service: BytesString::from_slice(b"svc").unwrap(),
+            name: BytesString::from_slice(b"op").unwrap(),
+            resource: BytesString::from_slice(b"res").unwrap(),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 1000,
+            duration: 100,
+            meta,
+            ..Default::default()
+        };
+
+        let encoded = to_vec(&[vec![span]]);
+
+        // Both attribute strings must appear in the payload bytes.
+        let ssi_bytes = b"ssi";
+        assert!(
+            encoded.windows(ssi_bytes.len()).any(|w| w == ssi_bytes),
+            "apm_mode 'ssi' should appear in payload"
+        );
+        let sha_bytes = b"abc123";
+        assert!(
+            encoded.windows(sha_bytes.len()).any(|w| w == sha_bytes),
+            "git commit sha 'abc123' should appear in payload"
+        );
+        // The attribute key names must also be present (first occurrence is a raw str).
+        let apm_key = b"_dd.apm_mode";
+        assert!(
+            encoded.windows(apm_key.len()).any(|w| w == apm_key),
+            "_dd.apm_mode key should appear in payload"
+        );
+        let git_key = b"_dd.git.commit.sha";
+        assert!(
+            encoded.windows(git_key.len()).any(|w| w == git_key),
+            "_dd.git.commit.sha key should appear in payload"
+        );
+    }
+
+    #[test]
+    fn test_payload_attributes_absent_when_no_relevant_tags() {
+        // A span with no _dd.apm_mode or _dd.git.commit.sha must not produce key 10.
+        let span = make_span("svc", "op", 1, 1, 0);
+        let encoded = to_vec(&[vec![span]]);
+        let apm_key = b"_dd.apm_mode";
+        assert!(
+            !encoded.windows(apm_key.len()).any(|w| w == apm_key),
+            "key 10 should be absent when no relevant tags are set"
         );
     }
 }
