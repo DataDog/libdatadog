@@ -93,7 +93,7 @@ where
         }
         let new_size = self.get_shm().size as libc::off_t;
         let fd = self.get_shm().handle.as_owned_fd()?;
-        // Use fallocate on Linux to eagerly commit the new pages: ENOSPC at resize time is
+        // Try to se fallocate on Linux to eagerly commit the new pages: ENOSPC at resize time is
         // recoverable; a later SIGBUS mid-execution is not.
         #[cfg(target_os = "linux")]
         match nix::fcntl::fallocate(
@@ -102,7 +102,9 @@ where
             0,
             new_size,
         ) {
-            Err(nix::Error::EPERM | nix::Error::ENOSYS) => nix::unistd::ftruncate(fd, new_size)?,
+            Err(nix::Error::EPERM | nix::Error::ENOSYS | nix::Error::ENOTSUP) => {
+                nix::unistd::ftruncate(fd, new_size)?
+            }
             Err(e) => return Err(e.into()),
             Ok(_) => {}
         }
