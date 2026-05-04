@@ -515,7 +515,7 @@ pub(crate) async fn receive_report_from_stream(
     // timeout, and we always emit whatever threads were collected before
     // the deadline rather than silently discarding them.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() {
+    if config.collect_all_threads() && builder.error.kind != Some(ErrorKind::UnhandledException) {
         if let Some(proc_info) = builder.proc_info.as_ref() {
             let parent_pid = proc_info.pid;
             let crashing_tid = proc_info.tid;
