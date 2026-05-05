@@ -21,12 +21,14 @@ enum ClosureKind {
 }
 
 impl JsonObfuscator {
-    pub fn new(config: JsonObfuscatorConfig) -> Self {
+    #[must_use]
+    pub const fn new(config: JsonObfuscatorConfig) -> Self {
         Self { config }
     }
 
     /// Obfuscates json string and return an optional error on malformatted json
     /// If an error occurs, an value is returned anyways which might be truncated (...)
+    #[must_use]
     pub fn obfuscate(&self, input: &str) -> (String, Option<String>) {
         if input.is_empty() {
             return (String::new(), None);

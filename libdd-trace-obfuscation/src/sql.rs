@@ -64,15 +64,15 @@ pub struct SqlObfuscateConfig {
     pub obfuscation_mode: SqlObfuscationMode,
 }
 
-fn is_whitespace(b: u8) -> bool {
+const fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
 }
 
-fn is_ident_start(b: u8) -> bool {
+const fn is_ident_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_' || b > 127
 }
 
-fn is_ident_char(b: u8) -> bool {
+const fn is_ident_char(b: u8) -> bool {
     // Go's scanIdentifier includes '.*$' as continuation chars in addition to alnum/_.
     // '@' is in Go's isLetter (isLeadingLetter) so it continues identifiers too.
     // '.' is handled separately (qualifier), but '*', '$', '@' are included here.
@@ -86,7 +86,7 @@ fn is_ident_char(b: u8) -> bool {
 }
 
 /// Replace trailing digit sequences in identifier with `?`
-/// e.g., sales_2019_07_01 → sales_?_?_?
+/// e.g., `sales_2019_07_01` → sales_?_?_?
 ///       item1001 → item?
 ///       ddh19 → ddh?
 fn apply_replace_digits(ident: &str) -> String {
@@ -123,10 +123,9 @@ fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
                     i += 2; // '' escape
                     continue;
-                } else {
-                    result = Some(i + 1);
-                    break;
                 }
+                result = Some(i + 1);
+                break;
             }
             i += 1;
         }
@@ -169,7 +168,7 @@ fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
 }
 
 /// Find the end of a dollar-quoted string $tag$...$tag$
-/// Returns (inner_start, inner_end, outer_end) or None if not a valid dollar quote
+/// Returns (`inner_start`, `inner_end`, `outer_end`) or None if not a valid dollar quote
 fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
     let n = bytes.len();
     if start >= n || bytes[start] != b'$' {
@@ -243,18 +242,18 @@ impl<'a> Tokenizer<'a> {
         self.bytes.get(self.pos + offset).copied()
     }
 
-    fn at_end(&self) -> bool {
+    const fn at_end(&self) -> bool {
         self.pos >= self.bytes.len()
     }
 
-    fn is_normalize_only(&self) -> bool {
+    const fn is_normalize_only(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::NormalizeOnly
         )
     }
 
-    fn is_obfuscate_only(&self) -> bool {
+    const fn is_obfuscate_only(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::ObfuscateOnly
@@ -262,7 +261,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[allow(deprecated)]
-    fn is_unspecified_obfuscate_mode(&self) -> bool {
+    const fn is_unspecified_obfuscate_mode(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::Unspecified
@@ -284,8 +283,8 @@ impl<'a> Tokenizer<'a> {
 
     /// Push a space if result doesn't already end with one (and result is non-empty).
     /// Does NOT add space after `.` (qualifier separator).
-    /// When actually pushing a space, resets last_was_placeholder — equivalent to Go's
-    /// groupingFilter.Reset() on any non-comma, non-paren, non-FilteredGroupable token.
+    /// When actually pushing a space, resets `last_was_placeholder` — equivalent to Go's
+    /// `groupingFilter.Reset()` on any non-comma, non-paren, non-FilteredGroupable token.
     fn space(&mut self) {
         if !self.result.is_empty()
             && self.last_char() != Some(b' ')
@@ -318,7 +317,7 @@ impl<'a> Tokenizer<'a> {
             }
             self.result.push(' ');
         } else if self.last_char() == Some(b' ')
-            && !matches!(self.last_nonspace_char(), Some(b'?') | Some(b'('))
+            && !matches!(self.last_nonspace_char(), Some(b'?' | b'('))
         {
             // Result already ends in space (e.g. after an operator like '!') and we still need
             // to reset placeholder state. Do NOT reset after '(' — Go's groupingFilter lets
@@ -344,8 +343,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// Emit a literal-replacement '?' with consecutive-duplicate suppression.
-    /// In legacy mode, Go's groupingFilter suppresses consecutive FilteredGroupable tokens
-    /// (groupFilter > 1). If last_was_placeholder is already true, suppress this one.
+    /// In legacy mode, Go's groupingFilter suppresses consecutive `FilteredGroupable` tokens
+    /// (groupFilter > 1). If `last_was_placeholder` is already true, suppress this one.
     fn emit_placeholder(&mut self) {
         if self.is_unspecified_obfuscate_mode() && self.last_was_placeholder {
             // Suppress consecutive placeholder (Go groupFilter > 1 rule)
@@ -556,7 +555,7 @@ impl<'a> Tokenizer<'a> {
                 return;
             }
             match next {
-                Some(b'`') | Some(b'"') | Some(b'[') => {
+                Some(b'`' | b'"' | b'[') => {
                     self.result.push_str(" . ");
                     self.pos += 1; // skip '.'
                 }
@@ -778,7 +777,7 @@ impl<'a> Tokenizer<'a> {
                     };
                     if add_close_space {
                         // Add space before ) if needed (not after '(' or already spaced)
-                        if !matches!(self.last_char(), Some(b'(') | Some(b' ') | None) {
+                        if !matches!(self.last_char(), Some(b'(' | b' ') | None) {
                             self.result.push(' ');
                         }
                     }
@@ -888,7 +887,7 @@ impl<'a> Tokenizer<'a> {
                     let is_string_value = self.last_was_assign;
                     // If pending SAVEPOINT or empty/whitespace content, treat as literal → ?
                     if self.pending_savepoint
-                        || (!ident.is_empty() && ident.chars().all(|c| c.is_whitespace()))
+                        || (!ident.is_empty() && ident.chars().all(char::is_whitespace))
                         || (!self.is_normalize_only() && is_string_value)
                     {
                         self.pending_savepoint = false;
@@ -980,7 +979,7 @@ impl<'a> Tokenizer<'a> {
                     if self.maybe_consume_alias_next() {
                         continue;
                     }
-                    if !matches!(self.last_char(), Some(b'[') | Some(b' ') | None) {
+                    if !matches!(self.last_char(), Some(b'[' | b' ') | None) {
                         self.space();
                     }
                     self.result.push(']');
@@ -1118,7 +1117,7 @@ impl<'a> Tokenizer<'a> {
                 }
 
                 // Hex literal: 0x...
-                b'0' if matches!(self.peek(1), Some(b'x') | Some(b'X')) => {
+                b'0' if matches!(self.peek(1), Some(b'x' | b'X')) => {
                     self.pos += 2; // skip '0x'
                     while !self.at_end() && self.bytes[self.pos].is_ascii_hexdigit() {
                         self.pos += 1;
@@ -1658,7 +1657,7 @@ impl<'a> Tokenizer<'a> {
                                 let c_len = self.s[self.pos..]
                                     .chars()
                                     .next()
-                                    .map_or(1, |c| c.len_utf8());
+                                    .map_or(1, char::len_utf8);
                                 let after_c = self.pos + c_len;
                                 if after_c < self.bytes.len()
                                     && self.bytes[after_c].is_ascii_digit()
@@ -1944,7 +1943,7 @@ impl<'a> Tokenizer<'a> {
                     && self.s[self.pos..]
                         .chars()
                         .next()
-                        .is_some_and(|c| c.is_whitespace()) =>
+                        .is_some_and(char::is_whitespace) =>
                 {
                     let c = self.s[self.pos..].chars().next().unwrap_or(' ');
                     self.pos += c.len_utf8();
@@ -1964,10 +1963,10 @@ impl<'a> Tokenizer<'a> {
                             // Non-ASCII: check if this char is Unicode whitespace — if so, stop.
                             // Go's scanIdentifier stops at unicode.IsSpace chars.
                             let c = self.s[self.pos..].chars().next();
-                            if c.is_some_and(|c| c.is_whitespace()) {
+                            if c.is_some_and(char::is_whitespace) {
                                 break;
                             }
-                            self.pos += c.map_or(1, |c| c.len_utf8());
+                            self.pos += c.map_or(1, char::len_utf8);
                         } else if is_ident_char(b) || b == b'.' {
                             self.pos += 1;
                         } else {
@@ -2119,7 +2118,7 @@ fn collapse_multi_values(s: &str) -> String {
         if matches_values_pattern {
             // Preceding context: must be start or space/'(' or '\n'
             let prev_ok = result.is_empty()
-                || matches!(result.chars().last(), Some(' ') | Some('(') | Some('\n'));
+                || matches!(result.chars().last(), Some(' ' | '(' | '\n'));
 
             if prev_ok {
                 // Keep the original casing as it appeared in `remaining`
@@ -2174,7 +2173,7 @@ fn collapse_limit_two_args(s: &str) -> String {
                     let prev_ok = result.is_empty()
                         || matches!(
                             result.as_bytes().last(),
-                            Some(b' ') | Some(b'(') | Some(b'\n')
+                            Some(b' ' | b'(' | b'\n')
                         );
                     if prev_ok {
                         result.push_str(&remaining[..7]); // "LIMIT ?"
@@ -2192,6 +2191,7 @@ fn collapse_limit_two_args(s: &str) -> String {
 }
 
 /// Obfuscates a SQL string using a proper tokenizer.
+#[must_use]
 pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> String {
     if s.is_empty() {
         return String::new();
@@ -2214,14 +2214,16 @@ pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> St
 }
 
 /// Obfuscates a SQL string with default configuration.
+#[must_use]
 pub fn obfuscate_sql_string(s: &str) -> String {
     obfuscate_sql(s, &SqlObfuscateConfig::default(), DbmsKind::Generic)
 }
 
 /// SQL obfuscation with Go-compatible whitespace normalization for use in JSON plan obfuscation.
-/// Applies obfuscate_sql_string then additional normalizations for JSON plan SQL.
+/// Applies `obfuscate_sql_string` then additional normalizations for JSON plan SQL.
 // FIXME: remove these tiny wrappers they provide no value, keep the public api 1 function which
 // takes a config
+#[must_use]
 pub fn obfuscate_sql_string_normalized(s: &str) -> String {
     let obfuscated = obfuscate_sql_string(s);
     normalize_plan_sql(&obfuscated)

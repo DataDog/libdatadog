@@ -47,6 +47,7 @@ pub struct JsonObfuscatorConfig {
 }
 
 impl JsonObfuscatorConfig {
+    #[must_use]
     pub fn disabled() -> Self {
         Self {
             enabled: false,
@@ -54,6 +55,7 @@ impl JsonObfuscatorConfig {
         }
     }
 
+    #[must_use]
     pub fn enabled() -> Self {
         Self {
             enabled: true,
@@ -93,7 +95,7 @@ pub struct ObfuscationConfig {
 }
 
 impl ObfuscationConfig {
-    pub fn new() -> Result<ObfuscationConfig, Box<dyn std::error::Error>> {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
             Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
                 Ok(res) => {
@@ -119,7 +121,7 @@ impl ObfuscationConfig {
         let obfuscate_memcached =
             parse_env::bool("DD_APM_OBFUSCATION_MEMCACHED_ENABLED").unwrap_or(false);
 
-        Ok(ObfuscationConfig {
+        Ok(Self {
             tag_replace_rules,
             http: HttpConfig {
                 remove_query_string: http_remove_query_string,

@@ -38,3 +38,6 @@ bench = false
 name = "trace_obfuscation"
 harness = false
 path = "benches/trace_obfuscation.rs"
+
+[lints]
+workspace = true

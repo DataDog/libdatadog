@@ -41,7 +41,7 @@ impl<'de> Deserialize<'de> for ReplaceRule {
         let raw = RawReplaceRule::deserialize(deserializer)?;
         let re = Regex::new(&raw.pattern).map_err(serde::de::Error::custom)?;
         let no_expansion = regex::Replacer::no_expansion(&mut raw.repl.as_str()).is_some();
-        Ok(ReplaceRule {
+        Ok(Self {
             name: raw.name,
             re,
             repl: raw.repl,
@@ -72,11 +72,11 @@ impl ReplaceRule {
             self.no_expansion,
             tag_value,
             scratch_space,
-        )
+        );
     }
 }
 
-/// replace_trace_tags replaces the tag values of all spans within a trace with a given set of
+/// `replace_trace_tags` replaces the tag values of all spans within a trace with a given set of
 /// rules.
 pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     let mut scratch_space = String::new();
@@ -85,12 +85,12 @@ pub fn replace_trace_tags(trace: &mut [pb::Span], rules: &[ReplaceRule]) {
     }
 }
 
-/// replace_span_tags replaces the tag values of a span with a given set of rules.
+/// `replace_span_tags` replaces the tag values of a span with a given set of rules.
 pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_space: &mut String) {
     for rule in rules {
         match rule.name.as_ref() {
             "*" => {
-                for (_, tag_value) in span.meta.iter_mut() {
+                for tag_value in span.meta.values_mut() {
                     rule.apply(tag_value, scratch_space);
                 }
             }
@@ -106,9 +106,9 @@ pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_spa
     }
 }
 
-/// parse_rules_from_string takes an array of rules, represented as an array of length 3 arrays
+/// `parse_rules_from_string` takes an array of rules, represented as an array of length 3 arrays
 /// holding the tag name, regex pattern, and replacement string as strings.
-/// * returns a vec of ReplaceRules
+/// * returns a vec of `ReplaceRules`
 pub fn parse_rules_from_string(
     // rules: &'a [[&'a str; 3]],
     rules: &str,
@@ -139,8 +139,8 @@ pub fn parse_rules_from_string(
 /// Mutate the haystack by changing all occurences of the regex by the `replace` parameter
 /// using the scratch space provided
 ///
-/// Taken from regex::replacen to use a reusable scratch space instead of allocating a new String
-/// https://docs.rs/regex/1.10.2/src/regex/regex/string.rs.html#890-944
+/// Taken from `regex::replacen` to use a reusable scratch space instead of allocating a new String
+/// <https://docs.rs/regex/1.10.2/src/regex/regex/string.rs.html#890-944>
 fn replace_all(
     re: &Regex,
     mut replace: &str,

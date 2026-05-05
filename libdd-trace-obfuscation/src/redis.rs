@@ -79,6 +79,7 @@ pub fn quantize_redis_string(query: &str) -> String {
     result
 }
 
+#[must_use]
 pub fn obfuscate_redis_string(cmd: &str) -> String {
     // Go's newRedisTokenizer calls bytes.TrimSpace before tokenizing
     let cmd = cmd.trim();
@@ -105,7 +106,7 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
             break;
         }
     }
-    s.to_string()
+    s.clone()
 }
 
 fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str>) -> Vec<&'a str> {
@@ -193,18 +194,18 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
         b"GEOADD" => {
             // Obfuscating every 3rd argument starting from first
             // • GEOADD key longitude latitude member [longitude latitude member ...]
-            args = obfuscate_redis_args_step(args, 1, 3)
+            args = obfuscate_redis_args_step(args, 1, 3);
         }
         b"HMSET" | b"HSET" => {
             // Every 2nd argument starting from first.
             // • HMSET key field value [field value ...]
-            args = obfuscate_redis_args_step(args, 1, 2)
+            args = obfuscate_redis_args_step(args, 1, 2);
         }
         b"MSET" | b"MSETNX" => {
             // Every 2nd argument starting from command.
             // • MSET key value [key value ...]
             // • MSETNX key value [key value ...]
-            args = obfuscate_redis_args_step(args, 0, 2)
+            args = obfuscate_redis_args_step(args, 0, 2);
         }
         b"CONFIG" => {
             // Obfuscate 2nd argument to SET sub-command.
@@ -212,7 +213,7 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             let mut uppercase_arg = [0; 8];
             let uppercase_arg = ascii_uppercase(args[0], &mut uppercase_arg).unwrap_or(b"");
             if uppercase_arg == b"SET" {
-                args = obfuscate_redis_args_n(args, 2)
+                args = obfuscate_redis_args_n(args, 2);
             }
         }
         b"BITFIELD" => {
@@ -271,6 +272,7 @@ fn obfuscate_redis_args_step(mut args: Vec<&str>, start: usize, step: usize) -> 
     args
 }
 
+#[must_use]
 pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     let mut redis_cmd_iter = redis_cmd.split_whitespace().peekable();
     let mut obfuscated_cmd = String::new();

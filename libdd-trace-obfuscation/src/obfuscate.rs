@@ -17,32 +17,32 @@ use crate::{
     sql::DbmsKind,
 };
 
-/// TAG_REDIS_RAW_COMMAND represents a redis raw command tag
+/// `TAG_REDIS_RAW_COMMAND` represents a redis raw command tag
 const TAG_REDIS_RAW_COMMAND: &str = "redis.raw_command";
-/// TAG_VALKEY_RAW_COMMAND represents a valkey raw command tag
+/// `TAG_VALKEY_RAW_COMMAND` represents a valkey raw command tag
 const TAG_VALKEY_RAW_COMMAND: &str = "valkey.raw_command";
-/// TAG_MEMCACHED_COMMAND represents a memcached command tag
+/// `TAG_MEMCACHED_COMMAND` represents a memcached command tag
 const TAG_MEMCACHED_COMMAND: &str = "memcached.command";
-/// TAG_MONGO_DBQUERY represents a MongoDB query tag
+/// `TAG_MONGO_DBQUERY` represents a `MongoDB` query tag
 const TAG_MONGO_DBQUERY: &str = "mongodb.query";
-/// TAG_ELASTIC_BODY represents an Elasticsearch body tag
+/// `TAG_ELASTIC_BODY` represents an Elasticsearch body tag
 const TAG_ELASTIC_BODY: &str = "elasticsearch.body";
-/// TAG_OPEN_SEARCH_BODY represents an OpenSearch body tag
+/// `TAG_OPEN_SEARCH_BODY` represents an `OpenSearch` body tag
 const TAG_OPEN_SEARCH_BODY: &str = "opensearch.body";
-/// TAG_SQLQUERY represents a SQL query tag
+/// `TAG_SQLQUERY` represents a SQL query tag
 const TAG_SQLQUERY: &str = "sql.query";
-/// TAG_HTTPURL represents an HTTP URL tag
+/// `TAG_HTTPURL` represents an HTTP URL tag
 const TAG_HTTPURL: &str = "http.url";
-/// TAG_DBMS represents a DBMS tag
+/// `TAG_DBMS` represents a DBMS tag
 const TAG_DBMS: &str = "db.type";
-/// TAG_CARD_NUMBER represents a card number tag
+/// `TAG_CARD_NUMBER` represents a card number tag
 const TAG_CARD_NUMBER: &str = "card.number";
 
 /// `obfuscate_span` goes through `span` fields and applies obfuscation on it
 // TODO(APMSP-2764): return parsing errors in a vec to log them ?
 pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
-    for span_event in span.span_events.iter_mut() {
-        obfuscate_span_event(span_event, config)
+    for span_event in &mut span.span_events {
+        obfuscate_span_event(span_event, config);
     }
 
     if let Some(credit_card) = span.meta.get_mut(TAG_CARD_NUMBER) {
@@ -57,15 +57,15 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                     url,
                     config.http.remove_query_string,
                     config.http.remove_paths_with_digits,
-                )
+                );
             }
         }
         "memcached" if config.memcached.enabled => {
             if let Some(cmd) = span.meta.get_mut(TAG_MEMCACHED_COMMAND) {
                 if config.memcached.keep_command {
-                    *cmd = obfuscate_memcached_string(cmd)
+                    *cmd = obfuscate_memcached_string(cmd);
                 } else {
-                    *cmd = "".to_string()
+                    *cmd = String::new();
                 }
             }
         }
@@ -74,9 +74,9 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             if config.redis.enabled && !span.meta.is_empty() {
                 if let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND) {
                     if config.redis.remove_all_args {
-                        *redis_cmd = remove_all_redis_args(redis_cmd)
+                        *redis_cmd = remove_all_redis_args(redis_cmd);
                     } else {
-                        *redis_cmd = obfuscate_redis_string(redis_cmd)
+                        *redis_cmd = obfuscate_redis_string(redis_cmd);
                     }
                 }
             }
@@ -86,9 +86,9 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             if config.valkey.enabled && !span.meta.is_empty() {
                 if let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND) {
                     if config.valkey.remove_all_args {
-                        *valkey_cmd = remove_all_redis_args(valkey_cmd)
+                        *valkey_cmd = remove_all_redis_args(valkey_cmd);
                     } else {
-                        *valkey_cmd = obfuscate_redis_string(valkey_cmd)
+                        *valkey_cmd = obfuscate_redis_string(valkey_cmd);
                     }
                 }
             }
@@ -145,13 +145,13 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 
 pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfig) {
     if config.credit_cards.enabled {
-        for (k, v) in event.attributes.iter_mut() {
+        for (k, v) in &mut event.attributes {
             if !should_obfuscate_cc_key(k, config) {
                 continue;
             }
             let str_value = match v.r#type() {
                 pb::attribute_any_value::AttributeAnyValueType::StringValue => {
-                    v.string_value.to_string()
+                    v.string_value.clone()
                 }
                 pb::attribute_any_value::AttributeAnyValueType::BoolValue => continue, /* Booleans can't be credit cards */
                 pb::attribute_any_value::AttributeAnyValueType::IntValue => v.int_value.to_string(),
@@ -174,7 +174,7 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
 }
 
 fn obfuscate_attribute_array(v: &mut pb::AttributeArray, config: &ObfuscationConfig) {
-    for elt in v.values.iter_mut() {
+    for elt in &mut v.values {
         let string_value = match elt.r#type() {
             pb::attribute_array_value::AttributeArrayValueType::StringValue => {
                 elt.string_value.clone()
@@ -194,7 +194,7 @@ fn obfuscate_attribute_array(v: &mut pb::AttributeArray, config: &ObfuscationCon
     }
 }
 
-/// should_obfuscate_cc_key returns true if the value for the given key should be obfuscated
+/// `should_obfuscate_cc_key` returns true if the value for the given key should be obfuscated
 /// This is used to skip known safe attributes and specifically configured safe tags
 fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
     match key {
@@ -235,7 +235,7 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 		{return false;}
 		_=> {}
 	}
-    if key.starts_with("_") {
+    if key.starts_with('_') {
         return false;
     }
     if config.credit_cards.keep_values.contains(key) {

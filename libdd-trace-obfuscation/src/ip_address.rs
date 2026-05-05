@@ -34,6 +34,7 @@ static PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// This quantization is used to reduce cardinality on peer tags in trace metrics. As such it is
 /// not exhaustive and some ip format may not be obfuscated.
 /// The reference implementation lives in [dd-go](https://github.com/DataDog/dd-go/blob/393e6de733807b20597d80b1e5103d6e823d8a0c/trace/pkg/peertags/peer_tags.go#L56)
+#[must_use]
 pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
     let values = s.split(',');
     let mut should_return_new_string = false; // Set to true if the function should return a modified
@@ -54,7 +55,7 @@ pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
     let mut quantized_values_dedup: Vec<&str> = Vec::new();
     let mut quantized_values_set: HashSet<&str> = HashSet::new();
 
-    for quantized_value in quantized_values.iter() {
+    for quantized_value in &quantized_values {
         if quantized_values_set.insert(quantized_value) {
             quantized_values_dedup.push(quantized_value);
         } else {

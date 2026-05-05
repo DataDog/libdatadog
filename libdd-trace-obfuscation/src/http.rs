@@ -11,7 +11,7 @@ use std::fmt::Write;
 
 /// Returns true for Go net/url's "category 1" characters:
 /// ASCII bytes that always trigger escaping in URLs (plus space and quote).
-fn is_go_url_escape_cat1(c: char) -> bool {
+const fn is_go_url_escape_cat1(c: char) -> bool {
     matches!(
         c,
         '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' | '"'
@@ -20,17 +20,17 @@ fn is_go_url_escape_cat1(c: char) -> bool {
 
 /// Returns true for Go net/url's "category 2" characters for PATH contexts:
 /// characters Go may escape in paths when Cat1 is present or non-ASCII exists.
-fn is_go_url_escape_cat2_path(c: char) -> bool {
+const fn is_go_url_escape_cat2_path(c: char) -> bool {
     matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')
 }
 
 /// Returns true for Go net/url's "category 2" characters for FRAGMENT contexts:
 /// characters Go may escape in fragments when non-ASCII exists.
-fn is_go_url_escape_cat2_fragment(c: char) -> bool {
+const fn is_go_url_escape_cat2_fragment(c: char) -> bool {
     matches!(c, '\'' | '[' | ']')
 }
 
-fn hex_val(b: u8) -> u8 {
+const fn hex_val(b: u8) -> u8 {
     match b {
         b'0'..=b'9' => b - b'0',
         b'a'..=b'f' => b - b'a' + 10,
