@@ -22,11 +22,24 @@ pub trait RemoteConfigParsedData: Send + Sync + 'static {
 pub type ProductParser =
     Box<dyn Fn(&[u8]) -> anyhow::Result<Box<dyn RemoteConfigParsedData>> + Send + Sync>;
 
+/// Sentinel returned by [`ParserRegistry::parse`] when no parser is registered for a product.
+/// Consumers that want to handle only specific products can downcast and ignore this type.
+pub struct IgnoredProduct(pub RemoteConfigProduct);
+
+impl RemoteConfigParsedData for IgnoredProduct {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn product(&self) -> RemoteConfigProduct {
+        self.0
+    }
+}
+
 /// Maps [`RemoteConfigProduct`] variants to their parser functions.
 ///
 /// Consumers build a registry (optionally starting from [`default_registry`]) and inject it into
-/// the file storage or fetcher. Products with no registered parser produce a parse error, which
-/// is treated as "ignored" by callers that only care about specific products.
+/// the file storage or fetcher. Products with no registered parser return [`IgnoredProduct`]
+/// so callers can track the config without processing its contents.
 pub struct ParserRegistry {
     parsers: HashMap<RemoteConfigProduct, ProductParser>,
 }
@@ -43,6 +56,8 @@ impl ParserRegistry {
         self.parsers.insert(product, parser);
     }
 
+    /// Parse `data` for `product`. Returns [`IgnoredProduct`] (not an error) when no parser is
+    /// registered, so callers can still track the config in their bookkeeping structures.
     pub fn parse(
         &self,
         product: RemoteConfigProduct,
@@ -50,7 +65,7 @@ impl ParserRegistry {
     ) -> anyhow::Result<Box<dyn RemoteConfigParsedData>> {
         match self.parsers.get(&product) {
             Some(parser) => parser(data),
-            None => anyhow::bail!("no parser registered for product {:?}", product),
+            None => Ok(Box::new(IgnoredProduct(product))),
         }
     }
 }
