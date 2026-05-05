@@ -57,7 +57,12 @@ pub(super) enum AnyValueKey {
     String = 1,
     Bool = 2,
     Double = 3,
+    Int64 = 4,
     Bytes = 5,
+    Array = 6,
+    /// Not used in V04→V1 conversion (V04 has no key-value list type), defined for completeness.
+    #[allow(dead_code)]
+    KeyValueList = 7,
 }
 
 /// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
@@ -102,16 +107,6 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
             write_u64(writer, link.span_id)?;
         }
 
-        if !link.tracestate.borrow().is_empty() {
-            write_uint8(writer, SpanLinkKey::TraceState as u8)?;
-            table.write_interned(writer, link.tracestate.borrow())?;
-        }
-
-        if link.flags != 0 {
-            write_uint8(writer, SpanLinkKey::Flags as u8)?;
-            write_uint(writer, link.flags as u64)?;
-        }
-
         if !link.attributes.is_empty() {
             write_uint8(writer, SpanLinkKey::Attributes as u8)?;
             rmp::encode::write_array_len(writer, link.attributes.len() as u32 * 3)?;
@@ -120,6 +115,16 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
                 write_uint8(writer, AnyValueKey::String as u8)?;
                 table.write_interned(writer, v.borrow())?;
             }
+        }
+
+        if !link.tracestate.borrow().is_empty() {
+            write_uint8(writer, SpanLinkKey::TraceState as u8)?;
+            table.write_interned(writer, link.tracestate.borrow())?;
+        }
+
+        if link.flags != 0 {
+            write_uint8(writer, SpanLinkKey::Flags as u8)?;
+            write_uint(writer, link.flags as u64)?;
         }
     }
 
@@ -190,13 +195,13 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
                 write_uint8(writer, AnyValueKey::Bool as u8)?;
                 write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
             }
-            AttributeArrayValue::Integer(i) => {
-                write_uint8(writer, 4u8)?; // Int64
-                write_sint(writer, *i)?;
-            }
             AttributeArrayValue::Double(d) => {
                 write_uint8(writer, AnyValueKey::Double as u8)?;
                 write_f64(writer, *d)?;
+            }
+            AttributeArrayValue::Integer(i) => {
+                write_uint8(writer, AnyValueKey::Int64 as u8)?;
+                write_sint(writer, *i)?;
             }
         }
         Ok(())
@@ -207,7 +212,7 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
             encode_array_element(writer, value, table)?;
         }
         AttributeAnyValue::Array(array) => {
-            write_uint8(writer, 6u8)?; // Array
+            write_uint8(writer, AnyValueKey::Array as u8)?;
             rmp::encode::write_array_len(writer, array.len() as u32)?;
             for v in array {
                 encode_array_element(writer, v, table)?;

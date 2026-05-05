@@ -154,6 +154,7 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
             tracer_version: &tags.tracer_version,
             lang_interpreter: &tags.language_interpreter,
             lang_vendor: &tags.language_interpreter_vendor,
+            runtime_id: &tags.runtime_id,
             client_computed_stats: tags.client_computed_stats,
             client_computed_top_level: tags.client_computed_top_level,
             ..Default::default()

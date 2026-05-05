@@ -475,6 +475,7 @@ mod tests {
         lang_vendor: "vendor",
         tracer_version: "1.0",
         container_id: "id",
+        runtime_id: "",
         client_computed_top_level: false,
         client_computed_stats: false,
         dropped_p0_traces: 0,

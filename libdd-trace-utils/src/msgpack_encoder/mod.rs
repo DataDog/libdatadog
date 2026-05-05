@@ -4,6 +4,7 @@
 pub mod v04;
 pub mod v1;
 
+/// A writer that counts bytes without storing them, used to compute encoded payload size.
 pub(crate) struct CountLength(u32);
 
 impl std::io::Write for CountLength {
