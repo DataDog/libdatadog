@@ -8,12 +8,12 @@
 //! which trades advanced features (Unicode classes, look-around, etc.) for
 //! smaller binary size and faster compile times.
 //!
-//! The **`ffe`** feature forces the full `regex` crate even when `regex-lite`
-//! is enabled, because FFE evaluates user-provided regexes that require
-//! Unicode character class support.
+//! The **`require-regex-full`** feature forces the full `regex` crate even
+//! when `regex-lite` is enabled, for consumers that evaluate user-provided
+//! regexes requiring Unicode character class support.
 
-#[cfg(all(feature = "regex-lite", not(feature = "ffe")))]
+#[cfg(all(feature = "regex-lite", not(feature = "require-regex-full")))]
 pub use regex_lite::{escape, Captures, Regex, RegexBuilder, Replacer};
 
-#[cfg(not(all(feature = "regex-lite", not(feature = "ffe"))))]
+#[cfg(not(all(feature = "regex-lite", not(feature = "require-regex-full"))))]
 pub use regex::{escape, Captures, Regex, RegexBuilder, Replacer};
