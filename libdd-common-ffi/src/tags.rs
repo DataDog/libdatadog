@@ -1,5 +1,6 @@
 // Copyright 2022-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(feature = "std")]
 
 use crate::slice::{AsBytes, CharSlice};
 use crate::Error;

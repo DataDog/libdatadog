@@ -1,5 +1,6 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg(feature = "std")]
 
 use libdd_common_ffi::Result;
 #[cfg(target_os = "linux")]

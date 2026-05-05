@@ -29,8 +29,8 @@ crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]
-datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
-ddcommon-ffi = ["dep:libdd-common-ffi"]
+datadog-library-config-ffi = ["dep:libdd-library-config-ffi", "libdd-library-config-ffi/std"]
+ddcommon-ffi = ["dep:libdd-common-ffi", "libdd-common-ffi/std"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
 

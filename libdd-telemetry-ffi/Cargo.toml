@@ -24,7 +24,7 @@ build_common = { path = "../build-common" }
 [dependencies]
 libdd-telemetry = { path = "../libdd-telemetry" }
 libdd-common = { path = "../libdd-common" }
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, features = ["std"] }
 function_name = "0.3"
 libc = "0.2"
 paste = "1"
