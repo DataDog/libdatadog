@@ -165,10 +165,16 @@ impl NamedShmHandle {
 
     pub fn create_mode(path: CString, size: usize, mode: Mode) -> io::Result<NamedShmHandle> {
         let fd = shm_open(path.as_bytes(), OFlag::O_CREAT | OFlag::O_RDWR, mode)?;
-        // Use fallocate on Linux to eagerly commit pages: if /dev/shm is full we get ENOSPC
+        // Try to use fallocate on Linux to eagerly commit pages: if /dev/shm is full we get ENOSPC
         // here (recoverable) rather than SIGBUS mid-execution when a worker writes a slot.
         #[cfg(target_os = "linux")]
-        fallocate(fd.as_raw_fd(), FallocateFlags::empty(), 0, size as off_t)?;
+        match fallocate(fd.as_raw_fd(), FallocateFlags::empty(), 0, size as off_t) {
+            Err(nix::Error::EPERM | nix::Error::ENOSYS | nix::Error::ENOTSUP) => {
+                ftruncate(&fd, size as off_t)?
+            }
+            Err(e) => return Err(e.into()),
+            Ok(_) => {}
+        }
         #[cfg(not(target_os = "linux"))]
         ftruncate(&fd, size as off_t)?;
         if let Some(uid) = shm_owner_uid() {
