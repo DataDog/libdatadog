@@ -13,6 +13,7 @@ mod probe_defs;
 
 pub mod debugger_defs;
 mod redacted_names;
+pub mod remote_config;
 pub mod sender;
 
 pub use expr_eval::*;

@@ -7,80 +7,149 @@ use crate::{
     },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
-#[cfg(feature = "ffe")]
-use datadog_ffe::rules_based::UniversalFlagConfig;
-#[cfg(feature = "live-debugger")]
-use datadog_live_debugger::LiveDebuggingData;
+use std::any::Any;
+use std::collections::HashMap;
 
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum RemoteConfigData {
-    DynamicConfig(DynamicConfigFile),
-    #[cfg(feature = "live-debugger")]
-    LiveDebugger(LiveDebuggingData),
-    TracerFlareConfig(AgentConfigFile),
-    TracerFlareTask(AgentTaskFile),
-    #[cfg(feature = "ffe")]
-    FfeFlags(UniversalFlagConfig),
-    Ignored(RemoteConfigProduct),
+/// Opaque parsed payload for a remote config product. Product crates implement this on their own
+/// types and export a [`ProductParser`] factory; the RC crate stores and distributes the results
+/// without knowing their concrete type.
+pub trait RemoteConfigParsedData: Send + Sync + 'static {
+    fn as_any(&self) -> &dyn Any;
+    fn product(&self) -> RemoteConfigProduct;
 }
 
-impl RemoteConfigData {
-    pub fn try_parse(
+/// A product-specific parser: converts raw bytes into a parsed payload.
+pub type ProductParser =
+    Box<dyn Fn(&[u8]) -> anyhow::Result<Box<dyn RemoteConfigParsedData>> + Send + Sync>;
+
+/// Maps [`RemoteConfigProduct`] variants to their parser functions.
+///
+/// Consumers build a registry (optionally starting from [`default_registry`]) and inject it into
+/// the file storage or fetcher. Products with no registered parser produce a parse error, which
+/// is treated as "ignored" by callers that only care about specific products.
+pub struct ParserRegistry {
+    parsers: HashMap<RemoteConfigProduct, ProductParser>,
+}
+
+impl ParserRegistry {
+    pub fn new() -> Self {
+        ParserRegistry {
+            parsers: HashMap::new(),
+        }
+    }
+
+    /// Register a parser for a product. Replaces any existing parser for that product.
+    pub fn register(&mut self, product: RemoteConfigProduct, parser: ProductParser) {
+        self.parsers.insert(product, parser);
+    }
+
+    pub fn parse(
+        &self,
         product: RemoteConfigProduct,
         data: &[u8],
-    ) -> anyhow::Result<RemoteConfigData> {
-        Ok(match product {
-            RemoteConfigProduct::AgentConfig => {
-                RemoteConfigData::TracerFlareConfig(config::agent_config::parse_json(data)?)
-            }
-            RemoteConfigProduct::AgentTask => {
-                RemoteConfigData::TracerFlareTask(config::agent_task::parse_json(data)?)
-            }
-            RemoteConfigProduct::ApmTracing => {
-                RemoteConfigData::DynamicConfig(config::dynamic::parse_json(data)?)
-            }
-            #[cfg(feature = "live-debugger")]
-            RemoteConfigProduct::LiveDebugger => {
-                let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
-                RemoteConfigData::LiveDebugger(parsed)
-            }
-            #[cfg(feature = "ffe")]
-            RemoteConfigProduct::FfeFlags => {
-                RemoteConfigData::FfeFlags(UniversalFlagConfig::from_json(data.to_vec())?)
-            }
-            _ => RemoteConfigData::Ignored(product),
-        })
-    }
-}
-
-impl From<&RemoteConfigData> for RemoteConfigProduct {
-    fn from(value: &RemoteConfigData) -> Self {
-        match value {
-            RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
-            #[cfg(feature = "live-debugger")]
-            RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
-            RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
-            RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,
-            #[cfg(feature = "ffe")]
-            RemoteConfigData::FfeFlags(_) => RemoteConfigProduct::FfeFlags,
-            RemoteConfigData::Ignored(product) => *product,
+    ) -> anyhow::Result<Box<dyn RemoteConfigParsedData>> {
+        match self.parsers.get(&product) {
+            Some(parser) => parser(data),
+            None => anyhow::bail!("no parser registered for product {:?}", product),
         }
     }
 }
 
-#[derive(Debug)]
+impl Default for ParserRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ── Implementations for RC-internal product types ────────────────────────────
+
+impl RemoteConfigParsedData for DynamicConfigFile {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn product(&self) -> RemoteConfigProduct {
+        RemoteConfigProduct::ApmTracing
+    }
+}
+
+impl RemoteConfigParsedData for AgentConfigFile {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn product(&self) -> RemoteConfigProduct {
+        RemoteConfigProduct::AgentConfig
+    }
+}
+
+impl RemoteConfigParsedData for AgentTaskFile {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn product(&self) -> RemoteConfigProduct {
+        RemoteConfigProduct::AgentTask
+    }
+}
+
+/// Returns a registry pre-loaded with parsers for the RC-internal products:
+/// [`RemoteConfigProduct::AgentConfig`], [`RemoteConfigProduct::AgentTask`], and
+/// [`RemoteConfigProduct::ApmTracing`].
+///
+/// Consumers that need additional product parsers (live-debugger, FFE, …) should call
+/// [`ParserRegistry::register`] on the returned registry before use.
+pub fn default_registry() -> ParserRegistry {
+    let mut registry = ParserRegistry::new();
+    registry.register(
+        RemoteConfigProduct::AgentConfig,
+        Box::new(|data: &[u8]| {
+            let parsed = config::agent_config::parse_json(data)?;
+            Ok(Box::new(parsed) as Box<dyn RemoteConfigParsedData>)
+        }),
+    );
+    registry.register(
+        RemoteConfigProduct::AgentTask,
+        Box::new(|data: &[u8]| {
+            let parsed = config::agent_task::parse_json(data)?;
+            Ok(Box::new(parsed) as Box<dyn RemoteConfigParsedData>)
+        }),
+    );
+    registry.register(
+        RemoteConfigProduct::ApmTracing,
+        Box::new(|data: &[u8]| {
+            let parsed = config::dynamic::parse_json(data)?;
+            Ok(Box::new(parsed) as Box<dyn RemoteConfigParsedData>)
+        }),
+    );
+    registry
+}
+
+// ── RemoteConfigValue ─────────────────────────────────────────────────────────
+
 pub struct RemoteConfigValue {
     pub source: RemoteConfigSource,
-    pub data: RemoteConfigData,
+    pub data: Box<dyn RemoteConfigParsedData>,
     pub config_id: String,
     pub name: String,
 }
 
+impl std::fmt::Debug for RemoteConfigValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteConfigValue")
+            .field("source", &self.source)
+            .field("product", &self.data.product())
+            .field("config_id", &self.config_id)
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
 impl RemoteConfigValue {
-    pub fn try_parse(path: &str, data: &[u8]) -> anyhow::Result<Self> {
+    pub fn try_parse(
+        path: &str,
+        data: &[u8],
+        registry: &ParserRegistry,
+    ) -> anyhow::Result<Self> {
         let path = RemoteConfigPath::try_parse(path)?;
-        let data = RemoteConfigData::try_parse(path.product, data)?;
+        let data = registry.parse(path.product, data)?;
         Ok(RemoteConfigValue {
             source: path.source,
             data,

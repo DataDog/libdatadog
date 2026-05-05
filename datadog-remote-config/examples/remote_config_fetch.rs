@@ -1,11 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use datadog_remote_config::config::dynamic::DynamicConfigFile;
 use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use datadog_remote_config::file_change_tracker::{Change, FilePath};
 use datadog_remote_config::file_storage::ParsedFileStorage;
 use datadog_remote_config::RemoteConfigProduct::ApmTracing;
-use datadog_remote_config::{RemoteConfigData, Target};
+use datadog_remote_config::{RemoteConfigParsedData, Target};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use std::time::Duration;
@@ -86,11 +87,13 @@ async fn main() {
     }
 }
 
-fn print_file_contents(contents: &anyhow::Result<RemoteConfigData>) {
-    // Note: these contents may be large. Do not actually print it fully in a non-dev env.
+fn print_file_contents(contents: &anyhow::Result<Box<dyn RemoteConfigParsedData>>) {
     match contents {
         Ok(data) => {
-            println!("File contents: {data:?}");
+            println!("Product: {:?}", data.product());
+            if let Some(cfg) = data.as_any().downcast_ref::<DynamicConfigFile>() {
+                println!("DynamicConfig action: {}", cfg.action);
+            }
         }
         Err(e) => {
             println!("Failed parsing file: {e:?}");

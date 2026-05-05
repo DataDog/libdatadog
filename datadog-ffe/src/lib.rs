@@ -3,6 +3,7 @@
 
 mod flag_type;
 
+pub mod remote_config;
 pub mod rules_based;
 
 pub use flag_type::{ExpectedFlagType, FlagType};

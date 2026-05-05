@@ -16,7 +16,10 @@ use datadog_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
     MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
 };
-use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
+use datadog_remote_config::{
+    default_registry, ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue,
+    Target,
+};
 use libdd_common::{tag::Tag, MutexExt};
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
@@ -526,7 +529,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
     }
 }
 
-fn read_config(path: &str) -> anyhow::Result<(RemoteConfigValue, u32)> {
+fn read_config(path: &str, registry: &ParserRegistry) -> anyhow::Result<(RemoteConfigValue, u32)> {
     if let [shm_path, limiter, rc_path] = &path.split(':').collect::<Vec<_>>()[..] {
         let mapped = NamedShmHandle::open(&CString::new(*shm_path)?)?.map()?;
         let rc_path = String::from_utf8(BASE64_URL_SAFE_NO_PAD.decode(rc_path)?)?;
@@ -534,7 +537,7 @@ fn read_config(path: &str) -> anyhow::Result<(RemoteConfigValue, u32)> {
         #[cfg(windows)]
         let data = &data[4..(4 + u32::from_ne_bytes((&data[0..4]).try_into()?) as usize)];
         Ok((
-            RemoteConfigValue::try_parse(&rc_path, data)?,
+            RemoteConfigValue::try_parse(&rc_path, data, registry)?,
             u32::from_str(limiter)?,
         ))
     } else {
@@ -553,6 +556,7 @@ fn read_config(path: &str) -> anyhow::Result<(RemoteConfigValue, u32)> {
 /// once. They will always be Remove()d first, then Add()ed again upon update.
 pub struct RemoteConfigManager {
     invariants: ConfigInvariants,
+    registry: Arc<ParserRegistry>,
     active_target: Option<Arc<Target>>,
     pub active_reader: Option<RemoteConfigReader>,
     encountered_targets: HashMap<Arc<Target>, (RemoteConfigReader, Vec<String>)>,
@@ -576,8 +580,16 @@ pub enum RemoteConfigUpdate {
 
 impl RemoteConfigManager {
     pub fn new(invariants: ConfigInvariants) -> RemoteConfigManager {
+        Self::new_with_registry(invariants, Arc::new(default_registry()))
+    }
+
+    pub fn new_with_registry(
+        invariants: ConfigInvariants,
+        registry: Arc<ParserRegistry>,
+    ) -> RemoteConfigManager {
         RemoteConfigManager {
             invariants,
+            registry,
             active_target: None,
             active_reader: None,
             encountered_targets: Default::default(),
@@ -662,12 +674,12 @@ impl RemoteConfigManager {
 
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
-                match read_config(entry.key()) {
+                match read_config(entry.key(), &self.registry) {
                     Ok((parsed, limiter_index)) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
                         entry.insert(RemoteConfigPath {
                             source: parsed.source,
-                            product: (&parsed.data).into(),
+                            product: parsed.data.product(),
                             config_id: parsed.config_id.clone(),
                             name: parsed.name.clone(),
                         });
@@ -756,9 +768,9 @@ impl RemoteConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_remote_config::config::dynamic::{tests::dummy_dynamic_config, Configs};
+    use datadog_remote_config::config::dynamic::{tests::dummy_dynamic_config, Configs, DynamicConfigFile};
     use datadog_remote_config::fetch::test_server::RemoteConfigServer;
-    use datadog_remote_config::{RemoteConfigData, RemoteConfigProduct, RemoteConfigSource};
+    use datadog_remote_config::{RemoteConfigProduct, RemoteConfigSource};
     use manual_future::ManualFuture;
     use std::sync::LazyLock;
 
@@ -868,9 +880,9 @@ mod tests {
             assert_eq!(value.config_id, PATH_FIRST.config_id);
             assert_eq!(value.source, PATH_FIRST.source);
             assert_eq!(value.name, PATH_FIRST.name);
-            if let RemoteConfigData::DynamicConfig(data) = value.data {
+            if let Some(cfg) = value.data.as_any().downcast_ref::<DynamicConfigFile>() {
                 assert!(matches!(
-                    <Vec<Configs>>::from(data.lib_config)[0],
+                    <Vec<Configs>>::from(cfg.lib_config.clone())[0],
                     Configs::TracingEnabled(true)
                 ));
             } else {
