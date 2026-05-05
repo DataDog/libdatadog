@@ -768,7 +768,9 @@ impl RemoteConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_remote_config::config::dynamic::{tests::dummy_dynamic_config, Configs, DynamicConfigFile};
+    use datadog_remote_config::config::dynamic::{
+        tests::dummy_dynamic_config, Configs, DynamicConfigFile,
+    };
     use datadog_remote_config::fetch::test_server::RemoteConfigServer;
     use datadog_remote_config::{RemoteConfigProduct, RemoteConfigSource};
     use manual_future::ManualFuture;

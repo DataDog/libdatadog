@@ -158,11 +158,7 @@ impl std::fmt::Debug for RemoteConfigValue {
 }
 
 impl RemoteConfigValue {
-    pub fn try_parse(
-        path: &str,
-        data: &[u8],
-        registry: &ParserRegistry,
-    ) -> anyhow::Result<Self> {
+    pub fn try_parse(path: &str, data: &[u8], registry: &ParserRegistry) -> anyhow::Result<Self> {
         let path = RemoteConfigPath::try_parse(path)?;
         let data = registry.parse(path.product, data)?;
         Ok(RemoteConfigValue {
