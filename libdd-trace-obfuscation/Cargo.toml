@@ -4,6 +4,8 @@ version = "2.0.0"
 description = "A duplicate of trace obfuscator implemented in the agent and documented in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#trace-obfuscation"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-obfuscation"
+keywords = ["datadog", "trace", "obfuscation"]
+categories = ["development-tools"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
