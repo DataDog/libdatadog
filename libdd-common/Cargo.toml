@@ -101,6 +101,9 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 cgroup_testing = []
 # Use regex-lite instead of regex for smaller binary size
 regex-lite = ["dep:regex-lite"]
+# FFE uses user-provided regexes and cannot forgo the Unicode character class
+# support dropped by regex-lite
+ffe = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["tls-core", "hyper-rustls/fips"]
 # Enable reqwest client builder support with file dump debugging

@@ -7,9 +7,13 @@
 //! Enable the **`regex-lite`** feature to switch to [`regex_lite`] instead,
 //! which trades advanced features (Unicode classes, look-around, etc.) for
 //! smaller binary size and faster compile times.
+//!
+//! The **`ffe`** feature forces the full `regex` crate even when `regex-lite`
+//! is enabled, because FFE evaluates user-provided regexes that require
+//! Unicode character class support.
 
-#[cfg(feature = "regex-lite")]
+#[cfg(all(feature = "regex-lite", not(feature = "ffe")))]
 pub use regex_lite::{escape, Captures, Regex, RegexBuilder, Replacer};
 
-#[cfg(not(feature = "regex-lite"))]
+#[cfg(not(all(feature = "regex-lite", not(feature = "ffe"))))]
 pub use regex::{escape, Captures, Regex, RegexBuilder, Replacer};
