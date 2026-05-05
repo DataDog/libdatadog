@@ -129,6 +129,7 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
     client: H,
     client_side_stats: &StatsComputationConfig,
 ) -> anyhow::Result<()> {
+    let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
     let stats_exporter = StatsExporter::<H>::new(
         bucket_size,
         stats_concentrator.clone(),
@@ -137,6 +138,8 @@ fn create_and_start_stats_worker<H: HttpClientTrait + MaybeSend + Sync + 'static
         client,
         #[cfg(feature = "stats-obfuscation")]
         client_side_stats.obfuscation_config.clone(),
+        #[cfg(feature = "stats-obfuscation")]
+        SUPPORTED_OBFUSCATION_VERSION_STR,
     );
     let worker_handle = ctx
         .shared_runtime
@@ -342,5 +345,20 @@ impl From<TracerMetadata> for StatsMetadata {
             process_tags: m.process_tags,
             service: m.service,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "stats-obfuscation")]
+    fn test_obfuscation_version_was_updated() {
+        use crate::trace_exporter::stats::{
+            SUPPORTED_OBFUSCATION_VERSION, SUPPORTED_OBFUSCATION_VERSION_STR,
+        };
+
+        assert_eq!(
+            SUPPORTED_OBFUSCATION_VERSION.to_string(),
+            SUPPORTED_OBFUSCATION_VERSION_STR
+        );
     }
 }

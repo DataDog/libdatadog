@@ -9,15 +9,14 @@ use std::{
     time,
 };
 
+#[cfg(feature = "stats-obfuscation")]
+use crate::span_concentrator::SharedStatsComputationObfuscationConfig;
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-#[cfg(feature = "stats-obfuscation")]
-use libdd_trace_stats::span_concentrator::SharedStatsComputationObfuscationConfig;
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::fmt::Debug;
@@ -69,6 +68,8 @@ pub struct StatsExporter<H: HttpClientTrait, C: FlushableConcentrator = SpanConc
     client: H,
     #[cfg(feature = "stats-obfuscation")]
     obfuscation_config: SharedStatsComputationObfuscationConfig,
+    #[cfg(feature = "stats-obfuscation")]
+    supported_obfuscation_version: &'static str,
 }
 
 impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
@@ -87,6 +88,7 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
         client: H,
         #[cfg(feature = "stats-obfuscation")]
         obfuscation_config: SharedStatsComputationObfuscationConfig,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
     ) -> Self {
         Self {
             flush_interval,
@@ -97,6 +99,8 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
             client,
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config,
+            #[cfg(feature = "stats-obfuscation")]
+            supported_obfuscation_version,
         }
     }
 
@@ -134,9 +138,7 @@ impl<H: HttpClientTrait, C: FlushableConcentrator> StatsExporter<H, C> {
         if self.obfuscation_config.load().enabled {
             headers.insert(
                 http::HeaderName::from_static("datadog-obfuscation-version"),
-                http::HeaderValue::from_static(
-                    crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION_STR,
-                ),
+                http::HeaderValue::from_static(self.supported_obfuscation_version),
             );
         }
 
@@ -239,12 +241,12 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "stats-obfuscation")]
+    use crate::span_concentrator::StatsComputationObfuscationConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::SharedRuntime;
-    #[cfg(feature = "stats-obfuscation")]
-    use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -327,6 +329,8 @@ mod tests {
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -356,6 +360,8 @@ mod tests {
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -392,6 +398,8 @@ mod tests {
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
 
         let _handle = shared_runtime
@@ -435,6 +443,8 @@ mod tests {
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
             StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
 
         let _handle = shared_runtime
@@ -499,10 +509,13 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
             Arc::new(ArcSwap::from_pointee(StatsComputationObfuscationConfig {
                 enabled: true,
                 ..Default::default()
             })),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
 
         let send_status = stats_exporter.send(true).await;
