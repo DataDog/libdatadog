@@ -22,19 +22,6 @@ pub trait RemoteConfigParsedData: Send + Sync + 'static {
 pub type ProductParser =
     Box<dyn Fn(&[u8]) -> anyhow::Result<Box<dyn RemoteConfigParsedData>> + Send + Sync>;
 
-/// Sentinel returned by [`ParserRegistry::parse`] when no parser is registered for a product.
-/// Consumers that want to handle only specific products can downcast and ignore this type.
-pub struct IgnoredProduct(pub RemoteConfigProduct);
-
-impl RemoteConfigParsedData for IgnoredProduct {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn product(&self) -> RemoteConfigProduct {
-        self.0
-    }
-}
-
 /// Maps [`RemoteConfigProduct`] variants to their parser functions.
 ///
 /// Consumers build a registry (optionally starting from [`default_registry`]) and inject it into
@@ -77,6 +64,19 @@ impl Default for ParserRegistry {
 }
 
 // ── Implementations for RC-internal product types ────────────────────────────
+
+/// Sentinel returned by [`ParserRegistry::parse`] when no parser is registered for a product.
+/// Consumers that want to handle only specific products can downcast and ignore this type.
+pub struct IgnoredProduct(pub RemoteConfigProduct);
+
+impl RemoteConfigParsedData for IgnoredProduct {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn product(&self) -> RemoteConfigProduct {
+        self.0
+    }
+}
 
 impl RemoteConfigParsedData for DynamicConfigFile {
     fn as_any(&self) -> &dyn Any {
