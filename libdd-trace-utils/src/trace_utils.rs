@@ -264,11 +264,11 @@ where
 
 /// Tags gathered from a trace's root span
 #[derive(Default)]
-pub struct RootSpanTags<'a> {
-    pub env: &'a str,
-    pub app_version: &'a str,
-    pub hostname: &'a str,
-    pub runtime_id: &'a str,
+pub struct RootSpanTags {
+    pub env: String,
+    pub app_version: String,
+    pub hostname: String,
+    pub runtime_id: String,
 }
 
 pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
@@ -287,13 +287,13 @@ pub(crate) fn construct_tracer_payload(
     root_span_tags: RootSpanTags,
 ) -> pb::TracerPayload {
     pb::TracerPayload {
-        app_version: root_span_tags.app_version.to_string(),
+        app_version: root_span_tags.app_version,
         language_name: tracer_tags.lang.to_string(),
         container_id: tracer_tags.container_id.to_string(),
-        env: root_span_tags.env.to_string(),
-        runtime_id: root_span_tags.runtime_id.to_string(),
+        env: root_span_tags.env,
+        runtime_id: root_span_tags.runtime_id,
         chunks,
-        hostname: root_span_tags.hostname.to_string(),
+        hostname: root_span_tags.hostname,
         language_version: tracer_tags.lang_version.to_string(),
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),
@@ -569,19 +569,6 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     }
 }
 
-/// Used to populate root_span_tags fields if they exist in the root span's meta tags
-macro_rules! parse_root_span_tags {
-    (
-        $root_span_meta_map:ident,
-        { $($tag:literal => $($root_span_tags_struct_field:ident).+ ,)+ }
-    ) => {
-        $(
-            if let Some(root_span_tag_value) = $root_span_meta_map.get($tag) {
-                $($root_span_tags_struct_field).+ = root_span_tag_value;
-            }
-        )+
-    }
-}
 
 pub fn collect_trace_chunks<T: TraceData>(
     traces: Vec<Vec<crate::span::v04::Span<T>>>,
@@ -617,7 +604,6 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
     // We'll skip setting the global metadata and rely on the agent to unpack these
-    let mut gathered_root_span_tags = !is_agentless;
     let mut root_span_tags = RootSpanTags::default();
 
     for trace in traces.iter_mut() {
@@ -656,18 +642,31 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
 
         trace_chunks.push(chunk);
 
-        if !gathered_root_span_tags {
-            gathered_root_span_tags = true;
+        if is_agentless {
+            // Check each root span tag field independently so that a later trace can fill in
+            // fields that were missing from an earlier trace (e.g. command_execution span has no
+            // version, but a subsequent azure_functions.invoke span does).
             let meta_map = &trace[root_span_index].meta;
-            parse_root_span_tags!(
-                meta_map,
-                {
-                    "env" => root_span_tags.env,
-                    "version" => root_span_tags.app_version,
-                    "_dd.hostname" => root_span_tags.hostname,
-                    "runtime-id" => root_span_tags.runtime_id,
+            if root_span_tags.env.is_empty() {
+                if let Some(v) = meta_map.get("env") {
+                    root_span_tags.env = v.clone();
                 }
-            );
+            }
+            if root_span_tags.app_version.is_empty() {
+                if let Some(v) = meta_map.get("version") {
+                    root_span_tags.app_version = v.clone();
+                }
+            }
+            if root_span_tags.hostname.is_empty() {
+                if let Some(v) = meta_map.get("_dd.hostname") {
+                    root_span_tags.hostname = v.clone();
+                }
+            }
+            if root_span_tags.runtime_id.is_empty() {
+                if let Some(v) = meta_map.get("runtime-id") {
+                    root_span_tags.runtime_id = v.clone();
+                }
+            }
         }
     }
 

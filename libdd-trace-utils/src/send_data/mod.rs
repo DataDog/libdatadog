@@ -483,10 +483,10 @@ mod tests {
 
     fn setup_payload(header_tags: &TracerHeaderTags) -> TracerPayload {
         let root_tags = RootSpanTags {
-            env: "TEST",
-            app_version: "1.0",
-            hostname: "test_bench",
-            runtime_id: "id",
+            env: "TEST".to_string(),
+            app_version: "1.0".to_string(),
+            hostname: "test_bench".to_string(),
+            runtime_id: "id".to_string(),
         };
 
         let chunk = construct_trace_chunk(vec![Span {
