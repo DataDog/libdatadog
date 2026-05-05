@@ -123,8 +123,7 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    #[allow(clippy::expect_used)]
-    to_writer(&mut buf, traces).expect("infallible: the error is std::convert::Infallible");
+    let _ = to_writer(&mut buf, traces);
     buf.into_vec()
 }
 
@@ -158,7 +157,6 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
 /// ```
 pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
     let mut counter = super::CountLength(0);
-    #[allow(clippy::expect_used)]
-    to_writer(&mut counter, traces).expect("infallible: CountLength never fails");
+    let _ = to_writer(&mut counter, traces);
     counter.0
 }
