@@ -3107,9 +3107,9 @@ dependencies = [
 
 [[package]]
 name = "libdd-libunwind-sys"
-version = "1.0.0"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eecc52581f5ccbcced4e2264fb7dd95112dba55f47d217c859420dd64e62c43a"
+checksum = "227f0e30af5fbb91d1b3768db7997fdd1ded87c44b371663783c4ff3eb686908"
 dependencies = [
  "cc",
  "libc",

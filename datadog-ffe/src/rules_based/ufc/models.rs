@@ -528,8 +528,6 @@ impl From<Vec<String>> for ConditionValue {
 pub(crate) struct SplitWire {
     pub shards: Vec<ShardWire>,
     pub variation_key: Str,
-    #[serde(default)]
-    pub extra_logging: Option<Arc<HashMap<String, String>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
