@@ -27,15 +27,10 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$ROOT_DIR"
 
-# crate_has_feature <Cargo.toml> <feature_name>
-# 0 if the [features] table declares the named feature, 1 otherwise.
+# crate_has_feature <pkg_json> <feature_name>
+# 0 if the cargo-metadata package blob declares the named feature, 1 otherwise.
 crate_has_feature() {
-    awk -v feat="$2" '
-        /^\[features\]/ { in_features = 1; next }
-        /^\[/           { in_features = 0 }
-        in_features && $1 == feat && $2 == "=" { found = 1; exit }
-        END { exit !found }
-    ' "$1"
+    printf '%s' "$1" | jq -e --arg feat "$2" '.features | has($feat)' > /dev/null 2>&1
 }
 
 # pulls <manifest> <package> [extra-cargo-flags...]
@@ -101,28 +96,30 @@ checked=0
 # Enumerate all workspace members (libdd-* and the datadog-* / sidecar /
 # live-debugger / remote-config / ffi crates) via `cargo metadata` so we
 # don't have to hardcode prefixes or maintain an allow-list.
-manifests=$(cargo metadata --no-deps --format-version 1 \
-    | python3 -c 'import json,sys; m=json.load(sys.stdin); print("\n".join(p["manifest_path"] for p in m["packages"]))')
+METADATA=$(cargo metadata --no-deps --format-version 1)
 
-for manifest in $manifests; do
-    crate="$(basename "$(dirname "$manifest")")"
+mapfile -t PACKAGES < <(printf '%s' "$METADATA" | jq -c \
+    '.packages[] | {manifest: .manifest_path, features: .features}')
+
+for pkg in "${PACKAGES[@]}"; do
+    manifest=$(printf '%s' "$pkg" | jq -r '.manifest')
     checked=$((checked + 1))
 
     check "$manifest" "default" || errors=$((errors + 1))
 
-    if crate_has_feature "$manifest" "https"; then
+    if crate_has_feature "$pkg" "https"; then
         check "$manifest" "--features https" --no-default-features --features https \
             || errors=$((errors + 1))
     fi
 
-    if crate_has_feature "$manifest" "fips"; then
+    if crate_has_feature "$pkg" "fips"; then
         check "$manifest" "--features fips" --no-default-features --features fips \
             || errors=$((errors + 1))
     fi
 done
 
 if [ "$checked" -eq 0 ]; then
-    echo "no libdd-* crates found" >&2
+    echo "no workspace crates found" >&2
     exit 2
 fi
 
