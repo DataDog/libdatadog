@@ -20,6 +20,20 @@ and see what sticks", and would realistically expect the set of pieces reduces o
 
 If you want to **see it working right now**, the fastest path is the Rust allocator demo in [`libdd-heap-allocator`](../libdd-heap-allocator#running-the-demo), which wraps the system allocator, fires USDT probes on every heap event, and lets you observe them live with `bpftrace`.
 
+## Initial Use Cases
+_aka: what will the PoC I keep hearing about do?_
+
+We are targeting two different application use cases in an effort to demonstrate the general utility of this approach.
+
+**Rust compile-time instrumentation**
+A crate exposing a `GlobalAlloc` implementation will allow Rust users to, at compile time, opt into heap profiling. We
+anticipate this will be shipped as a feature of `dd-trace-rs`. This addresses a pain point both internally with the
+increase in Rust adoption in Datadog services, and would adress the same pain point within the broader Rust community. 
+
+**Python Runtime Instrumentation for _native_ library allocation sampling**
+Today our python profiler cannot sample allocations occuring behind the FFI; we will extend `ddtrace-py` to load our dynamic
+runtime patching mechanism such that, as native libraries are loaded, we intercept their allocators. As many popular python
+libraries function largely as API glue around native libraries this will help close the allocation observability gap. 
 
 ## Components
 
