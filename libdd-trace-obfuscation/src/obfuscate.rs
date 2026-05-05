@@ -101,7 +101,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                 .and_then(|dbms| TryInto::try_into(dbms).ok())
                 .unwrap_or_default();
             let obfuscated_query = crate::sql::obfuscate_sql(&span.resource, &config.sql, dbms);
-            span.resource = obfuscated_query.clone();
+            span.resource.clone_from(&obfuscated_query);
             span.meta.insert(TAG_SQLQUERY.to_owned(), obfuscated_query);
         }
         "elasticsearch" if config.elasticsearch.enabled => {

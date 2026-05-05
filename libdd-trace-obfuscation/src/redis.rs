@@ -128,13 +128,22 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
                 args.clear();
                 args.push("?");
             }
-        b"ACL"
-            // Obfuscate all arguments after the subcommand:
+        b"ACL" | b"GEOHASH" | b"GEOPOS" | b"GEODIST" | b"LPUSH" | b"RPUSH" | b"SREM" | b"ZREM"
+        | b"SADD"
+            // Obfuscate all arguments after the first token:
             // • ACL SETUSER username on >password ~keys &channels +commands
             // • ACL GETUSER username
             // • ACL DELUSER username [username ...]
             // • ACL LIST
             // • ACL WHOAMI
+            // • GEOHASH key member [member ...]
+            // • GEOPOS key member [member ...]
+            // • GEODIST key member1 member2 [unit]
+            // • LPUSH key value [value ...]
+            // • RPUSH key value [value ...]
+            // • SREM key member [member ...]
+            // • ZREM key member [member ...]
+            // • SADD key member [member ...]
             if args.len() > 1 => {
                 args[1] = "?";
                 args.drain(2..);
@@ -177,20 +186,6 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             // • LINSERT key BEFORE|AFTER pivot value
             args = obfuscate_redis_args_n(args, 3);
         }
-        b"GEOHASH" | b"GEOPOS" | b"GEODIST" | b"LPUSH" | b"RPUSH" | b"SREM" | b"ZREM" | b"SADD"
-            // Obfuscate all arguments after the first one.
-            // • GEOHASH key member [member ...]
-            // • GEOPOS key member [member ...]
-            // • GEODIST key member1 member2 [unit]
-            // • LPUSH key value [value ...]
-            // • RPUSH key value [value ...]
-            // • SREM key member [member ...]
-            // • ZREM key member [member ...]
-            // • SADD key member [member ...]
-            if args.len() > 1 => {
-                args[1] = "?";
-                args.drain(2..);
-            }
         b"GEOADD" => {
             // Obfuscating every 3rd argument starting from first
             // • GEOADD key longitude latitude member [longitude latitude member ...]
@@ -278,9 +273,8 @@ pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     let mut obfuscated_cmd = String::new();
 
     // If the redis command is empty, return immediately. Otherwise, store the command token.
-    let cmd = match redis_cmd_iter.next() {
-        Some(cmd) => cmd,
-        None => return obfuscated_cmd,
+    let Some(cmd) = redis_cmd_iter.next() else {
+        return obfuscated_cmd;
     };
     obfuscated_cmd.push_str(cmd);
 

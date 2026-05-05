@@ -95,20 +95,26 @@ pub struct ObfuscationConfig {
 }
 
 impl ObfuscationConfig {
+    /// Builds the obfuscation config from environment variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if one of the regular expressions used by the config cannot be compiled.
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
-            Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
-                Ok(res) => {
-                    debug!("Successfully parsed DD_APM_REPLACE_TAGS: {res:?}");
-                    Some(res)
-                }
-                Err(e) => {
-                    error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
-                    None
-                }
-            },
-            Err(_) => None,
-        };
+        let tag_replace_rules: Option<Vec<ReplaceRule>> = env::var("DD_APM_REPLACE_TAGS")
+            .map_or_else(
+                |_| None,
+                |replace_rules_str| match replacer::parse_rules_from_string(&replace_rules_str) {
+                    Ok(res) => {
+                        debug!("Successfully parsed DD_APM_REPLACE_TAGS: {res:?}");
+                        Some(res)
+                    }
+                    Err(e) => {
+                        error!("Failed to parse DD_APM_REPLACE_TAGS: {e}");
+                        None
+                    }
+                },
+            );
         let http_remove_query_string =
             parse_env::bool("DD_APM_OBFUSCATION_HTTP_REMOVE_QUERY_STRING").unwrap_or(false);
         let http_remove_path_digits =

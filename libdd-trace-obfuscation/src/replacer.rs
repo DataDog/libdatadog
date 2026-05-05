@@ -109,6 +109,10 @@ pub fn replace_span_tags(span: &mut pb::Span, rules: &[ReplaceRule], scratch_spa
 /// `parse_rules_from_string` takes an array of rules, represented as an array of length 3 arrays
 /// holding the tag name, regex pattern, and replacement string as strings.
 /// * returns a vec of `ReplaceRules`
+///
+/// # Errors
+///
+/// Returns an error when the input is not valid JSON or a rule pattern is not a valid regex.
 pub fn parse_rules_from_string(
     // rules: &'a [[&'a str; 3]],
     rules: &str,

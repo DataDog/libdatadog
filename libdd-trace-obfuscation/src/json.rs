@@ -4,8 +4,9 @@
 use crate::json_scanner::{Op, Scanner};
 use crate::obfuscation_config::{JsonObfuscatorConfig, JsonStringTransformer};
 
-/// Obfuscates a JSON string by replacing all leaf values with `"?"`, unless the value
-/// belongs to a key listed in `keep_keys`, in which case it is left verbatim.
+/// Obfuscates a JSON string by replacing all leaf values with `"?"`, unless the value belongs to a
+/// key listed in `keep_keys`, in which case it is left verbatim.
+///
 /// Keys in `transform_keys` have their string values passed through a transformer function
 /// (e.g. SQL obfuscation) instead of being replaced with `"?"`.
 ///
@@ -67,7 +68,7 @@ impl JsonObfuscator {
                         &mut buf,
                         &mut keeping,
                         &mut transforming_value,
-                        &mut keep_depth,
+                        keep_depth,
                         depth,
                         self.config.transformer.as_ref(),
                     );
@@ -79,7 +80,7 @@ impl JsonObfuscator {
                         &mut buf,
                         &mut keeping,
                         &mut transforming_value,
-                        &mut keep_depth,
+                        keep_depth,
                         depth,
                         self.config.transformer.as_ref(),
                     );
@@ -145,7 +146,7 @@ fn handle_value_done(
     buf: &mut String,
     keeping: &mut bool,
     transforming_value: &mut bool,
-    keep_depth: &mut usize,
+    keep_depth: usize,
     depth: usize,
     transformer: Option<&JsonStringTransformer>,
 ) {
@@ -161,7 +162,7 @@ fn handle_value_done(
             *transforming_value = false;
             buf.clear();
         }
-    } else if *keeping && depth < *keep_depth {
+    } else if *keeping && depth < keep_depth {
         *keeping = false;
     }
 }

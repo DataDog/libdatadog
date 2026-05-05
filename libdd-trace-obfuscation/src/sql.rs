@@ -581,11 +581,10 @@ impl<'a> Tokenizer<'a> {
             let next = self.bytes.get(self.pos + 1).copied();
             if next == Some(b'[') {
                 self.result.push_str(" . ");
-                self.pos += 1; // skip '.'
             } else {
                 self.result.push('.');
-                self.pos += 1;
             }
+            self.pos += 1;
         }
     }
 
@@ -1654,10 +1653,8 @@ impl<'a> Tokenizer<'a> {
                             // Handle the off-leak: the char at pos was advanced past by Go's peek.
                             // It becomes the first byte of the next token in Go's model.
                             if !self.at_end() {
-                                let c_len = self.s[self.pos..]
-                                    .chars()
-                                    .next()
-                                    .map_or(1, char::len_utf8);
+                                let c_len =
+                                    self.s[self.pos..].chars().next().map_or(1, char::len_utf8);
                                 let after_c = self.pos + c_len;
                                 if after_c < self.bytes.len()
                                     && self.bytes[after_c].is_ascii_digit()
@@ -1775,33 +1772,29 @@ impl<'a> Tokenizer<'a> {
                             if matches!(self.dbms, DbmsKind::Postgresql) || !next2_is_ident {
                                 self.emit("<@");
                                 self.pos += 2;
-                                self.result.push(' ');
                             } else {
                                 // Non-PG dbms with <@name → emit < then @name handled separately
                                 self.space();
                                 self.result.push('<');
                                 self.pos += 1;
-                                self.result.push(' ');
                             }
                         }
                         Some(b'>') => {
                             self.emit("<>");
                             self.pos += 2;
-                            self.result.push(' ');
                         }
                         Some(b'=') => {
                             self.emit("<=");
                             self.pos += 2;
-                            self.result.push(' ');
                         }
                         _ => {
                             self.space();
                             self.result.push('<');
                             self.pos += 1;
                             self.last_was_placeholder = false;
-                            self.result.push(' ');
                         }
                     }
+                    self.result.push(' ');
                 }
 
                 // > and >= operators
@@ -1832,7 +1825,6 @@ impl<'a> Tokenizer<'a> {
                     self.last_was_placeholder = false;
                     self.result.push(' ');
                     self.last_was_assign = true;
-                    continue; // skip emit() clearing last_was_assign
                 }
 
                 // ! and !=, !~, !~*
@@ -1843,7 +1835,6 @@ impl<'a> Tokenizer<'a> {
                     if self.peek(1) == Some(b'=') {
                         self.emit("!=");
                         self.pos += 2;
-                        self.result.push(' ');
                     } else if self.peek(1) == Some(b'~') {
                         if self.peek(2) == Some(b'*') {
                             self.emit("!~*");
@@ -1852,14 +1843,13 @@ impl<'a> Tokenizer<'a> {
                             self.emit("!~");
                             self.pos += 2;
                         }
-                        self.result.push(' ');
                     } else {
                         self.space();
                         self.result.push('!');
                         self.pos += 1;
                         self.last_was_placeholder = false;
-                        self.result.push(' ');
                     }
+                    self.result.push(' ');
                 }
 
                 // | and ||
@@ -2117,8 +2107,8 @@ fn collapse_multi_values(s: &str) -> String {
 
         if matches_values_pattern {
             // Preceding context: must be start or space/'(' or '\n'
-            let prev_ok = result.is_empty()
-                || matches!(result.chars().last(), Some(' ' | '(' | '\n'));
+            let prev_ok =
+                result.is_empty() || matches!(result.chars().last(), Some(' ' | '(' | '\n'));
 
             if prev_ok {
                 // Keep the original casing as it appeared in `remaining`
@@ -2149,6 +2139,8 @@ fn collapse_multi_values(s: &str) -> String {
 
 /// Collapse `LIMIT ?, ?` → `LIMIT ?`
 fn collapse_limit_two_args(s: &str) -> String {
+    const PREFIX: &[u8] = b"LIMIT ?";
+
     // Scan for "LIMIT ?, ?" pattern (all ASCII keywords, UTF-8 safe via char iteration)
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;
@@ -2157,7 +2149,6 @@ fn collapse_limit_two_args(s: &str) -> String {
         // Check for LIMIT (case-insensitive) + " ?, ?" or " ? ?"
         if remaining.len() >= 9 {
             let rb = remaining.as_bytes();
-            const PREFIX: &[u8] = b"LIMIT ?";
             if rb[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
                 // Check " ?, ?" or " ? ?"
                 let skip =
@@ -2171,10 +2162,7 @@ fn collapse_limit_two_args(s: &str) -> String {
                 if let Some(skip_len) = skip {
                     // Word boundary: previous char in result should be space or start
                     let prev_ok = result.is_empty()
-                        || matches!(
-                            result.as_bytes().last(),
-                            Some(b' ' | b'(' | b'\n')
-                        );
+                        || matches!(result.as_bytes().last(), Some(b' ' | b'(' | b'\n'));
                     if prev_ok {
                         result.push_str(&remaining[..7]); // "LIMIT ?"
                         remaining = &remaining[skip_len..];

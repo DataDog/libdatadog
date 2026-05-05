@@ -147,15 +147,12 @@ pub fn obfuscate_url_string(
         }
     }
 
-    let uri = match UriRef::parse(pre.as_str()) {
-        Ok(u) => u,
-        Err(_) => {
-            return if remove_query_string || remove_path_digits {
-                "?".to_string()
-            } else {
-                url.to_string()
-            };
-        }
+    let Ok(uri) = UriRef::parse(pre.as_str()) else {
+        return if remove_query_string || remove_path_digits {
+            "?".to_string()
+        } else {
+            url.to_string()
+        };
     };
 
     let mut out = String::new();

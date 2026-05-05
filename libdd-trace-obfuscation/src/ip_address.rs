@@ -42,12 +42,13 @@ pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
 
     let quantized_values = values
         .map(|v| {
-            if let Some(quantize_string) = quantize_ip(v) {
-                should_return_new_string = true;
-                Cow::from(quantize_string)
-            } else {
-                Cow::from(v)
-            }
+            quantize_ip(v).map_or_else(
+                || Cow::from(v),
+                |quantize_string| {
+                    should_return_new_string = true;
+                    Cow::from(quantize_string)
+                },
+            )
         })
         .collect::<Vec<Cow<'a, str>>>();
 
@@ -89,13 +90,14 @@ fn quantize_ip(s: &str) -> Option<String> {
 /// Split the ip prefix, can be either a provider specific prefix or a protocol
 fn split_prefix(s: &str) -> (&str, &str) {
     #[allow(clippy::unwrap_used)]
-    if let Some(tail) = s.strip_prefix("ip-") {
-        ("ip-", tail)
-    } else if let Some(protocol) = PREFIX_REGEX.find(s) {
-        s.split_at(protocol.end())
-    } else {
-        ("", s)
-    }
+    s.strip_prefix("ip-").map_or_else(
+        || {
+            PREFIX_REGEX
+                .find(s)
+                .map_or(("", s), |protocol| s.split_at(protocol.end()))
+        },
+        |tail| ("ip-", tail),
+    )
 }
 
 /// Check if `s` starts with a valid ip. If it does return Some((ip, suffix)), else return None.
@@ -103,7 +105,7 @@ fn parse_ip(s: &str) -> Option<(&str, &str)> {
     for ch in s.chars() {
         // Determine the version of the ip
         match ch {
-            '0'..='9' => continue,
+            '0'..='9' => {}
             '.' | '-' | '_' => return parse_ip_v4(s, ch),
             ':' | 'A'..='F' | 'a'..='f' if s.parse::<Ipv6Addr>().is_ok() => {
                 return Some((s, ""));
