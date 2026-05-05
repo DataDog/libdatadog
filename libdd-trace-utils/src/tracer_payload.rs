@@ -228,16 +228,13 @@ pub fn decode_to_trace_chunks(
     data: libdd_tinybytes::Bytes,
     encoding_type: TraceEncoding,
 ) -> Result<(TraceChunks<BytesData>, usize), anyhow::Error> {
-    let (data, size) = match encoding_type {
+    let (data, size) = match &encoding_type {
         TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
         TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),
     }
     .map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
 
-    Ok((
-        collect_trace_chunks(data, matches!(encoding_type, TraceEncoding::V05))?,
-        size,
-    ))
+    Ok((collect_trace_chunks(data, encoding_type)?, size))
 }
 
 #[cfg(test)]

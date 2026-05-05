@@ -7,7 +7,7 @@ use crate::span::v05::dict::SharedDict;
 use crate::span::{v05, TraceData};
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
-use crate::tracer_payload::{self, TraceChunks};
+use crate::tracer_payload::{self, TraceChunks, TraceEncoding};
 use anyhow::anyhow;
 use bytes::buf::Reader;
 use bytes::Buf;
@@ -585,26 +585,26 @@ macro_rules! parse_root_span_tags {
 
 pub fn collect_trace_chunks<T: TraceData>(
     traces: Vec<Vec<crate::span::v04::Span<T>>>,
-    use_v05_format: bool,
+    format: TraceEncoding,
 ) -> anyhow::Result<TraceChunks<T>> {
-    if use_v05_format {
-        let mut shared_dict = SharedDict::default();
-        let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
-        for trace in traces {
-            let trace_len = trace.len();
-            let v05_trace = trace.into_iter().try_fold(
-                Vec::with_capacity(trace_len),
-                |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
-                    acc.push(v05::from_v04_span(span, &mut shared_dict)?);
-                    Ok(acc)
-                },
-            )?;
-
-            v05_traces.push(v05_trace);
+    match format {
+        TraceEncoding::V05 => {
+            let mut shared_dict = SharedDict::default();
+            let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
+            for trace in traces {
+                let trace_len = trace.len();
+                let v05_trace = trace.into_iter().try_fold(
+                    Vec::with_capacity(trace_len),
+                    |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
+                        acc.push(v05::from_v04_span(span, &mut shared_dict)?);
+                        Ok(acc)
+                    },
+                )?;
+                v05_traces.push(v05_trace);
+            }
+            Ok(TraceChunks::V05((shared_dict, v05_traces)))
         }
-        Ok(TraceChunks::V05((shared_dict, v05_traces)))
-    } else {
-        Ok(TraceChunks::V04(traces))
+        TraceEncoding::V04 => Ok(TraceChunks::V04(traces)),
     }
 }
 
@@ -1109,7 +1109,7 @@ mod tests {
     fn test_collect_trace_chunks_v05() {
         let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
 
-        let collection = collect_trace_chunks(vec![chunk], true).unwrap();
+        let collection = collect_trace_chunks(vec![chunk], TraceEncoding::V05).unwrap();
 
         let (dict, traces) = match collection {
             TraceChunks::V05(payload) => payload,
