@@ -37,4 +37,3 @@ path = "benches/eval.rs"
 
 [features]
 pyo3 = ["dep:pyo3"]
-regex-lite = ["libdd-common/regex-lite"]
