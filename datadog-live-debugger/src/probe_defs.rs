@@ -74,12 +74,20 @@ pub struct SpanProbeDecoration {
 }
 
 #[derive(Debug)]
+pub struct CaptureExpression {
+    pub name: String,
+    pub expr: ProbeValue,
+    pub capture: CaptureConfiguration,
+}
+
+#[derive(Debug)]
 pub struct LogProbe {
     pub segments: DslString,
     pub when: ProbeCondition,
     pub capture: CaptureConfiguration,
     pub capture_snapshot: bool,
     pub sampling_snapshots_per_second: u32,
+    pub capture_expressions: Vec<CaptureExpression>,
 }
 
 #[derive(Debug)]

@@ -23,6 +23,7 @@ macro_rules! c_setters {
         paste::paste! {
             $(
                 #[no_mangle]
+                #[allow(clippy::missing_safety_doc)]
                 pub unsafe extern "C" fn [<ddog_ $object_name _with_ $property_type_name_snakecase _ $path $(_ $path_rest)* >](
                     $object_name: &mut $object_ty,
                     param: $property_type,
@@ -39,6 +40,7 @@ macro_rules! c_setters {
             }
 
             #[no_mangle]
+            #[allow(clippy::missing_safety_doc)]
             #[doc=concat!(
                 "\n Sets a property from it's string value.\n\n",
                 " Available properties:\n\n",
@@ -61,6 +63,7 @@ macro_rules! c_setters {
             }
 
             #[no_mangle]
+            #[allow(clippy::missing_safety_doc)]
             #[doc=concat!(
                 "\n Sets a property from it's string value.\n\n",
                 " Available properties:\n\n",
@@ -199,6 +202,37 @@ mod tests {
                 MaybeError::None,
             );
             assert_eq!(builder.runtime_id.as_deref(), Some("abcd"));
+
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::SessionId,
+                    ffi::CharSlice::from("sess-1")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.config.session_id.as_deref(), Some("sess-1"));
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::RootSessionId,
+                    ffi::CharSlice::from("root-9")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(builder.config.root_session_id.as_deref(), Some("root-9"));
+            assert_eq!(
+                ddog_telemetry_builder_with_property_str(
+                    &mut builder,
+                    TelemetryWorkerBuilderStrProperty::ParentSessionId,
+                    ffi::CharSlice::from("parent-2")
+                ),
+                MaybeError::None,
+            );
+            assert_eq!(
+                builder.config.parent_session_id.as_deref(),
+                Some("parent-2")
+            );
 
             assert_eq!(
                 ddog_telemetry_builder_with_property_str(

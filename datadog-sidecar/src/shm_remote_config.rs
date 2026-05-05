@@ -268,7 +268,10 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStora
         serialized.push(b'\n');
         for file in files.iter() {
             #[allow(clippy::unwrap_used)]
-            serialized.extend_from_slice(file.handle.lock_or_panic().as_ref().unwrap().get_path());
+            // SAFETY: no concurrent unlink() on this handle.
+            serialized.extend_from_slice(unsafe {
+                file.handle.lock_or_panic().as_ref().unwrap().get_path()
+            });
             serialized.push(b':');
             if let Some(ref limiter) = file.limiter {
                 serialized.extend_from_slice(limiter.index().to_string().as_bytes());

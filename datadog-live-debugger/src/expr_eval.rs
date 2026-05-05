@@ -84,7 +84,7 @@ pub trait Evaluator<'e, I> {
         member: IntermediateValue<'e, I>,
     ) -> ResultValue<&'e I>;
     fn length(&mut self, value: &'e I) -> usize;
-    fn try_enumerate(&mut self, value: &'e I) -> ResultValue<Vec<&'e I>>;
+    fn try_enumerate(&mut self, value: &'e I) -> ResultValue<Vec<(&'e I, &'e I)>>;
     fn stringify(&mut self, value: &'e I) -> Cow<'e, str>; // generic string representation
     fn get_string(&mut self, value: &'e I) -> Cow<'e, str>; // log output-formatted string
     fn convert_index(&mut self, value: &'e I) -> ResultValue<usize>;
@@ -233,6 +233,8 @@ impl<'e, I> InternalImm<'e, I> {
 struct Eval<'a, 'e, I, E: Evaluator<'e, I>> {
     eval: &'a mut E,
     it: Option<&'e I>,
+    it_key: Option<&'e I>,
+    it_value: Option<&'e I>,
 }
 
 impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
@@ -320,7 +322,10 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
         })
     }
 
-    fn reference_collection(&mut self, reference: &'e Reference) -> EvalResult<Vec<&'e I>> {
+    fn reference_collection(
+        &mut self,
+        reference: &'e Reference,
+    ) -> EvalResult<Vec<(&'e I, &'e I)>> {
         let immediate = self.reference(reference)?.try_use(self)?;
         self.eval.try_enumerate(immediate).map_err(|e| match e {
             ResultError::Invalid => EvErr::str(format!(
@@ -337,6 +342,8 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
     fn reference(&mut self, reference: &'e Reference) -> EvalResult<DefOrUndefRef<'e, I>> {
         Ok(DefOrUndefRef(match reference {
             Reference::IteratorVariable => self.it.ok_or(InvalidFetch::NoIterator),
+            Reference::IteratorKey => self.it_key.ok_or(InvalidFetch::NoIterator),
+            Reference::IteratorValue => self.it_value.ok_or(InvalidFetch::NoIterator),
             Reference::Base(ref identifier) => self
                 .eval
                 .fetch_identifier(identifier.as_str())
@@ -351,9 +358,12 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
                             .map_err(|e| EvErr::str(format!("{} (from {dimension}", e.0)))?;
                         let vec = self.collection_source(source)?;
                         if index < vec.len() {
-                            Ok(vec[index])
+                            Ok(vec[index].1)
                         } else {
-                            Err(InvalidFetch::IndexEvaluated(source, dimension, vec, index))
+                            let values: Vec<&'e I> = vec.into_iter().map(|(_, v)| v).collect();
+                            Err(InvalidFetch::IndexEvaluated(
+                                source, dimension, values, index,
+                            ))
                         }
                     }
                     CollectionSource::Reference(ref reference) => {
@@ -387,20 +397,27 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
         }))
     }
 
-    fn collection_source(&mut self, collection: &'e CollectionSource) -> EvalResult<Vec<&'e I>> {
+    fn collection_source(
+        &mut self,
+        collection: &'e CollectionSource,
+    ) -> EvalResult<Vec<(&'e I, &'e I)>> {
         Ok(match collection {
             CollectionSource::Reference(ref reference) => self.reference_collection(reference)?,
             CollectionSource::FilterOperator(ref boxed) => {
                 let (source, condition) = &**boxed;
                 let mut values = vec![];
-                let it = self.it;
-                for item in self.collection_source(source)? {
+                let (it, it_key, it_value) = (self.it, self.it_key, self.it_value);
+                for (key, item) in self.collection_source(source)? {
                     self.it = Some(item);
+                    self.it_key = Some(key);
+                    self.it_value = Some(item);
                     if self.condition(condition)? {
-                        values.push(item);
+                        values.push((key, item));
                     }
                 }
                 self.it = it;
+                self.it_key = it_key;
+                self.it_value = it_value;
                 values
             }
         })
@@ -459,13 +476,15 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
             }
             Condition::CollectionMatch(match_type, reference, condition) => {
                 let vec = self.reference_collection(reference)?;
-                let it = self.it;
+                let (it, it_key, it_value) = (self.it, self.it_key, self.it_value);
                 let mut result;
                 match match_type {
                     CollectionMatch::All => {
                         result = true;
-                        for v in vec {
+                        for (key, v) in vec {
                             self.it = Some(v);
+                            self.it_key = Some(key);
+                            self.it_value = Some(v);
                             if !self.condition(condition)? {
                                 result = false;
                                 break;
@@ -474,8 +493,10 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
                     }
                     CollectionMatch::Any => {
                         result = false;
-                        for v in vec {
+                        for (key, v) in vec {
                             self.it = Some(v);
+                            self.it_key = Some(key);
+                            self.it_value = Some(v);
                             if self.condition(condition)? {
                                 result = true;
                                 break;
@@ -484,6 +505,8 @@ impl<'e, I, E: Evaluator<'e, I>> Eval<'_, 'e, I, E> {
                     }
                 }
                 self.it = it;
+                self.it_key = it_key;
+                self.it_value = it_value;
                 result
             }
             Condition::IsDefinedReference(reference) => self.reference(reference)?.0.is_ok(),
@@ -512,12 +535,17 @@ pub fn eval_condition<'e, I: 'e, E: Evaluator<'e, I>>(
     eval: &mut E,
     condition: &'e ProbeCondition,
 ) -> Result<bool, SnapshotEvaluationError> {
-    Eval { eval, it: None }
-        .condition(&condition.0)
-        .map_err(|e| SnapshotEvaluationError {
-            expr: condition.to_string(),
-            message: e.0,
-        })
+    Eval {
+        eval,
+        it: None,
+        it_key: None,
+        it_value: None,
+    }
+    .condition(&condition.0)
+    .map_err(|e| SnapshotEvaluationError {
+        expr: condition.to_string(),
+        message: e.0,
+    })
 }
 
 pub fn eval_string<'a, 'e, 'v, I: 'e, E: Evaluator<'e, I>>(
@@ -529,7 +557,12 @@ where
     'e: 'a,
 {
     let mut errors = vec![];
-    let mut eval = Eval { eval, it: None };
+    let mut eval = Eval {
+        eval,
+        it: None,
+        it_key: None,
+        it_value: None,
+    };
     let mut map_error = |err: EvErr, expr: &dyn ToString| {
         errors.push(SnapshotEvaluationError {
             expr: expr.to_string(),
@@ -559,7 +592,7 @@ where
                 CollectionSource::FilterOperator(_) => {
                     eval.collection_source(reference).map(|vec| {
                         let mut strings = vec![];
-                        for referenced in vec {
+                        for (_, referenced) in vec {
                             strings
                                 .push(eval.get_string(IntermediateValue::Referenced(referenced)));
                         }
@@ -587,7 +620,12 @@ pub fn eval_value<'e, 'v, I: 'e, E: Evaluator<'e, I>>(
 where
     'v: 'e,
 {
-    let mut eval = Eval { eval, it: None };
+    let mut eval = Eval {
+        eval,
+        it: None,
+        it_key: None,
+        it_value: None,
+    };
     eval.value(&value.0)
         .and_then(|v| v.try_use(&mut eval))
         .map_err(|e| SnapshotEvaluationError {
@@ -600,7 +638,12 @@ pub fn eval_intermediate_to_string<'e, I, E: Evaluator<'e, I>>(
     eval: &mut E,
     value: IntermediateValue<'e, I>,
 ) -> Cow<'e, str> {
-    let mut eval = Eval { eval, it: None };
+    let mut eval = Eval {
+        eval,
+        it: None,
+        it_key: None,
+        it_value: None,
+    };
     eval.get_string(value)
 }
 
@@ -721,10 +764,11 @@ mod tests {
             }
         }
 
-        fn try_enumerate(&mut self, value: &'e Val) -> ResultValue<Vec<&'e Val>> {
+        fn try_enumerate(&mut self, value: &'e Val) -> ResultValue<Vec<(&'e Val, &'e Val)>> {
             match value {
-                Val::Vec(v) => Ok(v.iter().collect()),
-                Val::Obj(o) => Ok(o.0.values().collect()),
+                // key = value (tests don't check @key, only @it/@value)
+                Val::Vec(v) => Ok(v.iter().map(|item| (item, item)).collect()),
+                Val::Obj(o) => Ok(o.0.values().map(|v| (v, v)).collect()),
                 _ => Err(ResultError::Invalid),
             }
         }

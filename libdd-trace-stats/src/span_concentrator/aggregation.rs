@@ -8,6 +8,7 @@
 use hashbrown::HashMap;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
+use std::borrow::Borrow;
 
 use crate::span_concentrator::StatSpan;
 
@@ -23,62 +24,74 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
     "grpc.status.code",
 ];
 
+/// Aggregation key fields shared across all concentrator implementations — everything
+/// **except** peer tags.
+///
+/// `T` is the string representation:
+/// * `&'a str`   — borrowed references used in [`BorrowedAggregationKey`]
+/// * `String`    — owned values used in `OwnedAggregationKey`
+/// * `StringRef` — offset+len into a SHM string pool, used in `ShmKeyHeader`
+#[derive(
+    Clone, Default, Hash, Eq, PartialEq, Debug, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+pub struct FixedAggregationKey<T> {
+    pub resource_name: T,
+    pub service_name: T,
+    pub operation_name: T,
+    pub span_type: T,
+    pub span_kind: T,
+    pub http_method: T,
+    pub http_endpoint: T,
+    pub service_source: T,
+    pub http_status_code: u32,
+    pub grpc_status_code: Option<u8>,
+    pub is_synthetics_request: bool,
+    pub is_trace_root: bool,
+}
+
+impl<T> FixedAggregationKey<T> {
+    /// Map all string fields through `f`, preserving scalar fields.
+    pub fn convert<'a, V: 'a, I: ?Sized + 'a, F: Fn(&'a I) -> V>(
+        &'a self,
+        f: F,
+    ) -> FixedAggregationKey<V>
+    where
+        T: Borrow<I>,
+    {
+        FixedAggregationKey {
+            resource_name: f(self.resource_name.borrow()),
+            service_name: f(self.service_name.borrow()),
+            operation_name: f(self.operation_name.borrow()),
+            span_type: f(self.span_type.borrow()),
+            span_kind: f(self.span_kind.borrow()),
+            http_method: f(self.http_method.borrow()),
+            http_endpoint: f(self.http_endpoint.borrow()),
+            service_source: f(self.service_source.borrow()),
+            http_status_code: self.http_status_code,
+            grpc_status_code: self.grpc_status_code,
+            is_synthetics_request: self.is_synthetics_request,
+            is_trace_root: self.is_trace_root,
+        }
+    }
+}
+
 #[derive(Clone, Hash, PartialEq, Eq)]
 /// Represent a stats aggregation key borrowed from span data
 pub(super) struct BorrowedAggregationKey<'a> {
-    resource_name: &'a str,
-    service_name: &'a str,
-    operation_name: &'a str,
-    span_type: &'a str,
-    span_kind: &'a str,
-    http_status_code: u32,
-    is_synthetics_request: bool,
+    fixed: FixedAggregationKey<&'a str>,
     peer_tags: Vec<(&'a str, &'a str)>,
-    is_trace_root: bool,
-    http_method: &'a str,
-    http_endpoint: &'a str,
-    grpc_status_code: Option<u8>,
-    service_source: &'a str,
 }
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     #[inline]
-    fn equivalent(
-        &self,
-        OwnedAggregationKey {
-            resource_name,
-            service_name,
-            operation_name,
-            span_type,
-            span_kind,
-            http_status_code,
-            is_synthetics_request,
-            peer_tags,
-            is_trace_root,
-            http_method,
-            http_endpoint,
-            grpc_status_code,
-            service_source,
-        }: &OwnedAggregationKey,
-    ) -> bool {
-        self.resource_name == resource_name
-            && self.service_name == service_name
-            && self.operation_name == operation_name
-            && self.span_type == span_type
-            && self.span_kind == span_kind
-            && self.http_status_code == *http_status_code
-            && self.is_synthetics_request == *is_synthetics_request
-            && self.peer_tags.len() == peer_tags.len()
+    fn equivalent(&self, other: &OwnedAggregationKey) -> bool {
+        self.fixed == other.fixed.convert(|s| s)
+            && self.peer_tags.len() == other.peer_tags.len()
             && self
                 .peer_tags
                 .iter()
-                .zip(peer_tags.iter())
+                .zip(other.peer_tags.iter())
                 .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
-            && self.is_trace_root == *is_trace_root
-            && self.http_method == http_method
-            && self.http_endpoint == http_endpoint
-            && self.grpc_status_code == *grpc_status_code
-            && self.service_source == service_source
     }
 }
 
@@ -91,41 +104,19 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
 ///   borrowed key
 /// * Running the Equivalent trait on an owned key derived from a borrowed key should produce true
 pub(super) struct OwnedAggregationKey {
-    resource_name: String,
-    service_name: String,
-    operation_name: String,
-    span_type: String,
-    span_kind: String,
-    http_status_code: u32,
-    is_synthetics_request: bool,
+    fixed: FixedAggregationKey<String>,
     peer_tags: Vec<(String, String)>,
-    is_trace_root: bool,
-    http_method: String,
-    http_endpoint: String,
-    grpc_status_code: Option<u8>,
-    service_source: String,
 }
 
 impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
     fn from(value: &BorrowedAggregationKey<'_>) -> Self {
         OwnedAggregationKey {
-            resource_name: value.resource_name.to_owned(),
-            service_name: value.service_name.to_owned(),
-            operation_name: value.operation_name.to_owned(),
-            span_type: value.span_type.to_owned(),
-            span_kind: value.span_kind.to_owned(),
-            http_status_code: value.http_status_code,
-            is_synthetics_request: value.is_synthetics_request,
+            fixed: value.fixed.convert(str::to_owned),
             peer_tags: value
                 .peer_tags
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
-            is_trace_root: value.is_trace_root,
-            http_method: value.http_method.to_owned(),
-            http_endpoint: value.http_endpoint.to_owned(),
-            grpc_status_code: value.grpc_status_code,
-            service_source: value.service_source.to_owned(),
         }
     }
 }
@@ -211,19 +202,6 @@ impl<'a> BorrowedAggregationKey<'a> {
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
     pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
-        Self::from_obfuscated_span(span.resource(), span, peer_tag_keys)
-    }
-
-    pub(crate) fn from_obfuscated_span<'b, T>(
-        resource_name: &'a str,
-        span: &'b T,
-        peer_tag_keys: &'b [String],
-    ) -> BorrowedAggregationKey<'a>
-    where
-        T: StatSpan<'b>,
-        // resource_name is a temporary string on the stack the span will outlive it
-        'b: 'a,
-    {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
@@ -268,12 +246,32 @@ impl<'a> BorrowedAggregationKey<'a> {
             is_synthetics_request: span
                 .get_meta(TAG_ORIGIN)
                 .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
+            resource_name: span.resource(),
+            service_name: span.service(),
+            operation_name: span.name(),
+            span_type: span.r#type(),
+            span_kind,
+            http_status_code: status_code,
+            is_synthetics_request: span
+                .get_meta(TAG_ORIGIN)
+                .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
+            fixed: FixedAggregationKey {
+                resource_name: span.resource(),
+                service_name: span.service(),
+                operation_name: span.name(),
+                span_type: span.r#type(),
+                span_kind,
+                http_method,
+                http_endpoint,
+                service_source,
+                http_status_code: status_code,
+                grpc_status_code,
+                is_synthetics_request: span
+                    .get_meta(TAG_ORIGIN)
+                    .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
+                is_trace_root: span.is_trace_root(),
+            },
             peer_tags,
-            is_trace_root: span.is_trace_root(),
-            http_method,
-            http_endpoint,
-            grpc_status_code,
-            service_source,
         }
     }
 }
@@ -281,13 +279,20 @@ impl<'a> BorrowedAggregationKey<'a> {
 impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
     fn from(value: pb::ClientGroupedStats) -> Self {
         Self {
-            resource_name: value.resource,
-            service_name: value.service,
-            operation_name: value.name,
-            span_type: value.r#type,
-            span_kind: value.span_kind,
-            http_status_code: value.http_status_code,
-            is_synthetics_request: value.synthetics,
+            fixed: FixedAggregationKey {
+                resource_name: value.resource,
+                service_name: value.service,
+                operation_name: value.name,
+                span_type: value.r#type,
+                span_kind: value.span_kind,
+                http_method: value.http_method,
+                http_endpoint: value.http_endpoint,
+                service_source: value.service_source,
+                http_status_code: value.http_status_code,
+                grpc_status_code: value.grpc_status_code.parse().ok(),
+                is_synthetics_request: value.synthetics,
+                is_trace_root: value.is_trace_root == 1,
+            },
             peer_tags: value
                 .peer_tags
                 .into_iter()
@@ -296,11 +301,6 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
                     Some((key.to_string(), value.to_string()))
                 })
                 .collect(),
-            is_trace_root: value.is_trace_root == 1,
-            http_method: value.http_method,
-            http_endpoint: value.http_endpoint,
-            grpc_status_code: value.grpc_status_code.parse().ok(),
-            service_source: value.service_source,
         }
     }
 }
@@ -396,12 +396,13 @@ impl StatsBucket {
 
 /// Create a ClientGroupedStats struct based on the given AggregationKey and GroupedStats
 fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::ClientGroupedStats {
+    let f = key.fixed;
     pb::ClientGroupedStats {
-        service: key.service_name,
-        name: key.operation_name,
-        resource: key.resource_name,
-        http_status_code: key.http_status_code,
-        r#type: key.span_type,
+        service: f.service_name,
+        name: f.operation_name,
+        resource: f.resource_name,
+        http_status_code: f.http_status_code,
+        r#type: f.span_type,
         db_type: String::new(), // db_type is not used yet (see proto definition)
 
         hits: group.hits,
@@ -410,27 +411,27 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
 
         ok_summary: group.ok_summary.encode_to_vec(),
         error_summary: group.error_summary.encode_to_vec(),
-        synthetics: key.is_synthetics_request,
+        synthetics: f.is_synthetics_request,
         top_level_hits: group.top_level_hits,
-        span_kind: key.span_kind,
+        span_kind: f.span_kind,
 
         peer_tags: key
             .peer_tags
             .into_iter()
             .map(|(k, v)| format!("{k}:{v}"))
             .collect(),
-        is_trace_root: if key.is_trace_root {
+        is_trace_root: if f.is_trace_root {
             pb::Trilean::True.into()
         } else {
             pb::Trilean::False.into()
         },
-        http_method: key.http_method,
-        http_endpoint: key.http_endpoint,
-        grpc_status_code: key
+        http_method: f.http_method,
+        http_endpoint: f.http_endpoint,
+        grpc_status_code: f
             .grpc_status_code
             .map(|c| c.to_string())
             .unwrap_or_default(),
-        service_source: key.service_source,
+        service_source: f.service_source,
         span_derived_primary_tags: vec![], // Todo
     }
 }
@@ -449,6 +450,21 @@ mod tests {
         hasher.finish()
     }
 
+    impl FixedAggregationKey<String> {
+        fn into_key(self) -> OwnedAggregationKey {
+            OwnedAggregationKey {
+                fixed: self,
+                peer_tags: vec![],
+            }
+        }
+        fn into_key_with_peers(self, peer_tags: Vec<(String, String)>) -> OwnedAggregationKey {
+            OwnedAggregationKey {
+                fixed: self,
+                peer_tags,
+            }
+        }
+    }
+
     #[test]
     fn test_aggregation_key_from_span() {
         let test_cases: Vec<(SpanBytes, OwnedAggregationKey)> = vec![
@@ -462,13 +478,14 @@ mod tests {
                     parent_id: 0,
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with span kind
             (
@@ -481,14 +498,15 @@ mod tests {
                     meta: HashMap::from([("span.kind".into(), "client".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with peer tags but peertags aggregation disabled
             (
@@ -504,14 +522,15 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with multiple peer tags but peertags aggregation disabled
             (
@@ -529,14 +548,15 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with multiple peer tags but peertags aggregation disabled and span kind is
             // server
@@ -555,14 +575,15 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span from synthetics
             (
@@ -575,14 +596,15 @@ mod tests {
                     meta: HashMap::from([("_dd.origin".into(), "synthetics-browser".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: true,
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with status code in meta
             (
@@ -595,7 +617,7 @@ mod tests {
                     meta: HashMap::from([("http.status_code".into(), "418".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
@@ -603,7 +625,8 @@ mod tests {
                     is_trace_root: true,
                     http_status_code: 418,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with invalid status code in meta
             (
@@ -616,14 +639,15 @@ mod tests {
                     meta: HashMap::from([("http.status_code".into(), "x".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with status code in metrics
             (
@@ -636,7 +660,7 @@ mod tests {
                     metrics: HashMap::from([("http.status_code".into(), 418.0)]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
@@ -644,7 +668,8 @@ mod tests {
                     is_trace_root: true,
                     http_status_code: 418,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with http.method and http.route
             (
@@ -660,7 +685,7 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "GET /api/v1/users".into(),
@@ -669,7 +694,8 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with http.method and http.endpoint (http.endpoint takes precedence)
             (
@@ -686,7 +712,7 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "POST /users/create".into(),
@@ -695,7 +721,8 @@ mod tests {
                     is_synthetics_request: false,
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with grpc status from meta as named string
             (
@@ -703,11 +730,12 @@ mod tests {
                     meta: HashMap::from([("rpc.grpc.status_code".into(), "OK".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(0),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with grpc status from meta as numeric string
             (
@@ -715,11 +743,12 @@ mod tests {
                     meta: HashMap::from([("rpc.grpc.status_code".into(), "14".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(14),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with grpc status from meta with StatusCode. prefix
             (
@@ -727,11 +756,12 @@ mod tests {
                     meta: HashMap::from([("grpc.code".into(), "StatusCode.UNAVAILABLE".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(14),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with grpc status from metrics takes precedence over meta
             (
@@ -743,11 +773,12 @@ mod tests {
                     metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(7),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with grpc status from metrics via secondary key
             (
@@ -755,11 +786,12 @@ mod tests {
                     metrics: HashMap::from([("grpc.code".into(), 3.0)]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     grpc_status_code: Some(3),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with invalid grpc status string
             (
@@ -767,10 +799,11 @@ mod tests {
                     meta: HashMap::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with service source set by integration
             (
@@ -783,14 +816,15 @@ mod tests {
                     meta: HashMap::from([("_dd.svc_src".into(), "redis".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: true,
                     service_source: "redis".into(),
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span with service source set by configuration option
             (
@@ -803,14 +837,15 @@ mod tests {
                     meta: HashMap::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: true,
                     service_source: "opt.split_by_tag".into(),
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
             // Span without service source (default service name)
             (
@@ -822,14 +857,15 @@ mod tests {
                     parent_id: 0,
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_trace_root: true,
                     service_source: "".into(),
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
         ];
 
@@ -851,15 +887,15 @@ mod tests {
                     meta: HashMap::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
                     is_trace_root: true,
-                    peer_tags: vec![("aws.s3.bucket".into(), "bucket-a".into())],
                     ..Default::default()
-                },
+                }
+                .into_key_with_peers(vec![("aws.s3.bucket".into(), "bucket-a".into())]),
             ),
             // Span with multiple peer tags with peertags aggregation enabled
             (
@@ -877,19 +913,19 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
-                    peer_tags: vec![
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                        ("db.instance".into(), "dynamo.test.us1".into()),
-                        ("db.system".into(), "dynamodb".into()),
-                    ],
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key_with_peers(vec![
+                    ("aws.s3.bucket".into(), "bucket-a".into()),
+                    ("db.instance".into(), "dynamo.test.us1".into()),
+                    ("db.system".into(), "dynamodb".into()),
+                ]),
             ),
             // Span with multiple peer tags with peertags aggregation enabled and span kind is
             // server
@@ -908,14 +944,15 @@ mod tests {
                     ]),
                     ..Default::default()
                 },
-                OwnedAggregationKey {
+                FixedAggregationKey {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
                     is_trace_root: true,
                     ..Default::default()
-                },
+                }
+                .into_key(),
             ),
         ];
 

@@ -20,6 +20,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, warn};
+
 /// Whether the agent reported the same value or not.
 #[derive(Debug)]
 pub enum FetchInfoStatus {
@@ -112,8 +113,11 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
         .body(Bytes::new())
         .map_err(|e| anyhow!("Failed to build request: {}", e))?;
 
+    let timeout = Duration::from_millis(info_endpoint.timeout_ms);
     let client = H::new_client();
-    let res = client.request(req).await?;
+    let res = tokio::time::timeout(timeout, client.request(req))
+        .await
+        .map_err(|_| anyhow!("Request to /info timed out after {:?}", timeout))??;
 
     // Extract the Datadog-Container-Tags-Hash header
     let container_tags_hash = res
@@ -160,7 +164,7 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// );
 /// // Start the fetcher on a shared runtime
 /// let runtime = libdd_shared_runtime::SharedRuntime::new()?;
-/// runtime.spawn_worker(fetcher)?;
+/// runtime.spawn_worker(fetcher, true)?;
 ///
 /// // Get the Arc to access the info
 /// let agent_info_arc = agent_info::get_agent_info();
@@ -573,7 +577,7 @@ mod single_threaded_tests {
         );
         assert!(agent_info::get_agent_info().is_none());
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher).unwrap();
+        shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Wait until the info is fetched
         let start = std::time::Instant::now();
@@ -656,7 +660,7 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher).unwrap();
+        shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the new agent state
         let response = http::Response::builder()
@@ -737,7 +741,7 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher).unwrap();
+        shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the same agent state
         let response = http::Response::builder()

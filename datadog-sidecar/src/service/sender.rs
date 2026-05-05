@@ -13,7 +13,8 @@
 
 use crate::service::{
     sidecar_interface::{
-        DynamicInstrumentationConfigState, SidecarInterfaceChannel, SidecarInterfaceRequest,
+        DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
+        SidecarInterfaceRequest,
     },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
@@ -435,6 +436,19 @@ impl SidecarSender {
         self.channel.try_send_set_test_session_token(token);
     }
 
+    pub fn add_span_to_concentrator(
+        &mut self,
+        env: String,
+        version: String,
+        span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_add_span_to_concentrator(env, version, span);
+    }
+
     pub fn set_read_timeout(&mut self, d: Option<Duration>) -> io::Result<()> {
         self.channel.0.set_read_timeout(d)
     }
@@ -443,9 +457,9 @@ impl SidecarSender {
         self.channel.0.set_write_timeout(d)
     }
 
-    pub fn flush_traces(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
         self.drain_outbox_blocking();
-        self.channel.call_flush_traces()
+        self.channel.call_flush(options)
     }
 
     pub fn ping(&mut self) -> io::Result<()> {

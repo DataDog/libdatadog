@@ -16,6 +16,7 @@ static REDACTED_NAMES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
         b"apikey",
         b"apisecret",
         b"apisignature",
+        b"appkey",
         b"applicationkey",
         b"auth",
         b"authorization",
@@ -101,6 +102,10 @@ static REDACTED_NAMES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
 
 static ADDED_REDACTED_NAMES: LazyLock<Vec<Vec<u8>>> = LazyLock::new(Vec::new);
 
+// Exclusions take precedence over the built-in REDACTED_NAMES set.
+static EXCLUDED_NAMES: LazyLock<HashSet<Vec<u8>>> = LazyLock::new(HashSet::new);
+static EXCLUDED_NAMES_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
 static REDACTED_TYPES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(HashSet::new);
 
 static ADDED_REDACTED_TYPES: LazyLock<Vec<Vec<u8>>> = LazyLock::new(Vec::new);
@@ -139,6 +144,14 @@ pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
     let redacted_names = &mut (*(&*REDACTED_NAMES as *const HashSet<&'static [u8]>).cast_mut());
     redacted_names.insert(&added_names[added_names.len() - 1]);
 }
+/// # Safety
+/// May only be called while not running yet - concurrent access to is_excluded_name is forbidden.
+pub unsafe fn add_excluded_name<I: Into<Vec<u8>>>(name: I) {
+    assert!(!EXCLUDED_NAMES_INITIALIZED.load(Ordering::Relaxed));
+    let excluded_names = &mut (*(&*EXCLUDED_NAMES as *const HashSet<Vec<u8>>).cast_mut());
+    excluded_names.insert(name.into());
+}
+
 /// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_type is forbidden.
 pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
@@ -182,7 +195,15 @@ pub fn is_redacted_name<I: AsRef<[u8]>>(name: I) -> bool {
         }
         i += 1;
     }
-    REDACTED_NAMES.contains(&copy[0..copy.len()])
+    let normalized = &copy[0..copy.len()];
+    // Exclusions take precedence: if explicitly excluded, do not redact.
+    if !EXCLUDED_NAMES.is_empty() {
+        EXCLUDED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
+        if EXCLUDED_NAMES.contains(normalized as &[u8]) {
+            return false;
+        }
+    }
+    REDACTED_NAMES.contains(normalized)
 }
 
 pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {

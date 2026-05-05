@@ -300,56 +300,6 @@ mod native {
     pub fn client_builder() -> hyper_util::client::legacy::Builder {
         hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
     }
-
-    // --- DefaultHttpClient: portable HttpClientTrait backed by hyper ---
-
-    use libdd_capabilities::http::{HttpClientTrait, HttpError};
-    use libdd_capabilities::maybe_send::MaybeSend;
-
-    #[derive(Clone)]
-    pub struct DefaultHttpClient {
-        client: GenericHttpClient<Connector>,
-    }
-
-    impl std::fmt::Debug for DefaultHttpClient {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("DefaultHttpClient").finish()
-        }
-    }
-
-    impl HttpClientTrait for DefaultHttpClient {
-        fn new_client() -> Self {
-            Self {
-                client: new_default_client(),
-            }
-        }
-
-        #[allow(clippy::manual_async_fn)]
-        fn request(
-            &self,
-            req: http::Request<bytes::Bytes>,
-        ) -> impl std::future::Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
-        {
-            let client = self.client.clone();
-            async move {
-                let hyper_req = req.map(Body::from_bytes);
-
-                let response = client
-                    .request(hyper_req)
-                    .await
-                    .map_err(|e| HttpError::Network(e.into()))?;
-
-                let (parts, body) = response.into_parts();
-                let collected = body
-                    .collect()
-                    .await
-                    .map_err(|e| HttpError::ResponseBody(e.into()))?
-                    .to_bytes();
-
-                Ok(http::Response::from_parts(parts, collected))
-            }
-        }
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
