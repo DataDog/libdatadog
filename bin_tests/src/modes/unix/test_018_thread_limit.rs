@@ -36,18 +36,16 @@ impl Behavior for Test {
     fn post(&self, _output_dir: &Path) -> anyhow::Result<()> {
         let barrier = Arc::new(Barrier::new(THREAD_COUNT + 1));
 
-        let _: Vec<_> = (0..THREAD_COUNT)
-            .map(|i| {
-                let barrier = Arc::clone(&barrier);
-                std::thread::Builder::new()
-                    .name(format!("worker-{i}"))
-                    .spawn(move || {
-                        barrier.wait();
-                        worker_fn(i);
-                    })
-                    .expect("failed to spawn thread")
-            })
-            .collect();
+        for i in 0..THREAD_COUNT {
+            let barrier = Arc::clone(&barrier);
+            std::thread::Builder::new()
+                .name(format!("worker-{i}"))
+                .spawn(move || {
+                    barrier.wait();
+                    worker_fn(i);
+                })
+                .expect("failed to spawn thread");
+        }
 
         barrier.wait();
         Ok(())

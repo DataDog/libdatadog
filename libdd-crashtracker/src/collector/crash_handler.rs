@@ -307,10 +307,12 @@ fn handle_posix_signal_impl(
     #[cfg(target_os = "linux")]
     if config.collect_all_threads() {
         if let Some(receiver_pid) = receiver.handle.pid {
-            // Allow the receiver to ptrace this process for thread context collection
+            // Allow the receiver to ptrace this process for thread context collection.
+            // PR_SET_PTRACER only uses arg2 (the pid); the trailing zeros satisfy
+            // libc::prctl's fixed 5-argument FFI binding.
             // SAFETY: prctl is async-signal-safe and we're just setting ptrace permissions
             unsafe {
-                libc::prctl(libc::PR_SET_PTRACER, receiver_pid as libc::c_ulong, 0, 0, 0);
+                libc::prctl(libc::PR_SET_PTRACER, receiver_pid as libc::c_ulong);
             }
         }
     }

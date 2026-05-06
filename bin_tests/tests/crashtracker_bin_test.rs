@@ -298,6 +298,12 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
+        assert!(
+            threads.len() == 2,
+            "expected 2 threads, got {}",
+            threads.len()
+        );
+
         Ok(())
     });
 

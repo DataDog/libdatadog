@@ -107,7 +107,7 @@ fn wait_for_stop(tid: libc::pid_t) -> Result<(), PtraceError> {
 /// Attach to a thread using PTRACE_SEIZE + PTRACE_INTERRUPT, then wait for it
 /// to enter ptrace-stop state before returning.
 fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
-    // SAFETY: PTRACE_SEIZE attaches without stopping the thread
+    // PTRACE_SEIZE attaches without stopping the thread
     let result = unsafe {
         libc::ptrace(
             libc::PTRACE_SEIZE,
@@ -121,7 +121,7 @@ fn attach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
         return Err(PtraceError::Attach(tid, errno));
     }
 
-    // SAFETY: PTRACE_INTERRUPT delivers a stop to the seized thread
+    // PTRACE_INTERRUPT delivers a stop to the seized thread
     let result = unsafe {
         libc::ptrace(
             libc::PTRACE_INTERRUPT,
@@ -176,6 +176,9 @@ fn unwind_remote_thread(
     }
 
     // SAFETY: _UPT_accessors is a static accessor table provided by libunwind-ptrace.
+    // unw_create_addr_space only reads the accessor struct; it does not mutate it.
+    // The *mut _ cast is required because the C declaration is const-incorrect, but no
+    // mutation occurs, so casting &raw const to *mut is ok here.
     // byteorder=0 means native byte order.
     let addr_space: UnwAddrSpaceT =
         unsafe { unw_create_addr_space(&raw const _UPT_accessors as *mut _, 0) };
@@ -306,14 +309,11 @@ where
     let mut processed = 0;
 
     for tid in tids {
-        if start_time.elapsed() >= timeout {
+        if start_time.elapsed() >= timeout || processed >= max_threads {
             break;
         }
         if tid == crashing_tid {
             continue;
-        }
-        if processed >= max_threads {
-            break;
         }
 
         let context = capture_thread_context(tid, resolve_frames).ok();

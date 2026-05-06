@@ -617,13 +617,11 @@ fn read_thread_stat(pid: i32, tid: i32) -> (Option<String>, Option<String>) {
         Err(_) => return (None, None),
     };
 
-    let name_start = match content.find('(') {
-        Some(i) => i,
-        None => return (None, None),
+    let Some(name_start) = content.find('(') else {
+        return (None, None);
     };
-    let name_end = match content.rfind(')') {
-        Some(i) => i,
-        None => return (None, None),
+    let Some(name_end) = content.rfind(')') else {
+        return (None, None);
     };
 
     let name = Some(content[name_start + 1..name_end].to_string());
