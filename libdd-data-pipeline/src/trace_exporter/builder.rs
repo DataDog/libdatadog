@@ -310,6 +310,8 @@ impl TraceExporterBuilder {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            use crate::trace_exporter::TraceSerializer;
+
             let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
             let (info_fetcher, info_response_observer) =
                 AgentInfoFetcher::<H>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
@@ -400,6 +402,7 @@ impl TraceExporterBuilder {
                 },
                 input_format: self.input_format,
                 output_format: self.output_format,
+                serializer: TraceSerializer::new(self.output_format),
                 client_computed_top_level: self.client_computed_top_level,
                 shared_runtime,
                 dogstatsd,
