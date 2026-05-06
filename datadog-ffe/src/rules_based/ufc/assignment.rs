@@ -30,7 +30,8 @@ pub struct Assignment {
     pub allocation_key: Str,
     /// The reason for this assignment.
     pub reason: AssignmentReason,
-
+    /// Serial id for the selected split.
+    pub serial_id: Option<i32>,
     /// Whether this assignment is part of an experiment and should be logged.
     pub do_log: bool,
 }

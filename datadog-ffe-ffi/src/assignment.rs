@@ -432,6 +432,23 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_error_message(
     }
 }
 
+/// Get the serial_id produced by evaluation.
+///
+/// Returns `None` if the assignment has no serial_id or evaluation did not produce any value.
+///
+/// # Safety
+/// `assignment` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_serial_id(
+    assignment: Handle<ResolutionDetails>,
+) -> libdd_common_ffi::Option<i32> {
+    // SAFETY: the caller must ensure that assignment handle is valid.
+    match unsafe { assignment.as_ref() }.as_ref() {
+        Ok(a) => a.serial_id.into(),
+        Err(_) => libdd_common_ffi::Option::None,
+    }
+}
+
 /// # Safety
 /// `assignment` must be a valid handle.
 #[no_mangle]
