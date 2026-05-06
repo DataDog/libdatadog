@@ -271,18 +271,22 @@ pub struct TracerPayloadTags {
     pub runtime_id: String,
 }
 
-/// Returns the first value of `field` found in `trace`, searching the root span first then all
-/// other spans.
+/// Returns the first non-empty value of `field` found in `trace`, searching the root span first
+/// then all other spans.
 fn search_trace_for_field(root: &pb::Span, trace: &[pb::Span], field: &str) -> Option<String> {
     if let Some(v) = root.meta.get(field) {
-        return Some(v.clone());
+        if !v.is_empty() {
+            return Some(v.clone());
+        }
     }
     for span in trace {
         if span.span_id == root.span_id {
             continue;
         }
         if let Some(v) = span.meta.get(field) {
-            return Some(v.clone());
+            if !v.is_empty() {
+                return Some(v.clone());
+            }
         }
     }
     None
@@ -1368,5 +1372,31 @@ mod tests {
             panic!("expected TracerPayloadCollection::V07");
         };
         assert_eq!(payloads[0].app_version, "root-version");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_skips_empty_root_span_value() {
+        // Root span has version: "". Child span has a non-empty version.
+        // The child span should populate the version field.
+        let mut root_span = create_test_span(1, 1, 0, 1, true);
+        root_span.meta.insert("version".to_string(), "".to_string());
+
+        let mut child_span = create_test_span(1, 2, 1, 1, false);
+        child_span
+            .meta
+            .insert("version".to_string(), "1.2.3".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![root_span, child_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].app_version, "1.2.3");
     }
 }
