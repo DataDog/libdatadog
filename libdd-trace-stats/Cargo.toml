@@ -27,7 +27,7 @@ tracing = { version = "0.1", default-features = false }
 async-trait = "0.1.85"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [lib]
 bench = false
@@ -46,4 +46,5 @@ tokio = { version = "1.23", features = ["rt-multi-thread", "macros", "test-util"
 
 [features]
 default = ["https"]
-https = ["libdd-common/https"]
+https = ["libdd-common/https", "libdd-capabilities-impl/https"]
+fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]

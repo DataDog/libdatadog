@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::{anyhow, Result};
-use regex::Regex;
+use libdd_common::regex_engine::{Captures, Regex};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ pub(crate) fn adjust_extern_symbols(
     let re = Regex::new(r#"(?m)^(\s*)extern\s+(.+;)$"#).unwrap();
 
     // Replace function using captures
-    let new_content = re.replace_all(&content, |caps: &regex::Captures| {
+    let new_content = re.replace_all(&content, |caps: &Captures| {
         let full_match = caps.get(0).unwrap().as_str();
         let indent = &caps[1];
         let declaration = &caps[2];

@@ -19,6 +19,7 @@ bench = false
 default = ["cbindgen", "catch_panic"]
 catch_panic = []
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+regex-lite = ["libdd-data-pipeline/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

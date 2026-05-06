@@ -22,6 +22,7 @@ required-features = ["collector_windows"]
 [features]
 default = ["cbindgen", "collector", "demangler", "receiver"]
 cbindgen = ["build_common/cbindgen"]
+regex-lite = ["libdd-common-ffi/regex-lite"]
 # Enables the in-process collection of crash-info
 collector = []
 collector_windows = []

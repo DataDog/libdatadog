@@ -16,6 +16,7 @@ bench = false
 [features]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+regex-lite = ["libdd-common-ffi/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
