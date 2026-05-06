@@ -143,6 +143,7 @@ pub struct TelemetryWorker {
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
     next_action: Option<TelemetryActions>,
+    stopped: bool,
 }
 impl Debug for TelemetryWorker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -166,6 +167,16 @@ impl Worker for TelemetryWorker {
         if self.next_action.is_some() {
             // An action is already available and hasn't been executed
             return;
+        }
+        if self.stopped {
+            // Channel is closed and Stop has already been dispatched. Park forever to avoid
+            // a hot loop re-emitting Lifecycle::Stop on every iteration; the runtime will
+            // tear the worker down via the handle.
+            debug!(
+                worker.runtime_id = %self.runtime_id,
+                "Telemetry worker mailbox closed; parking until shutdown"
+            );
+            std::future::pending::<()>().await;
         }
         // Wait for the next action and store it
         let action = self.recv_next_action().await;
@@ -204,6 +215,7 @@ impl Worker for TelemetryWorker {
 
         // Discard any action that was staged by the last trigger() call.
         self.next_action = None;
+        self.stopped = false;
 
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
@@ -307,6 +319,7 @@ impl TelemetryWorker {
         action.unwrap_or_else(|| {
             // the worker handle no longer lives - we must remove restartable here to avoid leaks
             self.config.restartable = false;
+            self.stopped = true;
             TelemetryActions::Lifecycle(LifecycleAction::Stop)
         })
     }
@@ -1233,6 +1246,7 @@ impl TelemetryWorkerBuilder {
             ]),
             cancellation_token: token.clone(),
             next_action: None,
+            stopped: false,
         };
 
         (

@@ -682,6 +682,11 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
     async fn trigger(&mut self) {
         let message = self.rx.receive(self.config.max_flush_interval).await;
         let Ok(trace_chunks) = message else {
+            // Mailbox mutex is poisoned and unrecoverable. Park forever to avoid a hot loop
+            // where the runtime would immediately call trigger() again; the worker will be
+            // torn down via its handle / SharedRuntime shutdown.
+            tracing::error!("TraceExporterWorker mailbox poisoned; parking until shutdown");
+            std::future::pending::<()>().await;
             return;
         };
         self.run_input = Some(TraceExporterRunInput { trace_chunks });
@@ -754,7 +759,7 @@ mod tests {
             ),
             Box::new(AssertExporter(assert_export, sem.clone())),
         );
-        rt.spawn_worker(worker, true).unwrap();
+        let _ = rt.spawn_worker(worker, true).unwrap();
         (rt, sem, sender)
     }
 
