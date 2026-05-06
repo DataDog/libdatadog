@@ -48,3 +48,4 @@ winver = "1.0.0"
 tracing-subscriber = "0.3.22"
 tokio = { version = "1.23", features = ["sync", "io-util", "rt-multi-thread"] }
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }
+httpmock = "0.8.0-alpha.1"

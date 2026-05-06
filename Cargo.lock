@@ -3246,6 +3246,7 @@ dependencies = [
  "hashbrown 0.15.1",
  "http",
  "http-body-util",
+ "httpmock",
  "libc",
  "libdd-common",
  "libdd-ddsketch",

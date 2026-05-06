@@ -1676,4 +1676,87 @@ mod tests {
             }
         }
     }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_channel_close_flushes_and_parks_via_shared_runtime() {
+        use httpmock::prelude::*;
+        use libdd_common::Endpoint;
+        use libdd_shared_runtime::SharedRuntime;
+        use std::time::Duration;
+
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST).path(TELEMETRY_PATH);
+            then.status(202).body("");
+        });
+
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(Endpoint::from_slice(&server.url("/")))
+            .unwrap();
+        builder.runtime_id = Some("rid".into());
+
+        let shared_runtime = SharedRuntime::new().expect("SharedRuntime::new");
+        let runtime_handle = shared_runtime
+            .block_on(async { tokio::runtime::Handle::current() })
+            .expect("runtime handle");
+        let (telemetry_handle, worker) = builder.build_worker(Some(runtime_handle));
+
+        let _worker_handle = shared_runtime
+            .spawn_worker(worker, false)
+            .expect("spawn_worker");
+
+        // Drive the worker into the started state so Stop has work to flush.
+        telemetry_handle.send_start().expect("send_start");
+
+        // Wait for the AppStarted batch so we know the worker reached started == true
+        // before we close the channel.
+        for _ in 0..50 {
+            if mock.calls() >= 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            mock.calls() >= 1,
+            "worker should POST at least once after Start"
+        );
+
+        // Close the mailbox by dropping the handle.
+        let hits_before_close = mock.calls();
+        drop(telemetry_handle);
+
+        // The worker must dispatch Lifecycle::Stop, which flushes a final batch, then park.
+        for _ in 0..50 {
+            if mock.calls() > hits_before_close {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            mock.calls() > hits_before_close,
+            "worker should flush a final batch after the channel is closed"
+        );
+
+        // Once parked, the worker must stop POSTing. Sample for a while and require the
+        // hit count to stabilise (proves no Stop-emit loop).
+        let stable_hits = mock.calls();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            mock.calls(),
+            stable_hits,
+            "worker must stop POSTing after parking; observed {} extra hits",
+            mock.calls().saturating_sub(stable_hits),
+        );
+    }
 }
