@@ -220,8 +220,8 @@ pub struct ConfigClientState {
     targets_version: u64,
     root_version: u64,
     last_error: Option<String>,
-    /// Services discovered at runtime. Sent to the agent on each poll so it can route configs 
-    /// targeting those services to this client. Updated out-of-band by the consumer via 
+    /// Services discovered at runtime. Sent to the agent on each poll so it can route configs
+    /// targeting those services to this client. Updated out-of-band by the consumer via
     /// `SingleFetcher::set_extra_services` (or equivalents on the other fetcher types).
     extra_services: Vec<String>,
 }
@@ -290,10 +290,10 @@ impl<S: FileStorage> ConfigFetcher<S> {
             tags,
             process_tags,
         } = (*target).clone();
-        
+
         let mut cached_target_files = vec![];
         let mut config_states = vec![];
-        
+
         {
             let target_files = self.state.target_files_by_path.lock_or_panic();
             for StoredTargetFile { meta, expiring, .. } in target_files.values() {
@@ -301,10 +301,10 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     cached_target_files.push(meta.clone());
                 }
             }
-            
+
             for config in opaque_state.last_config_paths.iter() {
                 if let Some(StoredTargetFile { state, .. }) =
-                target_files.get(config as &dyn RemoteConfigPathType)
+                    target_files.get(config as &dyn RemoteConfigPathType)
                 {
                     config_states.push(state.clone());
                 }
