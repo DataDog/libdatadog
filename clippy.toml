@@ -1,0 +1,2 @@
+# Allow configuration structs to expose a few independent feature flags.
+max-struct-bools = 5
