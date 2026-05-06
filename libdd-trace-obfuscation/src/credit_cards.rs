@@ -64,8 +64,9 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
 /// See:
 /// <https://en.wikipedia.org/wiki/Luhn_algorithm>
 fn luhn_valid(nums: &[u32]) -> bool {
-    #[allow(clippy::unwrap_used)]
-    let (given_digit, payload) = nums.split_last().unwrap();
+    let Some((given_digit, payload)) = nums.split_last() else {
+        return false;
+    };
     calculate_luhn(payload) == *given_digit
 }
 
