@@ -30,7 +30,7 @@ enum ParseState {
 
 /// One variant per position in the JSON grammar.
 #[rustfmt::skip]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum State {
     BeginValue,
     BeginValueOrEmpty,  // after '['
@@ -175,7 +175,7 @@ impl Scanner {
             State::BeginString => self.begin_string(c),
             State::EndValue => self.end_value(c),
             State::EndTop => self.end_top(c),
-            _ => unreachable!("non-structural JSON scanner state"),
+            _ => self.invalid_state("structural"),
         }
     }
 
@@ -188,7 +188,7 @@ impl Scanner {
             State::InStringEscU1 => self.hex_digit(c, State::InStringEscU12),
             State::InStringEscU12 => self.hex_digit(c, State::InStringEscU123),
             State::InStringEscU123 => self.hex_digit(c, State::InString),
-            _ => unreachable!("non-string JSON scanner state"),
+            _ => self.invalid_state("string"),
         }
     }
 
@@ -203,7 +203,7 @@ impl Scanner {
             State::Exp => self.exp(c),
             State::ExpSign => self.exp_sign(c),
             State::Exp0 => self.end_value(c),
-            _ => unreachable!("non-number JSON scanner state"),
+            _ => self.invalid_state("number"),
         }
     }
 
@@ -219,7 +219,7 @@ impl Scanner {
             State::N => self.lit(c, 'u', State::Nu, "in literal null (expecting 'u')"),
             State::Nu => self.lit(c, 'l', State::Nul, "in literal null (expecting 'l')"),
             State::Nul => self.lit_end(c, 'l', "in literal null (expecting 'l')"),
-            _ => unreachable!("non-literal JSON scanner state"),
+            _ => self.invalid_state("literal"),
         }
     }
 
@@ -478,6 +478,17 @@ impl Scanner {
     fn error(&mut self, c: char, ctx: &str) -> Op {
         self.state = State::Error;
         self.err = Some(format!("invalid character '{c}' {ctx}"));
+        Op::Error
+    }
+
+    // This function is unreachable during normal scanner execution. It exists
+    // to report an internal state mismatch without introducing a panic path.
+    fn invalid_state(&mut self, expected: &'static str) -> Op {
+        let actual = self.state;
+        self.state = State::Error;
+        self.err = Some(format!(
+            "internal JSON scanner state mismatch: expected {expected}, got {actual:?}"
+        ));
         Op::Error
     }
 }
