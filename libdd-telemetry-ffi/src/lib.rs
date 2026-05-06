@@ -114,7 +114,10 @@ mod tests {
     use libdd_common::Endpoint;
     use libdd_common_ffi as ffi;
     use libdd_telemetry::{
-        data::metrics::{MetricNamespace, MetricType},
+        data::{
+            metrics::{MetricNamespace, MetricType},
+            LogLevel,
+        },
         worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},
     };
     use std::{mem::MaybeUninit, ptr::NonNull};
@@ -550,6 +553,68 @@ mod tests {
                 versionless["version"].is_null(),
                 "Empty version string should map to null/None, got {:?}",
                 versionless["version"]
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_add_log_preserves_stack_trace() {
+        unsafe {
+            let (handle, f) = start_file_backed_worker();
+
+            ddog_telemetry_handle_add_log(
+                &handle,
+                ffi::CharSlice::from("log-with-trace"),
+                ffi::CharSlice::from("something went wrong"),
+                LogLevel::Error,
+                ffi::CharSlice::from("frame1\nframe2\nframe3"),
+            )
+            .unwrap_none();
+
+            ddog_telemetry_handle_add_log(
+                &handle,
+                ffi::CharSlice::from("log-without-trace"),
+                ffi::CharSlice::from("just a warning"),
+                LogLevel::Warn,
+                ffi::CharSlice::from(""),
+            )
+            .unwrap_none();
+
+            ddog_telemetry_handle_stop(&handle).unwrap_none();
+            ddog_telemetry_handle_wait_for_shutdown(handle);
+
+            let output = std::fs::read_to_string(f.path()).unwrap();
+            let log_payloads = find_sub_payloads(&output, "logs");
+            assert!(
+                !log_payloads.is_empty(),
+                "expected at least one logs payload in output:\n{output}"
+            );
+
+            let logs: Vec<&serde_json::Value> = log_payloads
+                .iter()
+                .filter_map(|p| p["payload"]["logs"].as_array())
+                .flatten()
+                .collect();
+
+            let with_trace = logs
+                .iter()
+                .find(|l| l["message"] == "something went wrong")
+                .expect("expected log with message 'something went wrong'");
+            assert_eq!(
+                with_trace["stack_trace"].as_str(),
+                Some("frame1\nframe2\nframe3"),
+                "Non-empty stack_trace must be preserved through the FFI layer"
+            );
+
+            let without_trace = logs
+                .iter()
+                .find(|l| l["message"] == "just a warning")
+                .expect("expected log with message 'just a warning'");
+            assert!(
+                without_trace["stack_trace"].is_null(),
+                "Empty stack_trace string should map to null/None, got {:?}",
+                without_trace["stack_trace"]
             );
         }
     }

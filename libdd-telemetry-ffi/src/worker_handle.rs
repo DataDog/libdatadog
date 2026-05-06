@@ -19,9 +19,8 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_dependency(
     dependency_name: ffi::CharSlice,
     dependency_version: ffi::CharSlice,
 ) -> MaybeError {
-    let name = dependency_name.to_utf8_lossy().into_owned();
-    let version =
-        (!dependency_version.is_empty()).then(|| dependency_version.to_utf8_lossy().into_owned());
+    let name = crate::try_c!(dependency_name.try_to_string());
+    let version = crate::try_c!(dependency_version.try_to_string_option());
     crate::try_c!(handle.add_dependency(name, version));
     MaybeError::None
 }
@@ -36,9 +35,8 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_integration(
     compatible: ffi::Option<bool>,
     auto_enabled: ffi::Option<bool>,
 ) -> MaybeError {
-    let name = dependency_name.to_utf8_lossy().into_owned();
-    let version =
-        (!dependency_version.is_empty()).then(|| dependency_version.to_utf8_lossy().into_owned());
+    let name = crate::try_c!(dependency_name.try_to_string());
+    let version = crate::try_c!(dependency_version.try_to_string_option());
     crate::try_c!(handle.add_integration(
         name,
         enabled,
@@ -69,9 +67,9 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_log(
     }));
     crate::try_c!(handle.add_log(
         id,
-        message.to_utf8_lossy().into_owned(),
+        crate::try_c!(message.try_to_string()),
         level,
-        (!stack_trace.is_empty()).then(|| stack_trace.to_utf8_lossy().into_owned()),
+        crate::try_c!(stack_trace.try_to_string_option()),
     ));
     MaybeError::None
 }
