@@ -215,7 +215,6 @@ impl Worker for TelemetryWorker {
 
         // Discard any action that was staged by the last trigger() call.
         self.next_action = None;
-        self.stopped = false;
 
         // Clear all unbuffered telemetry data; the child must not send pre-fork data.
         self.data.logs = store::QueueHashMap::default();
