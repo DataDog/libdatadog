@@ -154,6 +154,14 @@ void evaluate_and_print_flag(
     bool do_log = ddog_ffe_assignment_get_do_log(assignment);
     printf("  Do Log: %s\n", do_log ? "true" : "false");
 
+    // Get and print serial_id
+    struct ddog_Option_I32 serial_id = ddog_ffe_assignment_get_serial_id(assignment);
+    if (serial_id.tag == DDOG_OPTION_I32_SOME_I32) {
+        printf("  Serial ID: %d\n", serial_id.some);
+    } else {
+        printf("  Serial ID: (none)\n");
+    }
+
     // Get and print flag metadata
     struct ddog_ffe_ArrayMap_BorrowedStr metadata = ddog_ffe_assignnment_get_flag_metadata(assignment);
     if (metadata.count > 0) {
