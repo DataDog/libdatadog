@@ -456,7 +456,7 @@ mod tests {
     use super::*;
     use crate::send_with_retry::{RetryBackoffType, RetryStrategy};
     use crate::test_utils::create_test_no_alloc_span;
-    use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, RootSpanTags};
+    use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, TracerPayloadTags};
     use crate::tracer_header_tags::TracerHeaderTags;
     use httpmock::prelude::*;
     use httpmock::MockServer;
@@ -482,7 +482,7 @@ mod tests {
     };
 
     fn setup_payload(header_tags: &TracerHeaderTags) -> TracerPayload {
-        let root_tags = RootSpanTags {
+        let tracer_payload_tags = TracerPayloadTags {
             env: "TEST".to_string(),
             app_version: "1.0".to_string(),
             hostname: "test_bench".to_string(),
@@ -507,7 +507,7 @@ mod tests {
             span_events: vec![],
         }]);
 
-        construct_tracer_payload(vec![chunk], header_tags, root_tags)
+        construct_tracer_payload(vec![chunk], header_tags, tracer_payload_tags)
     }
 
     fn compute_payload_len(collection: &TracerPayloadCollection) -> usize {

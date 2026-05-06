@@ -262,13 +262,30 @@ where
     Ok((body_size, traces))
 }
 
-/// Tags gathered from a trace's root span
+/// Tags extracted from a tracer payload's traces, used to populate top level tracer payload fields.
 #[derive(Default)]
-pub struct RootSpanTags {
+pub struct TracerPayloadTags {
     pub env: String,
     pub app_version: String,
     pub hostname: String,
     pub runtime_id: String,
+}
+
+/// Returns the first value of `field` found in `trace`, searching the root span first then all
+/// other spans.
+fn search_trace_for_field(root: &pb::Span, trace: &[pb::Span], field: &str) -> Option<String> {
+    if let Some(v) = root.meta.get(field) {
+        return Some(v.clone());
+    }
+    for span in trace {
+        if span.span_id == root.span_id {
+            continue;
+        }
+        if let Some(v) = span.meta.get(field) {
+            return Some(v.clone());
+        }
+    }
+    None
 }
 
 pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
@@ -284,16 +301,16 @@ pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
 pub(crate) fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
     tracer_tags: &TracerHeaderTags,
-    root_span_tags: RootSpanTags,
+    tracer_payload_tags: TracerPayloadTags,
 ) -> pb::TracerPayload {
     pb::TracerPayload {
-        app_version: root_span_tags.app_version,
+        app_version: tracer_payload_tags.app_version,
         language_name: tracer_tags.lang.to_string(),
         container_id: tracer_tags.container_id.to_string(),
-        env: root_span_tags.env,
-        runtime_id: root_span_tags.runtime_id,
+        env: tracer_payload_tags.env,
+        runtime_id: tracer_payload_tags.runtime_id,
         chunks,
-        hostname: root_span_tags.hostname,
+        hostname: tracer_payload_tags.hostname,
         language_version: tracer_tags.lang_version.to_string(),
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),
@@ -569,7 +586,6 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     }
 }
 
-
 pub fn collect_trace_chunks<T: TraceData>(
     traces: Vec<Vec<crate::span::v04::Span<T>>>,
     use_v05_format: bool,
@@ -604,7 +620,7 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
     // We'll skip setting the global metadata and rely on the agent to unpack these
-    let mut root_span_tags = RootSpanTags::default();
+    let mut tracer_payload_tags = TracerPayloadTags::default();
 
     for trace in traces.iter_mut() {
         if is_agentless {
@@ -643,35 +659,34 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
         trace_chunks.push(chunk);
 
         if is_agentless {
-            // Check each root span tag field independently so that a later trace can fill in
-            // fields that were missing from an earlier trace (e.g. command_execution span has no
-            // version, but a subsequent azure_functions.invoke span does).
-            let meta_map = &trace[root_span_index].meta;
-            if root_span_tags.env.is_empty() {
-                if let Some(v) = meta_map.get("env") {
-                    root_span_tags.env = v.clone();
+            // Check each field independently so that a later trace can fill in fields missing
+            // from an earlier trace.
+            let root = &trace[root_span_index];
+            if tracer_payload_tags.env.is_empty() {
+                if let Some(v) = search_trace_for_field(root, trace, "env") {
+                    tracer_payload_tags.env = v;
                 }
             }
-            if root_span_tags.app_version.is_empty() {
-                if let Some(v) = meta_map.get("version") {
-                    root_span_tags.app_version = v.clone();
+            if tracer_payload_tags.app_version.is_empty() {
+                if let Some(v) = search_trace_for_field(root, trace, "version") {
+                    tracer_payload_tags.app_version = v;
                 }
             }
-            if root_span_tags.hostname.is_empty() {
-                if let Some(v) = meta_map.get("_dd.hostname") {
-                    root_span_tags.hostname = v.clone();
+            if tracer_payload_tags.hostname.is_empty() {
+                if let Some(v) = search_trace_for_field(root, trace, "_dd.hostname") {
+                    tracer_payload_tags.hostname = v;
                 }
             }
-            if root_span_tags.runtime_id.is_empty() {
-                if let Some(v) = meta_map.get("runtime-id") {
-                    root_span_tags.runtime_id = v.clone();
+            if tracer_payload_tags.runtime_id.is_empty() {
+                if let Some(v) = search_trace_for_field(root, trace, "runtime-id") {
+                    tracer_payload_tags.runtime_id = v;
                 }
             }
         }
     }
 
     Ok(TracerPayloadCollection::V07(vec![
-        construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags),
+        construct_tracer_payload(trace_chunks, tracer_header_tags, tracer_payload_tags),
     ]))
 }
 
@@ -1276,5 +1291,82 @@ mod tests {
         assert!(!span.meta.contains_key("aas.site.name"));
         assert!(!span.meta.contains_key("aas.site.kind"));
         assert!(!span.meta.contains_key("aas.site.type"));
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_searches_multiple_root_spans_for_fields() {
+        // First trace root span has no version. Second trace root span has a version.
+        // The second root span should populate the version field.
+        let first_root_span = create_test_span(1, 1, 0, 1, true);
+
+        let mut second_root_span = create_test_span(2, 3, 0, 1, true);
+        second_root_span
+            .meta
+            .insert("version".to_string(), "1.2.3".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![first_root_span], vec![second_root_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].app_version, "1.2.3");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_searches_non_root_spans_for_fields() {
+        // Root span has no version. Child span has a version.
+        // The child span should populate the version field.
+        let root_span = create_test_span(1, 1, 0, 1, true);
+        let mut child_span = create_test_span(1, 2, 1, 1, false);
+        child_span
+            .meta
+            .insert("version".to_string(), "1.2.3".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![root_span, child_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].app_version, "1.2.3");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_root_span_takes_priority_over_child() {
+        // Root span has a version. Child has a different version.
+        // The root span should populate the version field.
+        let mut root_span = create_test_span(1, 1, 0, 1, true);
+        root_span
+            .meta
+            .insert("version".to_string(), "root-version".to_string());
+
+        let mut child_span = create_test_span(1, 2, 1, 1, false);
+        child_span
+            .meta
+            .insert("version".to_string(), "child-version".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![root_span, child_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].app_version, "root-version");
     }
 }
