@@ -124,4 +124,9 @@ where
     pub fn set_config_state(&self, file: &S::StoredFile, state: ConfigApplyState) {
         self.fetcher.set_config_state(file.path(), state)
     }
+
+    /// See [`SingleFetcher::set_extra_services`].
+    pub fn set_extra_services(&mut self, services: Vec<String>) {
+        self.fetcher.set_extra_services(services);
+    }
 }
