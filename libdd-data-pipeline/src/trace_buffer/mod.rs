@@ -20,13 +20,80 @@ use crate::trace_exporter::{
     agent_response::AgentResponse, error::TraceExporterError, TraceExporter,
 };
 
+/// Trait for types stored in a [`TraceBuffer`] that can report their approximate byte size.
+pub trait BufferSize {
+    fn byte_size(&self) -> usize;
+}
+
+impl<T> BufferSize for libdd_trace_utils::span::v04::Span<T>
+where
+    T: libdd_trace_utils::span::TraceData,
+    T::Text: AsRef<str>,
+    T::Bytes: AsRef<[u8]>,
+{
+    fn byte_size(&self) -> usize {
+        use libdd_trace_utils::span::v04::AttributeAnyValue;
+
+        // trace_id(16) + span_id(8) + parent_id(8) + start(8) + duration(8) + error(4)
+        let mut size: usize = 52;
+
+        size += self.service.as_ref().len();
+        size += self.name.as_ref().len();
+        size += self.resource.as_ref().len();
+        size += self.r#type.as_ref().len();
+
+        for (k, v) in &self.meta {
+            size += k.as_ref().len() + v.as_ref().len();
+        }
+        for k in self.metrics.keys() {
+            size += k.as_ref().len() + 8;
+        }
+        for (k, v) in &self.meta_struct {
+            size += k.as_ref().len() + v.as_ref().len();
+        }
+        for link in &self.span_links {
+            // trace_id(8) + trace_id_high(8) + span_id(8) + flags(4) = 28
+            size += 28 + link.tracestate.as_ref().len();
+            for (k, v) in &link.attributes {
+                size += k.as_ref().len() + v.as_ref().len();
+            }
+        }
+        for event in &self.span_events {
+            // time_unix_nano(8)
+            size += 8 + event.name.as_ref().len();
+            for (k, v) in &event.attributes {
+                size += k.as_ref().len()
+                    + match v {
+                        AttributeAnyValue::SingleValue(av) => span_attr_size::<T>(av),
+                        AttributeAnyValue::Array(vec) => vec.iter().map(span_attr_size::<T>).sum(),
+                    };
+            }
+        }
+        size
+    }
+}
+
+fn span_attr_size<T>(v: &libdd_trace_utils::span::v04::AttributeArrayValue<T>) -> usize
+where
+    T: libdd_trace_utils::span::TraceData,
+    T::Text: AsRef<str>,
+{
+    use libdd_trace_utils::span::v04::AttributeArrayValue;
+    match v {
+        AttributeArrayValue::String(s) => s.as_ref().len(),
+        AttributeArrayValue::Boolean(_) => 1,
+        AttributeArrayValue::Integer(_) => 8,
+        AttributeArrayValue::Double(_) => 8,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TraceBufferConfig {
     synchronous_export: bool,
     synchronous_export_timeout: Option<Duration>,
     max_flush_interval: Duration,
-    max_buffered_spans: usize,
-    span_flush_threshold: usize,
+    max_buffered_bytes: usize,
+    flush_threshold_bytes: usize,
 }
 
 impl TraceBufferConfig {
@@ -62,18 +129,18 @@ impl TraceBufferConfig {
         }
     }
 
-    /// The maximum number of spans that will be buffered before we drop data
-    pub fn max_buffered_spans(self, max: usize) -> Self {
+    /// The maximum number of bytes that will be buffered before we drop data
+    pub fn max_buffered_bytes(self, max: usize) -> Self {
         Self {
-            max_buffered_spans: max,
+            max_buffered_bytes: max,
             ..self
         }
     }
 
-    /// The number of spans that will be buffered before we decide to flush
-    pub fn span_flush_threshold(self, threshold: usize) -> Self {
+    /// The number of bytes that will be buffered before we decide to flush
+    pub fn flush_threshold_bytes(self, threshold: usize) -> Self {
         Self {
-            span_flush_threshold: threshold,
+            flush_threshold_bytes: threshold,
             ..self
         }
     }
@@ -85,8 +152,8 @@ impl Default for TraceBufferConfig {
             synchronous_export: false,
             synchronous_export_timeout: Some(Duration::from_secs(1)),
             max_flush_interval: Duration::from_secs(2),
-            max_buffered_spans: 10_000,
-            span_flush_threshold: 3_000,
+            max_buffered_bytes: 5_000_000,    // 5MB
+            flush_threshold_bytes: 1_500_000, // 1.5MB
         }
     }
 }
@@ -94,12 +161,12 @@ impl Default for TraceBufferConfig {
 pub type TraceChunk<T> = Vec<T>;
 
 /// Error that can occur when the batch has reached its maximum size
-/// and we can't add more spans to it.
+/// and we can't add more data to it.
 ///
-/// The added spans will be dropped.
+/// The added data will be dropped.
 #[derive(Debug, PartialEq, Eq)]
 pub struct BatchFullError {
-    spans_dropped: usize,
+    pub spans_dropped: usize,
 }
 
 /// Error that can occur when the mutex was poisoned.
@@ -120,8 +187,8 @@ pub enum TraceBufferError {
 struct Batch<T> {
     chunks: Vec<TraceChunk<T>>,
     last_flush: Instant,
-    span_count: usize,
-    max_buffered_spans: usize,
+    byte_count: usize,
+    max_buffered_bytes: usize,
     batch_gen: BatchGeneration,
 }
 
@@ -130,15 +197,15 @@ struct Batch<T> {
 const PRE_ALLOCATE_CHUNKS: usize = 400;
 
 impl<T> Batch<T> {
-    fn new(max_buffered_spans: usize) -> Self {
+    fn new(max_buffered_bytes: usize) -> Self {
         let mut batch_gen = BatchGeneration::default();
         batch_gen.incr();
         Self {
             chunks: Vec::with_capacity(PRE_ALLOCATE_CHUNKS),
             last_flush: Instant::now(),
-            span_count: 0,
+            byte_count: 0,
             batch_gen,
-            max_buffered_spans,
+            max_buffered_bytes,
         }
     }
 
@@ -146,13 +213,13 @@ impl<T> Batch<T> {
         let Self {
             chunks,
             last_flush,
-            span_count,
+            byte_count,
             batch_gen,
-            max_buffered_spans: _max_buffered_spans,
+            max_buffered_bytes: _max_buffered_bytes,
         } = self;
         chunks.clear();
         *last_flush = Instant::now();
-        *span_count = 0;
+        *byte_count = 0;
 
         *batch_gen = {
             let mut batch_gen = BatchGeneration::default();
@@ -166,10 +233,13 @@ impl<T> Batch<T> {
     ///
     /// This method will not check that adding the chunk will not exceed the maximum size of the
     /// batch. So the batch can be over the maximum size after this call.
-    /// This is because we don't want to always drop traces that contain more spans than the maximum
+    /// This is because we don't want to always drop traces that contain more bytes than the maximum
     /// size.
-    fn add_trace_chunk(&mut self, chunk: Vec<T>) -> Result<(), BatchFullError> {
-        if self.span_count > self.max_buffered_spans {
+    fn add_trace_chunk(&mut self, chunk: Vec<T>) -> Result<(), BatchFullError>
+    where
+        T: BufferSize,
+    {
+        if self.byte_count > self.max_buffered_bytes {
             return Err(BatchFullError {
                 spans_dropped: chunk.len(),
             });
@@ -178,7 +248,7 @@ impl<T> Batch<T> {
             return Ok(());
         }
 
-        self.span_count += chunk.len();
+        self.byte_count += chunk.iter().map(|s| s.byte_size()).sum::<usize>();
         self.chunks.push(chunk);
         Ok(())
     }
@@ -186,7 +256,7 @@ impl<T> Batch<T> {
     /// Export the trace chunk and reset the batch
     fn export(&mut self) -> Vec<TraceChunk<T>> {
         let chunks = std::mem::replace(&mut self.chunks, Vec::with_capacity(PRE_ALLOCATE_CHUNKS));
-        self.span_count = 0;
+        self.byte_count = 0;
         self.last_flush = Instant::now();
         if !chunks.is_empty() {
             self.batch_gen.incr();
@@ -230,15 +300,15 @@ pub struct TraceBuffer<T> {
 
 pub type ResponseHandler = Box<dyn Fn(Result<AgentResponse, TraceExporterError>) + Send + Sync>;
 
-impl<T: Send + 'static> TraceBuffer<T> {
+impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
     pub fn new(
         config: TraceBufferConfig,
         response_handler: ResponseHandler,
         export_operation: Box<dyn Export<T> + Send + Sync>,
     ) -> (Self, TraceExporterWorker<T>) {
         let (tx, rx) = channel(
-            config.span_flush_threshold,
-            config.max_buffered_spans,
+            config.flush_threshold_bytes,
+            config.max_buffered_bytes,
             config.synchronous_export,
         );
         let worker = TraceExporterWorker::new(rx, response_handler, export_operation, config);
@@ -310,8 +380,8 @@ pub struct QueueMetrics {
 }
 
 fn channel<T>(
-    flush_trigger_number_of_spans: usize,
-    max_number_of_spans: usize,
+    flush_trigger_bytes: usize,
+    max_buffered_bytes: usize,
     synchronous_write: bool,
 ) -> (Sender<T>, Receiver<T>) {
     let waiter = Arc::new(Waiter {
@@ -319,7 +389,7 @@ fn channel<T>(
             flush_needed: false,
             last_flush_generation: BatchGeneration::default(),
             has_shutdown: false,
-            batch: Batch::new(max_number_of_spans),
+            batch: Batch::new(max_buffered_bytes),
             metrics: QueueMetrics::default(),
         }),
         sender_notifier: Condvar::new(),
@@ -328,7 +398,7 @@ fn channel<T>(
     (
         Sender {
             waiter: waiter.clone(),
-            flush_trigger_number_of_spans,
+            flush_trigger_bytes,
             synchronous_write,
         },
         Receiver { waiter },
@@ -337,7 +407,7 @@ fn channel<T>(
 
 struct Sender<T> {
     waiter: Arc<Waiter<T>>,
-    flush_trigger_number_of_spans: usize,
+    flush_trigger_bytes: usize,
     synchronous_write: bool,
 }
 
@@ -390,7 +460,10 @@ impl<T> Sender<T> {
         Ok(state)
     }
 
-    fn add_trace_chunk(&self, chunk: Vec<T>) -> Result<BatchGeneration, TraceBufferError> {
+    fn add_trace_chunk(&self, chunk: Vec<T>) -> Result<BatchGeneration, TraceBufferError>
+    where
+        T: BufferSize,
+    {
         let mut state = self.get_running_state()?;
         let chunk_len = chunk.len();
         if let Err(e @ BatchFullError { spans_dropped }) = state.batch.add_trace_chunk(chunk) {
@@ -400,8 +473,7 @@ impl<T> Sender<T> {
         state.metrics.spans_queued += chunk_len;
         let gen = state.batch.batch_gen;
         if !state.flush_needed
-            && (state.batch.span_count > self.flush_trigger_number_of_spans
-                || self.synchronous_write)
+            && (state.batch.byte_count > self.flush_trigger_bytes || self.synchronous_write)
         {
             state.flush_needed = true;
             self.waiter.notify_receiver(state);
@@ -703,11 +775,18 @@ mod tests {
 
     use libdd_shared_runtime::SharedRuntime;
 
-    use crate::trace_buffer::{Export, TraceBuffer, TraceBufferConfig};
+    use crate::trace_buffer::{BufferSize, Export, TraceBuffer, TraceBufferConfig};
     use crate::trace_exporter::agent_response::AgentResponse;
     use crate::trace_exporter::error::TraceExporterError;
 
     use super::{BatchFullError, TraceBufferError};
+
+    // Used for tests, 1 byte per item so size computations are easier
+    impl BufferSize for () {
+        fn byte_size(&self) -> usize {
+            1
+        }
+    }
 
     struct AssertExporter(
         Box<dyn FnMut(Vec<Vec<()>>) + Send + Sync>,
@@ -769,8 +848,8 @@ mod tests {
                 assert_eq!(lengths, &[1, 2]);
             }),
             TraceBufferConfig::default()
-                .max_buffered_spans(4)
-                .span_flush_threshold(2)
+                .max_buffered_bytes(4)
+                .flush_threshold_bytes(2)
                 .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
         );
 
@@ -798,8 +877,8 @@ mod tests {
                 }
             }),
             TraceBufferConfig::default()
-                .max_buffered_spans(4)
-                .span_flush_threshold(3)
+                .max_buffered_bytes(4)
+                .flush_threshold_bytes(3)
                 .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
         );
 
@@ -837,8 +916,8 @@ mod tests {
                 assert_eq!(chunks.len(), 1);
             }),
             TraceBufferConfig::default()
-                .max_buffered_spans(4)
-                .span_flush_threshold(2)
+                .max_buffered_bytes(4)
+                .flush_threshold_bytes(2)
                 .max_flush_interval(Duration::from_millis(1)),
         );
         sender.send_chunk(vec![()]).unwrap();
@@ -894,8 +973,8 @@ mod tests {
                 assert_eq!(chunks.len(), 2);
             }),
             TraceBufferConfig::default()
-                .max_buffered_spans(100)
-                .span_flush_threshold(100)
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
                 .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
         );
 
@@ -917,7 +996,7 @@ mod tests {
     fn test_worker_reset() {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks| assert_eq!(chunks.len(), 1)),
-            TraceBufferConfig::default().span_flush_threshold(2),
+            TraceBufferConfig::default().flush_threshold_bytes(2),
         );
         sender.send_chunk(vec![()]).unwrap();
         assert_eq!(sem.available_permits(), 0);
