@@ -10,6 +10,8 @@
 //!   export.
 
 use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
+use crate::response::ExporterResponse;
+use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
@@ -288,6 +290,51 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
             }
         } else {
             gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Send trace chunks
+// ---------------------------------------------------------------------------
+
+/// Send trace chunks through a [`TraceExporter`], consuming the chunks.
+///
+/// This calls `TraceExporter::send_trace_chunks` which processes stats,
+/// serializes in the configured output format, and sends to the agent
+/// with retry logic.
+///
+/// On success, if `response_out` is non-null, a heap-allocated
+/// [`ExporterResponse`] is written there.  The caller owns it and must
+/// free it with `ddog_trace_exporter_response_free`.
+///
+/// # Safety
+///
+/// * `exporter` must be a valid `TraceExporter` pointer.
+/// * `chunks` is consumed and must not be used after this call.
+/// * If `response_out` is non-null it must point to valid writable memory for a
+///   `Box<ExporterResponse>`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
+    exporter: Option<&TraceExporter>,
+    chunks: Box<TracerTraceChunks>,
+    response_out: Option<NonNull<Box<ExporterResponse>>>,
+) -> Option<Box<ExporterError>> {
+    let exporter = match exporter {
+        Some(e) => e,
+        None => return gen_error!(ErrorCode::InvalidArgument),
+    };
+
+    catch_panic!(
+        match exporter.send_trace_chunks(chunks.0) {
+            Ok(resp) => {
+                if let Some(out) = response_out {
+                    out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
+                }
+                None
+            }
+            Err(e) => Some(Box::new(ExporterError::from(e))),
         },
         gen_error!(ErrorCode::Panic)
     )
