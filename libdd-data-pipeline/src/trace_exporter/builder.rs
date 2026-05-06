@@ -487,6 +487,7 @@ impl TraceExporterBuilder {
                 },
                 input_format: self.input_format,
                 output_format: self.output_format,
+                serializer: TraceSerializer::new(self.output_format),
                 client_computed_top_level: self.client_computed_top_level,
                 shared_runtime,
                 dogstatsd,
