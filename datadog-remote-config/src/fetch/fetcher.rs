@@ -220,6 +220,10 @@ pub struct ConfigClientState {
     targets_version: u64,
     root_version: u64,
     last_error: Option<String>,
+    /// Services discovered at runtime. Sent to the agent on each poll so it can route configs 
+    /// targeting those services to this client. Updated out-of-band by the consumer via 
+    /// `SingleFetcher::set_extra_services` (or equivalents on the other fetcher types).
+    extra_services: Vec<String>,
 }
 
 impl Default for ConfigClientState {
@@ -231,7 +235,14 @@ impl Default for ConfigClientState {
             targets_version: 0,
             root_version: 1,
             last_error: None,
+            extra_services: vec![],
         }
+    }
+}
+
+impl ConfigClientState {
+    pub fn set_extra_services(&mut self, services: Vec<String>) {
+        self.extra_services = services;
     }
 }
 
@@ -279,10 +290,10 @@ impl<S: FileStorage> ConfigFetcher<S> {
             tags,
             process_tags,
         } = (*target).clone();
-
+        
         let mut cached_target_files = vec![];
         let mut config_states = vec![];
-
+        
         {
             let target_files = self.state.target_files_by_path.lock_or_panic();
             for StoredTargetFile { meta, expiring, .. } in target_files.values() {
@@ -290,15 +301,16 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     cached_target_files.push(meta.clone());
                 }
             }
-
+            
             for config in opaque_state.last_config_paths.iter() {
                 if let Some(StoredTargetFile { state, .. }) =
-                    target_files.get(config as &dyn RemoteConfigPathType)
+                target_files.get(config as &dyn RemoteConfigPathType)
                 {
                     config_states.push(state.clone());
                 }
             }
         }
+        let extra_services = opaque_state.extra_services.clone();
 
         let config_req = ClientGetConfigsRequest {
             client: Some(libdd_trace_protobuf::remoteconfig::Client {
@@ -322,7 +334,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     language: self.state.invariants.language.to_string(),
                     tracer_version: self.state.invariants.tracer_version.clone(),
                     service,
-                    extra_services: vec![],
+                    extra_services,
                     env,
                     app_version,
                     tags: tags.iter().map(|t| t.to_string()).collect(),
@@ -911,6 +923,100 @@ pub mod tests {
                 .unwrap();
             assert_eq!(fetched.len(), 1);
             assert_eq!(storage.files.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_extra_services_forwarded_in_client_tracer() {
+        let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage,
+            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+        );
+        let mut opaque_state = ConfigClientState::default();
+
+        // Default: nothing set, agent receives an empty list.
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                DUMMY_TARGET.clone(),
+                &server.dummy_product_capabilities(),
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+        {
+            let req = server.last_request.lock().unwrap();
+            let tracer = req
+                .as_ref()
+                .unwrap()
+                .client
+                .as_ref()
+                .unwrap()
+                .client_tracer
+                .as_ref()
+                .unwrap();
+            assert!(tracer.extra_services.is_empty());
+        }
+
+        // After set_extra_services, the next poll forwards them to the agent.
+        opaque_state.set_extra_services(vec!["svc-a".to_string(), "svc-b".to_string()]);
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                DUMMY_TARGET.clone(),
+                &server.dummy_product_capabilities(),
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+        {
+            let req = server.last_request.lock().unwrap();
+            let tracer = req
+                .as_ref()
+                .unwrap()
+                .client
+                .as_ref()
+                .unwrap()
+                .client_tracer
+                .as_ref()
+                .unwrap();
+            assert_eq!(tracer.extra_services, &["svc-a", "svc-b"]);
+        }
+
+        // Replace-semantics: a subsequent set fully overrides the previous list.
+        opaque_state.set_extra_services(vec!["svc-c".to_string()]);
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                DUMMY_TARGET.clone(),
+                &server.dummy_product_capabilities(),
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+        {
+            let req = server.last_request.lock().unwrap();
+            let tracer = req
+                .as_ref()
+                .unwrap()
+                .client
+                .as_ref()
+                .unwrap()
+                .client_tracer
+                .as_ref()
+                .unwrap();
+            assert_eq!(tracer.extra_services, &["svc-c"]);
         }
     }
 

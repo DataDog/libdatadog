@@ -70,6 +70,13 @@ impl<S: FileStorage> SingleFetcher<S> {
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         self.fetcher.set_config_state(file, state)
     }
+
+    /// Update the set of services discovered at runtime
+    /// Sent to the agent on each subsequent poll so it can route configs targeting those
+    /// services to this client. Replace-semantics: the new vec fully overrides the previous one.
+    pub fn set_extra_services(&mut self, services: Vec<String>) {
+        self.opaque_state.set_extra_services(services);
+    }
 }
 
 pub struct SingleChangesFetcher<S: FileStorage>
