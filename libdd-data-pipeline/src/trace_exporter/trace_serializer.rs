@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
@@ -16,6 +18,8 @@ use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_payload;
 
+const MIN_BUFFER_CAPACITY: usize = 1024;
+
 /// Prepared traces payload ready for sending to the agent
 pub(super) struct PreparedTracesPayload {
     /// Serialized msgpack payload
@@ -28,6 +32,7 @@ pub(super) struct PreparedTracesPayload {
 
 /// Trace serialization client for handling payload preparation
 pub(super) struct TraceSerializer<'a> {
+    previous_serialised_len: AtomicUsize,
     output_format: TraceExporterOutputFormat,
     agent_payload_response_version: Option<&'a AgentResponsePayloadVersion>,
 }
@@ -39,6 +44,7 @@ impl<'a> TraceSerializer<'a> {
         agent_payload_response_version: Option<&'a AgentResponsePayloadVersion>,
     ) -> Self {
         Self {
+            previous_serialised_len: AtomicUsize::new(MIN_BUFFER_CAPACITY),
             output_format,
             agent_payload_response_version,
         }
@@ -96,12 +102,24 @@ impl<'a> TraceSerializer<'a> {
         &self,
         payload: &tracer_payload::TraceChunks<T>,
     ) -> Result<Vec<u8>, TraceExporterError> {
-        match payload {
-            tracer_payload::TraceChunks::V04(p) => Ok(msgpack_encoder::v04::to_vec(p)),
-            tracer_payload::TraceChunks::V05(p) => {
-                rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
+        let capacity = self
+            .previous_serialised_len
+            .load(Ordering::Relaxed)
+            .max(MIN_BUFFER_CAPACITY);
+        let buff = match payload {
+            tracer_payload::TraceChunks::V04(p) => {
+                msgpack_encoder::v04::to_vec_with_capacity(p, capacity as u32)
             }
-        }
+            tracer_payload::TraceChunks::V05(p) => {
+                let mut buff = Vec::with_capacity(capacity);
+                rmp_serde::encode::write(&mut buff, p)
+                    .map_err(TraceExporterError::Serialization)?;
+                buff
+            }
+        };
+        self.previous_serialised_len
+            .store(buff.len(), Ordering::Relaxed);
+        Ok(buff)
     }
 }
 
