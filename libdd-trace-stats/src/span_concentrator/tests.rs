@@ -877,6 +877,116 @@ fn test_peer_tags_aggregation() {
     );
 }
 
+/// Test that spans differing only by peer-tag IPs aggregate after IP quantization
+#[test]
+fn test_peer_tags_quantization_aggregation() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            2,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "10.1.2.3"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            3,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "10.1.2.4"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            4,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+    let mut concentrator_with_peer_tags = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![
+            "db.instance".to_string(),
+            "db.system".to_string(),
+            "peer.hostname".to_string(),
+        ],
+    );
+    for span in &spans {
+        concentrator_with_peer_tags.add_span(span);
+    }
+
+    let flushtime = now
+        + Duration::from_nanos(
+            concentrator_with_peer_tags.bucket_size * concentrator_with_peer_tags.buffer_len as u64,
+        );
+
+    let expected_with_peer_tags = vec![pb::ClientGroupedStats {
+        service: "A1".to_string(),
+        resource: "SELECT user_id from users WHERE user_name = ?".to_string(),
+        r#type: "db".to_string(),
+        name: "query".to_string(),
+        duration: 225,
+        hits: 3,
+        top_level_hits: 3,
+        errors: 0,
+        is_trace_root: pb::Trilean::False.into(),
+        span_kind: "client".to_string(),
+        peer_tags: vec![
+            "db.instance:i-1234".to_string(),
+            "db.system:postgres".to_string(),
+            "peer.hostname:blocked-ip-address".to_string(),
+        ],
+        ..Default::default()
+    }];
+
+    let stats_with_peer_tags = concentrator_with_peer_tags.flush(flushtime, false);
+    assert_counts_equal(
+        expected_with_peer_tags,
+        stats_with_peer_tags
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
 /// Test that internal spans with _dd.base_service use it as their sole peer tag
 #[test]
 fn test_base_service_peer_tag() {
