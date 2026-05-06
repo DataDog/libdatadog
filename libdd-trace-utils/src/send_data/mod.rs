@@ -475,6 +475,7 @@ mod tests {
         lang_vendor: "vendor",
         tracer_version: "1.0",
         container_id: "id",
+        runtime_id: "",
         client_computed_top_level: false,
         client_computed_stats: false,
         dropped_p0_traces: 0,
@@ -531,7 +532,7 @@ mod tests {
                 total
             }
             TracerPayloadCollection::V04(payloads) => {
-                msgpack_encoder::v04::to_len(payloads) as usize
+                msgpack_encoder::v04::to_encoded_byte_len(payloads) as usize
             }
             TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
         }

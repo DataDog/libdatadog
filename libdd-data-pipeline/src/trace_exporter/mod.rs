@@ -82,6 +82,7 @@ pub enum TraceExporterOutputFormat {
     #[default]
     V04,
     V05,
+    V1,
 }
 
 impl TraceExporterOutputFormat {
@@ -92,6 +93,7 @@ impl TraceExporterOutputFormat {
             match self {
                 TraceExporterOutputFormat::V04 => "/v0.4/traces",
                 TraceExporterOutputFormat::V05 => "/v0.5/traces",
+                TraceExporterOutputFormat::V1 => "/v1.0/traces",
             },
         )
     }
@@ -152,6 +154,7 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
             tracer_version: &tags.tracer_version,
             lang_interpreter: &tags.language_interpreter,
             lang_vendor: &tags.language_interpreter_vendor,
+            runtime_id: &tags.runtime_id,
             client_computed_stats: tags.client_computed_stats,
             client_computed_top_level: tags.client_computed_top_level,
             ..Default::default()

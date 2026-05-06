@@ -14,7 +14,7 @@ use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
-use libdd_trace_utils::tracer_payload;
+use libdd_trace_utils::tracer_payload::{self, TraceEncoding};
 
 /// Prepared traces payload ready for sending to the agent
 pub(super) struct PreparedTracesPayload {
@@ -52,8 +52,8 @@ impl<'a> TraceSerializer<'a> {
     ) -> Result<PreparedTracesPayload, TraceExporterError> {
         let payload = self.collect_and_process_traces(traces)?;
         let chunks = payload.size();
+        let mp_payload = self.serialize_payload(&payload, &header_tags)?;
         let headers = self.build_traces_headers(header_tags, chunks);
-        let mp_payload = self.serialize_payload(&payload)?;
 
         Ok(PreparedTracesPayload {
             data: mp_payload,
@@ -67,13 +67,18 @@ impl<'a> TraceSerializer<'a> {
         &self,
         traces: Vec<Vec<Span<T>>>,
     ) -> Result<tracer_payload::TraceChunks<T>, TraceExporterError> {
-        let use_v05_format = match self.output_format {
-            TraceExporterOutputFormat::V05 => true,
-            TraceExporterOutputFormat::V04 => false,
-        };
-        trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
+        let map_err = |e: anyhow::Error| {
             TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-        })
+        };
+        match self.output_format {
+            TraceExporterOutputFormat::V1 => Ok(tracer_payload::TraceChunks::V1(traces)),
+            TraceExporterOutputFormat::V04 => {
+                trace_utils::collect_trace_chunks(traces, TraceEncoding::V04).map_err(map_err)
+            }
+            TraceExporterOutputFormat::V05 => {
+                trace_utils::collect_trace_chunks(traces, TraceEncoding::V05).map_err(map_err)
+            }
+        }
     }
 
     /// Build HTTP headers for traces request
@@ -95,11 +100,21 @@ impl<'a> TraceSerializer<'a> {
     fn serialize_payload<T: TraceData>(
         &self,
         payload: &tracer_payload::TraceChunks<T>,
+        header_tags: &TracerHeaderTags,
     ) -> Result<Vec<u8>, TraceExporterError> {
         match payload {
             tracer_payload::TraceChunks::V04(p) => Ok(msgpack_encoder::v04::to_vec(p)),
             tracer_payload::TraceChunks::V05(p) => {
                 rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
+            }
+            tracer_payload::TraceChunks::V1(p) => {
+                let metadata = msgpack_encoder::v1::PayloadMetadata {
+                    language_name: header_tags.lang,
+                    language_version: header_tags.lang_version,
+                    tracer_version: header_tags.tracer_version,
+                    runtime_id: header_tags.runtime_id,
+                };
+                Ok(msgpack_encoder::v1::to_vec(p, &metadata))
             }
         }
     }
@@ -256,7 +271,7 @@ mod tests {
             .collect_and_process_traces(original_traces.clone())
             .unwrap();
 
-        let result = serializer.serialize_payload(&payload);
+        let result = serializer.serialize_payload(&payload, &TracerHeaderTags::default());
         assert!(result.is_ok());
 
         let serialized = result.unwrap();
@@ -291,7 +306,7 @@ mod tests {
             .collect_and_process_traces(original_traces.clone())
             .unwrap();
 
-        let result = serializer.serialize_payload(&payload);
+        let result = serializer.serialize_payload(&payload, &TracerHeaderTags::default());
         assert!(result.is_ok());
 
         let serialized = result.unwrap();

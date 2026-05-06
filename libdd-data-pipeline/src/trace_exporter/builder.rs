@@ -536,7 +536,9 @@ impl TraceExporterBuilder {
         match input {
             TraceExporterInputFormat::V04 => matches!(
                 output,
-                TraceExporterOutputFormat::V04 | TraceExporterOutputFormat::V05
+                TraceExporterOutputFormat::V04
+                    | TraceExporterOutputFormat::V05
+                    | TraceExporterOutputFormat::V1
             ),
             TraceExporterInputFormat::V05 => matches!(output, TraceExporterOutputFormat::V05),
         }
