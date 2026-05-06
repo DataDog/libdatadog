@@ -9,7 +9,7 @@ use hashbrown::HashMap;
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 
 use crate::span_concentrator::StatSpan;
 
@@ -80,13 +80,19 @@ impl<T> FixedAggregationKey<T> {
 /// Represent a stats aggregation key borrowed from span data
 pub(super) struct BorrowedAggregationKey<'a> {
     fixed: FixedAggregationKey<&'a str>,
-    peer_tags: Vec<(String, String)>,
+    peer_tags: Vec<(&'a str, Cow<'a, str>)>,
 }
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
     #[inline]
     fn equivalent(&self, other: &OwnedAggregationKey) -> bool {
-        self.fixed == other.fixed.convert(|s| s) && self.peer_tags == other.peer_tags
+        self.fixed == other.fixed.convert(|s| s)
+            && self.peer_tags.len() == other.peer_tags.len()
+            && self
+                .peer_tags
+                .iter()
+                .zip(other.peer_tags.iter())
+                .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
     }
 }
 
@@ -107,7 +113,11 @@ impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
     fn from(value: &BorrowedAggregationKey<'_>) -> Self {
         OwnedAggregationKey {
             fixed: value.fixed.convert(str::to_owned),
-            peer_tags: value.peer_tags.clone(),
+            peer_tags: value
+                .peer_tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         }
     }
 }
@@ -201,12 +211,12 @@ impl<'a> BorrowedAggregationKey<'a> {
                 .iter()
                 .filter_map(|key| {
                     let value = span.get_meta(key.as_str())?;
-                    Some((key.clone(), quantize_peer_ip_addresses(value).into_owned()))
+                    Some((key.as_str(), quantize_peer_ip_addresses(value)))
                 })
                 .collect()
         } else if let Some(base_service) = span.get_meta("_dd.base_service") {
             // Internal spans with a base service override use only _dd.base_service as peer tag
-            vec![("_dd.base_service".to_string(), base_service.to_string())]
+            vec![("_dd.base_service", Cow::Borrowed(base_service))]
         } else {
             vec![]
         };
