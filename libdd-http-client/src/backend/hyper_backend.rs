@@ -7,10 +7,10 @@ use crate::{HttpClientError, HttpRequest, HttpResponse};
 
 use http_body_util::BodyExt;
 use libdd_common::connector::Connector;
-use libdd_common::http_common::{self, Body};
+use libdd_common::http::{self, Body};
 
 pub(crate) struct HyperBackend {
-    client: http_common::GenericHttpClient<Connector>,
+    client: http::GenericHttpClient<Connector>,
     transport: TransportConfig,
 }
 
@@ -135,10 +135,10 @@ fn collect_response_headers<T>(
 }
 
 fn map_hyper_error(e: hyper_util::client::legacy::Error) -> HttpClientError {
-    let err = http_common::ClientError::from(e);
+    let err = http::ClientError::from(e);
     match err.kind() {
-        http_common::ErrorKind::Timeout => HttpClientError::TimedOut,
-        http_common::ErrorKind::Closed => HttpClientError::ConnectionFailed(err.to_string()),
+        http::ErrorKind::Timeout => HttpClientError::TimedOut,
+        http::ErrorKind::Closed => HttpClientError::ConnectionFailed(err.to_string()),
         _ => HttpClientError::IoError(err.to_string()),
     }
 }
@@ -148,7 +148,7 @@ impl super::Backend for HyperBackend {
         client_config: &HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
-        let mut builder = http_common::client_builder();
+        let mut builder = http::client_builder();
 
         if !client_config.allow_connection_pooling() {
             builder.pool_max_idle_per_host(0);

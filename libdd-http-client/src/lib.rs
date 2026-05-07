@@ -70,10 +70,13 @@ pub use retry::RetryConfig;
 /// HTTPS requests. Only available when the `fips` feature is enabled.
 ///
 /// Returns an error if a crypto provider has already been installed.
+///
+/// Internally delegates to
+/// [`libdd_common::http::install_fips_provider`] so the install is centralised
+/// across libdatadog crates and runs at most once per process.
 #[cfg(feature = "fips")]
 pub fn init_fips_crypto() -> Result<(), HttpClientError> {
-    rustls::crypto::CryptoProvider::install_default(rustls::crypto::aws_lc_rs::default_provider())
-        .map_err(|_| {
-            HttpClientError::InvalidConfig("FIPS crypto provider already installed".to_owned())
-        })
+    libdd_common::http::install_fips_provider().map_err(|e| {
+        HttpClientError::InvalidConfig(format!("FIPS crypto provider install failed: {e}"))
+    })
 }

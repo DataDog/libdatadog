@@ -11,8 +11,10 @@
 //! installation. Higher layers (e.g., `libdd-http-client::init_fips_crypto`)
 //! are expected to delegate here so the install runs once even when multiple
 //! crates would otherwise each try.
-
-#![cfg(feature = "fips")]
+//!
+//! This module is conditionally included by its parent (`super::mod`) when the
+//! `fips` feature is enabled, so no inner `#![cfg(...)]` attribute is needed
+//! here.
 
 use thiserror::Error;
 
