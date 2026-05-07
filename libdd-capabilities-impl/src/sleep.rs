@@ -13,6 +13,10 @@ use libdd_capabilities::sleep::SleepCapability;
 pub struct NativeSleepCapability;
 
 impl SleepCapability for NativeSleepCapability {
+    fn new() -> Self {
+        Self
+    }
+
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + MaybeSend {
         tokio::time::sleep(duration)
     }

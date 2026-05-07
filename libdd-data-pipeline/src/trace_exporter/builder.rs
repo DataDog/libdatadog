@@ -320,29 +320,23 @@ impl TraceExporterBuilder {
         let capabilities = C::new_client();
 
         // --- Platform-specific worker setup ---
-        // The blocks below spawn background workers on native and create
-        // lightweight stubs on wasm. The `#[cfg]` interleaving is inherent to
-        // the platform split; each block is kept small to stay readable.
+        // The blocks below spawn background workers via `SharedRuntime`. On
+        // native, workers run on the tokio runtime; on wasm, they run on the JS
+        // event loop via `spawn_local`. Telemetry remains native-only for now.
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
-        #[cfg(not(target_arch = "wasm32"))]
-        let (info_fetcher_handle, info_response_observer) = {
-            let (info_fetcher, observer) =
-                AgentInfoFetcher::<C>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
-            let handle = shared_runtime
-                .spawn_worker(info_fetcher, false)
-                .map_err(|e| {
-                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                        e.to_string(),
-                    ))
-                })?;
-            (handle, observer)
-        };
-        // On wasm the AgentInfoFetcher is not spawned yet (it requires spawn_local),
-        // but we still need the ResponseObserver for header checks.
-        #[cfg(target_arch = "wasm32")]
-        let (_info_fetcher, info_response_observer) =
+        let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
+        let info_fetcher_handle = shared_runtime
+            .spawn_worker(info_fetcher, false)
+            .map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?;
+        // The handle is currently only tracked for shutdown on native; on wasm
+        // it is dropped here (the worker keeps running on the JS event loop
+        // until the page/module is torn down).
+        #[cfg(target_arch = "wasm32")]
+        let _ = info_fetcher_handle;
 
         #[allow(unused_mut)]
         let mut stats = StatsComputationStatus::Disabled;

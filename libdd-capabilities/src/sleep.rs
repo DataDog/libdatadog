@@ -11,5 +11,14 @@ use core::future::Future;
 use std::time::Duration;
 
 pub trait SleepCapability: Clone + std::fmt::Debug {
+    /// Construct a new sleeper.
+    ///
+    /// Stateless impls return a unit struct; stateful impls (mock clocks,
+    /// virtual time sources, etc.) should return a sensible default. Callers
+    /// that don't have an instance handy can use the static-style
+    /// `C::new().sleep(duration)` pattern, mirroring `HttpClientCapability`'s
+    /// `new_client()` + `request(&self)` shape.
+    fn new() -> Self;
+
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + MaybeSend;
 }

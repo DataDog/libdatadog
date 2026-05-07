@@ -65,6 +65,13 @@ impl HttpClientCapability for NativeCapabilities {
 }
 
 impl SleepCapability for NativeCapabilities {
+    fn new() -> Self {
+        Self {
+            http: NativeHttpClient::new_client(),
+            sleep: NativeSleepCapability,
+        }
+    }
+
     fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + MaybeSend {
         self.sleep.sleep(duration)
     }
