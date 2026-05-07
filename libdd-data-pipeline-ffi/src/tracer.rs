@@ -222,11 +222,7 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_new(
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         {
-            let chunks = if capacity > 0 {
-                Vec::with_capacity(capacity)
-            } else {
-                Vec::new()
-            };
+            let chunks = Vec::with_capacity(capacity);
             out_handle
                 .as_ptr()
                 .write(Box::new(TracerTraceChunks(chunks)));
