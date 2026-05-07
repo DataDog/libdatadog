@@ -981,6 +981,8 @@ fn test_peer_tags_quantization_aggregation() {
             "db.system".to_string(),
             "peer.hostname".to_string(),
         ],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator_with_peer_tags.add_span(span);
