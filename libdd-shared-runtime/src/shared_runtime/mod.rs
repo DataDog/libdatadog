@@ -80,12 +80,16 @@ mod native {
             // Lock runtime first to synchronize with before_fork (which does
             // runtime.take() then workers.lock()), following the documented mutex
             // lock order. If the runtime has been taken (fork window), skip starting
-            // the worker, after_fork_parent/child will start it on the new runtime.
+            // the worker; after_fork_parent/child will start it on the new runtime.
             let runtime_handle = self
                 .runtime
                 .lock_or_panic()
                 .as_ref()
                 .map(|rt| rt.handle().clone());
+            // Hold the workers lock while starting the worker to avoid a race with
+            // before_fork: without this, before_fork could run after the worker is
+            // started but before it's added to the list, not pausing the worker
+            // before the runtime is dropped.
             let mut workers_guard = self.workers.lock_or_panic();
 
             if let Some(ref handle) = runtime_handle {
