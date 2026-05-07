@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use bytes::Bytes;
 use flate2::{write::GzEncoder, Compression};
 use libdd_http_client::{HttpClient, HttpMethod, HttpRequest};
+use libdd_shared_runtime::SharedRuntime;
 use serde_json::{from_slice, Value};
 use std::io::Write as _;
 
@@ -225,6 +226,206 @@ impl AgentClient {
             container_tags_hash,
             state_hash,
         }))
+    }
+
+    /// Send a serialised trace payload synchronously, blocking the current
+    /// thread.
+    ///
+    /// Synchronous counterpart to [`AgentClient::send_traces`]. Drives the
+    /// async send to completion via [`SharedRuntime::block_on`]. Intended for
+    /// synchronous FFI / pyo3 callers that don't run their own tokio runtime.
+    ///
+    /// FFI callers will normally hold an `Arc<SharedRuntime>` (obtained from
+    /// `libdd-shared-runtime-ffi`) and pass `&shared_runtime` here.
+    ///
+    /// # Fallback runtime
+    ///
+    /// If the [`SharedRuntime`] is uninitialised (for example, between
+    /// `before_fork` and `after_fork_*`), `block_on` constructs a temporary
+    /// single-threaded tokio runtime to run the future. This is convenient
+    /// but allocates a new runtime per call; a follow-up may optimise the
+    /// hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`AgentClient::send_traces`]. Additionally,
+    /// if the shared runtime fails to construct its fallback runtime, the
+    /// error is surfaced as [`SendError::Transport`].
+    pub fn send_traces_blocking(
+        &self,
+        payload: Bytes,
+        trace_count: usize,
+        format: TraceFormat,
+        opts: TraceSendOptions,
+        runtime: &SharedRuntime,
+    ) -> Result<AgentResponse, SendError> {
+        runtime
+            .block_on(self.send_traces(payload, trace_count, format, opts))
+            .map_err(SendError::Transport)?
+    }
+
+    /// Send span stats synchronously, blocking the current thread.
+    ///
+    /// Synchronous counterpart to [`AgentClient::send_stats`]. Drives the
+    /// async send to completion via [`SharedRuntime::block_on`]. Intended for
+    /// synchronous FFI / pyo3 callers that don't run their own tokio runtime.
+    ///
+    /// FFI callers will normally hold an `Arc<SharedRuntime>` (obtained from
+    /// `libdd-shared-runtime-ffi`) and pass `&shared_runtime` here.
+    ///
+    /// # Fallback runtime
+    ///
+    /// If the [`SharedRuntime`] is uninitialised (for example, between
+    /// `before_fork` and `after_fork_*`), `block_on` constructs a temporary
+    /// single-threaded tokio runtime to run the future. This is convenient
+    /// but allocates a new runtime per call; a follow-up may optimise the
+    /// hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`AgentClient::send_stats`]. Additionally,
+    /// if the shared runtime fails to construct its fallback runtime, the
+    /// error is surfaced as [`SendError::Transport`].
+    pub fn send_stats_blocking(
+        &self,
+        payload: Bytes,
+        runtime: &SharedRuntime,
+    ) -> Result<(), SendError> {
+        runtime
+            .block_on(self.send_stats(payload))
+            .map_err(SendError::Transport)?
+    }
+
+    /// Send data-streams pipeline stats synchronously, blocking the current
+    /// thread.
+    ///
+    /// Synchronous counterpart to [`AgentClient::send_pipeline_stats`]. Drives
+    /// the async send to completion via [`SharedRuntime::block_on`]. Intended
+    /// for synchronous FFI / pyo3 callers that don't run their own tokio
+    /// runtime.
+    ///
+    /// FFI callers will normally hold an `Arc<SharedRuntime>` (obtained from
+    /// `libdd-shared-runtime-ffi`) and pass `&shared_runtime` here.
+    ///
+    /// # Fallback runtime
+    ///
+    /// If the [`SharedRuntime`] is uninitialised (for example, between
+    /// `before_fork` and `after_fork_*`), `block_on` constructs a temporary
+    /// single-threaded tokio runtime to run the future. This is convenient
+    /// but allocates a new runtime per call; a follow-up may optimise the
+    /// hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`AgentClient::send_pipeline_stats`].
+    /// Additionally, if the shared runtime fails to construct its fallback
+    /// runtime, the error is surfaced as [`SendError::Transport`].
+    pub fn send_pipeline_stats_blocking(
+        &self,
+        payload: Bytes,
+        runtime: &SharedRuntime,
+    ) -> Result<(), SendError> {
+        runtime
+            .block_on(self.send_pipeline_stats(payload))
+            .map_err(SendError::Transport)?
+    }
+
+    /// Send a telemetry event synchronously, blocking the current thread.
+    ///
+    /// Synchronous counterpart to [`AgentClient::send_telemetry`]. Drives the
+    /// async send to completion via [`SharedRuntime::block_on`]. Intended for
+    /// synchronous FFI / pyo3 callers that don't run their own tokio runtime.
+    ///
+    /// FFI callers will normally hold an `Arc<SharedRuntime>` (obtained from
+    /// `libdd-shared-runtime-ffi`) and pass `&shared_runtime` here.
+    ///
+    /// # Fallback runtime
+    ///
+    /// If the [`SharedRuntime`] is uninitialised (for example, between
+    /// `before_fork` and `after_fork_*`), `block_on` constructs a temporary
+    /// single-threaded tokio runtime to run the future. This is convenient
+    /// but allocates a new runtime per call; a follow-up may optimise the
+    /// hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`AgentClient::send_telemetry`].
+    /// Additionally, if the shared runtime fails to construct its fallback
+    /// runtime, the error is surfaced as [`SendError::Transport`].
+    pub fn send_telemetry_blocking(
+        &self,
+        req: TelemetryRequest,
+        runtime: &SharedRuntime,
+    ) -> Result<(), SendError> {
+        runtime
+            .block_on(self.send_telemetry(req))
+            .map_err(SendError::Transport)?
+    }
+
+    /// Send an EVP-proxy event synchronously, blocking the current thread.
+    ///
+    /// Synchronous counterpart to [`AgentClient::send_evp_event`]. Drives the
+    /// async send to completion via [`SharedRuntime::block_on`]. Intended for
+    /// synchronous FFI / pyo3 callers that don't run their own tokio runtime.
+    ///
+    /// FFI callers will normally hold an `Arc<SharedRuntime>` (obtained from
+    /// `libdd-shared-runtime-ffi`) and pass `&shared_runtime` here.
+    ///
+    /// # Fallback runtime
+    ///
+    /// If the [`SharedRuntime`] is uninitialised (for example, between
+    /// `before_fork` and `after_fork_*`), `block_on` constructs a temporary
+    /// single-threaded tokio runtime to run the future. This is convenient
+    /// but allocates a new runtime per call; a follow-up may optimise the
+    /// hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`AgentClient::send_evp_event`].
+    /// Additionally, if the shared runtime fails to construct its fallback
+    /// runtime, the error is surfaced as [`SendError::Transport`].
+    pub fn send_evp_event_blocking(
+        &self,
+        subdomain: &str,
+        path: &str,
+        payload: Bytes,
+        content_type: &str,
+        runtime: &SharedRuntime,
+    ) -> Result<(), SendError> {
+        runtime
+            .block_on(self.send_evp_event(subdomain, path, payload, content_type))
+            .map_err(SendError::Transport)?
+    }
+
+    /// Probe `GET /info` synchronously, blocking the current thread.
+    ///
+    /// Synchronous counterpart to [`AgentClient::agent_info`]. Drives the
+    /// async probe to completion via [`SharedRuntime::block_on`]. Intended for
+    /// synchronous FFI / pyo3 callers that don't run their own tokio runtime.
+    ///
+    /// FFI callers will normally hold an `Arc<SharedRuntime>` (obtained from
+    /// `libdd-shared-runtime-ffi`) and pass `&shared_runtime` here.
+    ///
+    /// # Fallback runtime
+    ///
+    /// If the [`SharedRuntime`] is uninitialised (for example, between
+    /// `before_fork` and `after_fork_*`), `block_on` constructs a temporary
+    /// single-threaded tokio runtime to run the future. This is convenient
+    /// but allocates a new runtime per call; a follow-up may optimise the
+    /// hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`AgentClient::agent_info`]. Additionally,
+    /// if the shared runtime fails to construct its fallback runtime, the
+    /// error is surfaced as [`SendError::Transport`].
+    pub fn agent_info_blocking(
+        &self,
+        runtime: &SharedRuntime,
+    ) -> Result<Option<AgentInfo>, SendError> {
+        runtime
+            .block_on(self.agent_info())
+            .map_err(SendError::Transport)?
     }
 }
 
