@@ -316,9 +316,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     chunks: Box<TracerTraceChunks>,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
-    let exporter = match exporter {
-        Some(e) => e,
-        None => return gen_error!(ErrorCode::InvalidArgument),
+    let Some(exporter) = exporter else {
+        return gen_error!(ErrorCode::InvalidArgument);
     };
 
     catch_panic!(
