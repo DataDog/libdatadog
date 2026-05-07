@@ -118,6 +118,9 @@ impl Profiling {
     }
 
     fn add_pkg_config(&self) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return Ok(());
+
         let files: [&str; 3] = [
             "datadog_profiling.pc",
             "datadog_profiling_with_rpath.pc",
