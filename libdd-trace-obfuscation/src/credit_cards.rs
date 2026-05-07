@@ -248,18 +248,18 @@ mod tests {
             (21000, FuzzyBool::False),
             (55555, FuzzyBool::False),
             // yes
-            (222100, FuzzyBool::True),
-            (272099, FuzzyBool::True),
-            (500000, FuzzyBool::True),
-            (509999, FuzzyBool::True),
-            (560000, FuzzyBool::True),
-            (589999, FuzzyBool::True),
-            (600000, FuzzyBool::True),
-            (699999, FuzzyBool::True),
+            (222_100, FuzzyBool::True),
+            (272_099, FuzzyBool::True),
+            (500_000, FuzzyBool::True),
+            (509_999, FuzzyBool::True),
+            (560_000, FuzzyBool::True),
+            (589_999, FuzzyBool::True),
+            (600_000, FuzzyBool::True),
+            (699_999, FuzzyBool::True),
             // no
-            (551234, FuzzyBool::False),
-            (594388, FuzzyBool::False),
-            (219899, FuzzyBool::False),
+            (551_234, FuzzyBool::False),
+            (594_388, FuzzyBool::False),
+            (219_899, FuzzyBool::False),
         ];
 
         for (num, expected) in test_cases {
@@ -267,7 +267,7 @@ mod tests {
             assert_eq!(
                 actual, expected,
                 "card prefix '{num}' was expected to be {expected:?} but got {actual:?}"
-            )
+            );
         }
     }
 
@@ -293,6 +293,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_valid_cards() {
         let valid_cards = vec![
             "378282246310005",

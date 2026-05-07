@@ -207,16 +207,16 @@ mod tests {
 
     fn new_test_span_with_tags(tags: HashMap<&str, &str>) -> pb::Span {
         let mut span = pb::Span {
-            duration: 10000000,
+            duration: 10_000_000,
             error: 0,
             resource: "GET /some/raclette".to_string(),
             service: "django".to_string(),
             name: "django.controller".to_string(),
             span_id: 123,
-            start: 1448466874000000000,
-            trace_id: 424242,
+            start: 1_448_466_874_000_000_000,
+            trace_id: 424_242,
             meta: HashMap::new(),
-            metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
+            metrics: HashMap::from([("cheese_weight".to_string(), 100_000.0)]),
             parent_id: 1111,
             r#type: "http".to_string(),
             meta_struct: HashMap::new(),
@@ -296,15 +296,12 @@ mod tests {
         replacer::replace_trace_tags(&mut trace, &parsed_rules.unwrap());
 
         for (key, val) in expected {
-            match key {
-                "resource.name" => {
-                    assert_eq!(val, trace[0].resource);
-                    assert_eq!(val, trace[1].resource);
-                }
-                _ => {
-                    assert_eq!(val, trace[0].meta.get(key).unwrap());
-                    assert_eq!(val, trace[1].meta.get(key).unwrap());
-                }
+            if key == "resource.name" {
+                assert_eq!(val, trace[0].resource);
+                assert_eq!(val, trace[1].resource);
+            } else {
+                assert_eq!(val, trace[0].meta.get(key).unwrap());
+                assert_eq!(val, trace[1].meta.get(key).unwrap());
             }
         }
     }

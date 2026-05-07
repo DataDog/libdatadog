@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(
             span.meta.get("http.url").unwrap(),
             "http://foo.com/id/?/page/q?"
-        )
+        );
     }
 
     #[test]
@@ -309,7 +309,7 @@ mod tests {
             ..Default::default()
         };
         obfuscate_span(&mut span, &obf_config);
-        assert_eq!(span.meta.get("redis.raw_command").unwrap(), "GEOADD ?")
+        assert_eq!(span.meta.get("redis.raw_command").unwrap(), "GEOADD ?");
     }
 
     #[test]
@@ -331,6 +331,6 @@ mod tests {
         assert_eq!(
             span.meta.get("redis.raw_command").unwrap(),
             "GEOADD key longitude latitude ?"
-        )
+        );
     }
 }

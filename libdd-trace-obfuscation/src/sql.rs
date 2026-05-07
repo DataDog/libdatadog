@@ -2073,6 +2073,7 @@ fn normalize_plan_sql(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::format_push_string)]
     use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
 
     #[test]
@@ -2099,7 +2100,7 @@ mod tests {
             if panic.is_none() {
                 panic!("{err}")
             } else {
-                eprintln!("{err}")
+                eprintln!("{err}");
             }
         }
         if let Some(p) = panic {
@@ -2140,7 +2141,7 @@ mod tests {
             if panic.is_none() {
                 panic!("{err}")
             } else {
-                eprintln!("{err}")
+                eprintln!("{err}");
             }
         }
         if let Some(p) = panic {
@@ -2655,7 +2656,7 @@ mod tests {
             // Table identifier (after FROM) — keep
             (
                 r#"SELECT * FROM "users" WHERE id = 1"#,
-                r#"SELECT * FROM users WHERE id = ?"#,
+                r"SELECT * FROM users WHERE id = ?",
             ),
         ];
         for (input, expected) in cases {
@@ -3110,9 +3111,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True}
@@ -3139,9 +3138,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dollar_quoted_func': True}
@@ -3168,9 +3165,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True}
@@ -3195,9 +3190,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'replace_digits': True}
@@ -3289,9 +3282,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True, 'keep_null': True, 'keep_boolean': True,
@@ -3344,9 +3335,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dbms': 'mssql'}
@@ -3373,9 +3362,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dbms': 'postgresql'}
@@ -3444,9 +3431,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only'}
@@ -3479,9 +3464,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_sql_alias': True}
@@ -3505,9 +3488,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'remove_space_between_parentheses': True}
@@ -3534,9 +3515,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_trailing_semicolon': True}
@@ -3563,9 +3542,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_identifier_quotation': True}
@@ -3592,9 +3569,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize'}
@@ -3635,9 +3610,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_digits': True}
@@ -3664,9 +3637,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_sql_alias': True}
@@ -3690,9 +3661,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True}
@@ -3719,9 +3688,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True, 'replace_digits': True}
@@ -3749,9 +3716,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'remove_space_between_parentheses': True}
@@ -3778,9 +3743,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_null': True}
@@ -3807,9 +3770,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_boolean': True}
@@ -3836,9 +3797,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_positional_parameter': True}
@@ -3865,9 +3824,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_trailing_semicolon': True}
@@ -3894,9 +3851,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_identifier_quotation': True}
@@ -3923,9 +3878,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_bind_parameter': True}
@@ -3952,9 +3905,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_json_path': True}
@@ -3986,9 +3937,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only'}
@@ -4017,9 +3966,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'replace_digits': True}
@@ -4046,9 +3993,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True}
@@ -4075,9 +4020,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True, 'replace_digits': True}
@@ -4105,9 +4048,7 @@ mod tests {
                 ));
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // Test that collapse_limit_two_args handles LIMIT case-insensitively.

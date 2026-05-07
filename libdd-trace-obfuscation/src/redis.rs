@@ -877,12 +877,12 @@ mod tests {
         ]
         [
             test_name   [test_obfuscate_redis_string_66]
-            input       [r#"
+            input       [r"
 CONFIG command
 SET k v
-                        "#]
-            expected    [r#"CONFIG command
-SET k ?"#];
+                        "]
+            expected    [r"CONFIG command
+SET k ?"];
         ]
         [
             test_name   [test_obfuscate_redis_string_67]

@@ -7,6 +7,7 @@ use criterion::{black_box, criterion_group, Criterion};
 use libdd_trace_obfuscation::replacer;
 use libdd_trace_protobuf::pb;
 
+#[allow(clippy::unwrap_used)]
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("tags");
     let rules: &[replacer::ReplaceRule] = &replacer::parse_rules_from_string(
@@ -21,14 +22,14 @@ fn criterion_benchmark(c: &mut Criterion) {
     .unwrap();
 
     let span_1 = pb::Span {
-        duration: 10000000,
+        duration: 10_000_000,
         error: 0,
         resource: "GET /some/raclette".to_string(),
         service: "django".to_string(),
         name: "django.controller".to_string(),
         span_id: 123,
-        start: 1448466874000000000,
-        trace_id: 424242,
+        start: 1_448_466_874_000_000_000,
+        trace_id: 424_242,
         meta: HashMap::from([
             ("resource.name".to_string(), "this is prod".to_string()),
             (
@@ -41,7 +42,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             ),
             ("custom.tag".to_string(), "/foo/bar/foo".to_string()),
         ]),
-        metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
+        metrics: HashMap::from([("cheese_weight".to_string(), 100_000.0)]),
         parent_id: 1111,
         r#type: "http".to_string(),
         meta_struct: HashMap::new(),
@@ -55,7 +56,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             || trace.to_owned(),
             |t| replacer::replace_trace_tags(black_box(t), black_box(rules)),
             criterion::BatchSize::LargeInput,
-        )
+        );
     });
 }
 

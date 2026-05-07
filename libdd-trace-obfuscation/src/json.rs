@@ -178,7 +178,7 @@ mod tests {
     fn obf(keep_keys: &[&str]) -> JsonObfuscator {
         JsonObfuscator::new(JsonObfuscatorConfig {
             enabled: true,
-            keep_keys: keep_keys.iter().map(|key| key.to_string()).collect(),
+            keep_keys: keep_keys.iter().map(std::string::ToString::to_string).collect(),
             ..Default::default()
         })
     }
@@ -186,8 +186,8 @@ mod tests {
     fn obf_sql(keep_keys: &[&str], transform_keys: &[&str]) -> JsonObfuscator {
         JsonObfuscator::new(JsonObfuscatorConfig {
             enabled: true,
-            keep_keys: keep_keys.iter().map(|s| s.to_string()).collect(),
-            transform_keys: transform_keys.iter().map(|s| s.to_string()).collect(),
+            keep_keys: keep_keys.iter().map(std::string::ToString::to_string).collect(),
+            transform_keys: transform_keys.iter().map(std::string::ToString::to_string).collect(),
             transformer: Some(obfuscate_sql_string),
         })
     }
