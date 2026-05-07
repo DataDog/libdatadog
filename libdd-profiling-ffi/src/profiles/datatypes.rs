@@ -916,6 +916,19 @@ mod tests {
         }
     }
 
+    /// Invalid FFI `sample_types` must not panic: `try_as_slice` fails and we return `Err`.
+    #[test]
+    fn profile_new_invalid_sample_types_slice_returns_err() {
+        unsafe {
+            let bad_slice: Slice<'_, SampleType> = Slice::from_raw_parts(std::ptr::null(), 1);
+            let result = ddog_prof_Profile_new(bad_slice, None);
+            assert!(
+                matches!(result, ProfileNewResult::Err(_)),
+                "expected Err for null pointer with non-zero length (SliceConversionError::NullPointer)"
+            );
+        }
+    }
+
     #[test]
     fn add_failure() -> Result<(), Error> {
         unsafe {
