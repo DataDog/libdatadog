@@ -11,15 +11,15 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
-use datadog_live_debugger::remote_config::live_debugger_parser;
+use datadog_live_debugger::LiveDebuggingData;
 use datadog_remote_config::config::dynamic::{parse_json, Configs};
 use datadog_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
     MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
 };
+use datadog_remote_config::file_storage::ParseFile;
 use datadog_remote_config::{
-    default_registry, ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue,
-    Target,
+    BuiltinProducts, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target,
 };
 use libdd_common::{tag::Tag, MutexExt};
 use priority_queue::PriorityQueue;
@@ -530,7 +530,45 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
     }
 }
 
-fn read_config(path: &str, registry: &ParserRegistry) -> anyhow::Result<(RemoteConfigValue, u32)> {
+/// Parsed payload for the products the sidecar consumes. Variants other than the listed ones
+/// are tracked but their bytes are not parsed.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
+pub enum SidecarProducts {
+    LiveDebugger(LiveDebuggingData),
+    Builtin(BuiltinProducts),
+}
+
+impl SidecarProducts {
+    pub fn product(&self) -> RemoteConfigProduct {
+        match self {
+            SidecarProducts::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
+            SidecarProducts::Builtin(b) => b.product(),
+        }
+    }
+
+    pub fn try_parse(product: RemoteConfigProduct, data: &[u8]) -> anyhow::Result<SidecarProducts> {
+        Ok(match product {
+            RemoteConfigProduct::LiveDebugger => {
+                SidecarProducts::LiveDebugger(LiveDebuggingData::parse(data)?)
+            }
+            other => SidecarProducts::Builtin(BuiltinProducts::try_parse(other, data)?),
+        })
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct SidecarParser;
+
+impl ParseFile for SidecarParser {
+    type Parsed = anyhow::Result<SidecarProducts>;
+
+    fn parse(&self, path: &RemoteConfigPath, contents: Vec<u8>) -> Self::Parsed {
+        SidecarProducts::try_parse(path.product, &contents)
+    }
+}
+
+fn read_config(path: &str) -> anyhow::Result<(RemoteConfigValue<SidecarProducts>, u32)> {
     if let [shm_path, limiter, rc_path] = &path.split(':').collect::<Vec<_>>()[..] {
         let mapped = NamedShmHandle::open(&CString::new(*shm_path)?)?.map()?;
         let rc_path = String::from_utf8(BASE64_URL_SAFE_NO_PAD.decode(rc_path)?)?;
@@ -538,7 +576,7 @@ fn read_config(path: &str, registry: &ParserRegistry) -> anyhow::Result<(RemoteC
         #[cfg(windows)]
         let data = &data[4..(4 + u32::from_ne_bytes((&data[0..4]).try_into()?) as usize)];
         Ok((
-            RemoteConfigValue::try_parse(&rc_path, data, registry)?,
+            RemoteConfigValue::try_parse(&rc_path, data, SidecarProducts::try_parse)?,
             u32::from_str(limiter)?,
         ))
     } else {
@@ -557,7 +595,6 @@ fn read_config(path: &str, registry: &ParserRegistry) -> anyhow::Result<(RemoteC
 /// once. They will always be Remove()d first, then Add()ed again upon update.
 pub struct RemoteConfigManager {
     invariants: ConfigInvariants,
-    registry: Arc<ParserRegistry>,
     active_target: Option<Arc<Target>>,
     pub active_reader: Option<RemoteConfigReader>,
     encountered_targets: HashMap<Arc<Target>, (RemoteConfigReader, Vec<String>)>,
@@ -573,7 +610,7 @@ pub struct RemoteConfigManager {
 pub enum RemoteConfigUpdate {
     None,
     Add {
-        value: RemoteConfigValue,
+        value: RemoteConfigValue<SidecarProducts>,
         limiter_index: u32,
     },
     Remove(RemoteConfigPath),
@@ -581,18 +618,8 @@ pub enum RemoteConfigUpdate {
 
 impl RemoteConfigManager {
     pub fn new(invariants: ConfigInvariants) -> RemoteConfigManager {
-        let mut registry = default_registry();
-        registry.register(RemoteConfigProduct::LiveDebugger, live_debugger_parser());
-        Self::new_with_registry(invariants, Arc::new(registry))
-    }
-
-    pub fn new_with_registry(
-        invariants: ConfigInvariants,
-        registry: Arc<ParserRegistry>,
-    ) -> RemoteConfigManager {
         RemoteConfigManager {
             invariants,
-            registry,
             active_target: None,
             active_reader: None,
             encountered_targets: Default::default(),
@@ -677,7 +704,7 @@ impl RemoteConfigManager {
 
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
-                match read_config(entry.key(), &self.registry) {
+                match read_config(entry.key()) {
                     Ok((parsed, limiter_index)) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
                         entry.insert(RemoteConfigPath {
@@ -771,9 +798,7 @@ impl RemoteConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_remote_config::config::dynamic::{
-        tests::dummy_dynamic_config, Configs, DynamicConfigFile,
-    };
+    use datadog_remote_config::config::dynamic::{tests::dummy_dynamic_config, Configs};
     use datadog_remote_config::fetch::test_server::RemoteConfigServer;
     use datadog_remote_config::{RemoteConfigProduct, RemoteConfigSource};
     use manual_future::ManualFuture;
@@ -892,7 +917,7 @@ mod tests {
             assert_eq!(value.config_id, PATH_FIRST.config_id);
             assert_eq!(value.source, PATH_FIRST.source);
             assert_eq!(value.name, PATH_FIRST.name);
-            if let Some(cfg) = value.data.as_any().downcast_ref::<DynamicConfigFile>() {
+            if let SidecarProducts::Builtin(BuiltinProducts::ApmTracing(cfg)) = &value.data {
                 assert!(matches!(
                     <Vec<Configs>>::from(cfg.lib_config.clone())[0],
                     Configs::TracingEnabled(true)
@@ -1027,8 +1052,6 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_live_debugger_config_parsed() {
-        use datadog_live_debugger::LiveDebuggingData;
-
         let server = RemoteConfigServer::spawn();
 
         // The callback is mandatory but irrelevant here — we don't synchronize on teardown.
@@ -1077,16 +1100,15 @@ mod tests {
             assert_eq!(
                 value.data.product(),
                 RemoteConfigProduct::LiveDebugger,
-                "must be parsed as LiveDebugger, not IgnoredProduct"
+                "must be parsed as LiveDebugger, not Other"
             );
-            let parsed = value
-                .data
-                .as_any()
-                .downcast_ref::<LiveDebuggingData>()
-                .expect("downcast to LiveDebuggingData should succeed");
-            match parsed {
-                LiveDebuggingData::ServiceConfiguration(sc) => assert_eq!(sc.id, "ld-1"),
-                LiveDebuggingData::Probe(_) => unreachable!("expected ServiceConfiguration"),
+            match &value.data {
+                SidecarProducts::LiveDebugger(
+                    datadog_live_debugger::LiveDebuggingData::ServiceConfiguration(sc),
+                ) => {
+                    assert_eq!(sc.id, "ld-1");
+                }
+                _ => unreachable!("expected SidecarProducts::LiveDebugger(ServiceConfiguration)"),
             }
         } else {
             unreachable!("expected RemoteConfigUpdate::Add for the LiveDebugger config");
