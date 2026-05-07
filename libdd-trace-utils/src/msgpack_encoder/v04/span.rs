@@ -10,8 +10,21 @@ use rmp::encode::{
 use rmp::Marker;
 use std::borrow::Borrow;
 
+const fn msp_string_encoding_len(s: &str) -> usize {
+    let length_marker_len = if s.len() < 32 {
+        1
+    } else if s.len() < 256 {
+        2
+    } else if s.len() <= (u16::MAX as usize) {
+        3
+    } else {
+        5
+    };
+    length_marker_len + s.len()
+}
+
 // Compute the encoding of a string to messagepack in a const manner
-const fn msp_const_string_encoding(s: &str) -> ([u8; 256], usize) {
+const fn msp_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u8; ENCODING_LEN] {
     // copy_to_slice is not const yet
     const fn write_be(value: u64, first_n_bytes: usize, s: &mut [u8], idx: &mut usize) {
         let mut i = 0;
@@ -23,7 +36,7 @@ const fn msp_const_string_encoding(s: &str) -> ([u8; 256], usize) {
         *idx += first_n_bytes;
     }
 
-    let mut storage = [0; 256];
+    let mut storage = [0; ENCODING_LEN];
     let mut idx = 0;
     let len = s.len() as u64;
     let marker = if len < 32 {
@@ -59,17 +72,17 @@ const fn msp_const_string_encoding(s: &str) -> ([u8; 256], usize) {
         storage[idx + i] = s.as_bytes()[i];
         i += 1;
     }
-    idx += s.len();
-    (storage, idx)
+    storage
 }
 
 macro_rules! write_const_msg_pack_str {
     ($writer:expr, $str:expr) => {{
         use rmp::encode::ValueWriteError;
-        const STRING_LEN_TUP: ([u8; 256], usize) = msp_const_string_encoding($str);
+        const STRING_ENCODING_LEN: usize = msp_string_encoding_len($str);
+        const STRING_ENCODING: [u8; STRING_ENCODING_LEN] = msp_const_string_encoding($str);
 
         $writer
-            .write_bytes(&STRING_LEN_TUP.0[..STRING_LEN_TUP.1])
+            .write_bytes(&STRING_ENCODING)
             .map_err(ValueWriteError::InvalidDataWrite)
     }};
 }
