@@ -106,3 +106,10 @@ set_vcruntime_link_type(ffe ${VCRUNTIME_LINK_TYPE})
 if(MSVC)
   target_compile_definitions(ffe PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
+
+# http_client uses POSIX fork()/sockets to spin up a tiny in-process
+# HTTP server, so it's only built on Unix-like platforms.
+if(NOT WIN32)
+  add_executable(http_client http_client.c)
+  target_link_libraries(http_client PRIVATE Datadog::Profiling)
+endif()

@@ -33,6 +33,9 @@ datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:libdd-common-ffi"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
+# http-client-ffi pulls in shared-runtime-ffi: send_blocking takes a
+# ddog_SharedRuntime built via shared-runtime-ffi, so the two travel together.
+libdd-http-client-ffi = ["dep:libdd-http-client-ffi", "dep:libdd-shared-runtime-ffi"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -59,3 +62,5 @@ symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features
 thiserror = "2"
 tokio-util = "0.7.1"
 datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }
+libdd-http-client-ffi = { path = "../libdd-http-client-ffi", default-features = false, optional = true }
+libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true, features = ["catch_panic"] }

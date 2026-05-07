@@ -1,0 +1,84 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+language = "C"
+cpp_compat = true
+tab_width = 2
+header = """// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
+include_guard = "DDOG_HTTP_CLIENT_H"
+includes = ["common.h"]
+after_includes = """
+typedef struct ddog_HttpClient ddog_HttpClient;
+typedef struct ddog_HttpClientBuilder ddog_HttpClientBuilder;
+typedef struct ddog_HttpRequest ddog_HttpRequest;
+typedef struct ddog_HttpResponse ddog_HttpResponse;
+typedef struct ddog_SharedRuntime ddog_SharedRuntime;
+"""
+
+# Types we deliberately export. Anything not listed here that cbindgen
+# discovers from a parse_deps crate is filtered out by the `exclude` list
+# below — the goal is a minimal, audited C surface.
+[export]
+prefix = "ddog_"
+renaming_overrides_prefixing = true
+include = [
+  "DdogHttpClientErrorCode",
+  "DdogHttpClientError",
+  "DdogHttpMethod",
+  "DdogHttpHeader",
+  "DdogHttpHeaderSlice",
+]
+# Internal Rust types we don't want leaking into the C header. Anything
+# in `parse.include` (libdd-http-client, libdd-shared-runtime,
+# libdd-common-ffi) that isn't part of our intended C surface lives here.
+exclude = [
+  # The four opaque handle types are forward-declared by hand in
+  # `after_includes`; we don't want cbindgen emitting their Rust bodies.
+  "HttpClient",
+  "HttpClientBuilder",
+  "HttpRequest",
+  "HttpResponse",
+  "SharedRuntime",
+  # Crate-internal libdd-http-client types that aren't part of the C surface.
+  "HttpClientConfig",
+  "HttpClientError",
+  "HttpMethod",
+  "MultipartPart",
+  "RetryConfig",
+  # Foreign types pulled in by parse_deps.
+  "Bytes",
+  "Duration",
+  "Result",
+  "VoidResult",
+  "MutSlice",
+  # `ddog_CharSlice` already comes from `common.h`; don't redefine it.
+  "Slice_CChar",
+  "CharSlice",
+]
+
+[export.rename]
+"CharSlice" = "ddog_CharSlice"
+"ByteSlice" = "ddog_ByteSlice"
+"Slice_U8" = "ddog_Slice_U8"
+"Slice_CChar" = "ddog_Slice_CChar"
+"DdogHttpClientErrorCode" = "ddog_HttpClientErrorCode"
+"DdogHttpClientError" = "ddog_HttpClientError"
+"DdogHttpMethod" = "ddog_HttpMethod"
+"DdogHttpHeader" = "ddog_HttpHeader"
+"DdogHttpHeaderSlice" = "ddog_HttpHeaderSlice"
+
+[export.mangle]
+rename_types = "PascalCase"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[parse]
+parse_deps = true
+include = ["libdd-common-ffi", "libdd-http-client", "libdd-shared-runtime"]

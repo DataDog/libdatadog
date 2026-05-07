@@ -1,0 +1,30 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-http-client-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "C ABI for libdd-http-client"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+bench = false
+
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+bytes = "1.4"
+libdd-http-client = { path = "../libdd-http-client", default-features = false, features = ["https", "reqwest-backend"] }
+libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
