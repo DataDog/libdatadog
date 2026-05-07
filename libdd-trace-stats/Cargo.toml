@@ -50,3 +50,4 @@ tokio = { version = "1.23", features = ["rt-multi-thread", "macros", "test-util"
 default = ["https"]
 https = ["libdd-common/https", "libdd-capabilities-impl/https"]
 fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]
+stats-obfuscation = []

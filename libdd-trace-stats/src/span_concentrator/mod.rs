@@ -187,7 +187,10 @@ impl SpanConcentrator {
             );
     }
 
-    fn compute_obfuscated_span<'a>(&self, span: &'a impl StatSpan<'a>) -> Option<String> {
+    fn compute_obfuscated_span<'a>(
+        &self,
+        #[allow(unused)] span: &'a impl StatSpan<'a>,
+    ) -> Option<String> {
         #[cfg(feature = "stats-obfuscation")]
         if self.obfuscation_config.load().enabled {
             let dbms_hint: Option<&str> = span.get_meta("db.type");

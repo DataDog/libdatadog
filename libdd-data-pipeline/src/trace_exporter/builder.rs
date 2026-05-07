@@ -53,6 +53,8 @@ pub struct TraceExporterBuilder {
     peer_tags_aggregation: bool,
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
+    #[cfg(feature = "stats-obfuscation")]
+    client_side_stats_obfuscation_enabled: bool,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
@@ -208,6 +210,17 @@ impl TraceExporterBuilder {
     /// enabled)
     pub fn enable_compute_stats_by_span_kind(&mut self) -> &mut Self {
         self.compute_stats_by_span_kind = true;
+        self
+    }
+
+    /// Enable client-side stats obfuscation. Disabled by default.
+    ///
+    /// Final activation also requires the agent to advertise a supported
+    /// `obfuscation_version` via the `/info` endpoint. When disabled, no
+    /// `datadog-obfuscation-version` header is sent on stats payloads.
+    #[cfg(feature = "stats-obfuscation")]
+    pub fn enable_client_side_stats_obfuscation(&mut self) -> &mut Self {
+        self.client_side_stats_obfuscation_enabled = true;
         self
     }
 
@@ -415,6 +428,8 @@ impl TraceExporterBuilder {
                     obfuscation_config: Arc::new(ArcSwap::from_pointee(
                         StatsComputationObfuscationConfig::default(),
                     )),
+                    #[cfg(feature = "stats-obfuscation")]
+                    obfuscation_enabled: self.client_side_stats_obfuscation_enabled,
                 },
                 previous_info_state: arc_swap::ArcSwapOption::new(None),
                 info_response_observer,
@@ -510,6 +525,8 @@ impl TraceExporterBuilder {
                     obfuscation_config: Arc::new(ArcSwap::from_pointee(
                         StatsComputationObfuscationConfig::default(),
                     )),
+                    #[cfg(feature = "stats-obfuscation")]
+                    obfuscation_enabled: self.client_side_stats_obfuscation_enabled,
                 },
                 previous_info_state: arc_swap::ArcSwapOption::new(None),
                 info_response_observer,

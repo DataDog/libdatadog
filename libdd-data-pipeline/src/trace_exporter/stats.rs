@@ -73,6 +73,10 @@ pub(crate) struct StatsComputationConfig {
     pub(crate) status: ArcSwap<StatsComputationStatus>,
     #[cfg(feature = "stats-obfuscation")]
     pub(crate) obfuscation_config: SharedStatsComputationObfuscationConfig,
+    /// Builder-level opt-in. When false, stats obfuscation stays off
+    /// regardless of agent support.
+    #[cfg(feature = "stats-obfuscation")]
+    pub(crate) obfuscation_enabled: bool,
 }
 
 /// Return true if the agent's obfuscation version is supported by this tracer
@@ -222,7 +226,8 @@ fn update_obfuscation_config(
         &**client_side_stats.status.load(),
         StatsComputationStatus::Enabled { .. }
     ) {
-        let obfuscation_active = is_obfuscation_active(agent_info);
+        let obfuscation_active =
+            client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
         let sql_obfuscation_mode = (|| {
             agent_info
                 .info
@@ -351,6 +356,7 @@ impl From<TracerMetadata> for StatsMetadata {
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "stats-obfuscation")]
+    #[test]
     fn test_obfuscation_version_was_updated() {
         use crate::trace_exporter::stats::{
             SUPPORTED_OBFUSCATION_VERSION, SUPPORTED_OBFUSCATION_VERSION_STR,
