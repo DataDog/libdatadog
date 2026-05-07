@@ -41,7 +41,7 @@ fn charslice_to_bytesstring(s: CharSlice) -> Result<BytesString, Box<ExporterErr
 // ---------------------------------------------------------------------------
 
 /// Opaque handle wrapping a single `Span<BytesData>`.
-pub struct TracerSpan(pub(crate) SpanBytes);
+pub struct TracerSpan(SpanBytes);
 
 /// Create a new span with all scalar fields set.
 ///
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn ddog_tracer_span_set_metric(
 
 /// Opaque handle wrapping `Vec<Vec<SpanBytes>>` — a list of trace chunks,
 /// each containing a list of spans.
-pub struct TracerTraceChunks(pub(crate) Vec<Vec<SpanBytes>>);
+pub struct TracerTraceChunks(Vec<Vec<SpanBytes>>);
 
 /// Create a new empty trace chunks container.
 ///
