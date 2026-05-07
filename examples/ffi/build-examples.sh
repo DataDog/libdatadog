@@ -23,6 +23,7 @@ FEATURES=(
     "log"
     "ddsketch"
     "ffe"
+    "http-client"
 )
 
 FEATURE_LIST=$(IFS=,; echo "${FEATURES[*]}")

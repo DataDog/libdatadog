@@ -53,3 +53,16 @@ pub use datadog_ffe_ffi;
 // re-export tracer metadata functions
 #[cfg(feature = "ddcommon-ffi")]
 pub use libdd_common_ffi::*;
+
+// re-export http-client ffi
+#[cfg(feature = "libdd-http-client-ffi")]
+#[allow(unused_imports)]
+pub use libdd_http_client_ffi::*;
+
+// pull in shared-runtime ffi (paired with http-client-ffi: send_blocking
+// takes a ddog_SharedRuntime built via shared-runtime-ffi). The crate has
+// no Rust items at the root — referencing it via `extern crate` is enough
+// for the linker to pull its `#[no_mangle]` C symbols into the unified
+// cdylib.
+#[cfg(feature = "libdd-http-client-ffi")]
+extern crate libdd_shared_runtime_ffi;

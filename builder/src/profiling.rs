@@ -59,6 +59,11 @@ impl Profiling {
         headers.push("ddsketch.h");
         #[cfg(feature = "ffe")]
         headers.push("ffe.h");
+        #[cfg(feature = "http-client")]
+        {
+            headers.push("http_client.h");
+            headers.push("shared-runtime.h");
+        }
 
         let mut origin_path: PathBuf = [&self.source_include, "dummy.h"].iter().collect();
         let mut target_path: PathBuf = [&self.target_include, "dummy.h"].iter().collect();

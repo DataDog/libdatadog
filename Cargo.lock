@@ -3053,11 +3053,24 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-shared-runtime",
  "reqwest",
  "rustls",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+]
+
+[[package]]
+name = "libdd-http-client-ffi"
+version = "32.0.0"
+dependencies = [
+ "build_common",
+ "bytes",
+ "libdd-common-ffi",
+ "libdd-http-client",
+ "libdd-shared-runtime",
+ "rustls",
 ]
 
 [[package]]
@@ -3193,9 +3206,11 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline-ffi",
  "libdd-ddsketch-ffi",
+ "libdd-http-client-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "libdd-profiling",
+ "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
  "serde_json",
  "symbolizer-ffi",

@@ -74,6 +74,8 @@ pub fn main() {
         f.push("ddsketch-ffi".to_string());
         #[cfg(feature = "ffe")]
         f.push("datadog-ffe-ffi".to_string());
+        #[cfg(feature = "http-client")]
+        f.push("libdd-http-client-ffi".to_string());
         f
     };
 
