@@ -6,6 +6,7 @@
 use crate::backend::Backend;
 use crate::config::{HttpClientBuilder, HttpClientConfig, TransportConfig};
 use crate::{HttpClientError, HttpRequest, HttpResponse};
+use libdd_shared_runtime::SharedRuntime;
 use std::time::Duration;
 
 #[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
@@ -67,6 +68,38 @@ impl HttpClient {
             Some(retry) => self.send_with_retry(request, retry).await,
             None => self.send_once(request).await,
         }
+    }
+
+    /// Send an HTTP request synchronously, blocking the current thread.
+    ///
+    /// Drives the async [`HttpClient::send`] to completion via
+    /// [`SharedRuntime::block_on`]. Intended for synchronous FFI / pyo3
+    /// callers that don't run their own tokio runtime.
+    ///
+    /// FFI callers will normally hold an `Arc<SharedRuntime>` (obtained from
+    /// `libdd-shared-runtime-ffi`) and pass `&shared_runtime` here.
+    ///
+    /// # Fallback runtime
+    ///
+    /// If the [`SharedRuntime`] is uninitialised (for example, between
+    /// `before_fork` and `after_fork_*`), `block_on` constructs a temporary
+    /// single-threaded tokio runtime to run the future. This is convenient
+    /// but allocates a new runtime per call; a follow-up may optimise the
+    /// hot path.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`HttpClient::send`]. Additionally, if the
+    /// shared runtime fails to construct its fallback runtime, the error is
+    /// surfaced as [`HttpClientError::IoError`].
+    pub fn send_blocking(
+        &self,
+        request: HttpRequest,
+        runtime: &SharedRuntime,
+    ) -> Result<HttpResponse, HttpClientError> {
+        runtime
+            .block_on(self.send(request))
+            .map_err(|e| HttpClientError::IoError(format!("shared runtime block_on failed: {e}")))?
     }
 
     async fn send_once(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
