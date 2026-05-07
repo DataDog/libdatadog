@@ -2,22 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::rules_based::UniversalFlagConfig;
-use datadog_remote_config::{ProductParser, RemoteConfigParsedData, RemoteConfigProduct};
-use std::any::Any;
+use datadog_remote_config::{RemoteConfigContent, RemoteConfigProduct};
 
-impl RemoteConfigParsedData for UniversalFlagConfig {
-    fn as_any(&self) -> &dyn Any {
-        self
+impl RemoteConfigContent for UniversalFlagConfig {
+    const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::FfeFlags;
+
+    fn parse(data: &[u8]) -> anyhow::Result<Self> {
+        Ok(UniversalFlagConfig::from_json(data.to_vec())?)
     }
-
-    fn product(&self) -> RemoteConfigProduct {
-        RemoteConfigProduct::FfeFlags
-    }
-}
-
-pub fn ffe_parser() -> ProductParser {
-    Box::new(|data: &[u8]| {
-        let parsed = UniversalFlagConfig::from_json(data.to_vec())?;
-        Ok(Box::new(parsed) as Box<dyn RemoteConfigParsedData>)
-    })
 }

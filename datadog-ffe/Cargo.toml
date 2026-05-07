@@ -11,6 +11,7 @@ publish = false
 bench = false
 
 [dependencies]
+anyhow = { version = "1.0" }
 datadog-remote-config = { path = "../datadog-remote-config", default-features = false }
 faststr = { version = "0.2.23", default-features = false, features = ["serde"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "rc"] }

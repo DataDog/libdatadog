@@ -141,7 +141,7 @@ pub type SimpleFileStorage = RawFileStorage<RawBytesParser>;
 pub struct RegistryParser(pub Arc<ParserRegistry>);
 
 impl ParseFile for RegistryParser {
-    type Parsed = anyhow::Result<Box<dyn RemoteConfigParsedData>>;
+    type Parsed = anyhow::Result<Option<Box<dyn RemoteConfigParsedData>>>;
 
     fn parse(&self, path: &RemoteConfigPath, contents: Vec<u8>) -> Self::Parsed {
         self.0.parse(path.product, &contents)

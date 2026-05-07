@@ -253,7 +253,8 @@ impl TracerFlareManager {
         file: RemoteConfigFile,
     ) -> Result<FlareAction, FlareError> {
         match file.contents().as_ref() {
-            Ok(data) => self.handle_remote_config_data(data.as_ref()),
+            Ok(Some(data)) => self.handle_remote_config_data(data.as_ref()),
+            Ok(None) => Ok(FlareAction::None),
             Err(e) => {
                 // If encounter an error we need to stop collecting
                 self.collecting.store(false, Ordering::Relaxed);
@@ -364,7 +365,7 @@ impl TryFrom<&str> for LogLevel {
 
 #[cfg(feature = "listener")]
 pub type RemoteConfigFile =
-    std::sync::Arc<RawFile<anyhow::Result<Box<dyn RemoteConfigParsedData>>>>;
+    std::sync::Arc<RawFile<anyhow::Result<Option<Box<dyn RemoteConfigParsedData>>>>>;
 #[cfg(feature = "listener")]
 pub type Listener = SingleChangesFetcher<ParsedFileStorage>;
 
@@ -385,7 +386,8 @@ impl TryFrom<RemoteConfigFile> for FlareAction {
     /// * `FlareError(msg)` - If something fail.
     fn try_from(file: RemoteConfigFile) -> Result<Self, Self::Error> {
         match file.contents().as_ref() {
-            Ok(data) => data.as_ref().try_into(),
+            Ok(Some(data)) => data.as_ref().try_into(),
+            Ok(None) => Ok(FlareAction::None),
             Err(e) => Err(FlareError::ParsingError(e.to_string())),
         }
     }
@@ -483,13 +485,14 @@ pub async fn run_remote_config_listener(
                     }
                 } else if let Change::Remove(file) = change {
                     match file.contents().as_ref() {
-                        Ok(data) => {
+                        Ok(Some(data)) => {
                             if data.as_any().downcast_ref::<AgentConfigFile>().is_some()
                                 && state == FlareAction::None
                             {
                                 state = FlareAction::Unset;
                             }
                         }
+                        Ok(None) => {}
                         Err(e) => {
                             return Err(FlareError::ParsingError(e.to_string()));
                         }

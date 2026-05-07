@@ -11,7 +11,7 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
-use datadog_live_debugger::remote_config::live_debugger_parser;
+use datadog_live_debugger::LiveDebuggingData;
 use datadog_remote_config::config::dynamic::{parse_json, Configs};
 use datadog_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
@@ -581,8 +581,7 @@ pub enum RemoteConfigUpdate {
 
 impl RemoteConfigManager {
     pub fn new(invariants: ConfigInvariants) -> RemoteConfigManager {
-        let mut registry = default_registry();
-        registry.register(RemoteConfigProduct::LiveDebugger, live_debugger_parser());
+        let registry = default_registry().with::<LiveDebuggingData>();
         Self::new_with_registry(invariants, Arc::new(registry))
     }
 
@@ -682,7 +681,7 @@ impl RemoteConfigManager {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
                         entry.insert(RemoteConfigPath {
                             source: parsed.source,
-                            product: parsed.data.product(),
+                            product: parsed.product,
                             config_id: parsed.config_id.clone(),
                             name: parsed.name.clone(),
                         });
@@ -892,7 +891,8 @@ mod tests {
             assert_eq!(value.config_id, PATH_FIRST.config_id);
             assert_eq!(value.source, PATH_FIRST.source);
             assert_eq!(value.name, PATH_FIRST.name);
-            if let Some(cfg) = value.data.as_any().downcast_ref::<DynamicConfigFile>() {
+            let parsed = value.data.as_deref().expect("dynamic config must parse");
+            if let Some(cfg) = parsed.as_any().downcast_ref::<DynamicConfigFile>() {
                 assert!(matches!(
                     <Vec<Configs>>::from(cfg.lib_config.clone())[0],
                     Configs::TracingEnabled(true)
@@ -1075,12 +1075,12 @@ mod tests {
         if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
             assert_eq!(value.config_id, PATH_LIVE_DEBUGGER.config_id);
             assert_eq!(
-                value.data.product(),
+                value.product,
                 RemoteConfigProduct::LiveDebugger,
-                "must be parsed as LiveDebugger, not IgnoredProduct"
+                "must be parsed as LiveDebugger, not skipped"
             );
-            let parsed = value
-                .data
+            let data = value.data.as_deref().expect("LiveDebugger must parse");
+            let parsed = data
                 .as_any()
                 .downcast_ref::<LiveDebuggingData>()
                 .expect("downcast to LiveDebuggingData should succeed");
