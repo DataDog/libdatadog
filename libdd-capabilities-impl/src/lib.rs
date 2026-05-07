@@ -4,12 +4,11 @@
 //! Native capability implementations for libdatadog.
 //!
 //! `NativeCapabilities` is the bundle struct that implements all capability
-//! traits using platform-native backends (hyper for HTTP, tokio for spawn,
+//! traits using platform-native backends (hyper for HTTP, tokio for sleep,
 //! etc.). Leaf crates (FFI, benchmarks) pin this type as the generic parameter.
 
 mod http;
 pub mod sleep;
-pub mod spawn;
 
 use core::future::Future;
 use std::time::Duration;
@@ -18,7 +17,6 @@ pub use http::NativeHttpClient;
 use libdd_capabilities::{http::HttpError, MaybeSend};
 pub use libdd_capabilities::{HttpClientCapability, SleepCapability};
 pub use sleep::NativeSleepCapability;
-pub use spawn::NativeSpawnCapability; // kept for backwards compatibility
 
 /// Bundle struct for native platform capabilities.
 ///
