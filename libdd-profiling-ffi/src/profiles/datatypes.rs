@@ -481,7 +481,10 @@ unsafe fn profile_new(
     period: Option<&Period>,
     string_storage: Option<ManagedStringStorage>,
 ) -> ProfileNewResult {
-    let types = sample_types.into_slice();
+    let types = match sample_types.try_as_slice() {
+        Ok(s) => s,
+        Err(e) => return ProfileNewResult::Err(anyhow::Error::from(e).into()),
+    };
     let period = period.copied();
 
     let result = match string_storage {
@@ -910,6 +913,19 @@ mod tests {
             ))?;
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
+        }
+    }
+
+    /// Invalid FFI `sample_types` must not panic: `try_as_slice` fails and we return `Err`.
+    #[test]
+    fn profile_new_invalid_sample_types_slice_returns_err() {
+        unsafe {
+            let bad_slice: Slice<'_, SampleType> = Slice::from_raw_parts(std::ptr::null(), 1);
+            let result = ddog_prof_Profile_new(bad_slice, None);
+            assert!(
+                matches!(result, ProfileNewResult::Err(_)),
+                "expected Err for null pointer with non-zero length (SliceConversionError::NullPointer)"
+            );
         }
     }
 
