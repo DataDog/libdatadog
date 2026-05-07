@@ -77,23 +77,20 @@ mod native {
             debug!(?boxed_worker, "Spawning worker on SharedRuntime");
             let mut pausable_worker = PausableWorker::new(boxed_worker);
 
-            // Lock runtime first to synchronize with before_fork (which does
-            // runtime.take() then workers.lock()), following the documented mutex
-            // lock order. If the runtime has been taken (fork window), skip starting
-            // the worker; after_fork_parent/child will start it on the new runtime.
-            let runtime_handle = self
-                .runtime
-                .lock_or_panic()
-                .as_ref()
-                .map(|rt| rt.handle().clone());
-            // Hold the workers lock while starting the worker to avoid a race with
-            // before_fork: without this, before_fork could run after the worker is
-            // started but before it's added to the list, not pausing the worker
-            // before the runtime is dropped.
+            // Lock runtime first, then workers, following the documented mutex
+            // lock order (matches before_fork). Both guards are held across
+            // start+push so that before_fork cannot interleave between them:
+            // otherwise before_fork could take the runtime, drop it, and miss
+            // our (not-yet-pushed) worker, leaving us with a worker running on
+            // a torn-down runtime that before_fork never paused. If the
+            // runtime has been taken (fork window already passed), we skip
+            // starting; after_fork_parent/child will start the worker on the
+            // new runtime.
+            let runtime_guard = self.runtime.lock_or_panic();
             let mut workers_guard = self.workers.lock_or_panic();
 
-            if let Some(ref handle) = runtime_handle {
-                if let Err(e) = pausable_worker.start(tokio_spawn_fn(handle)) {
+            if let Some(rt) = runtime_guard.as_ref() {
+                if let Err(e) = pausable_worker.start(tokio_spawn_fn(rt.handle())) {
                     return Err(e.into());
                 }
             }
