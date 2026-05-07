@@ -181,6 +181,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_quantize_peer_ip_addresses() {
         // Special cases
         // - localhost

@@ -363,8 +363,8 @@ impl Scanner {
             self.state = State::EndValue;
             return Op::SkipSpace;
         }
-        #[allow(clippy::match_on_vec_items)]
-        match self.parse_state[n - 1] {
+        let top = self.parse_state[n - 1]; // Copy; n > 0 checked above
+        match top {
             ParseState::ObjectKey => {
                 if c == ':' {
                     self.parse_state[n - 1] = ParseState::ObjectValue;
