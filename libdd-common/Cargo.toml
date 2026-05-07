@@ -99,7 +99,7 @@ use_webpki_roots = ["hyper-rustls/webpki-roots"]
 # php directly import this crate and uses functions gated by this feature for their test
 cgroup_testing = []
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
-fips = ["tls-core", "hyper-rustls/fips"]
+fips = ["tls-core", "hyper-rustls/fips", "rustls/aws-lc-rs"]
 # Enable reqwest client builder support with file dump debugging
 reqwest = ["dep:reqwest", "test-utils"]
 # Enable test utilities for use in other crates
