@@ -6,6 +6,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use libdd_common::RwLockExt;
+
 use crate::rate_sampler::RateSampler;
 
 #[derive(Debug, serde::Deserialize)]
@@ -21,7 +23,7 @@ pub struct ServicesSampler {
 
 impl ServicesSampler {
     pub fn get(&self, service: &str) -> Option<RateSampler> {
-        self.inner.read().unwrap().get(service).cloned()
+        self.inner.read_or_panic().get(service).cloned()
     }
 
     pub fn update_rates<I: IntoIterator<Item = (String, f64)>>(&self, rates: I) {
@@ -29,23 +31,23 @@ impl ServicesSampler {
             .into_iter()
             .map(|(s, r)| (s, RateSampler::new(r)))
             .collect();
-        *self.inner.write().unwrap() = new_rates;
+        *self.inner.write_or_panic() = new_rates;
     }
 
-    // used for testing purposes
+    // Test-only inspection helpers.
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
-        self.inner.read().unwrap().is_empty()
+        self.inner.read_or_panic().is_empty()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.inner.read().unwrap().len()
+        self.inner.read_or_panic().len()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn contains_key(&self, service: &str) -> bool {
-        self.inner.read().unwrap().contains_key(service)
+        self.inner.read_or_panic().contains_key(service)
     }
 }

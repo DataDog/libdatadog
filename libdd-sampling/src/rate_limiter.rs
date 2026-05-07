@@ -1,6 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use libdd_common::MutexExt;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -44,11 +45,11 @@ struct RateLimiterState {
 
 impl fmt::Debug for RateLimiter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.lock_or_panic();
 
         let current_rate_val = self.current_window_rate(&state);
         let effective_rate_val =
-            self._calculate_internal_effective_rate(current_rate_val, state.prev_window_rate);
+            self.calculate_internal_effective_rate(current_rate_val, state.prev_window_rate);
 
         f.debug_struct("RateLimiter")
             .field("rate_limit", &self.rate_limit)
@@ -64,11 +65,13 @@ impl RateLimiter {
     /// Creates a new RateLimiter with the given rate limit.
     ///
     /// # Parameters
-    /// * `rate_limit` - Maximum number of spans per second:
-    ///   * rate_limit > 0: max number of requests to allow per second
+    /// * `rate_limit` - Maximum number of requests allowed per `time_window_ns`:
+    ///   * rate_limit > 0: max number of requests to allow per window
     ///   * rate_limit == 0: disallow all requests
     ///   * rate_limit < 0: allow all requests
-    /// * `time_window_ns` - The time window in nanoseconds (default: 1 second)
+    /// * `time_window_ns` - The time window in nanoseconds (default: 1,000,000,000 ns = 1 second).
+    ///   With the default window `rate_limit` is equivalent to requests per second, but the actual
+    ///   unit is always "requests per `time_window_ns`".
     pub fn new(rate_limit: i32, time_window_ns: Option<u64>) -> Self {
         let window_ns = time_window_ns.unwrap_or(1_000_000_000); // Default to 1 second in ns
 
@@ -94,45 +97,49 @@ impl RateLimiter {
     /// # Returns
     /// `true` if the request is allowed, `false` otherwise
     pub fn is_allowed(&self) -> bool {
-        let now = Instant::now();
-        let allowed = self.is_allowed_at(now);
-        self.update_rate_counts(allowed, now);
-        allowed
-    }
-
-    /// Internal method to check if a request is allowed at the given time
-    fn is_allowed_at(&self, timestamp: Instant) -> bool {
+        // Fast paths that don't touch the lock at all.
         if self.rate_limit == 0 {
+            // Still need to update window counts so effective_rate() reflects denials.
+            let now = Instant::now();
+            let mut state = self.inner.lock_or_panic();
+            self.update_rate_counts_locked(&mut state, false, now);
             return false;
         }
         if self.rate_limit < 0 {
+            let now = Instant::now();
+            let mut state = self.inner.lock_or_panic();
+            self.update_rate_counts_locked(&mut state, true, now);
             return true;
         }
 
-        let mut state = self.inner.lock().unwrap();
+        let now = Instant::now();
+        let mut state = self.inner.lock_or_panic();
 
-        // Phase 2: Optimization - try to consume first
-        if state.tokens >= 1 {
+        // Try to consume a token; if not enough, replenish and try again.
+        let allowed = if state.tokens >= 1 {
             state.tokens -= 1;
             true
         } else {
-            // Not enough tokens, replenish
-            self.replenish(&mut state, timestamp);
-
-            // Check again after replenish
+            self.replenish(&mut state, now);
             if state.tokens >= 1 {
                 state.tokens -= 1;
                 true
             } else {
                 false
             }
-        }
+        };
+
+        self.update_rate_counts_locked(&mut state, allowed, now);
+        allowed
     }
 
-    /// Update counts used to determine effective rate
-    fn update_rate_counts(&self, allowed: bool, timestamp: Instant) {
-        let mut state = self.inner.lock().unwrap();
-
+    /// Update counts used to determine effective rate. Caller must hold the lock.
+    fn update_rate_counts_locked(
+        &self,
+        state: &mut RateLimiterState,
+        allowed: bool,
+        timestamp: Instant,
+    ) {
         // No window start yet, start a new window
         if state.current_window_start.is_none() {
             state.current_window_start = Some(timestamp);
@@ -142,7 +149,7 @@ impl RateLimiter {
             let elapsed = timestamp.duration_since(window_start);
             if elapsed.as_nanos() as u64 >= state.time_window_ns {
                 // Store previous window's rate
-                state.prev_window_rate = Some(self.current_window_rate(&state));
+                state.prev_window_rate = Some(self.current_window_rate(state));
                 state.tokens_allowed = 0;
                 state.tokens_total = 0;
                 state.current_window_start = Some(timestamp);
@@ -161,9 +168,8 @@ impl RateLimiter {
         let elapsed = timestamp.duration_since(state.last_update);
 
         // Calculate new tokens to add
-        let tokens_to_add_precise: f64 =
-            (elapsed.as_nanos() as f64 / state.time_window_ns as f64) * self.rate_limit as f64;
-        let tokens_to_add: i64 = tokens_to_add_precise as i64; // Truncates fractional tokens
+        let tokens_to_add: i64 = ((elapsed.as_nanos() as f64 / state.time_window_ns as f64)
+            * self.rate_limit as f64) as i64; // Truncates fractional tokens
 
         if tokens_to_add > 0 {
             state.tokens += tokens_to_add;
@@ -193,7 +199,7 @@ impl RateLimiter {
     }
 
     /// Helper function to calculate the effective rate based on current and optional previous rate.
-    fn _calculate_internal_effective_rate(
+    fn calculate_internal_effective_rate(
         &self, // Takes &self to be a method, though it doesn't use self directly
         current_rate: f64,
         prev_window_rate_opt: Option<f64>,
@@ -207,10 +213,10 @@ impl RateLimiter {
 
     /// Returns the effective sample rate of this rate limiter (between 0.0 and 1.0)
     pub fn effective_rate(&self) -> f64 {
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.lock_or_panic();
         let current_rate = self.current_window_rate(&state);
         // Use the new helper
-        self._calculate_internal_effective_rate(current_rate, state.prev_window_rate)
+        self.calculate_internal_effective_rate(current_rate, state.prev_window_rate)
     }
 }
 
@@ -354,5 +360,33 @@ mod tests {
             (95..=105).contains(&total_allowed),
             "Expected around 100 allowed requests, got {total_allowed}",
         );
+    }
+
+    #[test]
+    fn test_debug_impl() {
+        let limiter = RateLimiter::new(10, None);
+        let dbg = format!("{limiter:?}");
+        assert!(dbg.contains("RateLimiter"));
+    }
+
+    #[test]
+    fn test_window_reset_and_token_cap() {
+        use std::time::Duration;
+        // 1 token per 1ms window
+        let limiter = RateLimiter::new(1, Some(1_000_000));
+        // Exhaust the initial token
+        assert!(limiter.is_allowed());
+        // Wait > 1 window to trigger window reset + prev_window_rate assignment
+        std::thread::sleep(Duration::from_millis(5));
+        // After reset, should allow again (token cap branch also exercised)
+        assert!(limiter.is_allowed());
+    }
+
+    #[test]
+    fn test_effective_rate_zero_total() {
+        // New limiter with no calls: effective_rate should be 1.0 (no data = pass through)
+        let limiter = RateLimiter::new(10, None);
+        let rate = limiter.effective_rate();
+        assert_eq!(rate, 1.0);
     }
 }

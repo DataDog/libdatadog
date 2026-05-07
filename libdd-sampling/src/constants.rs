@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared constants for the datadog_opentelemetry::sampling crate
+//! Shared constants for the libdd-sampling crate
 
 /// Sampling rate limits
 pub mod rate {

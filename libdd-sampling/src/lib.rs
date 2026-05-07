@@ -13,6 +13,17 @@
 //! - Agent-provided sampling rates
 //! - Complete Datadog sampler implementation
 
+#![cfg_attr(
+    not(test),
+    deny(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::todo,
+        clippy::unimplemented,
+    )
+)]
+
 pub(crate) mod agent_service_sampler;
 pub(crate) mod constants;
 pub(crate) mod datadog_sampler;

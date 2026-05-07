@@ -1,10 +1,11 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use libdd_common::MutexExt;
 use lru::LruCache;
 use std::fmt;
 use std::num::NonZeroUsize;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// A backtracking implementation of the glob matching algorithm.
 ///
@@ -12,19 +13,21 @@ use std::sync::Mutex;
 /// and `?` as a single character wildcard (not including empty string). The match is case
 /// insensitive.
 ///
-/// This implementation includes an LRU cache for faster repeated matching.
+/// This implementation includes an LRU cache for faster repeated matching. The cache is
+/// shared across clones via `Arc`, so cloning a `GlobMatcher` does not discard cached
+/// results or allocate a new cache.
 pub struct GlobMatcher {
     /// Lowercased pattern for case-insensitive matching
     pattern_lower: String,
-    /// LRU cache of previously matched strings to their results
-    cache: Mutex<LruCache<String, bool>>,
+    /// Shared LRU cache of previously matched strings to their results.
+    cache: Arc<Mutex<LruCache<String, bool>>>,
 }
 
 impl fmt::Debug for GlobMatcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("GlobMatcher")
             .field("pattern_lower", &self.pattern_lower)
-            .field("cache_size", &self.cache.lock().unwrap().len())
+            .field("cache_size", &self.cache.lock_or_panic().len())
             .finish()
     }
 }
@@ -33,16 +36,16 @@ impl GlobMatcher {
     /// Creates a new GlobMatcher with the given pattern
     pub fn new(pattern: &str) -> Self {
         // Use a cache of size 256
-        let cache_size = NonZeroUsize::new(256).unwrap();
+        let cache_size = unsafe { NonZeroUsize::new_unchecked(256) };
         GlobMatcher {
             pattern_lower: pattern.to_lowercase(),
-            cache: Mutex::new(LruCache::new(cache_size)),
+            cache: Arc::new(Mutex::new(LruCache::new(cache_size))),
         }
     }
 
     /// Returns the pattern (lowercase version)
-    pub fn pattern(&self) -> String {
-        self.pattern_lower.clone()
+    pub fn pattern(&self) -> &str {
+        &self.pattern_lower
     }
 
     /// Checks if the given subject matches the glob pattern
@@ -66,7 +69,7 @@ impl GlobMatcher {
 
         // Try to get from cache first
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.lock_or_panic();
             if let Some(&result) = cache.get(&subject_lower) {
                 return result;
             }
@@ -116,7 +119,7 @@ impl GlobMatcher {
             // If we're here, we've exhausted all options and no match was found
             // Store in cache and return
             {
-                let mut cache = self.cache.lock().unwrap();
+                let mut cache = self.cache.lock_or_panic();
                 cache.put(subject_lower, false);
             }
             return false;
@@ -125,7 +128,7 @@ impl GlobMatcher {
         // If we reached here, we've consumed both strings entirely - it's a match
         // Store in cache and return
         {
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.lock_or_panic();
             cache.put(subject_lower, true);
         }
         true
@@ -134,11 +137,11 @@ impl GlobMatcher {
 
 impl Clone for GlobMatcher {
     fn clone(&self) -> Self {
-        // Create a new matcher with the same pattern
-        // This doesn't clone the cache since each instance maintains its own cache
+        // Share the cache across clones so that previously cached results are reused
+        // and we don't allocate a fresh empty `LruCache` on every clone.
         GlobMatcher {
             pattern_lower: self.pattern_lower.clone(),
-            cache: Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap())),
+            cache: Arc::clone(&self.cache),
         }
     }
 }
@@ -195,6 +198,20 @@ mod tests {
     }
 
     #[test]
+    fn test_debug_impl() {
+        let matcher = GlobMatcher::new("svc-*");
+        let dbg = format!("{matcher:?}");
+        assert!(dbg.contains("svc-*"));
+    }
+
+    #[test]
+    fn test_double_star_matches_everything() {
+        let matcher = GlobMatcher::new("**");
+        assert!(matcher.matches("anything"));
+        assert!(matcher.matches(""));
+    }
+
+    #[test]
     fn test_glob_caching() {
         let matcher = GlobMatcher::new("c*t?r*");
 
@@ -202,7 +219,7 @@ mod tests {
         assert!(matcher.matches("contoroller"));
 
         // Check the cache
-        let cache = matcher.cache.lock().unwrap();
+        let cache = matcher.cache.lock_or_panic();
         assert!(cache.contains(&"contoroller".to_string()));
         drop(cache);
 
@@ -210,7 +227,7 @@ mod tests {
         assert!(!matcher.matches("car"));
 
         // Verify both are in cache
-        let cache = matcher.cache.lock().unwrap();
+        let cache = matcher.cache.lock_or_panic();
         assert!(cache.contains(&"contoroller".to_string()));
         assert!(cache.contains(&"car".to_string()));
     }

@@ -45,8 +45,8 @@ impl DatadogSampler {
         }
     }
 
-    // used for tests
-    #[allow(dead_code)]
+    // Test-only helper that bypasses the agent-response parsing path.
+    #[cfg(test)]
     pub(crate) fn update_service_rates(&self, rates: impl IntoIterator<Item = (String, f64)>) {
         self.service_samplers.update_rates(rates);
     }
@@ -64,9 +64,11 @@ impl DatadogSampler {
         })
     }
 
-    /// Creates a callback for updating sampling rules from remote configuration
+    /// Creates a callback for updating sampling rules from remote configuration.
+    ///
     /// # Returns
-    /// A boxed function that takes a slice of SamplingRuleConfig and updates the sampling rules
+    ///
+    /// A boxed function that takes a slice of `SamplingRuleConfig` and updates the sampling rules.
     pub fn on_rules_update(&self) -> SamplingRulesCallback {
         let rules_sampler = self.rules.clone();
         Box::new(move |rule_configs: &[SamplingRuleConfig]| {
@@ -78,12 +80,9 @@ impl DatadogSampler {
 
     /// Computes a key for service-based sampling
     fn service_key(&self, span: &impl SpanProperties) -> String {
-        // Get service from span
-        let service = span.service().into_owned();
-        // Get env from span
-        let env = span.env();
-
-        format!("service:{service},env:{env}")
+        // `Cow<str>` implements `Display`, so no `into_owned()` allocation is needed here;
+        // `format!` will borrow directly from the span.
+        format!("service:{},env:{}", span.service(), span.env())
     }
 
     /// Finds the highest precedence rule that matches the span
@@ -98,40 +97,46 @@ impl DatadogSampler {
         used_agent_sampler: bool,
     ) -> SamplingMechanism {
         if let Some(rule) = rule {
+            // Provenance is set when rules come from remote configuration
+            // (see `on_rules_update`); locally configured rules use the default value.
             match rule.provenance.as_str() {
-                // Provenance will not be set for rules until we implement remote configuration
                 "customer" => mechanism::REMOTE_USER_TRACE_SAMPLING_RULE,
                 "dynamic" => mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE,
                 _ => mechanism::LOCAL_USER_TRACE_SAMPLING_RULE,
             }
         } else if used_agent_sampler {
-            // If using service-based sampling from the agent
             mechanism::AGENT_RATE_BY_SERVICE
         } else {
-            // Should not happen, but just in case
+            // Should not happen in practice: agent rates default to covering all services.
             mechanism::DEFAULT
         }
     }
 
-    /// Sample an incoming span based on the parent context and attributes
+    /// Sample an incoming span based on the parent context and attributes.
+    ///
+    /// If a parent sampling decision is present it is inherited; otherwise the root-span
+    /// sampling pipeline is run via [`Self::sample_root`].
     pub fn sample(&self, data: &impl SamplingData) -> DdSamplingResult {
         if let Some(is_parent_sampled) = data.is_parent_sampled() {
             let priority = match is_parent_sampled {
                 false => priority::AUTO_REJECT,
                 true => priority::AUTO_KEEP,
             };
-            // If a parent exists, inherit its sampling decision and trace state
             return DdSamplingResult {
                 priority,
                 trace_root_info: None,
             };
         }
 
-        // Apply rules-based sampling
         data.with_span_properties(self, |sampler, span| sampler.sample_root(data, span))
     }
 
-    /// Sample the root span of a trace
+    /// Sample the root span of a trace.
+    ///
+    /// Order of precedence:
+    /// 1. A matching local/remote sampling rule (with rate limiting on keep).
+    /// 2. Agent-provided per-service sampling rate.
+    /// 3. Default 100% keep.
     fn sample_root(
         &self,
         data: &impl SamplingData,
@@ -143,42 +148,32 @@ impl DatadogSampler {
         let mut rl_effective_rate: Option<f64> = None;
         let trace_id = data.trace_id();
 
-        // Find a matching rule
         let matching_rule = self.find_matching_rule(span);
 
-        // Apply sampling logic
         if let Some(rule) = &matching_rule {
-            // Get the sample rate from the rule
             sample_rate = rule.sample_rate;
 
-            // First check if the span should be sampled according to the rule
             if !rule.sample(trace_id) {
                 is_keep = false;
-            // If the span should be sampled, then apply rate limiting
             } else if !self.rate_limiter.is_allowed() {
+                // Rule kept the span, but the rate limiter dropped it.
                 is_keep = false;
                 rl_effective_rate = Some(self.rate_limiter.effective_rate());
             }
         } else {
-            // Try service-based sampling from Agent
             let service_key = self.service_key(span);
             if let Some(sampler) = self.service_samplers.get(&service_key) {
-                // Use the service-based sampler
                 used_agent_sampler = true;
-                sample_rate = sampler.sample_rate(); // Get rate for reporting
-
-                // Check if the service sampler decides to drop
+                sample_rate = sampler.sample_rate();
                 if !sampler.sample(trace_id) {
                     is_keep = false;
                 }
             } else {
-                // Default sample rate, should never happen in practice if agent provides rates
+                // No agent rate for this service yet; keep with rate 1.0 until rates arrive.
                 sample_rate = 1.0;
-                // Keep the default decision (RecordAndSample)
             }
         }
 
-        // Determine the sampling mechanism
         let mechanism = self.get_sampling_mechanism(matching_rule.as_ref(), used_agent_sampler);
 
         DdSamplingResult {
@@ -227,9 +222,7 @@ fn format_sampling_rate(rate: f64) -> Option<String> {
     let s = format!("{:.prec$}", rounded, prec = decimal_places);
     // Strip trailing zeros after decimal point
     Some(if s.contains('.') {
-        let s = s.trim_end_matches('0');
-        let s = s.trim_end_matches('.');
-        s.to_string()
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
     } else {
         s
     })
@@ -381,7 +374,7 @@ mod tests {
     }
 
     impl ValueLike for TestValue {
-        fn extract_float(&self) -> Option<f64> {
+        fn as_float(&self) -> Option<f64> {
             match self {
                 TestValue::I64(i) => Some(*i as f64),
                 TestValue::F64(f) => Some(*f),
@@ -389,7 +382,7 @@ mod tests {
             }
         }
 
-        fn extract_string(&self) -> Option<Cow<'_, str>> {
+        fn as_str(&self) -> Option<Cow<'_, str>> {
             match self {
                 TestValue::String(s) => Some(Cow::Borrowed(s.as_str())),
                 TestValue::I64(i) => Some(Cow::Owned(i.to_string())),
@@ -476,7 +469,7 @@ mod tests {
             self.attributes
                 .iter()
                 .find(|attr| attr.key() == SERVICE_NAME)
-                .and_then(|attr| attr.value().extract_string())
+                .and_then(|attr| attr.value().as_str())
                 .unwrap_or(Cow::Borrowed(""))
         }
 
@@ -484,7 +477,7 @@ mod tests {
             self.attributes
                 .iter()
                 .find(|attr| attr.key() == "datadog.env" || attr.key() == ENV_TAG)
-                .and_then(|attr| attr.value().extract_string())
+                .and_then(|attr| attr.value().as_str())
                 .unwrap_or(Cow::Borrowed(""))
         }
 
@@ -492,7 +485,7 @@ mod tests {
             self.attributes
                 .iter()
                 .find(|attr| attr.key() == RESOURCE_TAG)
-                .and_then(|attr| attr.value().extract_string())
+                .and_then(|attr| attr.value().as_str())
                 .unwrap_or(Cow::Borrowed(self.name))
         }
 
@@ -617,6 +610,20 @@ mod tests {
         ]
     }
 
+    // Helper function to create attributes with service plus arbitrary extra string tags.
+    fn create_attributes_with_extra(
+        service: &'static str,
+        resource: &'static str,
+        env: &'static str,
+        extra: &[(&'static str, &'static str)],
+    ) -> Vec<TestAttribute> {
+        let mut attrs = create_attributes_with_service(service.to_string(), resource, env);
+        for (k, v) in extra {
+            attrs.push(TestAttribute::new(*k, *v));
+        }
+        attrs
+    }
+
     // Helper function to create SamplingData for testing
     fn create_sampling_data<'a>(
         is_parent_sampled: Option<bool>,
@@ -710,17 +717,55 @@ mod tests {
 
     #[test]
     fn test_sampling_rule_matches() {
-        // Create a rule with specific service and name patterns
-        let _rule = SamplingRule::new(
+        // Rule constrained on service, operation name, and a required tag value.
+        // `TestSpan::operation_name()` returns "http.client.request" when the span
+        // carries an `http.request.method` attribute (see `get_operation_name`).
+        let rule = SamplingRule::new(
             0.5,
             Some("web-*".to_string()),
-            Some("http.*".to_string()),
+            Some("http.client.*".to_string()),
             None,
             Some(HashMap::from([(
                 "custom_key".to_string(),
                 "custom_value".to_string(),
             )])),
             None,
+        );
+
+        // Matching span.
+        let attrs = create_attributes_with_extra(
+            "web-foo",
+            "resource",
+            "production",
+            &[(HTTP_REQUEST_METHOD, "GET"), ("custom_key", "custom_value")],
+        );
+        let span = TestSpan::new("span-name", attrs.as_slice());
+        assert!(rule.matches(&span), "rule should match qualifying span");
+
+        // Non-matching service.
+        let attrs_bad_service = create_attributes_with_extra(
+            "api-foo",
+            "resource",
+            "production",
+            &[(HTTP_REQUEST_METHOD, "GET"), ("custom_key", "custom_value")],
+        );
+        let span_bad_service = TestSpan::new("span-name", attrs_bad_service.as_slice());
+        assert!(
+            !rule.matches(&span_bad_service),
+            "rule should not match different service"
+        );
+
+        // Missing required tag.
+        let attrs_no_tag = create_attributes_with_extra(
+            "web-foo",
+            "resource",
+            "production",
+            &[(HTTP_REQUEST_METHOD, "GET")],
+        );
+        let span_no_tag = TestSpan::new("span-name", attrs_no_tag.as_slice());
+        assert!(
+            !rule.matches(&span_no_tag),
+            "rule should not match without required tag"
         );
     }
 
@@ -1454,5 +1499,51 @@ mod tests {
         // Test with empty rules array
         callback(&[]);
         assert_eq!(sampler.rules.len(), 0); // Should now have no rules
+    }
+
+    #[test]
+    fn test_on_agent_response_updates_service_rates() {
+        let sampler = DatadogSampler::new(vec![], 100);
+        let callback = sampler.on_agent_response();
+
+        // Valid JSON with rate_by_service
+        let json = r#"{"rate_by_service":{"service:web,env:prod":0.5}}"#;
+        callback(json);
+        assert!(sampler
+            .service_samplers
+            .contains_key("service:web,env:prod"));
+
+        // Invalid JSON — should not panic
+        callback("not json");
+
+        // Missing rate_by_service — should not panic
+        callback(r#"{"other_field":1}"#);
+    }
+
+    #[test]
+    fn test_rate_limiter_drop_branch() {
+        // Rule with sample_rate=1.0 keeps everything, but rate_limit=0 then drops
+        // every kept span via the rate limiter, exercising the drop branch.
+        let always_keep = SamplingRule::new(1.0, None, None, None, None, None);
+        let sampler = DatadogSampler::new(vec![always_keep], 0);
+        let trace_id = TestTraceId::from_bytes([0u8; 16]);
+        let attributes = create_attributes("res", "prod");
+        let data = create_sampling_data(None, &trace_id, "op", &attributes);
+        let decision = sampler.sample(&data);
+        assert_eq!(
+            decision.priority,
+            priority::USER_REJECT,
+            "rule kept span, rate_limit=0 should then drop it"
+        );
+    }
+
+    #[test]
+    fn test_get_trace_root_sampling_info() {
+        let sampler = DatadogSampler::new(vec![], 100);
+        let trace_id = TestTraceId::from_bytes([0u8; 16]);
+        let attributes = create_attributes("res", "prod");
+        let data = create_sampling_data(None, &trace_id, "op", &attributes);
+        let decision = sampler.sample(&data);
+        let _info = decision.get_trace_root_sampling_info();
     }
 }

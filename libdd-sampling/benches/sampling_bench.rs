@@ -338,6 +338,25 @@ fn make_configs() -> Vec<BenchConfig> {
             is_parent_sampled: Some(false),
             span: make_span("http.request", "my-service", "GET /api/v1/users"),
         },
+        // 17. Unicode service name with uppercase characters — exercises the glob matcher's
+        // Unicode fallback path (case-insensitive Unicode lowercasing).
+        BenchConfig {
+            name: "unicode_uppercase_service_rule",
+            sampler: DatadogSampler::new(
+                vec![SamplingRule::new(
+                    1.0,
+                    Some("caf\u{00e9}-*".into()),
+                    None,
+                    None,
+                    None,
+                    None,
+                )],
+                100,
+            ),
+            is_parent_sampled: None,
+            // "CAFÉ-PAYMENT" — uppercase including Unicode 'É' (U+00C9), must match "café-*".
+            span: make_span("http.request", "CAF\u{00c9}-PAYMENT", "GET /api/v1/users"),
+        },
     ]
 }
 

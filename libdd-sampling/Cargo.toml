@@ -26,6 +26,7 @@ required-features = ["v04_span"]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 lru = "0.16.3"
+libdd-common = { path = "../libdd-common", version = "4.0.0" }
 libdd-trace-utils = { path = "../libdd-trace-utils", version = "3.0.1", optional = true }
 
 [features]
@@ -34,4 +35,3 @@ v04_span = ["dep:libdd-trace-utils"]
 [dev-dependencies]
 criterion = "0.5"
 libdd-common = { path = "../libdd-common", version = "4.0.0", features = ["bench-utils"] }
-libdd-trace-utils = { path = "../libdd-trace-utils", version = "3.0.1" }

@@ -142,6 +142,11 @@ impl SamplingMechanism {
     }
 
     /// Returns the string representation of the sampling mechanism.
+    ///
+    /// The format is `"-N"` (e.g. `"-4"` for manual sampling). The leading `-` comes from the
+    /// propagation tags RFC, which initially had a prefix component before the `-`; that prefix
+    /// was dropped, but the `-` was retained as-is for backwards compatibility with existing
+    /// existing tracers.
     pub fn to_cow(self) -> Cow<'static, str> {
         match self {
             mechanism::DEFAULT => Cow::Borrowed("-0"),

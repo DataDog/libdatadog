@@ -24,7 +24,7 @@ use std::borrow::Cow;
 ///     }
 /// }
 /// ```
-pub trait TraceIdLike: PartialEq + Eq {
+pub trait TraceIdLike: Eq {
     /// Converts the trace ID to a 128-bit unsigned integer.
     ///
     /// The conversion should be deterministic: the same trace ID must always produce
@@ -63,15 +63,11 @@ impl<T: AttributeLike> AttributeLike for &T {
 ///
 /// Provides methods for converting attribute values to common types used in sampling logic.
 pub trait ValueLike {
-    /// Extracts a float value if the value can be represented as `f64`.
-    ///
-    /// Returns `Some(f64)` for numeric types, `None` otherwise.
-    fn extract_float(&self) -> Option<f64>;
+    /// Returns the value as `f64`, if representable as a float.
+    fn as_float(&self) -> Option<f64>;
 
-    /// Extracts a string representation of the value.
-    ///
-    /// Returns `Some(Cow<str>)` for types that can be converted to strings, `None` otherwise.
-    fn extract_string(&self) -> Option<Cow<'_, str>>;
+    /// Returns the value as a string, if representable.
+    fn as_str(&self) -> Option<Cow<'_, str>>;
 }
 
 /// A trait for creating sampling attributes.

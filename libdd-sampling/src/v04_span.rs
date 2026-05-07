@@ -68,14 +68,14 @@ pub enum SpanAttributeValue<'a> {
 }
 
 impl ValueLike for SpanAttributeValue<'_> {
-    fn extract_float(&self) -> Option<f64> {
+    fn as_float(&self) -> Option<f64> {
         match self {
             Self::Metric(f) => Some(*f),
             Self::Meta(_) => None,
         }
     }
 
-    fn extract_string(&self) -> Option<Cow<'_, str>> {
+    fn as_str(&self) -> Option<Cow<'_, str>> {
         match self {
             Self::Meta(s) => Some(Cow::Borrowed(s)),
             Self::Metric(f) => Some(Cow::Owned(f.to_string())),
@@ -280,21 +280,21 @@ mod tests {
     #[test]
     fn test_span_attribute_value_meta() {
         let val = SpanAttributeValue::Meta("hello");
-        assert_eq!(val.extract_float(), None);
-        assert_eq!(val.extract_string(), Some(Cow::Borrowed("hello")));
+        assert_eq!(val.as_float(), None);
+        assert_eq!(val.as_str(), Some(Cow::Borrowed("hello")));
     }
 
     #[test]
     fn test_span_attribute_value_metric() {
         let val = SpanAttributeValue::Metric(1.5);
-        assert_eq!(val.extract_float(), Some(1.5));
-        assert_eq!(val.extract_string(), Some(Cow::Owned("1.5".to_string())));
+        assert_eq!(val.as_float(), Some(1.5));
+        assert_eq!(val.as_str(), Some(Cow::Owned("1.5".to_string())));
     }
 
     #[test]
     fn test_span_attribute_value_metric_as_string() {
         let val = SpanAttributeValue::Metric(1.0);
-        assert_eq!(val.extract_string(), Some(Cow::Owned("1".to_string())));
+        assert_eq!(val.as_str(), Some(Cow::Owned("1".to_string())));
     }
 
     #[test]
@@ -304,11 +304,8 @@ mod tests {
             value: SpanAttributeValue::Meta("my-service"),
         };
         assert_eq!(attr.key(), "service.name");
-        assert_eq!(
-            attr.value().extract_string(),
-            Some(Cow::Borrowed("my-service"))
-        );
-        assert_eq!(attr.value().extract_float(), None);
+        assert_eq!(attr.value().as_str(), Some(Cow::Borrowed("my-service")));
+        assert_eq!(attr.value().as_float(), None);
     }
 
     #[test]
@@ -335,10 +332,7 @@ mod tests {
         assert_eq!(props.attributes().count(), 2);
 
         let env_attr = props.attributes().find(|a| a.key() == "env").unwrap();
-        assert_eq!(
-            env_attr.value().extract_string(),
-            Some(Cow::Borrowed("staging"))
-        );
+        assert_eq!(env_attr.value().as_str(), Some(Cow::Borrowed("staging")));
     }
 
     #[test]
@@ -370,7 +364,7 @@ mod tests {
             .attributes()
             .find(|a| a.key() == "_sampling_priority_v1")
             .unwrap();
-        assert_eq!(attr.value().extract_float(), Some(1.0));
+        assert_eq!(attr.value().as_float(), Some(1.0));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::ops::Deref;
 use std::str::FromStr;
 
 /// Configuration for a single sampling rule
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SamplingRuleConfig {
     /// The sample rate to apply (0.0-1.0)
     pub sample_rate: f64,
@@ -34,6 +34,21 @@ pub struct SamplingRuleConfig {
     /// during conversion from the public `SamplingRuleConfig` type.
     #[serde(default = "default_provenance")]
     pub provenance: String,
+}
+
+impl Default for SamplingRuleConfig {
+    fn default() -> Self {
+        // Keep `Default` in sync with the serde defaults so that constructing a config
+        // with `..Default::default()` matches what deserialization would produce.
+        Self {
+            sample_rate: 0.0,
+            service: None,
+            name: None,
+            resource: None,
+            tags: HashMap::new(),
+            provenance: default_provenance(),
+        }
+    }
 }
 
 impl Display for SamplingRuleConfig {
@@ -102,8 +117,17 @@ mod tests {
         assert!(config.name.is_none());
         assert!(config.resource.is_none());
         assert!(config.tags.is_empty());
-        // derive(Default) gives "" for String; "default" is only the serde deserialization default
-        assert_eq!(config.provenance, "");
+        // `Default` matches the serde default for `provenance`.
+        assert_eq!(config.provenance, "default");
+    }
+
+    #[test]
+    fn test_sampling_rule_config_default_matches_serde_default() {
+        // Constructing from an empty-but-valid JSON object must yield the same value
+        // as `Default::default()`.
+        let from_serde: SamplingRuleConfig =
+            serde_json::from_str(r#"{"sample_rate": 0.0}"#).unwrap();
+        assert_eq!(from_serde, SamplingRuleConfig::default());
     }
 
     #[test]

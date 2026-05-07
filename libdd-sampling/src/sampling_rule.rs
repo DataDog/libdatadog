@@ -68,12 +68,12 @@ impl SamplingRule {
         let service_matcher = service.as_deref().and_then(matcher_from_rule);
         let resource_matcher = resource.as_deref().and_then(matcher_from_rule);
 
-        // Create matchers for tag values
-        let tag_map = tags.clone().unwrap_or_default();
+        // Create matchers for tag values. `tags` is consumed here so no clone is needed.
+        let tag_map = tags.unwrap_or_default();
         let mut tag_matchers = HashMap::with_capacity(tag_map.len());
-        for (key, value) in &tag_map {
-            if let Some(matcher) = matcher_from_rule(value) {
-                tag_matchers.insert(key.clone(), matcher);
+        for (key, value) in tag_map {
+            if let Some(matcher) = matcher_from_rule(&value) {
+                tag_matchers.insert(key, matcher);
             }
         }
 
@@ -195,12 +195,14 @@ impl SamplingRule {
     // Helper method to match attribute values considering different value types
     fn match_attribute_value(&self, value: &impl ValueLike, matcher: &GlobMatcher) -> Option<bool> {
         // Floating point values are handled with special rules
-        if let Some(float_val) = value.extract_float() {
-            // Check if the float has a non-zero decimal part
-            let has_decimal = float_val != (float_val as i64) as f64;
+        if let Some(float_val) = value.as_float() {
+            // A float is treated as an integer iff it has no fractional part *and* it is
+            // finite. `fract()` is robust for values outside the i64 range, unlike
+            // `(float_val as i64) as f64` which silently saturates / produces garbage.
+            let is_integer = float_val.is_finite() && float_val.fract() == 0.0;
 
             // For non-integer floats, only match if it's a wildcard pattern
-            if has_decimal {
+            if !is_integer {
                 // All '*' pattern returns true, any other pattern returns false
                 return Some(matcher.pattern().chars().all(|c| c == '*'));
             }
@@ -211,7 +213,7 @@ impl SamplingRule {
 
         // For non-float values, use normal matching
         value
-            .extract_string()
+            .as_str()
             .map(|string_value| matcher.matches(&string_value))
     }
 
@@ -222,10 +224,14 @@ impl SamplingRule {
     }
 }
 
-/// Represents a priority for sampling rules
+/// Represents a priority for sampling rules.
+///
+/// TODO: this enum is currently only exercised by tests and `From<&str>`. It will become
+/// actively used once Remote Configuration drives `SamplingRule::provenance` (which today
+/// is a `String`). The `dead_code` allow can go away once that wiring lands.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum RuleProvenance {
+pub(crate) enum RuleProvenance {
     Customer = 0,
     Dynamic = 1,
     Default = 2,
@@ -245,11 +251,11 @@ impl From<&str> for RuleProvenance {
 struct ValueI64(i64);
 
 impl ValueLike for ValueI64 {
-    fn extract_float(&self) -> Option<f64> {
+    fn as_float(&self) -> Option<f64> {
         Some(self.0 as f64)
     }
 
-    fn extract_string(&self) -> Option<std::borrow::Cow<'_, str>> {
+    fn as_str(&self) -> Option<std::borrow::Cow<'_, str>> {
         Some(std::borrow::Cow::Owned(self.0.to_string()))
     }
 }
@@ -283,14 +289,14 @@ mod tests {
     }
 
     impl crate::types::ValueLike for TestValue {
-        fn extract_float(&self) -> Option<f64> {
+        fn as_float(&self) -> Option<f64> {
             if self.is_metric {
                 self.value.parse().ok()
             } else {
                 None
             }
         }
-        fn extract_string(&self) -> Option<Cow<'_, str>> {
+        fn as_str(&self) -> Option<Cow<'_, str>> {
             Some(Cow::Borrowed(self.value))
         }
     }
@@ -588,6 +594,20 @@ mod tests {
                 is_metric: true,
             },
         }];
+        assert!(!rule.matches(&span));
+    }
+
+    #[test]
+    fn test_resource_mismatch_returns_false() {
+        let rule = SamplingRule::new(
+            1.0,
+            None,
+            Some("specific-resource".into()),
+            None,
+            None,
+            None,
+        );
+        let span = make_span("op", "svc", "other-resource");
         assert!(!rule.matches(&span));
     }
 

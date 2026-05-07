@@ -3,6 +3,8 @@
 
 use std::sync::{Arc, RwLock};
 
+use libdd_common::RwLockExt;
+
 use super::sampling_rule::SamplingRule;
 
 /// Thread-safe container for sampling rules
@@ -20,7 +22,7 @@ impl RulesSampler {
 
     /// Updates the rules with a new set
     pub fn update_rules(&self, new_rules: Vec<SamplingRule>) {
-        *self.inner.write().unwrap() = new_rules;
+        *self.inner.write_or_panic() = new_rules;
     }
 
     /// Finds the first matching rule for a span
@@ -29,21 +31,20 @@ impl RulesSampler {
         F: Fn(&SamplingRule) -> bool,
     {
         self.inner
-            .read()
-            .unwrap()
+            .read_or_panic()
             .iter()
             .find(|rule| matcher(rule))
             .cloned()
     }
 
-    // used for testing purposes
-    #[allow(dead_code)]
+    // Test-only inspection helpers.
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
-        self.inner.read().unwrap().is_empty()
+        self.inner.read_or_panic().is_empty()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.inner.read().unwrap().len()
+        self.inner.read_or_panic().len()
     }
 }

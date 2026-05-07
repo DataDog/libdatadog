@@ -10,7 +10,7 @@ use anyhow::Context;
 use http::uri;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
@@ -87,6 +87,51 @@ impl<T> MutexExt<T> for Mutex<T> {
     fn lock_or_panic(&self) -> MutexGuard<'_, T> {
         #[allow(clippy::unwrap_used)]
         self.lock().unwrap()
+    }
+}
+
+/// Extension trait for `RwLock` to provide methods that acquire read/write locks, panicking if
+/// the lock is poisoned.
+///
+/// Mirrors [`MutexExt`] for `RwLock` so callers avoid `#[allow(clippy::unwrap_used)]` at each
+/// lock site.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::RwLockExt;
+/// use std::sync::{Arc, RwLock};
+///
+/// let data = Arc::new(RwLock::new(5));
+/// let data_clone = Arc::clone(&data);
+///
+/// std::thread::spawn(move || {
+///     let mut num = data_clone.write_or_panic();
+///     *num += 1;
+/// })
+/// .join()
+/// .expect("Thread panicked");
+///
+/// assert_eq!(*data.read_or_panic(), 6);
+/// ```
+pub trait RwLockExt<T> {
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T>;
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T>;
+}
+
+impl<T> RwLockExt<T> for RwLock<T> {
+    #[inline(always)]
+    #[track_caller]
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.read().unwrap()
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.write().unwrap()
     }
 }
 
