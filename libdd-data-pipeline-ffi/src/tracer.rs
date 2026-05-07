@@ -28,13 +28,12 @@ use std::ptr::NonNull;
 /// Returns an error if the slice is not valid UTF-8.
 #[inline]
 fn charslice_to_bytesstring(s: CharSlice) -> Result<BytesString, Box<ExporterError>> {
-    match BytesString::from_slice(s.as_bytes()) {
-        Ok(bs) => Ok(bs),
-        Err(_) => Err(Box::new(ExporterError::new(
+    BytesString::from_slice(s.as_bytes()).map_err(|_| {
+        Box::new(ExporterError::new(
             ErrorCode::InvalidInput,
             &ErrorCode::InvalidInput.to_string(),
-        ))),
-    }
+        ))
+    })
 }
 
 // ---------------------------------------------------------------------------
