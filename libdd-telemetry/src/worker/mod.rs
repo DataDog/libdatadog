@@ -12,7 +12,7 @@ use crate::{
 };
 
 use async_trait::async_trait;
-use libdd_common::{http_common, tag::Tag};
+use libdd_common::{http as dd_http, tag::Tag};
 use libdd_shared_runtime::Worker;
 
 use std::iter::Sum;
@@ -746,7 +746,7 @@ impl TelemetryWorker {
         Ok(())
     }
 
-    fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http_common::HttpRequest> {
+    fn build_request(&self, payload: &data::Payload) -> anyhow::Result<dd_http::HttpRequest> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
@@ -789,14 +789,14 @@ impl TelemetryWorker {
             self.config.root_session_id.as_deref(),
         );
 
-        let body = http_common::Body::from(serialize::serialize(&tel)?);
+        let body = dd_http::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
     }
 
     async fn send_request(
         &self,
-        req: http_common::HttpRequest,
-    ) -> Result<http_common::HttpResponse, http_common::Error> {
+        req: dd_http::HttpRequest,
+    ) -> Result<dd_http::HttpResponse, dd_http::Error> {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
@@ -815,7 +815,7 @@ impl TelemetryWorker {
                     worker.runtime_id = %self.runtime_id,
                     "Telemetry request cancelled"
                 );
-                Err(http_common::Error::Other(anyhow::anyhow!("Request cancelled")))
+                Err(dd_http::Error::Other(anyhow::anyhow!("Request cancelled")))
             },
             _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
                 debug!(
@@ -823,7 +823,7 @@ impl TelemetryWorker {
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
                 );
-                Err(http_common::Error::Other(anyhow::anyhow!("Request timed out")))
+                Err(dd_http::Error::Other(anyhow::anyhow!("Request timed out")))
             },
             r = self.client.request(req) => {
                 match r {
@@ -1284,7 +1284,7 @@ mod tests {
         DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
     };
     use crate::worker::{TelemetryWorker, TelemetryWorkerBuilder, TelemetryWorkerHandle};
-    use libdd_common::{http_common, Endpoint};
+    use libdd_common::{http as dd_http, Endpoint};
     use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
@@ -1384,7 +1384,7 @@ mod tests {
 
     #[test]
     fn telemetry_http_omits_session_family_without_valid_session_id() {
-        let assert_no_session_headers = |req: &http_common::HttpRequest| {
+        let assert_no_session_headers = |req: &dd_http::HttpRequest| {
             assert!(req.headers().get(DD_SESSION_ID).is_none());
             assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
             assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());

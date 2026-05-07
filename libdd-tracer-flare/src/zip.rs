@@ -4,7 +4,7 @@
 use bytes::Bytes;
 use datadog_remote_config::config::agent_task::AgentTaskFile;
 use http::Method;
-use libdd_common::{http_common, Endpoint, MutexExt};
+use libdd_common::{http as dd_http, Endpoint, MutexExt};
 use std::{
     collections::HashMap,
     fs::File,
@@ -425,17 +425,17 @@ impl TracerFlareManager {
             req = req.header(key, value);
         }
         let req = req
-            .body(http_common::Body::from_bytes(payload))
+            .body(dd_http::Body::from_bytes(payload))
             .map_err(|_| {
                 FlareError::SendError("Unable to had the body to the request".to_owned())
             })?;
 
-        let req = http_common::new_default_client().request(req);
+        let req = dd_http::new_default_client().request(req);
 
         match tokio::time::timeout(Duration::from_millis(target.timeout_ms), req).await {
             Ok(resp) => match resp {
                 Ok(body) => {
-                    let response = http_common::into_response(body);
+                    let response = dd_http::into_response(body);
                     let status = response.status();
                     if status.is_success() {
                         Ok(())

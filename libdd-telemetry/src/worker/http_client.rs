@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use http_body_util::BodyExt;
-use libdd_common::{http_common, HttpRequestBuilder};
+use libdd_common::{http as dd_http, HttpRequestBuilder};
 use std::{
     fs::OpenOptions,
     future::Future,
@@ -57,10 +57,10 @@ pub(crate) fn add_instrumentation_session_headers(
 }
 
 pub type ResponseFuture =
-    Pin<Box<dyn Future<Output = Result<http_common::HttpResponse, http_common::Error>> + Send>>;
+    Pin<Box<dyn Future<Output = Result<dd_http::HttpResponse, dd_http::Error>> + Send>>;
 
 pub trait HttpClient {
-    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture;
+    fn request(&self, req: dd_http::HttpRequest) -> ResponseFuture;
 }
 
 pub fn request_builder(c: &Config) -> anyhow::Result<HttpRequestBuilder> {
@@ -128,7 +128,7 @@ pub fn from_config(c: &Config) -> Box<dyn HttpClient + Sync + Send> {
         }
     };
     Box::new(HyperClient {
-        inner: http_common::new_client_periodic(),
+        inner: dd_http::new_client_periodic(),
     })
 }
 
@@ -137,12 +137,12 @@ pub struct HyperClient {
 }
 
 impl HttpClient for HyperClient {
-    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture {
+    fn request(&self, req: dd_http::HttpRequest) -> ResponseFuture {
         let resp = self.inner.request(req);
         Box::pin(async move {
             match resp.await {
-                Ok(response) => Ok(http_common::into_response(response)),
-                Err(e) => Err(http_common::Error::Client(e.into())),
+                Ok(response) => Ok(dd_http::into_response(response)),
+                Err(e) => Err(dd_http::Error::Client(e.into())),
             }
         })
     }
@@ -154,7 +154,7 @@ pub struct MockClient {
 }
 
 impl HttpClient for MockClient {
-    fn request(&self, req: http_common::HttpRequest) -> ResponseFuture {
+    fn request(&self, req: dd_http::HttpRequest) -> ResponseFuture {
         let s = self.clone();
         Box::pin(async move {
             debug!("MockClient writing request to file");
@@ -175,13 +175,13 @@ impl HttpClient for MockClient {
                             error = %e,
                             "Failed to write to mock file"
                         );
-                        return Err(http_common::Error::from(e));
+                        return Err(dd_http::Error::from(e));
                     }
                 }
             }
 
             debug!(http.status = 202, "MockClient returning success response");
-            http_common::empty_response(http::Response::builder().status(202))
+            dd_http::empty_response(http::Response::builder().status(202))
         })
     }
 }
@@ -201,7 +201,7 @@ mod tests {
         };
         c.request(
             HttpRequestBuilder::new()
-                .body(http_common::Body::from("hello world\n"))
+                .body(dd_http::Body::from("hello world\n"))
                 .unwrap(),
         )
         .await

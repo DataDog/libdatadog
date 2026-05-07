@@ -9,14 +9,14 @@ mod mini_agent {
     use bytes::{Buf, Bytes};
     use http_body_util::BodyExt;
     use libdd_capabilities::HttpClientTrait;
-    use libdd_common::http_common;
+    use libdd_common::http as dd_http;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb;
     use std::io::Write;
     use tracing::debug;
 
     pub async fn get_stats_from_request_body(
-        body: http_common::Body,
+        body: dd_http::Body,
     ) -> anyhow::Result<pb::ClientStatsPayload> {
         let buffer = BodyExt::collect(body).await?.aggregate();
 
@@ -96,7 +96,7 @@ mod mini_agent {
 mod mini_agent_tests {
     use crate::stats_utils;
     use http::Request;
-    use libdd_common::http_common;
+    use libdd_common::http as dd_http;
     use libdd_trace_protobuf::pb::{
         ClientGroupedStats, ClientStatsBucket, ClientStatsPayload, Trilean::NotSet,
     };
@@ -157,7 +157,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(http_common::Body::from(bytes))
+            .body(dd_http::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;
@@ -238,7 +238,7 @@ mod mini_agent_tests {
 
         let bytes = rmp_serde::to_vec(&v).unwrap();
         let request = Request::builder()
-            .body(http_common::Body::from(bytes))
+            .body(dd_http::Body::from(bytes))
             .unwrap();
 
         let res = stats_utils::get_stats_from_request_body(request.into_body()).await;

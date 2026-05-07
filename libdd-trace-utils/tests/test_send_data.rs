@@ -9,7 +9,7 @@ mod tracing_integration_tests {
     use libdd_capabilities_impl::{HttpClientTrait, NativeCapabilities};
     #[cfg(target_os = "linux")]
     use libdd_common::connector::uds::socket_path_to_uri;
-    use libdd_common::{http_common, Endpoint};
+    use libdd_common::{http as dd_http, Endpoint};
     use libdd_tinybytes::{Bytes, BytesString};
     use libdd_trace_utils::send_data::SendData;
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
@@ -360,7 +360,7 @@ mod tracing_integration_tests {
             .get_uri_for_endpoint("v0.7/config", Some(snapshot_name))
             .await;
 
-        let res = http_common::new_default_client()
+        let res = dd_http::new_default_client()
             .get(uri)
             .await
             .expect("Failed to get remote config data from test agent");

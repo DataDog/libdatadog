@@ -11,7 +11,7 @@ use http::uri::PathAndQuery;
 use http::uri::Scheme;
 use http::StatusCode;
 use http_body_util::BodyExt;
-use libdd_common::{http_common, Endpoint, MutexExt};
+use libdd_common::{http as dd_http, Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     TargetFileHash, TargetFileMeta,
@@ -348,10 +348,10 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 http::header::CONTENT_TYPE,
                 libdd_common::header::APPLICATION_JSON,
             )
-            .body(http_common::Body::from(serde_json::to_string(&config_req)?))?;
+            .body(dd_http::Body::from(serde_json::to_string(&config_req)?))?;
         let response = tokio::time::timeout(
             Duration::from_millis(self.state.endpoint.timeout_ms),
-            http_common::new_default_client().request(req),
+            dd_http::new_default_client().request(req),
         )
         .await
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
@@ -696,7 +696,7 @@ pub mod tests {
         );
         let mut opaque_state = ConfigClientState::default();
 
-        let mut response = http_common::empty_response(Response::builder()).unwrap();
+        let mut response = dd_http::empty_response(Response::builder()).unwrap();
         *response.status_mut() = StatusCode::NOT_FOUND;
         *server.next_response.lock().unwrap() = Some(response);
 

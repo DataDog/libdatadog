@@ -700,7 +700,7 @@ mod tests {
         test_utils::{create_test_no_alloc_span, create_test_span},
     };
     use http::Request;
-    use libdd_common::{http_common, Endpoint};
+    use libdd_common::{http as dd_http, Endpoint};
     use serde_json::json;
 
     fn find_index_in_dict(dict: &SharedDictBytes, value: &str) -> Option<u32> {
@@ -813,7 +813,7 @@ mod tests {
             )]],
         );
         let bytes = rmp_serde::to_vec(&data).unwrap();
-        let res = get_v05_traces_from_request_body(http_common::Body::from(bytes)).await;
+        let res = get_v05_traces_from_request_body(dd_http::Body::from(bytes)).await;
         assert!(res.is_ok());
         let (_, traces) = res.unwrap();
         let span = traces[0][0].clone();
@@ -913,7 +913,7 @@ mod tests {
         for (trace_input, output) in pairs {
             let bytes = rmp_serde::to_vec(&vec![&trace_input]).unwrap();
             let request = Request::builder()
-                .body(http_common::Body::from(bytes))
+                .body(dd_http::Body::from(bytes))
                 .unwrap();
             let res = get_traces_from_request_body(request.into_body()).await;
             assert!(res.is_ok());
@@ -973,7 +973,7 @@ mod tests {
 
         let bytes = rmp_serde::to_vec(&trace_input).unwrap();
         let request = Request::builder()
-            .body(http_common::Body::from(bytes))
+            .body(dd_http::Body::from(bytes))
             .unwrap();
 
         let res = get_traces_from_request_body(request.into_body()).await;
