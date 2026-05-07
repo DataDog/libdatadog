@@ -344,25 +344,27 @@ mod tests {
         CharSlice::from_bytes(s.as_bytes())
     }
 
-    unsafe fn make_minimal_span() -> Box<TracerSpan> {
-        let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
-        let out = NonNull::new(handle.as_mut_ptr()).unwrap();
-        let err = ddog_tracer_span_new(
-            out,
-            cs("svc"),
-            cs("op"),
-            cs("res"),
-            cs(""),
-            1,
-            0,
-            1,
-            0,
-            0,
-            0,
-            0,
-        );
-        assert!(err.is_none());
-        handle.assume_init()
+    fn make_minimal_span() -> Box<TracerSpan> {
+        unsafe {
+            let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            let err = ddog_tracer_span_new(
+                out,
+                cs("svc"),
+                cs("op"),
+                cs("res"),
+                cs(""),
+                1,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+            );
+            assert!(err.is_none());
+            handle.assume_init()
+        }
     }
 
     #[test]
@@ -499,12 +501,14 @@ mod tests {
 
     // -- TracerTraceChunks tests --------------------------------------------
 
-    unsafe fn make_chunks(capacity: usize) -> Box<TracerTraceChunks> {
-        let mut handle = MaybeUninit::<Box<TracerTraceChunks>>::uninit();
-        let out = NonNull::new(handle.as_mut_ptr()).unwrap();
-        let err = ddog_tracer_trace_chunks_new(capacity, out);
-        assert!(err.is_none());
-        handle.assume_init()
+    fn make_chunks(capacity: usize) -> Box<TracerTraceChunks> {
+        unsafe {
+            let mut handle = MaybeUninit::<Box<TracerTraceChunks>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            let err = ddog_tracer_trace_chunks_new(capacity, out);
+            assert!(err.is_none());
+            handle.assume_init()
+        }
     }
 
     #[test]
