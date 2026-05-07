@@ -409,6 +409,10 @@ fn walk_thread_stack(
         });
 
         if let Some(module) = module {
+            frame.relative_address = Some(format!(
+                "{:x}",
+                native_frame.AddrPC.Offset - module.base_address
+            ));
             frame.module_base_address = Some(format!("{:x}", module.base_address));
             frame.symbol_address = Some(format!(
                 "{:x}",
@@ -417,7 +421,7 @@ fn walk_thread_stack(
             frame.path.clone_from(&module.path);
 
             if let Some(pdb_info) = &module.pdb_info {
-                frame.build_id = Some(format!("{:x}{:x}", pdb_info.signature, pdb_info.age));
+                frame.build_id = Some(format!("{:X}{:x}", pdb_info.signature, pdb_info.age));
                 frame.build_id_type = Some(BuildIdType::PDB);
                 frame.file_type = Some(FileType::PE);
             }
@@ -572,13 +576,13 @@ struct Guid {
     pub data4: [u8; 8],
 }
 
-impl fmt::LowerHex for Guid {
+impl fmt::UpperHex for Guid {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             // Guid format but without dashes
             // https://devblogs.microsoft.com/oldnewthing/20220928-00/?p=107221
-            "{:08x}{:04x}{:04x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            "{:08X}{:04X}{:04X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
             self.data1,
             self.data2,
             self.data3,
