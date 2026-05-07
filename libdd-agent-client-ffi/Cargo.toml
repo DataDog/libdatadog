@@ -1,0 +1,44 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-agent-client-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "C ABI for libdd-agent-client"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+bench = false
+
+[features]
+# Mirror libdd-agent-client's features. The default pulls in HTTPS over the
+# reqwest backend, matching the agent-client default. Backend selection and
+# HTTPS support are forwarded to the agent-client crate.
+default = ["https", "reqwest-backend", "cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+https = ["libdd-agent-client/https"]
+reqwest-backend = ["libdd-agent-client/reqwest-backend"]
+hyper-backend = ["libdd-agent-client/hyper-backend"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+bytes = "1.4"
+serde_json = "1.0"
+libdd-agent-client = { path = "../libdd-agent-client", default-features = false }
+# The shared-types dep: we reuse DdogHttpClientError, DdogHttpHeader, the
+# RetryConfig and MultipartPart handles, etc.
+libdd-http-client = { path = "../libdd-http-client", default-features = false, features = ["https", "reqwest-backend"] }
+libdd-http-client-ffi = { path = "../libdd-http-client-ffi", default-features = false }
+libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+
+[dev-dependencies]
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+httpmock = "0.8.0-alpha.1"

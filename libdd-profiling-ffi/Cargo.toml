@@ -36,6 +36,14 @@ datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
 # http-client-ffi pulls in shared-runtime-ffi: send_blocking takes a
 # ddog_SharedRuntime built via shared-runtime-ffi, so the two travel together.
 libdd-http-client-ffi = ["dep:libdd-http-client-ffi", "dep:libdd-shared-runtime-ffi"]
+# agent-client-ffi reuses shared types from http-client-ffi
+# (DdogHttpClientError, DdogHttpHeader, RetryConfig, MultipartPart) and
+# also drives blocking sends through shared-runtime, so we pull both in.
+libdd-agent-client-ffi = [
+  "dep:libdd-agent-client-ffi",
+  "dep:libdd-http-client-ffi",
+  "dep:libdd-shared-runtime-ffi",
+]
 
 [build-dependencies]
 build_common = { path = "../build-common" }
@@ -64,3 +72,4 @@ tokio-util = "0.7.1"
 datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }
 libdd-http-client-ffi = { path = "../libdd-http-client-ffi", default-features = false, optional = true }
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true, features = ["catch_panic"] }
+libdd-agent-client-ffi = { path = "../libdd-agent-client-ffi", default-features = false, optional = true }

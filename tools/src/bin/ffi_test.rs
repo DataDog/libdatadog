@@ -116,6 +116,7 @@ const FFI_FEATURES: &[&str] = &[
     "ddsketch",
     "ffe",
     "http-client",
+    "agent-client",
 ];
 
 fn skip_examples() -> &'static HashMap<&'static str, &'static str> {

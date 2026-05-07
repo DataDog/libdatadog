@@ -76,6 +76,8 @@ pub fn main() {
         f.push("datadog-ffe-ffi".to_string());
         #[cfg(feature = "http-client")]
         f.push("libdd-http-client-ffi".to_string());
+        #[cfg(feature = "agent-client")]
+        f.push("libdd-agent-client-ffi".to_string());
         f
     };
 

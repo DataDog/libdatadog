@@ -2830,6 +2830,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-agent-client-ffi"
+version = "32.0.0"
+dependencies = [
+ "build_common",
+ "bytes",
+ "httpmock",
+ "libdd-agent-client",
+ "libdd-common-ffi",
+ "libdd-http-client",
+ "libdd-http-client-ffi",
+ "libdd-shared-runtime",
+ "rustls",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-alloc"
 version = "1.0.0"
 dependencies = [
@@ -3219,6 +3235,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "libc",
+ "libdd-agent-client-ffi",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-crashtracker-ffi",

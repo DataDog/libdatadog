@@ -1,0 +1,118 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+language = "C"
+cpp_compat = true
+tab_width = 2
+header = """// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
+include_guard = "DDOG_AGENT_CLIENT_H"
+# common.h provides ddog_CharSlice / ddog_StringWrapper. http_client.h
+# provides the shared error/header/retry/multipart types we deliberately
+# reuse so the C surface stays uniform across the two FFI crates.
+includes = ["common.h", "http_client.h"]
+after_includes = """
+typedef struct ddog_AgentClient ddog_AgentClient;
+typedef struct ddog_AgentClientBuilder ddog_AgentClientBuilder;
+typedef struct ddog_AgentInfo ddog_AgentInfo;
+typedef struct ddog_AgentResponse ddog_AgentResponse;
+typedef struct ddog_LanguageMetadata ddog_LanguageMetadata;
+typedef struct ddog_TelemetryRequest ddog_TelemetryRequest;
+"""
+
+# Types we deliberately export from this crate. Anything not listed here
+# that cbindgen discovers from a parse_deps crate is filtered out by the
+# `exclude` list below — the goal is a minimal, audited C surface.
+[export]
+prefix = "ddog_"
+renaming_overrides_prefixing = true
+include = [
+  "DdogAgentClientErrorCode",
+  "DdogAgentClientError",
+  "DdogTraceFormat",
+  "DdogTraceSendOptions",
+  "DdogStringSlice",
+]
+# Internal Rust types we don't want leaking into the C header. Anything
+# in `parse.include` that isn't part of our intended C surface lives
+# here. In particular, we explicitly exclude all the http-client types
+# that are already declared in http_client.h — the consumer gets them by
+# including http_client.h alongside agent_client.h.
+exclude = [
+  # The opaque agent-client handle types are forward-declared by hand
+  # in `after_includes`; we don't want cbindgen emitting their Rust
+  # bodies.
+  "AgentClient",
+  "AgentClientBuilder",
+  "AgentInfo",
+  "AgentResponse",
+  "LanguageMetadata",
+  "TelemetryRequest",
+  # Crate-internal libdd-agent-client / shared-runtime types that aren't
+  # part of the C surface.
+  "AgentTransport",
+  "BuildError",
+  "SendError",
+  "TraceFormat",
+  "TraceSendOptions",
+  "SharedRuntime",
+  # Foreign types pulled in by parse_deps.
+  "Bytes",
+  "Duration",
+  "Result",
+  "VoidResult",
+  "MutSlice",
+  # Already declared in common.h — don't duplicate.
+  "Vec_U8",
+  "StringWrapper",
+  # Already declared in http_client.h — don't duplicate.
+  "HttpClient",
+  "HttpClientBuilder",
+  "HttpClientConfig",
+  "HttpClientError",
+  "HttpMethod",
+  "HttpRequest",
+  "HttpResponse",
+  "MultipartPart",
+  "RetryConfig",
+  "DdogHttpClientErrorCode",
+  "DdogHttpClientError",
+  "DdogHttpMethod",
+  "DdogHttpHeader",
+  "DdogHttpHeaderSlice",
+  # `ddog_CharSlice` already comes from `common.h`; don't redefine it.
+  "Slice_CChar",
+  "CharSlice",
+]
+
+[export.rename]
+"CharSlice" = "ddog_CharSlice"
+"ByteSlice" = "ddog_ByteSlice"
+"Slice_U8" = "ddog_Slice_U8"
+"Slice_CChar" = "ddog_Slice_CChar"
+"DdogAgentClientErrorCode" = "ddog_AgentClientErrorCode"
+"DdogAgentClientError" = "ddog_AgentClientError"
+"DdogTraceFormat" = "ddog_TraceFormat"
+"DdogTraceSendOptions" = "ddog_TraceSendOptions"
+"DdogStringSlice" = "ddog_StringSlice"
+
+[export.mangle]
+rename_types = "PascalCase"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"
+
+[fn]
+must_use = "DDOG_CHECK_RETURN"
+
+[parse]
+parse_deps = true
+include = [
+  "libdd-common-ffi",
+  "libdd-agent-client",
+  "libdd-shared-runtime",
+  "libdd-http-client-ffi",
+  "libdd-http-client",
+]

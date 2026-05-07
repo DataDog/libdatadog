@@ -66,3 +66,8 @@ pub use libdd_http_client_ffi::*;
 // cdylib.
 #[cfg(feature = "libdd-http-client-ffi")]
 extern crate libdd_shared_runtime_ffi;
+
+// re-export agent-client ffi
+#[cfg(feature = "libdd-agent-client-ffi")]
+#[allow(unused_imports)]
+pub use libdd_agent_client_ffi::*;

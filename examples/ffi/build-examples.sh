@@ -24,6 +24,7 @@ FEATURES=(
     "ddsketch"
     "ffe"
     "http-client"
+    "agent-client"
 )
 
 FEATURE_LIST=$(IFS=,; echo "${FEATURES[*]}")

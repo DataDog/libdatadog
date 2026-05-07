@@ -20,6 +20,7 @@ default = [
   "ddsketch",
   "ffe",
   "http-client",
+  "agent-client",
 ]
 crashtracker = []
 profiling = []
@@ -31,6 +32,7 @@ log = []
 ddsketch = []
 ffe = []
 http-client = []
+agent-client = []
 
 [lib]
 bench = false

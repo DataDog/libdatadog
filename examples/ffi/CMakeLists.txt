@@ -113,3 +113,9 @@ if(NOT WIN32)
   add_executable(http_client http_client.c)
   target_link_libraries(http_client PRIVATE Datadog::Profiling)
 endif()
+
+# agent_client also uses POSIX fork()/sockets, so Unix-only.
+if(NOT WIN32)
+  add_executable(agent_client agent_client.c)
+  target_link_libraries(agent_client PRIVATE Datadog::Profiling)
+endif()
