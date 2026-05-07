@@ -6,7 +6,7 @@ use cargo_metadata::MetadataCommand;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::{Request, Response, Uri};
-use libdd_common::http_common;
+use libdd_common::http as dd_http;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
@@ -400,7 +400,7 @@ impl DatadogTestAgent {
         let req = Request::builder()
             .method("GET")
             .uri(uri)
-            .body(http_common::Body::empty())
+            .body(dd_http::Body::empty())
             .expect("Failed to create request");
 
         let res = self
@@ -455,7 +455,7 @@ impl DatadogTestAgent {
         let req = Request::builder()
             .method("GET")
             .uri(uri)
-            .body(http_common::Body::empty())
+            .body(dd_http::Body::empty())
             .expect("Failed to create request");
 
         let res = self
@@ -524,7 +524,7 @@ impl DatadogTestAgent {
         let req = Request::builder()
             .method("GET")
             .uri(uri)
-            .body(http_common::Body::empty())
+            .body(dd_http::Body::empty())
             .expect("Failed to create request");
 
         let res = self
@@ -552,7 +552,7 @@ impl DatadogTestAgent {
     ///
     /// # Arguments
     ///
-    /// * `req` - A `Request<http_common::Body>` representing the HTTP request to be sent.
+    /// * `req` - A `Request<dd_http::Body>` representing the HTTP request to be sent.
     /// * `max_attempts` - An `i32` specifying the maximum number of request attempts to be made.
     ///
     /// # Returns
@@ -564,7 +564,7 @@ impl DatadogTestAgent {
     /// ```
     async fn agent_request_with_retry(
         &self,
-        req: Request<http_common::Body>,
+        req: Request<dd_http::Body>,
         max_attempts: i32,
     ) -> anyhow::Result<Response<Incoming>> {
         let mut attempts = 1;
@@ -578,10 +578,10 @@ impl DatadogTestAgent {
         let mut last_response;
 
         loop {
-            let client = http_common::new_default_client();
+            let client = dd_http::new_default_client();
             let req = Request::from_parts(
                 parts.clone(),
-                http_common::Body::from_bytes(body_bytes.clone()),
+                dd_http::Body::from_bytes(body_bytes.clone()),
             );
             let res = client.request(req).await;
 
@@ -623,7 +623,7 @@ impl DatadogTestAgent {
         let req = Request::builder()
             .method("POST")
             .uri(uri)
-            .body(http_common::Body::from(data.as_bytes().to_vec()))
+            .body(dd_http::Body::from(data.as_bytes().to_vec()))
             .expect("Failed to create request");
 
         let res = self
