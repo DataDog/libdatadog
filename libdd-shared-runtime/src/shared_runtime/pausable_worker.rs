@@ -23,6 +23,20 @@ type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, SpawnError>> + 
 #[cfg(target_arch = "wasm32")]
 type WorkerJoinHandle<T> = Pin<Box<dyn Future<Output = Result<T, SpawnError>>>>;
 
+/// Build the spawn closure used by [`PausableWorker::start`] on native, backed by
+/// `tokio::runtime::Handle::spawn`. Maps tokio's `JoinError` into the
+/// executor-agnostic [`SpawnError`].
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn tokio_spawn_fn<T: Send + 'static>(
+    handle: &tokio::runtime::Handle,
+) -> impl FnOnce(WorkerFuture<T>) -> WorkerJoinHandle<T> {
+    let h = handle.clone();
+    move |future| {
+        let jh = h.spawn(future);
+        Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
+    }
+}
+
 /// A pausable worker which can be paused and restarted on forks.
 ///
 /// Used to allow a [`super::Worker`] to be paused while saving its state when
@@ -189,7 +203,6 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use libdd_capabilities::spawn::SpawnError;
     use tokio::{runtime::Builder, time::sleep};
 
     use super::*;
@@ -197,17 +210,6 @@ mod tests {
         sync::mpsc::{channel, Sender},
         time::Duration,
     };
-
-    fn tokio_spawn_fn(
-        handle: &tokio::runtime::Handle,
-    ) -> impl FnOnce(WorkerFuture<Box<dyn Worker + Sync>>) -> WorkerJoinHandle<Box<dyn Worker + Sync>>
-    {
-        let h = handle.clone();
-        move |future| {
-            let jh = h.spawn(future);
-            Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
-        }
-    }
 
     /// Test worker incrementing the state and sending it with the sender.
     #[derive(Debug)]

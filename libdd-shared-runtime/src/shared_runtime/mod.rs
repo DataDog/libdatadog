@@ -25,7 +25,7 @@ use tracing::{debug, error};
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use libdd_capabilities::spawn::SpawnError;
+    use pausable_worker::tokio_spawn_fn;
     use std::sync::atomic::Ordering;
     use tokio::runtime::{Builder, Runtime};
 
@@ -93,11 +93,7 @@ mod native {
             let mut workers_guard = self.workers.lock_or_panic();
 
             if let Some(ref handle) = runtime_handle {
-                let h = handle.clone();
-                if let Err(e) = pausable_worker.start(|future| {
-                    let jh = h.spawn(future);
-                    Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
-                }) {
+                if let Err(e) = pausable_worker.start(tokio_spawn_fn(handle)) {
                     return Err(e.into());
                 }
             }
@@ -173,11 +169,7 @@ mod native {
             let mut workers_lock = self.workers.lock_or_panic();
 
             for worker_entry in workers_lock.iter_mut() {
-                let h = handle.clone();
-                worker_entry.worker.start(|future| {
-                    let jh = h.spawn(future);
-                    Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
-                })?;
+                worker_entry.worker.start(tokio_spawn_fn(&handle))?;
             }
 
             Ok(())
@@ -209,11 +201,7 @@ mod native {
 
             for worker_entry in workers_lock.iter_mut() {
                 worker_entry.worker.reset();
-                let h = handle.clone();
-                worker_entry.worker.start(|future| {
-                    let jh = h.spawn(future);
-                    Box::pin(async { jh.await.map_err(|e| SpawnError::new(e.to_string())) })
-                })?;
+                worker_entry.worker.start(tokio_spawn_fn(&handle))?;
             }
 
             Ok(())
