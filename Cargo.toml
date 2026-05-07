@@ -50,8 +50,9 @@ members = [
   "libdd-ddsketch-ffi",
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
-  "libdd-http-client",
   "libdd-agent-client",
+  "libdd-http-client",
+  "libdd-http-client-pyo3",
   "libdd-log",
   "libdd-log-ffi",
 ]

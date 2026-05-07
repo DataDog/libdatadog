@@ -3080,6 +3080,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-http-client-pyo3"
+version = "32.0.0"
+dependencies = [
+ "httpmock",
+ "libdd-http-client",
+ "libdd-shared-runtime",
+ "pyo3",
+ "rustls",
+ "tokio",
+]
+
+[[package]]
 name = "libdd-library-config"
 version = "1.1.0"
 dependencies = [
