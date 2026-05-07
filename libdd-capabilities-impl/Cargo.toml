@@ -16,15 +16,20 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
+anyhow = "1.0"
 bytes = "1"
 http = "1"
 libdd-capabilities = { path = "../libdd-capabilities", version = "1.0.0" }
 libdd-common = { path = "../libdd-common", version = "4.0.0", default-features = false }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-http-body-util = "0.1"
+# Pin the hyper backend explicitly: every internal consumer of HttpClientTrait
+# already routes through libdd-common's hyper stack, so the hyper backend keeps
+# the dependency surface unchanged and avoids pulling reqwest into them.
+libdd-http-client = { path = "../libdd-http-client", default-features = false, features = ["hyper-backend"] }
 
 [features]
 default = ["https"]
+# We enable HTTPS via libdd-common directly rather than via libdd-http-client's
+# `https` feature: the latter unconditionally pulls in reqwest, which we
+# explicitly avoid by selecting only the hyper backend above.
 https = ["libdd-common/https"]
 fips = ["libdd-common/fips"]

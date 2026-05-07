@@ -2835,11 +2835,12 @@ dependencies = [
 name = "libdd-capabilities-impl"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "http",
- "http-body-util",
  "libdd-capabilities",
  "libdd-common",
+ "libdd-http-client",
 ]
 
 [[package]]
