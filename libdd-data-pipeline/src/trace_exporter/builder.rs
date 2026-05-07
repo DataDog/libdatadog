@@ -15,7 +15,7 @@ use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
     TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TracerMetadata,
-    INFO_ENDPOINT,
+    INFO_ENDPOINT, TraceSerializer
 };
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
@@ -310,8 +310,6 @@ impl TraceExporterBuilder {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            use crate::trace_exporter::TraceSerializer;
-
             let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
             let (info_fetcher, info_response_observer) =
                 AgentInfoFetcher::<H>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
