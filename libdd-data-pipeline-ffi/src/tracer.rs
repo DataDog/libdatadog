@@ -83,41 +83,32 @@ pub unsafe extern "C" fn ddog_tracer_span_new(
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         {
-            let service = match charslice_to_bytesstring(service) {
-                Ok(s) => s,
-                Err(e) => return Some(e),
-            };
-            let name = match charslice_to_bytesstring(name) {
-                Ok(s) => s,
-                Err(e) => return Some(e),
-            };
-            let resource = match charslice_to_bytesstring(resource) {
-                Ok(s) => s,
-                Err(e) => return Some(e),
-            };
-            let span_type = match charslice_to_bytesstring(span_type) {
-                Ok(s) => s,
-                Err(e) => return Some(e),
-            };
+            let inner = || -> Result<(), Box<ExporterError>> {
+                let service = charslice_to_bytesstring(service)?;
+                let name = charslice_to_bytesstring(name)?;
+                let resource = charslice_to_bytesstring(resource)?;
+                let span_type = charslice_to_bytesstring(span_type)?;
 
-            let trace_id: u128 = ((trace_id_high as u128) << 64) | (trace_id_low as u128);
+                let trace_id: u128 = ((trace_id_high as u128) << 64) | (trace_id_low as u128);
 
-            let span = SpanBytes {
-                service,
-                name,
-                resource,
-                r#type: span_type,
-                trace_id,
-                span_id,
-                parent_id,
-                start,
-                duration,
-                error,
-                ..Default::default()
+                let span = SpanBytes {
+                    service,
+                    name,
+                    resource,
+                    r#type: span_type,
+                    trace_id,
+                    span_id,
+                    parent_id,
+                    start,
+                    duration,
+                    error,
+                    ..Default::default()
+                };
+
+                out_handle.as_ptr().write(Box::new(TracerSpan(span)));
+                Ok(())
             };
-
-            out_handle.as_ptr().write(Box::new(TracerSpan(span)));
-            None
+            inner().err()
         },
         gen_error!(ErrorCode::Panic)
     )
