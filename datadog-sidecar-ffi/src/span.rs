@@ -142,8 +142,7 @@ pub extern "C" fn ddog_get_traces_size(traces: &TracesBytes) -> usize {
 // can return values as `Option<&/&mut>` that will have the same ABI `*const/*mut TraceBytes`, with
 // `None` corresponding to `null`.
 
-// I don't think we need to return a mutable reference here, but when changing the return value
-// from `*mut` to `Option<&mut>`, we wanted to preserve the FFI at first.
+// TODO: I don't think we need to return a mutable reference here
 #[no_mangle]
 pub extern "C" fn ddog_get_trace(
     traces: &mut TracesBytes,
