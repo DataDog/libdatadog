@@ -4,7 +4,7 @@
 use crate::{
     crash_info::{
         CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TelemetryCrashUploader,
-        Ucontext,
+        Threads, Ucontext,
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
@@ -515,11 +515,10 @@ pub(crate) async fn receive_report_from_stream(
     // timeout, and we always emit whatever threads were collected before
     // the deadline rather than silently discarding them.
     #[cfg(target_os = "linux")]
-    if config.collect_all_threads() && builder.error.kind != Some(ErrorKind::UnhandledException) {
+    if config.collect_all_threads() {
         if let Some(proc_info) = builder.proc_info.as_ref() {
             let parent_pid = proc_info.pid;
             let crashing_tid = proc_info.tid;
-            // remaining_budget: time left on the receiver's clock after stdin.
             // If we never received a first line (deadline is None) use zero so
             // collection is skipped; there is nothing to attach to anyway.
             let remaining_budget = deadline
@@ -574,7 +573,7 @@ fn collect_and_add_thread_contexts(
 
     let mut collected_threads = Vec::new();
 
-    stream_thread_contexts(
+    let incomplete = stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
@@ -599,7 +598,12 @@ fn collect_and_add_thread_contexts(
     )?;
 
     if !collected_threads.is_empty() {
-        let _ = builder.with_threads(collected_threads);
+        let count = collected_threads.len();
+        let _ = builder.with_threads(Threads {
+            threads: collected_threads,
+            count,
+            incomplete,
+        });
     }
 
     Ok(())

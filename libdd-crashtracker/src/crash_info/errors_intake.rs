@@ -3,10 +3,10 @@
 
 use std::time::SystemTime;
 
-use crate::{OsInfo, SigInfo, Ucontext};
+use crate::{OsInfo, SigInfo, ThreadData, Ucontext};
 
 use super::{
-    build_crash_ping_message, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, ThreadData,
+    build_crash_ping_message, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace,
     TARGET_TRIPLE,
 };
 use anyhow::Context;
@@ -253,8 +253,8 @@ pub struct ErrorObject {
     pub stack: Option<StackTrace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub threads: Option<Vec<ThreadData>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<ThreadData>,
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -432,7 +432,7 @@ impl ErrorsIntakePayload {
                 is_crash: Some(true),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: crash_info.experimental.clone(),
-                threads: Some(crash_info.error.threads.clone()),
+                threads: crash_info.error.threads.threads.clone(),
             },
             trace_id: None,
             ucontext: crash_info.ucontext.clone(),
@@ -499,7 +499,7 @@ impl ErrorsIntakePayload {
                 is_crash: Some(false),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: None,
-                threads: None,
+                threads: vec![],
             },
             sig_info: sig_info.cloned(),
             trace_id: None,
@@ -682,7 +682,7 @@ mod tests {
         assert!(ddtags.contains("version:bar"));
         assert!(ddtags.contains("language_name:native"));
 
-        assert!(ddtags.contains("data_schema_version:1.6"));
+        assert!(ddtags.contains("data_schema_version:1.7"));
         assert!(ddtags.contains("incomplete:true"));
         assert!(ddtags.contains("is_crash:true"));
         assert!(ddtags.contains("uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781"));
@@ -734,7 +734,7 @@ mod tests {
         let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
 
         let expected_crash_tags = [
-            "data_schema_version:1.6",
+            "data_schema_version:1.7",
             "incomplete:true",
             "is_crash:true",
             "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",

@@ -46,7 +46,7 @@ pub struct CrashtrackerConfiguration {
 }
 
 pub const fn default_max_threads() -> usize {
-    2048
+    256
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
