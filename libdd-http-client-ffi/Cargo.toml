@@ -18,6 +18,12 @@ bench = false
 [features]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+# Enable the FIPS-compliant rustls crypto provider entry point
+# (`ddog_http_client_init_fips`). Mutually exclusive with the default
+# non-FIPS build at the rustls level: see `ddog_http_client_init_fips`
+# for the contract and the "first-wins" semantics shared with
+# `ddog_http_client_install_default_crypto_provider`.
+fips = ["libdd-http-client/fips"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

@@ -14,6 +14,8 @@ typedef struct ddog_HttpClient ddog_HttpClient;
 typedef struct ddog_HttpClientBuilder ddog_HttpClientBuilder;
 typedef struct ddog_HttpRequest ddog_HttpRequest;
 typedef struct ddog_HttpResponse ddog_HttpResponse;
+typedef struct ddog_MultipartPart ddog_MultipartPart;
+typedef struct ddog_RetryConfig ddog_RetryConfig;
 typedef struct ddog_SharedRuntime ddog_SharedRuntime;
 """
 

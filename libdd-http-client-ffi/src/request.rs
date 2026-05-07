@@ -9,7 +9,7 @@
 use crate::error::DdogHttpClientError;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice};
 use libdd_common_ffi::{CharSlice, Slice};
-use libdd_http_client::{HttpMethod, HttpRequest};
+use libdd_http_client::{HttpMethod, HttpRequest, MultipartPart};
 use std::ptr::NonNull;
 use std::time::Duration;
 
@@ -268,6 +268,40 @@ pub unsafe extern "C" fn ddog_http_request_set_timeout(
     None
 }
 
+/// Attach a multipart part to this request, taking ownership of the part.
+///
+/// When at least one multipart part is attached, the request is sent as
+/// `multipart/form-data` and any body set via
+/// [`ddog_http_request_set_body`] is ignored by the underlying backend.
+/// Parts are appended in attach order.
+///
+/// The `part` is consumed by this call (regardless of success or
+/// failure) and must not be reused or freed by the caller.
+///
+/// # Safety
+/// `request` must be `None` or a valid mutable reference to a request
+/// produced by [`ddog_http_request_new`]. `part` must be `None` or a
+/// part produced by [`crate::ddog_multipart_part_new`] and not yet
+/// consumed.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_http_request_with_multipart_part(
+    request: Option<&mut HttpRequest>,
+    part: Option<Box<MultipartPart>>,
+) -> Option<Box<DdogHttpClientError>> {
+    let Some(r) = request else {
+        return Some(Box::new(DdogHttpClientError::invalid_argument(
+            "request is null",
+        )));
+    };
+    let Some(part) = part else {
+        return Some(Box::new(DdogHttpClientError::invalid_argument(
+            "multipart part is null",
+        )));
+    };
+    r.multipart_parts_mut().push(*part);
+    None
+}
+
 /// Drop a request that was not consumed by `send_blocking`.
 ///
 /// # Safety
@@ -347,6 +381,58 @@ mod tests {
             assert_eq!(req.headers().len(), 1);
             assert_eq!(req.body().as_ref(), b"x");
 
+            ddog_http_request_drop(Some(req));
+        }
+    }
+
+    #[test]
+    fn with_multipart_part_takes_ownership() {
+        unsafe {
+            let mut req: MaybeUninit<Box<HttpRequest>> = MaybeUninit::uninit();
+            ddog_http_request_new(
+                DdogHttpMethod::Post,
+                cs("http://localhost/upload"),
+                NonNull::new_unchecked(req.as_mut_ptr()),
+            );
+            let mut req = req.assume_init();
+
+            let part = Box::new(
+                MultipartPart::new("file", bytes::Bytes::from_static(b"hello"))
+                    .with_filename("a.txt")
+                    .with_content_type("text/plain"),
+            );
+            let err = ddog_http_request_with_multipart_part(Some(&mut req), Some(part));
+            assert!(err.is_none());
+
+            assert_eq!(req.multipart_parts().len(), 1);
+            assert_eq!(req.multipart_parts()[0].name(), "file");
+            assert_eq!(req.multipart_parts()[0].filename(), Some("a.txt"));
+
+            ddog_http_request_drop(Some(req));
+        }
+    }
+
+    #[test]
+    fn with_multipart_part_null_request_returns_error() {
+        unsafe {
+            let part = Box::new(MultipartPart::new("file", bytes::Bytes::from_static(b"x")));
+            let err = ddog_http_request_with_multipart_part(None, Some(part));
+            assert!(err.is_some());
+        }
+    }
+
+    #[test]
+    fn with_multipart_part_null_part_returns_error() {
+        unsafe {
+            let mut req: MaybeUninit<Box<HttpRequest>> = MaybeUninit::uninit();
+            ddog_http_request_new(
+                DdogHttpMethod::Post,
+                cs("http://localhost/upload"),
+                NonNull::new_unchecked(req.as_mut_ptr()),
+            );
+            let mut req = req.assume_init();
+            let err = ddog_http_request_with_multipart_part(Some(&mut req), None);
+            assert!(err.is_some());
             ddog_http_request_drop(Some(req));
         }
     }

@@ -50,6 +50,7 @@ members = [
   "libdd-ddsketch-ffi",
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
+  "libdd-agent-client",
   "libdd-http-client",
   "libdd-http-client-ffi",
   "libdd-log",
