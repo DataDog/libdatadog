@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use regex::Regex;
+use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
@@ -528,6 +528,8 @@ impl From<Vec<String>> for ConditionValue {
 pub(crate) struct SplitWire {
     pub shards: Vec<ShardWire>,
     pub variation_key: Str,
+    #[serde(default)]
+    pub serial_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
