@@ -363,6 +363,7 @@ impl Scanner {
             self.state = State::EndValue;
             return Op::SkipSpace;
         }
+        #[allow(clippy::match_on_vec_items)]
         match self.parse_state[n - 1] {
             ParseState::ObjectKey => {
                 if c == ':' {

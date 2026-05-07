@@ -147,7 +147,7 @@ pub fn obfuscate_url_string(
         }
     }
 
-    let Ok(uri) = UriRef::parse(pre.as_str()) else {
+    let Ok(parsed) = UriRef::parse(pre.as_str()) else {
         return if remove_query_string || remove_path_digits {
             "?".to_string()
         } else {
@@ -157,12 +157,12 @@ pub fn obfuscate_url_string(
 
     let mut out = String::new();
 
-    if let Some(scheme) = uri.scheme() {
+    if let Some(scheme) = parsed.scheme() {
         out.push_str(&scheme.as_str().to_lowercase());
         out.push(':');
     }
 
-    if let Some(auth) = uri.authority() {
+    if let Some(auth) = parsed.authority() {
         out.push_str("//");
         // Strip userinfo — emit only host[:port]
         out.push_str(auth.host());
@@ -170,13 +170,13 @@ pub fn obfuscate_url_string(
             out.push(':');
             out.push_str(port.as_str());
         }
-        let path_str = normalize_pct_encoded_unreserved(uri.path().as_str());
+        let path_str = normalize_pct_encoded_unreserved(parsed.path().as_str());
         if remove_path_digits {
             out.push_str(&redact_path_digits(&path_str));
         } else {
             out.push_str(&path_str);
         }
-    } else if let Some(scheme) = uri.scheme() {
+    } else if let Some(scheme) = parsed.scheme() {
         // This is a really weird case because there is a scheme but no authority.
         // For example: http:#
         // Length of "http:"
@@ -185,7 +185,7 @@ pub fn obfuscate_url_string(
         out.push_str(&url[scheme_end..path_end]);
     } else {
         // Relative reference: use pre-encoded path
-        let path_str = normalize_pct_encoded_unreserved(uri.path().as_str());
+        let path_str = normalize_pct_encoded_unreserved(parsed.path().as_str());
         if remove_path_digits {
             out.push_str(&redact_path_digits(&path_str));
         } else {
@@ -204,7 +204,7 @@ pub fn obfuscate_url_string(
         out.push_str(&url[path_end..path_query_end]);
     }
 
-    if let Some(frag) = uri.fragment() {
+    if let Some(frag) = parsed.fragment() {
         if !frag.as_str().is_empty() {
             out.push('#');
             out.push_str(frag.as_str());
