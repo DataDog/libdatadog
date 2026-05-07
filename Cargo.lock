@@ -3070,10 +3070,23 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libdd-common",
+ "libdd-shared-runtime",
  "reqwest",
  "rustls",
  "tempfile",
  "thiserror 2.0.17",
+ "tokio",
+]
+
+[[package]]
+name = "libdd-http-client-pyo3"
+version = "32.0.0"
+dependencies = [
+ "httpmock",
+ "libdd-http-client",
+ "libdd-shared-runtime",
+ "pyo3",
+ "rustls",
  "tokio",
 ]
 
