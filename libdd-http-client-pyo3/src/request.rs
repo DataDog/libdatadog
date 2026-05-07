@@ -7,6 +7,7 @@
 //! with UTF-8 contracts. See the crate-root docstring for the round-trip
 //! semantics.
 
+use crate::multipart::MultipartPart;
 use crate::{duration_from_secs, headers_from_pydict, InvalidConfigError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -162,6 +163,23 @@ impl HttpRequest {
     /// Replace the body. Accepts `bytes`.
     fn set_body(&mut self, body: Vec<u8>) {
         *self.inner.body_mut() = body.into();
+    }
+
+    /// Append a multipart part to this request.
+    ///
+    /// When the request has at least one multipart part attached, the
+    /// underlying client sends it as `multipart/form-data` and the body bytes
+    /// (if any) are ignored. Mirrors
+    /// [`libdd_http_client::HttpRequest::with_multipart_part`].
+    pub fn with_multipart_part(&mut self, part: &MultipartPart) {
+        self.inner.multipart_parts_mut().push(part.to_inner());
+    }
+
+    /// Returns the number of multipart parts attached to this request. Useful
+    /// for tests that want to verify the multipart path was taken.
+    #[getter]
+    pub fn multipart_parts_len(&self) -> usize {
+        self.inner.multipart_parts().len()
     }
 
     /// Set the per-request timeout override (seconds).

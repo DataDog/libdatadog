@@ -3083,11 +3083,15 @@ dependencies = [
 name = "libdd-http-client-pyo3"
 version = "32.0.0"
 dependencies = [
+ "bytes",
  "httpmock",
+ "libdd-agent-client",
  "libdd-http-client",
  "libdd-shared-runtime",
  "pyo3",
+ "pythonize",
  "rustls",
+ "serde_json",
  "tokio",
 ]
 
@@ -4484,6 +4488,16 @@ dependencies = [
  "pyo3-build-config",
  "quote",
  "syn 2.0.87",
+]
+
+[[package]]
+name = "pythonize"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b79f670c9626c8b651c0581011b57b6ba6970bb69faf01a7c4c0cfc81c43f95"
+dependencies = [
+ "pyo3",
+ "serde",
 ]
 
 [[package]]

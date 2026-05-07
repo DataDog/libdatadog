@@ -33,9 +33,23 @@ bench = false
 # Default mirrors libdd-http-client; the pyo3 extension itself is feature-flagged
 # via `python-extension` so that `cargo test` does not require the abi3 shim.
 default = ["https", "reqwest-backend"]
-https = ["libdd-http-client/https"]
-reqwest-backend = ["libdd-http-client/reqwest-backend"]
-hyper-backend = ["libdd-http-client/hyper-backend"]
+https = [
+    "libdd-http-client/https",
+    "libdd-agent-client/https",
+]
+reqwest-backend = [
+    "libdd-http-client/reqwest-backend",
+    "libdd-agent-client/reqwest-backend",
+]
+hyper-backend = [
+    "libdd-http-client/hyper-backend",
+    "libdd-agent-client/hyper-backend",
+]
+# When enabled, `init_fips_crypto()` becomes available and installs the
+# aws-lc-rs FIPS provider instead of ring at module init time. Mirrors the
+# `fips` feature in `libdd-http-client`. The two are mutually exclusive: do
+# not enable both `https` and `fips` simultaneously.
+fips = ["libdd-http-client/fips"]
 
 # Toggle when packaging as a real Python wheel (e.g. via `maturin build`).
 # Adds the `extension-module` feature to pyo3 which removes the libpython
@@ -50,9 +64,16 @@ python-extension = ["pyo3/extension-module"]
 # importable from any CPython >= 3.8.
 pyo3 = { version = "0.28", default-features = false, features = ["macros", "abi3-py38"] }
 libdd-http-client = { version = "32.0.0", path = "../libdd-http-client", default-features = false }
+libdd-agent-client = { version = "32.0.0", path = "../libdd-agent-client", default-features = false }
 libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
+# Used by the agent_client module to round-trip `serde_json::Value` (the
+# `AgentInfo::config` field) into Python `dict`/`list`/scalar types without
+# manual recursive walking. Pythonize 0.28 matches our pinned pyo3 0.28.
+pythonize = "0.28"
+serde_json = "1.0"
+bytes = "1.4"
 # We install rustls' ring provider on module init so callers don't have to.
-# Task 8b will replace this with the FIPS init entry point.
+# Task 8b adds the optional `fips` feature which swaps this for aws-lc-rs.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
 [dev-dependencies]

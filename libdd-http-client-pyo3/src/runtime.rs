@@ -109,4 +109,13 @@ impl SharedRuntime {
     pub fn as_inner(&self) -> &libdd_shared_runtime::SharedRuntime {
         &self.inner
     }
+
+    /// Clone the underlying `Arc<SharedRuntime>`.
+    ///
+    /// Used by the agent-client bindings when handing the runtime to a
+    /// `Python::detach` closure: the closure must own its captured state,
+    /// and `Arc` is `Send + Sync`.
+    pub fn clone_arc(&self) -> Arc<libdd_shared_runtime::SharedRuntime> {
+        self.inner.clone()
+    }
 }

@@ -10,12 +10,19 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 
-//! Python (pyo3) bindings for `libdd-http-client`.
+//! Python (pyo3) bindings for `libdd-http-client` and `libdd-agent-client`.
 //!
-//! Task 8a of the libdd-http-client epic: ship a minimum pyo3 module that lets
-//! `dd-trace-py` issue GET / JSON POST against the agent. The surface is
-//! deliberately blocking-only and does **not** include multipart, retry, FIPS,
-//! or the agent-client surface (those land in 8b).
+//! Task 8a shipped the minimum `HttpClient` surface; Task 8b — this revision —
+//! completes the surface so that dd-trace-py call sites can be migrated
+//! end-to-end. The new surface consists of:
+//!
+//! - [`MultipartPart`] for `multipart/form-data` uploads.
+//! - [`RetryConfig`] for opt-in automatic retry with exponential backoff.
+//! - [`init_fips_crypto`] (only when compiled with the `fips` feature) to
+//!   install the aws-lc-rs FIPS provider in lieu of ring at module init.
+//! - The full [`agent_client`] surface (`AgentClient`, `AgentClientBuilder`,
+//!   `LanguageMetadata`, `AgentTransport`, `TraceFormat`, `TraceSendOptions`,
+//!   `AgentResponse`, `TelemetryRequest`, `AgentInfo`).
 //!
 //! # Surface
 //!
@@ -26,16 +33,27 @@
 //! - `HttpRequest` — wraps [`libdd_http_client::HttpRequest`].
 //! - `HttpResponse` — wraps [`libdd_http_client::HttpResponse`].
 //! - `HttpMethod` — enum mirroring [`libdd_http_client::HttpMethod`].
+//! - `MultipartPart` — wraps [`libdd_http_client::MultipartPart`].
+//! - `RetryConfig` — wraps [`libdd_http_client::RetryConfig`].
 //! - `SharedRuntime` — wraps `Arc<libdd_shared_runtime::SharedRuntime>`. See
 //!   the runtime module's docstring for why the wrapper lives in this crate
 //!   instead of `libdd-shared-runtime-ffi`.
+//! - Agent-client classes — `AgentClient`, `AgentClientBuilder`,
+//!   `LanguageMetadata`, `AgentTransport`, `TraceFormat`, `TraceSendOptions`,
+//!   `AgentResponse`, `TelemetryRequest`, `AgentInfo`.
 //!
 //! Python exceptions exposed:
 //!
-//! - `HttpClientError` — base class.
+//! - `HttpClientError` — base class for `libdd_http_client::HttpClientError`.
 //! - `ConnectionFailedError`, `TimedOutError`, `RequestFailedError`,
-//!   `InvalidConfigError`, `IoError` — one per
-//!   [`libdd_http_client::HttpClientError`] variant.
+//!   `InvalidConfigError`, `IoError`.
+//! - `AgentClientError` — separate base class for `libdd_agent_client` errors.
+//! - `AgentBuildError`, `AgentTransportError`, `AgentHttpError`,
+//!   `AgentRetriesExhaustedError`, `AgentEncodingError`.
+//!
+//! The two hierarchies are separate roots because the underlying Rust error
+//! types are independent — a caller catching `HttpClientError` should not
+//! incidentally catch agent-specific errors and vice versa.
 //!
 //! # Header round-trip
 //!
@@ -46,21 +64,32 @@
 //! header. Bodies and header strings are UTF-8 by contract — non-UTF-8 input
 //! raises `UnicodeDecodeError` from Python's str codec.
 
+mod agent_client;
 mod errors;
+mod multipart;
 mod request;
 mod response;
+mod retry;
 mod runtime;
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::time::Duration;
 
+pub use agent_client::{
+    map_build_error, map_send_error, AgentBuildError, AgentClient, AgentClientBuilder,
+    AgentClientError, AgentEncodingError, AgentHttpError, AgentInfo, AgentResponse,
+    AgentRetriesExhaustedError, AgentTransport, AgentTransportError, LanguageMetadata,
+    TelemetryRequest, TraceFormat, TraceSendOptions,
+};
 pub use errors::{
     map_http_client_error, ConnectionFailedError, HttpClientError, InvalidConfigError, IoError,
     RequestFailedError, TimedOutError,
 };
+pub use multipart::MultipartPart;
 pub use request::{HttpMethod, HttpRequest};
 pub use response::HttpResponse;
+pub use retry::RetryConfig;
 pub use runtime::SharedRuntime;
 
 /// Wraps [`libdd_http_client::HttpClient`].
@@ -127,6 +156,7 @@ pub struct HttpClientBuilder {
     timeout: Option<Duration>,
     allow_connection_pooling: bool,
     transport: TransportConfig,
+    retry: Option<libdd_http_client::RetryConfig>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -141,14 +171,16 @@ enum TransportConfig {
 
 #[pymethods]
 impl HttpClientBuilder {
+    /// Construct a fresh builder with library defaults.
     #[new]
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             base_url: None,
             timeout: None,
             // Match libdd-http-client's default.
             allow_connection_pooling: true,
             transport: TransportConfig::Tcp,
+            retry: None,
         }
     }
 
@@ -181,6 +213,14 @@ impl HttpClientBuilder {
         self.transport = TransportConfig::WindowsNamedPipe(pipe.into());
     }
 
+    /// Enable automatic retries with the given [`RetryConfig`].
+    ///
+    /// Retries are off by default. Pass a configured `RetryConfig` to opt
+    /// in; mirrors [`libdd_http_client::HttpClientBuilder::retry`].
+    fn retry(&mut self, config: &RetryConfig) {
+        self.retry = Some(config.to_inner());
+    }
+
     /// Consume the builder and produce an [`HttpClient`].
     fn build(&mut self) -> PyResult<HttpClient> {
         let base_url = self.base_url.clone().ok_or_else(|| {
@@ -194,6 +234,10 @@ impl HttpClientBuilder {
             .base_url(base_url)
             .timeout(timeout)
             .allow_connection_pooling(self.allow_connection_pooling);
+
+        if let Some(retry) = self.retry.clone() {
+            builder = builder.retry(retry);
+        }
 
         match &self.transport {
             TransportConfig::Tcp => {}
@@ -221,6 +265,18 @@ fn duration_from_secs(secs: f64) -> PyResult<Duration> {
     Ok(Duration::from_secs_f64(secs))
 }
 
+/// Install the FIPS-compliant TLS crypto provider.
+///
+/// Wraps [`libdd_http_client::init_fips_crypto`]. Only available when
+/// compiled with the `fips` feature. Call once at process start, before
+/// constructing any `HttpClient` that issues HTTPS requests. Returns an
+/// error if a crypto provider is already installed.
+#[cfg(feature = "fips")]
+#[pyfunction]
+fn init_fips_crypto() -> PyResult<()> {
+    libdd_http_client::init_fips_crypto().map_err(map_http_client_error)
+}
+
 /// pyo3 module entry point.
 ///
 /// Importing the wheel as `libdd_http_client` invokes this function and
@@ -231,23 +287,34 @@ fn duration_from_secs(secs: f64) -> PyResult<Duration> {
 /// `libdd_http_client` *crate* identifier; the Python-side module name is
 /// driven by the `#[pyo3(name)]` attribute.
 ///
-/// At init time we install rustls' ring crypto provider as the
-/// process-default. Task 8a does not include the FIPS entry point — that's
-/// 8b — but because `libdd-http-client`'s reqwest backend uses
+/// # Crypto provider
+///
+/// Without the `fips` feature, we install rustls' ring crypto provider as
+/// the process-default. Because `libdd-http-client`'s reqwest backend uses
 /// `rustls-no-provider`, *some* provider must be installed before the first
 /// HTTPS connection. Installing ring here matches the test setup in the
 /// underlying crate and avoids forcing every Python caller to learn about
 /// rustls. The install is best-effort (`let _`): if a provider is already
-/// installed (e.g. because 8b's FIPS init ran first), we do nothing.
+/// installed (e.g. because the user explicitly called `init_fips_crypto`
+/// first, or another library beat us to it), we do nothing.
+///
+/// With the `fips` feature, we do **not** install ring at init time — the
+/// caller is expected to call [`init_fips_crypto`] explicitly. Doing both
+/// would defeat the purpose of building with FIPS.
 #[pymodule(name = "libdd_http_client")]
 fn init_module(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(not(feature = "fips"))]
+    {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
 
     m.add_class::<HttpClient>()?;
     m.add_class::<HttpClientBuilder>()?;
     m.add_class::<HttpRequest>()?;
     m.add_class::<HttpResponse>()?;
     m.add_class::<HttpMethod>()?;
+    m.add_class::<MultipartPart>()?;
+    m.add_class::<RetryConfig>()?;
     m.add_class::<SharedRuntime>()?;
 
     m.add("HttpClientError", py.get_type::<HttpClientError>())?;
@@ -263,6 +330,11 @@ fn init_module(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "SharedRuntimeError",
         py.get_type::<runtime::SharedRuntimeError>(),
     )?;
+
+    #[cfg(feature = "fips")]
+    m.add_function(wrap_pyfunction!(init_fips_crypto, m)?)?;
+
+    agent_client::register(py, m)?;
 
     Ok(())
 }
