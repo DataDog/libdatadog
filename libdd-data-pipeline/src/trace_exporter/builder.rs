@@ -14,8 +14,8 @@ use crate::trace_exporter::TelemetryConfig;
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TracerMetadata,
-    INFO_ENDPOINT, TraceSerializer
+    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
+    TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
