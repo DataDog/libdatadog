@@ -12,7 +12,7 @@ fn main() {
     // Export the TLSDESC thread-local variable to the dynamic symbol table so
     // external readers (e.g. the eBPF profiler) can locate it. Rust's cdylib
     // linker applies a version script with `local: *` that hides all symbols
-    // not explicitly whitelisted, and also causes lld to relax the TLSDESC
+    // not explicitly allowlisted, and also causes lld to relax the TLSDESC
     // access to local-exec (LE), eliminating the dynsym entry entirely.
     // Passing our own version script with an explicit `global:` entry for the
     // symbol beats the `local: *` wildcard and prevents that relaxation.
