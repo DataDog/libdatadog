@@ -14,6 +14,8 @@ typedef struct ddog_HttpClient ddog_HttpClient;
 typedef struct ddog_HttpClientBuilder ddog_HttpClientBuilder;
 typedef struct ddog_HttpRequest ddog_HttpRequest;
 typedef struct ddog_HttpResponse ddog_HttpResponse;
+typedef struct ddog_MultipartPart ddog_MultipartPart;
+typedef struct ddog_RetryConfig ddog_RetryConfig;
 typedef struct ddog_SharedRuntime ddog_SharedRuntime;
 
 
@@ -177,18 +179,51 @@ extern "C" {
  *
  * This MUST be called exactly once per process, before
  * [`ddog_http_client_builder_new`], unless the caller installs a
- * different provider themselves (for example the FIPS provider that
- * Task 9b's `ddog_http_client_init_fips` will install).
+ * different provider themselves (for example via
+ * [`ddog_http_client_init_fips`]).
  *
  * Idempotent: if a provider is already installed, the second call is a
  * no-op and the first install wins. This means it's safe to call this
  * after a FIPS init has already run; the FIPS provider is preserved.
+ *
+ * **Mutually exclusive with [`ddog_http_client_init_fips`].** Calling
+ * both is a contract violation; whichever wins, wins. If FIPS users
+ * also call this by mistake, the second call is a no-op (rustls's
+ * install is "first wins").
  *
  * # Safety
  * Safe to call from any thread, but ordering relative to first
  * `ddog_http_client_builder_new` matters: install the provider first.
  */
 void ddog_http_client_install_default_crypto_provider(void);
+
+/**
+ * Install the FIPS-compliant rustls crypto provider as the process-wide
+ * default.
+ *
+ * This MUST be called exactly once per process, before
+ * [`ddog_http_client_builder_new`]. It is the FIPS counterpart to
+ * [`ddog_http_client_install_default_crypto_provider`] and is **mutually
+ * exclusive** with it: calling both is a contract violation. The
+ * underlying rustls install is "first wins", so whichever runs first
+ * determines the provider; the second is a no-op.
+ *
+ * Idempotent: re-calling this entry point in the same process is a
+ * no-op once a provider is installed (regardless of which one).
+ *
+ * Returns `None` on success or when the call was a no-op (a provider
+ * was already installed). Currently never returns an error in this
+ * build (the underlying init function is only available when the
+ * `fips` feature is enabled on `libdd-http-client`); when that feature
+ * is *not* enabled this entry point returns
+ * [`crate::DdogHttpClientErrorCode::InvalidConfig`] with a message
+ * indicating the FFI was built without FIPS support.
+ *
+ * # Safety
+ * Safe to call from any thread, but ordering relative to first
+ * `ddog_http_client_builder_new` matters: install the provider first.
+ */
+struct ddog_HttpClientError *ddog_http_client_init_fips(void);
 
 /**
  * Allocate a new [`HttpClientBuilder`] with default settings.
@@ -266,6 +301,23 @@ struct ddog_HttpClientError *ddog_http_client_builder_set_allow_connection_pooli
                                                                                    bool allow);
 
 /**
+ * Enable automatic retries on the resulting client using the given
+ * configuration. Takes ownership of the config: the caller must not
+ * reuse or free it.
+ *
+ * All errors are retried except
+ * [`crate::DdogHttpClientErrorCode::InvalidConfig`].
+ *
+ * # Safety
+ * `builder` must be `None` or a valid mutable reference to a builder
+ * produced by [`ddog_http_client_builder_new`]. `cfg` must be `None` or
+ * a config produced by [`crate::ddog_retry_config_new`] and not yet
+ * consumed.
+ */
+struct ddog_HttpClientError *ddog_http_client_builder_set_retry(ddog_HttpClientBuilder *builder,
+                                                                ddog_RetryConfig *cfg);
+
+/**
  * Consume the builder and produce an [`HttpClient`].
  *
  * On success writes a `Box<HttpClient>` into `*out_handle` and returns
@@ -309,6 +361,63 @@ void ddog_http_client_drop(ddog_HttpClient *client);
  * not yet freed.
  */
 void ddog_http_client_error_free(struct ddog_HttpClientError *error);
+
+/**
+ * Allocate a new [`MultipartPart`] with the given form-field name and
+ * raw bytes.
+ *
+ * `name` must be valid UTF-8. `data` is copied into the part (any byte
+ * sequence; not required to be UTF-8). The new part is written into
+ * `*out_handle` and owned by the caller.
+ *
+ * # Safety
+ * `name` must point to valid memory for its declared length and contain
+ * valid UTF-8. `data` must point to valid memory for its declared length.
+ * `out_handle` must be a valid, writable pointer to an uninitialised
+ * `*mut ddog_MultipartPart`.
+ */
+struct ddog_HttpClientError *ddog_multipart_part_new(ddog_CharSlice name,
+                                                     ddog_ByteSlice data,
+                                                     ddog_MultipartPart **out_handle);
+
+/**
+ * Set the filename associated with this multipart part.
+ *
+ * `filename` must be valid UTF-8. Calling this more than once replaces
+ * the previous filename.
+ *
+ * # Safety
+ * `part` must be `None` or a valid mutable reference to a part produced
+ * by [`ddog_multipart_part_new`]. `filename` must point to valid memory
+ * for its declared length.
+ */
+struct ddog_HttpClientError *ddog_multipart_part_with_filename(ddog_MultipartPart *part,
+                                                               ddog_CharSlice filename);
+
+/**
+ * Set the MIME content type for this multipart part (e.g.
+ * `"application/json"`, `"text/plain"`).
+ *
+ * `content_type` must be valid UTF-8. Calling this more than once
+ * replaces the previous content type.
+ *
+ * # Safety
+ * `part` must be `None` or a valid mutable reference to a part produced
+ * by [`ddog_multipart_part_new`]. `content_type` must point to valid
+ * memory for its declared length.
+ */
+struct ddog_HttpClientError *ddog_multipart_part_with_content_type(ddog_MultipartPart *part,
+                                                                   ddog_CharSlice content_type);
+
+/**
+ * Drop a multipart part that was not attached to a request.
+ *
+ * # Safety
+ * `part` must be `None` or a part produced by
+ * [`ddog_multipart_part_new`] and not yet consumed by
+ * [`crate::ddog_http_request_with_multipart_part`].
+ */
+void ddog_multipart_part_drop(ddog_MultipartPart *part);
 
 /**
  * Construct a new HTTP request.
@@ -385,6 +494,26 @@ struct ddog_HttpClientError *ddog_http_request_set_timeout(ddog_HttpRequest *req
                                                            uint64_t timeout_ms);
 
 /**
+ * Attach a multipart part to this request, taking ownership of the part.
+ *
+ * When at least one multipart part is attached, the request is sent as
+ * `multipart/form-data` and any body set via
+ * [`ddog_http_request_set_body`] is ignored by the underlying backend.
+ * Parts are appended in attach order.
+ *
+ * The `part` is consumed by this call (regardless of success or
+ * failure) and must not be reused or freed by the caller.
+ *
+ * # Safety
+ * `request` must be `None` or a valid mutable reference to a request
+ * produced by [`ddog_http_request_new`]. `part` must be `None` or a
+ * part produced by [`crate::ddog_multipart_part_new`] and not yet
+ * consumed.
+ */
+struct ddog_HttpClientError *ddog_http_request_with_multipart_part(ddog_HttpRequest *request,
+                                                                   ddog_MultipartPart *part);
+
+/**
  * Drop a request that was not consumed by `send_blocking`.
  *
  * # Safety
@@ -456,6 +585,63 @@ void ddog_http_response_headers_free(struct ddog_HttpHeader *ptr, uintptr_t len)
  * [`crate::ddog_http_client_send_blocking`] and not yet dropped.
  */
 void ddog_http_response_drop(ddog_HttpResponse *response);
+
+/**
+ * Allocate a new [`RetryConfig`] with default settings: 3 retries, 100ms
+ * initial delay, exponential backoff with jitter.
+ *
+ * Writes a `Box<RetryConfig>` into `*out_handle`. The caller owns the
+ * handle and must eventually pass it to either
+ * [`crate::ddog_http_client_builder_set_retry`] (which consumes it) or
+ * [`ddog_retry_config_drop`].
+ *
+ * # Safety
+ * `out_handle` must be a valid, writable pointer to an uninitialised
+ * `*mut ddog_RetryConfig`.
+ */
+void ddog_retry_config_new(ddog_RetryConfig **out_handle);
+
+/**
+ * Set the maximum number of retry attempts (not counting the initial
+ * request).
+ *
+ * # Safety
+ * `cfg` must be `None` or a valid mutable reference to a config produced
+ * by [`ddog_retry_config_new`].
+ */
+struct ddog_HttpClientError *ddog_retry_config_set_max_retries(ddog_RetryConfig *cfg,
+                                                               uint32_t max_retries);
+
+/**
+ * Set the initial delay before the first retry, in milliseconds.
+ * Subsequent retries double this value (exponential backoff).
+ *
+ * # Safety
+ * `cfg` must be `None` or a valid mutable reference to a config produced
+ * by [`ddog_retry_config_new`].
+ */
+struct ddog_HttpClientError *ddog_retry_config_set_initial_delay_millis(ddog_RetryConfig *cfg,
+                                                                        uint64_t initial_delay_ms);
+
+/**
+ * Enable or disable jitter. When enabled, each delay is replaced with a
+ * uniform random value between 0 and the calculated delay.
+ *
+ * # Safety
+ * `cfg` must be `None` or a valid mutable reference to a config produced
+ * by [`ddog_retry_config_new`].
+ */
+struct ddog_HttpClientError *ddog_retry_config_set_jitter(ddog_RetryConfig *cfg, bool jitter);
+
+/**
+ * Drop a retry config that was not attached to a builder.
+ *
+ * # Safety
+ * `cfg` must be `None` or a config produced by
+ * [`ddog_retry_config_new`] and not yet consumed by
+ * [`crate::ddog_http_client_builder_set_retry`].
+ */
+void ddog_retry_config_drop(ddog_RetryConfig *cfg);
 
 /**
  * Send a request synchronously, blocking until the response is received.
