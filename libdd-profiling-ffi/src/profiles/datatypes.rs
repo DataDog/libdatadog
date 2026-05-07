@@ -481,7 +481,10 @@ unsafe fn profile_new(
     period: Option<&Period>,
     string_storage: Option<ManagedStringStorage>,
 ) -> ProfileNewResult {
-    let types = sample_types.into_slice();
+    let types = match sample_types.try_as_slice() {
+        Ok(s) => s,
+        Err(e) => return ProfileNewResult::Err(anyhow::Error::from(e).into()),
+    };
     let period = period.copied();
 
     let result = match string_storage {
