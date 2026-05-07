@@ -1,0 +1,24 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+# Maturin uses this file to drive `maturin develop` / `maturin build`. The
+# Cargo manifest's `[lib] crate-type = ["rlib"]` is intentionally rlib-only
+# so plain `cargo build` / `cargo test` succeed without a libpython at link
+# time; maturin overrides that to `cdylib` automatically when packaging.
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "libdd-http-client"
+version = "0.1.0"
+description = "Python bindings for libdd-http-client (libdatadog)"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+
+[tool.maturin]
+# `python-extension` flips pyo3's `extension-module` feature on so the
+# resulting `.so` does not link libpython directly — required for portable
+# wheels and the only way the cdylib step links cleanly on this host.
+features = ["python-extension"]
+module-name = "libdd_http_client"

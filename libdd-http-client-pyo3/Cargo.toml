@@ -1,0 +1,61 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-http-client-pyo3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Python (pyo3) bindings for libdd-http-client"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client-pyo3"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client-pyo3"
+publish = false
+
+# Default crate-type is `rlib` only so plain `cargo build` / `cargo test` /
+# `cargo clippy` succeed without a libpython available at link time.
+#
+# Building the actual Python extension module (`.so`/`.pyd`) requires both:
+#   * crate-type `cdylib` — set by maturin or by the `cdylib` cargo feature
+#     below (which uses Cargo's `[[example]]` / build-script tricks)
+#   * the `python-extension` cargo feature, which adds pyo3's
+#     `extension-module` feature so libpython is *not* linked at all.
+#
+# In practice, run `maturin develop --features python-extension` (or
+# `maturin build`) and maturin sets crate-type=cdylib internally.
+[lib]
+name = "libdd_http_client_pyo3"
+crate-type = ["rlib"]
+bench = false
+
+[features]
+# Default mirrors libdd-http-client; the pyo3 extension itself is feature-flagged
+# via `python-extension` so that `cargo test` does not require the abi3 shim.
+default = ["https", "reqwest-backend"]
+https = ["libdd-http-client/https"]
+reqwest-backend = ["libdd-http-client/reqwest-backend"]
+hyper-backend = ["libdd-http-client/hyper-backend"]
+
+# Toggle when packaging as a real Python wheel (e.g. via `maturin build`).
+# Adds the `extension-module` feature to pyo3 which removes the libpython
+# link, required for portable wheels.
+python-extension = ["pyo3/extension-module"]
+
+[dependencies]
+# Pin pyo3 to 0.28 to match the existing precedent in `datadog-ffe`.
+# 0.28 supports CPython 3.7+ which covers dd-trace-py's minimum (3.8).
+# Without `default-features` we omit `auto-initialize`; we keep `macros` so
+# `#[pyclass]` / `#[pymethods]` work and add `abi3-py38` so the wheel is
+# importable from any CPython >= 3.8.
+pyo3 = { version = "0.28", default-features = false, features = ["macros", "abi3-py38"] }
+libdd-http-client = { version = "32.0.0", path = "../libdd-http-client", default-features = false }
+libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
+# We install rustls' ring provider on module init so callers don't have to.
+# Task 8b will replace this with the FIPS init entry point.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[dev-dependencies]
+httpmock = "0.8.0-alpha.1"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+tokio = { version = "1.23", features = ["rt", "macros", "io-util", "net"] }
