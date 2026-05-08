@@ -667,8 +667,12 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
             // from an earlier trace.
             let root = &trace[root_span_index];
             if tracer_payload_tags.env.is_empty() {
-                if let Some(v) = search_trace_for_field(root, trace, "env") {
-                    tracer_payload_tags.env = v;
+                if let Some(mut v) = search_trace_for_field(root, trace, "env") {
+                    // Normalize env tag in case the span it was pulled from was skipped during normalization
+                    libdd_trace_normalization::normalize_utils::normalize_tag(&mut v);
+                    if !v.is_empty() {
+                        tracer_payload_tags.env = v;
+                    }
                 }
             }
             if tracer_payload_tags.app_version.is_empty() {
