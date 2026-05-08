@@ -1404,4 +1404,40 @@ mod tests {
         };
         assert_eq!(payloads[0].app_version, "1.2.3");
     }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_normalizes_env() {
+        let mut root = create_test_span(1, 1, 0, 1, true);
+        root.meta.insert("env".to_string(), "PRODUCTION".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![root]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].env, "production");
+    }
+
+    #[test]
+    fn test_search_trace_for_field_skips_span_with_same_id_as_root() {
+        // A span with the same span_id as root is treated as the root and skipped
+        // in the child span search. Only the root spans own meta is checked for it.
+        let mut root = create_test_span(1, 1, 0, 1, true);
+        root.meta.remove("version");
+
+        // This span shares the same span_id as the root span, it should be skipped.
+        let mut duplicate = create_test_span(1, 1, 0, 1, false);
+        duplicate
+            .meta
+            .insert("version".to_string(), "should-not-appear".to_string());
+
+        let trace = vec![root.clone(), duplicate];
+        assert_eq!(search_trace_for_field(&root, &trace, "version"), None);
+    }
 }
