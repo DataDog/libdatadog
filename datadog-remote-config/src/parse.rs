@@ -72,7 +72,7 @@ impl ParserRegistry {
         &mut self,
         product: RemoteConfigProduct,
         parser: ProductParser,
-    ) -> anyhow::Result<(), AlreadyRegistered> {
+    ) -> std::result::Result<(), AlreadyRegistered> {
         if self.parsers.contains_key(&product) {
             return Err(AlreadyRegistered(product));
         }
@@ -184,5 +184,36 @@ impl RemoteConfigValue {
             config_id: path.config_id.to_string(),
             name: path.name.to_string(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn noop_parser() -> ProductParser {
+        Box::new(|_data: &[u8]| anyhow::bail!("not invoked in this test"))
+    }
+
+    #[test]
+    fn parse_returns_none_for_unregistered_product() {
+        let registry = ParserRegistry::new();
+        let parsed = registry
+            .parse(RemoteConfigProduct::AsmFeatures, b"{}")
+            .expect("parse must not error for unregistered products");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn register_rejects_duplicate_product() {
+        let mut registry = ParserRegistry::new();
+        registry
+            .register(RemoteConfigProduct::AgentTask, noop_parser())
+            .expect("first registration succeeds");
+
+        let err = registry
+            .register(RemoteConfigProduct::AgentTask, noop_parser())
+            .expect_err("second registration for the same product must fail");
+        assert_eq!(err.0, RemoteConfigProduct::AgentTask);
     }
 }
