@@ -57,6 +57,53 @@ pub fn getpid() -> libc::pid_t {
     unsafe { libc::getpid() }
 }
 
+/// Return the path to the dynamic linker (PT_INTERP) of the current process.
+#[cfg(target_os = "linux")]
+pub fn read_pt_interp_self() -> Option<std::path::PathBuf> {
+    // Auxiliary vector entries for the current process's executable PHDRs.
+    // SAFETY: getauxval is signal-safe and idempotent.
+    let phdr_addr = unsafe { libc::getauxval(libc::AT_PHDR) } as usize;
+    let phent = unsafe { libc::getauxval(libc::AT_PHENT) } as usize;
+    let phnum = unsafe { libc::getauxval(libc::AT_PHNUM) } as usize;
+
+    if phdr_addr == 0 || phent == 0 || phnum == 0 {
+        return None;
+    }
+
+    // Walk the in-memory program headers.  We need two passes:
+    // 1. Find PT_PHDR to compute the load-base offset (PIE ASLR correction).
+    // 2. Find PT_INTERP to get the interpreter path's virtual address.
+    let mut load_base: isize = 0;
+    let mut interp_vaddr: usize = 0;
+
+    for i in 0..phnum {
+        // SAFETY: AT_PHDR + i*phent is within the mapped PHDR table placed by the kernel.
+        let ph = (phdr_addr + i * phent) as *const libc::Elf64_Phdr;
+        let p_type = unsafe { (*ph).p_type };
+        let p_vaddr = unsafe { (*ph).p_vaddr } as usize;
+
+        if p_type == libc::PT_PHDR {
+            // load_base = runtime_addr_of_PHDRs − link-time vaddr of PHDRs
+            load_base = phdr_addr as isize - p_vaddr as isize;
+        }
+        if p_type == 3 {
+            // PT_INTERP = 3; the interpreter string lives at this vaddr.
+            interp_vaddr = p_vaddr;
+        }
+    }
+
+    if interp_vaddr == 0 {
+        return None;
+    }
+
+    // Compute the runtime address of the null-terminated interpreter path.
+    let interp_ptr = load_base.checked_add(interp_vaddr as isize)? as *const libc::c_char;
+    // SAFETY: the interpreter path is a valid C string placed by the kernel in the mapped
+    // PT_INTERP segment; it is readable for the lifetime of the process.
+    let interp = unsafe { CStr::from_ptr(interp_ptr) };
+    Some(std::path::PathBuf::from(interp.to_string_lossy().as_ref()))
+}
+
 impl Entrypoint {
     pub fn get_fs_path(&self) -> Option<PathBuf> {
         let (path, _) = unsafe { get_dl_path_raw(self.ptr as *const libc::c_void) };

@@ -4,6 +4,8 @@
 use anyhow::Context;
 #[cfg(unix)]
 use libdd_crashtracker;
+#[cfg(target_os = "linux")]
+use spawn_worker::read_pt_interp_self;
 use spawn_worker::{entrypoint, Stdio};
 use std::fs::File;
 use std::future::Future;
@@ -220,6 +222,11 @@ where
 pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
+
+    #[cfg(target_os = "linux")]
+    if cfg.spawn_without_trampoline && read_pt_interp_self().is_some() {
+        spawn_cfg.spawn_method(spawn_worker::SpawnMethod::Direct);
+    }
 
     spawn_cfg.target(entrypoint!(ddog_daemon_entry_point));
 

@@ -4,6 +4,18 @@
 pub use cc_utils::cc;
 
 fn main() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+
+    // Compile the ELF entry point for the shared library (direct exec by ld.so).
+    if target_os == "linux" {
+        cc::Build::new()
+            .file("src/direct_entry.c")
+            .compile("ddtrace_direct_entry");
+        println!("cargo:rerun-if-changed=src/direct_entry.c");
+        // Note, users of direct mode have to add to their build flags:
+        // -Wl,-e,ddog_sidecar_direct_entry
+    }
+
     let mut builder = cc_utils::ImprovedBuild::new();
     builder
         .file("src/trampoline.c")
@@ -13,7 +25,7 @@ fn main() {
         .warnings_into_errors(true)
         .emit_rerun_if_env_changed(true);
 
-    if !cfg!(target_os = "windows") {
+    if target_os != "windows" {
         builder.link_dynamically("dl");
         if cfg!(target_os = "linux") {
             builder.flag("-Wl,--no-as-needed");
@@ -28,7 +40,7 @@ fn main() {
 
     builder.try_compile_executable("trampoline.bin").unwrap();
 
-    if !cfg!(target_os = "windows") {
+    if target_os != "windows" {
         cc_utils::ImprovedBuild::new()
             .file("src/ld_preload_trampoline.c")
             .link_dynamically("dl")
@@ -37,10 +49,7 @@ fn main() {
             .emit_rerun_if_env_changed(true)
             .try_compile_shared_lib("ld_preload_trampoline.shared_lib")
             .unwrap();
-    }
-
-    #[cfg(target_os = "windows")]
-    {
+    } else {
         cc_utils::ImprovedBuild::new()
             .file("src/crashtracking_trampoline.cpp") // Path to your C++ file
             .warnings(true)
