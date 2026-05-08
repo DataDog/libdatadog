@@ -673,6 +673,8 @@ impl TelemetryWorker {
     fn build_app_started(&mut self) -> data::AppStarted {
         data::AppStarted {
             configuration: self.data.configurations.unflushed().cloned().collect(),
+            dependencies: self.data.dependencies.unflushed().cloned().collect(),
+            integrations: self.data.integrations.unflushed().cloned().collect(),
         }
     }
 
@@ -680,6 +682,8 @@ impl TelemetryWorker {
         self.data
             .configurations
             .removed_flushed(p.configuration.len());
+        self.data.dependencies.removed_flushed(p.dependencies.len());
+        self.data.integrations.removed_flushed(p.integrations.len());
     }
 
     fn payload_sent_success(&mut self, payload: &data::Payload) {

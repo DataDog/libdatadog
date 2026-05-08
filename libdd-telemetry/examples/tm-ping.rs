@@ -17,6 +17,8 @@ use libdd_telemetry::{
 fn build_app_started_payload() -> AppStarted {
     AppStarted {
         configuration: Vec::new(),
+        dependencies: Vec::new(),
+        integrations: Vec::new(),
     }
 }
 
