@@ -81,7 +81,7 @@ run_init_array_cb(struct dl_phdr_info *info, size_t size, void *self_addr) {
     }
     return 0;
 }
-#endif /* __linux__ */
+#endif
 
 // Called by ld.so when the library is exec'd directly.
 // Linked as the ELF e_entry.
@@ -89,6 +89,11 @@ run_init_array_cb(struct dl_phdr_info *info, size_t size, void *self_addr) {
 // _DD_SIDECAR_DIRECT_EXEC must be set to the name of the symbol to call
 __attribute__((visibility("default")))
 void ddog_sidecar_direct_entry(void) {
+#if defined(__x86_64__)
+    // ensure 16 byte stack alignment
+    __asm__ volatile ("and $-16, %%rsp" ::: "memory", "cc");
+#endif
+
     // Run our own DT_INIT_ARRAY before any other code.
     // ld.so skips DT_INIT_ARRAY for the main module in direct-exec mode, so
     // ASAN's per-object global registration and other constructors never run
