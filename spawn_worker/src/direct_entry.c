@@ -12,6 +12,12 @@
 
 #define _GNU_SOURCE
 #include <alloca.h>
+#include <fcntl.h>
+#include <signal.h>
+#ifdef __linux__
+# include <sys/ucontext.h>
+#endif
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -19,6 +25,10 @@
 #ifdef __linux__
 # include <elf.h>
 # include <link.h>
+#endif
+/* HAVE_BACKTRACE is defined by build.rs when execinfo is available and links */
+#ifdef HAVE_BACKTRACE
+# include <execinfo.h>
 #endif
 
 // All fields are null/zero when calling from Direct spawn (no deps to clean up).
@@ -71,9 +81,11 @@ run_init_array_cb(struct dl_phdr_info *info, size_t size, void *self_addr) {
                     sz = dyn->d_un.d_val;
             }
             if (arr) {
+                typedef void (*init_fn_t)(int, char **, char **);
+                extern char **environ;
                 for (size_t k = 0; k < sz / sizeof(void *); k++) {
                     if (arr[k] && (uintptr_t)arr[k] != (uintptr_t)-1)
-                        arr[k]();
+                        ((init_fn_t)arr[k])(0, NULL, environ);
                 }
             }
             return 1;
@@ -83,16 +95,145 @@ run_init_array_cb(struct dl_phdr_info *info, size_t size, void *self_addr) {
 }
 #endif
 
+// Signal handler: write crash info to stderr AND /tmp/ddog_sidecar_crash_<pid>.
+// Uses only async-signal-safe functions.
+static void crash_handler(int sig, siginfo_t *si, void *ctx) {
+    (void)si;
+    char path[64];
+    pid_t pid = getpid();
+    const char prefix[] = "/tmp/ddog_sidecar_crash_";
+    int pos = 0;
+    for (int i = 0; prefix[i]; i++) path[pos++] = prefix[i];
+    char pidbuf[20]; int plen = 0;
+    unsigned long p = (unsigned long)pid;
+    if (!p) { pidbuf[plen++] = '0'; }
+    else { char tmp[20]; int tl = 0; while (p) { tmp[tl++] = '0' + (int)(p % 10); p /= 10; }
+           for (int i = tl-1; i >= 0; i--) pidbuf[plen++] = tmp[i]; }
+    for (int i = 0; i < plen; i++) path[pos++] = pidbuf[i];
+    path[pos] = '\0';
+
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fds[2] = { STDERR_FILENO, fd };
+
+    const char hdr[] = "\n=== ddog_sidecar_direct_entry: fatal signal ===\n";
+    for (int i = 0; i < 2; i++) if (fds[i] >= 0) write(fds[i], hdr, sizeof(hdr) - 1);
+
+    // Write signal number and fault/crash addresses using only async-signal-safe ops.
+    // backtrace() is NOT called: the and$-16 stack alignment breaks CFI, causing
+    // _Unwind_Backtrace to fault.  Instead we extract the IP directly from ucontext.
+    static const char hex[] = "0123456789abcdef";
+    // Helper: write "label: 0xHEX\n" for an unsigned long
+#define WRITE_HEX(label, val) do { \
+        const char _lab[] = label ": 0x"; \
+        for (int _i = 0; _i < 2; _i++) if (fds[_i] >= 0) write(fds[_i], _lab, sizeof(_lab)-1); \
+        char _hbuf[18]; int _hl = 0; unsigned long _v = (unsigned long)(val); \
+        if (!_v) { _hbuf[_hl++] = '0'; } \
+        else { char _tmp[16]; int _tl = 0; while (_v) { _tmp[_tl++] = hex[_v&0xf]; _v>>=4; } \
+               for (int _j=_tl-1;_j>=0;_j--) _hbuf[_hl++]=_tmp[_j]; } \
+        _hbuf[_hl++] = '\n'; \
+        for (int _i = 0; _i < 2; _i++) if (fds[_i] >= 0) write(fds[_i], _hbuf, _hl); \
+    } while(0)
+
+    { int s = sig; char sl[24] = "signal: "; int sll = 8;
+      char stmp[10]; int stl = 0;
+      if (!s) stmp[stl++] = '0';
+      else { while (s > 0) { stmp[stl++] = '0' + s % 10; s /= 10; } }
+      for (int i = stl-1; i >= 0; i--) sl[sll++] = stmp[i];
+      sl[sll++] = '\n';
+      for (int i = 0; i < 2; i++) if (fds[i] >= 0) write(fds[i], sl, sll); }
+
+    if (si) WRITE_HEX("fault_addr", si->si_addr);
+
+#if defined(__linux__) && defined(__x86_64__)
+    if (ctx) {
+        ucontext_t *uc = (ucontext_t *)ctx;
+        WRITE_HEX("rip", uc->uc_mcontext.gregs[REG_RIP]);
+        WRITE_HEX("rsp", uc->uc_mcontext.gregs[REG_RSP]);
+    }
+#elif defined(__linux__) && defined(__aarch64__)
+    if (ctx) {
+        ucontext_t *uc = (ucontext_t *)ctx;
+        WRITE_HEX("pc",  uc->uc_mcontext.pc);
+        WRITE_HEX("sp",  uc->uc_mcontext.sp);
+    }
+#endif
+#undef WRITE_HEX
+
+    // Dump /proc/self/maps so RIP can be attributed to a library
+#ifdef __linux__
+    {
+        const char maps_hdr[] = "\n=== /proc/self/maps ===\n";
+        for (int i = 0; i < 2; i++) if (fds[i] >= 0) write(fds[i], maps_hdr, sizeof(maps_hdr)-1);
+        int mfd = open("/proc/self/maps", O_RDONLY);
+        if (mfd >= 0) {
+            char mbuf[4096];
+            ssize_t n;
+            while ((n = read(mfd, mbuf, sizeof(mbuf))) > 0)
+                for (int i = 0; i < 2; i++) if (fds[i] >= 0) write(fds[i], mbuf, (size_t)n);
+            close(mfd);
+        }
+    }
+#endif
+
+    if (fd >= 0) close(fd);
+
+    struct sigaction sa = { .sa_handler = SIG_DFL };
+    sigemptyset(&sa.sa_mask);
+    sigaction(sig, &sa, NULL);
+    raise(sig);
+}
+
 // Called by ld.so when the library is exec'd directly.
 // Linked as the ELF e_entry.
 //
 // _DD_SIDECAR_DIRECT_EXEC must be set to the name of the symbol to call
+
+// Hidden (not static) so asm can reference it by name.
+// @PLT in the call generates R_X86_64_PLT32 which old linkers accept for shared objects.
+// 'used' prevents LTO from dropping it (it's only called from the naked asm below).
+__attribute__((visibility("hidden"), used, noinline))
+void ddog_sidecar_direct_entry_body(void);
+
+// Naked wrapper: ld.so JUMPs (not calls) to e_entry, so rsp alignment is
+// unpredictable.  We must align the stack BEFORE the C prologue runs — doing
+// it inside the function body is too late because the prologue already anchors
+// rbp from the unaligned rsp, causing movaps on rbp-relative locals to fault
+// with #GP (reported as SIGSEGV si_addr=0 on Linux).
 __attribute__((visibility("default")))
-void ddog_sidecar_direct_entry(void) {
 #if defined(__x86_64__)
-    // ensure 16 byte stack alignment
-    __asm__ volatile ("and $-16, %%rsp" ::: "memory", "cc");
+__attribute__((naked))
+void ddog_sidecar_direct_entry(void) {
+    __asm__ (
+        "and $-16, %rsp\n\t"    /* 16-byte align before C prologue sees rsp */
+        "call ddog_sidecar_direct_entry_body@PLT\n\t"  /* @PLT → R_X86_64_PLT32, valid in .so */
+        "ud2"                    /* unreachable: body calls _exit */
+    );
+}
+#elif defined(__i386__)
+__attribute__((naked))
+void ddog_sidecar_direct_entry(void) {
+    __asm__ (
+        "and $-16, %esp\n\t"
+        "call ddog_sidecar_direct_entry_body@PLT\n\t"
+        "ud2"
+    );
+}
+#else
+void ddog_sidecar_direct_entry(void) {
+    ddog_sidecar_direct_entry_body();
+}
 #endif
+
+__attribute__((visibility("hidden"), used, noinline))
+void ddog_sidecar_direct_entry_body(void) {
+    // Install crash handler so any fatal signal is captured in a file.
+    struct sigaction sa = { .sa_sigaction = crash_handler,
+                            .sa_flags = SA_SIGINFO | SA_RESETHAND };
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS,  &sa, NULL);
+    sigaction(SIGABRT, &sa, NULL);
+    sigaction(SIGILL,  &sa, NULL);
 
     // Run our own DT_INIT_ARRAY before any other code.
     // ld.so skips DT_INIT_ARRAY for the main module in direct-exec mode, so
