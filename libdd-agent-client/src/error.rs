@@ -42,6 +42,15 @@ pub enum SendError {
         /// The last error encountered before giving up.
         last_error: Box<SendError>,
     },
+    /// The path argument did not start with `'/'`.
+    #[error("path must start with '/': {path}")]
+    InvalidPath {
+        /// The invalid path that was provided.
+        path: String,
+    },
+    /// The `/info` response did not contain an `endpoints` field.
+    #[error("missing 'endpoints' field in /info response")]
+    MissingEndpointsInfo,
     /// Payload serialisation or compression failure.
     #[error("encoding error: {0}")]
     Encoding(String),
