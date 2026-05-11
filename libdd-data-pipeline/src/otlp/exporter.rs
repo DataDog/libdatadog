@@ -5,7 +5,7 @@
 
 use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
-use libdd_capabilities::HttpClientTrait;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryBackoffType, RetryStrategy, SendWithRetryError,
@@ -22,8 +22,8 @@ const OTLP_RETRY_DELAY_MS: u64 = 100;
 ///
 /// `test_token` is forwarded as `X-Datadog-Test-Session-Token` when set, enabling snapshot tests
 /// against the Datadog test agent's OTLP endpoint.
-pub async fn send_otlp_traces_http<H: HttpClientTrait>(
-    client: &H,
+pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
     config: &OtlpTraceConfig,
     test_token: Option<&str>,
     json_body: Vec<u8>,
@@ -62,7 +62,7 @@ pub async fn send_otlp_traces_http<H: HttpClientTrait>(
         None,
     );
 
-    match send_with_retry(client, &target, json_body, &headers, &retry_strategy).await {
+    match send_with_retry(capabilities, &target, json_body, &headers, &retry_strategy).await {
         Ok(_) => Ok(()),
         Err(e) => Err(map_send_error(e).await),
     }

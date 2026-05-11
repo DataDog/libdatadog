@@ -2842,6 +2842,7 @@ dependencies = [
  "http-body-util",
  "libdd-capabilities",
  "libdd-common",
+ "tokio",
 ]
 
 [[package]]
@@ -3235,11 +3236,14 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
+ "futures-util",
  "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "tokio",
  "tokio-util",
  "tracing",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -3263,6 +3267,7 @@ dependencies = [
  "hashbrown 0.15.1",
  "http",
  "http-body-util",
+ "httpmock",
  "libc",
  "libdd-common",
  "libdd-ddsketch",
