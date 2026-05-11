@@ -327,11 +327,14 @@ impl TraceExporterBuilder {
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
-        let info_fetcher_handle = shared_runtime
-            .spawn_worker(info_fetcher, false)
-            .map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?;
+        let info_fetcher_handle =
+            shared_runtime
+                .spawn_worker(info_fetcher, false)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
         // The handle is currently only tracked for shutdown on native; on wasm
         // it is dropped here (the worker keeps running on the JS event loop
         // until the page/module is torn down).

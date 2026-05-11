@@ -169,7 +169,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 /// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::<
 ///     NativeCapabilities,
 /// >::new(
-///     endpoint, std::time::Duration::from_secs(5 * 60),
+///     endpoint, std::time::Duration::from_secs(5 * 60)
 /// );
 /// // Start the fetcher on a shared runtime
 /// let runtime = libdd_shared_runtime::SharedRuntime::new()?;
