@@ -80,7 +80,7 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.6".to_string()
+        "1.7".to_string()
     }
 
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
@@ -184,7 +184,7 @@ mod tests {
     fn test_schema_matches_rfc() {
         let rfc_schema_filename = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_6.json"
+            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_7.json"
         );
         let schema = schemars::schema_for!(CrashInfo);
         let schema_json = serde_json::to_string_pretty(&schema).expect("Schema to serialize");
