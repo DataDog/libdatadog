@@ -1304,14 +1304,25 @@ mod tests {
 
     #[test]
     fn test_collect_pb_trace_chunks_searches_multiple_root_spans_for_fields() {
-        // First trace root span has no version. Second trace root span has a version.
-        // The second root span should populate the version field.
-        let first_root_span = create_test_span(1, 1, 0, 1, true);
+        // First trace root span has no fields. Second trace root span has all fields.
+        // The second root span should populate all fields.
+        let mut first_root_span = create_test_span(1, 1, 0, 1, true);
+        first_root_span.meta.remove("env");
+        first_root_span.meta.remove("runtime-id");
 
         let mut second_root_span = create_test_span(2, 3, 0, 1, true);
         second_root_span
             .meta
             .insert("version".to_string(), "1.2.3".to_string());
+        second_root_span
+            .meta
+            .insert("env".to_string(), "prod".to_string());
+        second_root_span
+            .meta
+            .insert("_dd.hostname".to_string(), "my-host".to_string());
+        second_root_span
+            .meta
+            .insert("runtime-id".to_string(), "123".to_string());
 
         let result = collect_pb_trace_chunks(
             vec![vec![first_root_span], vec![second_root_span]],
@@ -1325,17 +1336,31 @@ mod tests {
             panic!("expected TracerPayloadCollection::V07");
         };
         assert_eq!(payloads[0].app_version, "1.2.3");
+        assert_eq!(payloads[0].env, "prod");
+        assert_eq!(payloads[0].hostname, "my-host");
+        assert_eq!(payloads[0].runtime_id, "123");
     }
 
     #[test]
     fn test_collect_pb_trace_chunks_searches_non_root_spans_for_fields() {
-        // Root span has no version. Child span has a version.
-        // The child span should populate the version field.
-        let root_span = create_test_span(1, 1, 0, 1, true);
+        // Root span has no fields. Child span has all fields.
+        // The child span should populate all fields.
+        let mut root_span = create_test_span(1, 1, 0, 1, true);
+        root_span.meta.remove("env");
+        root_span.meta.remove("runtime-id");
         let mut child_span = create_test_span(1, 2, 1, 1, false);
         child_span
             .meta
             .insert("version".to_string(), "1.2.3".to_string());
+        child_span
+            .meta
+            .insert("env".to_string(), "prod".to_string());
+        child_span
+            .meta
+            .insert("_dd.hostname".to_string(), "my-host".to_string());
+        child_span
+            .meta
+            .insert("runtime-id".to_string(), "123".to_string());
 
         let result = collect_pb_trace_chunks(
             vec![vec![root_span, child_span]],
@@ -1349,21 +1374,42 @@ mod tests {
             panic!("expected TracerPayloadCollection::V07");
         };
         assert_eq!(payloads[0].app_version, "1.2.3");
+        assert_eq!(payloads[0].env, "prod");
+        assert_eq!(payloads[0].hostname, "my-host");
+        assert_eq!(payloads[0].runtime_id, "123");
     }
 
     #[test]
     fn test_collect_pb_trace_chunks_root_span_takes_priority_over_child() {
-        // Root span has a version. Child has a different version.
-        // The root span should populate the version field.
+        // Root span has all fields. Child has different values for all fields.
+        // The root span should populate all fields.
         let mut root_span = create_test_span(1, 1, 0, 1, true);
         root_span
             .meta
             .insert("version".to_string(), "root-version".to_string());
+        root_span
+            .meta
+            .insert("env".to_string(), "root-env".to_string());
+        root_span
+            .meta
+            .insert("_dd.hostname".to_string(), "root-host".to_string());
+        root_span
+            .meta
+            .insert("runtime-id".to_string(), "root-runtime-id".to_string());
 
         let mut child_span = create_test_span(1, 2, 1, 1, false);
         child_span
             .meta
             .insert("version".to_string(), "child-version".to_string());
+        child_span
+            .meta
+            .insert("env".to_string(), "child-env".to_string());
+        child_span
+            .meta
+            .insert("_dd.hostname".to_string(), "child-host".to_string());
+        child_span
+            .meta
+            .insert("runtime-id".to_string(), "child-runtime-id".to_string());
 
         let result = collect_pb_trace_chunks(
             vec![vec![root_span, child_span]],
@@ -1377,19 +1423,38 @@ mod tests {
             panic!("expected TracerPayloadCollection::V07");
         };
         assert_eq!(payloads[0].app_version, "root-version");
+        assert_eq!(payloads[0].env, "root-env");
+        assert_eq!(payloads[0].hostname, "root-host");
+        assert_eq!(payloads[0].runtime_id, "root-runtime-id");
     }
 
     #[test]
     fn test_collect_pb_trace_chunks_skips_empty_root_span_value() {
-        // Root span has version: "". Child span has a non-empty version.
-        // The child span should populate the version field.
+        // Root span has empty values for all fields. Child span has non-empty values.
+        // The child span should populate all fields.
         let mut root_span = create_test_span(1, 1, 0, 1, true);
         root_span.meta.insert("version".to_string(), "".to_string());
+        root_span.meta.insert("env".to_string(), "".to_string());
+        root_span
+            .meta
+            .insert("_dd.hostname".to_string(), "".to_string());
+        root_span
+            .meta
+            .insert("runtime-id".to_string(), "".to_string());
 
         let mut child_span = create_test_span(1, 2, 1, 1, false);
         child_span
             .meta
             .insert("version".to_string(), "1.2.3".to_string());
+        child_span
+            .meta
+            .insert("env".to_string(), "prod".to_string());
+        child_span
+            .meta
+            .insert("_dd.hostname".to_string(), "my-host".to_string());
+        child_span
+            .meta
+            .insert("runtime-id".to_string(), "123".to_string());
 
         let result = collect_pb_trace_chunks(
             vec![vec![root_span, child_span]],
@@ -1403,12 +1468,16 @@ mod tests {
             panic!("expected TracerPayloadCollection::V07");
         };
         assert_eq!(payloads[0].app_version, "1.2.3");
+        assert_eq!(payloads[0].env, "prod");
+        assert_eq!(payloads[0].hostname, "my-host");
+        assert_eq!(payloads[0].runtime_id, "123");
     }
 
     #[test]
     fn test_collect_pb_trace_chunks_normalizes_env() {
         let mut root = create_test_span(1, 1, 0, 1, true);
-        root.meta.insert("env".to_string(), "PRODUCTION".to_string());
+        root.meta
+            .insert("env".to_string(), "PRODUCTION".to_string());
 
         let result = collect_pb_trace_chunks(
             vec![vec![root]],
@@ -1422,6 +1491,34 @@ mod tests {
             panic!("expected TracerPayloadCollection::V07");
         };
         assert_eq!(payloads[0].env, "production");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_skips_env_empty_after_normalization() {
+        // First root span has an env that normalizes to empty (all invalid characters).
+        // Second root span has an env should populate env fields.
+        let mut first_root_span = create_test_span(1, 1, 0, 1, true);
+        first_root_span
+            .meta
+            .insert("env".to_string(), "!!!".to_string());
+
+        let mut second_root_span = create_test_span(2, 3, 0, 1, true);
+        second_root_span
+            .meta
+            .insert("env".to_string(), "prod".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![first_root_span], vec![second_root_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].env, "prod");
     }
 
     #[test]
