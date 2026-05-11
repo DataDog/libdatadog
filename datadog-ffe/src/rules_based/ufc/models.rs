@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 
 use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
@@ -537,7 +537,7 @@ pub(crate) struct SplitWire {
 #[allow(missing_docs)]
 pub(crate) struct ShardWire {
     pub salt: String,
-    pub total_shards: u32,
+    pub total_shards: NonZeroU32,
     pub ranges: Box<[ShardRange]>,
 }
 
