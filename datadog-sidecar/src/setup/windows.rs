@@ -75,9 +75,9 @@ mod tests {
 
     #[test]
     fn test_shared_dir_can_connect_to_socket() -> anyhow::Result<()> {
-        use rand::distributions::Alphanumeric;
-        use rand::{thread_rng, Rng};
-        let random_prefix: Vec<u8> = thread_rng().sample_iter(&Alphanumeric).take(8).collect();
+        use rand::distr::Alphanumeric;
+        use rand::RngExt;
+        let random_prefix: Vec<u8> = rand::rng().sample_iter(&Alphanumeric).take(8).collect();
         let liaison = super::NamedPipeLiaison::new(String::from_utf8_lossy(&random_prefix));
         basic_liaison_connection_test(&liaison)?;
         Ok(())

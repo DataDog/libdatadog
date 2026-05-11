@@ -4,7 +4,7 @@
 use crate::{
     crash_info::{
         CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TelemetryCrashUploader,
-        Threads, Ucontext,
+        Ucontext,
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
@@ -560,7 +560,7 @@ fn collect_and_add_thread_contexts(
     crashing_tid: Option<u32>,
     budget: Duration,
 ) -> anyhow::Result<()> {
-    use crate::crash_info::ThreadData;
+    use crate::crash_info::{ThreadData, Threads};
     use crate::receiver::ptrace_collector::stream_thread_contexts;
 
     let crashing_tid = crashing_tid.unwrap_or(0) as i32;

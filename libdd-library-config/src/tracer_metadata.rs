@@ -175,8 +175,8 @@ pub enum AnonymousFileHandle {
 #[cfg(target_os = "linux")]
 mod linux {
     use anyhow::Context;
-    use rand::distributions::Alphanumeric;
-    use rand::Rng;
+    use rand::distr::Alphanumeric;
+    use rand::RngExt;
     use std::io::Write;
 
     /// Create a memfd file storing the tracer metadata. This function also attempts to publish the
@@ -186,7 +186,7 @@ mod linux {
     ) -> anyhow::Result<super::AnonymousFileHandle> {
         let _ = crate::otel_process_ctx::linux::publish(&data.to_otel_process_ctx());
 
-        let uid: String = rand::thread_rng()
+        let uid: String = rand::rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)
