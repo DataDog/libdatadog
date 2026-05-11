@@ -20,9 +20,10 @@ use bin_tests::{
     validation::PayloadValidator,
     ArtifactsBuild, BuildProfile,
 };
+#[cfg(target_os = "linux")]
+use libdd_crashtracker::default_max_threads;
 use libdd_crashtracker::{
-    default_max_threads, CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames,
-    StacktraceCollection,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
 };
 use serde_json::Value;
 

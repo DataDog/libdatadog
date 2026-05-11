@@ -113,12 +113,12 @@ mod tests {
     use crate::normalize_utils::{DEFAULT_SPAN_NAME, MAX_TYPE_LEN};
     use crate::normalizer;
     use libdd_trace_protobuf::pb;
-    use rand::Rng;
+    use rand::RngExt;
     use std::collections::HashMap;
     use std::time::SystemTime;
 
     fn new_test_span() -> pb::Span {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         pb::Span {
             duration: 10000000,
@@ -126,7 +126,7 @@ mod tests {
             resource: "GET /some/raclette".to_string(),
             service: "django".to_string(),
             name: "django.controller".to_string(),
-            span_id: rng.gen(),
+            span_id: rng.random(),
             start: 1448466874000000000,
             trace_id: 424242,
             meta: HashMap::from([

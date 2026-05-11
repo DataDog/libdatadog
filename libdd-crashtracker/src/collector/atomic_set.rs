@@ -8,7 +8,7 @@
 //! If this is useful for other cases, we can consider moving it to ddcommon.
 
 use portable_atomic::AtomicUsize;
-use rand::Rng;
+use rand::RngExt as _;
 use std::fmt::Debug;
 use std::io::Write;
 use std::num::NonZeroU128;
@@ -141,7 +141,7 @@ where
         // Long scans become exponentially unlikely, giving amortized constant time insertion.
         // Try 10 random locations, this should succeed 0.999 of the time.
         for _ in 0..10 {
-            let idx: usize = rand::thread_rng().gen_range(0..self.set.len());
+            let idx: usize = rand::rng().random_range(0..self.set.len());
             if let Some(v) = self.set[idx].try_insert(value) {
                 value = v;
             } else {
@@ -152,7 +152,7 @@ where
         // In the case where it doesn't succeed, do a linear probe to guarantee it lands somewhere.
         // Since we enforce that the array is only half full, this is guarantee to succeed.
         // We leave this to second to avoid the chains that can build up with linear probing.
-        let shift: usize = rand::thread_rng().gen_range(0..self.set.len());
+        let shift: usize = rand::rng().random_range(0..self.set.len());
         for i in 0..self.set.len() {
             let idx = (i + shift) % self.set.len();
 

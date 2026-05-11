@@ -47,7 +47,7 @@ libdd-profiling-protobuf = { version = "2.0.0", path = "../libdd-profiling-proto
 mime = "0.3.16"
 parking_lot = { version = "0.12", default-features = false }
 prost = "0.14.1"
-rand = "0.8"
+rand = "0.10.1"
 # Use rustls to align with the rest of the workspace (libdd-common, libdd-telemetry, etc.)
 # Non-FIPS builds use ring as the crypto provider; FIPS builds use aws-lc-rs.
 # Use hickory-dns instead of the default system DNS resolver to avoid fork safety issues.

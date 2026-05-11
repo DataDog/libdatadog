@@ -50,6 +50,7 @@ libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-imp
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+getrandom_v04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 uuid = { version = "1", features = ["js"] }
 
 [lib]
@@ -71,7 +72,7 @@ libdd-trace-utils = { path = "../libdd-trace-utils", features = [
     "test-utils",
 ] }
 httpmock = "0.8.0-alpha.1"
-rand = "0.8.5"
+rand = "0.10.1"
 tempfile = "3.3.0"
 tokio = { version = "1.23", features = [
     "rt",

@@ -39,7 +39,7 @@ http-body-util = "0.1"
 datadog-ipc = { path = "../datadog-ipc", features = ["tiny-bytes"] }
 datadog-ipc-macros = { path = "../datadog-ipc-macros" }
 
-rand = "0.8.3"
+rand = "0.10.1"
 rmp-serde = "1.1.1"
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf" }
 serde = { version = "1.0", features = ["derive", "rc"] }

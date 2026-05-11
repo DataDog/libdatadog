@@ -5,7 +5,7 @@ use crate::span_concentrator::aggregation::OwnedAggregationKey;
 
 use super::*;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
-use rand::{thread_rng, Rng};
+use rand::RngExt;
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
@@ -20,7 +20,7 @@ fn get_span_kinds() -> Vec<String> {
 
 /// Return a random timestamp within the corresponding bucket (now - offset)
 fn get_timestamp_in_bucket(aligned_now: u64, bucket_size: u64, offset: u64) -> u64 {
-    aligned_now - bucket_size * offset + thread_rng().gen_range(0..BUCKET_SIZE)
+    aligned_now - bucket_size * offset + rand::rng().random_range(0..BUCKET_SIZE)
 }
 
 /// Create a test span with given attributes
