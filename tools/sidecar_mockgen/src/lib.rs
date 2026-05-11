@@ -122,7 +122,7 @@ pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String>
         let so_file = File::parse(bin_data.as_slice())
             .map_err(|e| format!("parse {}: {e}", binary.display()))?;
         let mut result = HashSet::new();
-        for sym in so_file.symbols().chain(so_file.dynamic_symbols()) {
+        for sym in so_file.dynamic_symbols() {
             if sym_is_definition(&sym) {
                 if let Ok(name) = sym.name() {
                     if undefined_candidates.contains(name) {
