@@ -5,17 +5,12 @@
 //!
 //! All symbols are only available on Linux, since spec is currently Linux-specific.
 
-/// Opaque handle to a thread context record.
-#[repr(C)]
-pub struct ThreadContextRecord {}
-
 #[cfg(target_os = "linux")]
 pub use linux::*;
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::ThreadContextRecord;
-    use libdd_otel_thread_ctx::linux::ThreadContext;
+    use libdd_otel_thread_ctx::linux::{ThreadContext, ThreadContextHandle};
     use std::ptr::NonNull;
 
     /// Maximum size in bytes of the `attrs_data` field of a thread context record.
@@ -40,10 +35,8 @@ mod linux {
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
         local_root_span_id: &[u8; 8],
-    ) -> NonNull<ThreadContextRecord> {
-        ThreadContext::new(*trace_id, *span_id, *local_root_span_id, &[])
-            .into_ptr()
-            .cast()
+    ) -> NonNull<ThreadContextHandle> {
+        ThreadContext::new(*trace_id, *span_id, *local_root_span_id, &[]).into_opaque_ptr()
     }
 
     /// Free an owned thread context.
@@ -54,9 +47,9 @@ mod linux {
     /// `ddog_otel_thread_ctx_detach`, and must not be used after this call. In particular, `ctx`
     /// must not be currently attached to a thread.
     #[no_mangle]
-    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextRecord) {
+    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextHandle) {
         if let Some(ctx) = NonNull::new(ctx) {
-            let _ = ThreadContext::from_ptr(ctx.cast());
+            let _ = ThreadContext::from_opaque_ptr(ctx);
         }
     }
 
@@ -70,11 +63,11 @@ mod linux {
     /// attached.
     #[no_mangle]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_attach(
-        ctx: *mut ThreadContextRecord,
-    ) -> Option<NonNull<ThreadContextRecord>> {
-        ThreadContext::from_ptr(NonNull::new(ctx)?.cast())
+        ctx: *mut ThreadContextHandle,
+    ) -> Option<NonNull<ThreadContextHandle>> {
+        ThreadContext::from_opaque_ptr(NonNull::new(ctx)?)
             .attach()
-            .map(|prev| ThreadContext::into_ptr(prev).cast())
+            .map(ThreadContext::into_opaque_ptr)
     }
 
     /// Remove the currently attached context from the TLS slot.
@@ -82,8 +75,8 @@ mod linux {
     /// Returns the detached context (caller now owns it and must release it with
     /// `ddog_otel_thread_ctx_free`), or null if the slot was empty.
     #[no_mangle]
-    pub extern "C" fn ddog_otel_thread_ctx_detach() -> Option<NonNull<ThreadContextRecord>> {
-        ThreadContext::detach().map(|ctx| ThreadContext::into_ptr(ctx).cast())
+    pub extern "C" fn ddog_otel_thread_ctx_detach() -> Option<NonNull<ThreadContextHandle>> {
+        ThreadContext::detach().map(ThreadContext::into_opaque_ptr)
     }
 
     /// Update the currently attached context in-place.

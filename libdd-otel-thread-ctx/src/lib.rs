@@ -140,7 +140,7 @@ pub mod linux {
     // `valid`. We just use a const assertion in `new()` to avoid surprises and make sure this
     // struct has the right total size.
     #[repr(C)]
-    pub struct ThreadContextRecord {
+    struct ThreadContextRecord {
         /// Trace identifier; all-zeroes means "no trace".
         trace_id: [u8; 16],
         /// Span identifier.
@@ -286,6 +286,14 @@ pub mod linux {
     /// not thread-safe.
     pub struct ThreadContext(NonNull<ThreadContextRecord>);
 
+
+    /// Opaque handle to a thread context record. Used to allow the FFI to convert [ThreadContext]
+    /// to and from raw pointers without exposing [ThreadContextRecord], as the latter needs extra
+    /// care to be manipulated (async-signal-safety, seq-lock-like modification protocol through
+    /// [ThreadContextRecord::valid], etc.)
+    #[repr(C)]
+    pub struct ThreadContextHandle {}
+
     impl ThreadContext {
         /// Create a new thread context with the given trace/span IDs and encoded attributes.
         pub fn new(
@@ -305,9 +313,17 @@ pub mod linux {
         /// Turn this thread context into a pointer to the underlying [ThreadContextRecord].
         /// The pointer must be reconstructed through [`Self::from_ptr`] in order to be properly
         /// dropped, or the record will leak.
-        pub fn into_ptr(self) -> NonNull<ThreadContextRecord> {
+        fn into_ptr(self) -> NonNull<ThreadContextRecord> {
             let mdrop = mem::ManuallyDrop::new(self);
             mdrop.0
+        }
+
+        /// Turn this thread context into an opaque pointer to the underlying [ThreadContextRecord].
+        /// The pointer must be reconstructed through [`Self::from_opaque_ptr`] in order to be
+        /// properly dropped, or the record will leak.
+        pub fn into_opaque_ptr(self) -> NonNull<ThreadContextHandle> {
+            let mdrop = mem::ManuallyDrop::new(self);
+            mdrop.0.cast()
         }
 
         /// Reconstruct a [ThreadContextRecord] from a pointer that comes
@@ -320,8 +336,22 @@ pub mod linux {
         ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
-        pub unsafe fn from_ptr(ptr: NonNull<ThreadContextRecord>) -> Self {
+        unsafe fn from_ptr(ptr: NonNull<ThreadContextRecord>) -> Self {
             Self(ptr)
+        }
+
+        /// Reconstruct an [OpaqueThreadContextRecord] from a pointer that comes from
+        /// [`Self::into_opaque_ptr`].
+        ///
+        /// # Safety
+        ///
+        /// - `ptr` must come from a prior call to [`Self::into_opaque_ptr`].
+        /// - if `ptr` is aliased, accesses through aliases must not be interleaved with method
+        ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
+        ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
+        ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
+        pub unsafe fn from_opaque_ptr(ptr: NonNull<ThreadContextHandle>) -> Self {
+            Self(ptr.cast())
         }
     }
 
