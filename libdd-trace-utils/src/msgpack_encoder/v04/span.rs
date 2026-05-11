@@ -7,7 +7,6 @@ use rmp::encode::{
     write_bin, write_bool, write_f64, write_i64, write_sint, write_str, write_u32, write_u64,
     write_u8, RmpWrite, ValueWriteError,
 };
-use rmp::Marker;
 use std::borrow::Borrow;
 
 const fn msp_string_encoding_len(s: &str) -> usize {
@@ -25,53 +24,32 @@ const fn msp_string_encoding_len(s: &str) -> usize {
 
 // Compute the encoding of a string to messagepack in a const manner
 const fn msp_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u8; ENCODING_LEN] {
-    // copy_to_slice is not const yet
-    const fn write_be(value: u64, first_n_bytes: usize, s: &mut [u8], idx: &mut usize) {
+    // copy_to_slice is not const yet, so we make a helper
+    const fn copy_to_slice(dest: &mut [u8], src: &[u8], n: usize) {
         let mut i = 0;
-        let be_bytes = value.to_be_bytes();
-        while i < first_n_bytes {
-            s[*idx + i] = be_bytes[i];
+        while i < n {
+            dest[i] = src[i];
             i += 1;
         }
-        *idx += first_n_bytes;
     }
 
     let mut storage = [0; ENCODING_LEN];
-    let mut idx = 0;
     let len = s.len() as u64;
-    let marker = if len < 32 {
-        Marker::FixStr(len as u8)
+    let len_bytes = if len < 32 {
+        storage[0] = 0xa0 | (len as u8 & 0x1f);
+        0
     } else if len < 256 {
-        Marker::Str8
+        storage[0] = 0xd9;
+        1
     } else if len <= (u16::MAX as u64) {
-        Marker::Str16
+        storage[0] = 0xda;
+        2
     } else {
-        Marker::Str32
+        storage[0] = 0xdb;
+        4
     };
-    let marker_byte = match marker {
-        Marker::FixStr(len) => 0xa0 | (len & 0x1f),
-        Marker::Str8 => 0xd9,
-        Marker::Str16 => 0xda,
-        Marker::Str32 => 0xdb,
-        _ => unreachable!(),
-    };
-
-    storage[idx] = marker_byte;
-    idx += 1;
-    if matches!(marker, Marker::Str8) {
-        write_be(len, 1, &mut storage, &mut idx);
-    }
-    if matches!(marker, Marker::Str16) {
-        write_be(len, 2, &mut storage, &mut idx);
-    }
-    if matches!(marker, Marker::Str32) {
-        write_be(len, 4, &mut storage, &mut idx);
-    }
-    let mut i = 0;
-    while i < s.len() {
-        storage[idx + i] = s.as_bytes()[i];
-        i += 1;
-    }
+    copy_to_slice(storage.split_at_mut(1).1, &len.to_be_bytes(), len_bytes);
+    copy_to_slice(storage.split_at_mut(1 + len_bytes).1, s.as_bytes(), s.len());
     storage
 }
 
