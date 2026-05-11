@@ -25,6 +25,7 @@ log = "0.4.21"
 [features]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+regex-lite = ["datadog-live-debugger/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

@@ -22,6 +22,7 @@ http = "1.1"
 [features]
 default = ["https"]
 https = ["libdd-common/https"]
+fips = ["libdd-common/fips"]
 
 
 [dev-dependencies]

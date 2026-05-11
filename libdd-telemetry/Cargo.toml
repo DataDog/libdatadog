@@ -1,6 +1,6 @@
 [package]
 name = "libdd-telemetry"
-version= "4.0.0"
+version= "5.0.0"
 description = "Telemetry client allowing to send data as described in https://docs.datadoghq.com/tracing/configure_data_security/?tab=net#telemetry-collection"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-telemetry"
@@ -15,6 +15,7 @@ bench = false
 default = ["tracing"]
 tracing = ["tracing/std"]
 https = ["libdd-common/https"]
+fips = ["libdd-common/fips"]
 
 [dependencies]
 anyhow = { version = "1.0" }

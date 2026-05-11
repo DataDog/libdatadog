@@ -48,6 +48,8 @@ pub enum ConfigurationOrigin {
 #[derive(Serialize, Debug)]
 pub struct AppStarted {
     pub configuration: Vec<Configuration>,
+    pub dependencies: Vec<Dependency>,
+    pub integrations: Vec<Integration>,
 }
 
 #[derive(Serialize, Debug)]

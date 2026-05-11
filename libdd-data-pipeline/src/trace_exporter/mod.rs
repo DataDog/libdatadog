@@ -215,6 +215,7 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
+    serializer: TraceSerializer,
     shared_runtime: Arc<SharedRuntime>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
@@ -616,11 +617,11 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             return self.send_otlp_traces_inner(traces, config).await;
         }
 
-        let serializer = TraceSerializer::new(
-            self.output_format,
+        let prepared = match self.serializer.prepare_traces_payload(
+            traces,
+            header_tags,
             self.agent_payload_response_version.as_ref(),
-        );
-        let prepared = match serializer.prepare_traces_payload(traces, header_tags) {
+        ) {
             Ok(p) => p,
             Err(e) => {
                 error!("Error serializing traces: {e}");
