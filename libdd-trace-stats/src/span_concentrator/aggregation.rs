@@ -202,7 +202,20 @@ impl<'a> BorrowedAggregationKey<'a> {
     ///
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
+    pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
+        Self::from_obfuscated_span(span.resource(), span, peer_tag_keys)
+    }
+
+    pub(crate) fn from_obfuscated_span<'b, T>(
+        resource_name: &'a str,
+        span: &'b T,
+        peer_tag_keys: &'b [String],
+    ) -> BorrowedAggregationKey<'a>
+    where
+        T: StatSpan<'b>,
+        // resource_name is a temporary string on the stack the span will outlive it
+        'b: 'a,
+    {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
@@ -242,7 +255,7 @@ impl<'a> BorrowedAggregationKey<'a> {
 
         Self {
             fixed: FixedAggregationKey {
-                resource_name: span.resource(),
+                resource_name,
                 service_name: span.service(),
                 operation_name: span.name(),
                 span_type: span.r#type(),

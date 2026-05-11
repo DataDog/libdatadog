@@ -24,12 +24,13 @@ use crate::trace_exporter::agent_response::{
 use crate::trace_exporter::error::{
     InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
 };
+use crate::trace_exporter::stats::StatsComputationConfig;
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
@@ -222,7 +223,7 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
-    client_side_stats: ArcSwap<StatsComputationStatus>,
+    client_side_stats: StatsComputationConfig,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
@@ -279,7 +280,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
             // Extract the stats handle before moving other fields.
             if let StatsComputationStatus::Enabled { worker_handle, .. } =
-                &**self.client_side_stats.load()
+                &**self.client_side_stats.status.load()
             {
                 let handle = worker_handle.clone();
                 join_set.spawn(async move { handle.stop().await });
@@ -381,7 +382,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
             if self.has_agent_info_state_changed(&agent_info) {
-                match &**self.client_side_stats.load() {
+                match &**self.client_side_stats.status.load() {
                     StatsComputationStatus::Disabled => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
                         let ctx = stats::StatsContext {
@@ -392,8 +393,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                         stats::handle_stats_disabled_by_agent(
                             &ctx,
                             &agent_info,
-                            &self.client_side_stats,
                             self.capabilities.clone(),
+                            &self.client_side_stats,
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -573,7 +574,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         mp_payload: Vec<u8>,
         headers: HeaderMap,
         chunks: usize,
-        chunks_dropped_p0: usize,
+        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))] chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
@@ -614,7 +615,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
-            &self.client_side_stats,
+            &self.client_side_stats.status,
             self.client_computed_top_level,
         );
 
@@ -851,7 +852,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     #[cfg(not(target_arch = "wasm32"))]
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
-        stats::is_stats_worker_active(&self.client_side_stats)
+        stats::is_stats_worker_active(&self.client_side_stats.status)
     }
 }
 
@@ -2070,5 +2071,123 @@ mod single_threaded_tests {
             .unwrap_err(); // The shutdown should timeout
 
         mock_traces.assert();
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    fn build_obfuscation_test_exporter(
+        url: String,
+        runtime: Arc<SharedRuntime>,
+        opt_in: bool,
+    ) -> TraceExporter<NativeCapabilities> {
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        builder
+            .set_url(&url)
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime)
+            .enable_stats(Duration::from_secs(10));
+        if opt_in {
+            builder.enable_client_side_stats_obfuscation();
+        }
+        builder.build::<NativeCapabilities>().unwrap()
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    fn run_obfuscation_test(opt_in: bool, agent_obfuscation_version: Option<u32>) -> bool {
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+
+        let _mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.4/traces");
+            then.status(200).body("");
+        });
+
+        let _mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats");
+            then.status(200).body("");
+        });
+
+        let info_body = match agent_obfuscation_version {
+            Some(v) => format!(
+                r#"{{"version":"1","client_drop_p0s":true,"obfuscation_version":{v},"endpoints":["/v0.4/traces","/v0.6/stats"]}}"#
+            ),
+            None => r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#.to_string(),
+        };
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(info_body);
+        });
+
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
+        let exporter = build_obfuscation_test_exporter(server.url("/"), runtime.clone(), opt_in);
+
+        while agent_info::get_agent_info().is_none() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let trace_chunk = vec![SpanBytes {
+            duration: 10,
+            ..Default::default()
+        }];
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let _ = exporter.send(data.as_ref());
+
+        let start = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let result = exporter.client_side_stats.obfuscation_config.load().enabled;
+        let _ = runtime.shutdown(None);
+        result
+    }
+
+    /// Runs the three opt-in × agent-support cases sequentially in a single test
+    /// to avoid races on the process-global agent info cache.
+    #[cfg(feature = "stats-obfuscation")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_client_side_stats_obfuscation_opt_in() {
+        let current_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION;
+        let prev_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION - 1;
+        // Opt-in OFF, agent supports → must stay disabled.
+        assert!(
+            !run_obfuscation_test(false, Some(current_obf_version)),
+            "obfuscation must stay disabled when builder opt-in is absent"
+        );
+        // Opt-in ON, agent does not advertise support → disabled.
+        assert!(
+            !run_obfuscation_test(true, None),
+            "obfuscation must stay disabled when agent does not advertise support"
+        );
+
+        // Opt-in ON, agent obfuscation_version < tracer obfuscation_version -> disabled;
+        assert!(
+            !run_obfuscation_test(true, Some(prev_obf_version)),
+            "obfuscation must stay disabled when agent.obfuscation_version < tracer.obfuscation_version"
+        );
+
+        // Opt-in ON, agent supports → enabled.
+        assert!(
+            run_obfuscation_test(true, Some(current_obf_version)),
+            "obfuscation must activate when opted in and agent supports"
+        );
     }
 }

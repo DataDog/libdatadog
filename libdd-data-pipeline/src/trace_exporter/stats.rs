@@ -16,6 +16,10 @@ use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
+#[cfg(feature = "stats-obfuscation")]
+use libdd_trace_stats::span_concentrator::{
+    SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::sync::{Arc, Mutex};
@@ -32,6 +36,12 @@ pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
     ["client", "server", "producer", "consumer"];
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
+
+/// The maximum obfuscation version this tracer supports.
+#[cfg(feature = "stats-obfuscation")]
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
+#[cfg(feature = "stats-obfuscation")]
+pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Context struct that groups immutable parameters used by stats functions
@@ -57,6 +67,27 @@ pub(crate) enum StatsComputationStatus {
     },
 }
 
+#[derive(Debug)]
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) struct StatsComputationConfig {
+    pub(crate) status: ArcSwap<StatsComputationStatus>,
+    #[cfg(feature = "stats-obfuscation")]
+    pub(crate) obfuscation_config: SharedStatsComputationObfuscationConfig,
+    /// Builder-level opt-in. When false, stats obfuscation stays off
+    /// regardless of agent support.
+    #[cfg(feature = "stats-obfuscation")]
+    pub(crate) obfuscation_enabled: bool,
+}
+
+/// Return true if the agent's obfuscation version is supported by this tracer
+#[cfg(feature = "stats-obfuscation")]
+fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
+    agent_info
+        .info
+        .obfuscation_version
+        .is_some_and(|v| v >= 1 && v <= SUPPORTED_OBFUSCATION_VERSION)
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 /// Get span kinds for stats computation with default fallback
 fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
@@ -75,25 +106,23 @@ pub(crate) fn start_stats_computation<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 >(
     ctx: &StatsContext,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
     capabilities: C,
+    client_side_stats: &StatsComputationConfig,
 ) -> anyhow::Result<()> {
-    if let StatsComputationStatus::DisabledByAgent { bucket_size } = **client_side_stats.load() {
+    if let StatsComputationStatus::DisabledByAgent { bucket_size } =
+        **client_side_stats.status.load()
+    {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
             bucket_size,
             std::time::SystemTime::now(),
             span_kinds,
             peer_tags,
+            #[cfg(feature = "stats-obfuscation")]
+            Some(client_side_stats.obfuscation_config.clone()),
         )));
-        create_and_start_stats_worker(
-            ctx,
-            bucket_size,
-            &stats_concentrator,
-            client_side_stats,
-            capabilities,
-        )?;
+        create_and_start_stats_worker(ctx, &stats_concentrator, capabilities, client_side_stats)?;
     }
     Ok(())
 }
@@ -104,17 +133,21 @@ fn create_and_start_stats_worker<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 >(
     ctx: &StatsContext,
-    bucket_size: Duration,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
     capabilities: C,
+    client_side_stats: &StatsComputationConfig,
 ) -> anyhow::Result<()> {
+    let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
     let stats_exporter = StatsExporter::<C>::new(
         bucket_size,
         stats_concentrator.clone(),
         StatsMetadata::from(ctx.metadata.clone()),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         capabilities.clone(),
+        #[cfg(feature = "stats-obfuscation")]
+        client_side_stats.obfuscation_config.clone(),
+        #[cfg(feature = "stats-obfuscation")]
+        SUPPORTED_OBFUSCATION_VERSION_STR,
     );
     let worker_handle = ctx
         .shared_runtime
@@ -122,10 +155,12 @@ fn create_and_start_stats_worker<
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
-    client_side_stats.store(Arc::new(StatsComputationStatus::Enabled {
-        stats_concentrator: stats_concentrator.clone(),
-        worker_handle,
-    }));
+    client_side_stats
+        .status
+        .store(Arc::new(StatsComputationStatus::Enabled {
+            stats_concentrator: stats_concentrator.clone(),
+            worker_handle,
+        }));
 
     Ok(())
 }
@@ -141,6 +176,7 @@ pub(crate) fn stop_stats_computation(
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
         worker_handle,
+        ..
     } = &**client_side_stats.load()
     {
         let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
@@ -162,23 +198,58 @@ pub(crate) fn handle_stats_disabled_by_agent<
 >(
     ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
     capabilities: C,
+    client_side_stats: &StatsComputationConfig,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         let status = start_stats_computation(
             ctx,
-            client_side_stats,
             get_span_kinds_for_stats(agent_info),
             agent_info.info.peer_tags.clone().unwrap_or_default(),
             capabilities,
+            client_side_stats,
         );
         match status {
-            Ok(()) => debug!("Client-side stats enabled"),
+            Ok(()) => {
+                #[cfg(feature = "stats-obfuscation")]
+                update_obfuscation_config(agent_info, client_side_stats);
+                debug!("Client-side stats enabled");
+            }
             Err(_) => error!("Failed to start stats computation"),
         }
     } else {
         debug!("Client-side stats computation has been disabled by the agent")
+    }
+}
+
+#[cfg(feature = "stats-obfuscation")]
+#[cfg(not(target_arch = "wasm32"))]
+fn update_obfuscation_config(
+    agent_info: &Arc<AgentInfo>,
+    client_side_stats: &StatsComputationConfig,
+) {
+    if matches!(
+        &**client_side_stats.status.load(),
+        StatsComputationStatus::Enabled { .. }
+    ) {
+        let obfuscation_active =
+            client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
+        let sql_obfuscation_mode = (|| {
+            agent_info
+                .info
+                .config
+                .as_ref()?
+                .obfuscation
+                .as_ref()?
+                .sql_obfuscation_mode
+        })()
+        .unwrap_or_default();
+        client_side_stats
+            .obfuscation_config
+            .store(Arc::new(StatsComputationObfuscationConfig {
+                enabled: obfuscation_active,
+                sql_obfuscation_mode,
+            }));
     }
 }
 
@@ -187,22 +258,26 @@ pub(crate) fn handle_stats_disabled_by_agent<
 pub(crate) fn handle_stats_enabled(
     ctx: &StatsContext,
     agent_info: &Arc<AgentInfo>,
-    stats_concentrator: &Mutex<SpanConcentrator>,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
+    stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
+    client_side_stats: &StatsComputationConfig,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
+        #[cfg(feature = "stats-obfuscation")]
+        update_obfuscation_config(agent_info, client_side_stats);
     } else {
-        stop_stats_computation(ctx, client_side_stats);
+        stop_stats_computation(ctx, &client_side_stats.status);
         debug!("Client-side stats computation has been disabled by the agent")
     }
 }
 
-/// Add all spans from the given iterator into the stats concentrator
+/// Add all spans from the given iterator into the stats concentrator, optionally obfuscating
+/// resource names for client-side stats.
+///
 /// # Panic
-/// Will panic if another thread panicked will holding the lock on `stats_concentrator`
+/// Will panic if another thread panicked while holding the lock on `stats_concentrator`
 fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
     stats_concentrator: &Mutex<SpanConcentrator>,
     traces: &[Vec<libdd_trace_utils::span::v04::Span<T>>],
@@ -223,9 +298,10 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
 ) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+    let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
-    } = &**client_side_stats.load()
+    } = &**status
     {
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
@@ -280,5 +356,21 @@ impl From<TracerMetadata> for StatsMetadata {
             process_tags: m.process_tags,
             service: m.service,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(feature = "stats-obfuscation")]
+    #[test]
+    fn test_obfuscation_version_was_updated() {
+        use crate::trace_exporter::stats::{
+            SUPPORTED_OBFUSCATION_VERSION, SUPPORTED_OBFUSCATION_VERSION_STR,
+        };
+
+        assert_eq!(
+            SUPPORTED_OBFUSCATION_VERSION.to_string(),
+            SUPPORTED_OBFUSCATION_VERSION_STR
+        );
     }
 }

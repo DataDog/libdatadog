@@ -1507,6 +1507,7 @@ name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "arrayref",
  "base64 0.22.1",
  "bincode",
@@ -2977,11 +2978,13 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-stats",
  "libdd-trace-utils",
@@ -3356,6 +3359,7 @@ name = "libdd-trace-stats"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-trait",
  "criterion",
  "hashbrown 0.15.1",

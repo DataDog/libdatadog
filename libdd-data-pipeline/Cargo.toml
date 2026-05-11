@@ -12,8 +12,8 @@ autobenches = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+arc-swap.workspace = true
 anyhow = { version = "1.0" }
-arc-swap = "1.7.1"
 async-trait = "0.1"
 http = "1"
 http-body-util = "0.1"
@@ -38,6 +38,8 @@ libdd-telemetry = { version = "5.0.0", path = "../libdd-telemetry", default-feat
 libdd-trace-protobuf = { version = "3.0.1", path = "../libdd-trace-protobuf" }
 libdd-trace-stats = { version = "2.0.0", path = "../libdd-trace-stats", default-features = false }
 libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils", default-features = false }
+libdd-trace-obfuscation = { version = "2.0.0", path = "../libdd-trace-obfuscation", optional = true }
+libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-dogstatsd-client = { version = "2.0.0", path = "../libdd-dogstatsd-client", default-features = false }
 libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
     "bytes_string",
@@ -90,6 +92,10 @@ https = [
     "libdd-trace-stats/https",
     "libdd-trace-utils/https",
     "libdd-dogstatsd-client/https",
+]
+stats-obfuscation = [
+    "libdd-trace-obfuscation",
+    "libdd-trace-stats/stats-obfuscation"
 ]
 fips = [
     "libdd-common/fips",

@@ -9,6 +9,8 @@ use std::{
     time,
 };
 
+#[cfg(feature = "stats-obfuscation")]
+use crate::span_concentrator::SharedStatsComputationObfuscationConfig;
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -67,6 +69,10 @@ pub struct StatsExporter<
     meta: StatsMetadata,
     sequence_id: AtomicU64,
     capabilities: Cap,
+    #[cfg(feature = "stats-obfuscation")]
+    obfuscation_config: SharedStatsComputationObfuscationConfig,
+    #[cfg(feature = "stats-obfuscation")]
+    supported_obfuscation_version: &'static str,
 }
 
 impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
@@ -79,14 +85,15 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     ///   agent
     /// - `meta` metadata used in ClientStatsPayload and as headers to send stats to the agent
     /// - `endpoint` the Endpoint used to send stats to the agent
-    /// - `cancellation_token` Token used to safely shutdown the exporter by force flushing the
-    ///   concentrator
     pub fn new(
         flush_interval: time::Duration,
         concentrator: Arc<Mutex<Con>>,
         meta: StatsMetadata,
         endpoint: Endpoint,
         capabilities: Cap,
+        #[cfg(feature = "stats-obfuscation")]
+        obfuscation_config: SharedStatsComputationObfuscationConfig,
+        #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
     ) -> Self {
         Self {
             flush_interval,
@@ -95,6 +102,10 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             meta,
             sequence_id: AtomicU64::new(0),
             capabilities,
+            #[cfg(feature = "stats-obfuscation")]
+            obfuscation_config,
+            #[cfg(feature = "stats-obfuscation")]
+            supported_obfuscation_version,
         }
     }
 
@@ -127,6 +138,14 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             http::header::CONTENT_TYPE,
             libdd_common::header::APPLICATION_MSGPACK,
         );
+
+        #[cfg(feature = "stats-obfuscation")]
+        if self.obfuscation_config.load().enabled {
+            headers.insert(
+                http::HeaderName::from_static("datadog-obfuscation-version"),
+                http::HeaderValue::from_static(self.supported_obfuscation_version),
+            );
+        }
 
         let result = send_with_retry(
             &self.capabilities,
@@ -227,6 +246,8 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "stats-obfuscation")]
+    use crate::span_concentrator::StatsComputationObfuscationConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
@@ -268,6 +289,8 @@ mod tests {
             SystemTime::now() - BUCKETS_DURATION * 3,
             vec![],
             vec![],
+            #[cfg(feature = "stats-obfuscation")]
+            None,
         );
         let mut trace = vec![];
 
@@ -309,6 +332,10 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -336,6 +363,10 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -371,6 +402,10 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             caps.clone(),
+            #[cfg(feature = "stats-obfuscation")]
+            StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
         let _handle = shared_runtime
             .spawn_worker(stats_exporter, true)
@@ -412,6 +447,10 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             caps.clone(),
+            #[cfg(feature = "stats-obfuscation")]
+            StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
         );
 
         let _handle = shared_runtime
@@ -450,5 +489,44 @@ mod tests {
             payload_with_env.env, "test",
             "Non-empty env should be preserved"
         );
+    }
+    #[cfg(feature = "stats-obfuscation")]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_send_stats_with_obfuscation_header() {
+        use arc_swap::ArcSwap;
+
+        let server = MockServer::start_async().await;
+
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .header("Content-type", "application/msgpack")
+                    .header("datadog-obfuscation-version", "1")
+                    .path("/v0.6/stats")
+                    .body_includes("libdatadog-test");
+                then.status(200).body("");
+            })
+            .await;
+
+        let stats_exporter = StatsExporter::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            Arc::new(ArcSwap::from_pointee(StatsComputationObfuscationConfig {
+                enabled: true,
+                ..Default::default()
+            })),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
+        );
+
+        let send_status = stats_exporter.send(true).await;
+        send_status.unwrap();
+
+        mock.assert_async().await;
     }
 }
