@@ -11,11 +11,11 @@ use std::process::Command;
 ///
 /// This directory contains an `ld.lld` wrapper that delegates to `rust-lld`.
 /// Passing it via `-B` to the C compiler driver makes it discover rust-lld
-/// before any system-wide lld, which matters when the system lld is too old
-/// (e.g. lld 7 on CentOS 7 cannot handle TLSDESC relocations).
+/// before any system-wide lld, which
 ///
-/// The discovery goes through `rustc --print sysroot` so it works on any
-/// layout (NixOS, Homebrew, rustup, distro packages) without assuming FHS.
+/// 1. Avoid the need of a system-wide LLD install
+/// 2. Pick a recent LLD, as opposed to e.g. CentOS 7' LLVM7 which is too old to handle TLSDESC
+///    relocations properly.
 fn find_rust_lld_dir() -> Option<PathBuf> {
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
     let target = env::var("TARGET").ok()?;
@@ -39,19 +39,17 @@ fn main() {
     generate_and_configure_header("otel-thread-ctx.h");
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
 
-    // Export the TLSDESC thread-local variable to the dynamic symbol table so
-    // external readers (e.g. the eBPF profiler) can discover it. Rust's cdylib
-    // linker applies a version script with `local: *` that hides all symbols
-    // not explicitly allowlisted, and also causes lld to relax the TLSDESC
-    // access to local-exec (LE), eliminating the dynsym entry entirely.
-    // Passing our own version script with an explicit `global:` entry for the
-    // symbol beats the `local: *` wildcard and prevents that relaxation.
+    // Export the TLSDESC thread-local variable to the dynamic symbol table so external readers
+    // (e.g. the eBPF profiler) can discover it. Rust's cdylib linker applies a version script with
+    // `local: *` that hides all symbols not explicitly allowlisted, and also causes lld to relax
+    // the TLSDESC access, eliminating the dynsym entry entirely.
     //
-    // Merging multiple version scripts is not supported by GNU ld, so we need
-    // lld. We prefer the toolchain's bundled rust-lld (LLD 19+ since Rust 1.84)
-    // over the system lld, because some environments ship an lld too old for
-    // TLSDESC (e.g. lld 7 on CentOS 7). If rust-lld is not found we fall back
-    // to whatever `lld` the system provides.
+    // Passing our own version script with an explicit `global:` entry for the symbol beats the
+    // `local: *` wildcard and prevents that relaxation.
+    //
+    // Merging multiple version scripts is not supported by GNU ld, so we need lld. We prefer the
+    // toolchain's bundled rust-lld (LLD 19+ since Rust 1.84) over the system lld (if it even
+    // exists). If rust-lld is not found we fall back to whatever `lld` the system provides.
     if target_os == "linux" {
         let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
