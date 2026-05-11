@@ -32,6 +32,13 @@ struct WorkerEntry {
 /// Handle to a worker registered on a [`SharedRuntime`].
 ///
 /// This handle can be used to stop the worker.
+///
+/// # Warning
+/// If every clone of this handle is dropped without calling [`WorkerHandle::stop`], the worker
+/// remains registered on the [`SharedRuntime`] and can only be torn down by shutting the
+/// runtime down. Workers are expected to detect that their input channel has been closed and
+/// park themselves to avoid spinning, but they will not be freed until the runtime stops.
+#[must_use = "dropping a WorkerHandle without calling stop() leaks the worker until the SharedRuntime is shut down"]
 #[derive(Clone, Debug)]
 pub struct WorkerHandle {
     worker_id: u64,
@@ -500,7 +507,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker, true).unwrap();
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Let the worker run until state > 0 so that preservation is observable
         let mut state_before_fork = 0;
@@ -531,7 +538,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker, true).unwrap();
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Let the worker run until state > 0 so that the reset is observable
         let mut state_before_fork = 0;
@@ -562,7 +569,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker, true).unwrap();
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
 
         // Wait for at least one run before shutting down
         receiver
@@ -586,7 +593,7 @@ mod tests {
         let shared_runtime = SharedRuntime::new().unwrap();
         let (worker, receiver) = make_test_worker();
 
-        shared_runtime.spawn_worker(worker, false).unwrap();
+        let _ = shared_runtime.spawn_worker(worker, false).unwrap();
 
         // Wait for the worker to run at least once
         receiver

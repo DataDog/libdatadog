@@ -577,7 +577,7 @@ mod single_threaded_tests {
         );
         assert!(agent_info::get_agent_info().is_none());
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher, true).unwrap();
+        let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Wait until the info is fetched
         let start = std::time::Instant::now();
@@ -660,7 +660,7 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher, true).unwrap();
+        let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the new agent state
         let response = http::Response::builder()
@@ -741,7 +741,7 @@ mod single_threaded_tests {
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
         let shared_runtime = SharedRuntime::new().unwrap();
-        shared_runtime.spawn_worker(fetcher, true).unwrap();
+        let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the same agent state
         let response = http::Response::builder()
