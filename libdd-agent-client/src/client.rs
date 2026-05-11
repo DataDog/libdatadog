@@ -164,6 +164,12 @@ impl AgentClient {
         payload: Bytes,
         content_type: &str,
     ) -> Result<(), SendError> {
+        if !path.starts_with('/') {
+            return Err(SendError::InvalidPath {
+                path: path.to_owned(),
+            });
+        }
+
         let request = HttpRequest::new(HttpMethod::Post, format!("{}{}", self.base_url, path))
             .with_body(payload)
             .with_headers(self.static_headers.iter().cloned())
@@ -217,8 +223,10 @@ impl AgentClient {
         let info: InfoResponse =
             from_slice(response.body()).map_err(|e| SendError::Encoding(e.to_string()))?;
 
+        let endpoints = info.endpoints.ok_or(SendError::MissingEndpointsInfo)?;
+
         Ok(Some(AgentInfo {
-            endpoints: info.endpoints.unwrap_or_default(),
+            endpoints,
             client_drop_p0s: info.client_drop_p0s.unwrap_or(false),
             config: info.config.unwrap_or(Value::Null),
             version: info.version,
