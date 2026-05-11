@@ -36,12 +36,6 @@ pub enum SendError {
         /// Raw response body.
         body: Bytes,
     },
-    /// All retry attempts exhausted without a successful response.
-    #[error("retries exhausted: {last_error}")]
-    RetriesExhausted {
-        /// The last error encountered before giving up.
-        last_error: Box<SendError>,
-    },
     /// The path argument did not start with `'/'`.
     #[error("path must start with '/': {path}")]
     InvalidPath {
