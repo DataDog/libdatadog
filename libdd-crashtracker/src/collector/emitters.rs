@@ -450,7 +450,7 @@ fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), Emit
         let message = unsafe { &*message_ptr };
         if !message.trim().is_empty() {
             writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
-            writeln!(w, "{message}")?;
+            writeln!(w, "{}", serde_json::to_string(message)?)?;
             writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
             w.flush()?;
         }

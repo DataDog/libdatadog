@@ -704,6 +704,7 @@ mod tests {
         assert!(builder.has_message());
     }
 
+
     #[test]
     fn test_stdin_state_message_to_waiting() {
         let mut builder = CrashInfoBuilder::new();
