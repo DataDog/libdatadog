@@ -26,7 +26,7 @@ build_common = { path = "../build-common" }
 
 [dev-dependencies]
 httpmock = "0.8.0-alpha.1"
-rmp-serde = "1.3.1"
+rmp-serde = "1.3.0"
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 
 [dependencies]
