@@ -6,8 +6,7 @@ use std::time::SystemTime;
 use crate::{OsInfo, SigInfo, ThreadData, Ucontext};
 
 use super::{
-    build_crash_ping_message, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace,
-    TARGET_TRIPLE,
+    telemetry::CrashPing, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, TARGET_TRIPLE,
 };
 use anyhow::Context;
 use chrono::{DateTime, Utc};
@@ -443,15 +442,15 @@ impl ErrorsIntakePayload {
         })
     }
 
-    pub fn from_crash_ping(
-        crash_uuid: &str,
-        sig_info: Option<&SigInfo>,
-        metadata: &Metadata,
-    ) -> anyhow::Result<Self> {
+    pub fn from_crash_ping(crash_ping: &CrashPing) -> anyhow::Result<Self> {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+
+        let crash_uuid = crash_ping.crash_uuid();
+        let sig_info = crash_ping.siginfo();
+        let metadata = crash_ping.metadata();
 
         let extracted_metadata = ExtractedMetadata::from_metadata(metadata);
         let mut ddtags = format!(
@@ -472,20 +471,12 @@ impl ErrorsIntakePayload {
 
         ddtags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
 
-        let (error_type, message) = if let Some(sig_info) = sig_info {
-            (
-                Some(format!("{:?}", sig_info.si_signo_human_readable)),
-                Some(build_crash_ping_message(sig_info)),
-            )
-        } else {
-            (
-                Some("Unknown".to_string()),
-                Some(
-                    "Crashtracker crash ping: crash processing started - Process terminated"
-                        .to_string(),
-                ),
-            )
-        };
+        let error_type = Some(
+            sig_info
+                .map(|s| format!("{:?}", s.si_signo_human_readable))
+                .unwrap_or_else(|| format!("{:?}", crash_ping.kind())),
+        );
+        let message = Some(crash_ping.message().to_string());
 
         Ok(Self {
             timestamp,
@@ -529,13 +520,8 @@ impl ErrorsIntakeUploader {
         self.cfg.is_errors_intake_enabled()
     }
 
-    pub async fn upload_crash_ping(
-        &self,
-        crash_uuid: &str,
-        sig_info: Option<&SigInfo>,
-        metadata: &Metadata,
-    ) -> anyhow::Result<()> {
-        let payload = ErrorsIntakePayload::from_crash_ping(crash_uuid, sig_info, metadata)?;
+    pub async fn upload_crash_ping(&self, crash_ping: &CrashPing) -> anyhow::Result<()> {
+        let payload = ErrorsIntakePayload::from_crash_ping(crash_ping)?;
         self.send_payload(&payload).await
     }
 
@@ -702,19 +688,30 @@ mod tests {
     fn test_errors_payload_from_crash_ping() {
         let metadata = Metadata::test_instance(1);
         let sig_info = crate::SigInfo::test_instance(42);
-        let crash_uuid = "test-uuid-123";
+        let crash_uuid = uuid::Uuid::from_u128(0x01);
 
-        let payload =
-            ErrorsIntakePayload::from_crash_ping(crash_uuid, Some(&sig_info), &metadata).unwrap();
+        let crash_ping = crate::CrashPingBuilder::new(crash_uuid)
+            .with_metadata(metadata.clone())
+            .with_kind(crate::ErrorKind::UnixSignal)
+            .with_sig_info(sig_info.clone())
+            .build()
+            .unwrap();
+
+        let payload = ErrorsIntakePayload::from_crash_ping(&crash_ping).unwrap();
 
         assert_eq!(payload.ddsource, "crashtracker");
         assert_eq!(payload.error.source_type, Some("Crashtracking".to_string()));
         assert_eq!(payload.error.is_crash, Some(false));
         assert!(payload.error.stack.is_none());
+        assert_eq!(payload.error.message.as_deref(), Some(crash_ping.message()));
+        assert_eq!(
+            payload.error.error_type,
+            Some(format!("{:?}", sig_info.si_signo_human_readable))
+        );
 
         let ddtags = &payload.ddtags;
 
-        assert!(ddtags.contains("uuid:test-uuid-123"));
+        assert!(ddtags.contains(&format!("uuid:{crash_uuid}")));
         assert!(ddtags.contains("is_crash_ping:true"));
         assert!(ddtags.contains("service:foo"));
 
@@ -768,14 +765,24 @@ mod tests {
     fn test_crash_ping_has_all_telemetry_tags() {
         let metadata = Metadata::test_instance(1);
         let sig_info = crate::SigInfo::test_instance(42);
-        let crash_uuid = "test-crash-ping-uuid";
+        let crash_uuid = uuid::Uuid::from_u128(0x02);
 
-        let payload =
-            ErrorsIntakePayload::from_crash_ping(crash_uuid, Some(&sig_info), &metadata).unwrap();
+        let crash_ping = crate::CrashPingBuilder::new(crash_uuid)
+            .with_metadata(metadata.clone())
+            .with_kind(crate::ErrorKind::UnixSignal)
+            .with_sig_info(sig_info.clone())
+            .build()
+            .unwrap();
+
+        let payload = ErrorsIntakePayload::from_crash_ping(&crash_ping).unwrap();
 
         // This test ensures we have all the tags that telemetry crash ping produces
+        assert!(
+            payload.ddtags.contains(&format!("uuid:{crash_uuid}")),
+            "Missing uuid tag in ddtags: {}",
+            payload.ddtags
+        );
         let expected_tags = [
-            "uuid:test-crash-ping-uuid",
             "is_crash_ping:true",
             "service:foo",
             "language_name:native",
