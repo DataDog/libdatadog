@@ -14,9 +14,9 @@ use libdd_ipc::platform::locks::FLock;
 use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
 #[cfg(feature = "logging")]
-use log::{debug, warn};
+use log::{trace, warn};
 #[cfg(not(feature = "logging"))]
-use tracing::{debug, warn};
+use tracing::{trace, warn};
 
 pub type IpcClient = SeqpacketConn;
 pub type IpcServer = SeqpacketListener;
@@ -62,7 +62,9 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if libdd_ipc::platform::sockets::is_listening(&self.socket_path)? {
-                debug!(
+                // trace not debug: this fires on every non-first PHP process start and
+                // appears in test diffs whenever debug logging is enabled.
+                trace!(
                     "The sidecar's socket is already listening ({})",
                     self.socket_path.as_path().display()
                 );
