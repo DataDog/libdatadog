@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use rand::Rng;
+use rand::RngExt as _;
 use serde::{Deserialize, Serialize};
 
 /// `QueueId` is a struct that represents a unique identifier for a queue.
@@ -27,7 +27,7 @@ impl QueueId {
     /// ```
     pub fn new_unique() -> Self {
         Self {
-            inner: rand::thread_rng().gen_range(1u64..u64::MAX),
+            inner: rand::rng().random_range(1u64..u64::MAX),
         }
     }
 }
