@@ -337,10 +337,10 @@ impl TraceExporterBuilder {
         // native, workers run on the tokio runtime; on wasm, they run on the JS
         // event loop via `spawn_local`. Telemetry remains native-only for now.
 
-            #[cfg(feature = "stats-obfuscation")]
-            use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
+        #[cfg(feature = "stats-obfuscation")]
+        use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
 
-            use crate::trace_exporter::stats::StatsComputationConfig;
+        use crate::trace_exporter::stats::StatsComputationConfig;
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
@@ -472,14 +472,14 @@ impl TraceExporterBuilder {
             dogstatsd,
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: StatsComputationConfig {
-                    status: ArcSwap::new(stats.into()),
-                    #[cfg(feature = "stats-obfuscation")]
-                    obfuscation_config: Arc::new(ArcSwap::from_pointee(
-                        StatsComputationObfuscationConfig::default(),
-                    )),
-                    #[cfg(feature = "stats-obfuscation")]
-                    obfuscation_enabled: self.client_side_stats_obfuscation_enabled,
-                },
+                status: ArcSwap::new(stats.into()),
+                #[cfg(feature = "stats-obfuscation")]
+                obfuscation_config: Arc::new(ArcSwap::from_pointee(
+                    StatsComputationObfuscationConfig::default(),
+                )),
+                #[cfg(feature = "stats-obfuscation")]
+                obfuscation_enabled: self.client_side_stats_obfuscation_enabled,
+            },
             previous_info_state: arc_swap::ArcSwapOption::new(None),
             info_response_observer,
             #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
