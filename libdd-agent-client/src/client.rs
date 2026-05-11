@@ -80,7 +80,7 @@ impl AgentClient {
             .with_headers(self.static_headers.iter().cloned())
             .with_header("Content-Type", content_type)
             .with_header("X-Datadog-Trace-Count", trace_count.to_string())
-            .with_header("Datadog-Send-Real-Http-Status", "true");
+            .with_header("Datadog-Send-Real-Http-Status", "1");
 
         if opts.computed_top_level {
             request = request.with_header("Datadog-Client-Computed-Top-Level", "yes");

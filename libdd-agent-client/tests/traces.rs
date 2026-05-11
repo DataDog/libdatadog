@@ -83,7 +83,7 @@ async fn injects_send_real_http_status_header() {
     let mock = server.mock(|when, then| {
         when.method(PUT)
             .path("/v0.5/traces")
-            .header("Datadog-Send-Real-Http-Status", "true");
+            .header("Datadog-Send-Real-Http-Status", "1");
         then.status(200).body(r#"{}"#);
     });
 
