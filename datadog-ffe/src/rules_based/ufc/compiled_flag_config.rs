@@ -53,6 +53,7 @@ pub(crate) struct Split {
     pub shards: Vec<Shard>,
     pub variation_key: Str,
     pub value: AssignmentValue,
+    pub serial_id: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -168,6 +169,7 @@ fn compile_split(
         shards,
         variation_key: split.variation_key,
         value: result,
+        serial_id: split.serial_id,
     })
 }
 

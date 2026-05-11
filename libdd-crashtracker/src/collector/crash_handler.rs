@@ -303,6 +303,20 @@ fn handle_posix_signal_impl(
 
     let receiver = Receiver::from_crashtracker_config(config)?;
 
+    // Enable ptrace permissions for receiver if multi-thread collection is enabled
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() {
+        if let Some(receiver_pid) = receiver.handle.pid {
+            // Allow the receiver to ptrace this process for thread context collection.
+            // PR_SET_PTRACER only uses arg2 (the pid); the trailing zeros satisfy
+            // libc::prctl's fixed 5-argument FFI binding.
+            // SAFETY: prctl is async-signal-safe and we're just setting ptrace permissions
+            unsafe {
+                libc::prctl(libc::PR_SET_PTRACER, receiver_pid as libc::c_ulong);
+            }
+        }
+    }
+
     let collector = Collector::spawn(
         &receiver,
         config,

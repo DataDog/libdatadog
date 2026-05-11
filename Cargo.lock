@@ -695,7 +695,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1463,7 +1463,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2196,6 +2196,11 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hdrhistogram"
@@ -2884,7 +2889,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2937,7 +2942,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2997,7 +3002,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3022,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3044,7 +3049,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3115,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3213,6 +3218,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-sampling"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "libdd-common",
+ "libdd-trace-utils",
+ "lru",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-shared-runtime"
 version = "0.1.0"
 dependencies = [
@@ -3227,7 +3244,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3236,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3263,7 +3280,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3493,6 +3510,15 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 dependencies = [
  "serde",
  "value-bag",
+]
+
+[[package]]
+name = "lru"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
+dependencies = [
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -5504,7 +5530,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5946,7 +5972,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

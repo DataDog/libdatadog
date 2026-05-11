@@ -14,8 +14,8 @@ use crate::trace_exporter::TelemetryConfig;
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TracerMetadata,
-    INFO_ENDPOINT,
+    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
+    TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientTrait, MaybeSend};
@@ -418,6 +418,7 @@ impl TraceExporterBuilder {
                 },
                 input_format: self.input_format,
                 output_format: self.output_format,
+                serializer: TraceSerializer::new(self.output_format),
                 client_computed_top_level: self.client_computed_top_level,
                 shared_runtime,
                 dogstatsd,
@@ -515,6 +516,7 @@ impl TraceExporterBuilder {
                 },
                 input_format: self.input_format,
                 output_format: self.output_format,
+                serializer: TraceSerializer::new(self.output_format),
                 client_computed_top_level: self.client_computed_top_level,
                 shared_runtime,
                 dogstatsd,

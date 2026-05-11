@@ -7,6 +7,8 @@ pub use entry_points::{
     async_receiver_entry_point_unix_listener, async_receiver_entry_point_unix_socket,
     get_receiver_unix_socket, receiver_entry_point_stdin, receiver_entry_point_unix_socket,
 };
+#[cfg(target_os = "linux")]
+mod ptrace_collector;
 mod receive_report;
 
 #[cfg(feature = "benchmarking")]
