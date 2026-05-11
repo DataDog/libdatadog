@@ -62,7 +62,15 @@ impl Liaison for SharedDirLiaison {
         if self.socket_path.exists() {
             // if socket is already listening, then creating listener is not available
             if datadog_ipc::platform::sockets::is_listening(&self.socket_path)? {
-                debug!(
+                // trace not debug: this fires on every non-first PHP process start and
+                // appears in test diffs whenever debug logging is enabled.
+                #[cfg(not(feature = "logging"))]
+                tracing::trace!(
+                    "The sidecar's socket is already listening ({})",
+                    self.socket_path.as_path().display()
+                );
+                #[cfg(feature = "logging")]
+                log::trace!(
                     "The sidecar's socket is already listening ({})",
                     self.socket_path.as_path().display()
                 );

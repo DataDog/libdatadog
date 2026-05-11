@@ -65,6 +65,10 @@ impl SeqpacketListener {
     pub fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
         let _ = std::fs::remove_file(path.as_ref());
         let fd = create_dgram_socket()?;
+        // Size the receive buffer to match clients: when many PHP processes start
+        // simultaneously they all sendmsg their fd to this rendezvous socket before
+        // the daemon has had a chance to accept them.
+        set_dgram_buffers(fd.as_raw_fd())?;
         let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
         bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
         Ok(Self { inner: fd })

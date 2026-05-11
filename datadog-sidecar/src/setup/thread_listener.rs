@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
 use tokio::io::unix::AsyncFd;
 use tokio::sync::oneshot;
@@ -47,15 +47,26 @@ impl MasterListener {
         }
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        // ready_tx is sent by the listener thread once its socket is bound.
+        // We block here until that signal arrives so that connect_to_master()
+        // called immediately after start() always finds a live socket.
+        let (ready_tx, ready_rx) = mpsc::channel::<io::Result<()>>();
 
         let thread_handle = thread::Builder::new()
             .name(format!("ddtrace-sidecar-listener-{}", pid))
             .spawn(move || {
-                if let Err(e) = run_listener(pid as u32, config, shutdown_rx) {
+                if let Err(e) = run_listener(pid as u32, config, shutdown_rx, ready_tx) {
                     error!("Listener thread error: {}", e);
                 }
             })
             .map_err(|e| io::Error::other(format!("Failed to spawn listener thread: {}", e)))?;
+
+        // Block until the socket is ready (or the thread fails to start).
+        match ready_rx.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => return Err(io::Error::other("Master listener thread exited before becoming ready")),
+        }
 
         *listener_guard = Some(MasterListener {
             shutdown_tx: Some(shutdown_tx),
@@ -178,7 +189,7 @@ async fn accept_socket_loop_thread(
 /// threads. A multi-thread runtime would leave worker threads visible to LSan/ASAN at
 /// process exit, causing "Running thread was not suspended" warnings. With
 /// current_thread all async work runs on this OS thread; no other threads are created.
-fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -> io::Result<()> {
+fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>, ready_tx: mpsc::Sender<io::Result<()>>) -> io::Result<()> {
     info!("Listener thread running, creating IPC server");
 
     #[cfg(target_os = "linux")]
@@ -186,10 +197,21 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
     #[cfg(not(target_os = "linux"))]
     let liaison = SharedDirLiaison::ipc_for_pid(pid);
 
-    let listener = liaison
-        .attempt_listen()?
-        .ok_or_else(|| io::Error::other("Failed to create IPC listener"))?;
+    let listener = match liaison.attempt_listen() {
+        Ok(Some(l)) => l,
+        Ok(None) => {
+            let err = io::Error::other("Failed to create IPC listener: socket already in use");
+            let _ = ready_tx.send(Err(io::Error::other(err.to_string())));
+            return Err(err);
+        }
+        Err(e) => {
+            let _ = ready_tx.send(Err(io::Error::other(e.to_string())));
+            return Err(e);
+        }
+    };
 
+    // Signal the caller that the socket is bound and ready for connections.
+    let _ = ready_tx.send(Ok(()));
     info!("IPC server listening for worker connections");
 
     let cancel = || {};
