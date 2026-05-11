@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_shared_runtime::Worker;
 
 use crate::trace_exporter::{
@@ -568,18 +568,18 @@ pub trait Export<T>: Send + Debug {
 }
 
 #[derive(Debug)]
-pub struct DefaultExport<H: HttpClientTrait + MaybeSend + Sync + 'static> {
-    trace_exporter: TraceExporter<H>,
+pub struct DefaultExport<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
+    trace_exporter: TraceExporter<C>,
 }
 
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static> DefaultExport<H> {
-    pub fn new(trace_exporter: TraceExporter<H>) -> Self {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> DefaultExport<C> {
+    pub fn new(trace_exporter: TraceExporter<C>) -> Self {
         Self { trace_exporter }
     }
 }
 
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static>
-    Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<H>
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
+    Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C>
 {
     fn export_trace_chunks(
         &mut self,

@@ -10,7 +10,7 @@ use super::{
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use sha2::{Digest, Sha256};
@@ -18,7 +18,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::sleep;
 use tracing::{debug, warn};
 
 /// Whether the agent reported the same value or not.
@@ -35,13 +34,13 @@ pub enum FetchInfoStatus {
 /// If either the agent state hash or container tags hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-async fn fetch_info_with_state_and_container_tags<H: HttpClientTrait>(
+async fn fetch_info_with_state_and_container_tags<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
     current_container_tags_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
     let (new_state_hash, body_data, container_tags_hash) =
-        fetch_and_hash_response::<H>(info_endpoint).await?;
+        fetch_and_hash_response::<C>(info_endpoint).await?;
 
     if current_state_hash.is_some_and(|state| state == new_state_hash)
         && (current_container_tags_hash.is_none()
@@ -65,11 +64,11 @@ async fn fetch_info_with_state_and_container_tags<H: HttpClientTrait>(
 /// If the state hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-pub async fn fetch_info_with_state<H: HttpClientTrait>(
+pub async fn fetch_info_with_state<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
 ) -> Result<FetchInfoStatus> {
-    fetch_info_with_state_and_container_tags::<H>(info_endpoint, current_state_hash, None).await
+    fetch_info_with_state_and_container_tags::<C>(info_endpoint, current_state_hash, None).await
 }
 
 /// Fetch the info endpoint once and return the info.
@@ -93,8 +92,10 @@ pub async fn fetch_info_with_state<H: HttpClientTrait>(
 /// # Ok(())
 /// # }
 /// ```
-pub async fn fetch_info<H: HttpClientTrait>(info_endpoint: &Endpoint) -> Result<Box<AgentInfo>> {
-    match fetch_info_with_state::<H>(info_endpoint, None).await? {
+pub async fn fetch_info<C: HttpClientCapability + SleepCapability>(
+    info_endpoint: &Endpoint,
+) -> Result<Box<AgentInfo>> {
+    match fetch_info_with_state::<C>(info_endpoint, None).await? {
         FetchInfoStatus::NewState(info) => Ok(info),
         // Should never be reached since there is no previous state.
         FetchInfoStatus::SameState => Err(anyhow!("Invalid state header")),
@@ -105,7 +106,7 @@ pub async fn fetch_info<H: HttpClientTrait>(info_endpoint: &Endpoint) -> Result<
 ///
 /// Returns a tuple of (state_hash, response_body_bytes, container_tags_hash).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
-async fn fetch_and_hash_response<H: HttpClientTrait>(
+async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
 ) -> Result<(String, bytes::Bytes, Option<String>)> {
     let req = info_endpoint
@@ -114,10 +115,18 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
         .map_err(|e| anyhow!("Failed to build request: {}", e))?;
 
     let timeout = Duration::from_millis(info_endpoint.timeout_ms);
-    let client = H::new_client();
-    let res = tokio::time::timeout(timeout, client.request(req))
-        .await
-        .map_err(|_| anyhow!("Request to /info timed out after {:?}", timeout))??;
+    let client = C::new_client();
+    let sleeper = <C as SleepCapability>::new();
+    // Runtime-agnostic timeout: race the request against a capability-driven
+    // sleep instead of `tokio::time::timeout`, which requires a tokio reactor
+    // (not available on wasm where we run on the JS event loop).
+    let res = tokio::select! {
+        biased;
+        result = client.request(req) => result?,
+        _ = sleeper.sleep(timeout) => {
+            return Err(anyhow!("Request to /info timed out after {:?}", timeout));
+        }
+    };
 
     // Extract the Datadog-Container-Tags-Hash header
     let container_tags_hash = res
@@ -149,7 +158,7 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// # Example
 /// ```no_run
 /// # use anyhow::Result;
-/// # use libdd_capabilities_impl::NativeCapabilities;
+/// # use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 /// # use libdd_shared_runtime::Worker;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
@@ -179,20 +188,20 @@ async fn fetch_and_hash_response<H: HttpClientTrait>(
 /// # Ok(())
 /// # }
 /// ```
-/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
-/// pin it to a concrete type.
+/// `C` is the capability bundle, see [`HttpClientCapability`] and [`SleepCapability`].
+/// Leaf crates pin it to a concrete type.
 #[derive(Debug)]
-pub struct AgentInfoFetcher<H: HttpClientTrait> {
+pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
     trigger_tx: mpsc::Sender<()>,
-    /// `H` must live on the struct because `Worker::run(&mut self)` (a fixed
-    /// trait signature) calls `fetch_info_with_state::<H>()` internally.
-    _phantom: PhantomData<H>,
+    /// `C` lives on the struct because `Worker::run(&mut self)` (a fixed trait
+    /// signature) calls `fetch_info_with_state::<C>()` internally.
+    _phantom: PhantomData<C>,
 }
 
-impl<H: HttpClientTrait> AgentInfoFetcher<H> {
+impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
     /// Return a new `AgentInfoFetcher` fetching the `info_endpoint` on each `refresh_interval`
     /// and updating the stored info.
     ///
@@ -227,7 +236,9 @@ impl<H: HttpClientTrait> AgentInfoFetcher<H> {
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetcher<H> {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Worker
+    for AgentInfoFetcher<C>
+{
     async fn initial_trigger(&mut self) {
         // Skip initial wait if cache is not populated
         if AGENT_INFO_CACHE.load().is_none() {
@@ -237,6 +248,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetche
     }
 
     async fn trigger(&mut self) {
+        let sleeper = <C as SleepCapability>::new();
         // Wait for either a manual trigger or the refresh interval
         match &mut self.trigger_rx {
             Some(trigger_rx) => {
@@ -249,12 +261,12 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetche
                         }
                     }
                     // Regular periodic fetch timer
-                    _ = sleep(self.refresh_interval) => {}
+                    _ = sleeper.sleep(self.refresh_interval) => {}
                 }
             }
             None => {
                 // If the trigger channel is closed we only use timed fetch.
-                sleep(self.refresh_interval).await;
+                sleeper.sleep(self.refresh_interval).await;
             }
         }
     }
@@ -274,7 +286,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> Worker for AgentInfoFetche
     }
 }
 
-impl<H: HttpClientTrait> AgentInfoFetcher<H> {
+impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
     /// Fetch agent info and update cache if needed
     async fn fetch_and_update(&self) {
         let current_info = AGENT_INFO_CACHE.load();
@@ -282,7 +294,7 @@ impl<H: HttpClientTrait> AgentInfoFetcher<H> {
         let current_container_tags_hash = current_info
             .as_ref()
             .and_then(|info| info.info.container_tags_hash.as_deref());
-        let res = fetch_info_with_state_and_container_tags::<H>(
+        let res = fetch_info_with_state_and_container_tags::<C>(
             &self.info_endpoint,
             current_hash,
             current_container_tags_hash,

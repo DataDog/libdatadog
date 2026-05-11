@@ -15,7 +15,7 @@ use datadog_ipc::shm_stats::{
     ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
 };
 use http::uri::PathAndQuery;
-use libdd_capabilities_impl::{HttpClientTrait, NativeCapabilities};
+use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::collections::HashMap;
