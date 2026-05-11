@@ -176,7 +176,7 @@ fn compile_split(
 fn compile_shard(shard: ShardWire) -> Option<Shard> {
     if shard.ranges.contains(&ShardRange {
         start: 0,
-        end: shard.total_shards,
+        end: shard.total_shards.get(),
     }) {
         // The shard is "insignificant" because it always matches, so we don't need to waste time
         // checking it.
