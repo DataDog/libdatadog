@@ -3,62 +3,73 @@
 
 use crate::fetch::FileStorage;
 use crate::file_change_tracker::{FilePath, UpdatedFiles};
-use crate::{RemoteConfigData, RemoteConfigPath};
+use crate::RemoteConfigPath;
 use libdd_common::MutexExt;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// A trivial local storage for remote config files.
 pub struct RawFileStorage<P: ParseFile> {
-    updated: Mutex<Vec<(Arc<RawFile<P>>, P)>>,
+    parser: P,
+    #[allow(clippy::type_complexity)]
+    updated: Mutex<Vec<(Arc<RawFile<P::Parsed>>, P::Parsed)>>,
 }
 
-impl<P: ParseFile> Default for RawFileStorage<P> {
+impl<P: ParseFile + Default> Default for RawFileStorage<P> {
     fn default() -> Self {
+        Self::new(P::default())
+    }
+}
+
+impl<P: ParseFile> RawFileStorage<P> {
+    pub fn new(parser: P) -> Self {
         RawFileStorage {
+            parser,
             updated: Mutex::default(),
         }
     }
 }
 
-pub trait ParseFile
-where
-    Self: Sized,
-{
-    fn parse(path: &RemoteConfigPath, contents: Vec<u8>) -> Self;
+/// Instance-based file parser. Implementations may carry state (e.g. configuration to drive a
+/// product-specific parsing decision).
+pub trait ParseFile: Clone + Send + Sync {
+    /// The type of the parsed/stored content.
+    type Parsed: Send;
+
+    fn parse(&self, path: &RemoteConfigPath, contents: Vec<u8>) -> Self::Parsed;
 }
 
-impl<P: ParseFile> UpdatedFiles<RawFile<P>, P> for RawFileStorage<P> {
-    fn updated(&self) -> Vec<(Arc<RawFile<P>>, P)> {
+impl<P: ParseFile> UpdatedFiles<RawFile<P::Parsed>, P::Parsed> for RawFileStorage<P> {
+    fn updated(&self) -> Vec<(Arc<RawFile<P::Parsed>>, P::Parsed)> {
         std::mem::take(&mut *self.updated.lock_or_panic())
     }
 }
 
 /// Mutable data: version and contents.
-struct RawFileData<P> {
+struct RawFileData<T> {
     version: u64,
-    contents: P,
+    contents: T,
 }
 
 /// File contents and file metadata
-pub struct RawFile<P> {
+pub struct RawFile<T> {
     path: Arc<RemoteConfigPath>,
-    data: Mutex<RawFileData<P>>,
+    data: Mutex<RawFileData<T>>,
 }
 
-pub struct RawFileContentsGuard<'a, P>(MutexGuard<'a, RawFileData<P>>);
+pub struct RawFileContentsGuard<'a, T>(MutexGuard<'a, RawFileData<T>>);
 
-impl<P> Deref for RawFileContentsGuard<'_, P> {
-    type Target = P;
+impl<T> Deref for RawFileContentsGuard<'_, T> {
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
         &self.0.contents
     }
 }
 
-impl<P> RawFile<P> {
+impl<T> RawFile<T> {
     /// Gets the contents behind a Deref impl (guarding a Mutex).
-    pub fn contents(&self) -> RawFileContentsGuard<'_, P> {
+    pub fn contents(&self) -> RawFileContentsGuard<'_, T> {
         RawFileContentsGuard(self.data.lock_or_panic())
     }
 
@@ -67,14 +78,14 @@ impl<P> RawFile<P> {
     }
 }
 
-impl<P> FilePath for RawFile<P> {
+impl<T> FilePath for RawFile<T> {
     fn path(&self) -> &RemoteConfigPath {
         &self.path
     }
 }
 
 impl<P: ParseFile> FileStorage for RawFileStorage<P> {
-    type StoredFile = RawFile<P>;
+    type StoredFile = RawFile<P::Parsed>;
 
     fn store(
         &self,
@@ -85,7 +96,7 @@ impl<P: ParseFile> FileStorage for RawFileStorage<P> {
         Ok(Arc::new(RawFile {
             data: Mutex::new(RawFileData {
                 version,
-                contents: P::parse(&path, contents),
+                contents: self.parser.parse(&path, contents),
             }),
             path,
         }))
@@ -97,7 +108,7 @@ impl<P: ParseFile> FileStorage for RawFileStorage<P> {
         version: u64,
         contents: Vec<u8>,
     ) -> anyhow::Result<()> {
-        let mut contents = P::parse(&file.path, contents);
+        let mut contents = self.parser.parse(&file.path, contents);
         let mut data = file.data.lock_or_panic();
         std::mem::swap(&mut data.contents, &mut contents);
         self.updated.lock_or_panic().push((file.clone(), contents));
@@ -106,20 +117,22 @@ impl<P: ParseFile> FileStorage for RawFileStorage<P> {
     }
 }
 
-/// It simply stores the raw remote config file contents.
-pub type SimpleFileStorage = RawFileStorage<Vec<u8>>;
+// ── RawBytesParser ────────────────────────────────────────────────────────────
 
-impl ParseFile for Vec<u8> {
-    fn parse(_path: &RemoteConfigPath, contents: Vec<u8>) -> Self {
+/// Stores raw remote config file bytes without parsing.
+#[derive(Clone, Default)]
+pub struct RawBytesParser;
+
+impl ParseFile for RawBytesParser {
+    type Parsed = Vec<u8>;
+
+    fn parse(&self, _path: &RemoteConfigPath, contents: Vec<u8>) -> Vec<u8> {
         contents
     }
 }
 
-/// Storing the remote config file contents in parsed form
-pub type ParsedFileStorage = RawFileStorage<anyhow::Result<RemoteConfigData>>;
+/// Stores the remote config file contents in raw (unparsed) form.
+pub type SimpleFileStorage = RawFileStorage<RawBytesParser>;
 
-impl ParseFile for anyhow::Result<RemoteConfigData> {
-    fn parse(path: &RemoteConfigPath, contents: Vec<u8>) -> Self {
-        RemoteConfigData::try_parse(path.product, contents.as_slice())
-    }
-}
+/// Stores remote config file contents parsed as [`crate::BuiltinProducts`].
+pub type ParsedFileStorage = RawFileStorage<crate::parse::BuiltinProductsParser>;

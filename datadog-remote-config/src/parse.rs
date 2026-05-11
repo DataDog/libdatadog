@@ -1,89 +1,105 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "client")]
+use crate::file_storage::ParseFile;
 use crate::{
     config::{
         self, agent_config::AgentConfigFile, agent_task::AgentTaskFile, dynamic::DynamicConfigFile,
     },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
-#[cfg(feature = "ffe")]
-use datadog_ffe::rules_based::UniversalFlagConfig;
-#[cfg(feature = "live-debugger")]
-use datadog_live_debugger::LiveDebuggingData;
 
+/// Parsed payload for the products owned by `datadog-remote-config`.
+///
+/// Consumers that only care about these products can use this enum directly via
+/// [`BuiltinProductsParser`]. Consumers that need additional products should define their own
+/// enum and [`ParseFile`] implementation.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum RemoteConfigData {
-    DynamicConfig(DynamicConfigFile),
-    #[cfg(feature = "live-debugger")]
-    LiveDebugger(LiveDebuggingData),
-    TracerFlareConfig(AgentConfigFile),
-    TracerFlareTask(AgentTaskFile),
-    #[cfg(feature = "ffe")]
-    FfeFlags(UniversalFlagConfig),
-    Ignored(RemoteConfigProduct),
+pub enum BuiltinProducts {
+    AgentConfig(AgentConfigFile),
+    AgentTask(AgentTaskFile),
+    ApmTracing(DynamicConfigFile),
+    Other(RemoteConfigProduct),
 }
 
-impl RemoteConfigData {
-    pub fn try_parse(
-        product: RemoteConfigProduct,
-        data: &[u8],
-    ) -> anyhow::Result<RemoteConfigData> {
+impl BuiltinProducts {
+    pub fn product(&self) -> RemoteConfigProduct {
+        match self {
+            BuiltinProducts::AgentConfig(_) => RemoteConfigProduct::AgentConfig,
+            BuiltinProducts::AgentTask(_) => RemoteConfigProduct::AgentTask,
+            BuiltinProducts::ApmTracing(_) => RemoteConfigProduct::ApmTracing,
+            BuiltinProducts::Other(p) => *p,
+        }
+    }
+
+    pub fn try_parse(product: RemoteConfigProduct, data: &[u8]) -> anyhow::Result<BuiltinProducts> {
         Ok(match product {
             RemoteConfigProduct::AgentConfig => {
-                RemoteConfigData::TracerFlareConfig(config::agent_config::parse_json(data)?)
+                BuiltinProducts::AgentConfig(config::agent_config::parse_json(data)?)
             }
             RemoteConfigProduct::AgentTask => {
-                RemoteConfigData::TracerFlareTask(config::agent_task::parse_json(data)?)
+                BuiltinProducts::AgentTask(config::agent_task::parse_json(data)?)
             }
             RemoteConfigProduct::ApmTracing => {
-                RemoteConfigData::DynamicConfig(config::dynamic::parse_json(data)?)
+                BuiltinProducts::ApmTracing(config::dynamic::parse_json(data)?)
             }
-            #[cfg(feature = "live-debugger")]
-            RemoteConfigProduct::LiveDebugger => {
-                let parsed = datadog_live_debugger::parse_json(&String::from_utf8_lossy(data))?;
-                RemoteConfigData::LiveDebugger(parsed)
-            }
-            #[cfg(feature = "ffe")]
-            RemoteConfigProduct::FfeFlags => {
-                RemoteConfigData::FfeFlags(UniversalFlagConfig::from_json(data.to_vec())?)
-            }
-            _ => RemoteConfigData::Ignored(product),
+            other => BuiltinProducts::Other(other),
         })
     }
 }
 
-impl From<&RemoteConfigData> for RemoteConfigProduct {
-    fn from(value: &RemoteConfigData) -> Self {
-        match value {
-            RemoteConfigData::DynamicConfig(_) => RemoteConfigProduct::ApmTracing,
-            #[cfg(feature = "live-debugger")]
-            RemoteConfigData::LiveDebugger(_) => RemoteConfigProduct::LiveDebugger,
-            RemoteConfigData::TracerFlareConfig(_) => RemoteConfigProduct::AgentConfig,
-            RemoteConfigData::TracerFlareTask(_) => RemoteConfigProduct::AgentTask,
-            #[cfg(feature = "ffe")]
-            RemoteConfigData::FfeFlags(_) => RemoteConfigProduct::FfeFlags,
-            RemoteConfigData::Ignored(product) => *product,
-        }
+/// [`ParseFile`] implementation for [`BuiltinProducts`]. Use this with [`RawFileStorage`] when
+/// no extra products beyond the RC-internal set need parsing.
+///
+/// [`RawFileStorage`]: crate::file_storage::RawFileStorage
+#[cfg(feature = "client")]
+#[derive(Clone, Default)]
+pub struct BuiltinProductsParser;
+
+#[cfg(feature = "client")]
+impl ParseFile for BuiltinProductsParser {
+    type Parsed = anyhow::Result<BuiltinProducts>;
+
+    fn parse(&self, path: &RemoteConfigPath, contents: Vec<u8>) -> Self::Parsed {
+        BuiltinProducts::try_parse(path.product, &contents)
     }
 }
 
-#[derive(Debug)]
-pub struct RemoteConfigValue {
+/// A parsed remote config file along with metadata extracted from its path.
+///
+/// `T` is the consumer-defined parsed-payload enum; for the built-in set, use
+/// [`BuiltinProducts`].
+pub struct RemoteConfigValue<T> {
     pub source: RemoteConfigSource,
-    pub data: RemoteConfigData,
+    pub data: T,
     pub config_id: String,
     pub name: String,
 }
 
-impl RemoteConfigValue {
-    pub fn try_parse(path: &str, data: &[u8]) -> anyhow::Result<Self> {
+impl<T: std::fmt::Debug> std::fmt::Debug for RemoteConfigValue<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteConfigValue")
+            .field("source", &self.source)
+            .field("data", &self.data)
+            .field("config_id", &self.config_id)
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+impl<T> RemoteConfigValue<T> {
+    pub fn try_parse(
+        path: &str,
+        data: &[u8],
+        parse: impl FnOnce(RemoteConfigProduct, &[u8]) -> anyhow::Result<T>,
+    ) -> anyhow::Result<Self> {
         let path = RemoteConfigPath::try_parse(path)?;
-        let data = RemoteConfigData::try_parse(path.product, data)?;
+        let parsed = parse(path.product, data)?;
         Ok(RemoteConfigValue {
             source: path.source,
-            data,
+            data: parsed,
             config_id: path.config_id.to_string(),
             name: path.name.to_string(),
         })

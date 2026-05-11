@@ -17,7 +17,7 @@ use std::{
     },
 };
 
-use datadog_remote_config::{config::agent_task::AgentTaskFile, RemoteConfigData};
+use datadog_remote_config::{config::agent_task::AgentTaskFile, BuiltinProducts};
 
 use crate::error::FlareError;
 #[cfg(feature = "listener")]
@@ -25,7 +25,7 @@ use {
     datadog_remote_config::{
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
         file_change_tracker::Change,
-        file_storage::{ParsedFileStorage, RawFile, RawFileStorage},
+        file_storage::{ParsedFileStorage, RawFile},
         RemoteConfigProduct, Target,
     },
     libdd_common::Endpoint,
@@ -201,13 +201,13 @@ impl TracerFlareManager {
         Ok(tracer_flare)
     }
 
-    /// Handle the `RemoteConfigData` and return the action the tracer flare
+    /// Handle a parsed remote-config payload and return the action the tracer flare
     /// needs to perform. This function also updates the `TracerFlareManager`
     /// state based on the received configuration.
     ///
     /// # Arguments
     ///
-    /// * `data` - RemoteConfigData.
+    /// * `data` - Parsed remote-config payload.
     /// * `tracer_flare` - TracerFlareManager object to update with the received configuration.
     ///
     /// # Returns
@@ -216,7 +216,7 @@ impl TracerFlareManager {
     /// * `FlareError(msg)` - If something fails.
     pub fn handle_remote_config_data(
         &self,
-        data: &RemoteConfigData,
+        data: &BuiltinProducts,
     ) -> Result<FlareAction, FlareError> {
         let action = data.try_into();
         if let Ok(FlareAction::Set(_)) = action {
@@ -360,9 +360,9 @@ impl TryFrom<&str> for LogLevel {
 }
 
 #[cfg(feature = "listener")]
-pub type RemoteConfigFile = std::sync::Arc<RawFile<Result<RemoteConfigData, anyhow::Error>>>;
+pub type RemoteConfigFile = std::sync::Arc<RawFile<anyhow::Result<BuiltinProducts>>>;
 #[cfg(feature = "listener")]
-pub type Listener = SingleChangesFetcher<RawFileStorage<Result<RemoteConfigData, anyhow::Error>>>;
+pub type Listener = SingleChangesFetcher<ParsedFileStorage>;
 
 #[cfg(feature = "listener")]
 impl TryFrom<RemoteConfigFile> for FlareAction {
@@ -387,39 +387,29 @@ impl TryFrom<RemoteConfigFile> for FlareAction {
     }
 }
 
-impl TryFrom<&RemoteConfigData> for FlareAction {
+impl TryFrom<&BuiltinProducts> for FlareAction {
     type Error = FlareError;
 
-    /// Check the `&RemoteConfigData` and return the action the tracer flare
-    /// needs to perform.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - &RemoteConfigData
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(FlareAction)` - If successful
-    /// * `FlareError(msg)` - If something fails
-    fn try_from(data: &RemoteConfigData) -> Result<Self, Self::Error> {
+    fn try_from(data: &BuiltinProducts) -> Result<Self, Self::Error> {
         match data {
-            RemoteConfigData::TracerFlareConfig(agent_config) => {
+            BuiltinProducts::AgentConfig(agent_config) => {
                 if agent_config.name.starts_with("flare-log-level.") {
                     if let Some(log_level) = &agent_config.config.log_level {
                         let log_level = log_level.as_str().try_into()?;
                         return Ok(FlareAction::Set(log_level));
                     }
                 }
+                Ok(FlareAction::None)
             }
-            RemoteConfigData::TracerFlareTask(agent_task) => {
+            BuiltinProducts::AgentTask(agent_task) => {
                 if agent_task.task_type.eq("tracer_flare") {
-                    return Ok(FlareAction::Send(agent_task.to_owned()));
+                    Ok(FlareAction::Send(agent_task.to_owned()))
+                } else {
+                    Ok(FlareAction::None)
                 }
             }
-            _ => return Ok(FlareAction::None),
+            _ => Ok(FlareAction::None),
         }
-
-        Ok(FlareAction::None)
     }
 }
 
@@ -495,14 +485,13 @@ pub async fn run_remote_config_listener(
                     }
                 } else if let Change::Remove(file) = change {
                     match file.contents().as_ref() {
-                        Ok(data) => match data {
-                            RemoteConfigData::TracerFlareConfig(_) => {
-                                if state == FlareAction::None {
-                                    state = FlareAction::Unset;
-                                }
+                        Ok(data) => {
+                            if matches!(data, BuiltinProducts::AgentConfig(_))
+                                && state == FlareAction::None
+                            {
+                                state = FlareAction::Unset;
                             }
-                            _ => continue,
-                        },
+                        }
                         Err(e) => {
                             return Err(FlareError::ParsingError(e.to_string()));
                         }
@@ -528,7 +517,7 @@ pub async fn run_remote_config_listener(
 mod tests {
     #[cfg(feature = "listener")]
     use crate::FlareAction;
-    use crate::{FlareError, LogLevel, RemoteConfigData, TracerFlareManager};
+    use crate::{FlareError, LogLevel, TracerFlareManager};
     #[cfg(feature = "listener")]
     use datadog_remote_config::{
         config::{
@@ -722,7 +711,9 @@ mod tests {
 
     #[test]
     fn test_remote_config_task_with_wrong_type_returns_none() {
-        let data = RemoteConfigData::TracerFlareTask(AgentTaskFile {
+        use datadog_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
+        use datadog_remote_config::BuiltinProducts;
+        let data = BuiltinProducts::AgentTask(AgentTaskFile {
             args: AgentTask {
                 case_id: "123".to_string(),
                 hostname: "test-host".to_string(),
@@ -731,18 +722,21 @@ mod tests {
             task_type: "not_tracer_flare".to_string(),
             uuid: "test-uuid".to_string(),
         });
-
-        let result = FlareAction::try_from(&data);
+        let tracer_flare = TracerFlareManager::new("http://localhost:8126", "rust");
+        let result = tracer_flare.handle_remote_config_data(&data);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), FlareAction::None);
     }
 
     #[test]
     fn test_handle_remote_config_data_send_stops_collecting() {
+        use datadog_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
+        use datadog_remote_config::BuiltinProducts;
+        use std::sync::atomic::Ordering;
         let tracer_flare = TracerFlareManager::new("http://localhost:8126", "rust");
         tracer_flare.collecting.store(true, Ordering::Relaxed);
 
-        let data = RemoteConfigData::TracerFlareTask(AgentTaskFile {
+        let data = BuiltinProducts::AgentTask(AgentTaskFile {
             args: AgentTask {
                 case_id: "123".to_string(),
                 hostname: "test-host".to_string(),

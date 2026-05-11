@@ -5,7 +5,7 @@ use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChange
 use datadog_remote_config::file_change_tracker::{Change, FilePath};
 use datadog_remote_config::file_storage::ParsedFileStorage;
 use datadog_remote_config::RemoteConfigProduct::ApmTracing;
-use datadog_remote_config::{RemoteConfigData, Target};
+use datadog_remote_config::{BuiltinProducts, Target};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use std::time::Duration;
@@ -86,11 +86,11 @@ async fn main() {
     }
 }
 
-fn print_file_contents(contents: &anyhow::Result<RemoteConfigData>) {
+fn print_file_contents(contents: &anyhow::Result<BuiltinProducts>) {
     // Note: these contents may be large. Do not actually print it fully in a non-dev env.
     match contents {
-        Ok(data) => {
-            println!("File contents: {data:?}");
+        Ok(products) => {
+            println!("Products contents: {products:?}");
         }
         Err(e) => {
             println!("Failed parsing file: {e:?}");
