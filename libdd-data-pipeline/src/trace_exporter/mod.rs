@@ -2153,20 +2153,29 @@ mod single_threaded_tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_client_side_stats_obfuscation_opt_in() {
+        let current_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION;
+        let prev_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION - 1;
         // Opt-in OFF, agent supports → must stay disabled.
         assert!(
-            !run_obfuscation_test(false, Some(1)),
+            !run_obfuscation_test(false, Some(current_obf_version)),
             "obfuscation must stay disabled when builder opt-in is absent"
-        );
-        // Opt-in ON, agent supports → enabled.
-        assert!(
-            run_obfuscation_test(true, Some(1)),
-            "obfuscation must activate when opted in and agent supports"
         );
         // Opt-in ON, agent does not advertise support → disabled.
         assert!(
             !run_obfuscation_test(true, None),
             "obfuscation must stay disabled when agent does not advertise support"
+        );
+
+        // Opt-in ON, agent obfuscation_version < tracer obfuscation_version -> disabled;
+        assert!(
+            !run_obfuscation_test(true, Some(prev_obf_version)),
+            "obfuscation must stay disabled when agent.obfuscation_version < tracer.obfuscation_version"
+        );
+
+        // Opt-in ON, agent supports → enabled.
+        assert!(
+            run_obfuscation_test(true, Some(current_obf_version)),
+            "obfuscation must activate when opted in and agent supports"
         );
     }
 }
