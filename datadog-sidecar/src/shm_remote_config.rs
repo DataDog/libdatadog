@@ -11,12 +11,16 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
+use datadog_live_debugger::LiveDebuggingData;
 use datadog_remote_config::config::dynamic::{parse_json, Configs};
 use datadog_remote_config::fetch::{
     ConfigInvariants, FileRefcountData, FileStorage, MultiTargetFetcher, MultiTargetHandlers,
     MultiTargetStats, NotifyTarget, ProductCapabilities, RefcountedFile,
 };
-use datadog_remote_config::{RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue, Target};
+use datadog_remote_config::{
+    default_registry, ParserRegistry, RemoteConfigPath, RemoteConfigProduct, RemoteConfigValue,
+    Target,
+};
 use libdd_common::{tag::Tag, MutexExt};
 use priority_queue::PriorityQueue;
 use sha2::{Digest, Sha224};
@@ -526,7 +530,7 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
     }
 }
 
-fn read_config(path: &str) -> anyhow::Result<(RemoteConfigValue, u32)> {
+fn read_config(path: &str, registry: &ParserRegistry) -> anyhow::Result<(RemoteConfigValue, u32)> {
     if let [shm_path, limiter, rc_path] = &path.split(':').collect::<Vec<_>>()[..] {
         let mapped = NamedShmHandle::open(&CString::new(*shm_path)?)?.map()?;
         let rc_path = String::from_utf8(BASE64_URL_SAFE_NO_PAD.decode(rc_path)?)?;
@@ -534,7 +538,7 @@ fn read_config(path: &str) -> anyhow::Result<(RemoteConfigValue, u32)> {
         #[cfg(windows)]
         let data = &data[4..(4 + u32::from_ne_bytes((&data[0..4]).try_into()?) as usize)];
         Ok((
-            RemoteConfigValue::try_parse(&rc_path, data)?,
+            RemoteConfigValue::try_parse(&rc_path, data, registry)?,
             u32::from_str(limiter)?,
         ))
     } else {
@@ -553,6 +557,7 @@ fn read_config(path: &str) -> anyhow::Result<(RemoteConfigValue, u32)> {
 /// once. They will always be Remove()d first, then Add()ed again upon update.
 pub struct RemoteConfigManager {
     invariants: ConfigInvariants,
+    registry: Arc<ParserRegistry>,
     active_target: Option<Arc<Target>>,
     pub active_reader: Option<RemoteConfigReader>,
     encountered_targets: HashMap<Arc<Target>, (RemoteConfigReader, Vec<String>)>,
@@ -576,8 +581,17 @@ pub enum RemoteConfigUpdate {
 
 impl RemoteConfigManager {
     pub fn new(invariants: ConfigInvariants) -> RemoteConfigManager {
+        let registry = default_registry().with::<LiveDebuggingData>();
+        Self::new_with_registry(invariants, Arc::new(registry))
+    }
+
+    pub fn new_with_registry(
+        invariants: ConfigInvariants,
+        registry: Arc<ParserRegistry>,
+    ) -> RemoteConfigManager {
         RemoteConfigManager {
             invariants,
+            registry,
             active_target: None,
             active_reader: None,
             encountered_targets: Default::default(),
@@ -662,12 +676,12 @@ impl RemoteConfigManager {
 
         while let Some(config) = self.last_read_configs.pop() {
             if let Entry::Vacant(entry) = self.active_configs.entry(config) {
-                match read_config(entry.key()) {
+                match read_config(entry.key(), &self.registry) {
                     Ok((parsed, limiter_index)) => {
                         trace!("Adding remote config file {}: {:?}", entry.key(), parsed);
                         entry.insert(RemoteConfigPath {
                             source: parsed.source,
-                            product: (&parsed.data).into(),
+                            product: parsed.product,
                             config_id: parsed.config_id.clone(),
                             name: parsed.name.clone(),
                         });
@@ -756,9 +770,11 @@ impl RemoteConfigManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datadog_remote_config::config::dynamic::{tests::dummy_dynamic_config, Configs};
+    use datadog_remote_config::config::dynamic::{
+        tests::dummy_dynamic_config, Configs, DynamicConfigFile,
+    };
     use datadog_remote_config::fetch::test_server::RemoteConfigServer;
-    use datadog_remote_config::{RemoteConfigData, RemoteConfigProduct, RemoteConfigSource};
+    use datadog_remote_config::{RemoteConfigProduct, RemoteConfigSource};
     use manual_future::ManualFuture;
     use std::sync::LazyLock;
 
@@ -773,6 +789,13 @@ mod tests {
         source: RemoteConfigSource::Employee,
         product: RemoteConfigProduct::ApmTracing,
         config_id: "9876".to_string(),
+        name: "config".to_string(),
+    });
+
+    static PATH_LIVE_DEBUGGER: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
+        source: RemoteConfigSource::Employee,
+        product: RemoteConfigProduct::LiveDebugger,
+        config_id: "ld-1".to_string(),
         name: "config".to_string(),
     });
 
@@ -868,9 +891,10 @@ mod tests {
             assert_eq!(value.config_id, PATH_FIRST.config_id);
             assert_eq!(value.source, PATH_FIRST.source);
             assert_eq!(value.name, PATH_FIRST.name);
-            if let RemoteConfigData::DynamicConfig(data) = value.data {
+            let parsed = value.data.as_deref().expect("dynamic config must parse");
+            if let Some(cfg) = parsed.as_any().downcast_ref::<DynamicConfigFile>() {
                 assert!(matches!(
-                    <Vec<Configs>>::from(data.lib_config)[0],
+                    <Vec<Configs>>::from(cfg.lib_config.clone())[0],
                     Configs::TracingEnabled(true)
                 ));
             } else {
@@ -998,5 +1022,74 @@ mod tests {
         };
 
         assert!(matches!(manager.fetch_update(), RemoteConfigUpdate::None));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_live_debugger_config_parsed() {
+        use datadog_live_debugger::LiveDebuggingData;
+
+        let server = RemoteConfigServer::spawn();
+
+        // The callback is mandatory but irrelevant here — we don't synchronize on teardown.
+        let shm = ShmRemoteConfigs::new(
+            server.dummy_options().invariants,
+            Box::new(|| {}),
+            Duration::from_millis(10),
+        );
+
+        let mut manager = RemoteConfigManager::new(server.dummy_options().invariants);
+
+        // Minimal valid `ServiceConfiguration` payload — `LiveDebuggingData::ServiceConfiguration`
+        // only requires `id` and `type` to parse.
+        let live_debugger_json = r#"{"id":"ld-1","type":"SERVICE_CONFIGURATION"}"#;
+        server.files.lock().unwrap().insert(
+            PATH_LIVE_DEBUGGER.clone(),
+            (
+                vec![DUMMY_TARGET.clone()],
+                1,
+                live_debugger_json.to_string(),
+            ),
+        );
+
+        manager.track_target(&DUMMY_TARGET);
+
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let _shm_guard = shm.add_runtime(
+            "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            NotifyDummy(Arc::new(sender)),
+            DUMMY_TARGET.env.to_string(),
+            DUMMY_TARGET.service.to_string(),
+            DUMMY_TARGET.app_version.to_string(),
+            DUMMY_TARGET.tags.clone(),
+            ProductCapabilities {
+                products: server.dummy_options().products,
+                capabilities: server.dummy_options().capabilities,
+            },
+            DynamicInstrumentationConfigState::Enabled,
+            DUMMY_TARGET.process_tags.clone(),
+        );
+
+        receiver.recv().await;
+
+        if let RemoteConfigUpdate::Add { value, .. } = manager.fetch_update() {
+            assert_eq!(value.config_id, PATH_LIVE_DEBUGGER.config_id);
+            assert_eq!(
+                value.product,
+                RemoteConfigProduct::LiveDebugger,
+                "must be parsed as LiveDebugger, not skipped"
+            );
+            let data = value.data.as_deref().expect("LiveDebugger must parse");
+            let parsed = data
+                .as_any()
+                .downcast_ref::<LiveDebuggingData>()
+                .expect("downcast to LiveDebuggingData should succeed");
+            match parsed {
+                LiveDebuggingData::ServiceConfiguration(sc) => assert_eq!(sc.id, "ld-1"),
+                LiveDebuggingData::Probe(_) => unreachable!("expected ServiceConfiguration"),
+            }
+        } else {
+            unreachable!("expected RemoteConfigUpdate::Add for the LiveDebugger config");
+        }
     }
 }

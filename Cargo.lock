@@ -1353,8 +1353,10 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 name = "datadog-ffe"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "criterion",
+ "datadog-remote-config",
  "derive_more",
  "env_logger",
  "faststr",
@@ -1432,6 +1434,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "constcat",
+ "datadog-remote-config",
  "http",
  "http-body-util",
  "libdd-common",
@@ -1479,8 +1482,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-ffe",
- "datadog-live-debugger",
  "datadog-remote-config",
  "futures",
  "futures-util",
