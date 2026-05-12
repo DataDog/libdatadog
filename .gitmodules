@@ -1,0 +1,3 @@
+[submodule "datadog-ffe/ffe-system-test-data"]
+	path = datadog-ffe/ffe-system-test-data
+	url = https://github.com/DataDog/ffe-system-test-data.git

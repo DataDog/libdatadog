@@ -149,9 +149,9 @@ impl Allocation {
         };
 
         // Determine the reason for assignment
-        let reason = if !self.rules.is_empty() || self.start_at.is_some() || self.end_at.is_some() {
+        let reason = if !self.rules.is_empty() {
             AssignmentReason::TargetingMatch
-        } else if self.splits.len() == 1 && self.splits[0].shards.is_empty() {
+        } else if self.splits.len() == 1 && !self.splits[0].had_shards {
             AssignmentReason::Static
         } else {
             AssignmentReason::Split
@@ -212,8 +212,8 @@ mod tests {
 
     use crate::rules_based::{
         eval::get_assignment,
-        ufc::{AssignmentValue, UniversalFlagConfig},
-        Attribute, Configuration, EvaluationContext, FlagType, Str,
+        ufc::{AssignmentReason, AssignmentValue, UniversalFlagConfig},
+        Attribute, Configuration, EvaluationContext, EvaluationError, FlagType, Str,
     };
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -230,6 +230,25 @@ mod tests {
     #[derive(Debug, Serialize, Deserialize)]
     struct TestResult {
         value: Arc<serde_json::value::RawValue>,
+        reason: Str,
+    }
+
+    fn reason_name(
+        result: &Result<crate::rules_based::Assignment, EvaluationError>,
+    ) -> &'static str {
+        match result {
+            Ok(assignment) => match assignment.reason {
+                AssignmentReason::TargetingMatch => "TARGETING_MATCH",
+                AssignmentReason::Split => "SPLIT",
+                AssignmentReason::Static => "STATIC",
+            },
+            Err(EvaluationError::FlagDisabled) => "DISABLED",
+            Err(
+                EvaluationError::DefaultAllocationNull
+                | EvaluationError::FlagUnrecognizedOrDisabled,
+            ) => "DEFAULT",
+            Err(_) => "ERROR",
+        }
     }
 
     #[test]
@@ -237,13 +256,14 @@ mod tests {
     fn evaluation_sdk_test_data() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let config =
-            UniversalFlagConfig::from_json(std::fs::read("tests/data/flags-v1.json").unwrap())
-                .unwrap();
+        let config = UniversalFlagConfig::from_json(
+            std::fs::read("ffe-system-test-data/ufc-config.json").unwrap(),
+        )
+        .unwrap();
         let config = Configuration::from_server_response(config);
         let now = Utc::now();
 
-        for entry in fs::read_dir("tests/data/tests/").unwrap() {
+        for entry in fs::read_dir("ffe-system-test-data/evaluation-cases/").unwrap() {
             let entry = entry.unwrap();
             println!("Processing test file: {:?}", entry.path());
 
@@ -278,6 +298,7 @@ mod tests {
                 .unwrap();
 
                 assert_eq!(result_assingment, &expected_assignment);
+                assert_eq!(reason_name(&result), test_case.result.reason.as_str());
                 println!("ok");
             }
         }

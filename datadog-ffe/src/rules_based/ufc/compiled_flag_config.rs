@@ -51,6 +51,7 @@ pub(crate) struct Allocation {
 #[derive(Debug)]
 pub(crate) struct Split {
     pub shards: Vec<Shard>,
+    pub had_shards: bool,
     pub variation_key: Str,
     pub value: AssignmentValue,
     pub serial_id: Option<i32>,
@@ -150,6 +151,7 @@ fn compile_split(
     split: SplitWire,
     variation_values: &HashMap<Str, AssignmentValue>,
 ) -> Result<Split, EvaluationError> {
+    let had_shards = !split.shards.is_empty();
     let shards = split
         .shards
         .into_iter()
@@ -167,6 +169,7 @@ fn compile_split(
 
     Ok(Split {
         shards,
+        had_shards,
         variation_key: split.variation_key,
         value: result,
         serial_id: split.serial_id,

@@ -11,7 +11,7 @@ use datadog_ffe::rules_based::{
 };
 
 fn load_configuration_bytes() -> Vec<u8> {
-    fs::read("tests/data/flags-v1.json").expect("Failed to read flags-v1.json")
+    fs::read("ffe-system-test-data/ufc-config.json").expect("Failed to read ufc-config.json")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ struct TestResult {
 fn load_test_cases() -> Vec<TestCase> {
     let mut test_cases = Vec::new();
 
-    if let Ok(entries) = fs::read_dir("tests/data/tests") {
+    if let Ok(entries) = fs::read_dir("ffe-system-test-data/evaluation-cases") {
         for entry in entries.flatten() {
             if let Some(path_str) = entry.path().to_str() {
                 if path_str.ends_with(".json") {
