@@ -3,7 +3,10 @@
 
 use object::macho::MachHeader64;
 use object::read::macho::{LoadCommandVariant, MachHeader};
-use object::{Endian, Endianness, File, FileKind, Object, ObjectSection, ObjectSymbol, Symbol, SymbolFlags, SymbolKind};
+use object::{
+    Endian, Endianness, File, FileKind, Object, ObjectSection, ObjectSymbol, Symbol, SymbolFlags,
+    SymbolKind,
+};
 use std::collections::HashSet;
 use std::fmt::Write;
 use std::path::Path;
@@ -24,7 +27,6 @@ fn check_and_parse<'a>(
         Ok(parsed) => Ok(parsed),
     }
 }
-
 
 fn sym_is_definition(sym: &Symbol) -> bool {
     if sym.is_definition() {
@@ -106,19 +108,18 @@ pub fn generate_mock_symbols(binary: &Path, objects: &[&Path]) -> Result<String,
 
 /// Weaken symbols present in a binary in relocatable objects (`.o`) in place.
 pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String> {
-    let data = fs::read(target)
-        .map_err(|e| format!("read {}: {e}", target.display()))?;
+    let data = fs::read(target).map_err(|e| format!("read {}: {e}", target.display()))?;
 
     let undefined_candidates: HashSet<String> = File::parse(data.as_slice())
-        .map_err(|e| format!("parse {}: {e}", target.display()))?.symbols()
-            .filter(|s| s.is_undefined() && !s.is_weak())
-            .filter_map(|s| s.name().ok().map(|n| n.to_string()))
-            .collect();
+        .map_err(|e| format!("parse {}: {e}", target.display()))?
+        .symbols()
+        .filter(|s| s.is_undefined() && !s.is_weak())
+        .filter_map(|s| s.name().ok().map(|n| n.to_string()))
+        .collect();
 
     // Filter symbols from binary.
     let symbols = {
-        let bin_data = fs::read(binary)
-            .map_err(|e| format!("read {}: {e}", binary.display()))?;
+        let bin_data = fs::read(binary).map_err(|e| format!("read {}: {e}", binary.display()))?;
         let so_file = File::parse(bin_data.as_slice())
             .map_err(|e| format!("parse {}: {e}", binary.display()))?;
         let mut result = HashSet::new();
@@ -144,8 +145,7 @@ pub fn weaken_object_symbols(target: &Path, binary: &Path) -> Result<(), String>
 /// - ELF64: flips `st_bind` from `STB_GLOBAL(1)` → `STB_WEAK(2)` in `.symtab`
 /// - Mach-O64: sets `N_WEAK_REF(0x0040)` in `n_desc` in `LC_SYMTAB`
 fn weaken_symtab(obj_path: &Path, symbols: &HashSet<String>) -> Result<(), String> {
-    let mut data = fs::read(obj_path)
-        .map_err(|e| format!("read {}: {e}", obj_path.display()))?;
+    let mut data = fs::read(obj_path).map_err(|e| format!("read {}: {e}", obj_path.display()))?;
 
     let modified = match FileKind::parse(data.as_slice())
         .map_err(|e| format!("parse {}: {e}", obj_path.display()))?
@@ -156,16 +156,14 @@ fn weaken_symtab(obj_path: &Path, symbols: &HashSet<String>) -> Result<(), Strin
     };
 
     if modified {
-        fs::write(obj_path, &data)
-            .map_err(|e| format!("write {}: {e}", obj_path.display()))?;
+        fs::write(obj_path, &data).map_err(|e| format!("write {}: {e}", obj_path.display()))?;
     }
     Ok(())
 }
 
 fn weaken_elf(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> Result<bool, String> {
     let patches: Vec<usize> = {
-        let elf = File::parse(&*data)
-            .map_err(|e| format!("parse {}: {e}", obj_path.display()))?;
+        let elf = File::parse(&*data).map_err(|e| format!("parse {}: {e}", obj_path.display()))?;
 
         let symtab = match elf.section_by_name(".symtab") {
             Some(s) => s,
@@ -179,7 +177,7 @@ fn weaken_elf(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> Re
             .filter(|sym| {
                 sym.is_undefined()
                     && !sym.is_weak()
-                    && sym.name().map_or(false, |n| symbols.contains(n))
+                    && sym.name().is_ok_and(|n| symbols.contains(n))
             })
             .map(|sym| (symtab_off + sym.index().0 as u64 * 24 + 4) as usize) // sizeof(Elf64_Sym)=24; st_info at +4
             .collect()
@@ -195,10 +193,14 @@ fn weaken_elf(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> Re
     Ok(true)
 }
 
-fn weaken_macho(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> Result<bool, String> {
+fn weaken_macho(
+    data: &mut [u8],
+    symbols: &HashSet<String>,
+    obj_path: &Path,
+) -> Result<bool, String> {
     let patches: Vec<(usize, [u8; 2])> = {
-        let file = File::parse(&*data)
-            .map_err(|e| format!("parse macho {}: {e}", obj_path.display()))?;
+        let file =
+            File::parse(&*data).map_err(|e| format!("parse macho {}: {e}", obj_path.display()))?;
 
         // Mach-O symbol names have a leading '_' stripped when `symbols` was built.
         let indices: Vec<usize> = file
@@ -206,9 +208,9 @@ fn weaken_macho(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> 
             .filter(|sym| {
                 sym.is_undefined()
                     && !sym.is_weak()
-                    && sym.name().map_or(false, |n| {
-                        symbols.contains(n.strip_prefix('_').unwrap_or(n))
-                    })
+                    && sym
+                        .name()
+                        .is_ok_and(|n| symbols.contains(n.strip_prefix('_').unwrap_or(n)))
             })
             .map(|sym| sym.index().0)
             .collect();
@@ -232,7 +234,14 @@ fn weaken_macho(data: &mut [u8], symbols: &HashSet<String>, obj_path: &Path) -> 
                     u16::from_le_bytes(data[abs..abs + 2].try_into().ok()?)
                 };
                 let new_val = old | 0x0040; // N_WEAK_REF
-                Some((abs, if is_be { new_val.to_be_bytes() } else { new_val.to_le_bytes() }))
+                Some((
+                    abs,
+                    if is_be {
+                        new_val.to_be_bytes()
+                    } else {
+                        new_val.to_le_bytes()
+                    },
+                ))
             })
             .collect()
     };

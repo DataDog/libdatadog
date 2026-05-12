@@ -59,7 +59,7 @@ pub fn getpid() -> libc::pid_t {
 
 /// Return the path to the dynamic linker (PT_INTERP) of the current process.
 #[cfg(target_os = "linux")]
-pub fn read_pt_interp_self() -> Option<std::path::PathBuf> {
+pub fn read_pt_interp_self() -> Option<PathBuf> {
     // Auxiliary vector entries for the current process's executable PHDRs.
     // SAFETY: getauxval is signal-safe and idempotent.
     let phdr_addr = unsafe { libc::getauxval(libc::AT_PHDR) } as usize;
@@ -101,7 +101,7 @@ pub fn read_pt_interp_self() -> Option<std::path::PathBuf> {
     // SAFETY: the interpreter path is a valid C string placed by the kernel in the mapped
     // PT_INTERP segment; it is readable for the lifetime of the process.
     let interp = unsafe { CStr::from_ptr(interp_ptr) };
-    Some(std::path::PathBuf::from(interp.to_string_lossy().as_ref()))
+    Some(PathBuf::from(interp.to_string_lossy().as_ref()))
 }
 
 impl Entrypoint {
