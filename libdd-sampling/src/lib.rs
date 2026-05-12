@@ -29,7 +29,11 @@ pub(crate) mod constants;
 pub(crate) mod datadog_sampler;
 pub mod dd_constants;
 pub mod dd_sampling;
+#[cfg(not(feature = "bench-internals"))]
 pub(crate) mod glob_matcher;
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+pub mod glob_matcher;
 pub(crate) mod rate_limiter;
 pub(crate) mod rate_sampler;
 pub(crate) mod rules_sampler;
