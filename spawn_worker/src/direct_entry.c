@@ -59,6 +59,10 @@ static void dlopen_path_deps(void) {
 }
 
 // Called by dl_iterate_phdr to run DT_INIT_ARRAY for our own library.
+// Returns 1 when our library is found and processed (stopping iteration),
+// 0 otherwise.  On musl, dl_iterate_phdr may not include the exec'd library
+// (the main object) in its DSO list; in that case dl_iterate_phdr returns 0
+// and we fall back to the AT_PHDR approach below.
 // Marked no_sanitize so it can run before ASAN's per-object init completes.
 #ifdef __linux__
 static int __attribute__((no_sanitize("address"), no_sanitize("undefined")))
@@ -93,6 +97,7 @@ run_init_array_cb(struct dl_phdr_info *info, size_t size, void *self_addr) {
     }
     return 0;
 }
+
 #endif
 
 // Signal handler: write crash info to stderr AND /tmp/ddog_sidecar_crash_<pid>.
@@ -204,8 +209,16 @@ __attribute__((visibility("default")))
 __attribute__((naked))
 void ddog_sidecar_direct_entry(void) {
     __asm__ (
+        /* ld.so jumps here (no call), so there is no return address and no
+         * previous frame to unwind into.  .cfi_undefined rip tells
+         * _Unwind_Backtrace to stop here rather than walking into garbage,
+         * which would produce a null _Unwind_Context → SIGSEGV at 0x1 in
+         * libgcc_s (masking the real ASAN error).
+         * Note: clang emits .cfi_startproc/.cfi_endproc around naked functions,
+         * so we must NOT add our own startproc/endproc here. */
+        ".cfi_undefined rip\n\t"
         "and $-16, %rsp\n\t"    /* 16-byte align before C prologue sees rsp */
-        "call ddog_sidecar_direct_entry_body@PLT\n\t"  /* @PLT → R_X86_64_PLT32, valid in .so */
+        "call ddog_sidecar_direct_entry_body@PLT\n\t"
         "ud2"                    /* unreachable: body calls _exit */
     );
 }
@@ -213,9 +226,26 @@ void ddog_sidecar_direct_entry(void) {
 __attribute__((naked))
 void ddog_sidecar_direct_entry(void) {
     __asm__ (
+        ".cfi_undefined eip\n\t"
         "and $-16, %esp\n\t"
         "call ddog_sidecar_direct_entry_body@PLT\n\t"
         "ud2"
+    );
+}
+#elif defined(__aarch64__)
+/* ld.so branches (not calls) to e_entry on aarch64, so x30 (LR) has no valid
+ * return address and SP may not be 16-byte aligned.  Align SP before the C
+ * prologue can execute its first `stp x29, x30, [sp, #-16]!` (SIGBUS if
+ * SP%16 != 0 on aarch64). */
+__attribute__((naked))
+void ddog_sidecar_direct_entry(void) {
+    __asm__ (
+        ".cfi_undefined x30\n\t"  /* no valid return address — bottom of stack */
+        "mov x9, sp\n\t"
+        "and x9, x9, #~15\n\t"
+        "mov sp, x9\n\t"
+        "bl ddog_sidecar_direct_entry_body\n\t"
+        "brk #0"                  /* unreachable: body calls _exit */
     );
 }
 #else
@@ -226,7 +256,21 @@ void ddog_sidecar_direct_entry(void) {
 
 __attribute__((visibility("hidden"), used, noinline))
 void ddog_sidecar_direct_entry_body(void) {
-    // Install crash handler so any fatal signal is captured in a file.
+    // Run our own DT_INIT_ARRAY before any other code.
+    // ld.so skips DT_INIT_ARRAY for the main module in direct-exec mode, so
+    // ASAN's per-object global registration and other constructors never run
+    // unless we trigger them explicitly.
+    // IMPORTANT: crash handler installation must happen AFTER this call.
+    // During DT_INIT_ARRAY, ASAN may attempt to collect a backtrace via
+    // _Unwind_Backtrace. That unwind walks through the naked
+    // ddog_sidecar_direct_entry frame (no CFI), hits a null _Unwind_Context,
+    // and raises SIGSEGV. If we have already installed our SA_RESETHAND crash
+    // handler, it fires instead of ASAN's handler, breaking ASAN entirely.
+#ifdef __linux__
+    dl_iterate_phdr(run_init_array_cb, (void *)&ddog_sidecar_direct_entry);
+#endif
+
+    // Install crash handler now that the Rust/ASAN runtime is fully up.
     struct sigaction sa = { .sa_sigaction = crash_handler,
                             .sa_flags = SA_SIGINFO | SA_RESETHAND };
     sigemptyset(&sa.sa_mask);
@@ -234,14 +278,6 @@ void ddog_sidecar_direct_entry_body(void) {
     sigaction(SIGBUS,  &sa, NULL);
     sigaction(SIGABRT, &sa, NULL);
     sigaction(SIGILL,  &sa, NULL);
-
-    // Run our own DT_INIT_ARRAY before any other code.
-    // ld.so skips DT_INIT_ARRAY for the main module in direct-exec mode, so
-    // ASAN's per-object global registration and other constructors never run
-    // unless we trigger them explicitly.
-#ifdef __linux__
-    dl_iterate_phdr(run_init_array_cb, (void *)&ddog_sidecar_direct_entry);
-#endif
 
     const char *sym_name = getenv("_DD_SIDECAR_DIRECT_EXEC");
     if (!sym_name || !*sym_name) {

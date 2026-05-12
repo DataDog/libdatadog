@@ -296,6 +296,20 @@ impl SpawnWorker {
         self
     }
 
+    /// Set an env var, removing any existing entry with the same key first.
+    /// Use this instead of `append_env` when the parent process may already
+    /// have the variable set and the child must use the new value.
+    pub fn set_env<K: Into<OsString>, V: Into<OsString>>(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> &mut Self {
+        let key = key.into();
+        self.env.retain(|(k, _)| k != &key);
+        self.env.push((key, value.into()));
+        self
+    }
+
     fn wait_pid(pid: Option<libc::pid_t>) -> anyhow::Result<()> {
         let pid = match pid {
             Some(pid) => Pid::from_raw(pid),
