@@ -16,6 +16,7 @@ members = [
   "datadog-live-debugger",
   "datadog-live-debugger-ffi",
   "libdd-otel-thread-ctx",
+  "libdd-otel-thread-ctx-ffi",
   "libdd-profiling",
   "libdd-profiling-ffi",
   "libdd-profiling-protobuf",
