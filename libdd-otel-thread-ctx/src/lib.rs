@@ -286,7 +286,6 @@ pub mod linux {
     /// not thread-safe.
     pub struct ThreadContext(NonNull<ThreadContextRecord>);
 
-
     /// Opaque handle to a thread context record. Used to allow the FFI to convert [ThreadContext]
     /// to and from raw pointers without exposing [ThreadContextRecord], as the latter needs extra
     /// care to be manipulated (async-signal-safety, seq-lock-like modification protocol through
