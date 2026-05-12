@@ -25,6 +25,7 @@
 )]
 
 pub(crate) mod agent_service_sampler;
+pub(crate) mod bounded_byte_cache;
 pub(crate) mod constants;
 pub(crate) mod datadog_sampler;
 pub mod dd_constants;
