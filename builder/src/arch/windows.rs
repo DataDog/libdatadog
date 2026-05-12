@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Result;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
@@ -29,6 +30,12 @@ pub fn add_additional_files(lib_path: &str, target_path: &OsStr) {
     fs::copy(from_pdb, to_pdb).expect("unable to copy pdb file");
 
     let from_imp: PathBuf = [lib_path, PROF_DLL_IMPORT_LIB_FFI].iter().collect();
-    let to_imp: PathBuf = [target_path, OsStr::new(PROF_DLL_IMPORT_LIB_FFI)].iter().collect();
+    let to_imp: PathBuf = [target_path, OsStr::new(PROF_DLL_IMPORT_LIB_FFI)]
+        .iter()
+        .collect();
     fs::copy(from_imp, to_imp).expect("unable to copy dll import lib");
+}
+
+pub fn add_pkg_config(_crate_path: &str, _target_path: &str, _version: &str) -> Result<()> {
+    Ok(())
 }
