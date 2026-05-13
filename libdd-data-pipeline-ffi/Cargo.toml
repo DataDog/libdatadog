@@ -30,6 +30,7 @@ rmp-serde = "1.1.1"
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 
 [dependencies]
+anyhow = "1.0"
 libdd-capabilities-impl = { version = "1.0.0", path = "../libdd-capabilities-impl" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-shared-runtime = { version = "0.1.0", path = "../libdd-shared-runtime" }
