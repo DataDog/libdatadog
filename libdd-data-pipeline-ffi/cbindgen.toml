@@ -30,6 +30,7 @@ exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks"]
 "ExporterErrorCode" = "ddog_TraceExporterErrorCode"
 "ExporterError" = "ddog_TraceExporterError"
 "TracerSpan" = "ddog_TracerSpan"
+"TracerSpanFields" = "ddog_TracerSpanFields"
 "TracerTraceChunks" = "ddog_TracerTraceChunks"
 
 [export.mangle]
