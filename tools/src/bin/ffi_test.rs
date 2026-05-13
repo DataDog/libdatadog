@@ -229,7 +229,7 @@ fn expected_failures() -> &'static HashMap<&'static str, &'static str> {
 }
 
 // Test data directories to symlink into work directory
-const TEST_DATA_PATHS: &[&str] = &["datadog-ffe/tests/data"];
+const TEST_DATA_PATHS: &[&str] = &["datadog-ffe/ffe-system-test-data"];
 
 /// Run a command with output streamed to terminal
 fn run_passthrough(cmd: &mut Command, what: &str) -> Result<()> {

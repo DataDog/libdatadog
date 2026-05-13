@@ -12,6 +12,7 @@
 .dockerignore                        @DataDog/libdatadog-core
 .github/                             @DataDog/apm-common-components-core
 .gitignore                           @DataDog/libdatadog
+.gitmodules                          @DataDog/libdatadog
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
 .gitlab/fuzz.yml                     @DataDog/chaos-platform

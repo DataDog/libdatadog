@@ -189,8 +189,8 @@ int main(int argc, char* argv[]) {
     if (argc > 1) {
         config_path = argv[1];
     } else {
-        // Default to the test data file
-        config_path = "./datadog-ffe/tests/data/flags-v1.json";
+        // Default to the canonical FFE test data file
+        config_path = "./datadog-ffe/ffe-system-test-data/ufc-config.json";
     }
 
     printf("Step 1: Loading configuration from file...\n");
@@ -227,7 +227,7 @@ int main(int argc, char* argv[]) {
     printf("\nStep 2: Creating evaluation context...\n");
 
     // Define some attributes for the evaluation context
-    // These attributes match targeting rules in the flags-v1.json test data
+    // These attributes match targeting rules in the canonical UFC test data
     struct ddog_ffe_AttributePair attributes[] = {
         {
             .name = "country",
