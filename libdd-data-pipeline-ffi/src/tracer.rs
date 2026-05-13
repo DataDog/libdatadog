@@ -43,53 +43,52 @@ fn charslice_to_bytesstring(s: CharSlice) -> Result<BytesString, Box<ExporterErr
 /// Opaque handle wrapping a single `Span<BytesData>`.
 pub struct TracerSpan(SpanBytes);
 
+/// FFI-safe bundle of scalar fields for creating a [`TracerSpan`].
+///
+/// Passed by reference to [`ddog_tracer_span_new`] so that adding or
+/// changing fields does not break the function signature.
+#[derive(Debug)]
+#[repr(C)]
+pub struct TracerSpanFields<'a> {
+    pub service: CharSlice<'a>,
+    pub name: CharSlice<'a>,
+    pub resource: CharSlice<'a>,
+    pub span_type: CharSlice<'a>,
+    pub trace_id_low: u64,
+    pub trace_id_high: u64,
+    pub span_id: u64,
+    pub parent_id: u64,
+    pub start: i64,
+    pub duration: i64,
+    pub error: i32,
+}
+
 /// Create a new span with all scalar fields set.
 ///
 /// String fields are copied from the provided slices.  The `meta` and
 /// `metrics` maps start empty; use [`ddog_tracer_span_set_meta`] and
 /// [`ddog_tracer_span_set_metric`] to populate them.
 ///
-/// # Arguments
-///
-/// * `out_handle`  – Receives the new `TracerSpan` handle on success.
-/// * `service`, `name`, `resource`, `span_type` – UTF-8 string fields.
-/// * `trace_id_low`, `trace_id_high` – 128-bit trace ID split into two 64-bit halves (low = bits
-///   0‥63, high = bits 64‥127).
-/// * `span_id`   – Span identifier.
-/// * `parent_id` – Parent span identifier (0 for root spans).
-/// * `start`     – Start time in nanoseconds since Unix epoch.
-/// * `duration`  – Duration in nanoseconds.
-/// * `error`     – Error status (0 = no error).
-///
 /// # Safety
 ///
 /// `out_handle` must point to valid, writable memory for a `Box<TracerSpan>`.
-/// All `CharSlice` arguments must point to valid memory for their stated
-/// length.
+/// All `CharSlice` fields in `fields` must point to valid memory for their
+/// stated length.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_new(
     out_handle: NonNull<Box<TracerSpan>>,
-    service: CharSlice,
-    name: CharSlice,
-    resource: CharSlice,
-    span_type: CharSlice,
-    trace_id_low: u64,
-    trace_id_high: u64,
-    span_id: u64,
-    parent_id: u64,
-    start: i64,
-    duration: i64,
-    error: i32,
+    fields: &TracerSpanFields,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         {
             let inner = || -> Result<(), Box<ExporterError>> {
-                let service = charslice_to_bytesstring(service)?;
-                let name = charslice_to_bytesstring(name)?;
-                let resource = charslice_to_bytesstring(resource)?;
-                let span_type = charslice_to_bytesstring(span_type)?;
+                let service = charslice_to_bytesstring(fields.service)?;
+                let name = charslice_to_bytesstring(fields.name)?;
+                let resource = charslice_to_bytesstring(fields.resource)?;
+                let span_type = charslice_to_bytesstring(fields.span_type)?;
 
-                let trace_id: u128 = ((trace_id_high as u128) << 64) | (trace_id_low as u128);
+                let trace_id: u128 =
+                    ((fields.trace_id_high as u128) << 64) | (fields.trace_id_low as u128);
 
                 let span = SpanBytes {
                     service,
@@ -97,11 +96,11 @@ pub unsafe extern "C" fn ddog_tracer_span_new(
                     resource,
                     r#type: span_type,
                     trace_id,
-                    span_id,
-                    parent_id,
-                    start,
-                    duration,
-                    error,
+                    span_id: fields.span_id,
+                    parent_id: fields.parent_id,
+                    start: fields.start,
+                    duration: fields.duration,
+                    error: fields.error,
                     ..Default::default()
                 };
 
@@ -339,20 +338,20 @@ mod tests {
         unsafe {
             let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
             let out = NonNull::new(handle.as_mut_ptr()).unwrap();
-            let err = ddog_tracer_span_new(
-                out,
-                cs("svc"),
-                cs("op"),
-                cs("res"),
-                cs(""),
-                1,
-                0,
-                1,
-                0,
-                0,
-                0,
-                0,
-            );
+            let fields = TracerSpanFields {
+                service: cs("svc"),
+                name: cs("op"),
+                resource: cs("res"),
+                span_type: cs(""),
+                trace_id_low: 1,
+                trace_id_high: 0,
+                span_id: 1,
+                parent_id: 0,
+                start: 0,
+                duration: 0,
+                error: 0,
+            };
+            let err = ddog_tracer_span_new(out, &fields);
             assert!(err.is_none());
             handle.assume_init()
         }
@@ -364,20 +363,20 @@ mod tests {
             let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
             let out = NonNull::new(handle.as_mut_ptr()).unwrap();
 
-            let err = ddog_tracer_span_new(
-                out,
-                cs("my-service"),
-                cs("web.request"),
-                cs("GET /users"),
-                cs("web"),
-                0xdeadbeef,                   // trace_id_low
-                0x00000001,                   // trace_id_high
-                12345,                        // span_id
-                67890,                        // parent_id
-                1_700_000_000_000_000_000i64, // start (ns)
-                25_000_000,                   // duration (25 ms)
-                0,                            // error
-            );
+            let fields = TracerSpanFields {
+                service: cs("my-service"),
+                name: cs("web.request"),
+                resource: cs("GET /users"),
+                span_type: cs("web"),
+                trace_id_low: 0xdeadbeef,
+                trace_id_high: 0x00000001,
+                span_id: 12345,
+                parent_id: 67890,
+                start: 1_700_000_000_000_000_000i64,
+                duration: 25_000_000,
+                error: 0,
+            };
+            let err = ddog_tracer_span_new(out, &fields);
             assert!(err.is_none());
 
             let span = handle.assume_init();
@@ -478,8 +477,20 @@ mod tests {
             let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
             let out = NonNull::new(handle.as_mut_ptr()).unwrap();
 
-            let err =
-                ddog_tracer_span_new(out, cs(""), cs(""), cs(""), cs(""), 0, 0, 0, 0, 0, 0, 0);
+            let fields = TracerSpanFields {
+                service: cs(""),
+                name: cs(""),
+                resource: cs(""),
+                span_type: cs(""),
+                trace_id_low: 0,
+                trace_id_high: 0,
+                span_id: 0,
+                parent_id: 0,
+                start: 0,
+                duration: 0,
+                error: 0,
+            };
+            let err = ddog_tracer_span_new(out, &fields);
             assert!(err.is_none());
 
             let span = handle.assume_init();
