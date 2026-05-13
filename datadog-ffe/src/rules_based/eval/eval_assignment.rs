@@ -257,13 +257,22 @@ mod tests {
         let _ = env_logger::builder().is_test(true).try_init();
 
         let config = UniversalFlagConfig::from_json(
-            std::fs::read("ffe-system-test-data/ufc-config.json").unwrap(),
+            std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/ffe-system-test-data/ufc-config.json"
+            ))
+            .unwrap(),
         )
         .unwrap();
         let config = Configuration::from_server_response(config);
         let now = Utc::now();
 
-        for entry in fs::read_dir("ffe-system-test-data/evaluation-cases/").unwrap() {
+        for entry in fs::read_dir(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/ffe-system-test-data/evaluation-cases/"
+        ))
+        .unwrap()
+        {
             let entry = entry.unwrap();
             println!("Processing test file: {:?}", entry.path());
 

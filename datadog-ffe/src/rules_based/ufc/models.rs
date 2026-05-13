@@ -561,7 +561,11 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)] // this test is way too slow on miri
     fn parse_flags_v1() {
-        let json_content = std::fs::read_to_string("ffe-system-test-data/ufc-config.json").unwrap();
+        let json_content = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/ffe-system-test-data/ufc-config.json"
+        ))
+        .unwrap();
         let ufc: UniversalFlagConfigWire = serde_json::from_str(&json_content).unwrap();
 
         let failures = ufc
