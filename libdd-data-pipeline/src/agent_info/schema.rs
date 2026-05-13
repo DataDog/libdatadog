@@ -46,7 +46,8 @@ pub struct AgentInfoStruct {
     #[serde(default)]
     pub filter_tags_regex: FilterTagsConfig,
     /// Regex patterns for root-span resource names; matching traces are excluded from stats.
-    pub ignore_resources: Option<Vec<String>>,
+    #[serde(default)]
+    pub ignore_resources: Vec<String>,
 }
 
 /// Require/reject lists for tag-based trace filters exposed by the agent /info endpoint.

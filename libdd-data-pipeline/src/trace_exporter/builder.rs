@@ -69,6 +69,7 @@ pub struct TraceExporterBuilder {
     otlp_headers: Vec<(String, String)>,
     filter_tags: FilterTagsConfig,
     filter_tags_regex: FilterTagsConfig,
+    ignore_resources: Vec<String>,
 }
 
 impl TraceExporterBuilder {
@@ -510,7 +511,11 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
-            trace_filterer: TraceFilterer::new(&self.filter_tags, &self.filter_tags_regex),
+            trace_filterer: TraceFilterer::new(
+                &self.filter_tags,
+                &self.filter_tags_regex,
+                &self.ignore_resources,
+            ),
         })
     }
 

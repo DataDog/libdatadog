@@ -388,6 +388,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 self.trace_filterer.update_conf(
                     &agent_info.info.filter_tags,
                     &agent_info.info.filter_tags_regex,
+                    &agent_info.info.ignore_resources,
                 );
                 match &**self.client_side_stats.status.load() {
                     StatsComputationStatus::Disabled => {}

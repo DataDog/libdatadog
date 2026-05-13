@@ -1,6 +1,3 @@
-// TODO:
-// regex cache ?: https://docs.rs/lru-cache/latest/lru_cache/
-
 use std::{str::FromStr, sync::Arc};
 
 use libdd_common::regex_engine;
@@ -27,6 +24,7 @@ struct TraceFilteredConf {
     reject_regex: Vec<RegexTagFilter>,
     require: Vec<TagFilter>,
     require_regex: Vec<RegexTagFilter>,
+    ignore_resources: Vec<regex_engine::Regex>,
 }
 
 #[derive(Debug)]
@@ -58,7 +56,9 @@ impl FromStr for RegexTagFilter {
             let regex = match regex_engine::Regex::new(value) {
                 Ok(regex) => regex,
                 Err(err) => {
-                    error!("Invalid regex pattern in tag filter, skipping it: {tag}");
+                    error!(
+                        "Invalid regex pattern in tag filter, skipping it: tag=`{tag}` err={err}"
+                    );
                     return Err(err);
                 }
             };
@@ -79,6 +79,7 @@ impl TraceFilteredConf {
     fn parse(
         filter_tags: &crate::agent_info::schema::FilterTagsConfig,
         filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
+        ignore_resources: &[String],
     ) -> Self {
         TraceFilteredConf {
             reject: filter_tags
@@ -101,6 +102,14 @@ impl TraceFilteredConf {
                 .iter()
                 .filter_map(|regex_tag| RegexTagFilter::from_str(regex_tag).ok())
                 .collect(),
+            ignore_resources: ignore_resources
+                .iter()
+                .filter_map(|regex| {
+                    regex_engine::Regex::new(regex).inspect_err(|err| {
+                    error!("Invalid regex pattern in ignore resources filter, skipping it: regex=`{regex}` err={err}")
+                }).ok()
+                })
+                .collect(),
         }
     }
 }
@@ -109,8 +118,9 @@ impl TraceFilterer {
     pub fn new(
         filter_tags: &crate::agent_info::schema::FilterTagsConfig,
         filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
+        ignore_resources: &[String],
     ) -> Self {
-        let conf = TraceFilteredConf::parse(filter_tags, filter_tags_regex);
+        let conf = TraceFilteredConf::parse(filter_tags, filter_tags_regex, ignore_resources);
         Self {
             conf: arc_swap::ArcSwap::from_pointee(conf),
         }
@@ -120,8 +130,9 @@ impl TraceFilterer {
         &self,
         filter_tags: &crate::agent_info::schema::FilterTagsConfig,
         filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
+        ignore_resources: &[String],
     ) {
-        let new_conf = TraceFilteredConf::parse(filter_tags, filter_tags_regex);
+        let new_conf = TraceFilteredConf::parse(filter_tags, filter_tags_regex, ignore_resources);
         self.conf.swap(Arc::new(new_conf));
     }
 
@@ -178,6 +189,14 @@ impl TraceFilterer {
                 .get_meta(&tag.key)
                 .is_some_and(|value| tag.value.as_ref().is_none_or(|pat| pat.is_match(value)))
         }) {
+            return true;
+        }
+
+        if conf
+            .ignore_resources
+            .iter()
+            .any(|resource_pattern| resource_pattern.is_match(root_span.resource()))
+        {
             return true;
         }
 
