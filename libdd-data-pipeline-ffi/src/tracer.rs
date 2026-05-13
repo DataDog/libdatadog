@@ -239,15 +239,19 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_free(handle: Box<TracerTraceCh
 /// Subsequent [`ddog_tracer_trace_chunks_push_span`] calls will append
 /// spans to this chunk until the next `begin_chunk` call.
 ///
+/// `capacity` is a hint for the expected number of spans in this chunk;
+/// pass 0 if unknown.
+///
 /// # Safety
 ///
 /// `handle` must be a valid pointer to a `TracerTraceChunks`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_begin_chunk(
     handle: Option<&mut TracerTraceChunks>,
+    capacity: usize,
 ) {
     if let Some(chunks) = handle {
-        chunks.0.push(Vec::new());
+        chunks.0.push(Vec::with_capacity(capacity));
     }
 }
 
@@ -519,7 +523,7 @@ mod tests {
             let mut chunks = make_chunks(2);
 
             // Chunk 1: two spans
-            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks));
+            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 2);
 
             let s1 = make_minimal_span();
             let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s1);
@@ -530,7 +534,7 @@ mod tests {
             assert!(err.is_none());
 
             // Chunk 2: one span
-            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks));
+            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 1);
             let s3 = make_minimal_span();
             let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s3);
             assert!(err.is_none());
@@ -571,7 +575,7 @@ mod tests {
     fn trace_chunks_empty_chunk_is_valid() {
         unsafe {
             let mut chunks = make_chunks(1);
-            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks));
+            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 0);
 
             assert_eq!(chunks.0.len(), 1);
             assert_eq!(chunks.0[0].len(), 0);
