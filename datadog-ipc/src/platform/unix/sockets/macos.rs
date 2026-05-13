@@ -120,9 +120,26 @@ impl SeqpacketListener {
     /// Silently discards messages without SCM_RIGHTS (liveness probes from `is_listening`).
     pub fn try_accept(&self) -> io::Result<SeqpacketConn> {
         loop {
-            let mut buf = [0u8; 1];
-            let (_, owned_fds) =
-                super::recvmsg_raw(self.inner.as_raw_fd(), &mut buf, MsgFlags::MSG_DONTWAIT)?;
+            // Use an 8-byte buffer rather than 1 byte: macOS SOCK_DGRAM uses
+            // non-truncating semantics and returns EMSGSIZE if the data doesn't
+            // fit, even for fractionally larger-than-expected payloads.
+            let mut buf = [0u8; 8];
+            let (_, owned_fds) = match super::recvmsg_raw(
+                self.inner.as_raw_fd(),
+                &mut buf,
+                MsgFlags::MSG_DONTWAIT,
+            ) {
+                // macOS SOCK_DGRAM returns EMSGSIZE when the received datagram exceeds
+                // the caller's iov or cmsg buffer — the kernel discards the message.
+                // Treat it as a discarded handshake: log and continue so the accept loop
+                // does not die. The PHP client will retry via the reconnect mechanism.
+                Err(ref e) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
+                    // Shouldn't occur with our larger buffers, but guard defensively.
+                    tracing::warn!("rendezvous socket: oversized datagram discarded (EMSGSIZE), client will retry");
+                    continue;
+                }
+                other => other?,
+            };
             let mut it = owned_fds.into_iter();
             if let Some(client_fd) = it.next() {
                 // The second fd (if present) is the liveness pipe read end from `connect()`.
