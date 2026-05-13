@@ -249,10 +249,16 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_free(handle: Box<TracerTraceCh
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_begin_chunk(
     handle: Option<&mut TracerTraceChunks>,
     capacity: usize,
-) {
-    if let Some(chunks) = handle {
-        chunks.0.push(Vec::with_capacity(capacity));
-    }
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(chunks) = handle {
+            chunks.0.push(Vec::with_capacity(capacity));
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
 }
 
 /// Move a span into the current (last) chunk, consuming the span handle.
@@ -523,7 +529,8 @@ mod tests {
             let mut chunks = make_chunks(2);
 
             // Chunk 1: two spans
-            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 2);
+            let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 2);
+            assert!(err.is_none());
 
             let s1 = make_minimal_span();
             let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s1);
@@ -534,7 +541,8 @@ mod tests {
             assert!(err.is_none());
 
             // Chunk 2: one span
-            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 1);
+            let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 1);
+            assert!(err.is_none());
             let s3 = make_minimal_span();
             let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s3);
             assert!(err.is_none());
@@ -544,6 +552,15 @@ mod tests {
             assert_eq!(chunks.0[1].len(), 1);
 
             ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    #[test]
+    fn begin_chunk_null_handle_returns_error() {
+        unsafe {
+            let err = ddog_tracer_trace_chunks_begin_chunk(None, 0);
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
         }
     }
 
@@ -575,7 +592,8 @@ mod tests {
     fn trace_chunks_empty_chunk_is_valid() {
         unsafe {
             let mut chunks = make_chunks(1);
-            ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 0);
+            let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 0);
+            assert!(err.is_none());
 
             assert_eq!(chunks.0.len(), 1);
             assert_eq!(chunks.0[0].len(), 0);
