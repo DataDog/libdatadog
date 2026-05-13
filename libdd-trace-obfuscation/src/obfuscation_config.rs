@@ -9,7 +9,7 @@ use libdd_common::config::parse_env;
 
 use crate::{
     replacer::{self, ReplaceRule},
-    sql::SqlObfuscateConfig,
+    sql::{SqlObfuscateConfig, SqlObfuscationMode},
 };
 
 #[derive(Debug, Default, Deserialize)]
@@ -90,6 +90,12 @@ pub struct ObfuscationConfig {
     pub elasticsearch: JsonObfuscatorConfig,
     pub opensearch: JsonObfuscatorConfig,
     pub mongodb: JsonObfuscatorConfig,
+}
+
+// Small subset of `ObfuscationConfig` for stats obfuscation only
+#[derive(Default)]
+pub struct StatsObfuscationConfig {
+    pub sql_obfuscation_mode: SqlObfuscationMode,
 }
 
 impl ObfuscationConfig {

@@ -18,7 +18,7 @@ pub struct ErrorDataBuilder {
     pub message: Option<String>,
     pub thread_name: Option<String>,
     pub stack: Option<StackTrace>,
-    pub threads: Option<Vec<ThreadData>>,
+    pub threads: Option<Threads>,
 }
 
 impl ErrorDataBuilder {
@@ -94,7 +94,7 @@ impl ErrorDataBuilder {
         Ok(())
     }
 
-    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
+    pub fn with_threads(&mut self, threads: Threads) -> anyhow::Result<()> {
         self.threads = Some(threads);
         Ok(())
     }
@@ -361,15 +361,21 @@ impl CrashInfoBuilder {
 
     pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
         if let Some(ref mut threads) = &mut self.error.threads {
-            threads.push(thread);
+            threads.threads.push(thread);
+            threads.count += 1;
         } else {
-            self.error.threads = Some(vec![thread]);
+            self.error.threads = Some(Threads {
+                threads: vec![thread],
+                count: 1,
+                incomplete: false,
+            });
         }
         Ok(())
     }
 
-    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
-        self.error.with_threads(threads)
+    pub fn with_threads(&mut self, threads: Threads) -> anyhow::Result<()> {
+        self.error.threads = Some(threads);
+        Ok(())
     }
 
     pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> anyhow::Result<()> {

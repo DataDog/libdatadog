@@ -4,21 +4,21 @@
 use crate::agent_info::AgentInfoFetcher;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::OtlpTraceConfig;
-#[cfg(feature = "telemetry")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
-#[cfg(feature = "telemetry")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TracerMetadata,
-    INFO_ENDPOINT,
+    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
+    TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
 use libdd_shared_runtime::SharedRuntime;
@@ -53,6 +53,8 @@ pub struct TraceExporterBuilder {
     peer_tags_aggregation: bool,
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
+    #[cfg(feature = "stats-obfuscation")]
+    client_side_stats_obfuscation_enabled: bool,
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
@@ -211,6 +213,17 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enable client-side stats obfuscation. Disabled by default.
+    ///
+    /// Final activation also requires the agent to advertise a supported
+    /// `obfuscation_version` via the `/info` endpoint. When disabled, no
+    /// `datadog-obfuscation-version` header is sent on stats payloads.
+    #[cfg(feature = "stats-obfuscation")]
+    pub fn enable_client_side_stats_obfuscation(&mut self) -> &mut Self {
+        self.client_side_stats_obfuscation_enabled = true;
+        self
+    }
+
     #[cfg(feature = "telemetry")]
     /// Enables sending telemetry metrics.
     pub fn enable_telemetry(&mut self, cfg: TelemetryConfig) -> &mut Self {
@@ -274,9 +287,9 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn build<H: HttpClientTrait + MaybeSend + Sync + 'static>(
+    pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
-    ) -> Result<TraceExporter<H>, TraceExporterError> {
+    ) -> Result<TraceExporter<C>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -305,228 +318,185 @@ impl TraceExporterBuilder {
         })?;
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
+
+        // On native, `C::new_client()` may capture `tokio::runtime::Handle::current()`
+        // internally (e.g. `NativeCapabilities`). Enter the SharedRuntime's tokio context
+        // so that handle is available. On wasm this is a no-op — the JS event loop is
+        // always the implicit executor.
+        #[cfg(not(target_arch = "wasm32"))]
+        let _guard = shared_runtime
+            .runtime_handle()
+            .map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?
+            .enter();
+        let capabilities = C::new_client();
+
+        // --- Platform-specific worker setup ---
+        // The blocks below spawn background workers via `SharedRuntime`. On
+        // native, workers run on the tokio runtime; on wasm, they run on the JS
+        // event loop via `spawn_local`. Telemetry remains native-only for now.
+
+        #[cfg(feature = "stats-obfuscation")]
+        use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
+
+        use crate::trace_exporter::stats::StatsComputationConfig;
+
+        let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
+        let (info_fetcher, info_response_observer) =
+            AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
+        let info_fetcher_handle =
+            shared_runtime
+                .spawn_worker(info_fetcher, false)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
+        // The handle is currently only tracked for shutdown on native; on wasm
+        // it is dropped here (the worker keeps running on the JS event loop
+        // until the page/module is torn down).
+        #[cfg(target_arch = "wasm32")]
+        let _ = info_fetcher_handle;
+
         #[allow(unused_mut)]
         let mut stats = StatsComputationStatus::Disabled;
-
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
-            let (info_fetcher, info_response_observer) =
-                AgentInfoFetcher::<H>::new(info_endpoint.clone(), Duration::from_secs(5 * 60));
-            let info_fetcher_handle =
-                shared_runtime
-                    .spawn_worker(info_fetcher, false)
-                    .map_err(|e| {
+        if let Some(bucket_size) = self.stats_bucket_size {
+            stats = StatsComputationStatus::DisabledByAgent { bucket_size };
+        }
+
+        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        let (telemetry_client, telemetry_handle) = {
+            let sessions = self.telemetry_instrumentation_sessions;
+            let telemetry = self.telemetry.map(|telemetry_config| {
+                let mut builder = TelemetryClientBuilder::default()
+                    .set_language(&self.language)
+                    .set_language_version(&self.language_version)
+                    .set_service_name(&self.service)
+                    .set_service_version(&self.app_version)
+                    .set_env(&self.env)
+                    .set_tracer_version(&self.tracer_version)
+                    .set_heartbeat(telemetry_config.heartbeat)
+                    .set_url(base_url)
+                    .set_debug_enabled(telemetry_config.debug_enabled);
+                if let Some(id) = telemetry_config.runtime_id {
+                    builder = builder.set_runtime_id(&id);
+                }
+                if let Some(ref id) = sessions.session_id {
+                    builder = builder.set_session_id(id);
+                }
+                if let Some(ref id) = sessions.root_session_id {
+                    builder = builder.set_root_session_id(id);
+                }
+                if let Some(ref id) = sessions.parent_session_id {
+                    builder = builder.set_parent_session_id(id);
+                }
+                Ok(builder.build())
+            });
+            match telemetry {
+                Some(Ok((client_tel, worker))) => {
+                    let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
                         TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                             e.to_string(),
                         ))
                     })?;
-
-            if let Some(bucket_size) = self.stats_bucket_size {
-                stats = StatsComputationStatus::DisabledByAgent { bucket_size };
-            }
-
-            #[cfg(feature = "telemetry")]
-            let (telemetry_client, telemetry_handle) = {
-                let sessions = self.telemetry_instrumentation_sessions;
-                let telemetry = self.telemetry.map(|telemetry_config| {
-                    let mut builder = TelemetryClientBuilder::default()
-                        .set_language(&self.language)
-                        .set_language_version(&self.language_version)
-                        .set_service_name(&self.service)
-                        .set_service_version(&self.app_version)
-                        .set_env(&self.env)
-                        .set_tracer_version(&self.tracer_version)
-                        .set_heartbeat(telemetry_config.heartbeat)
-                        .set_url(base_url)
-                        .set_debug_enabled(telemetry_config.debug_enabled);
-                    if let Some(id) = telemetry_config.runtime_id {
-                        builder = builder.set_runtime_id(&id);
-                    }
-                    if let Some(ref id) = sessions.session_id {
-                        builder = builder.set_session_id(id);
-                    }
-                    if let Some(ref id) = sessions.root_session_id {
-                        builder = builder.set_root_session_id(id);
-                    }
-                    if let Some(ref id) = sessions.parent_session_id {
-                        builder = builder.set_parent_session_id(id);
-                    }
-                    Ok(builder.build())
-                });
-                match telemetry {
-                    Some(Ok((client, worker))) => {
-                        let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
-                            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                                e.to_string(),
-                            ))
-                        })?;
-                        shared_runtime.block_on(client.start()).map_err(|e| {
-                            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                                e.to_string(),
-                            ))
-                        })?;
-                        (Some(client), Some(handle))
-                    }
-                    Some(Err(e)) => return Err(e),
-                    None => (None, None),
+                    shared_runtime.block_on(client_tel.start()).map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?;
+                    (Some(client_tel), Some(handle))
                 }
-            };
+                Some(Err(e)) => return Err(e),
+                None => (None, None),
+            }
+        };
 
-            Ok(TraceExporter {
-                endpoint: Endpoint {
-                    url: agent_url,
-                    test_token: self.test_session_token.map(|token| token.into()),
-                    timeout_ms: self
-                        .connection_timeout
-                        .unwrap_or(Endpoint::default().timeout_ms),
-                    ..Default::default()
-                },
-                metadata: TracerMetadata {
-                    tracer_version: self.tracer_version,
-                    language_version: self.language_version,
-                    language_interpreter: self.language_interpreter,
-                    language_interpreter_vendor: self.language_interpreter_vendor,
-                    language: self.language,
-                    git_commit_sha: self.git_commit_sha,
-                    process_tags: self.process_tags,
-                    client_computed_stats: self.client_computed_stats,
-                    client_computed_top_level: self.client_computed_top_level,
-                    hostname: self.hostname,
-                    env: self.env,
-                    app_version: self.app_version,
-                    runtime_id: uuid::Uuid::new_v4().to_string(),
-                    service: self.service,
-                },
-                input_format: self.input_format,
-                output_format: self.output_format,
+        let otlp_config = self.otlp_endpoint.map(|url| {
+            let mut headers = http::HeaderMap::new();
+            for (key, value) in self.otlp_headers {
+                match (
+                    http::HeaderName::from_bytes(key.as_bytes()),
+                    http::HeaderValue::from_str(&value),
+                ) {
+                    (Ok(name), Ok(val)) => {
+                        headers.insert(name, val);
+                    }
+                    _ => {
+                        tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
+                    }
+                }
+            }
+            OtlpTraceConfig {
+                endpoint_url: url,
+                headers,
+                timeout: self
+                    .connection_timeout
+                    .map(Duration::from_millis)
+                    .unwrap_or(DEFAULT_OTLP_TIMEOUT),
+                protocol: OtlpProtocol::HttpJson,
+            }
+        });
+
+        Ok(TraceExporter {
+            endpoint: Endpoint {
+                url: agent_url,
+                test_token: self.test_session_token.map(|token| token.into()),
+                timeout_ms: self
+                    .connection_timeout
+                    .unwrap_or(Endpoint::default().timeout_ms),
+                ..Default::default()
+            },
+            metadata: TracerMetadata {
+                tracer_version: self.tracer_version,
+                language_version: self.language_version,
+                language_interpreter: self.language_interpreter,
+                language_interpreter_vendor: self.language_interpreter_vendor,
+                language: self.language,
+                git_commit_sha: self.git_commit_sha,
+                process_tags: self.process_tags,
+                client_computed_stats: self.client_computed_stats,
                 client_computed_top_level: self.client_computed_top_level,
-                shared_runtime,
-                dogstatsd,
-                common_stats_tags: vec![libdatadog_version],
-                client_side_stats: ArcSwap::new(stats.into()),
-                previous_info_state: arc_swap::ArcSwapOption::new(None),
-                info_response_observer,
+                hostname: self.hostname,
+                env: self.env,
+                app_version: self.app_version,
+                runtime_id: uuid::Uuid::new_v4().to_string(),
+                service: self.service,
+            },
+            input_format: self.input_format,
+            output_format: self.output_format,
+            serializer: TraceSerializer::new(self.output_format),
+            client_computed_top_level: self.client_computed_top_level,
+            shared_runtime,
+            dogstatsd,
+            common_stats_tags: vec![libdatadog_version],
+            client_side_stats: StatsComputationConfig {
+                status: ArcSwap::new(stats.into()),
+                #[cfg(feature = "stats-obfuscation")]
+                obfuscation_config: Arc::new(ArcSwap::from_pointee(
+                    StatsComputationObfuscationConfig::default(),
+                )),
+                #[cfg(feature = "stats-obfuscation")]
+                obfuscation_enabled: self.client_side_stats_obfuscation_enabled,
+            },
+            previous_info_state: arc_swap::ArcSwapOption::new(None),
+            info_response_observer,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+            telemetry: telemetry_client,
+            health_metrics_enabled: self.health_metrics_enabled,
+            capabilities,
+            #[cfg(not(target_arch = "wasm32"))]
+            workers: TraceExporterWorkers {
+                info_fetcher: info_fetcher_handle,
                 #[cfg(feature = "telemetry")]
-                telemetry: telemetry_client,
-                health_metrics_enabled: self.health_metrics_enabled,
-                client: H::new_client(),
-                workers: TraceExporterWorkers {
-                    info_fetcher: info_fetcher_handle,
-                    #[cfg(feature = "telemetry")]
-                    telemetry: telemetry_handle,
-                },
-                agent_payload_response_version: self
-                    .agent_rates_payload_version_enabled
-                    .then(AgentResponsePayloadVersion::new),
-                otlp_config: self.otlp_endpoint.map(|url| {
-                    let mut headers = http::HeaderMap::new();
-                    for (key, value) in self.otlp_headers {
-                        match (
-                            http::HeaderName::from_bytes(key.as_bytes()),
-                            http::HeaderValue::from_str(&value),
-                        ) {
-                            (Ok(name), Ok(val)) => {
-                                headers.insert(name, val);
-                            }
-                            _ => {
-                                tracing::warn!(
-                                    "Skipping invalid OTLP header: {:?}={:?}",
-                                    key,
-                                    value
-                                );
-                            }
-                        }
-                    }
-                    OtlpTraceConfig {
-                        endpoint_url: url,
-                        headers,
-                        timeout: self
-                            .connection_timeout
-                            .map(Duration::from_millis)
-                            .unwrap_or(DEFAULT_OTLP_TIMEOUT),
-                        protocol: OtlpProtocol::HttpJson,
-                    }
-                }),
-            })
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
-            let (_info_fetcher, info_response_observer) =
-                AgentInfoFetcher::<H>::new(info_endpoint, Duration::from_secs(5 * 60));
-
-            Ok(TraceExporter {
-                endpoint: Endpoint {
-                    url: agent_url,
-                    test_token: self.test_session_token.map(|token| token.into()),
-                    timeout_ms: self
-                        .connection_timeout
-                        .unwrap_or(Endpoint::default().timeout_ms),
-                    ..Default::default()
-                },
-                metadata: TracerMetadata {
-                    tracer_version: self.tracer_version,
-                    language_version: self.language_version,
-                    language_interpreter: self.language_interpreter,
-                    language_interpreter_vendor: self.language_interpreter_vendor,
-                    language: self.language,
-                    git_commit_sha: self.git_commit_sha,
-                    process_tags: self.process_tags,
-                    client_computed_stats: self.client_computed_stats,
-                    client_computed_top_level: self.client_computed_top_level,
-                    hostname: self.hostname,
-                    env: self.env,
-                    app_version: self.app_version,
-                    runtime_id: uuid::Uuid::new_v4().to_string(),
-                    service: self.service,
-                },
-                input_format: self.input_format,
-                output_format: self.output_format,
-                client_computed_top_level: self.client_computed_top_level,
-                shared_runtime,
-                dogstatsd,
-                common_stats_tags: vec![libdatadog_version],
-                client_side_stats: ArcSwap::new(stats.into()),
-                previous_info_state: arc_swap::ArcSwapOption::new(None),
-                info_response_observer,
-                health_metrics_enabled: self.health_metrics_enabled,
-                client: H::new_client(),
-                agent_payload_response_version: self
-                    .agent_rates_payload_version_enabled
-                    .then(AgentResponsePayloadVersion::new),
-                otlp_config: self.otlp_endpoint.map(|url| {
-                    let mut headers = http::HeaderMap::new();
-                    for (key, value) in self.otlp_headers {
-                        match (
-                            http::HeaderName::from_bytes(key.as_bytes()),
-                            http::HeaderValue::from_str(&value),
-                        ) {
-                            (Ok(name), Ok(val)) => {
-                                headers.insert(name, val);
-                            }
-                            _ => {
-                                tracing::warn!(
-                                    "Skipping invalid OTLP header: {:?}={:?}",
-                                    key,
-                                    value
-                                );
-                            }
-                        }
-                    }
-                    OtlpTraceConfig {
-                        endpoint_url: url,
-                        headers,
-                        timeout: self
-                            .connection_timeout
-                            .map(Duration::from_millis)
-                            .unwrap_or(DEFAULT_OTLP_TIMEOUT),
-                        protocol: OtlpProtocol::HttpJson,
-                    }
-                }),
-            })
-        }
+                telemetry: telemetry_handle,
+            },
+            agent_payload_response_version: self
+                .agent_rates_payload_version_enabled
+                .then(AgentResponsePayloadVersion::new),
+            otlp_config,
+        })
     }
 
     fn is_inputs_outputs_formats_compatible(

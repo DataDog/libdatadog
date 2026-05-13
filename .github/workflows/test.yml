@@ -48,15 +48,14 @@ jobs:
           CRASHTRACKER_FEATURE=""
           RUN_TEST_SPAWN="false"
         else
-          UNIT_CRATES=$(echo "$AFFECTED_CRATES" | jq '[.[] | select(. != "builder")]')
-          COUNT=$(echo "$UNIT_CRATES" | jq 'length')
-          PACKAGES=$(echo "$UNIT_CRATES" | jq -r 'map("-p " + .) | join(" ")')
-          if echo "$UNIT_CRATES" | jq -e 'any(. == "libdd-crashtracker")' > /dev/null; then
+          COUNT=$(echo "$AFFECTED_CRATES" | jq 'length')
+          PACKAGES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
+          if echo "$AFFECTED_CRATES" | jq -e 'any(. == "libdd-crashtracker")' > /dev/null; then
             CRASHTRACKER_FEATURE="--features libdd-crashtracker/generate-unit-test-files"
           else
             CRASHTRACKER_FEATURE=""
           fi
-          if echo "$UNIT_CRATES" | jq -e 'any(. == "test_spawn_from_lib")' > /dev/null; then
+          if echo "$AFFECTED_CRATES" | jq -e 'any(. == "test_spawn_from_lib")' > /dev/null; then
             RUN_TEST_SPAWN="true"
           else
             RUN_TEST_SPAWN="false"
@@ -149,13 +148,13 @@ jobs:
             # shellcheck disable=SC2086
             cargo test --workspace $CRASHTRACKER_FEATURE --exclude builder --doc --verbose
             # shellcheck disable=SC2086
-            cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci --verbose -E '!test(tracing_integration_tests::)'
+            cargo nextest run --workspace $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
           else
             # shellcheck disable=SC2086
             cargo test $PACKAGES $CRASHTRACKER_FEATURE --doc --verbose
             # shellcheck disable=SC2086
-            cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose -E '!test(tracing_integration_tests::)'
+            cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
             if echo "$PACKAGES" | grep -q "libdd-http-client"; then
               cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
             fi
@@ -166,10 +165,10 @@ jobs:
         shell: bash
         run: |
           if [[ -z "$PACKAGES" ]]; then
-            cargo nextest run --workspace --all-features --exclude builder --exclude test_spawn_from_lib --verbose -E '!test(tracing_integration_tests::)'
+            cargo nextest run --workspace --all-features --exclude test_spawn_from_lib --verbose --no-tests=pass -E '!test(tracing_integration_tests::)'
           else
             # shellcheck disable=SC2086
-            cargo nextest run $PACKAGES --all-features --verbose -E '!test(tracing_integration_tests::) & !package(test_spawn_from_lib)'
+            cargo nextest run $PACKAGES --all-features --verbose --no-tests=pass -E '!test(tracing_integration_tests::) & !package(test_spawn_from_lib)'
           fi
         env:
           RUST_BACKTRACE: full
@@ -182,7 +181,7 @@ jobs:
             for crate in $TRACING_CRATES; do
               PACKAGES="$PACKAGES -p $crate"
             done
-            cargo nextest run $PACKAGES --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+            cargo nextest run $PACKAGES --profile ci --test-threads=1 --verbose --no-tests=pass -E 'test(tracing_integration_tests::)'
           else
             TRACING_PACKAGES=""
             for crate in $TRACING_CRATES; do
@@ -194,7 +193,7 @@ jobs:
               echo "No tracing integration test crates found in PACKAGES, skipping."
             else
               # shellcheck disable=SC2086
-              cargo nextest run $TRACING_PACKAGES --profile ci --test-threads=1 --verbose -E 'test(tracing_integration_tests::)'
+              cargo nextest run $TRACING_PACKAGES --profile ci --test-threads=1 --verbose --no-tests=pass -E 'test(tracing_integration_tests::)'
             fi
           fi
         env:
@@ -304,10 +303,10 @@ jobs:
         run: |
           if [[ -z "$PACKAGES" ]]; then
             # shellcheck disable=SC2086
-            NEXTEST_CMD="cargo nextest run --workspace $CRASHTRACKER_FEATURE --exclude builder --profile ci -E '!test(tracing_integration_tests::)'"
+            NEXTEST_CMD="cargo nextest run --workspace $CRASHTRACKER_FEATURE --profile ci --no-tests=pass -E '!test(tracing_integration_tests::)'"
           else
             # shellcheck disable=SC2086
-            NEXTEST_CMD="cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci -E '!test(tracing_integration_tests::)'"
+            NEXTEST_CMD="cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --no-tests=pass -E '!test(tracing_integration_tests::)'"
           fi
           docker run --rm \
             --user "$(id -u):$(id -g)" \
