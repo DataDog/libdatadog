@@ -201,23 +201,31 @@ unsafe fn into_vec_files<'a>(slice: Slice<'a, File>) -> Vec<exporter::File<'a>> 
         .collect()
 }
 
-unsafe fn parse_json(
+/// Best-effort parse of an optional caller-supplied JSON blob. On invalid
+/// UTF-8 or a `serde_json` parse error, log a warning and return `None`
+/// instead of propagating the error. The `info` and `internal_metadata`
+/// channels are supplementary signals attached to the profile upload event;
+/// a malformed payload there should not cause us to drop the pprof itself,
+/// which is the primary artifact.
+unsafe fn parse_json_lossy(
     string_id: &str,
     json_string: Option<&CharSlice>,
-) -> anyhow::Result<Option<serde_json::Value>> {
-    match json_string {
-        None => Ok(None),
-        Some(json_string) => {
-            let json = json_string.try_to_utf8()?;
-            match serde_json::from_str(json) {
-                Ok(parsed) => Ok(Some(parsed)),
-                Err(error) => Err(anyhow::anyhow!(
-                    "Failed to parse contents of {} json string (`{}`): {}.",
-                    string_id,
-                    json,
-                    error
-                )),
-            }
+) -> Option<serde_json::Value> {
+    let cs = json_string?;
+    let json = match cs.try_to_utf8() {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("warning: profile {string_id} JSON is not valid UTF-8, dropping it: {err}");
+            return None;
+        }
+    };
+    match serde_json::from_str(json) {
+        Ok(parsed) => Some(parsed),
+        Err(err) => {
+            eprintln!(
+                "warning: failed to parse profile {string_id} JSON (`{json}`), dropping it: {err}"
+            );
+            None
         }
     }
 }
@@ -289,8 +297,9 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
         let process_tags_str = optional_process_tags
             .map(|cs| cs.try_to_utf8())
             .transpose()?;
-        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
-        let info = parse_json("info", optional_info_json)?;
+        let internal_metadata =
+            parse_json_lossy("internal_metadata", optional_internal_metadata_json);
+        let info = parse_json_lossy("info", optional_info_json);
 
         let cancel = cancel.to_inner_mut().ok();
         let status = exporter.send_blocking(
@@ -443,8 +452,9 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
         let process_tags_str = optional_process_tags
             .map(|cs| cs.try_to_utf8())
             .transpose()?;
-        let internal_metadata = parse_json("internal_metadata", optional_internal_metadata_json)?;
-        let info = parse_json("info", optional_info_json)?;
+        let internal_metadata =
+            parse_json_lossy("internal_metadata", optional_internal_metadata_json);
+        let info = parse_json_lossy("info", optional_info_json);
 
         manager.queue(
             profile,
@@ -765,5 +775,28 @@ mod tests {
                 panic!("Expected error since no server is running");
             }
         }
+    }
+
+    #[test]
+    fn test_parse_json_lossy_none() {
+        let parsed = unsafe { parse_json_lossy("info", None) };
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_parse_json_lossy_valid() {
+        let s = CharSlice::from(r#"{"runtime": {"engine": "test"}}"#);
+        let parsed = unsafe { parse_json_lossy("info", Some(&s)) }.expect("valid JSON");
+        assert_eq!(parsed["runtime"]["engine"], "test");
+    }
+
+    #[test]
+    fn test_parse_json_lossy_drops_invalid() {
+        // Malformed JSON: trailing comma + missing closing brace. Must not
+        // propagate an error; we should silently drop the payload so the
+        // pprof itself can still upload.
+        let s = CharSlice::from(r#"{"runtime": {"engine": "test",}"#);
+        let parsed = unsafe { parse_json_lossy("info", Some(&s)) };
+        assert!(parsed.is_none());
     }
 }
