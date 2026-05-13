@@ -1,33 +1,37 @@
 # libdd-otel-thread-ctx-ffi
 
-FFI bindings for the OTel thread-level context publisher. Exposes a C API
-for attaching, detaching, and updating per-thread OpenTelemetry context records
-that external readers (e.g. the eBPF profiler) can discover via the dynamic
-symbol table.
+FFI bindings for the OTel thread-level context publisher. Exposes a C API for
+attaching, detaching, and updating per-thread OpenTelemetry context records
+that external readers (e.g. the eBPF profiler) can discover.
 
 Currently Linux-only (x86-64 and aarch64).
 
-## Building
+## Optimized build (cross-language inlining)
 
-### Default build
+The OTel thread-level conext sharing specification requires the use of the
+TLSDESC dialect for the thread-local variable that holds the current context.
+Because (stable) `rustc` doesn't currently provide a way to control the TLS
+dialect, we need to use a small C shim that defines the variable and expose a
+one-line getter. This unfortunately adds one level of indirection (a function
+call) when attaching or detaching a context.
 
-```bash
-cargo build --release -p libdd-otel-thread-ctx-ffi
-```
+With the right toolchain, it's possible to use Link-Time Optimization (LTO) to
+inline the C wrapper at link time. The requirements are:
 
-The C TLS shim is compiled with the system `cc` (gcc or clang). On x86-64,
-`-mtls-dialect=gnu2` forces TLSDESC. No cross-language inlining occurs.
+- `clang` is available to compile the C shim to LLVM IR (version requirements
+  aren't clear -- tested with clang18 and clang20, but ideally the version
+  should be the same or close to the LLVM version shipped with `rustc`)
+- Either the Rust toolchain ships lld or there's a system-wide lld install
+  (Rust ships `rust-lld` for a long time, something like since 1.53+, however
+  some musl-based distro like Alpine might have Rust packages without LLD)
+- lld version is at least 19 (TLSDESC support)
 
-### Optimized build (cross-language LTO)
+If those requirements are met, you can use the small wrapper provided in this
+directory to build an optimized release version where the C shim is inlined.
 
 ```bash
 ./build-optimized.sh
 ```
-
-This sets `LIBDD_OTEL_THREAD_CTX_INLINE=1` and the appropriate target-scoped
-`RUSTFLAGS`, enabling cross-language LTO so the C TLS shim is inlined directly
-into the Rust FFI functions. Requires `clang` and `lld` (the toolchain's
-bundled `rust-lld` is used automatically when available).
 
 The script auto-detects the host triple. To cross-compile:
 
