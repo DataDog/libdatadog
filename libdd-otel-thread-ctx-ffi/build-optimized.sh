@@ -39,7 +39,22 @@ TARGET_ENV=$(echo "$TARGET" | tr 'a-z-' 'A-Z_')
 export "CARGO_TARGET_${TARGET_ENV}_RUSTFLAGS=-Clinker-plugin-lto -Clinker=clang"
 export LIBDD_OTEL_THREAD_CTX_INLINE=1
 
-exec cargo build --release \
+cargo build --release \
     --target "$TARGET" \
     -p libdd-otel-thread-ctx-ffi \
     "${EXTRA_ARGS[@]}"
+
+# Sanity-check that the C shim was actually inlined.
+if ! command -v nm &>/dev/null; then
+    echo >&2 "WARNING: nm not found — skipping sanity check that the C TLS shim was inlined."
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    SO="$REPO_ROOT/target/$TARGET/release/liblibdd_otel_thread_ctx_ffi.so"
+
+    if [[ -f "$SO" ]] && nm "$SO" 2>/dev/null | grep -q 'libdd_get_otel_thread_ctx'; then
+        echo >&2 "WARNING: build succeeded but the C TLS shim (libdd_get_otel_thread_ctx_v1) was NOT inlined."
+        echo >&2 "Cross-language LTO may not be working. Check that clang and lld versions are compatible with the Rust toolchain's LLVM."
+        exit 1
+    fi
+fi
