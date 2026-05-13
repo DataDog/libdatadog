@@ -291,13 +291,21 @@ impl TraceExporterBuilder {
         self
     }
 
+    // TODO: doc
     pub fn set_filter_tags(&mut self, filter_tags: FilterTagsConfig) -> &mut Self {
         self.filter_tags = filter_tags;
         self
     }
 
+    // TODO: doc
     pub fn set_filter_tags_regex(&mut self, filter_tags_regex: FilterTagsConfig) -> &mut Self {
         self.filter_tags_regex = filter_tags_regex;
+        self
+    }
+
+    // TODO: doc
+    pub fn set_ignore_resources(&mut self, ignore_resources: Vec<String>) -> &mut Self {
+        self.ignore_resources = ignore_resources;
         self
     }
 
