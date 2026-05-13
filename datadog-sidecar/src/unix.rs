@@ -16,7 +16,7 @@ use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[cfg(target_os = "linux")]
 use crate::config::LogMethod;
@@ -28,8 +28,6 @@ use libdd_crashtracker::{
 use spawn_worker::{entrypoint, get_dl_path_raw};
 #[cfg(target_os = "linux")]
 use std::ffi::CStr;
-#[cfg(target_os = "linux")]
-use tracing::warn;
 
 #[no_mangle]
 #[allow(unused)]
@@ -124,6 +122,11 @@ async fn accept_socket_loop(
                                     let _ = conn.set_rcvbuf_size(buf_size);
                                 }
                                 handler(conn);
+                            }
+                            Ok(Err(e)) if e.raw_os_error() == Some(libc::EMSGSIZE) => {
+                                // Handled inside try_accept on macOS; guard here in case
+                                // it ever escapes so the accept loop stays alive.
+                                warn!("IPC accept: oversized datagram discarded (EMSGSIZE)");
                             }
                             Ok(Err(e)) => {
                                 error!("IPC accept error: {e}");
