@@ -26,8 +26,14 @@ inline the C wrapper at link time. The requirements are:
   some musl-based distro like Alpine might have Rust packages without LLD)
 - lld version is at least 19 (TLSDESC support)
 
-If those requirements are met, you can use the small wrapper provided in this
-directory to build an optimized release version where the C shim is inlined.
+If those requirements are met, you can use the small wrapper script provided in
+this directory to build an optimized release version where the C shim is
+inlined. A wrapper script is needed because cross-language LTO requires two
+`rustc` codegen flags (`-Clinker-plugin-lto` and `-Clinker=clang`) that cannot
+be set from a Cargo build script — they must come from `RUSTFLAGS` or
+`.cargo/config.toml`. The script sets them via the target-scoped
+`CARGO_TARGET_<TRIPLE>_RUSTFLAGS` env var so they don't leak to build scripts
+or proc-macros.
 
 ```bash
 ./build-optimized.sh
