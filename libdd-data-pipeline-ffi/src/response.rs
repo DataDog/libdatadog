@@ -3,8 +3,8 @@
 
 //! Define FFI compatible AgentResponse struct
 
+use libdd_common_ffi::slice::ByteSlice;
 use libdd_data_pipeline::trace_exporter::agent_response::AgentResponse;
-use std::ptr::null;
 
 /// Structure containing the agent response to a trace payload
 /// MUST be freed with `ddog_trace_exporter_response_free`
@@ -29,27 +29,17 @@ impl From<AgentResponse> for ExporterResponse {
     }
 }
 
-/// Return a read-only pointer to the response body. This pointer is only valid as long as
-/// `response` is valid.
+/// Return a borrowed view of the response body.  The returned slice is
+/// only valid as long as `response` is alive.  Returns an empty slice
+/// when `response` is null or the body is absent.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_response_get_body(
-    response: *const ExporterResponse,
-    out_len: Option<&mut usize>,
-) -> *const u8 {
-    let mut len: usize = 0;
-    let body = if response.is_null() {
-        null()
-    } else if let Some(body) = &(*response).body {
-        len = body.len();
-        body.as_ptr()
-    } else {
-        null()
-    };
-
-    if let Some(out_len) = out_len {
-        *out_len = len;
+pub unsafe extern "C" fn ddog_trace_exporter_response_get_body<'a>(
+    response: Option<&'a ExporterResponse>,
+) -> ByteSlice<'a> {
+    match response.and_then(|r| r.body.as_deref()) {
+        Some(body) => ByteSlice::from(body),
+        None => ByteSlice::default(),
     }
-    body
 }
 
 /// Free `response` and all its contents. After being called response will not point to a valid
@@ -66,40 +56,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn constructor_test_changed() {
+    fn body_from_changed_response() {
         let agent_response = AgentResponse::Changed {
             body: "res".to_string(),
         };
-        let response = &ExporterResponse::from(agent_response) as *const ExporterResponse;
-        let mut len = 0;
-        let body = unsafe { ddog_trace_exporter_response_get_body(response, Some(&mut len)) };
-        let response =
-            unsafe { std::str::from_utf8(std::slice::from_raw_parts(body, len)).unwrap() };
-        assert_eq!(response, "res");
-        assert_eq!(len, 3);
+        let response = ExporterResponse::from(agent_response);
+        let body = unsafe { ddog_trace_exporter_response_get_body(Some(&response)) };
+        assert_eq!(body.len(), 3);
+        assert_eq!(std::str::from_utf8(&body).unwrap(), "res");
     }
 
     #[test]
-    fn constructor_test_unchanged() {
+    fn body_from_unchanged_response() {
         let agent_response = AgentResponse::Unchanged;
-        let response = Box::into_raw(Box::new(ExporterResponse::from(agent_response)));
-        let mut len = usize::MAX;
-        let body = unsafe { ddog_trace_exporter_response_get_body(response, Some(&mut len)) };
-        assert!(body.is_null());
-        assert_eq!(len, 0);
-
-        unsafe {
-            ddog_trace_exporter_response_free(response);
-        }
+        let response = ExporterResponse::from(agent_response);
+        let body = unsafe { ddog_trace_exporter_response_get_body(Some(&response)) };
+        assert_eq!(body.len(), 0);
     }
 
     #[test]
-    fn handle_null_test() {
-        unsafe {
-            let body = ddog_trace_exporter_response_get_body(null(), None);
-            assert!(body.is_null());
-
-            ddog_trace_exporter_response_free(null::<ExporterResponse>() as *mut ExporterResponse);
-        }
+    fn body_from_null_response() {
+        let body = unsafe { ddog_trace_exporter_response_get_body(None) };
+        assert_eq!(body.len(), 0);
     }
 }
