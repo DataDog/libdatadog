@@ -3,9 +3,7 @@
 extern crate build_common;
 
 use build_common::generate_and_configure_header;
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
+use std::{env, path::PathBuf, process::Command};
 
 /// Locate the `gcc-ld/` shim directory shipped with the Rust toolchain.
 ///
@@ -86,22 +84,23 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed=LIBDD_OTEL_THREAD_CTX_INLINE");
 
-    let inline_mode = env::var_os("LIBDD_OTEL_THREAD_CTX_INLINE").is_some();
+    let inline_mode = env::var("LIBDD_OTEL_THREAD_CTX_INLINE").unwrap();
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
-    if inline_mode {
+    if &inline_mode == "1" {
         let rust_lld_dir = require_lld_for_inline(&target_arch);
 
         // Emit link args for ALL link types (not just cdylib) so that test
-        // binaries also link correctly when RUSTFLAGS sets clang as the linker.
+        // binaries also link correctly when RUSTFLAGS sets clang as the linker (although we should
+        // only build the shared object file in inline mode).
         if let Some(dir) = rust_lld_dir {
             println!("cargo:rustc-link-arg=-B{}", dir.display());
         }
         println!("cargo:rustc-link-arg=-fuse-ld=lld");
 
         // On x86-64, tell the LLVM backend to use TLSDESC during LTO codegen.
-        // On aarch64 TLSDESC is the only model, so no flag is needed.
+        // On aarch64 TLSDESC is the default and the only model.
         if target_arch == "x86_64" {
             println!("cargo:rustc-link-arg=-Wl,-mllvm,-enable-tlsdesc");
         }

@@ -7,6 +7,7 @@
 # on every TLS access.
 #
 # Requirements: clang, lld (rust-lld from the toolchain is used automatically).
+# The requirements are checked by the build.rs script.
 #
 # Usage:
 #   ./build-optimized.sh              # auto-detect host triple
@@ -44,9 +45,9 @@ cargo build --release \
     -p libdd-otel-thread-ctx-ffi \
     "${EXTRA_ARGS[@]}"
 
-# Sanity-check that the C shim was actually inlined.
+# Sanity-check that the C shim was actually inlined, if `nm` is available.
 if ! command -v nm &>/dev/null; then
-    echo >&2 "WARNING: nm not found — skipping sanity check that the C TLS shim was inlined."
+		echo >&2 "WARNING: skipping sanity check that the C TLS shim was inlined (\`nm\` not found)"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

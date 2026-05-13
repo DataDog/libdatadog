@@ -21,16 +21,16 @@ inline the C wrapper at link time. The requirements are:
 - `clang` is available to compile the C shim to LLVM IR (version requirements
   aren't clear -- tested with clang18 and clang20, but ideally the version
   should be the same or close to the LLVM version shipped with `rustc`)
-- Either the Rust toolchain ships lld or there's a system-wide lld install
+- Either the Rust toolchain ships `lld` or there's a system-wide `lld` install
   (Rust ships `rust-lld` for a long time, something like since 1.53+, however
-  some musl-based distro like Alpine might have Rust packages without LLD)
-- lld version is at least 19 (TLSDESC support)
+  some musl-based distro like Alpine might have the Rust toolchain without LLD)
+- `lld` version is at least 19 (TLSDESC support)
 
 If those requirements are met, you can use the small wrapper script provided in
 this directory to build an optimized release version where the C shim is
 inlined. A wrapper script is needed because cross-language LTO requires two
 `rustc` codegen flags (`-Clinker-plugin-lto` and `-Clinker=clang`) that cannot
-be set from a Cargo build script — they must come from `RUSTFLAGS` or
+be set from a Cargo build script: they must come from `RUSTFLAGS` or
 `.cargo/config.toml`. The script sets them via the target-scoped
 `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` env var so they don't leak to build scripts
 or proc-macros.
