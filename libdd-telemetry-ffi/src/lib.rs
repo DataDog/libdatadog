@@ -423,10 +423,11 @@ mod tests {
         target_type: &str,
         results: &mut Vec<serde_json::Value>,
     ) {
-        if value["request_type"].as_str() == Some(target_type) {
+        let request_type = value["request_type"].as_str();
+        if request_type == Some(target_type) {
             results.push(value.clone());
         }
-        if value["request_type"].as_str() == Some("message-batch") {
+        if request_type == Some("message-batch") {
             if let Some(batch) = value["payload"].as_array() {
                 for item in batch {
                     collect_payloads_recursive(item, target_type, results);
