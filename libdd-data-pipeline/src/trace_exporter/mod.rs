@@ -5,6 +5,7 @@ pub mod builder;
 pub mod error;
 pub mod metrics;
 pub mod stats;
+mod trace_filter;
 mod trace_serializer;
 
 // Re-export the builder
@@ -236,6 +237,7 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
+    trace_filterer: trace_filter::TraceFilterer,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
@@ -382,6 +384,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
             if self.has_agent_info_state_changed(&agent_info) {
+                // FIXME: trace_filterer should only be enabled when CSS is on. (why ?)
+                self.trace_filterer.update_conf(
+                    &agent_info.info.filter_tags,
+                    &agent_info.info.filter_tags_regex,
+                );
                 match &**self.client_side_stats.status.load() {
                     StatsComputationStatus::Disabled => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
@@ -609,6 +616,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+
+        // FIXME: when client_computed_top_level is true, looking twice for the root span here is
+        // inefficient and just below in process_traces_for_stats.
+        // Also, only do it when css is on (why ???)
+        self.trace_filterer.filter_traces(&mut traces);
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.

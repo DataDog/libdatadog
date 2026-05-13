@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::agent_info::schema::FilterTagsConfig;
 use crate::agent_info::AgentInfoFetcher;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::OtlpTraceConfig;
@@ -8,6 +9,7 @@ use crate::otlp::OtlpTraceConfig;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
+use crate::trace_exporter::trace_filter::TraceFilterer;
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
@@ -65,6 +67,8 @@ pub struct TraceExporterBuilder {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    filter_tags: FilterTagsConfig,
+    filter_tags_regex: FilterTagsConfig,
 }
 
 impl TraceExporterBuilder {
@@ -286,6 +290,16 @@ impl TraceExporterBuilder {
         self
     }
 
+    pub fn set_filter_tags(&mut self, filter_tags: FilterTagsConfig) -> &mut Self {
+        self.filter_tags = filter_tags;
+        self
+    }
+
+    pub fn set_filter_tags_regex(&mut self, filter_tags_regex: FilterTagsConfig) -> &mut Self {
+        self.filter_tags_regex = filter_tags_regex;
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
@@ -496,6 +510,7 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
+            trace_filterer: TraceFilterer::new(&self.filter_tags, &self.filter_tags_regex),
         })
     }
 
