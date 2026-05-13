@@ -222,9 +222,7 @@ unsafe fn parse_json_lossy(
     match serde_json::from_str(json) {
         Ok(parsed) => Some(parsed),
         Err(err) => {
-            eprintln!(
-                "warning: failed to parse profile {string_id} JSON (`{json}`), dropping it: {err}"
-            );
+            eprintln!("warning: failed to parse profile {string_id} JSON, dropping it: {err}");
             None
         }
     }
@@ -796,6 +794,15 @@ mod tests {
         // propagate an error; we should silently drop the payload so the
         // pprof itself can still upload.
         let s = CharSlice::from(r#"{"runtime": {"engine": "test",}"#);
+        let parsed = unsafe { parse_json_lossy("info", Some(&s)) };
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_parse_json_lossy_drops_invalid_utf8() {
+        // 0xFF is never valid in UTF-8. Must be dropped, not propagated.
+        let raw: &[u8] = &[b'{', 0xFF, b'}'];
+        let s = CharSlice::from_bytes(raw);
         let parsed = unsafe { parse_json_lossy("info", Some(&s)) };
         assert!(parsed.is_none());
     }
