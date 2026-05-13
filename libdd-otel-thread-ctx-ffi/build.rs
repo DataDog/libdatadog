@@ -84,11 +84,11 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed=LIBDD_OTEL_THREAD_CTX_INLINE");
 
-    let inline_mode = env::var("LIBDD_OTEL_THREAD_CTX_INLINE").unwrap();
+    let inline_mode = env::var("LIBDD_OTEL_THREAD_CTX_INLINE").is_ok_and(|v| v == "1");
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
-    if &inline_mode == "1" {
+    if inline_mode {
         let rust_lld_dir = require_lld_for_inline(&target_arch);
 
         // Emit link args for ALL link types (not just cdylib) so that test
