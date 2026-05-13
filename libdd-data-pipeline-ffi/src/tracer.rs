@@ -17,7 +17,6 @@ use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::v04::SpanBytes;
-use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 
 // ---------------------------------------------------------------------------
@@ -69,7 +68,7 @@ pub struct TracerSpan(SpanBytes);
 /// length.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_new(
-    out_handle: &mut MaybeUninit<Box<TracerSpan>>,
+    out_handle: NonNull<Box<TracerSpan>>,
     service: CharSlice,
     name: CharSlice,
     resource: CharSlice,
@@ -84,7 +83,7 @@ pub unsafe extern "C" fn ddog_tracer_span_new(
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         {
-            let mut inner = || -> Result<(), Box<ExporterError>> {
+            let inner = || -> Result<(), Box<ExporterError>> {
                 let service = charslice_to_bytesstring(service)?;
                 let name = charslice_to_bytesstring(name)?;
                 let resource = charslice_to_bytesstring(resource)?;
@@ -106,7 +105,7 @@ pub unsafe extern "C" fn ddog_tracer_span_new(
                     ..Default::default()
                 };
 
-                out_handle.write(Box::new(TracerSpan(span)));
+                out_handle.as_ptr().write(Box::new(TracerSpan(span)));
                 Ok(())
             };
             inner().err()
@@ -210,12 +209,14 @@ pub struct TracerTraceChunks(Vec<Vec<SpanBytes>>);
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_new(
     capacity: usize,
-    out_handle: &mut MaybeUninit<Box<TracerTraceChunks>>,
+    out_handle: NonNull<Box<TracerTraceChunks>>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         {
             let chunks = Vec::with_capacity(capacity);
-            out_handle.write(Box::new(TracerTraceChunks(chunks)));
+            out_handle
+                .as_ptr()
+                .write(Box::new(TracerTraceChunks(chunks)));
             None
         },
         gen_error!(ErrorCode::Panic)
@@ -337,8 +338,9 @@ mod tests {
     fn make_minimal_span() -> Box<TracerSpan> {
         unsafe {
             let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
             let err = ddog_tracer_span_new(
-                &mut handle,
+                out,
                 cs("svc"),
                 cs("op"),
                 cs("res"),
@@ -360,9 +362,10 @@ mod tests {
     fn new_sets_all_scalar_fields() {
         unsafe {
             let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
 
             let err = ddog_tracer_span_new(
-                &mut handle,
+                out,
                 cs("my-service"),
                 cs("web.request"),
                 cs("GET /users"),
@@ -473,9 +476,10 @@ mod tests {
     fn new_with_empty_strings_succeeds() {
         unsafe {
             let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
 
             let err =
-                ddog_tracer_span_new(&mut handle, cs(""), cs(""), cs(""), cs(""), 0, 0, 0, 0, 0, 0, 0);
+                ddog_tracer_span_new(out, cs(""), cs(""), cs(""), cs(""), 0, 0, 0, 0, 0, 0, 0);
             assert!(err.is_none());
 
             let span = handle.assume_init();
@@ -491,7 +495,8 @@ mod tests {
     fn make_chunks(capacity: usize) -> Box<TracerTraceChunks> {
         unsafe {
             let mut handle = MaybeUninit::<Box<TracerTraceChunks>>::uninit();
-            let err = ddog_tracer_trace_chunks_new(capacity, &mut handle);
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            let err = ddog_tracer_trace_chunks_new(capacity, out);
             assert!(err.is_none());
             handle.assume_init()
         }
