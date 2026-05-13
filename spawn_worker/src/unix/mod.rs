@@ -86,8 +86,7 @@ pub fn read_pt_interp_self() -> Option<PathBuf> {
             // load_base = runtime_addr_of_PHDRs − link-time vaddr of PHDRs
             load_base = phdr_addr as isize - p_vaddr as isize;
         }
-        if p_type == 3 {
-            // PT_INTERP = 3; the interpreter string lives at this vaddr.
+        if p_type == libc::PT_INTERP {
             interp_vaddr = p_vaddr;
         }
     }
