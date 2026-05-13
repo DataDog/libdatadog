@@ -12,7 +12,11 @@ pub fn crashtracker_unix_socket_path() -> PathBuf {
     );
     #[cfg(target_os = "linux")]
     let ret = base_path.into();
-    #[cfg(not(target_os = "linux"))]
+    // On macOS, temp_dir() expands to a long per-session path that can exceed the 103-byte sun_path
+    // limit. /tmp is always short (≤4 bytes) and guaranteed to exist.
+    #[cfg(target_os = "macos")]
+    let ret = std::path::Path::new("/tmp").join(base_path);
+    #[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
     let ret = std::env::temp_dir().join(base_path);
     ret
 }

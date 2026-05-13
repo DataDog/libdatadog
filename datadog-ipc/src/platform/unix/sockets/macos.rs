@@ -29,10 +29,47 @@ use crate::PeerCredentials;
 use nix::sys::socket::{bind, AddressFamily, SockFlag, SockType};
 use std::os::fd::RawFd;
 use std::{
+    ffi::CString,
     io,
-    os::unix::io::{AsRawFd, FromRawFd, OwnedFd},
+    os::unix::{
+        ffi::OsStrExt,
+        io::{AsRawFd, FromRawFd, OwnedFd},
+    },
     path::Path,
 };
+
+/// macOS `sockaddr_un::sun_path` is only 104 bytes (103 usable). When the socket path
+/// exceeds that, cd to the socket's parent directory for the operation using the
+/// thread-local `pthread_chdir_np` (unlike `chdir`, this does not affect other threads),
+/// then restore via `pthread_fchdir_np`.
+fn with_short_path<T, F: FnOnce(&Path) -> io::Result<T>>(path: &Path, f: F) -> io::Result<T> {
+    const SUN_PATH_MAX: usize = 103;
+    if path.as_os_str().len() <= SUN_PATH_MAX {
+        return f(path);
+    }
+    extern "C" {
+        fn pthread_chdir_np(path: *const libc::c_char) -> libc::c_int;
+        fn pthread_fchdir_np(fd: libc::c_int) -> libc::c_int;
+    }
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "socket path has no filename"))?;
+    // Save the calling thread's CWD as an fd so we can restore it unconditionally.
+    let saved = unsafe { libc::open(b".\0".as_ptr() as *const libc::c_char, libc::O_RDONLY) };
+    if saved < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let saved_owned = unsafe { OwnedFd::from_raw_fd(saved) };
+    let dir_cstr = CString::new(dir.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "socket dir path contains NUL"))?;
+    if unsafe { pthread_chdir_np(dir_cstr.as_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let result = f(Path::new(name));
+    unsafe { pthread_fchdir_np(saved_owned.as_raw_fd()) };
+    result
+}
 
 fn create_dgram_socket() -> io::Result<OwnedFd> {
     create_unix_socket(SockType::Datagram)
@@ -63,14 +100,17 @@ impl SeqpacketListener {
     ///
     /// Removes any stale socket file before binding (standard Unix practice).
     pub fn bind(path: impl AsRef<Path>) -> io::Result<Self> {
-        let _ = std::fs::remove_file(path.as_ref());
+        let path = path.as_ref();
+        let _ = std::fs::remove_file(path);
         let fd = create_dgram_socket()?;
         // Size the receive buffer to match clients: when many PHP processes start
         // simultaneously they all sendmsg their fd to this rendezvous socket before
         // the daemon has had a chance to accept them.
         set_dgram_buffers(fd.as_raw_fd())?;
-        let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
-        bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)?;
+        with_short_path(path, |short| {
+            let addr = UnixAddr::new(short).map_err(io::Error::from)?;
+            bind(fd.as_raw_fd(), &addr).map_err(io::Error::from)
+        })?;
         Ok(Self { inner: fd })
     }
 
@@ -151,18 +191,20 @@ impl SeqpacketConn {
         // A fresh unconnected DGRAM socket is required for the handshake sendmsg.
         // fd_client is already "connected" to fd_server and cannot reach the rendezvous path.
         let handshake_fd = create_dgram_socket()?;
-        let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
         let server_raw = fd_server.as_raw_fd();
         let liveness_r_raw = liveness_read.as_raw_fd();
         let iov = [std::io::IoSlice::new(&[0u8])];
-        sendmsg::<UnixAddr>(
-            handshake_fd.as_raw_fd(),
-            &iov,
-            &[ControlMessage::ScmRights(&[server_raw, liveness_r_raw])],
-            MsgFlags::empty(),
-            Some(&addr),
-        )
-        .map_err(io::Error::from)?;
+        with_short_path(path.as_ref(), |short| {
+            let addr = UnixAddr::new(short).map_err(io::Error::from)?;
+            sendmsg::<UnixAddr>(
+                handshake_fd.as_raw_fd(),
+                &iov,
+                &[ControlMessage::ScmRights(&[server_raw, liveness_r_raw])],
+                MsgFlags::empty(),
+                Some(&addr),
+            )
+            .map_err(io::Error::from)
+        })?;
         // liveness_read was sent via SCM_RIGHTS; drop our local copy (daemon has the reference).
         drop(liveness_read);
         // Keep fd_server (_peer) to prevent EINVAL: on macOS, closing the local fd for the
@@ -224,9 +266,13 @@ pub fn is_listening<P: AsRef<Path>>(path: P) -> io::Result<bool> {
         None,
     )
     .map_err(io::Error::from)?;
-    let addr = UnixAddr::new(path.as_ref()).map_err(io::Error::from)?;
     let iov = [std::io::IoSlice::new(&[0u8])];
-    Ok(sendmsg::<UnixAddr>(probe.as_raw_fd(), &iov, &[], MsgFlags::empty(), Some(&addr)).is_ok())
+    Ok(with_short_path(path.as_ref(), |short| {
+        let addr = UnixAddr::new(short).map_err(io::Error::from)?;
+        sendmsg::<UnixAddr>(probe.as_raw_fd(), &iov, &[], MsgFlags::empty(), Some(&addr))
+            .map_err(io::Error::from)
+    })
+    .is_ok())
 }
 
 pub fn get_peer_credentials(fd: RawFd) -> io::Result<PeerCredentials> {
