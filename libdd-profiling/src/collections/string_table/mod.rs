@@ -9,7 +9,9 @@ pub use error::*;
 
 use crate::collections::identifiable::StringId;
 use crate::iter::{IntoLendingIterator, LendingIterator};
-use libdd_alloc::{AllocError, Allocator, ChainAllocator, VirtualAllocator};
+use libdd_alloc::{
+    AllocError, Allocator, ChainAllocator, ChainAllocatorCheckpoint, VirtualAllocator,
+};
 use std::alloc::Layout;
 
 /// A trait that indicates an allocator is arena allocator, meaning it doesn't
@@ -70,6 +72,22 @@ pub struct StringTable {
     strings: HashSet<&'static str>,
 }
 
+#[derive(Clone, Copy)]
+pub struct StringTableCheckpoint {
+    len: usize,
+    bytes: ChainAllocatorCheckpoint<VirtualAllocator>,
+}
+
+impl StringTableCheckpoint {
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 impl Default for StringTable {
     fn default() -> Self {
         Self::new()
@@ -118,6 +136,35 @@ impl StringTable {
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.strings.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.strings.iter().copied()
+    }
+
+    pub fn get_id(&self, str: &str) -> Option<StringId> {
+        let offset = self.strings.get_index_of(str)?;
+        StringId::try_from(offset).ok()
+    }
+
+    pub fn checkpoint(&self) -> StringTableCheckpoint {
+        StringTableCheckpoint {
+            len: self.strings.len(),
+            bytes: self.bytes.checkpoint(),
+        }
+    }
+
+    /// Rewinds this string table to a previous checkpoint.
+    ///
+    /// # Safety
+    ///
+    /// The checkpoint must have been created from this string table, and no
+    /// ids or string references allocated after the checkpoint may be used
+    /// after rollback.
+    pub unsafe fn rollback_to(&mut self, checkpoint: StringTableCheckpoint) {
+        self.strings.truncate(checkpoint.len);
+        // SAFETY: upheld by this method's safety contract.
+        unsafe { self.bytes.rollback_to(checkpoint.bytes) };
     }
 
     /// Adds the string to the string table if it isn't present already, and

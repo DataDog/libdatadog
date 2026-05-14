@@ -451,6 +451,52 @@ fn fuzz_add_sample<'a>(
     }
 }
 
+fn profile_from_generated_data(
+    sample_types: &[api::SampleType],
+    period: Option<api::Period>,
+    samples: &[(Option<Timestamp>, Sample)],
+    endpoints: &[(u64, String)],
+) -> Profile {
+    let mut profile = Profile::new(sample_types, period);
+
+    for (local_root_span_id, endpoint) in endpoints {
+        profile
+            .add_endpoint(*local_root_span_id, endpoint.into())
+            .expect("add_endpoint to succeed");
+    }
+
+    for (timestamp, sample) in samples {
+        let _ = profile.try_add_sample(sample.into(), *timestamp);
+    }
+
+    profile
+}
+
+#[track_caller]
+fn assert_encoded_profiles_eq(
+    profile1: EncodedProfile,
+    profile2: EncodedProfile,
+    samples: &[(Option<Timestamp>, Sample)],
+    endpoints: &[(u64, String)],
+) {
+    assert_eq!(profile1.start, profile2.start);
+    assert_eq!(profile1.end, profile2.end);
+    assert_eq!(profile1.endpoints_stats, profile2.endpoints_stats);
+
+    if profile1.buffer != profile2.buffer {
+        let first_diff = profile1
+            .buffer
+            .iter()
+            .zip(profile2.buffer.iter())
+            .position(|(lhs, rhs)| lhs != rhs);
+        panic!(
+            "serialize2 compressed bytes differ from serialize bytes: len1={}, len2={}, first_diff={first_diff:?}, samples={samples:#?}, endpoints={endpoints:#?}",
+            profile1.buffer.len(),
+            profile2.buffer.len()
+        );
+    }
+}
+
 #[test]
 fn fuzz_failure_001() {
     let sample_types = [];
@@ -608,6 +654,70 @@ fn fuzz_add_sample_with_fixed_sample_length() {
                 &samples_without_timestamps,
                 &FxIndexMap::default(),
             );
+        });
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn fuzz_serialize2_matches_serialize_bytes() {
+    let sample_length_gen = 0..=64usize;
+
+    bolero::check!()
+        .with_generator(sample_length_gen)
+        .and_then(|sample_len| {
+            let sample_types = Vec::<api::SampleType>::produce().with().len(sample_len);
+            let period = Option::<(api::SampleType, i64)>::produce();
+
+            let timestamps = Option::<Timestamp>::produce();
+            let locations = Vec::<Location>::produce();
+            let values = Vec::<i64>::produce().with().len(sample_len);
+            let labels = HashMap::<Box<str>, LabelValue>::produce();
+            let samples = Vec::<(
+                Option<Timestamp>,
+                Vec<Location>,
+                Vec<i64>,
+                HashMap<Box<str>, LabelValue>,
+            )>::produce()
+            .with()
+            .values((timestamps, locations, values, labels));
+            let endpoints = Vec::<(u64, String)>::produce();
+
+            (sample_types, period, samples, endpoints)
+        })
+        .for_each(|(sample_types, period, samples, endpoints)| {
+            let period = period.map(|(sample_type, value)| api::Period { sample_type, value });
+            let samples = samples
+                .iter()
+                .map(|(timestamp, locations, values, labels)| {
+                    (
+                        *timestamp,
+                        Sample {
+                            locations: locations.clone(),
+                            values: values.clone(),
+                            labels: labels.iter().map(Label::from).collect(),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+
+            let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+            let end = SystemTime::UNIX_EPOCH + Duration::from_secs(1_123);
+            let duration = Duration::from_secs(123);
+
+            let mut profile1 =
+                profile_from_generated_data(sample_types, period, &samples, endpoints);
+            profile1.set_start_time(start).unwrap();
+            let encoded1 = profile1
+                .serialize_into_compressed_pprof(Some(end), Some(duration))
+                .expect("serialize to succeed");
+
+            let mut profile2 =
+                profile_from_generated_data(sample_types, period, &samples, endpoints);
+            let encoded2 = profile2
+                .serialize_into_compressed_pprof2(Some(start), Some(end), Some(duration))
+                .expect("serialize2 to succeed");
+
+            assert_encoded_profiles_eq(encoded1, encoded2, &samples, endpoints);
         });
 }
 

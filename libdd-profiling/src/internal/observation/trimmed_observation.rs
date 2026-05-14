@@ -15,6 +15,10 @@ use std::mem;
 pub(super) struct ObservationLength(usize);
 
 impl ObservationLength {
+    pub fn get(&self) -> usize {
+        self.0
+    }
+
     pub fn eq(&self, other: usize) -> bool {
         self.0 == other
     }

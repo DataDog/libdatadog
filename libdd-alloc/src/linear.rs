@@ -49,6 +49,10 @@ impl<A: Allocator> LinearAllocator<A> {
         self.size.get()
     }
 
+    pub(crate) fn rollback_to_used_bytes(&self, used_bytes: usize) {
+        self.size.set(used_bytes);
+    }
+
     /// Get the number of bytes allocated by the underlying allocator.
     /// This number is greater than or equal to [Self::used_bytes].
     #[inline]

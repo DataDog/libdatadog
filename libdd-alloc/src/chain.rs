@@ -25,9 +25,29 @@ pub struct ChainAllocator<A: Allocator + Clone> {
     allocator: A,
 }
 
-#[derive(Clone, Copy)]
+pub struct ChainAllocatorCheckpoint<A: Allocator + Clone> {
+    top: ChainNodePtr<A>,
+    top_used_bytes: usize,
+}
+
 struct ChainNodePtr<A: Allocator> {
     ptr: Option<NonNull<ChainNode<A>>>,
+}
+
+impl<A: Allocator + Clone> Copy for ChainAllocatorCheckpoint<A> {}
+
+impl<A: Allocator + Clone> Clone for ChainAllocatorCheckpoint<A> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<A: Allocator> Copy for ChainNodePtr<A> {}
+
+impl<A: Allocator> Clone for ChainNodePtr<A> {
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 
 impl<A: Allocator> ChainNodePtr<A> {
@@ -167,6 +187,65 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
         // SAFETY: This is never exposed to users, and never used internally
         // in a way it will provide simultaneous mutable references.
         unsafe { (*self.top.get()).as_mut_ptr() }
+    }
+
+    pub fn checkpoint(&self) -> ChainAllocatorCheckpoint<A> {
+        let top = {
+            // SAFETY: the value is a plain pointer wrapper and references are
+            // never exposed from this read.
+            unsafe { self.top.get().read() }
+        };
+        let top_used_bytes = top
+            .as_ref()
+            .map(|node| node.linear.used_bytes())
+            .unwrap_or(0);
+        ChainAllocatorCheckpoint {
+            top,
+            top_used_bytes,
+        }
+    }
+
+    fn drop_nodes_until(&self, stop: ChainNodePtr<A>) {
+        // SAFETY: top is a pointer wrapper. Reading it does not drop the
+        // underlying chain node.
+        let mut chain_node_ptr = unsafe { self.top.get().read() };
+
+        while chain_node_ptr.ptr.map(NonNull::as_ptr) != stop.ptr.map(NonNull::as_ptr) {
+            let Some(non_null) = chain_node_ptr.ptr else {
+                break;
+            };
+
+            // SAFETY: the chunk hasn't been dropped yet, so the ptr to the
+            // chunk is alive. Read prev before dropping the linear allocator.
+            chain_node_ptr = unsafe {
+                let unsafe_cell = core::ptr::addr_of!((*non_null.as_ptr()).prev).read();
+                unsafe_cell.get().read()
+            };
+
+            // SAFETY: the linear allocator lives in the chunk. Moving it to
+            // the stack before dropping avoids dropping through a self-owned
+            // allocation.
+            let alloc = unsafe { core::ptr::addr_of_mut!((*non_null.as_ptr()).linear).read() };
+            drop(alloc);
+        }
+    }
+
+    /// Rewinds this chain allocator to a previously captured checkpoint.
+    ///
+    /// # Safety
+    ///
+    /// The checkpoint must have been created from this allocator, and all
+    /// values allocated after the checkpoint must be unreachable before this
+    /// method is called.
+    pub unsafe fn rollback_to(&self, checkpoint: ChainAllocatorCheckpoint<A>) {
+        self.drop_nodes_until(checkpoint.top);
+
+        if let Some(top) = checkpoint.top.as_ref() {
+            top.linear.rollback_to_used_bytes(checkpoint.top_used_bytes);
+        }
+
+        // SAFETY: writing the saved pointer wrapper updates allocator state.
+        unsafe { self.top.get().write(checkpoint.top) };
     }
 
     /// Get the number of bytes allocated, including bytes for overhead.

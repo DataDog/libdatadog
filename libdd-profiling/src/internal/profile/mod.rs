@@ -14,20 +14,22 @@ use super::*;
 use crate::api::ManagedStringId;
 use crate::collections::identifiable::*;
 use crate::collections::string_storage::{CachedProfileId, ManagedStringStorage};
-use crate::collections::string_table::{self, StringTable};
+use crate::collections::string_table::{self, StringTable, StringTableCheckpoint};
 use crate::iter::{IntoLendingIterator, LendingIterator};
 use crate::profiles::collections::ArcOverflow;
 use crate::profiles::datatypes::ProfilesDictionary;
-use crate::profiles::{Compressor, DefaultProfileCodec};
+use crate::profiles::{Compressor, DefaultProfileCodec, ProfileCodec};
 use crate::{api, api2};
 use anyhow::Context;
 use interning_api::Generation;
+use libdd_common::error::FfiSafeErrorMessage;
 use libdd_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::io;
 use std::ops::Deref;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -45,10 +47,13 @@ pub struct Profile {
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
     period: Option<api::Period>,
+    preserved_period_type: Option<ValueType>,
+    preserved_sample_types: Box<[ValueType]>,
     sample_types: Box<[api::SampleType]>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
+    string_table_checkpoint: StringTableCheckpoint,
     string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
@@ -60,6 +65,113 @@ pub struct EncodedProfile {
     pub end: SystemTime,
     pub buffer: Vec<u8>,
     pub endpoints_stats: ProfiledEndpointsStats,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileSerializeError {
+    #[error("profile serialization failed while encoding: {0}")]
+    Encoding(#[source] ProfileEncodingError),
+    #[error("profile serialization failed while setting up or finishing compression: {0}")]
+    Compressing(#[source] io::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileEncodingError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Allocation(#[from] std::collections::TryReserveError),
+    #[error(transparent)]
+    InvalidProfile(#[from] ProfileDataError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProfileDataError {
+    InvalidLabelId,
+    InvalidLabelSetId,
+    InvalidStackTraceId,
+    InvalidLocationId,
+    UnexpectedEndpointLabelKey,
+    LocalRootSpanIdLabelNotNumeric,
+}
+
+impl std::fmt::Display for ProfileDataError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.as_rust_str().fmt(f)
+    }
+}
+
+impl std::error::Error for ProfileDataError {}
+
+// SAFETY: all cases are utf-8 c-str literals.
+unsafe impl FfiSafeErrorMessage for ProfileDataError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        match self {
+            ProfileDataError::InvalidLabelId => {
+                c"invalid profile data: label id did not exist in profile"
+            }
+            ProfileDataError::InvalidLabelSetId => {
+                c"invalid profile data: label set id did not exist in profile"
+            }
+            ProfileDataError::InvalidStackTraceId => {
+                c"invalid profile data: stack trace id did not exist in profile"
+            }
+            ProfileDataError::InvalidLocationId => {
+                c"invalid profile data: location id did not exist in profile"
+            }
+            ProfileDataError::UnexpectedEndpointLabelKey => {
+                c"bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\""
+            }
+            ProfileDataError::LocalRootSpanIdLabelNotNumeric => {
+                c"invalid profile data: local root span id label value was not numeric"
+            }
+        }
+    }
+}
+
+/// Runs profile finalization even when v2 serialization returns early.
+///
+/// The v2 serializer destructively drains transient profile state while it
+/// encodes. Once that process starts, the profile cannot be left partially
+/// drained, even if compressor construction, protobuf encoding, or compression
+/// finishing fails. This guard owns the reset checkpoint and next start time,
+/// and its `Drop` implementation restores the profile to the post-serialization
+/// empty state.
+///
+/// The guard stores a raw pointer so serialization can keep using `&mut Profile`
+/// while the guard is armed. It must only be constructed from a live exclusive
+/// `Profile` borrow, and it must be dropped before that borrow can escape.
+struct SerializeResetGuard {
+    profile: *mut Profile,
+    checkpoint: StringTableCheckpoint,
+    next_start_time: SystemTime,
+}
+
+impl SerializeResetGuard {
+    fn new(
+        profile: *mut Profile,
+        checkpoint: StringTableCheckpoint,
+        next_start_time: SystemTime,
+    ) -> Self {
+        Self {
+            profile,
+            checkpoint,
+            next_start_time,
+        }
+    }
+}
+
+impl Drop for SerializeResetGuard {
+    fn drop(&mut self) {
+        // SAFETY: the guard is only constructed from a live `&mut Profile` in
+        // `serialize_into_compressed_pprof2`, and it is dropped before that
+        // borrow can escape.
+        unsafe {
+            if let Some(profile) = self.profile.as_mut() {
+                profile.finalize_after_serialize(self.checkpoint, self.next_start_time);
+            }
+        }
+    }
 }
 
 impl EncodedProfile {
@@ -99,6 +211,23 @@ impl Profile {
     /// level 1 provided better compressed files while taking less or equal
     /// time compared to lz4.
     pub const COMPRESSION_LEVEL: i32 = 1;
+
+    // On 2023-08-23, we analyzed the uploaded tarball size per language.
+    // These tarballs include 1 or more profiles, but for most languages
+    // using libdatadog (all?) there is only 1 profile, so this is a good
+    // proxy for the compressed, final size of the profiles.
+    // We found that for all languages using libdatadog, the average
+    // tarball was at least 18 KiB. This initial size of 32KiB should
+    // definitely outperform starting at zero for time consumed, allocator
+    // pressure, and allocator fragmentation.
+    const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+
+    // 2025-10-16: a profile larger than 10 MiB will be skipped, but a
+    // higher limit is accepted for upload. A limit of 16 MiB allows us to
+    // be a little bit decoupled from the exact limit so that if the
+    // backend decides to accept larger pprofs, clients don't have to be
+    // recompiled. But setting a much higher limit would be wasteful.
+    const MAX_PROFILE_SIZE: usize = 16 * 1024 * 1024;
 
     /// Add the endpoint data to the endpoint mappings.
     /// The `endpoint` string will be interned.
@@ -467,32 +596,64 @@ impl Profile {
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
-        // On 2023-08-23, we analyzed the uploaded tarball size per language.
-        // These tarballs include 1 or more profiles, but for most languages
-        // using libdatadog (all?) there is only 1 profile, so this is a good
-        // proxy for the compressed, final size of the profiles.
-        // We found that for all languages using libdatadog, the average
-        // tarball was at least 18 KiB. This initial size of 32KiB should
-        // definitely outperform starting at zero for time consumed, allocator
-        // pressure, and allocator fragmentation.
-        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-
-        // 2025-10-16: a profile larger than 10 MiB will be skipped, but a
-        // higher limit is accepted for upload. A limit of 16 MiB allows us to
-        // be a little bit decoupled from the exact limit so that if the
-        // backend decides to accept larger pprofs, clients don't have to be
-        // recompiled. But setting a much higher limit would be wasteful.
-        const MAX_PROFILE_SIZE: usize = 16 * 1024 * 1024;
-
         let mut compressor = Compressor::<DefaultProfileCodec>::try_new(
-            INITIAL_PPROF_BUFFER_SIZE,
-            MAX_PROFILE_SIZE,
+            Self::INITIAL_PPROF_BUFFER_SIZE,
+            Self::MAX_PROFILE_SIZE,
             Self::COMPRESSION_LEVEL,
         )
         .context("failed to create compressor")?;
 
         let mut encoded_profile = self.encode(&mut compressor, end_time, duration)?;
         encoded_profile.buffer = compressor.finish()?;
+        Ok(encoded_profile)
+    }
+
+    pub fn serialize_into_compressed_pprof2(
+        &mut self,
+        start_time: Option<SystemTime>,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+    ) -> Result<EncodedProfile, ProfileSerializeError> {
+        #[cfg(debug_assertions)]
+        self.debug_assert_preserved_strings();
+
+        self.serialize_into_compressed_pprof2_with_config::<DefaultProfileCodec>(
+            start_time,
+            end_time,
+            duration,
+            Self::INITIAL_PPROF_BUFFER_SIZE,
+            Self::MAX_PROFILE_SIZE,
+        )
+    }
+
+    fn serialize_into_compressed_pprof2_with_config<C: ProfileCodec>(
+        &mut self,
+        start_time: Option<SystemTime>,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+        initial_pprof_buffer_size: usize,
+        max_profile_size: usize,
+    ) -> Result<EncodedProfile, ProfileSerializeError> {
+        let end = end_time.unwrap_or_else(SystemTime::now);
+        let _reset_guard =
+            SerializeResetGuard::new(self as *mut Profile, self.string_table_checkpoint, end);
+        if let Some(start_time) = start_time {
+            self.start_time = start_time;
+        }
+
+        let mut compressor = Compressor::<C>::try_new(
+            initial_pprof_buffer_size,
+            max_profile_size,
+            Self::COMPRESSION_LEVEL,
+        )
+        .map_err(ProfileSerializeError::Compressing)?;
+
+        let mut encoded_profile = self
+            .encode2(&mut compressor, end, duration)
+            .map_err(ProfileSerializeError::Encoding)?;
+        encoded_profile.buffer = compressor
+            .finish()
+            .map_err(ProfileSerializeError::Compressing)?;
         Ok(encoded_profile)
     }
 
@@ -518,21 +679,13 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut extended_label_sets: Vec<Vec<Label>> = Vec::with_capacity(self.label_sets.len());
+        let label_sets = std::mem::take(&mut self.label_sets);
+        let mut extended_label_sets: Vec<Vec<Label>> = Vec::new();
+        extended_label_sets.try_reserve_exact(label_sets.len())?;
 
-        for label_set in std::mem::take(&mut self.label_sets) {
-            let endpoint_label = self.get_endpoint_for_label_set(&label_set)?;
-            // Leave one space for the timestamp if needed
-            let mut labels = Vec::with_capacity(
-                label_set.len() + 1 + if endpoint_label.is_some() { 1 } else { 0 },
-            );
-            for l in label_set.iter() {
-                labels.push(*self.get_label(*l)?);
-            }
-            if let Some(endpoint_label) = endpoint_label {
-                labels.push(endpoint_label);
-            }
-            extended_label_sets.push(labels);
+        for label_set in label_sets {
+            // Leave one space for the timestamp if needed.
+            extended_label_sets.push(self.expand_label_set(&label_set)?);
         }
 
         let iter = std::mem::take(&mut self.observations).try_into_iter()?;
@@ -656,6 +809,145 @@ impl Profile {
         })
     }
 
+    /// Encodes the profile by destructively draining transient state while
+    /// leaving the profile object alive for the second serializer finalizer.
+    fn encode2<W: io::Write>(
+        &mut self,
+        writer: &mut W,
+        end: SystemTime,
+        duration: Option<Duration>,
+    ) -> Result<EncodedProfile, ProfileEncodingError> {
+        let start = self.start_time;
+        let endpoints_stats = std::mem::take(&mut self.endpoints.stats);
+        let duration_nanos = duration
+            .unwrap_or_else(|| end.duration_since(start).unwrap_or(Duration::ZERO))
+            .as_nanos()
+            .min(i64::MAX as u128) as i64;
+
+        let label_sets = std::mem::take(&mut self.label_sets);
+        let mut extended_label_sets: Vec<Vec<Label>> = Vec::new();
+        extended_label_sets.try_reserve_exact(label_sets.len())?;
+
+        for label_set in label_sets {
+            extended_label_sets.push(self.expand_label_set(&label_set)?);
+        }
+
+        let observations = std::mem::replace(
+            &mut self.observations,
+            Observations::empty_for_reuse(self.sample_types.len()),
+        );
+        let iter = observations.try_into_iter()?;
+        for (sample, timestamp, mut values) in iter {
+            let labels = extended_label_sets
+                .get_mut(sample.labels.to_raw_id())
+                .ok_or(ProfileDataError::InvalidLabelSetId)?;
+            let stacktrace = self.get_stacktrace(sample.stacktrace)?;
+            let mut location_ids = Vec::new();
+            location_ids.try_reserve_exact(stacktrace.locations.len())?;
+            for location in stacktrace.locations.iter() {
+                location_ids.push(location.to_raw_id());
+            }
+            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
+            self.upscaling_rules.upscale_values(&mut values, labels);
+
+            // We're reusing the labels vec but the timestamp differs per
+            // observation, so we push, copy+convert, then, pop it back off.
+            if let Some(ts) = timestamp {
+                // The space for the timestamp was reserved in `expand_label_set`.
+                labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
+            }
+            let mut pprof_labels = Vec::new();
+            pprof_labels.try_reserve_exact(labels.len())?;
+            pprof_labels.extend(labels.iter().map(protobuf::Label::from));
+            if timestamp.is_some() {
+                labels.pop();
+            }
+
+            let item = protobuf::Sample {
+                location_ids: Record::from(location_ids.as_slice()),
+                values: Record::from(values.as_slice()),
+                // SAFETY: converting &[Label] to &[Field<Label,..>] which is
+                // safe, because Field is repr(transparent).
+                labels: unsafe {
+                    &*(pprof_labels.as_slice() as *const [protobuf::Label]
+                        as *const [Record<protobuf::Label, 3, NO_OPT_ZERO>])
+                },
+            };
+
+            Record::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
+        }
+
+        for sample_type in self.preserved_sample_types.iter().copied() {
+            Record::<_, 1, NO_OPT_ZERO>::from(sample_type).encode(writer)?;
+        }
+
+        let period_type_and_value = self
+            .period
+            .zip(self.preserved_period_type)
+            .map(|(period, period_type)| (period_type, period.value));
+
+        for (offset, item) in std::mem::take(&mut self.mappings).into_iter().enumerate() {
+            let mapping = protobuf::Mapping {
+                id: Record::from((offset + 1) as u64),
+                memory_start: Record::from(item.memory_start),
+                memory_limit: Record::from(item.memory_limit),
+                file_offset: Record::from(item.file_offset),
+                filename: Record::from(item.filename),
+                build_id: Record::from(item.build_id),
+            };
+            Record::<_, 3, NO_OPT_ZERO>::from(mapping).encode(writer)?;
+        }
+
+        for (offset, item) in std::mem::take(&mut self.locations).into_iter().enumerate() {
+            let location = protobuf::Location {
+                id: Record::from((offset + 1) as u64),
+                mapping_id: Record::from(item.mapping_id.map(MappingId::into_raw_id).unwrap_or(0)),
+                address: Record::from(item.address),
+                line: Record::from(protobuf::Line {
+                    function_id: Record::from(item.function_id.into_raw_id()),
+                    lineno: Record::from(item.line),
+                }),
+            };
+            Record::<_, 4, NO_OPT_ZERO>::from(location).encode(writer)?;
+        }
+
+        for (offset, item) in std::mem::take(&mut self.functions).into_iter().enumerate() {
+            let function = protobuf::Function {
+                id: Record::from((offset + 1) as u64),
+                name: Record::from(item.name),
+                system_name: Record::from(item.system_name),
+                filename: Record::from(item.filename),
+            };
+            Record::<_, 5, NO_OPT_ZERO>::from(function).encode(writer)?;
+        }
+
+        for item in self.strings.iter() {
+            Record::<_, 6, NO_OPT_ZERO>::from(item).encode(writer)?;
+        }
+
+        let time_nanos = self
+            .start_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |duration| {
+                duration.as_nanos().min(i64::MAX as u128) as i64
+            });
+
+        Record::<_, 9, OPT_ZERO>::from(time_nanos).encode(writer)?;
+        Record::<_, 10, OPT_ZERO>::from(duration_nanos).encode(writer)?;
+
+        if let Some((period_type, period)) = period_type_and_value {
+            Record::<_, 11, OPT_ZERO>::from(period_type).encode(writer)?;
+            Record::<_, 12, OPT_ZERO>::from(period).encode(writer)?;
+        };
+
+        Ok(EncodedProfile {
+            start,
+            end,
+            buffer: Vec::new(),
+            endpoints_stats,
+        })
+    }
+
     pub fn set_start_time(&mut self, start_time: SystemTime) -> anyhow::Result<()> {
         self.start_time = start_time;
         Ok(())
@@ -669,17 +961,19 @@ impl Profile {
     /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
     /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
     /// we are 100% sure they were not introduced prior to this stage.
-    fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
-        let len: u64 = u64::try_from(len)?;
-        for id in location_ids.iter() {
-            let id = *id;
-            // Location ids start from 1, that's why they're <= len instead of < len
-            anyhow::ensure!(
-                id > 0 && id <= len,
-                "invalid location id found during serialization {:?}, len was {:?}",
-                id,
-                len
-            )
+    fn check_location_ids_are_valid(
+        &self,
+        location_ids: &[u64],
+        len: usize,
+    ) -> Result<(), ProfileDataError> {
+        let len: u64 = len
+            .try_into()
+            .map_err(|_| ProfileDataError::InvalidLocationId)?;
+        for id in location_ids.iter().copied() {
+            // Location ids start from 1, that's why they're <= len instead of < len.
+            if id == 0 || id > len {
+                return Err(ProfileDataError::InvalidLocationId);
+            }
         }
         Ok(())
     }
@@ -822,36 +1116,106 @@ impl Profile {
         }
     }
 
-    /// Fetches the endpoint information for the label. There may be errors,
-    /// but there may also be no endpoint information for a given endpoint.
-    /// Hence, the return type of Result<Option<_>, _>.
-    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<Label>> {
-        anyhow::ensure!(
-            label.get_key() == self.endpoints.local_root_span_id_label,
-            "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\""
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    fn preserved_string_id(&self, item: &str) -> StringId {
+        let id = self.strings.get_id(item);
+        debug_assert!(id.is_some(), "preserved string {item:?} was not interned");
+        let id = id.unwrap_or(StringId::ZERO);
+        debug_assert!(
+            usize::from(id) < self.string_table_checkpoint.len(),
+            "preserved string {item:?} was not before the string table checkpoint"
         );
+        id
+    }
 
-        anyhow::ensure!(
-            label.has_num_value(),
-            "the local root span id label value must be sent as a number, not a string, given {:?}",
-            label
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    fn preserved_sample_type(&self, sample_type: api::SampleType) -> ValueType {
+        let vt: api::ValueType<'static> = sample_type.into();
+        ValueType {
+            r#type: Record::from(self.preserved_string_id(vt.r#type)),
+            unit: Record::from(self.preserved_string_id(vt.unit)),
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    fn debug_assert_preserved_strings(&self) {
+        debug_assert_eq!(
+            self.preserved_string_id(""),
+            StringId::ZERO,
+            "empty string was not preserved as string id zero"
         );
-
-        let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
-            // Safety: the value is an u64, but pprof only has signed values, so we
-            // transmute it; the backend does the same.
-            #[allow(
-                unknown_lints,
-                unnecessary_transmutes,
-                reason = "i64::cast_unsigned requires MSRV 1.87.0"
-            )]
-            unsafe {
-                std::mem::transmute::<i64, u64>(*num)
-            }
+        debug_assert_eq!(
+            self.preserved_string_id("local root span id"),
+            self.endpoints.local_root_span_id_label,
+            "local root span id label id does not match preserved string table"
+        );
+        debug_assert_eq!(
+            self.preserved_string_id("trace endpoint"),
+            self.endpoints.endpoint_label,
+            "trace endpoint label id does not match preserved string table"
+        );
+        debug_assert_eq!(
+            self.preserved_string_id("end_timestamp_ns"),
+            self.timestamp_key,
+            "timestamp label id does not match preserved string table"
+        );
+        debug_assert_eq!(
+            self.sample_types.len(),
+            self.preserved_sample_types.len(),
+            "preserved sample type cache length does not match sample types"
+        );
+        for (sample_type, cached) in self
+            .sample_types
+            .iter()
+            .copied()
+            .zip(self.preserved_sample_types.iter().copied())
+        {
+            let expected = self.preserved_sample_type(sample_type);
+            debug_assert_eq!(
+                expected, cached,
+                "preserved sample type cache does not match sample type"
+            );
+        }
+        if let Some(period) = self.period {
+            let expected = self.preserved_sample_type(period.sample_type);
+            debug_assert_eq!(
+                Some(expected),
+                self.preserved_period_type,
+                "preserved period type cache does not match period"
+            );
         } else {
-            return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
-            label));
+            debug_assert_eq!(
+                None, self.preserved_period_type,
+                "preserved period type should be empty when period is empty"
+            );
+        }
+    }
+
+    fn get_endpoint_for_label(&self, label: &Label) -> Result<Option<Label>, ProfileDataError> {
+        if label.get_key() != self.endpoints.local_root_span_id_label {
+            debug_assert_eq!(label.get_key(), self.endpoints.local_root_span_id_label);
+            return Err(ProfileDataError::UnexpectedEndpointLabelKey);
+        }
+
+        if !label.has_num_value() {
+            return Err(ProfileDataError::LocalRootSpanIdLabelNotNumeric);
+        }
+
+        let LabelValue::Num { num, .. } = *label.get_value() else {
+            return Err(ProfileDataError::LocalRootSpanIdLabelNotNumeric);
         };
+
+        // Safety: the value is an u64, but pprof only has signed values, so we
+        // transmute it; the backend does the same.
+        #[allow(
+            unknown_lints,
+            unnecessary_transmutes,
+            reason = "i64::cast_unsigned requires MSRV 1.87.0"
+        )]
+        let local_root_span_id = unsafe { std::mem::transmute::<i64, u64>(num) };
 
         Ok(self
             .endpoints
@@ -860,25 +1224,42 @@ impl Profile {
             .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
     }
 
-    fn get_endpoint_for_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Option<Label>> {
-        if let Some(label) = label_set.iter().find_map(|id| {
-            if let Ok(label) = self.get_label(*id) {
-                if label.get_key() == self.endpoints.local_root_span_id_label {
-                    return Some(label);
-                }
+    fn get_endpoint_for_label_set(
+        &self,
+        label_set: &LabelSet,
+    ) -> Result<Option<Label>, ProfileDataError> {
+        for id in label_set.iter() {
+            let label = self.get_label(*id)?;
+            if label.get_key() == self.endpoints.local_root_span_id_label {
+                return self.get_endpoint_for_label(label);
             }
-            None
-        }) {
-            self.get_endpoint_for_label(label)
-        } else {
-            Ok(None)
         }
+
+        Ok(None)
     }
 
-    fn get_label(&self, id: LabelId) -> anyhow::Result<&Label> {
+    /// Resolves label ids into labels and appends the endpoint label, leaving
+    /// one spare slot for a sample timestamp label.
+    fn expand_label_set(&self, label_set: &LabelSet) -> Result<Vec<Label>, ProfileEncodingError> {
+        let endpoint_label = self.get_endpoint_for_label_set(label_set)?;
+        let mut labels = Vec::new();
+
+        // +1 for the timestamp label
+        let capacity = label_set.len() + 1 + usize::from(endpoint_label.is_some());
+        labels.try_reserve_exact(capacity)?;
+        for l in label_set.iter() {
+            labels.push(*self.get_label(*l)?);
+        }
+        if let Some(endpoint_label) = endpoint_label {
+            labels.push(endpoint_label);
+        }
+        Ok(labels)
+    }
+
+    fn get_label(&self, id: LabelId) -> Result<&Label, ProfileDataError> {
         self.labels
             .get_index(id.to_offset())
-            .context("LabelId to have a valid interned index")
+            .ok_or(ProfileDataError::InvalidLabelId)
     }
 
     #[allow(dead_code)]
@@ -888,10 +1269,10 @@ impl Profile {
             .context("LabelSetId to have a valid interned index")
     }
 
-    fn get_stacktrace(&self, st: StackTraceId) -> anyhow::Result<&StackTrace> {
+    fn get_stacktrace(&self, st: StackTraceId) -> Result<&StackTrace, ProfileDataError> {
         self.stack_traces
             .get_index(st.to_raw_id())
-            .with_context(|| format!("StackTraceId {st:?} to exist in profile"))
+            .ok_or(ProfileDataError::InvalidStackTraceId)
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
@@ -908,6 +1289,42 @@ impl Profile {
         self.strings.try_intern(item)
     }
 
+    fn finalize_after_serialize(
+        &mut self,
+        checkpoint: StringTableCheckpoint,
+        next_start_time: SystemTime,
+    ) {
+        self.functions.clear();
+        self.labels.clear();
+        self.label_sets.clear();
+        self.locations.clear();
+        self.mappings.clear();
+        self.stack_traces.clear();
+        self.endpoints.mappings.clear();
+        self.endpoints.stats = ProfiledEndpointsStats::default();
+        self.upscaling_rules = UpscalingRules::default();
+        self.observations = Observations::empty_for_reuse(self.sample_types.len());
+
+        if let Some(translator) = &mut self.profiles_dictionary_translator {
+            translator.mappings.clear();
+            translator.functions.clear();
+            translator.strings.clear();
+        }
+
+        self.string_storage_cached_profile_id = None;
+        self.active_samples.store(0, SeqCst);
+        self.generation = Generation::new();
+        self.start_time = next_start_time;
+
+        // SAFETY: the checkpoint is created after profile-lifetime strings
+        // are interned. All transient profile state has been cleared above, so
+        // no post-checkpoint string ids remain reachable from the profile.
+        unsafe { self.strings.rollback_to(checkpoint) };
+
+        #[cfg(debug_assertions)]
+        self.debug_assert_preserved_strings();
+    }
+
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
     fn try_new_internal(
@@ -917,6 +1334,8 @@ impl Profile {
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
         let start_time = SystemTime::now();
+        let strings = StringTable::default();
+        let string_table_checkpoint = strings.checkpoint();
         let mut profile = Self {
             profiles_dictionary_translator,
             active_samples: Default::default(),
@@ -930,10 +1349,13 @@ impl Profile {
             mappings: Default::default(),
             observations: Default::default(),
             period,
+            preserved_period_type: None,
+            preserved_sample_types: Default::default(),
             sample_types,
             stack_traces: Default::default(),
             start_time,
-            strings: Default::default(),
+            strings,
+            string_table_checkpoint,
             string_storage,
             string_storage_cached_profile_id: None, /* Never reuse an id! See comments on
                                                      * CachedProfileId for why. */
@@ -947,6 +1369,37 @@ impl Profile {
         profile.endpoints.local_root_span_id_label = profile.try_intern("local root span id")?;
         profile.endpoints.endpoint_label = profile.try_intern("trace endpoint")?;
         profile.timestamp_key = profile.try_intern("end_timestamp_ns")?;
+
+        // Serialization should have few error paths. Interning the sample
+        // types here ensures they are present for serialization. Do it
+        // immediately after well-known strings so that the string table can
+        // roll back to this checkpoint without holding onto extra strings.
+        profile.preserved_sample_types = {
+            let mut preserved_sample_types = Vec::new();
+            preserved_sample_types.try_reserve_exact(profile.sample_types.len())?;
+            for sample_type in profile.sample_types.iter().copied() {
+                let vt: api::ValueType<'static> = sample_type.into();
+                preserved_sample_types.push(ValueType {
+                    r#type: Record::from(profile.strings.try_intern(vt.r#type)?),
+                    unit: Record::from(profile.strings.try_intern(vt.unit)?),
+                });
+            }
+            preserved_sample_types.into_boxed_slice()
+        };
+
+        // Period needs interned before the checkpoint, same as sample types.
+        if let Some(period) = profile.period {
+            let sample_type = period.sample_type;
+            let vt: api::ValueType<'static> = sample_type.into();
+            profile.preserved_period_type = Some(ValueType {
+                r#type: Record::from(profile.try_intern(vt.r#type)?),
+                unit: Record::from(profile.try_intern(vt.unit)?),
+            });
+        }
+        profile.string_table_checkpoint = profile.strings.checkpoint();
+
+        #[cfg(debug_assertions)]
+        profile.debug_assert_preserved_strings();
 
         profile.observations = Observations::try_new(profile.sample_types.len())?;
         Ok(profile)
@@ -1058,7 +1511,10 @@ impl Profile {
 #[cfg(test)]
 mod api_tests {
     use super::*;
-    use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
+    use crate::pprof::test_utils::{
+        roundtrip_to_pprof, roundtrip_to_pprof2, roundtrip_to_pprof_with_times, sorted_samples,
+        string_table_fetch,
+    };
     use libdd_profiling_protobuf::prost_impls;
     use std::collections::HashSet;
 
@@ -1206,6 +1662,296 @@ mod api_tests {
             .expect("profile to not be full");
         assert_eq!(profile.only_for_testing_num_timestamped_samples(), 1);
         profile
+    }
+
+    fn normalize_profile_for_parity(mut profile: prost_impls::Profile) -> prost_impls::Profile {
+        profile.samples.sort_unstable();
+        profile
+    }
+
+    fn assert_serialize2_matches_serialize(
+        build_profile: impl Fn() -> anyhow::Result<Profile>,
+    ) -> anyhow::Result<()> {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let end = SystemTime::UNIX_EPOCH + Duration::from_secs(1_123);
+        let duration = Duration::from_secs(123);
+
+        let mut profile = build_profile()?;
+        profile.set_start_time(start)?;
+        let profile1 = normalize_profile_for_parity(roundtrip_to_pprof_with_times(
+            profile,
+            Some(end),
+            Some(duration),
+        )?);
+
+        let profile2 = normalize_profile_for_parity(roundtrip_to_pprof2(
+            build_profile()?,
+            Some(start),
+            Some(end),
+            Some(duration),
+        )?);
+
+        assert!(
+            profile1 == profile2,
+            "decoded serialize2 profile did not match serialize profile"
+        );
+        Ok(())
+    }
+
+    fn assert_serialize2_matches_serialize_bytes(
+        build_profile: impl Fn() -> anyhow::Result<Profile>,
+    ) -> anyhow::Result<()> {
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let end = SystemTime::UNIX_EPOCH + Duration::from_secs(1_123);
+        let duration = Duration::from_secs(123);
+
+        let mut profile = build_profile()?;
+        profile.set_start_time(start)?;
+        let encoded1 = profile.serialize_into_compressed_pprof(Some(end), Some(duration))?;
+
+        let mut profile = build_profile()?;
+        let encoded2 =
+            profile.serialize_into_compressed_pprof2(Some(start), Some(end), Some(duration))?;
+
+        if encoded1.buffer != encoded2.buffer {
+            let first_diff = encoded1
+                .buffer
+                .iter()
+                .zip(encoded2.buffer.iter())
+                .position(|(lhs, rhs)| lhs != rhs);
+            panic!(
+                "serialize2 compressed bytes differ from serialize bytes: len1={}, len2={}, first_diff={first_diff:?}",
+                encoded1.buffer.len(),
+                encoded2.buffer.len()
+            );
+        }
+        assert_eq!(encoded1.start, encoded2.start);
+        assert_eq!(encoded1.end, encoded2.end);
+        assert_eq!(encoded1.endpoints_stats, encoded2.endpoints_stats);
+        Ok(())
+    }
+
+    fn provide_endpoint_period_profile() -> anyhow::Result<Profile> {
+        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
+        let period = api::Period {
+            sample_type: api::SampleType::WallTime,
+            value: 10_000_000,
+        };
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+        let location = api::Location {
+            mapping,
+            function: api::Function {
+                name: "handle_request",
+                system_name: "handle_request",
+                filename: "index.php",
+            },
+            line: 42,
+            ..Default::default()
+        };
+
+        let mut profile = Profile::new(&sample_types, Some(period));
+        profile.try_add_sample(
+            api::Sample {
+                locations: vec![location],
+                values: &[1, 10_000],
+                labels: vec![
+                    api::Label {
+                        key: "local root span id",
+                        num: 10,
+                        ..Default::default()
+                    },
+                    api::Label {
+                        key: "pid",
+                        num: 101,
+                        ..Default::default()
+                    },
+                    api::Label {
+                        key: "route",
+                        str: "/users/:id",
+                        ..Default::default()
+                    },
+                ],
+            },
+            None,
+        )?;
+        profile.try_add_sample(
+            api::Sample {
+                locations: vec![location],
+                values: &[2, 20_000],
+                labels: vec![
+                    api::Label {
+                        key: "local root span id",
+                        num: 11,
+                        ..Default::default()
+                    },
+                    api::Label {
+                        key: "pid",
+                        num: 101,
+                        ..Default::default()
+                    },
+                    api::Label {
+                        key: "route",
+                        str: "/checkout",
+                        ..Default::default()
+                    },
+                ],
+            },
+            Timestamp::new(123),
+        )?;
+        profile.add_endpoint(10, Cow::from("GET /users/:id"))?;
+        profile.add_endpoint(11, Cow::from("POST /checkout"))?;
+        Ok(profile)
+    }
+
+    #[test]
+    fn serialize2_rolls_back_transient_strings() -> anyhow::Result<()> {
+        let sample_types = [api::SampleType::CpuSamples];
+        let mut profile = Profile::new(&sample_types, None);
+        let preserved_len = profile.string_table_checkpoint.len();
+
+        profile.try_add_sample(
+            api::Sample {
+                locations: vec![api::Location {
+                    mapping: api::Mapping {
+                        filename: "php",
+                        ..Default::default()
+                    },
+                    function: api::Function {
+                        name: "main",
+                        system_name: "main",
+                        filename: "index.php",
+                    },
+                    ..Default::default()
+                }],
+                values: &[1],
+                labels: vec![api::Label {
+                    key: "pid",
+                    num: 101,
+                    ..Default::default()
+                }],
+            },
+            None,
+        )?;
+
+        assert!(profile.strings.len() > preserved_len);
+        let encoded = profile.serialize_into_compressed_pprof2(None, None, None)?;
+        assert!(!encoded.buffer.is_empty());
+        assert_eq!(profile.strings.len(), preserved_len);
+        assert!(profile.strings.get_id("php").is_none());
+
+        let sample_type: api::ValueType<'static> = api::SampleType::CpuSamples.into();
+        assert!(profile.strings.get_id(sample_type.r#type).is_some());
+        assert!(profile.strings.get_id(sample_type.unit).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn serialize2_resets_after_compressor_creation_error() -> anyhow::Result<()> {
+        let sample_types = [api::SampleType::CpuSamples];
+        let mut profile = Profile::new(&sample_types, None);
+        let preserved_len = profile.string_table_checkpoint.len();
+        let end = SystemTime::UNIX_EPOCH + Duration::from_secs(123);
+
+        profile.try_add_sample(
+            api::Sample {
+                locations: vec![api::Location {
+                    function: api::Function {
+                        name: "main",
+                        system_name: "main",
+                        filename: "lib.rs",
+                    },
+                    ..Default::default()
+                }],
+                values: &[1],
+                labels: vec![api::Label {
+                    key: "pid",
+                    num: 101,
+                    ..Default::default()
+                }],
+            },
+            None,
+        )?;
+
+        assert!(profile.strings.len() > preserved_len);
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
+
+        let result = profile
+            .serialize_into_compressed_pprof2_with_config::<crate::profiles::NoopProfileCodec>(
+                None,
+                Some(end),
+                None,
+                1,
+                0,
+            );
+
+        assert!(matches!(
+            result,
+            Err(ProfileSerializeError::Compressing(err))
+                if err.kind() == io::ErrorKind::InvalidInput
+        ));
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
+        assert_eq!(profile.only_for_testing_num_timestamped_samples(), 0);
+        assert_eq!(profile.strings.len(), preserved_len);
+        assert!(profile.strings.get_id("main").is_none());
+        assert_eq!(profile.start_time, end);
+        Ok(())
+    }
+
+    #[test]
+    fn serialize2_resets_after_encode_error() -> anyhow::Result<()> {
+        let mut profile = provide_distinct_locations();
+        let preserved_len = profile.string_table_checkpoint.len();
+
+        // Corrupt the profile enough that serialization fails after the second
+        // reset guard is armed.
+        profile.locations.clear();
+        let result = profile.serialize_into_compressed_pprof2(None, None, None);
+        assert!(result.is_err());
+
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 0);
+        assert_eq!(profile.only_for_testing_num_timestamped_samples(), 0);
+        assert_eq!(profile.strings.len(), preserved_len);
+
+        profile.try_add_sample(
+            api::Sample {
+                locations: vec![api::Location {
+                    function: api::Function {
+                        name: "after_reset",
+                        system_name: "after_reset",
+                        filename: "lib.rs",
+                    },
+                    ..Default::default()
+                }],
+                values: &[1],
+                labels: vec![],
+            },
+            None,
+        )?;
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn serialize2_matches_serialize_for_mixed_timestamp_samples() -> anyhow::Result<()> {
+        assert_serialize2_matches_serialize(|| Ok(provide_distinct_locations()))
+    }
+
+    #[test]
+    fn serialize2_matches_serialize_for_endpoints_and_period() -> anyhow::Result<()> {
+        assert_serialize2_matches_serialize(provide_endpoint_period_profile)
+    }
+
+    #[test]
+    fn serialize2_matches_serialize_bytes_for_mixed_timestamp_samples() -> anyhow::Result<()> {
+        assert_serialize2_matches_serialize_bytes(|| Ok(provide_distinct_locations()))
+    }
+
+    #[test]
+    fn serialize2_matches_serialize_bytes_for_endpoints_and_period() -> anyhow::Result<()> {
+        assert_serialize2_matches_serialize_bytes(provide_endpoint_period_profile)
     }
 
     #[test]
@@ -2901,7 +3647,7 @@ mod api_tests {
     }
 
     #[test]
-    fn reproduce_crash_with_anyhow_bailout() {
+    fn serialize_fails_with_invalid_location_ids() {
         let sample_types = [api::SampleType::CpuSamples];
         let mapping = api::Mapping {
             filename: "test.php",
@@ -2948,11 +3694,10 @@ mod api_tests {
                 "Expected serialization to fail due to invalid location IDs, but it succeeded"
             ),
             Err(err) => {
-                assert!(
-                    err.to_string().contains("invalid location id"),
-                    "Expected error about invalid location id, got: {}",
-                    err
-                );
+                let err = err
+                    .downcast_ref::<ProfileDataError>()
+                    .expect("expected invalid location id error to be a ProfileDataError");
+                assert_eq!(*err, ProfileDataError::InvalidLocationId);
             }
         }
     }

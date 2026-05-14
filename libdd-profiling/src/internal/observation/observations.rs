@@ -7,8 +7,11 @@ use super::super::Sample;
 use super::timestamped_observations::TimestampedObservations;
 use super::trimmed_observation::{ObservationLength, TrimmedObservation};
 use crate::internal::Timestamp;
+use anyhow::Context;
 use std::collections::HashMap;
 use std::io;
+
+type Hasher = core::hash::BuildHasherDefault<rustc_hash::FxHasher>;
 
 struct NonEmptyObservations {
     // Samples with no timestamps are aggregated in-place as each observation is added
@@ -23,6 +26,7 @@ struct NonEmptyObservations {
 #[derive(Default)]
 pub struct Observations {
     inner: Option<NonEmptyObservations>,
+    obs_len: ObservationLength,
 }
 
 /// Public API
@@ -33,6 +37,7 @@ impl Observations {
     }
 
     pub fn try_new(observations_len: usize) -> io::Result<Self> {
+        let obs_len = ObservationLength::new(observations_len);
         Ok(Observations {
             inner: Some(NonEmptyObservations {
                 aggregated_data: AggregatedObservations::new(observations_len),
@@ -47,7 +52,39 @@ impl Observations {
                 obs_len: ObservationLength::new(observations_len),
                 timestamped_samples_count: 0,
             }),
+            obs_len,
         })
+    }
+
+    pub fn empty_for_reuse(observations_len: usize) -> Self {
+        Observations {
+            inner: None,
+            obs_len: ObservationLength::new(observations_len),
+        }
+    }
+
+    pub fn clear_for_reuse(&mut self) {
+        self.inner = None;
+    }
+
+    fn ensure_initialized(&mut self) -> io::Result<()> {
+        if self.inner.is_none() {
+            let observations_len = self.obs_len.get();
+            self.inner = Some(NonEmptyObservations {
+                aggregated_data: AggregatedObservations::new(observations_len),
+                timestamped_data: TimestampedObservations::try_new(observations_len).map_err(
+                    |err| {
+                        io::Error::new(
+                            err.kind(),
+                            format!("failed to create timestamped observations: {err}"),
+                        )
+                    },
+                )?,
+                obs_len: self.obs_len,
+                timestamped_samples_count: 0,
+            });
+        }
+        Ok(())
     }
 
     pub fn add(
@@ -56,10 +93,8 @@ impl Observations {
         timestamp: Option<Timestamp>,
         values: &[i64],
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            self.inner.is_some(),
-            "Use of add on Observations that were not initialized"
-        );
+        self.ensure_initialized()
+            .context("failed to initialize observations")?;
 
         // SAFETY: we just ensured it has an item above.
         let observations = unsafe { self.inner.as_mut().unwrap_unchecked() };
@@ -131,7 +166,7 @@ impl Observations {
 #[derive(Default)]
 struct AggregatedObservations {
     obs_len: ObservationLength,
-    data: HashMap<Sample, TrimmedObservation>,
+    data: HashMap<Sample, TrimmedObservation, Hasher>,
 }
 
 impl AggregatedObservations {

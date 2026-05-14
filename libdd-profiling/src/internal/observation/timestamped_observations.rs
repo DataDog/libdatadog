@@ -10,9 +10,9 @@ use super::super::Sample;
 use super::super::StackTraceId;
 use crate::collections::identifiable::Id;
 use crate::internal::Timestamp;
-use crate::profiles::{DefaultObservationCodec as DefaultCodec, ObservationCodec};
+use crate::profiles::{BufWriter, DefaultObservationCodec as DefaultCodec, ObservationCodec};
 use byteorder::{NativeEndian, ReadBytesExt};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, Write};
 
 pub type TimestampedObservations = TimestampedObservationsImpl<DefaultCodec>;
 
@@ -40,10 +40,10 @@ impl<C: ObservationCodec> TimestampedObservationsImpl<C> {
 
     pub fn try_new(sample_types_len: usize) -> io::Result<Self> {
         Ok(Self {
-            compressed_timestamped_data: BufWriter::with_capacity(
+            compressed_timestamped_data: BufWriter::try_with_capacity(
                 C::recommended_input_buf_size(),
                 C::new_encoder(Self::DEFAULT_BUFFER_SIZE, Self::MAX_CAPACITY)?,
-            ),
+            )?,
             sample_types_len,
         })
     }
@@ -74,10 +74,7 @@ impl<C: ObservationCodec> TimestampedObservationsImpl<C> {
     }
 
     pub fn try_into_iter(self) -> io::Result<TimestampedObservationsIterImpl<C>> {
-        let encoder = self
-            .compressed_timestamped_data
-            .into_inner()
-            .map_err(|e| e.into_error())?;
+        let encoder = self.compressed_timestamped_data.into_inner()?;
         Ok(TimestampedObservationsIterImpl {
             decoder: C::encoder_into_decoder(encoder)?,
             sample_types_len: self.sample_types_len,

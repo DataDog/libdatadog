@@ -5,11 +5,13 @@ use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
 use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileError, ProfileStatus};
 use anyhow::Context;
 use function_name::named;
+use libdd_common::error::FfiSafeErrorMessage;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use libdd_profiling::api::{self, ManagedStringId};
 use libdd_profiling::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_profiling::{api2, internal};
+use std::ffi::CStr;
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;
@@ -46,6 +48,26 @@ impl Profile {
 impl Drop for Profile {
     fn drop(&mut self) {
         drop(self.take())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ProfilePtrError {
+    #[error("profile pointer was null")]
+    NullProfilePointer,
+    #[error("profile's inner pointer was null (indicates use-after-free)")]
+    NullInnerPointer,
+}
+
+// SAFETY: all cases are utf-8 c-str literals.
+unsafe impl FfiSafeErrorMessage for ProfilePtrError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        match self {
+            ProfilePtrError::NullProfilePointer => c"profile pointer was null",
+            ProfilePtrError::NullInnerPointer => {
+                c"profile's inner pointer was null (indicates use-after-free)"
+            }
+        }
     }
 }
 
@@ -614,12 +636,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
 
 pub(crate) unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
-) -> anyhow::Result<&'a mut internal::Profile> {
+) -> Result<&'a mut internal::Profile, ProfilePtrError> {
     match profile_ptr.as_mut() {
-        None => anyhow::bail!("profile pointer was null"),
+        None => Err(ProfilePtrError::NullProfilePointer),
         Some(inner_ptr) => match inner_ptr.inner.as_mut() {
             Some(profile) => Ok(profile),
-            None => anyhow::bail!("profile's inner pointer was null (indicates use-after-free)"),
+            None => Err(ProfilePtrError::NullInnerPointer),
         },
     }
 }
@@ -831,7 +853,8 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
     })
 }
 
-/// Serialize the aggregated profile.
+/// Serialize the aggregated profile. Prefer [`ddog_prof_Profile_serialize2`].
+///
 /// Drains the data, and then resets the profile for future use.
 ///
 /// Don't forget to clean up the ok with `ddog_prof_EncodedProfile_drop` or
@@ -867,6 +890,53 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
     })()
     .context("ddog_prof_Profile_serialize failed")
     .into()
+}
+
+/// Serialize the aggregated profile.
+///
+/// Once serialization starts, the profile is reset whether serialization
+/// succeeds or fails. If this function returns an error before serialization
+/// starts, the profile remains unchanged, e.g. if provided invalid arguments.
+///
+/// Prefer this over [`ddog_prof_Profile_serialize`] because this has fewer
+/// ways to go wrong, and when it does, it makes fewer allocations (which can
+/// also go wrong).
+///
+/// # Safety
+/// The `out` pointer must be non-null and suitable for pointer writes.
+/// The `profile` must point to a valid profile object.
+/// The `start_time` and `end_time` must be null or otherwise point to valid
+/// TimeSpec objects.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_serialize2(
+    out: *mut Handle<internal::EncodedProfile>,
+    profile: *mut Profile,
+    start_time: Option<&Timespec>,
+    end_time: Option<&Timespec>,
+) -> ProfileStatus {
+    ensure_non_null_out_parameter!(out);
+
+    let profile = match profile_ptr_to_inner(profile) {
+        Ok(profile) => profile,
+        Err(err) => return ProfileStatus::from_ffi_safe_error_message(err),
+    };
+
+    let start_time = start_time.map(SystemTime::from);
+    let end_time = end_time.map(SystemTime::from);
+
+    match profile.serialize_into_compressed_pprof2(start_time, end_time, None) {
+        Ok(encoded_profile) => {
+            // SAFETY: checked that `out` is not null above; caller guarantees
+            // it points to writable storage for the handle.
+            unsafe { out.write(encoded_profile.into()) };
+            ProfileStatus::OK
+        }
+        Err(internal::ProfileSerializeError::Encoding(
+            internal::ProfileEncodingError::InvalidProfile(err),
+        )) => ProfileStatus::from_ffi_safe_error_message(err),
+        Err(err) => ProfileStatus::from_error(err),
+    }
 }
 
 #[must_use]
@@ -1015,6 +1085,47 @@ mod tests {
                 1
             );
 
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn serialize2_success() -> anyhow::Result<()> {
+        unsafe {
+            let sample_type = SampleType::CpuSamples;
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))?;
+
+            let locations = vec![Location {
+                function: Function {
+                    name: "main".into(),
+                    system_name: "main".into(),
+                    filename: "index.php".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }];
+            let values = vec![1];
+            let sample = Sample {
+                locations: Slice::from(&locations),
+                values: Slice::from(&values),
+                labels: Slice::empty(),
+            };
+
+            Result::from(ddog_prof_Profile_add(&mut profile, sample, None))?;
+
+            let mut encoded = Handle::empty();
+            let status = ddog_prof_Profile_serialize2(&mut encoded, &mut profile, None, None);
+            let status_result: std::result::Result<(), _> = status.into();
+            assert!(status_result.is_ok());
+
+            let bytes = ddog_prof_EncodedProfile_bytes(&mut encoded).unwrap();
+            assert!(!bytes.as_slice().is_empty());
+
+            ddog_prof_EncodedProfile_drop(&mut encoded);
             ddog_prof_Profile_drop(&mut profile);
             Ok(())
         }

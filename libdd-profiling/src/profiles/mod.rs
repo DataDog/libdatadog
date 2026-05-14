@@ -4,7 +4,9 @@
 pub mod collections;
 mod compressor;
 pub mod datatypes;
+mod fallible_buf_writer;
 mod fallible_string_writer;
 
 pub use compressor::*;
+pub(crate) use fallible_buf_writer::*;
 pub use fallible_string_writer::*;

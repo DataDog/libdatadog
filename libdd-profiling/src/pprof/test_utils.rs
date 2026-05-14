@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use libdd_profiling_protobuf::prost_impls::{Profile, Sample};
+use std::time::{Duration, SystemTime};
 
 fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
     use prost::Message;
@@ -25,7 +26,25 @@ fn deserialize_compressed_pprof(encoded: &[u8]) -> anyhow::Result<Profile> {
 }
 
 pub fn roundtrip_to_pprof(profile: crate::internal::Profile) -> anyhow::Result<Profile> {
-    let encoded = profile.serialize_into_compressed_pprof(None, None)?;
+    roundtrip_to_pprof_with_times(profile, None, None)
+}
+
+pub fn roundtrip_to_pprof_with_times(
+    profile: crate::internal::Profile,
+    end_time: Option<SystemTime>,
+    duration: Option<Duration>,
+) -> anyhow::Result<Profile> {
+    let encoded = profile.serialize_into_compressed_pprof(end_time, duration)?;
+    deserialize_compressed_pprof(&encoded.buffer)
+}
+
+pub fn roundtrip_to_pprof2(
+    mut profile: crate::internal::Profile,
+    start_time: Option<SystemTime>,
+    end_time: Option<SystemTime>,
+    duration: Option<Duration>,
+) -> anyhow::Result<Profile> {
+    let encoded = profile.serialize_into_compressed_pprof2(start_time, end_time, duration)?;
     deserialize_compressed_pprof(&encoded.buffer)
 }
 
