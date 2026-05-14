@@ -19,8 +19,6 @@ bench = false
 default = []
 # Regenerate src/healthplatform.rs from src/pb/*.proto. Off by default; CI builds use checked-in output.
 generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]
-# Expose the decoding helper module (prost::Message::decode wrappers).
-decode = []
 # Build the evp_proxy example. Pulls in std + HTTP stack.
 example-client = ["dep:reqwest", "dep:tokio", "dep:anyhow", "dep:serde_json"]
 
@@ -29,8 +27,8 @@ example-client = ["dep:reqwest", "dep:tokio", "dep:anyhow", "dep:serde_json"]
 prost = { version = "0.14.3", default-features = false, features = ["derive"] }
 prost-types = { version = "0.14.3", default-features = false }
 
-# Example-only deps -- gated.
-reqwest = { version = "0.13.2", default-features = false, features = ["rustls"], optional = true }
+# Example-only deps -- gated. The example POSTs to a localhost trace-agent over plain HTTP, no TLS needed.
+reqwest = { version = "0.13.2", default-features = false, optional = true }
 tokio = { version = "1.43", features = ["macros", "rt-multi-thread"], optional = true }
 anyhow = { version = "1.0", optional = true }
 serde_json = { version = "1.0", optional = true }
@@ -46,4 +44,4 @@ prost-types = "0.14.3"
 
 [[example]]
 name = "evp_proxy_send"
-required-features = ["example-client", "decode"]
+required-features = ["example-client"]

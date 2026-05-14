@@ -33,6 +33,10 @@ const DEFAULT_TRACE_AGENT_URL: &str = "http://localhost:8136";
 const DEFAULT_EVP_PROXY_PATH: &str = "/evp_proxy/v4/api/v2/agenthealth";
 const DEFAULT_EVP_PROXY_SUBDOMAIN: &str = "agenthealth-intake";
 
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
 fn now_rfc3339() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -45,41 +49,22 @@ fn now_rfc3339() -> String {
     let mm = sod / 60;
     let ss = sod % 60;
     let mut year = 1970i64;
-    loop {
-        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-        let yd = if leap { 366 } else { 365 };
-        if days < yd {
-            break;
-        }
-        days -= yd;
+    while days >= if is_leap_year(year) { 366 } else { 365 } {
+        days -= if is_leap_year(year) { 366 } else { 365 };
         year += 1;
     }
-    let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
-    let mdays = [
-        31,
-        if leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
+    let feb = if is_leap_year(year) { 29 } else { 28 };
+    let mdays = [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut month = 0usize;
     while month < 12 && days >= mdays[month] {
         days -= mdays[month];
         month += 1;
     }
-    let day = days + 1;
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
         year,
         month + 1,
-        day,
+        days + 1,
         hh,
         mm,
         ss
@@ -151,98 +136,68 @@ fn sample_report() -> HealthReport {
     }
 }
 
+// Mirror Go's `encoding/json` + `omitempty`: empty strings, empty slices, and
+// None options are elided from the output.
+fn put_str(m: &mut Map<String, Value>, key: &str, s: &str) {
+    if !s.is_empty() {
+        m.insert(key.into(), Value::String(s.into()));
+    }
+}
+
+fn put_opt_str(m: &mut Map<String, Value>, key: &str, s: &Option<String>) {
+    if let Some(v) = s {
+        m.insert(key.into(), Value::String(v.clone()));
+    }
+}
+
+fn put_str_vec(m: &mut Map<String, Value>, key: &str, v: &[String]) {
+    if !v.is_empty() {
+        m.insert(
+            key.into(),
+            Value::Array(v.iter().cloned().map(Value::String).collect()),
+        );
+    }
+}
+
 /// Serialise a `HealthReport` to JSON with snake_case keys, matching the agent
-/// forwarder (`encoding/json` on protoc-gen-go structs). Empty/None fields are
-/// omitted to mirror Go's `omitempty` behaviour.
+/// forwarder (`encoding/json` on protoc-gen-go structs).
 fn health_report_to_json(report: &HealthReport) -> Value {
-    let mut obj = Map::new();
-    if !report.schema_version.is_empty() {
-        obj.insert(
-            "schema_version".into(),
-            Value::String(report.schema_version.clone()),
-        );
-    }
-    if !report.event_type.is_empty() {
-        obj.insert(
-            "event_type".into(),
-            Value::String(report.event_type.clone()),
-        );
-    }
-    if !report.emitted_at.is_empty() {
-        obj.insert(
-            "emitted_at".into(),
-            Value::String(report.emitted_at.clone()),
-        );
-    }
+    let mut o = Map::new();
+    put_str(&mut o, "schema_version", &report.schema_version);
+    put_str(&mut o, "event_type", &report.event_type);
+    put_str(&mut o, "emitted_at", &report.emitted_at);
     if let Some(host) = &report.host {
         let mut h = Map::new();
-        if !host.hostname.is_empty() {
-            h.insert("hostname".into(), Value::String(host.hostname.clone()));
-        }
-        if let Some(v) = &host.agent_version {
-            h.insert("agent_version".into(), Value::String(v.clone()));
-        }
-        if !host.par_ids.is_empty() {
-            h.insert(
-                "par_ids".into(),
-                Value::Array(host.par_ids.iter().cloned().map(Value::String).collect()),
-            );
-        }
-        obj.insert("host".into(), Value::Object(h));
+        put_str(&mut h, "hostname", &host.hostname);
+        put_opt_str(&mut h, "agent_version", &host.agent_version);
+        put_str_vec(&mut h, "par_ids", &host.par_ids);
+        o.insert("host".into(), Value::Object(h));
     }
     if !report.issues.is_empty() {
         let mut m = Map::new();
         for (k, issue) in &report.issues {
             m.insert(k.clone(), issue_to_json(issue));
         }
-        obj.insert("issues".into(), Value::Object(m));
+        o.insert("issues".into(), Value::Object(m));
     }
-    if !report.service.is_empty() {
-        obj.insert("service".into(), Value::String(report.service.clone()));
-    }
-    Value::Object(obj)
+    put_str(&mut o, "service", &report.service);
+    Value::Object(o)
 }
 
 fn issue_to_json(issue: &Issue) -> Value {
     let mut o = Map::new();
-    if !issue.id.is_empty() {
-        o.insert("id".into(), Value::String(issue.id.clone()));
-    }
-    if !issue.issue_name.is_empty() {
-        o.insert("issue_name".into(), Value::String(issue.issue_name.clone()));
-    }
-    if !issue.title.is_empty() {
-        o.insert("title".into(), Value::String(issue.title.clone()));
-    }
-    if !issue.description.is_empty() {
-        o.insert(
-            "description".into(),
-            Value::String(issue.description.clone()),
-        );
-    }
-    if !issue.category.is_empty() {
-        o.insert("category".into(), Value::String(issue.category.clone()));
-    }
-    if !issue.location.is_empty() {
-        o.insert("location".into(), Value::String(issue.location.clone()));
-    }
-    if !issue.severity.is_empty() {
-        o.insert("severity".into(), Value::String(issue.severity.clone()));
-    }
-    if !issue.detected_at.is_empty() {
-        o.insert(
-            "detected_at".into(),
-            Value::String(issue.detected_at.clone()),
-        );
-    }
-    if !issue.source.is_empty() {
-        o.insert("source".into(), Value::String(issue.source.clone()));
-    }
+    put_str(&mut o, "id", &issue.id);
+    put_str(&mut o, "issue_name", &issue.issue_name);
+    put_str(&mut o, "title", &issue.title);
+    put_str(&mut o, "description", &issue.description);
+    put_str(&mut o, "category", &issue.category);
+    put_str(&mut o, "location", &issue.location);
+    put_str(&mut o, "severity", &issue.severity);
+    put_str(&mut o, "detected_at", &issue.detected_at);
+    put_str(&mut o, "source", &issue.source);
     if let Some(rem) = &issue.remediation {
         let mut r = Map::new();
-        if !rem.summary.is_empty() {
-            r.insert("summary".into(), Value::String(rem.summary.clone()));
-        }
+        put_str(&mut r, "summary", &rem.summary);
         if !rem.steps.is_empty() {
             let steps: Vec<Value> = rem
                 .steps
@@ -253,47 +208,25 @@ fn issue_to_json(issue: &Issue) -> Value {
         }
         if let Some(script) = &rem.script {
             let mut s = Map::new();
-            if !script.language.is_empty() {
-                s.insert("language".into(), Value::String(script.language.clone()));
-            }
-            if !script.language_version.is_empty() {
-                s.insert(
-                    "language_version".into(),
-                    Value::String(script.language_version.clone()),
-                );
-            }
-            if !script.filename.is_empty() {
-                s.insert("filename".into(), Value::String(script.filename.clone()));
-            }
+            put_str(&mut s, "language", &script.language);
+            put_str(&mut s, "language_version", &script.language_version);
+            put_str(&mut s, "filename", &script.filename);
             if script.requires_root {
                 s.insert("requires_root".into(), Value::Bool(true));
             }
-            if !script.content.is_empty() {
-                s.insert("content".into(), Value::String(script.content.clone()));
-            }
+            put_str(&mut s, "content", &script.content);
             r.insert("script".into(), Value::Object(s));
         }
         o.insert("remediation".into(), Value::Object(r));
     }
-    if !issue.tags.is_empty() {
-        o.insert(
-            "tags".into(),
-            Value::Array(issue.tags.iter().cloned().map(Value::String).collect()),
-        );
-    }
+    put_str_vec(&mut o, "tags", &issue.tags);
     if let Some(pi) = &issue.persisted_issue {
         let mut p = Map::new();
         // protoc-gen-go serialises proto enums as their integer value by default.
         p.insert("state".into(), Value::Number(pi.state.into()));
-        if !pi.first_seen.is_empty() {
-            p.insert("first_seen".into(), Value::String(pi.first_seen.clone()));
-        }
-        if !pi.last_seen.is_empty() {
-            p.insert("last_seen".into(), Value::String(pi.last_seen.clone()));
-        }
-        if let Some(v) = &pi.resolved_at {
-            p.insert("resolved_at".into(), Value::String(v.clone()));
-        }
+        put_str(&mut p, "first_seen", &pi.first_seen);
+        put_str(&mut p, "last_seen", &pi.last_seen);
+        put_opt_str(&mut p, "resolved_at", &pi.resolved_at);
         o.insert("persisted_issue".into(), Value::Object(p));
     }
     Value::Object(o)

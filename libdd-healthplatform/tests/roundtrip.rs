@@ -1,13 +1,12 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_healthplatform::encode::encode_health_report;
-use libdd_healthplatform::prost::Message;
-use libdd_healthplatform::prost_types::value::Kind;
-use libdd_healthplatform::prost_types::{Struct, Value};
 use libdd_healthplatform::{
     HealthReport, HostInfo, Issue, IssueState, PersistedIssue, Remediation, RemediationStep, Script,
 };
+use prost::Message;
+use prost_types::value::Kind;
+use prost_types::{Struct, Value};
 use std::collections::BTreeMap;
 
 fn populated_report(state: IssueState) -> HealthReport {
@@ -92,7 +91,7 @@ fn populated_report(state: IssueState) -> HealthReport {
 #[test]
 fn populated_report_roundtrips() {
     let report = populated_report(IssueState::Ongoing);
-    let bytes = encode_health_report(&report);
+    let bytes = report.encode_to_vec();
     assert!(!bytes.is_empty(), "encoded report should not be empty");
 
     let decoded = HealthReport::decode(bytes.as_slice()).expect("decode succeeds");
@@ -102,7 +101,7 @@ fn populated_report_roundtrips() {
 #[test]
 fn empty_report_roundtrips_to_default() {
     let report = HealthReport::default();
-    let bytes = encode_health_report(&report);
+    let bytes = report.encode_to_vec();
     assert!(
         bytes.is_empty(),
         "default report should encode to zero bytes"
@@ -121,7 +120,7 @@ fn all_issue_states_roundtrip() {
         IssueState::Resolved,
     ] {
         let report = populated_report(state);
-        let bytes = encode_health_report(&report);
+        let bytes = report.encode_to_vec();
         let decoded = HealthReport::decode(bytes.as_slice()).expect("decode succeeds");
 
         let persisted = decoded
