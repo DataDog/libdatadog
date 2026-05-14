@@ -1,0 +1,47 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-healthplatform"
+version = "0.1.0"
+description = "no_std-first Rust types for Datadog's agent-payload healthplatform.proto"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-healthplatform"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-healthplatform"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+bench = false
+
+[features]
+default = []
+# Regenerate src/healthplatform.rs from src/pb/*.proto. Off by default; CI builds use checked-in output.
+generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]
+# Build the evp_proxy example. Pulls in std + HTTP stack.
+example-client = ["dep:reqwest", "dep:tokio", "dep:anyhow", "dep:serde_json"]
+
+[dependencies]
+# default-features = false drops the std feature; prost-generated code only needs alloc + derive.
+prost = { version = "0.14.3", default-features = false, features = ["derive"] }
+prost-types = { version = "0.14.3", default-features = false }
+
+# Example-only deps -- gated. The example POSTs to a localhost trace-agent over plain HTTP, no TLS needed.
+reqwest = { version = "0.13.2", default-features = false, optional = true }
+tokio = { version = "1.43", features = ["macros", "rt-multi-thread"], optional = true }
+anyhow = { version = "1.0", optional = true }
+serde_json = { version = "1.0", optional = true }
+
+[build-dependencies]
+prost-build = { version = "0.14.3", optional = true }
+protoc-bin-vendored = { version = "3.2", optional = true }
+
+[dev-dependencies]
+# std + prost-with-std for round-trip tests.
+prost = "0.14.3"
+prost-types = "0.14.3"
+
+[[example]]
+name = "evp_proxy_send"
+required-features = ["example-client"]
