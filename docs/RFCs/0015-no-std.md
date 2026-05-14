@@ -24,7 +24,7 @@ Concretely, that means:
 - For **existing crates**, `no_std` support is added opportunistically: whenever a crate is touched substantially, or whenever a downstream consumer asks, evaluate whether the migration is cheap. If it is — and for many of our crates it will be — do it.
 - For **signal-handler-adjacent code paths** (crashtracker, profiling sample paths, any future async-signal-safe component), `no_std` is the strongly preferred default *for correctness reasons*, not just ergonomics. The compiler refusing to let you call `std::sync::Mutex` from a signal handler is exactly the property we want.
 
-This is opportunistic in the sense that we are not going to stop the world and rewrite the workspace. But dictated by needs of products like profiling, crashtracking or auto_inject, we will attempt to make parts of libdatadog compatible with the constraints of the environment
+This is opportunistic in the sense that we are not going to stop the world and rewrite the workspace. But dictated by needs of products like profiling, crashtracking or auto_inject, we will attempt to make parts of libdatadog compatible with the constraints of the environment.
 
 ## Crate conventions
 
