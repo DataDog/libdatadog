@@ -19,21 +19,40 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           fetch-depth: 0
-          # Use PR head so git diff origin/main...HEAD matches commits on the proposal branch (not the merge commit).
+          # Checkout PR head (not the synthetic merge commit) so version comparison matches the proposal branch.
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0
 
-      - name: Fetch main for three-dot diff
-        run: git fetch origin main
+      # origin/main is needed for merge-base on push; PR base SHA must be fetched for git show.
+      - name: Fetch refs for version comparison
+        run: |
+          git fetch origin main
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${{ github.event.pull_request.base.sha }}"
+          fi
 
-      # Every workspace crate: compare effective [package] version at origin/main vs HEAD (see script).
+      # Compare [package] versions between PR base and head (or merge-base(main,HEAD) vs push on direct push).
       # Dependency-only manifest edits are ignored; excludes match the old cargo package --exclude list.
-      - name: Package crates changed vs main
+      - name: Package crates with version bumps vs comparison base
         id: package-crates
         run: |
           set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            GIT_VERSION_BASE="${{ github.event.pull_request.base.sha }}"
+            export GIT_VERSION_BASE
+            GIT_VERSION_HEAD="${{ github.event.pull_request.head.sha }}"
+            export GIT_VERSION_HEAD
+          else
+            # Direct push: compare from fork point with main, not origin/main's current tip (main may have advanced).
+            GIT_VERSION_BASE="$(git merge-base origin/main HEAD)"
+            export GIT_VERSION_BASE
+            GIT_VERSION_HEAD="${GITHUB_SHA}"
+            export GIT_VERSION_HEAD
+          fi
+          
+          echo "Comparing Cargo.toml package versions: GIT_VERSION_BASE=${GIT_VERSION_BASE} GIT_VERSION_HEAD=${GIT_VERSION_HEAD}"
           mapfile -t PACKAGES < <(./scripts/crates-to-package.sh)
           echo "Packages to run cargo package on (version bump only):"
           printf '%s\n' "${PACKAGES[@]}"

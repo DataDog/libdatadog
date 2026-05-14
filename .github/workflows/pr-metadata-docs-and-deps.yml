@@ -26,7 +26,7 @@ jobs:
       with:
         fetch-depth: 0  # Need full history for git diff
     - id: changed-crates
-      uses: ./.github/actions/changed-crates
+      uses: ./.github/actions/crates-reporter
 
   # Check cargo metadata for crates that are not flagged as publish = false
   cargo-metadata:

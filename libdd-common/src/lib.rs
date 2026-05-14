@@ -10,11 +10,10 @@ use anyhow::Context;
 use http::uri;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
-pub mod capabilities;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
@@ -22,8 +21,11 @@ pub mod connector;
 #[cfg(feature = "reqwest")]
 pub mod dump_server;
 pub mod entity_id;
+pub mod regex_engine;
 #[macro_use]
 pub mod cstr;
+#[cfg(feature = "bench-utils")]
+pub mod bench_utils;
 pub mod config;
 pub mod error;
 pub mod http_common;
@@ -88,6 +90,51 @@ impl<T> MutexExt<T> for Mutex<T> {
     }
 }
 
+/// Extension trait for `RwLock` to provide methods that acquire read/write locks, panicking if
+/// the lock is poisoned.
+///
+/// Mirrors [`MutexExt`] for `RwLock` so callers avoid `#[allow(clippy::unwrap_used)]` at each
+/// lock site.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::RwLockExt;
+/// use std::sync::{Arc, RwLock};
+///
+/// let data = Arc::new(RwLock::new(5));
+/// let data_clone = Arc::clone(&data);
+///
+/// std::thread::spawn(move || {
+///     let mut num = data_clone.write_or_panic();
+///     *num += 1;
+/// })
+/// .join()
+/// .expect("Thread panicked");
+///
+/// assert_eq!(*data.read_or_panic(), 6);
+/// ```
+pub trait RwLockExt<T> {
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T>;
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T>;
+}
+
+impl<T> RwLockExt<T> for RwLock<T> {
+    #[inline(always)]
+    #[track_caller]
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.read().unwrap()
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.write().unwrap()
+    }
+}
+
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use http::{header::HeaderName, HeaderValue};
@@ -113,8 +160,6 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use http_common::DefaultHttpClient;
 #[cfg(not(target_arch = "wasm32"))]
 pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
 #[cfg(not(target_arch = "wasm32"))]

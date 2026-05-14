@@ -23,7 +23,9 @@ impl Display for CollectionSource {
 
 #[derive(Debug)]
 pub enum Reference {
-    IteratorVariable,
+    IteratorVariable, // @it — current iteration value
+    IteratorKey,      // @key — current iteration key
+    IteratorValue,    // @value — current iteration value
     Base(String),
     Index(Box<(CollectionSource, Value)>), // i.e. foo[bar]
     Nested(Box<(Reference, Value)>),       // i.e. foo.bar
@@ -33,6 +35,8 @@ impl Display for Reference {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Reference::IteratorVariable => f.write_str("@it"),
+            Reference::IteratorKey => f.write_str("@key"),
+            Reference::IteratorValue => f.write_str("@value"),
             Reference::Base(s) => s.fmt(f),
             Reference::Index(b) => {
                 let (source, index) = &**b;

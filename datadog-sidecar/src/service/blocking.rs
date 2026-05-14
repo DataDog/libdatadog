@@ -3,7 +3,7 @@
 
 use super::{
     DynamicInstrumentationConfigState, InstanceId, QueueId, SerializedTracerHeaderTags,
-    SessionConfig, SidecarAction,
+    SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use crate::service::sender::SidecarSender;
 use crate::service::sidecar_interface::SidecarInterfaceChannel;
@@ -419,6 +419,17 @@ pub fn set_test_session_token(transport: &mut SidecarTransport, token: String) -
     Ok(())
 }
 
+/// IPC fallback: send a span directly to the sidecar's SHM concentrator for (env, version).
+pub fn add_span_to_concentrator(
+    transport: &mut SidecarTransport,
+    env: String,
+    version: String,
+    span: datadog_ipc::shm_stats::OwnedShmSpanInput,
+) -> io::Result<()> {
+    lock_sender(transport)?.add_span_to_concentrator(env, version, span);
+    Ok(())
+}
+
 /// Dumps the current state of the service.
 pub fn dump(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.dump().map_err(|e| io::Error::other(e.to_string())))
@@ -429,9 +440,9 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
     transport.with_retry(|s| s.stats().map_err(|e| io::Error::other(e.to_string())))
 }
 
-/// Flushes the outstanding traces.
-pub fn flush_traces(transport: &mut SidecarTransport) -> io::Result<()> {
-    transport.with_retry(|s| s.flush_traces())
+/// Flushes traces/stats and/or telemetry, as specified by options.
+pub fn flush(transport: &mut SidecarTransport, options: SidecarFlushOptions) -> io::Result<()> {
+    transport.with_retry(|s| s.flush(options))
 }
 
 /// Sends a ping to the service.

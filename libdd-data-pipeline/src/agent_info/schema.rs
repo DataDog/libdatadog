@@ -35,8 +35,25 @@ pub struct AgentInfoStruct {
     pub peer_tags: Option<Vec<String>>,
     /// List of span kinds eligible for stats computation
     pub span_kinds_stats_computed: Option<Vec<String>>,
+    /// Obfuscation version supported by the agent for client-side stats
+    pub obfuscation_version: Option<u32>,
     /// Container tags hash from HTTP response header
     pub container_tags_hash: Option<String>,
+    /// Exact-match tag filters applied before stats computation (root span only).
+    pub filter_tags: Option<FilterTagsConfig>,
+    /// Regex-match tag filters applied before stats computation (root span only).
+    pub filter_tags_regex: Option<FilterTagsConfig>,
+    /// Regex patterns for root-span resource names; matching traces are excluded from stats.
+    pub ignore_resources: Option<Vec<String>>,
+}
+
+/// Require/reject lists for tag-based trace filters exposed by the agent /info endpoint.
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+pub struct FilterTagsConfig {
+    /// All listed filters must match at least one root-span tag for the trace to be accepted.
+    pub require: Option<Vec<String>>,
+    /// If any listed filter matches a root-span tag the trace is rejected.
+    pub reject: Option<Vec<String>>,
 }
 
 #[allow(missing_docs)]
@@ -54,15 +71,19 @@ pub struct Config {
     pub max_memory: Option<f64>,
     pub max_cpu: Option<f64>,
     pub analyzed_spans_by_service: Option<HashMap<String, HashMap<String, f64>>>,
+    pub obfuscation: Option<ObfuscationConfig>,
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct ObfuscationConfig {
     pub elastic_search: bool,
     pub mongo: bool,
     pub sql_exec_plan: bool,
     pub sql_exec_plan_normalize: bool,
+    #[cfg(feature = "stats-obfuscation")]
+    // Option because it might not exist with old agents
+    pub sql_obfuscation_mode: Option<libdd_trace_obfuscation::sql::SqlObfuscationMode>,
     pub http: HttpObfuscationConfig,
     pub remove_stack_traces: bool,
     pub redis: RedisObfuscationConfig,
@@ -70,21 +91,21 @@ pub struct ObfuscationConfig {
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct HttpObfuscationConfig {
     pub remove_query_string: bool,
     pub remove_path_digits: bool,
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct RedisObfuscationConfig {
     pub enabled: bool,
     pub remove_all_args: bool,
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct MemcachedObfuscationConfig {
     pub enabled: bool,
     pub keep_command: bool,

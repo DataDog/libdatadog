@@ -143,6 +143,7 @@ pub struct TelemetryWorker {
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
     next_action: Option<TelemetryActions>,
+    stopped: bool,
 }
 impl Debug for TelemetryWorker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -166,6 +167,16 @@ impl Worker for TelemetryWorker {
         if self.next_action.is_some() {
             // An action is already available and hasn't been executed
             return;
+        }
+        if self.stopped {
+            // Channel is closed and Stop has already been dispatched. Park forever to avoid
+            // a hot loop re-emitting Lifecycle::Stop on every iteration; the runtime will
+            // tear the worker down via the handle.
+            debug!(
+                worker.runtime_id = %self.runtime_id,
+                "Telemetry worker mailbox closed; parking until shutdown"
+            );
+            std::future::pending::<()>().await;
         }
         // Wait for the next action and store it
         let action = self.recv_next_action().await;
@@ -307,6 +318,7 @@ impl TelemetryWorker {
         action.unwrap_or_else(|| {
             // the worker handle no longer lives - we must remove restartable here to avoid leaks
             self.config.restartable = false;
+            self.stopped = true;
             TelemetryActions::Lifecycle(LifecycleAction::Stop)
         })
     }
@@ -377,13 +389,19 @@ impl TelemetryWorker {
                 }
                 self.data.metric_buckets.flush_aggregates();
 
-                let observability_events = self.build_observability_batch();
-                if let Err(e) = self
-                    .send_payload(&data::Payload::MessageBatch(observability_events))
-                    .await
-                {
-                    self.log_err(&e);
+                let batch = self.build_observability_batch();
+                if !batch.is_empty() {
+                    let payload = data::Payload::MessageBatch(batch);
+                    match self.send_payload(&payload).await {
+                        Ok(()) => {
+                            if self.config.restartable {
+                                self.payload_sent_success(&payload)
+                            }
+                        }
+                        Err(e) => self.log_err(&e),
+                    }
                 }
+
                 self.data.started = false;
                 if !self.config.restartable {
                     self.deadlines.clear_pending();
@@ -420,6 +438,11 @@ impl TelemetryWorker {
                     // flush data should be last to previously flushed metrics are sent
                     self.deadlines
                         .schedule_event(LifecycleAction::FlushData)
+                        .unwrap();
+
+                    #[allow(clippy::unwrap_used)]
+                    self.deadlines
+                        .schedule_event(LifecycleAction::ExtendedHeartbeat)
                         .unwrap();
                     self.data.started = true;
                 }
@@ -483,20 +506,18 @@ impl TelemetryWorker {
                 self.data.integrations.unflush_stored();
                 self.data.configurations.unflush_stored();
 
-                let app_started = data::Payload::AppStarted(self.build_app_started());
-                match self.send_payload(&app_started).await {
-                    Ok(()) => self.payload_sent_success(&app_started),
+                let extended_hb = data::Payload::AppExtendedHeartbeat(self.build_app_started());
+                match self.send_payload(&extended_hb).await {
+                    Ok(()) => self.payload_sent_success(&extended_hb),
                     Err(err) => self.log_err(&err),
                 }
+                // Only re-schedule self. Resetting `FlushData` here would replace its
+                // existing deadline with `now + heartbeat_interval`, starving FlushData
+                // when `extended_heartbeat_interval < heartbeat_interval` because each
+                // ExtendedHeartbeat firing pushes FlushData out before it can fire.
                 #[allow(clippy::unwrap_used)]
                 self.deadlines
-                    .schedule_events(
-                        &mut [
-                            LifecycleAction::FlushData,
-                            LifecycleAction::ExtendedHeartbeat,
-                        ]
-                        .into_iter(),
-                    )
+                    .schedule_event(LifecycleAction::ExtendedHeartbeat)
                     .unwrap();
             }
             Lifecycle(Stop) => {
@@ -664,6 +685,8 @@ impl TelemetryWorker {
     fn build_app_started(&mut self) -> data::AppStarted {
         data::AppStarted {
             configuration: self.data.configurations.unflushed().cloned().collect(),
+            dependencies: self.data.dependencies.unflushed().cloned().collect(),
+            integrations: self.data.integrations.unflushed().cloned().collect(),
         }
     }
 
@@ -671,6 +694,8 @@ impl TelemetryWorker {
         self.data
             .configurations
             .removed_flushed(p.configuration.len());
+        self.data.dependencies.removed_flushed(p.dependencies.len());
+        self.data.integrations.removed_flushed(p.integrations.len());
     }
 
     fn payload_sent_success(&mut self, payload: &data::Payload) {
@@ -770,13 +795,18 @@ impl TelemetryWorker {
             )
             .header(
                 http_client::header::LIBRARY_LANGUAGE,
-                // Note: passing by ref here just causes the clone to happen underneath
                 tel.application.language_name.clone(),
             )
             .header(
                 http_client::header::LIBRARY_VERSION,
                 tel.application.tracer_version.clone(),
             );
+        let req = http_client::add_instrumentation_session_headers(
+            req,
+            self.config.session_id.as_deref(),
+            self.config.parent_session_id.as_deref(),
+            self.config.root_session_id.as_deref(),
+        );
 
         let body = http_common::Body::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
@@ -1222,6 +1252,7 @@ impl TelemetryWorkerBuilder {
             ]),
             cancellation_token: token.clone(),
             next_action: None,
+            stopped: false,
         };
 
         (
@@ -1268,7 +1299,16 @@ impl TelemetryWorkerBuilder {
 
 #[cfg(test)]
 mod tests {
-    use crate::worker::TelemetryWorkerHandle;
+    use crate::data::Payload;
+    use crate::worker::http_client::header::{
+        DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
+    };
+    use crate::worker::{
+        LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
+        TelemetryWorkerFlavor, TelemetryWorkerHandle,
+    };
+    use libdd_common::{http_common, Endpoint};
+    use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
     fn is_sync<T: Sync>(_: T) {}
@@ -1279,6 +1319,249 @@ mod tests {
         let _ = |h: TelemetryWorkerHandle| is_send(h);
         #[allow(clippy::redundant_closure)]
         let _ = |h: TelemetryWorkerHandle| is_sync(h);
+    }
+
+    fn test_worker(
+        session_id: Option<String>,
+        root_session_id: Option<String>,
+        parent_session_id: Option<String>,
+    ) -> TelemetryWorker {
+        let mut b = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        b.config
+            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
+            .unwrap();
+        b.runtime_id = Some("rid".into());
+        b.config.session_id = session_id;
+        b.config.parent_session_id = parent_session_id;
+        b.config.root_session_id = root_session_id;
+        let rt = Runtime::new().unwrap();
+        b.build_worker(Some(rt.handle().clone())).1
+    }
+
+    #[test]
+    fn telemetry_http_includes_dd_session_id() {
+        let req = test_worker(Some("sess".into()), None, None)
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+    }
+
+    #[test]
+    fn telemetry_http_omits_root_session_id_when_same_as_session_id() {
+        let req = test_worker(
+            Some("sess-id".into()),
+            Some("sess-id".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess-id"
+        );
+        assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+        assert_eq!(
+            req.headers()
+                .get(DD_PARENT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "parent"
+        );
+    }
+
+    #[test]
+    fn telemetry_http_omits_parent_session_id_when_same_as_session_id() {
+        let req = test_worker(
+            Some("sess-id".into()),
+            Some("root".into()),
+            Some("sess-id".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess-id"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "root"
+        );
+        assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+    }
+
+    #[test]
+    fn telemetry_http_omits_session_family_without_valid_session_id() {
+        let assert_no_session_headers = |req: &http_common::HttpRequest| {
+            assert!(req.headers().get(DD_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
+            assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
+        };
+
+        let req = test_worker(None, Some("root".into()), Some("parent".into()))
+            .build_request(&Payload::AppHeartbeat(()))
+            .unwrap();
+        assert_no_session_headers(&req);
+
+        let req = test_worker(
+            Some(String::new()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_no_session_headers(&req);
+    }
+
+    #[test]
+    fn telemetry_http_includes_dd_session_root_and_parent_session_ids() {
+        let req = test_worker(
+            Some("sess".into()),
+            Some("root".into()),
+            Some("parent".into()),
+        )
+        .build_request(&Payload::AppHeartbeat(()))
+        .unwrap();
+        assert_eq!(
+            req.headers().get(DD_SESSION_ID).unwrap().to_str().unwrap(),
+            "sess"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_ROOT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "root"
+        );
+        assert_eq!(
+            req.headers()
+                .get(DD_PARENT_SESSION_ID)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "parent"
+        );
+    }
+
+    fn build_test_worker_with_flavor(flavor: TelemetryWorkerFlavor) -> TelemetryWorker {
+        let mut b = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        b.config
+            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
+            .unwrap();
+        b.runtime_id = Some("rid".into());
+        b.flavor = flavor;
+        b.build_worker(Some(tokio::runtime::Handle::current())).1
+    }
+
+    /// Every event with a delay must be scheduled on Start; otherwise it sits in
+    /// `delays` forever and its handler never fires. Walking `delays` (rather than
+    /// enumerating variants) guards against future periodic actions regressing.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in dispatch_action
+    async fn full_flavor_start_schedules_every_periodic_action() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let delays: Vec<LifecycleAction> =
+            worker.deadlines.delays.iter().map(|(_, k)| *k).collect();
+        let scheduled: Vec<LifecycleAction> =
+            worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
+
+        assert!(!delays.is_empty(), "scheduler should have periodic actions");
+        for ev in &delays {
+            assert!(
+                scheduled.contains(ev),
+                "{ev:?} has a delay but was not scheduled on Start; scheduled={scheduled:?}",
+            );
+        }
+    }
+
+    /// `MetricsLogs` flavor intentionally excludes lifecycle events. Negative guard
+    /// so any future change emitting them from this flavor has to update the test.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
+    async fn metrics_logs_flavor_start_does_not_schedule_extended_heartbeat() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::MetricsLogs);
+
+        let _ = worker
+            .dispatch_metrics_logs_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let scheduled: Vec<LifecycleAction> =
+            worker.deadlines.deadlines.iter().map(|(_, k)| *k).collect();
+
+        assert!(scheduled.contains(&LifecycleAction::FlushMetricAggr));
+        assert!(scheduled.contains(&LifecycleAction::FlushData));
+        assert!(
+            !scheduled.contains(&LifecycleAction::ExtendedHeartbeat),
+            "MetricsLogs should not schedule ExtendedHeartbeat; scheduled={scheduled:?}",
+        );
+    }
+
+    /// Regression: when `extended_heartbeat_interval < heartbeat_interval`, the
+    /// ExtendedHeartbeat handler must not reset FlushData's deadline. If it did, each
+    /// firing would push FlushData to `now + heartbeat_interval` and the next
+    /// (sooner) ExtendedHeartbeat would push it again — starving FlushData forever.
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)] // reqwest in dispatch_action
+    async fn extended_heartbeat_does_not_reset_flush_data() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        let flush_data_before = worker
+            .deadlines
+            .deadlines
+            .iter()
+            .find(|(_, k)| *k == LifecycleAction::FlushData)
+            .map(|(d, _)| *d)
+            .expect("FlushData scheduled on Start");
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(
+                LifecycleAction::ExtendedHeartbeat,
+            ))
+            .await;
+
+        let flush_data_after = worker
+            .deadlines
+            .deadlines
+            .iter()
+            .find(|(_, k)| *k == LifecycleAction::FlushData)
+            .map(|(d, _)| *d)
+            .expect("FlushData should still be scheduled after ExtendedHeartbeat fires");
+
+        assert_eq!(
+            flush_data_before, flush_data_after,
+            "ExtendedHeartbeat must not reset FlushData's deadline",
+        );
     }
 
     mod reset {
@@ -1506,5 +1789,88 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_channel_close_flushes_and_parks_via_shared_runtime() {
+        use httpmock::prelude::*;
+        use libdd_common::Endpoint;
+        use libdd_shared_runtime::SharedRuntime;
+        use std::time::Duration;
+
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST).path(TELEMETRY_PATH);
+            then.status(202).body("");
+        });
+
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(Endpoint::from_slice(&server.url("/")))
+            .unwrap();
+        builder.runtime_id = Some("rid".into());
+
+        let shared_runtime = SharedRuntime::new().expect("SharedRuntime::new");
+        let runtime_handle = shared_runtime
+            .block_on(async { tokio::runtime::Handle::current() })
+            .expect("runtime handle");
+        let (telemetry_handle, worker) = builder.build_worker(Some(runtime_handle));
+
+        let _worker_handle = shared_runtime
+            .spawn_worker(worker, false)
+            .expect("spawn_worker");
+
+        // Drive the worker into the started state so Stop has work to flush.
+        telemetry_handle.send_start().expect("send_start");
+
+        // Wait for the AppStarted batch so we know the worker reached started == true
+        // before we close the channel.
+        for _ in 0..50 {
+            if mock.calls() >= 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            mock.calls() >= 1,
+            "worker should POST at least once after Start"
+        );
+
+        // Close the mailbox by dropping the handle.
+        let hits_before_close = mock.calls();
+        drop(telemetry_handle);
+
+        // The worker must dispatch Lifecycle::Stop, which flushes a final batch, then park.
+        for _ in 0..50 {
+            if mock.calls() > hits_before_close {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            mock.calls() > hits_before_close,
+            "worker should flush a final batch after the channel is closed"
+        );
+
+        // Once parked, the worker must stop POSTing. Sample for a while and require the
+        // hit count to stabilise (proves no Stop-emit loop).
+        let stable_hits = mock.calls();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            mock.calls(),
+            stable_hits,
+            "worker must stop POSTing after parking; observed {} extra hits",
+            mock.calls().saturating_sub(stable_hits),
+        );
     }
 }

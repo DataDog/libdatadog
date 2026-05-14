@@ -4,38 +4,55 @@
 //! Native capability implementations for libdatadog.
 //!
 //! `NativeCapabilities` is the bundle struct that implements all capability
-//! traits using platform-native backends (hyper for HTTP, tokio for spawn,
+//! traits using platform-native backends (hyper for HTTP, tokio for sleep,
 //! etc.). Leaf crates (FFI, benchmarks) pin this type as the generic parameter.
 
 mod http;
+pub mod sleep;
 
 use core::future::Future;
+use std::time::Duration;
 
-pub use http::DefaultHttpClient;
-use libdd_capabilities::http::HttpError;
-pub use libdd_capabilities::HttpClientTrait;
-use libdd_capabilities::MaybeSend;
+pub use http::NativeHttpClient;
+use libdd_capabilities::{http::HttpError, MaybeSend};
+pub use libdd_capabilities::{HttpClientCapability, SleepCapability};
+pub use sleep::NativeSleepCapability;
 
 /// Bundle struct for native platform capabilities.
 ///
-/// Delegates to [`DefaultHttpClient`] for HTTP. As more capability traits are
-/// added (spawn, sleep, etc.), additional fields and impls are added here
-/// without changing the type identity — consumers see the same
-/// `NativeCapabilities` throughout.
+/// Delegates to [`NativeHttpClient`] for HTTP and [`NativeSleepCapability`] for
+/// sleep. Task spawning is handled internally by `SharedRuntime`.
 ///
 /// Individual capability traits keep minimal per-function bounds (e.g.
-/// functions that only need HTTP require just `H: HttpClientTrait`, not the
+/// functions that only need HTTP require just `H: HttpClientCapability`, not the
 /// full bundle) so that native callers like the sidecar can use
-/// `DefaultHttpClient` directly without pulling in this bundle.
+/// `NativeHttpClient` directly without pulling in this bundle.
 #[derive(Clone, Debug)]
 pub struct NativeCapabilities {
-    http: DefaultHttpClient,
+    http: NativeHttpClient,
+    sleep: NativeSleepCapability,
 }
 
-impl HttpClientTrait for NativeCapabilities {
+impl Default for NativeCapabilities {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NativeCapabilities {
+    pub fn new() -> Self {
+        Self {
+            http: NativeHttpClient::new_client(),
+            sleep: NativeSleepCapability,
+        }
+    }
+}
+
+impl HttpClientCapability for NativeCapabilities {
     fn new_client() -> Self {
         Self {
-            http: DefaultHttpClient::new_client(),
+            http: NativeHttpClient::new_client(),
+            sleep: NativeSleepCapability,
         }
     }
 
@@ -44,5 +61,18 @@ impl HttpClientTrait for NativeCapabilities {
         req: ::http::Request<bytes::Bytes>,
     ) -> impl Future<Output = Result<::http::Response<bytes::Bytes>, HttpError>> + MaybeSend {
         self.http.request(req)
+    }
+}
+
+impl SleepCapability for NativeCapabilities {
+    fn new() -> Self {
+        Self {
+            http: NativeHttpClient::new_client(),
+            sleep: NativeSleepCapability,
+        }
+    }
+
+    fn sleep(&self, duration: Duration) -> impl Future<Output = ()> + MaybeSend {
+        self.sleep.sleep(duration)
     }
 }

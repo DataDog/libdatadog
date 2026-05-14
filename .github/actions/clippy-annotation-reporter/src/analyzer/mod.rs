@@ -18,7 +18,6 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 mod annotation;
-mod crate_detection;
 mod git;
 
 /// Represents a clippy annotation in code

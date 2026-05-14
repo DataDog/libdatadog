@@ -24,17 +24,18 @@ use crate::trace_exporter::agent_response::{
 use crate::trace_exporter::error::{
     InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
 };
+use crate::trace_exporter::stats::StatsComputationConfig;
 use crate::{
     agent_info::{self, schema::AgentInfo},
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
@@ -53,6 +54,14 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
+
+/// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
+#[derive(Debug, Default, Clone)]
+pub struct TelemetryInstrumentationSessions {
+    pub session_id: Option<String>,
+    pub root_session_id: Option<String>,
+    pub parent_session_id: Option<String>,
+}
 
 /// TraceExporterInputFormat represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
@@ -199,27 +208,29 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
     }
 }
 
-/// `H` is the HTTP client implementation, see [`HttpClientTrait`]. Leaf crates
-/// pin it to a concrete type.
+/// `C` is the capabilities bundle (HTTP, sleep). Leaf crates
+/// pin it to a concrete type (`NativeCapabilities` or `WasmCapabilities`).
+/// Task spawning is handled internally by `SharedRuntime`.
 #[derive(Debug)]
-pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
+pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
+    serializer: TraceSerializer,
     shared_runtime: Arc<SharedRuntime>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
-    client_side_stats: ArcSwap<StatsComputationStatus>,
+    client_side_stats: StatsComputationConfig,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
-    #[cfg(feature = "telemetry")]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
     telemetry: Option<TelemetryClient>,
     health_metrics_enabled: bool,
-    client: H,
+    capabilities: C,
     #[cfg(not(target_arch = "wasm32"))]
     workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
@@ -227,7 +238,7 @@ pub struct TraceExporter<H: HttpClientTrait + MaybeSend + Sync + 'static> {
     otlp_config: Option<OtlpTraceConfig>,
 }
 
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
@@ -241,6 +252,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// # Errors
     /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
     /// all workers finished.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         let runtime = self.shared_runtime.clone();
         if let Some(timeout) = timeout {
@@ -268,7 +280,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
 
             // Extract the stats handle before moving other fields.
             if let StatsComputationStatus::Enabled { worker_handle, .. } =
-                &**self.client_side_stats.load()
+                &**self.client_side_stats.status.load()
             {
                 let handle = worker_handle.clone();
                 join_set.spawn(async move { handle.stop().await });
@@ -304,6 +316,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
@@ -369,7 +382,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
             if self.has_agent_info_state_changed(&agent_info) {
-                match &**self.client_side_stats.load() {
+                match &**self.client_side_stats.status.load() {
                     StatsComputationStatus::Disabled => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
                         let ctx = stats::StatsContext {
@@ -380,8 +393,8 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
                         stats::handle_stats_disabled_by_agent(
                             &ctx,
                             &agent_info,
+                            self.capabilities.clone(),
                             &self.client_side_stats,
-                            self.client.clone(),
                         );
                     }
                     StatsComputationStatus::Enabled {
@@ -428,7 +441,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// Since agent_info can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
     #[cfg(feature = "test-utils")]
-    pub fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
+    pub async fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
         loop {
             if std::time::Instant::now().duration_since(start) > timeout {
@@ -437,7 +450,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             if agent_info::get_agent_info().is_some() {
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(10));
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
@@ -465,6 +478,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
@@ -512,7 +526,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
         send_otlp_traces_http(
-            &self.client,
+            &self.capabilities,
             config,
             self.endpoint.test_token.as_deref(),
             json_body,
@@ -522,6 +536,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     }
 
     /// Deserializes, processes and sends trace chunks to the agent
+    #[cfg(not(target_arch = "wasm32"))]
     fn send_deser(
         &self,
         data: &[u8],
@@ -559,15 +574,22 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         mp_payload: Vec<u8>,
         headers: HeaderMap,
         chunks: usize,
-        chunks_dropped_p0: usize,
+        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))] chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
 
         // Send traces to the agent
-        let result = send_with_retry(&self.client, endpoint, mp_payload, &headers, &strategy).await;
+        let result = send_with_retry(
+            &self.capabilities,
+            endpoint,
+            mp_payload,
+            &headers,
+            &strategy,
+        )
+        .await;
 
-        #[cfg(feature = "telemetry")]
+        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
@@ -593,7 +615,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
         let dropped_p0_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
-            &self.client_side_stats,
+            &self.client_side_stats.status,
             self.client_computed_top_level,
         );
 
@@ -608,11 +630,11 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
             return self.send_otlp_traces_inner(traces, config).await;
         }
 
-        let serializer = TraceSerializer::new(
-            self.output_format,
+        let prepared = match self.serializer.prepare_traces_payload(
+            traces,
+            header_tags,
             self.agent_payload_response_version.as_ref(),
-        );
-        let prepared = match serializer.prepare_traces_payload(traces, header_tags) {
+        ) {
             Ok(p) => p,
             Err(e) => {
                 error!("Error serializing traces: {e}");
@@ -830,7 +852,7 @@ impl<H: HttpClientTrait + MaybeSend + Sync + 'static> TraceExporter<H> {
     #[cfg(not(target_arch = "wasm32"))]
     /// Test only function to check if the stats computation is active and the worker is running
     pub fn is_stats_worker_active(&self) -> bool {
-        stats::is_stats_worker_active(&self.client_side_stats)
+        stats::is_stats_worker_active(&self.client_side_stats.status)
     }
 }
 
@@ -2049,5 +2071,123 @@ mod single_threaded_tests {
             .unwrap_err(); // The shutdown should timeout
 
         mock_traces.assert();
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    fn build_obfuscation_test_exporter(
+        url: String,
+        runtime: Arc<SharedRuntime>,
+        opt_in: bool,
+    ) -> TraceExporter<NativeCapabilities> {
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        builder
+            .set_url(&url)
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime)
+            .enable_stats(Duration::from_secs(10));
+        if opt_in {
+            builder.enable_client_side_stats_obfuscation();
+        }
+        builder.build::<NativeCapabilities>().unwrap()
+    }
+
+    #[cfg(feature = "stats-obfuscation")]
+    fn run_obfuscation_test(opt_in: bool, agent_obfuscation_version: Option<u32>) -> bool {
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+
+        let _mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.4/traces");
+            then.status(200).body("");
+        });
+
+        let _mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats");
+            then.status(200).body("");
+        });
+
+        let info_body = match agent_obfuscation_version {
+            Some(v) => format!(
+                r#"{{"version":"1","client_drop_p0s":true,"obfuscation_version":{v},"endpoints":["/v0.4/traces","/v0.6/stats"]}}"#
+            ),
+            None => r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#.to_string(),
+        };
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(info_body);
+        });
+
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
+        let exporter = build_obfuscation_test_exporter(server.url("/"), runtime.clone(), opt_in);
+
+        while agent_info::get_agent_info().is_none() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let trace_chunk = vec![SpanBytes {
+            duration: 10,
+            ..Default::default()
+        }];
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let _ = exporter.send(data.as_ref());
+
+        let start = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let result = exporter.client_side_stats.obfuscation_config.load().enabled;
+        let _ = runtime.shutdown(None);
+        result
+    }
+
+    /// Runs the three opt-in × agent-support cases sequentially in a single test
+    /// to avoid races on the process-global agent info cache.
+    #[cfg(feature = "stats-obfuscation")]
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_client_side_stats_obfuscation_opt_in() {
+        let current_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION;
+        let prev_obf_version = crate::trace_exporter::stats::SUPPORTED_OBFUSCATION_VERSION - 1;
+        // Opt-in OFF, agent supports → must stay disabled.
+        assert!(
+            !run_obfuscation_test(false, Some(current_obf_version)),
+            "obfuscation must stay disabled when builder opt-in is absent"
+        );
+        // Opt-in ON, agent does not advertise support → disabled.
+        assert!(
+            !run_obfuscation_test(true, None),
+            "obfuscation must stay disabled when agent does not advertise support"
+        );
+
+        // Opt-in ON, agent obfuscation_version < tracer obfuscation_version -> disabled;
+        assert!(
+            !run_obfuscation_test(true, Some(prev_obf_version)),
+            "obfuscation must stay disabled when agent.obfuscation_version < tracer.obfuscation_version"
+        );
+
+        // Opt-in ON, agent supports → enabled.
+        assert!(
+            run_obfuscation_test(true, Some(current_obf_version)),
+            "obfuscation must activate when opted in and agent supports"
+        );
     }
 }

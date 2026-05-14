@@ -9,9 +9,8 @@ pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
 use bytes::Bytes;
 use http::HeaderMap;
-use libdd_capabilities::{HttpClientTrait, HttpError};
+use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
 use libdd_common::Endpoint;
-#[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -69,7 +68,7 @@ impl std::error::Error for SendWithRetryError {}
 ///
 /// ```rust, no_run
 /// # use libdd_common::Endpoint;
-/// # use libdd_capabilities::HttpClientTrait;
+/// # use libdd_capabilities::{HttpClientCapability, SleepCapability};
 /// # use libdd_trace_utils::send_with_retry::*;
 /// # async fn run() -> SendWithRetryResult {
 /// let payload: Vec<u8> = vec![0, 1, 2, 3];
@@ -83,19 +82,18 @@ impl std::error::Error for SendWithRetryError {}
 ///     http::HeaderValue::from_static("application/msgpack"),
 /// );
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
-/// let client = libdd_capabilities_impl::NativeCapabilities::new_client();
-/// send_with_retry(&client, &target, payload, &headers, &retry_strategy).await
+/// let capabilities = libdd_capabilities_impl::NativeCapabilities::new_client();
+/// send_with_retry(&capabilities, &target, payload, &headers, &retry_strategy).await
 /// # }
 /// ```
-pub async fn send_with_retry<H: HttpClientTrait>(
-    client: &H,
+pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
+    capabilities: &C,
     target: &Endpoint,
     payload: Vec<u8>,
     headers: &HeaderMap,
     retry_strategy: &RetryStrategy,
 ) -> SendWithRetryResult {
     let mut request_attempt = 0;
-    #[cfg(not(target_arch = "wasm32"))]
     let timeout = Duration::from_millis(target.timeout_ms);
 
     debug!(
@@ -130,10 +128,11 @@ pub async fn send_with_retry<H: HttpClientTrait>(
             }
         };
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let result = tokio::time::timeout(timeout, client.request(req)).await;
-        #[cfg(target_arch = "wasm32")]
-        let result: Result<Result<_, _>, std::convert::Infallible> = Ok(client.request(req).await);
+        let result = tokio::select! {
+            biased;
+            r = capabilities.request(req) => Ok(r),
+            _ = capabilities.sleep(timeout) => Err(()),
+        };
 
         match result {
             Ok(Ok(response)) => {
@@ -158,7 +157,7 @@ pub async fn send_with_retry<H: HttpClientTrait>(
                             remaining_retries = retry_strategy.max_retries() - request_attempt,
                             "Retrying after error status code"
                         );
-                        retry_strategy.delay(request_attempt).await;
+                        retry_strategy.delay(request_attempt, capabilities).await;
                         continue;
                     } else {
                         error!(
@@ -191,7 +190,7 @@ pub async fn send_with_retry<H: HttpClientTrait>(
                         remaining_retries = retry_strategy.max_retries() - request_attempt,
                         "Retrying after request error"
                     );
-                    retry_strategy.delay(request_attempt).await;
+                    retry_strategy.delay(request_attempt, capabilities).await;
                     continue;
                 } else {
                     let classified_error = match e {
@@ -223,7 +222,7 @@ pub async fn send_with_retry<H: HttpClientTrait>(
                         remaining_retries = retry_strategy.max_retries() - request_attempt,
                         "Retrying after timeout"
                     );
-                    retry_strategy.delay(request_attempt).await;
+                    retry_strategy.delay(request_attempt, capabilities).await;
                     continue;
                 } else {
                     error!(
@@ -242,7 +241,7 @@ mod tests {
     use super::*;
     use crate::test_utils::poll_for_mock_hit;
     use httpmock::MockServer;
-    use libdd_capabilities::HttpClientTrait;
+    use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
 
     #[cfg_attr(miri, ignore)]
@@ -273,11 +272,11 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(0, 2, RetryBackoffType::Constant, None);
-        let client = NativeCapabilities::new_client();
+        let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
+                &capabilities,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -322,11 +321,11 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(2, 250, RetryBackoffType::Constant, None);
-        let client = NativeCapabilities::new_client();
+        let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
+                &capabilities,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -371,11 +370,11 @@ mod tests {
             RetryBackoffType::Constant,
             None,
         );
-        let client = NativeCapabilities::new_client();
+        let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
+                &capabilities,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
@@ -420,11 +419,11 @@ mod tests {
         };
 
         let strategy = RetryStrategy::new(2, 10, RetryBackoffType::Constant, None);
-        let client = NativeCapabilities::new_client();
+        let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
             let result = send_with_retry(
-                &client,
+                &capabilities,
                 &target_endpoint,
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),

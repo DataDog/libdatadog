@@ -86,9 +86,9 @@ mod unix {
                 "receiver_symbols" => {
                     crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver
                 }
-                _ => crashtracker::StacktraceCollection::WithoutSymbols,
+                _ => crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
             },
-            Err(_) => crashtracker::StacktraceCollection::WithoutSymbols,
+            Err(_) => crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
         };
 
         // Ensure the receiver gets a timeout consistent with the collector's.

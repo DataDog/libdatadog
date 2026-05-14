@@ -22,6 +22,7 @@ constcat = "0.4.1"
 default = ["cbindgen", "catch_panic"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 catch_panic = []
+regex-lite = ["libdd-common-ffi/regex-lite"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

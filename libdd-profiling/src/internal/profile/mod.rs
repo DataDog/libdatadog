@@ -941,12 +941,12 @@ impl Profile {
             upscaling_rules: Default::default(),
         };
 
-        let _id = profile.intern("");
+        let _id = profile.try_intern("")?;
         debug_assert!(_id == StringId::ZERO);
 
-        profile.endpoints.local_root_span_id_label = profile.intern("local root span id");
-        profile.endpoints.endpoint_label = profile.intern("trace endpoint");
-        profile.timestamp_key = profile.intern("end_timestamp_ns");
+        profile.endpoints.local_root_span_id_label = profile.try_intern("local root span id")?;
+        profile.endpoints.endpoint_label = profile.try_intern("trace endpoint")?;
+        profile.timestamp_key = profile.try_intern("end_timestamp_ns")?;
 
         profile.observations = Observations::try_new(profile.sample_types.len())?;
         Ok(profile)

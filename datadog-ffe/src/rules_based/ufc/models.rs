@@ -1,9 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 
-use regex::Regex;
+use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
@@ -178,6 +178,10 @@ pub(crate) enum ConditionCheck {
     Null {
         expected_null: bool,
     },
+    SemverComparison {
+        operator: SemverComparisonOperator,
+        comparand: semver::Version,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -188,6 +192,16 @@ pub(crate) enum ComparisonOperator {
     Lt,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum SemverComparisonOperator {
+    Eq,
+    Neq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+}
+
 impl From<ComparisonOperator> for ConditionOperator {
     fn from(value: ComparisonOperator) -> ConditionOperator {
         match value {
@@ -195,6 +209,19 @@ impl From<ComparisonOperator> for ConditionOperator {
             ComparisonOperator::Gt => ConditionOperator::Gt,
             ComparisonOperator::Lte => ConditionOperator::Lte,
             ComparisonOperator::Lt => ConditionOperator::Lt,
+        }
+    }
+}
+
+impl From<SemverComparisonOperator> for ConditionOperator {
+    fn from(value: SemverComparisonOperator) -> ConditionOperator {
+        match value {
+            SemverComparisonOperator::Eq => ConditionOperator::SemverEq,
+            SemverComparisonOperator::Neq => ConditionOperator::SemverNeq,
+            SemverComparisonOperator::Lt => ConditionOperator::SemverLt,
+            SemverComparisonOperator::Lte => ConditionOperator::SemverLte,
+            SemverComparisonOperator::Gt => ConditionOperator::SemverGt,
+            SemverComparisonOperator::Gte => ConditionOperator::SemverGte,
         }
     }
 }
@@ -241,6 +268,15 @@ impl From<Condition> for ConditionWire {
             ConditionCheck::Null { expected_null } => {
                 (ConditionOperator::IsNull, expected_null.into())
             }
+            ConditionCheck::SemverComparison {
+                operator,
+                comparand,
+            } => (
+                operator.into(),
+                ConditionValue::Single(SingleConditionValue::String(Str::from(
+                    comparand.to_string().as_str(),
+                ))),
+            ),
         };
         ConditionWire {
             attribute: condition.attribute,
@@ -343,6 +379,43 @@ impl TryFrom<ConditionWire> for Condition {
                 };
                 ConditionCheck::Null { expected_null }
             }
+            ConditionOperator::SemverEq
+            | ConditionOperator::SemverNeq
+            | ConditionOperator::SemverLt
+            | ConditionOperator::SemverLte
+            | ConditionOperator::SemverGt
+            | ConditionOperator::SemverGte => {
+                let operator = match condition.operator {
+                    ConditionOperator::SemverEq => SemverComparisonOperator::Eq,
+                    ConditionOperator::SemverNeq => SemverComparisonOperator::Neq,
+                    ConditionOperator::SemverLt => SemverComparisonOperator::Lt,
+                    ConditionOperator::SemverLte => SemverComparisonOperator::Lte,
+                    ConditionOperator::SemverGt => SemverComparisonOperator::Gt,
+                    ConditionOperator::SemverGte => SemverComparisonOperator::Gte,
+                    _ => unreachable!(),
+                };
+                let semver_string = match condition.value.singleton() {
+                    Some(SingleConditionValue::String(s)) => s,
+                    _ => {
+                        log::warn!(
+                            "failed to parse condition: {:?} condition with non-string condition value",
+                            condition.operator
+                        );
+                        return Err(EvaluationError::ConfigurationParseError);
+                    }
+                };
+                let comparand = semver::Version::parse(&semver_string).map_err(|err| {
+                    log::warn!(
+                        "failed to parse condition: invalid semver {:?}: {err:?}",
+                        semver_string
+                    );
+                    EvaluationError::ConfigurationParseError
+                })?;
+                ConditionCheck::SemverComparison {
+                    operator,
+                    comparand,
+                }
+            }
         };
         Ok(Condition { attribute, check })
     }
@@ -376,6 +449,18 @@ pub(crate) enum ConditionOperator {
     /// Condition value must be a boolean. If it's `true`, this is a null check. If it's `false`,
     /// this is a not null check.
     IsNull,
+    /// Semantic version equal. Condition value must be a semver string.
+    SemverEq,
+    /// Semantic version not equal. Condition value must be a semver string.
+    SemverNeq,
+    /// Semantic version less than. Condition value must be a semver string.
+    SemverLt,
+    /// Semantic version less than or equal. Condition value must be a semver string.
+    SemverLte,
+    /// Semantic version greater than. Condition value must be a semver string.
+    SemverGt,
+    /// Semantic version greater than or equal. Condition value must be a semver string.
+    SemverGte,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -444,7 +529,7 @@ pub(crate) struct SplitWire {
     pub shards: Vec<ShardWire>,
     pub variation_key: Str,
     #[serde(default)]
-    pub extra_logging: Option<Arc<HashMap<String, String>>>,
+    pub serial_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -452,7 +537,7 @@ pub(crate) struct SplitWire {
 #[allow(missing_docs)]
 pub(crate) struct ShardWire {
     pub salt: String,
-    pub total_shards: u32,
+    pub total_shards: NonZeroU32,
     pub ranges: Box<[ShardRange]>,
 }
 

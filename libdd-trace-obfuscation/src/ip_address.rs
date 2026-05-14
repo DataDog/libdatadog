@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use regex::Regex;
+use libdd_common::regex_engine::Regex;
 use std::{borrow::Cow, collections::HashSet, net::Ipv6Addr, sync::LazyLock};
 
 const ALLOWED_IP_ADDRESSES: [&str; 5] = [
@@ -104,12 +104,8 @@ fn parse_ip(s: &str) -> Option<(&str, &str)> {
         match ch {
             '0'..='9' => continue,
             '.' | '-' | '_' => return parse_ip_v4(s, ch),
-            ':' | 'A'..='F' | 'a'..='f' => {
-                if s.parse::<Ipv6Addr>().is_ok() {
-                    return Some((s, ""));
-                } else {
-                    return None;
-                }
+            ':' | 'A'..='F' | 'a'..='f' if s.parse::<Ipv6Addr>().is_ok() => {
+                return Some((s, ""));
             }
             '[' => {
                 // Parse IPv6 in [host]:port format

@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use serde::Deserialize;
 
@@ -52,8 +52,8 @@ pub(crate) struct Allocation {
 pub(crate) struct Split {
     pub shards: Vec<Shard>,
     pub variation_key: Str,
-    pub extra_logging: Arc<HashMap<String, String>>,
     pub value: AssignmentValue,
+    pub serial_id: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -160,8 +160,6 @@ fn compile_split(
         .filter_map(compile_shard)
         .collect();
 
-    let extra_logging = split.extra_logging.unwrap_or_default();
-
     let result = variation_values
         .get(&split.variation_key)
         .cloned()
@@ -170,15 +168,15 @@ fn compile_split(
     Ok(Split {
         shards,
         variation_key: split.variation_key,
-        extra_logging,
         value: result,
+        serial_id: split.serial_id,
     })
 }
 
 fn compile_shard(shard: ShardWire) -> Option<Shard> {
     if shard.ranges.contains(&ShardRange {
         start: 0,
-        end: shard.total_shards,
+        end: shard.total_shards.get(),
     }) {
         // The shard is "insignificant" because it always matches, so we don't need to waste time
         // checking it.
