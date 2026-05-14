@@ -20,11 +20,6 @@ use core::cell::OnceCell;
 use core::mem;
 use core::ops::Deref;
 
-#[cfg(feature = "std")]
-use std::env;
-#[cfg(feature = "std")]
-use std::path::Path;
-
 /// This struct holds maps used to match and template configurations.
 ///
 /// They are computed lazily so that if the templating feature is not necessary, we don't
@@ -199,63 +194,6 @@ pub struct ProcessInfo {
     pub args: Vec<Vec<u8>>,
     pub envp: Vec<Vec<u8>>,
     pub language: Vec<u8>,
-}
-
-#[cfg(feature = "std")]
-fn process_envp() -> Vec<Vec<u8>> {
-    #[allow(clippy::unnecessary_filter_map)]
-    env::vars_os()
-        .filter_map(|(k, v)| {
-            #[cfg(not(unix))]
-            {
-                let mut env = Vec::new();
-                env.extend(k.to_str()?.as_bytes());
-                env.push(b'=');
-                env.extend(v.to_str()?.as_bytes());
-                Some(env)
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::ffi::OsStrExt;
-                let mut env = Vec::new();
-                env.extend(k.as_bytes());
-                env.push(b'=');
-                env.extend(v.as_bytes());
-                Some(env)
-            }
-        })
-        .collect()
-}
-
-#[cfg(feature = "std")]
-fn process_args() -> Vec<Vec<u8>> {
-    #[allow(clippy::unnecessary_filter_map)]
-    env::args_os()
-        .filter_map(|a| {
-            #[cfg(not(unix))]
-            {
-                Some(a.into_string().ok()?.into_bytes())
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::ffi::OsStringExt;
-                Some(a.into_vec())
-            }
-        })
-        .collect()
-}
-
-impl ProcessInfo {
-    #[cfg(feature = "std")]
-    pub fn detect_global(language: String) -> Self {
-        let envp = process_envp();
-        let args = process_args();
-        Self {
-            args,
-            envp,
-            language: language.into_bytes(),
-        }
-    }
 }
 
 /// A (key, value) struct
@@ -543,21 +481,6 @@ impl Configurator {
         self.parse_stable_config_slice(&buffer)
     }
 
-    #[cfg(feature = "std")]
-    pub fn get_config_from_file(
-        &self,
-        path_local: &Path,
-        path_managed: &Path,
-        process_info: &ProcessInfo,
-    ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
-        self.get_config_from_reader(
-            &StdConfigRead,
-            path_local.to_string_lossy(),
-            path_managed.to_string_lossy(),
-            process_info,
-        )
-    }
-
     /// Load configuration using a custom [`ConfigRead`] implementation.
     ///
     /// This is the primary entry point for no_std or virtual-filesystem
@@ -812,6 +735,84 @@ mod utils {
     impl Get for BTreeMap<String, String> {
         fn get(&self, k: &str) -> Option<&str> {
             self.get(k).map(|v| v.as_str())
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+mod std_api {
+    use std::{env, path::Path};
+
+    use alloc::string::String;
+    use alloc::vec::Vec;
+
+    use super::{Configurator, LibraryConfig, LoggedResult, ProcessInfo, StdConfigRead};
+
+    fn process_envp() -> Vec<Vec<u8>> {
+        #[allow(clippy::unnecessary_filter_map)]
+        env::vars_os()
+            .filter_map(|(k, v)| {
+                #[cfg(not(unix))]
+                {
+                    let mut env = Vec::new();
+                    env.extend(k.to_str()?.as_bytes());
+                    env.push(b'=');
+                    env.extend(v.to_str()?.as_bytes());
+                    Some(env)
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::ffi::OsStrExt;
+                    let mut env = Vec::new();
+                    env.extend(k.as_bytes());
+                    env.push(b'=');
+                    env.extend(v.as_bytes());
+                    Some(env)
+                }
+            })
+            .collect()
+    }
+
+    fn process_args() -> Vec<Vec<u8>> {
+        #[allow(clippy::unnecessary_filter_map)]
+        env::args_os()
+            .filter_map(|a| {
+                #[cfg(not(unix))]
+                {
+                    Some(a.into_string().ok()?.into_bytes())
+                }
+                #[cfg(unix)]
+                {
+                    use std::os::unix::ffi::OsStringExt;
+                    Some(a.into_vec())
+                }
+            })
+            .collect()
+    }
+
+    impl ProcessInfo {
+        pub fn detect_global(language: String) -> Self {
+            Self {
+                args: process_args(),
+                envp: process_envp(),
+                language: language.into_bytes(),
+            }
+        }
+    }
+
+    impl Configurator {
+        pub fn get_config_from_file(
+            &self,
+            path_local: &Path,
+            path_managed: &Path,
+            process_info: &ProcessInfo,
+        ) -> LoggedResult<Vec<LibraryConfig>, anyhow::Error> {
+            self.get_config_from_reader(
+                &StdConfigRead,
+                path_local.to_string_lossy(),
+                path_managed.to_string_lossy(),
+                process_info,
+            )
         }
     }
 }
