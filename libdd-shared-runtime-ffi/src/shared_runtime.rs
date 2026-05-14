@@ -15,6 +15,8 @@ pub enum SharedRuntimeErrorCode {
     InvalidArgument,
     /// The runtime is not available or in an invalid state.
     RuntimeUnavailable,
+    /// Operation rejected because the runtime has already been shut down.
+    AlreadyShutdown,
     /// Failed to acquire a lock on internal state.
     LockFailed,
     /// A worker operation failed.
@@ -50,6 +52,7 @@ impl From<SharedRuntimeError> for SharedRuntimeFFIError {
     fn from(err: SharedRuntimeError) -> Self {
         let code = match &err {
             SharedRuntimeError::RuntimeUnavailable => SharedRuntimeErrorCode::RuntimeUnavailable,
+            SharedRuntimeError::AlreadyShutdown => SharedRuntimeErrorCode::AlreadyShutdown,
             SharedRuntimeError::LockFailed(_) => SharedRuntimeErrorCode::LockFailed,
             SharedRuntimeError::WorkerError(_) => SharedRuntimeErrorCode::WorkerError,
             SharedRuntimeError::RuntimeCreation(_) => SharedRuntimeErrorCode::RuntimeCreation,
