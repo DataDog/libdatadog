@@ -8,26 +8,33 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 /// Error codes for SharedRuntime FFI operations.
+///
+/// # ABI stability
+/// Discriminants are pinned explicitly. The numeric values are part of the
+/// C ABI: existing variants must never be renumbered or reused, and new
+/// variants must be appended with a fresh value. Inserting a variant in
+/// the middle of the list silently misclassifies errors on any caller
+/// compiled against an older header.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum SharedRuntimeErrorCode {
     /// Invalid argument provided (e.g. null handle).
-    InvalidArgument,
+    InvalidArgument = 0,
     /// The runtime is not available or in an invalid state.
-    RuntimeUnavailable,
-    /// Operation rejected because the runtime has already been shut down.
-    AlreadyShutdown,
+    RuntimeUnavailable = 1,
     /// Failed to acquire a lock on internal state.
-    LockFailed,
+    LockFailed = 2,
     /// A worker operation failed.
-    WorkerError,
+    WorkerError = 3,
     /// Failed to create the tokio runtime.
-    RuntimeCreation,
+    RuntimeCreation = 4,
     /// Shutdown timed out.
-    ShutdownTimedOut,
+    ShutdownTimedOut = 5,
     /// An unexpected panic occurred inside the FFI call.
     #[cfg(feature = "catch_panic")]
-    Panic,
+    Panic = 6,
+    /// Operation rejected because the runtime has already been shut down.
+    AlreadyShutdown = 7,
 }
 
 /// Error returned by SharedRuntime FFI functions.
