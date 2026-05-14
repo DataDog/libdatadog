@@ -95,7 +95,7 @@ Crates that are out of scope by nature — their reason for existing is OS inter
 - **no_std rust ecosystem is large, but not all crates support it** Code willing to support `no_std` might have to do extra work to align dependencies with `no_std` requirements.
 - **Cognitive overhead in opted-in crates.** Contributors have to use `core::`/`alloc::` and gate `std`-only code. We consider this a feature: it forces the same discipline we'd want at code-review time anyway.
 - **Adding a dependency becomes a small research task.** Does it support `no_std`? With which features? Mostly this is good — it discourages casual dependency growth — but it is friction.
-- **Forks accumulate maintenance debt.** Mitigated by the fork rules above, not eliminated.
+- **Forks accumulate maintenance debt.** This risk is real and should be weighed carefully before adopting or maintaining a fork.
 
 ## Alternatives considered
 
