@@ -1,4 +1,4 @@
-# RFC 0015: Opportunistic `no_std`
+# RFC 0015: Use `no_std` where its beneficial for consumers
 
 ## Context
 
@@ -8,8 +8,7 @@ Concretely, four things make `no_std` attractive for this workspace:
 
 1. **Signal safety by construction.** `core` and `alloc` (with a signal-safe allocator) are made of pure functions, integer math, and stack-allocated data. None of `std`'s mutex, thread-local, environment, file-descriptor, or panic-handler machinery is reachable. Code that runs in async-signal contexts — crashtracker, profiling samplers, anything called from a signal handler — is *much* easier to keep correct when `std::` is simply not in the import graph. The compiler enforces what code review otherwise has to.
 2. **Smaller artifacts.** Embedders linking libdatadog statically pay for everything `std` pulls in, whether they use it or not. `no_std + alloc` lets us ship the same functionality with substantially less code in the final binary, and noticeably faster compiles in the tree.
-3. **Dependency hygiene.** Once a crate is `no_std`, every new dependency has to be added with `default-features = false` and an explicit story for what it pulls in. This is the dependency review we should be doing anyway; `no_std` makes the friction visible at the point of decision instead of months later when an embedder asks why their binary doubled in size.
-4. **Frequently, it's a mechanical change.** A surprising amount of "make this `no_std`" work is replacing `std::` with `core::` and adding `extern crate alloc;`. yaml/yaml-serde#8 is a recent example: a near-mechanical patch turned an `std` crate into a `no_std + alloc` crate without changing its API. Many of our internal crates are in the same shape.
+3. **Frequently, it's a mechanical change.** A surprising amount of "make this `no_std`" work is replacing `std::` with `core::` and adding `extern crate alloc;`. yaml/yaml-serde#8 is a recent example: a near-mechanical patch turned an `std` crate into a `no_std + alloc` crate without changing its API. Many of our internal crates are in the same shape.
 
 The first concrete driver in this workspace is `libdd-library-config` (prototyped in the sibling worktree `no-std-library-config`), but the case generalises: data structures, parsers, protocol definitions, error types, and signal-handler-adjacent code all benefit. The exceptions — sockets, files, threads, processes — are real but bounded.
 
@@ -25,7 +24,7 @@ Concretely, that means:
 - For **existing crates**, `no_std` support is added opportunistically: whenever a crate is touched substantially, or whenever a downstream consumer asks, evaluate whether the migration is cheap. If it is — and for many of our crates it will be — do it.
 - For **signal-handler-adjacent code paths** (crashtracker, profiling sample paths, any future async-signal-safe component), `no_std` is the strongly preferred default *for correctness reasons*, not just ergonomics. The compiler refusing to let you call `std::sync::Mutex` from a signal handler is exactly the property we want.
 
-This is opportunistic in the sense that we are not going to stop the world and rewrite the workspace. It is *not* opportunistic in the sense of "only when convenient" — when the opportunity arises, we should take it.
+This is opportunistic in the sense that we are not going to stop the world and rewrite the workspace. But dictated by needs of products like profiling, crashtracking or auto_inject, we will attempt to make parts of libdatadog compatible with the constraints of the environment
 
 ## Crate conventions
 
@@ -77,31 +76,23 @@ When a crate opts in:
 
 For crates that have not opted in, none of this applies, and reviewers do not block PRs on it. The policy is opt-in, not retroactive.
 
-## Forks of upstream crates
-
-Some migrations require an upstream change. `yaml-serde` is the in-flight example (yaml/yaml-serde#7 for the `no_std` work, yaml/yaml-serde#8 as a smaller mechanical patch). Forking upstream is acceptable on these terms:
-
-- An upstream PR exists and is linked from `Cargo.toml` with a `# TODO: Switch to crates.io once <link> is merged` comment.
-- The fork is pinned by `git` + `rev`, never by branch.
-- The fork lives under DataDog or a maintainer account we control; never a third-party fork.
-- If an upstream PR dies, we either adopt the fork as a maintained crate or drop the `no_std` support that depended on it. We do not let unmaintained forks accrete.
-
 ## Initial candidates
 
 Strong candidates, evaluated and migrated in follow-up PRs:
 
 - `libdd-library-config` — already prototyped on `no-std-library-config`. Reference implementation.
+- **`libdd-crashtracker` (the collector half).** This is the most interesting case. The crash-time code path runs in a signal handler and must be async-signal-safe. A `no_std` collector half — where the compiler refuses to let you reach for `std::sync::Mutex` or `eprintln!` — is meaningfully *safer by construction* than the current crate, independent of any embedder request. The reporting/serialisation half that runs post-crash in a separate process can stay `std`. Splitting the crate along that line is a separate piece of design work, but the `no_std` argument is the forcing function.
 - `libdd-tinybytes` — small, dependency-light building block.
 - `libdd-trace-protobuf` — generated code; should be near-mechanical.
 - `libdd-ddsketch` — pure data structure.
 - `libdd-otel-thread-ctx` — small surface, plausible embedder need.
-- **`libdd-crashtracker` (the collector half).** This is the most interesting case. The crash-time code path runs in a signal handler and must be async-signal-safe. A `no_std` collector half — where the compiler refuses to let you reach for `std::sync::Mutex` or `eprintln!` — is meaningfully *safer by construction* than the current crate, independent of any embedder request. The reporting/serialisation half that runs post-crash in a separate process can stay `std`. Splitting the crate along that line is a separate piece of design work, but the `no_std` argument is the forcing function.
 
 Crates that are out of scope by nature — their reason for existing is OS interaction: `datadog-sidecar*`, `datadog-ipc*`, `libdd-shared-runtime*`, `libdd-http-client`, `libdd-data-pipeline`, `spawn_worker`, all `*-ffi` shells. These stay `std`.
 
 ## Drawbacks
 
 - **Build matrix grows.** Each opted-in crate adds a `--no-default-features` build to CI. Real but bounded.
+- **no_std rust ecosystem is large, but not all crates support it** Code willing to support `no_std` might have to do extra work to align dependencies with `no_std` requirements.
 - **Cognitive overhead in opted-in crates.** Contributors have to use `core::`/`alloc::` and gate `std`-only code. We consider this a feature: it forces the same discipline we'd want at code-review time anyway.
 - **Adding a dependency becomes a small research task.** Does it support `no_std`? With which features? Mostly this is good — it discourages casual dependency growth — but it is friction.
 - **Forks accumulate maintenance debt.** Mitigated by the fork rules above, not eliminated.
@@ -111,8 +102,7 @@ Crates that are out of scope by nature — their reason for existing is OS inter
 - **Workspace-wide `no_std` mandate.** Rejected: forces awkward abstractions onto crates whose domain is genuinely OS-bound, with no benefit.
 - **Never go `no_std`.** Rejected: gives up the signal-safety, binary-size, and dependency-hygiene wins; blocks embedder use cases that are already arriving.
 - **Parallel `*-core` crates per opt-in.** Rejected: source duplication, split issue trackers, two places to land every fix.
-- **Defer until customers explicitly demand it.** We already have one in flight. Deferring means landing one-off `no_std` support per consumer and accumulating no shared conventions.
 
 ## Recommended
 
-Adopt the policy: prefer `no_std + alloc`; use `std` only where it is earning its keep. Land `libdd-library-config` `no_std` support as the reference implementation, including the CI shape and the conventions above. Schedule `libdd-crashtracker` as the next target on signal-safety grounds.
+Adopt the policy: allow and recommend `no_std + alloc`; use `std` mainly where it is earning its keep. Land `libdd-library-config` `no_std` support as the reference implementation, including the CI shape and the conventions above. Schedule `libdd-crashtracker` as the next target on signal-safety grounds.
