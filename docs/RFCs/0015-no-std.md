@@ -1,4 +1,4 @@
-# RFC 0015: Use `no_std` where its beneficial for consumers
+# RFC 0015: Use `no_std` where it's beneficial for consumers
 
 ## Context
 
