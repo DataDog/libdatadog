@@ -92,7 +92,7 @@ label to your pull request. This will trigger a one-time formatting commit if an
 additional commits after labeling, remove and re-add the label to re-run formatting.
 
 Optionally, you can install [pre-commit](https://pre-commit.com/) hooks to run formatting and clippy checks locally
-before they hit CI. See `.pre-commit-config.yaml` for setup instructions (`uv tool install pre-commit` to install).
+before they hit CI. See `.pre-commit-config.yaml` for setup instructions.
 
 ## Commit Message Guidelines
 
