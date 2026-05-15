@@ -46,6 +46,7 @@ const TAG_CARD_NUMBER: &str = "card.number";
 /// - `"redis"`, `"valkey"`: Redis quantization (command names only)
 ///
 /// Returns `Some(obfuscated)` if the resource was modified, `None` if no obfuscation was needed.
+#[must_use]
 pub fn obfuscate_resource_for_stats(
     span_type: &str,
     resource: &str,
