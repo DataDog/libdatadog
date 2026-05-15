@@ -496,6 +496,22 @@ impl Profile {
         Ok(encoded_profile)
     }
 
+    /// Resolves label ids into labels and appends the endpoint label, leaving
+    /// one spare slot for a sample timestamp label.
+    fn expand_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Vec<Label>> {
+        let endpoint_label = self.get_endpoint_for_label_set(label_set)?;
+        // +1 for the timestamp label
+        let mut labels =
+            Vec::with_capacity(label_set.len() + usize::from(endpoint_label.is_some()) + 1);
+        for l in label_set.iter() {
+            labels.push(*self.get_label(*l)?);
+        }
+        if let Some(endpoint_label) = endpoint_label {
+            labels.push(endpoint_label);
+        }
+        Ok(labels)
+    }
+
     /// Encodes the profile. Note that the buffer will be empty. The caller
     /// needs to flush/finish the writer, then fill/replace the buffer.
     fn encode<W: io::Write>(
@@ -518,21 +534,12 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut extended_label_sets: Vec<Vec<Label>> = Vec::with_capacity(self.label_sets.len());
+        let label_sets = std::mem::take(&mut self.label_sets);
+        let mut extended_label_sets: Vec<Vec<Label>> = Vec::new();
+        extended_label_sets.try_reserve_exact(label_sets.len())?;
 
-        for label_set in std::mem::take(&mut self.label_sets) {
-            let endpoint_label = self.get_endpoint_for_label_set(&label_set)?;
-            // Leave one space for the timestamp if needed
-            let mut labels = Vec::with_capacity(
-                label_set.len() + 1 + if endpoint_label.is_some() { 1 } else { 0 },
-            );
-            for l in label_set.iter() {
-                labels.push(*self.get_label(*l)?);
-            }
-            if let Some(endpoint_label) = endpoint_label {
-                labels.push(endpoint_label);
-            }
-            extended_label_sets.push(labels);
+        for label_set in label_sets {
+            extended_label_sets.push(self.expand_label_set(&label_set)?);
         }
 
         let iter = std::mem::take(&mut self.observations).try_into_iter()?;
@@ -547,11 +554,16 @@ impl Profile {
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, labels);
 
-            // Use the extra slot in the labels vector to store the timestamp without any reallocs.
+            let mut pprof_labels: Vec<_> = Vec::new();
+            pprof_labels.try_reserve_exact(labels.len())?;
+
+            // Try not to fail between labels.push and labels.pop, which would
+            // leave the push.
             if let Some(ts) = timestamp {
+                // The memory was reserved by `expand_label_set`.
                 labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
             }
-            let pprof_labels: Vec<_> = labels.iter().map(protobuf::Label::from).collect();
+            pprof_labels.extend(labels.iter().map(protobuf::Label::from));
             if timestamp.is_some() {
                 labels.pop();
             }
