@@ -500,9 +500,9 @@ impl Profile {
     /// one spare slot for a sample timestamp label.
     fn expand_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Vec<Label>> {
         let endpoint_label = self.get_endpoint_for_label_set(label_set)?;
+        let mut labels = Vec::new();
         // +1 for the timestamp label
-        let mut labels =
-            Vec::with_capacity(label_set.len() + usize::from(endpoint_label.is_some()) + 1);
+        labels.try_reserve_exact(label_set.len() + usize::from(endpoint_label.is_some()) + 1)?;
         for l in label_set.iter() {
             labels.push(*self.get_label(*l)?);
         }
