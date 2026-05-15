@@ -21,6 +21,7 @@ on:
           - libdd-otel-thread-ctx
           - libdd-profiling
           - libdd-profiling-protobuf
+          - libdd-sampling
           - libdd-shared-runtime
           - libdd-telemetry
           - libdd-tinybytes
