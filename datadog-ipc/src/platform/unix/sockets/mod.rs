@@ -438,7 +438,13 @@ impl SeqpacketConn {
 
     /// Convert to an async connection for use in async server dispatch loops.
     pub fn into_async_conn(self) -> io::Result<AsyncConn> {
-        AsyncFd::new(self.inner)
+        #[cfg(target_os = "macos")]
+        let _extra = (self._peer, self.liveness);
+        Ok(AsyncConn {
+            fd: AsyncFd::new(self.inner)?,
+            #[cfg(target_os = "macos")]
+            _extra,
+        })
     }
 
     pub fn as_raw_fd(&self) -> RawFd {
@@ -446,8 +452,31 @@ impl SeqpacketConn {
     }
 }
 
-/// The async connection type on Unix: a Tokio `AsyncFd` wrapping the raw fd.
-pub type AsyncConn = AsyncFd<OwnedFd>;
+/// The async connection type on Unix.
+///
+/// On macOS, this is a struct that wraps `AsyncFd<OwnedFd>` and additionally
+/// keeps `_peer` and `liveness` alive.  These must not be dropped while the
+/// async connection is in use: dropping `_peer` disconnects the SOCK_DGRAM
+/// socketpair; dropping `liveness` (the pipe read-end) fires POLLHUP on the
+/// client's write-end, falsely indicating a dead connection.
+pub struct AsyncConn {
+    fd: AsyncFd<OwnedFd>,
+    #[cfg(target_os = "macos")]
+    _extra: (Option<OwnedFd>, Option<OwnedFd>),
+}
+
+impl std::ops::Deref for AsyncConn {
+    type Target = AsyncFd<OwnedFd>;
+    fn deref(&self) -> &Self::Target {
+        &self.fd
+    }
+}
+
+impl AsRawFd for AsyncConn {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd.as_raw_fd()
+    }
+}
 
 /// Async receive on a Tokio `AsyncFd`-wrapped IPC connection.
 ///
