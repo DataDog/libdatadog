@@ -2,6 +2,34 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v4.0.0..libdd-telemetry-v6.0.0) - 2026-05-15
+
+### Added
+
+- Trait architecture http ([#1555](https://github.com/datadog/libdatadog/issues/1555)) - ([b863364](https://github.com/datadog/libdatadog/commit/b863364bbb9cb4567b10c80cd11bc4a22b49fcf4))
+- Sleep & spawn capabilities ([#1873](https://github.com/datadog/libdatadog/issues/1873)) - ([b419f6e](https://github.com/datadog/libdatadog/commit/b419f6e1edb7679c750a65713893c68fc697404c))
+- Add shared runtime ([#1602](https://github.com/datadog/libdatadog/issues/1602)) - ([33896de](https://github.com/datadog/libdatadog/commit/33896def2418a9c0fc5bf74b05011210d333759f))
+- Wire telemetry_extended_heartbeat_interval through SessionConfig ([#1882](https://github.com/datadog/libdatadog/issues/1882)) - ([a41b623](https://github.com/datadog/libdatadog/commit/a41b623f09bf41909fa394e78b3c316da27239c0))
+- Include dependencies and integrations in app-extended-heartbeat ([#1962](https://github.com/datadog/libdatadog/issues/1962)) - ([91fd13c](https://github.com/datadog/libdatadog/commit/91fd13c8a0ca5335fe39940f8764cd825bbef7e8))
+
+### Changed
+
+- Downgrade version so publish workflow succeeds ([#1870](https://github.com/datadog/libdatadog/issues/1870)) - ([730c122](https://github.com/datadog/libdatadog/commit/730c1221f9f73ecadcdcc90681f54730fe8e92f2))
+- Batch ack sending & consumption ([#1835](https://github.com/datadog/libdatadog/issues/1835)) - ([eff9d8a](https://github.com/datadog/libdatadog/commit/eff9d8a4421aa727fad6ce874f5c0f02820b3e6d))
+- Add session id support ([#1817](https://github.com/datadog/libdatadog/issues/1817)) - ([802f06a](https://github.com/datadog/libdatadog/commit/802f06a842848ba81b4fed9587a0ba7904cb7830))
+- Use weaker mem ordering for SEQ_ID ([#1749](https://github.com/datadog/libdatadog/issues/1749)) - ([8d2029d](https://github.com/datadog/libdatadog/commit/8d2029d2fad5129fc36a7b3b68d3148d68b48b79))
+
+### Fixed
+
+- Gate libdd-common TLS features in remaining internal crates + add CI guard ([#1943](https://github.com/datadog/libdatadog/issues/1943)) - ([db05e1f](https://github.com/datadog/libdatadog/commit/db05e1f8408a76075efb37ecec544d2e74217e57))
+- Restore previous Cargo.toml version ([#1993](https://github.com/datadog/libdatadog/issues/1993)) - ([500c147](https://github.com/datadog/libdatadog/commit/500c147ec07e9c768abdfaec074a84ab88885e2a))
+- Avoid trigger loop in telemetry worker ([#1950](https://github.com/datadog/libdatadog/issues/1950)) - ([7a24f53](https://github.com/datadog/libdatadog/commit/7a24f534a46367bc2b2007994dd3a3d2d62ad663))
+- Schedule ExtendedHeartbeat on worker start ([#1910](https://github.com/datadog/libdatadog/issues/1910)) - ([650c804](https://github.com/datadog/libdatadog/commit/650c804b170f9bb47ace9a0e8e672851f818b5d7))
+- Skip sending empty payloads ([#1894](https://github.com/datadog/libdatadog/issues/1894)) - ([ca7a74b](https://github.com/datadog/libdatadog/commit/ca7a74be123f34b5ac6982705c8f3abef4ed2977))
+- Wire up DD_TELEMETRY_EXTENDED_HEARTBEAT_INTERVAL to scheduler ([#1824](https://github.com/datadog/libdatadog/issues/1824)) - ([f1f0df1](https://github.com/datadog/libdatadog/commit/f1f0df1b5d9066a7fbff14524c04ca3636d778d6))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v3.1.0..libdd-telemetry-v4.0.0) - 2026-03-25
 
 ### Changed
