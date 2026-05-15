@@ -43,7 +43,7 @@ pub struct GlobMatcher {
     pattern_is_star: bool,
     /// Shared LRU cache of matched subjects, keyed on raw bytes (ASCII path) or lowercased
     /// UTF-8 (Unicode path). Only consulted for wildcard patterns. Bounded by byte size to
-    /// cap memory under arbitrary key sizes.
+    /// cap memory under arbitrarily large attribute values.
     cache: Arc<Mutex<BoundedByteCache<Vec<u8>, bool>>>,
 }
 
@@ -60,15 +60,12 @@ impl GlobMatcher {
     /// Creates a new GlobMatcher with the given pattern.
     pub fn new(pattern: &str) -> Self {
         let pattern_lower = pattern.to_lowercase();
-        let pattern_is_ascii = pattern_lower.is_ascii();
-        let pattern_has_wildcards = pattern_lower.contains('*') || pattern_lower.contains('?');
-        // Any non-empty run of only `*` matches everything (e.g. `*`, `**`, `***`).
-        let pattern_is_star = !pattern_lower.is_empty() && pattern_lower.bytes().all(|b| b == b'*');
         GlobMatcher {
+            pattern_is_ascii: pattern_lower.is_ascii(),
+            pattern_has_wildcards: pattern_lower.contains('*') || pattern_lower.contains('?'),
+            // Any non-empty run of only `*` matches everything (e.g. `*`, `**`, `***`).
+            pattern_is_star: !pattern_lower.is_empty() && pattern_lower.bytes().all(|b| b == b'*'),
             pattern_lower,
-            pattern_is_ascii,
-            pattern_has_wildcards,
-            pattern_is_star,
             cache: Arc::new(Mutex::new(BoundedByteCache::new(
                 DEFAULT_MAX_ENTRIES,
                 DEFAULT_MAX_BYTES,

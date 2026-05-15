@@ -16,8 +16,12 @@ use std::num::NonZeroUsize;
 /// Default maximum entry count.
 pub const DEFAULT_MAX_ENTRIES: usize = 256;
 
-/// Default maximum tracked byte size (256 KiB).
-pub const DEFAULT_MAX_BYTES: usize = 256 * 1024;
+/// Default maximum tracked byte size (64 KiB).
+///
+/// Under normal use (short keys such as service or resource names), the entry count cap binds
+/// first. This byte budget acts as a safety valve against memory exhaustion from unexpectedly
+/// large keys due to misconfiguration or adversarial input.
+pub const DEFAULT_MAX_BYTES: usize = 256 * 256;
 
 /// LRU cache bounded by both entry count and total tracked byte size.
 ///
@@ -57,7 +61,6 @@ where
 
     /// Insert `key -> value`. Entries larger than `max_bytes` are dropped silently. Otherwise
     /// LRU entries are evicted until the new entry fits.
-    #[inline]
     pub fn put(&mut self, key: K, value: V) {
         let entry_bytes = Self::entry_size(&key);
 
@@ -91,6 +94,7 @@ where
     }
 
     #[cfg(test)]
+    #[inline]
     pub fn current_bytes(&self) -> usize {
         self.current_bytes
     }
