@@ -126,7 +126,10 @@ pub enum Method {
     Options = 6,
     Trace = 7,
     Connect = 8,
-    Other = 9, //This is specified as "*" in the OpenAPI spec
+    // Note: "OTHER" is not in the OpenAPI schema; use Any for routes that accept all HTTP methods.
+    Other = 9,
+    #[serde(rename = "*")]
+    Any = 10,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
