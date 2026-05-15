@@ -298,13 +298,12 @@ impl TraceExporterBuilder {
             ));
         }
 
-        let shared_runtime =
-            self.shared_runtime
-                .unwrap_or(Arc::new(SharedRuntime::new().map_err(|e| {
-                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                        e.to_string(),
-                    ))
-                })?));
+        let shared_runtime = match self.shared_runtime {
+            Some(rt) => rt,
+            None => Arc::new(SharedRuntime::new().map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?),
+        };
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
             new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
