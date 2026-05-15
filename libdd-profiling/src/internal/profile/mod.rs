@@ -555,7 +555,8 @@ impl Profile {
             self.upscaling_rules.upscale_values(&mut values, labels);
 
             let mut pprof_labels: Vec<_> = Vec::new();
-            pprof_labels.try_reserve_exact(labels.len())?;
+            // + 1 for the timestamp (which hasn't ben pushed yet)
+            pprof_labels.try_reserve_exact(labels.len() + 1)?;
 
             // Try not to fail between labels.push and labels.pop, which would
             // leave the push.
