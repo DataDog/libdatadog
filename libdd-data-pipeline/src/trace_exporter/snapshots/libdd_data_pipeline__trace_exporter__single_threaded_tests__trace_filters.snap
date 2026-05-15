@@ -1,0 +1,150 @@
+---
+source: libdd-data-pipeline/src/trace_exporter/mod.rs
+expression: "serde_json::to_value(&captured_stats).unwrap()"
+---
+[
+  {
+    "Hostname": "",
+    "Env": "staging",
+    "Version": "",
+    "Stats": [
+      {
+        "Start": "[timestamp]",
+        "Duration": 10000000000,
+        "Stats": [
+          {
+            "Service": "",
+            "Name": "",
+            "Resource": "test2",
+            "HTTPStatusCode": 0,
+            "Type": "",
+            "DBType": "",
+            "Hits": 1,
+            "Errors": 0,
+            "Duration": 10,
+            "OkSummary": "[sketch]",
+            "ErrorSummary": "[sketch]",
+            "Synthetics": false,
+            "TopLevelHits": 1,
+            "SpanKind": "",
+            "PeerTags": [],
+            "IsTraceRoot": 1,
+            "GRPCStatusCode": "",
+            "HTTPMethod": "",
+            "HTTPEndpoint": "",
+            "srv_src": "",
+            "SpanDerivedPrimaryTags": []
+          },
+          {
+            "Service": "",
+            "Name": "",
+            "Resource": "test",
+            "HTTPStatusCode": 0,
+            "Type": "",
+            "DBType": "",
+            "Hits": 1,
+            "Errors": 0,
+            "Duration": 10,
+            "OkSummary": "[sketch]",
+            "ErrorSummary": "[sketch]",
+            "Synthetics": false,
+            "TopLevelHits": 1,
+            "SpanKind": "",
+            "PeerTags": [],
+            "IsTraceRoot": 1,
+            "GRPCStatusCode": "",
+            "HTTPMethod": "",
+            "HTTPEndpoint": "",
+            "srv_src": "",
+            "SpanDerivedPrimaryTags": []
+          }
+        ],
+        "AgentTimeShift": 0
+      }
+    ],
+    "Lang": "",
+    "TracerVersion": "",
+    "RuntimeID": "[id]",
+    "Sequence": 0,
+    "AgentAggregation": "",
+    "Service": "test",
+    "ContainerID": "",
+    "Tags": [],
+    "GitCommitSha": "",
+    "ImageTag": "",
+    "ProcessTagsHash": 0,
+    "ProcessTags": ""
+  },
+  {
+    "Hostname": "",
+    "Env": "staging",
+    "Version": "",
+    "Stats": [
+      {
+        "Start": "[timestamp]",
+        "Duration": 10000000000,
+        "Stats": [
+          {
+            "Service": "",
+            "Name": "",
+            "Resource": "test2",
+            "HTTPStatusCode": 0,
+            "Type": "",
+            "DBType": "",
+            "Hits": 1,
+            "Errors": 0,
+            "Duration": 10,
+            "OkSummary": "[sketch]",
+            "ErrorSummary": "[sketch]",
+            "Synthetics": false,
+            "TopLevelHits": 1,
+            "SpanKind": "",
+            "PeerTags": [],
+            "IsTraceRoot": 1,
+            "GRPCStatusCode": "",
+            "HTTPMethod": "",
+            "HTTPEndpoint": "",
+            "srv_src": "",
+            "SpanDerivedPrimaryTags": []
+          },
+          {
+            "Service": "",
+            "Name": "",
+            "Resource": "test",
+            "HTTPStatusCode": 0,
+            "Type": "",
+            "DBType": "",
+            "Hits": 1,
+            "Errors": 0,
+            "Duration": 10,
+            "OkSummary": "[sketch]",
+            "ErrorSummary": "[sketch]",
+            "Synthetics": false,
+            "TopLevelHits": 1,
+            "SpanKind": "",
+            "PeerTags": [],
+            "IsTraceRoot": 1,
+            "GRPCStatusCode": "",
+            "HTTPMethod": "",
+            "HTTPEndpoint": "",
+            "srv_src": "",
+            "SpanDerivedPrimaryTags": []
+          }
+        ],
+        "AgentTimeShift": 0
+      }
+    ],
+    "Lang": "",
+    "TracerVersion": "",
+    "RuntimeID": "[id]",
+    "Sequence": 0,
+    "AgentAggregation": "",
+    "Service": "test",
+    "ContainerID": "",
+    "Tags": [],
+    "GitCommitSha": "",
+    "ImageTag": "",
+    "ProcessTagsHash": 0,
+    "ProcessTags": ""
+  }
+]

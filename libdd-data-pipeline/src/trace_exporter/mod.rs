@@ -1901,10 +1901,14 @@ mod tests {
 
 #[cfg(test)]
 mod single_threaded_tests {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_trace_protobuf::pb::ClientStatsPayload;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
 
@@ -2201,6 +2205,181 @@ mod single_threaded_tests {
         assert!(
             run_obfuscation_test(true, Some(current_obf_version)),
             "obfuscation must activate when opted in and agent supports"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_trace_filters_snapshot() {
+        // Clear the agent info cache to ensure test isolation
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+        let captured_stats = Arc::new(Mutex::new(Vec::new()));
+
+        let captured_stats_in = captured_stats.clone();
+
+        let mock_traces = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.4/traces");
+            then.status(200).body("");
+        });
+
+        let mock_stats = server.mock(|when, then| {
+            when.method(POST)
+                .header("Content-type", "application/msgpack")
+                .path("/v0.6/stats")
+                .is_true(move |req| {
+                    captured_stats_in.lock().unwrap().push(req.body_vec());
+                    true
+                });
+            then.status(200).body("");
+        });
+
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path("/info");
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(
+                    r#"{
+                        "version":"1",
+                        "client_drop_p0s":true,
+                        "endpoints":["/v0.4/traces","/v0.6/stats"],
+                        "filter_tags": {"reject": ["my_ignore_tag"], "require": ["my_require_tag:true"]},
+                        "filter_tags_regex": {"reject": ["my_regex_ignore_tag:.*true.*"]},
+                        "ignore_resources": [".*IGNORED.*"]
+                    }"#,
+                );
+        });
+
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
+
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .set_shared_runtime(runtime.clone())
+            .enable_stats(Duration::from_secs(10));
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        // Wait for the info fetcher to get the config
+        while agent_info::get_agent_info().is_none() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let result = exporter.send(
+            msgpack_encoder::v04::to_vec(&[
+                vec![SpanBytes {
+                    duration: 10,
+                    resource: "test".into(),
+                    meta: HashMap::from_iter([("my_require_tag".into(), "true".into())]),
+                    ..Default::default()
+                }],
+                // This one gets filtered out because it matches an ignore_resources pattern
+                vec![SpanBytes {
+                    duration: 10,
+                    resource: "test IGNORED resource test".into(),
+                    meta: HashMap::from_iter([("my_require_tag".into(), "true".into())]),
+                    ..Default::default()
+                }],
+                // This one gets filtered out because one of its tag matches a reject filter_tag
+                vec![SpanBytes {
+                    duration: 10,
+                    resource: "test ignored because of reject filter_tag".into(),
+                    meta: HashMap::from_iter([
+                        ("my_ignore_tag".into(), "".into()),
+                        ("my_require_tag".into(), "true".into()),
+                    ]),
+                    ..Default::default()
+                }],
+                // This one gets filtered out because one of its tag matches a reject
+                // regex_filter_tag
+                vec![SpanBytes {
+                    duration: 10,
+                    resource: "test ignored because of reject regex_filter_tag".into(),
+                    meta: HashMap::from_iter([
+                        (
+                            "my_regex_ignore_tag".into(),
+                            "something-true-something".into(),
+                        ),
+                        ("my_require_tag".into(), "true".into()),
+                    ]),
+                    ..Default::default()
+                }],
+                // This one gets filtered out because it doesn't have my_require_tag:true
+                vec![SpanBytes {
+                    duration: 10,
+                    resource: "test ignored because missing a required filter_tag".into(),
+                    meta: HashMap::from_iter([("a_useless_tag".into(), "true".into())]),
+                    ..Default::default()
+                }],
+                // This one gets filtered out because it doesn't have my_require_tag:true
+                vec![SpanBytes {
+                    duration: 10,
+                    resource: "test ignored because wrong value on filter_tag".into(),
+                    meta: HashMap::from_iter([("my_require_tag".into(), "false".into())]),
+                    ..Default::default()
+                }],
+                vec![SpanBytes {
+                    duration: 10,
+                    resource: "test2".into(),
+                    meta: HashMap::from_iter([("my_require_tag".into(), "true".into())]),
+                    ..Default::default()
+                }],
+            ])
+            .as_ref(),
+        );
+        assert!(result.is_err());
+
+        // Wait for the stats worker to be active before shutting down to avoid potential flaky
+        // tests on CI where we shutdown before the stats worker had time to start
+        let start_time = std::time::Instant::now();
+        while !exporter.is_stats_worker_active() {
+            if start_time.elapsed() > Duration::from_secs(10) {
+                panic!("Timeout waiting for stats worker to become active");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        runtime.shutdown(None).unwrap();
+
+        // Wait for the mock server to process the stats
+        for _ in 0..1000 {
+            if mock_traces.calls() > 0 && mock_stats.calls() > 0 {
+                break;
+            } else {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        mock_traces.assert();
+        mock_stats.assert();
+
+        // Verify snapshots matches
+        let captured_stats: Vec<ClientStatsPayload> = captured_stats
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|payload| rmp_serde::from_slice(payload).unwrap())
+            .collect();
+        insta::assert_json_snapshot!(
+            "trace_filters",
+            serde_json::to_value(&captured_stats).unwrap(),
+            {
+                "[].RuntimeID"                        => "[id]",
+                "[].Stats[].Start"                    => "[timestamp]",
+                "[].Stats[].Stats[].OkSummary"        => "[sketch]",
+                "[].Stats[].Stats[].ErrorSummary"     => "[sketch]",
+            }
         );
     }
 }
