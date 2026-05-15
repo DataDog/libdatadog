@@ -30,7 +30,7 @@ enum ParseState {
 
 /// One variant per position in the JSON grammar.
 #[rustfmt::skip]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 enum State {
     BeginValue,
     BeginValueOrEmpty,  // after '['
@@ -110,45 +110,8 @@ impl Scanner {
     pub(crate) fn step(&mut self, c: char) -> Op {
         self.position += 1;
         match self.state {
-            State::BeginValue
-            | State::BeginValueOrEmpty
-            | State::BeginStringOrEmpty
-            | State::BeginString
-            | State::EndValue
-            | State::EndTop => self.step_structural_state(c),
-            State::InString
-            | State::InStringEsc
-            | State::InStringEscU
-            | State::InStringEscU1
-            | State::InStringEscU12
-            | State::InStringEscU123 => self.step_string_state(c),
-            State::Neg
-            | State::Num0
-            | State::Num1
-            | State::Dot
-            | State::Dot0
-            | State::Exp
-            | State::ExpSign
-            | State::Exp0 => self.step_number_state(c),
-            State::T
-            | State::Tr
-            | State::Tru
-            | State::F
-            | State::Fa
-            | State::Fal
-            | State::Fals
-            | State::N
-            | State::Nu
-            | State::Nul => self.step_literal_state(c),
-            State::Error => Op::Error,
-        }
-    }
-
-    // --- Helper methods ---
-
-    fn step_structural_state(&mut self, c: char) -> Op {
-        match self.state {
             State::BeginValue => self.begin_value(c),
+
             State::BeginValueOrEmpty => {
                 if is_space(c) {
                     return Op::SkipSpace;
@@ -158,6 +121,7 @@ impl Scanner {
                 }
                 self.begin_value(c)
             }
+
             State::BeginStringOrEmpty => {
                 if is_space(c) {
                     return Op::SkipSpace;
@@ -172,43 +136,105 @@ impl Scanner {
                 }
                 self.begin_string(c)
             }
+
             State::BeginString => self.begin_string(c),
             State::EndValue => self.end_value(c),
             State::EndTop => self.end_top(c),
-            _ => self.invalid_state("structural"),
-        }
-    }
 
-    fn step_string_state(&mut self, c: char) -> Op {
-        match self.state {
-            State::InString => self.in_string(c),
-            State::InStringEsc => self.in_string_escape(c),
+            State::InString => match c {
+                '"' => {
+                    self.state = State::EndValue;
+                    Op::Continue
+                }
+                '\\' => {
+                    self.state = State::InStringEsc;
+                    Op::Continue
+                }
+                '\x00'..'\x20' => self.error(c, "in string literal"),
+                _ => Op::Continue,
+            },
+
+            State::InStringEsc => match c {
+                'b' | 'f' | 'n' | 'r' | 't' | '\\' | '/' | '"' => {
+                    self.state = State::InString;
+                    Op::Continue
+                }
+                'u' => {
+                    self.state = State::InStringEscU;
+                    Op::Continue
+                }
+                _ => self.error(c, "in string escape code"),
+            },
+
             // Four hex digits for \uXXXX
             State::InStringEscU => self.hex_digit(c, State::InStringEscU1),
             State::InStringEscU1 => self.hex_digit(c, State::InStringEscU12),
             State::InStringEscU12 => self.hex_digit(c, State::InStringEscU123),
             State::InStringEscU123 => self.hex_digit(c, State::InString),
-            _ => self.invalid_state("string"),
-        }
-    }
 
-    fn step_number_state(&mut self, c: char) -> Op {
-        match self.state {
-            State::Neg => self.neg(c),
+            State::Neg => {
+                if c == '0' {
+                    self.state = State::Num0;
+                    Op::Continue
+                } else if ('1'..='9').contains(&c) {
+                    self.state = State::Num1;
+                    Op::Continue
+                } else {
+                    self.error(c, "in numeric literal")
+                }
+            }
+
             // Non-zero integer: keep consuming digits, then fall through to Num0 logic.
-            State::Num1 | State::Exp0 if c.is_ascii_digit() => Op::Continue,
-            State::Num1 | State::Num0 => self.num0(c),
-            State::Dot => self.dot(c),
-            State::Dot0 => self.dot0(c),
-            State::Exp => self.exp(c),
-            State::ExpSign => self.exp_sign(c),
-            State::Exp0 => self.end_value(c),
-            _ => self.invalid_state("number"),
-        }
-    }
+            State::Num1 => {
+                if c.is_ascii_digit() {
+                    Op::Continue
+                } else {
+                    self.num0(c)
+                }
+            }
 
-    fn step_literal_state(&mut self, c: char) -> Op {
-        match self.state {
+            State::Num0 => self.num0(c),
+
+            State::Dot => {
+                if c.is_ascii_digit() {
+                    self.state = State::Dot0;
+                    Op::Continue
+                } else {
+                    self.error(c, "after decimal point in numeric literal")
+                }
+            }
+
+            State::Dot0 => {
+                if c.is_ascii_digit() {
+                    Op::Continue
+                } else if c == 'e' || c == 'E' {
+                    self.state = State::Exp;
+                    Op::Continue
+                } else {
+                    self.end_value(c)
+                }
+            }
+
+            State::Exp => {
+                if c == '+' || c == '-' {
+                    self.state = State::ExpSign;
+                    Op::Continue
+                } else {
+                    self.exp_sign(c)
+                }
+            }
+
+            State::ExpSign => self.exp_sign(c),
+
+            State::Exp0 => {
+                if c.is_ascii_digit() {
+                    Op::Continue
+                } else {
+                    self.end_value(c)
+                }
+            }
+
+            // Literal keywords: "true", "false", "null"
             State::T => self.lit(c, 'r', State::Tr, "in literal true (expecting 'r')"),
             State::Tr => self.lit(c, 'u', State::Tru, "in literal true (expecting 'u')"),
             State::Tru => self.lit_end(c, 'e', "in literal true (expecting 'e')"),
@@ -219,79 +245,12 @@ impl Scanner {
             State::N => self.lit(c, 'u', State::Nu, "in literal null (expecting 'u')"),
             State::Nu => self.lit(c, 'l', State::Nul, "in literal null (expecting 'l')"),
             State::Nul => self.lit_end(c, 'l', "in literal null (expecting 'l')"),
-            _ => self.invalid_state("literal"),
+
+            State::Error => Op::Error,
         }
     }
 
-    fn in_string(&mut self, c: char) -> Op {
-        match c {
-            '"' => {
-                self.state = State::EndValue;
-                Op::Continue
-            }
-            '\\' => {
-                self.state = State::InStringEsc;
-                Op::Continue
-            }
-            '\x00'..'\x20' => self.error(c, "in string literal"),
-            _ => Op::Continue,
-        }
-    }
-
-    fn in_string_escape(&mut self, c: char) -> Op {
-        match c {
-            'b' | 'f' | 'n' | 'r' | 't' | '\\' | '/' | '"' => {
-                self.state = State::InString;
-                Op::Continue
-            }
-            'u' => {
-                self.state = State::InStringEscU;
-                Op::Continue
-            }
-            _ => self.error(c, "in string escape code"),
-        }
-    }
-
-    fn neg(&mut self, c: char) -> Op {
-        if c == '0' {
-            self.state = State::Num0;
-            Op::Continue
-        } else if ('1'..='9').contains(&c) {
-            self.state = State::Num1;
-            Op::Continue
-        } else {
-            self.error(c, "in numeric literal")
-        }
-    }
-
-    fn dot(&mut self, c: char) -> Op {
-        if c.is_ascii_digit() {
-            self.state = State::Dot0;
-            Op::Continue
-        } else {
-            self.error(c, "after decimal point in numeric literal")
-        }
-    }
-
-    fn dot0(&mut self, c: char) -> Op {
-        if c.is_ascii_digit() {
-            Op::Continue
-        } else if c == 'e' || c == 'E' {
-            self.state = State::Exp;
-            Op::Continue
-        } else {
-            self.end_value(c)
-        }
-    }
-
-    fn exp(&mut self, c: char) -> Op {
-        if c == '+' || c == '-' {
-            self.state = State::ExpSign;
-            Op::Continue
-        } else {
-            self.exp_sign(c)
-        }
-    }
+    // --- Helper methods ---
 
     fn begin_value(&mut self, c: char) -> Op {
         if is_space(c) {
@@ -363,8 +322,7 @@ impl Scanner {
             self.state = State::EndValue;
             return Op::SkipSpace;
         }
-        let top = self.parse_state[n - 1]; // Copy; n > 0 checked above
-        match top {
+        match self.parse_state[n - 1] {
             ParseState::ObjectKey => {
                 if c == ':' {
                     self.parse_state[n - 1] = ParseState::ObjectValue;
@@ -479,17 +437,6 @@ impl Scanner {
     fn error(&mut self, c: char, ctx: &str) -> Op {
         self.state = State::Error;
         self.err = Some(format!("invalid character '{c}' {ctx}"));
-        Op::Error
-    }
-
-    // This function is unreachable during normal scanner execution. It exists
-    // to report an internal state mismatch without introducing a panic path.
-    fn invalid_state(&mut self, expected: &'static str) -> Op {
-        let actual = self.state;
-        self.state = State::Error;
-        self.err = Some(format!(
-            "internal JSON scanner state mismatch: expected {expected}, got {actual:?}"
-        ));
         Op::Error
     }
 }
