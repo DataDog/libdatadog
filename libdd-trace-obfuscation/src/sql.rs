@@ -2004,7 +2004,7 @@ impl<'a> Tokenizer<'a> {
 
 /// Try to match a `( ?, ?, ..., ? )` or `[ ?, ?, ..., ? ]` pattern starting at `i`.
 /// Returns Some(k) where k is the index after the closing bracket if matched, else None.
-fn try_match_pure_group(bytes: &[u8], open: u8, close: u8, i: usize) -> Option<usize> {
+const fn try_match_pure_group(bytes: &[u8], open: u8, close: u8, i: usize) -> Option<usize> {
     let n = bytes.len();
     if i >= n || bytes[i] != open {
         return None;

@@ -144,6 +144,7 @@ redundant_feature_names = "allow"
 redundant_else = "allow" # less clear
 option_if_let_else = "allow" # less clear
 unreadable_literal = "allow" # annoying for all the ids in the codebase
+cognitive_complexity = "allow" # using clippy::too_many_lines already
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }

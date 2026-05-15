@@ -313,20 +313,19 @@ impl Scanner {
     }
 
     fn end_value(&mut self, c: char) -> Op {
-        let n = self.parse_state.len();
-        if n == 0 {
+        let Some(parse_state) = self.parse_state.last_mut() else {
             self.state = State::EndTop;
             self.end_top = true;
             return self.end_top(c);
-        }
+        };
         if is_space(c) {
             self.state = State::EndValue;
             return Op::SkipSpace;
         }
-        match self.parse_state[n - 1] {
+        match *parse_state {
             ParseState::ObjectKey => {
                 if c == ':' {
-                    self.parse_state[n - 1] = ParseState::ObjectValue;
+                    *parse_state = ParseState::ObjectValue;
                     self.state = State::BeginValue;
                     Op::ObjectKey
                 } else {
@@ -335,7 +334,7 @@ impl Scanner {
             }
             ParseState::ObjectValue => {
                 if c == ',' {
-                    self.parse_state[n - 1] = ParseState::ObjectKey;
+                    *parse_state = ParseState::ObjectKey;
                     self.state = State::BeginString;
                     Op::ObjectValue
                 } else if c == '}' {
