@@ -519,29 +519,35 @@ jobs:
           # iterate over the major bumps and check the major bumps and update the version
           jq -c '.[]' /tmp/api-changes-with-major-bumps-pre-commit.json | while read -r bump; do
             NAME=$(echo "$bump" | jq -r '.name')
+            LEVEL=$(echo "$bump" | jq -r '.level')
             PREV_TAG=$(echo "$bump" | jq -r '.prev_tag')
             TAG=$(echo "$bump" | jq -r '.tag')
             VERSION=$(echo "$bump" | jq -r '.version')
-            MAJOR_BUMPS=$(echo "$bump" | jq -r '.major_bumps')
+            MAJOR_BUMPS=$(echo "$bump" | jq -c '.major_bumps')
 
             if [ "$MAJOR_BUMPS" != "[]" ]; then
-              echo "Updating version for $NAME with major bumps: $MAJOR_BUMPS"
-              cargo release version -p "$NAME" --prev-tag-name "$PREV_TAG" --allow-branch "$BRANCH_NAME" -x major --no-confirm
-              
-              git commit -am "chore(release): update version for $NAME with major bumps"
+              # Already bumped at major in the API semver step; do not bump major again for libdd-* propagation.
+              if [ "$LEVEL" = "major" ]; then
+                echo "Skipping $NAME: already bumped at major level in the previous step (major_bumps: $MAJOR_BUMPS)"
+              else
+                echo "Updating version for $NAME with major bumps: $MAJOR_BUMPS"
+                cargo release version -p "$NAME" --prev-tag-name "$PREV_TAG" --allow-branch "$BRANCH_NAME" -x major --no-confirm
+                
+                git commit -am "chore(release): update version for $NAME with major bumps"
 
-              NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
-              NEXT_TAG="$NAME-v$NEXT_VERSION"
+                NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
+                NEXT_TAG="$NAME-v$NEXT_VERSION"
 
-              echo "Updating tag $TAG to $NEXT_TAG and version $VERSION to $NEXT_VERSION for $NAME"
+                echo "Updating tag $TAG to $NEXT_TAG and version $VERSION to $NEXT_VERSION for $NAME"
 
-              jq --arg name "$NAME" \
-                --arg nl "major" \
-                --arg version "$NEXT_VERSION" \
-                --arg tag "$NEXT_TAG" \
-                'map(if .name == $name then . + {level: $nl, version: $version, tag: $tag} else . end)' \
-                /tmp/api-changes-with-major-bumps.json > /tmp/api-changes-with-major-bumps.tmp \
-                && mv /tmp/api-changes-with-major-bumps.tmp /tmp/api-changes-with-major-bumps.json
+                jq --arg name "$NAME" \
+                  --arg nl "major" \
+                  --arg version "$NEXT_VERSION" \
+                  --arg tag "$NEXT_TAG" \
+                  'map(if .name == $name then . + {level: $nl, version: $version, tag: $tag} else . end)' \
+                  /tmp/api-changes-with-major-bumps.json > /tmp/api-changes-with-major-bumps.tmp \
+                  && mv /tmp/api-changes-with-major-bumps.tmp /tmp/api-changes-with-major-bumps.json
+              fi
             fi
           done
 
