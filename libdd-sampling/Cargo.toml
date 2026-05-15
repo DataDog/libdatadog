@@ -22,6 +22,12 @@ harness = false
 path = "benches/sampling_bench.rs"
 required-features = ["v04_span"]
 
+[[bench]]
+name = "glob_matcher_bench"
+harness = false
+path = "benches/glob_matcher_bench.rs"
+required-features = ["bench-internals"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -31,6 +37,9 @@ libdd-trace-utils = { path = "../libdd-trace-utils", version = "3.0.1", optional
 
 [features]
 v04_span = ["dep:libdd-trace-utils"]
+# Exposes internal modules (e.g. `glob_matcher`) for benchmarks. Not intended for downstream
+# consumers — enable only when running benches in this crate.
+bench-internals = []
 
 [dev-dependencies]
 criterion = "0.5"

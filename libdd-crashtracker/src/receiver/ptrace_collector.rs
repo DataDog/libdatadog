@@ -31,9 +31,9 @@ use std::ptr;
 use std::time::{Duration, Instant};
 
 use libdd_libunwind_sys::{
-    UnwAddrSpaceT, UnwCursor, UnwWord, _UPT_accessors, _UPT_create, _UPT_destroy,
-    unw_create_addr_space, unw_destroy_addr_space, unw_get_proc_name_remote, unw_get_reg_remote,
-    unw_init_remote, unw_step_remote, UNW_REG_IP, UNW_REG_SP,
+    _UPT_accessors, _UPT_create, _UPT_destroy, unw_create_addr_space, unw_destroy_addr_space,
+    unw_get_proc_name_remote, unw_get_reg_remote, unw_init_remote, unw_step_remote, UnwAddrSpaceT,
+    UnwCursor, UnwWord, UNW_REG_IP, UNW_REG_SP,
 };
 
 use crate::crash_info::{StackFrame, StackTrace};

@@ -40,13 +40,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
 
-pub fn build_crash_ping_message(sig_info: &SigInfo) -> String {
-    format!(
-        "Crashtracker crash ping: crash processing started - Process terminated by signal {:?}",
-        sig_info.si_signo_human_readable
-    )
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]

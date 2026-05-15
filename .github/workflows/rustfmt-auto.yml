@@ -1,13 +1,14 @@
 name: Rustfmt Auto
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, reopened, labeled]
 
 jobs:
   rustfmt:
     runs-on: ubuntu-latest
     if: >-
       contains(github.event.pull_request.labels.*.name, 'commit-rustfmt-changes') &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       !startsWith(github.head_ref, 'mq-working-branch')
     permissions:
       id-token: write
@@ -16,7 +17,8 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          ref: ${{ github.head_ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
       - name: Get GitHub App token
         uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
