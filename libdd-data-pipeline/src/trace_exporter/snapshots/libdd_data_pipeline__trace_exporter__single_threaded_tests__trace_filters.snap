@@ -15,7 +15,7 @@ expression: "serde_json::to_value(&captured_stats).unwrap()"
           {
             "Service": "",
             "Name": "",
-            "Resource": "test2",
+            "Resource": "test",
             "HTTPStatusCode": 0,
             "Type": "",
             "DBType": "",
@@ -38,7 +38,7 @@ expression: "serde_json::to_value(&captured_stats).unwrap()"
           {
             "Service": "",
             "Name": "",
-            "Resource": "test",
+            "Resource": "test2",
             "HTTPStatusCode": 0,
             "Type": "",
             "DBType": "",
@@ -87,7 +87,7 @@ expression: "serde_json::to_value(&captured_stats).unwrap()"
           {
             "Service": "",
             "Name": "",
-            "Resource": "test2",
+            "Resource": "test",
             "HTTPStatusCode": 0,
             "Type": "",
             "DBType": "",
@@ -110,7 +110,7 @@ expression: "serde_json::to_value(&captured_stats).unwrap()"
           {
             "Service": "",
             "Name": "",
-            "Resource": "test",
+            "Resource": "test2",
             "HTTPStatusCode": 0,
             "Type": "",
             "DBType": "",

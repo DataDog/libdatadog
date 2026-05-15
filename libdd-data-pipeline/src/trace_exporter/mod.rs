@@ -2365,12 +2365,18 @@ mod single_threaded_tests {
         mock_stats.assert();
 
         // Verify snapshots matches
-        let captured_stats: Vec<ClientStatsPayload> = captured_stats
+        let mut captured_stats: Vec<ClientStatsPayload> = captured_stats
             .lock()
             .unwrap()
             .iter()
             .map(|payload| rmp_serde::from_slice(payload).unwrap())
             .collect();
+        // Sort for deterministic snapshot output
+        for payload in &mut captured_stats {
+            for bucket in &mut payload.stats {
+                bucket.stats.sort_by(|a, b| a.resource.cmp(&b.resource));
+            }
+        }
         insta::assert_json_snapshot!(
             "trace_filters",
             serde_json::to_value(&captured_stats).unwrap(),
