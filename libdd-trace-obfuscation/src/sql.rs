@@ -49,6 +49,10 @@ pub enum SqlObfuscationMode {
 
 /// Configuration for SQL obfuscation
 #[derive(Debug, Default, Clone, Deserialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "public config schema, should not be refactored"
+)]
 pub struct SqlObfuscateConfig {
     pub replace_digits: bool,
     pub keep_sql_alias: bool,
@@ -626,6 +630,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "FIXME: split this function")]
     fn process(&mut self) {
         while !self.at_end() {
             let b = self.bytes[self.pos];
@@ -2269,6 +2274,7 @@ fn normalize_plan_sql(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
+    use std::fmt::Write;
 
     #[test]
     fn test_sql_obfuscation() {
@@ -2294,7 +2300,7 @@ mod tests {
             if panic.is_none() {
                 panic!("{err}")
             } else {
-                eprintln!("{err}")
+                eprintln!("{err}");
             }
         }
         if let Some(p) = panic {
@@ -2335,7 +2341,7 @@ mod tests {
             if panic.is_none() {
                 panic!("{err}")
             } else {
-                eprintln!("{err}")
+                eprintln!("{err}");
             }
         }
         if let Some(p) = panic {
@@ -2850,7 +2856,7 @@ mod tests {
             // Table identifier (after FROM) — keep
             (
                 r#"SELECT * FROM "users" WHERE id = 1"#,
-                r#"SELECT * FROM users WHERE id = ?"#,
+                r"SELECT * FROM users WHERE id = ?",
             ),
         ];
         for (input, expected) in cases {
@@ -3300,14 +3306,13 @@ mod tests {
         for (i, (input, expected)) in SUITE_CASES.iter().enumerate() {
             let got = super::obfuscate_sql_string(input);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True}
@@ -3329,14 +3334,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dollar_quoted_func': True}
@@ -3358,14 +3362,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True}
@@ -3385,14 +3388,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'replace_digits': True}
@@ -3479,14 +3481,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True, 'keep_null': True, 'keep_boolean': True,
@@ -3534,14 +3535,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dbms': 'mssql'}
@@ -3563,14 +3563,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Mssql);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dbms': 'postgresql'}
@@ -3634,14 +3633,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Postgresql);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only'}
@@ -3669,14 +3667,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_sql_alias': True}
@@ -3695,14 +3692,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'remove_space_between_parentheses': True}
@@ -3724,14 +3720,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_trailing_semicolon': True}
@@ -3753,14 +3748,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_identifier_quotation': True}
@@ -3782,14 +3776,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize'}
@@ -3825,14 +3818,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_digits': True}
@@ -3854,14 +3846,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_sql_alias': True}
@@ -3880,14 +3871,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True}
@@ -3909,14 +3899,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True, 'replace_digits': True}
@@ -3939,14 +3928,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'remove_space_between_parentheses': True}
@@ -3968,14 +3956,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_null': True}
@@ -3997,14 +3984,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_boolean': True}
@@ -4026,14 +4012,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_positional_parameter': True}
@@ -4055,14 +4040,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_trailing_semicolon': True}
@@ -4084,14 +4068,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_identifier_quotation': True}
@@ -4113,14 +4096,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_bind_parameter': True}
@@ -4142,14 +4124,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_json_path': True}
@@ -4176,14 +4157,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only'}
@@ -4207,14 +4187,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'replace_digits': True}
@@ -4236,14 +4215,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True}
@@ -4265,14 +4243,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True, 'replace_digits': True}
@@ -4295,14 +4272,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // Test that collapse_limit_two_args handles LIMIT case-insensitively.

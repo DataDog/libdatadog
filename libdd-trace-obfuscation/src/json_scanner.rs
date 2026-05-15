@@ -107,6 +107,7 @@ impl Scanner {
     }
 
     /// Advances the scanner by one char and returns its structural opcode.
+    #[allow(clippy::too_many_lines, reason = "FIXME: split this function")]
     pub(crate) fn step(&mut self, c: char) -> Op {
         self.position += 1;
         match self.state {
