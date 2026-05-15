@@ -22,9 +22,11 @@ use crate::profiles::{Compressor, DefaultProfileCodec};
 use crate::{api, api2};
 use anyhow::Context;
 use interning_api::Generation;
+use libdd_common::error::FfiSafeErrorMessage;
 use libdd_profiling_protobuf::{self as protobuf, Record, Value, NO_OPT_ZERO, OPT_ZERO};
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::ffi::CStr;
 use std::io;
 use std::ops::Deref;
 use std::sync::atomic::AtomicU64;
@@ -60,6 +62,60 @@ pub struct EncodedProfile {
     pub end: SystemTime,
     pub buffer: Vec<u8>,
     pub endpoints_stats: ProfiledEndpointsStats,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileEncodingError {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Allocation(#[from] std::collections::TryReserveError),
+    #[error(transparent)]
+    InvalidProfile(#[from] ProfileDataError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProfileDataError {
+    InvalidLabelId,
+    InvalidLabelSetId,
+    InvalidStackTraceId,
+    InvalidLocationId,
+    UnexpectedEndpointLabelKey,
+    LocalRootSpanIdLabelNotNumeric,
+}
+
+impl std::fmt::Display for ProfileDataError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.as_rust_str().fmt(f)
+    }
+}
+
+impl std::error::Error for ProfileDataError {}
+
+// SAFETY: all cases are utf-8 c-str literals.
+unsafe impl FfiSafeErrorMessage for ProfileDataError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        match self {
+            ProfileDataError::InvalidLabelId => {
+                c"invalid profile data: label id did not exist in profile"
+            }
+            ProfileDataError::InvalidLabelSetId => {
+                c"invalid profile data: label set id did not exist in profile"
+            }
+            ProfileDataError::InvalidStackTraceId => {
+                c"invalid profile data: stack trace id did not exist in profile"
+            }
+            ProfileDataError::InvalidLocationId => {
+                c"invalid profile data: location id did not exist in profile"
+            }
+            ProfileDataError::UnexpectedEndpointLabelKey => {
+                c"bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\""
+            }
+            ProfileDataError::LocalRootSpanIdLabelNotNumeric => {
+                c"invalid profile data: local root span id label value was not numeric"
+            }
+        }
+    }
 }
 
 impl EncodedProfile {
@@ -99,6 +155,23 @@ impl Profile {
     /// level 1 provided better compressed files while taking less or equal
     /// time compared to lz4.
     pub const COMPRESSION_LEVEL: i32 = 1;
+
+    // On 2023-08-23, we analyzed the uploaded tarball size per language.
+    // These tarballs include 1 or more profiles, but for most languages
+    // using libdatadog (all?) there is only 1 profile, so this is a good
+    // proxy for the compressed, final size of the profiles.
+    // We found that for all languages using libdatadog, the average
+    // tarball was at least 18 KiB. This initial size of 32KiB should
+    // definitely outperform starting at zero for time consumed, allocator
+    // pressure, and allocator fragmentation.
+    const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+
+    // 2025-10-16: a profile larger than 10 MiB will be skipped, but a
+    // higher limit is accepted for upload. A limit of 16 MiB allows us to
+    // be a little bit decoupled from the exact limit so that if the
+    // backend decides to accept larger pprofs, clients don't have to be
+    // recompiled. But setting a much higher limit would be wasteful.
+    const MAX_PROFILE_SIZE: usize = 16 * 1024 * 1024;
 
     /// Add the endpoint data to the endpoint mappings.
     /// The `endpoint` string will be interned.
@@ -467,26 +540,9 @@ impl Profile {
         end_time: Option<SystemTime>,
         duration: Option<Duration>,
     ) -> anyhow::Result<EncodedProfile> {
-        // On 2023-08-23, we analyzed the uploaded tarball size per language.
-        // These tarballs include 1 or more profiles, but for most languages
-        // using libdatadog (all?) there is only 1 profile, so this is a good
-        // proxy for the compressed, final size of the profiles.
-        // We found that for all languages using libdatadog, the average
-        // tarball was at least 18 KiB. This initial size of 32KiB should
-        // definitely outperform starting at zero for time consumed, allocator
-        // pressure, and allocator fragmentation.
-        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
-
-        // 2025-10-16: a profile larger than 10 MiB will be skipped, but a
-        // higher limit is accepted for upload. A limit of 16 MiB allows us to
-        // be a little bit decoupled from the exact limit so that if the
-        // backend decides to accept larger pprofs, clients don't have to be
-        // recompiled. But setting a much higher limit would be wasteful.
-        const MAX_PROFILE_SIZE: usize = 16 * 1024 * 1024;
-
         let mut compressor = Compressor::<DefaultProfileCodec>::try_new(
-            INITIAL_PPROF_BUFFER_SIZE,
-            MAX_PROFILE_SIZE,
+            Self::INITIAL_PPROF_BUFFER_SIZE,
+            Self::MAX_PROFILE_SIZE,
             Self::COMPRESSION_LEVEL,
         )
         .context("failed to create compressor")?;
@@ -518,26 +574,19 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut extended_label_sets: Vec<Vec<Label>> = Vec::with_capacity(self.label_sets.len());
+        let label_sets = std::mem::take(&mut self.label_sets);
+        let mut extended_label_sets: Vec<Vec<Label>> = Vec::new();
+        extended_label_sets.try_reserve_exact(label_sets.len())?;
 
-        for label_set in std::mem::take(&mut self.label_sets) {
-            let endpoint_label = self.get_endpoint_for_label_set(&label_set)?;
-            // Leave one space for the timestamp if needed
-            let mut labels = Vec::with_capacity(
-                label_set.len() + 1 + if endpoint_label.is_some() { 1 } else { 0 },
-            );
-            for l in label_set.iter() {
-                labels.push(*self.get_label(*l)?);
-            }
-            if let Some(endpoint_label) = endpoint_label {
-                labels.push(endpoint_label);
-            }
-            extended_label_sets.push(labels);
+        for label_set in label_sets {
+            extended_label_sets.push(self.expand_label_set(&label_set)?);
         }
 
         let iter = std::mem::take(&mut self.observations).try_into_iter()?;
         for (sample, timestamp, mut values) in iter {
-            let labels = &mut extended_label_sets[sample.labels.to_raw_id()];
+            let labels = extended_label_sets
+                .get_mut(sample.labels.to_offset())
+                .ok_or(ProfileDataError::InvalidLabelSetId)?;
             let location_ids: Vec<_> = self
                 .get_stacktrace(sample.stacktrace)?
                 .locations
@@ -547,11 +596,16 @@ impl Profile {
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, labels);
 
-            // Use the extra slot in the labels vector to store the timestamp without any reallocs.
+            let mut pprof_labels: Vec<_> = Vec::new();
+            pprof_labels.try_reserve_exact(labels.len())?;
+
+            // Try not to fail between labels.push and labels.pop, which would
+            // leave the push.
             if let Some(ts) = timestamp {
+                // The memory was reserved by `expand_label_set`.
                 labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
             }
-            let pprof_labels: Vec<_> = labels.iter().map(protobuf::Label::from).collect();
+            pprof_labels.extend(labels.iter().map(protobuf::Label::from));
             if timestamp.is_some() {
                 labels.pop();
             }
@@ -669,17 +723,19 @@ impl Profile {
     /// In incident 35390 (JIRA PROF-11456) we observed invalid location_ids being present in
     /// emitted profiles. We're doing extra checks here so that if we see incorrect ids again,
     /// we are 100% sure they were not introduced prior to this stage.
-    fn check_location_ids_are_valid(&self, location_ids: &[u64], len: usize) -> anyhow::Result<()> {
-        let len: u64 = u64::try_from(len)?;
-        for id in location_ids.iter() {
-            let id = *id;
-            // Location ids start from 1, that's why they're <= len instead of < len
-            anyhow::ensure!(
-                id > 0 && id <= len,
-                "invalid location id found during serialization {:?}, len was {:?}",
-                id,
-                len
-            )
+    fn check_location_ids_are_valid(
+        &self,
+        location_ids: &[u64],
+        len: usize,
+    ) -> Result<(), ProfileDataError> {
+        let len: u64 = len
+            .try_into()
+            .map_err(|_| ProfileDataError::InvalidLocationId)?;
+        for id in location_ids.iter().copied() {
+            // Location ids start from 1, that's why they're <= len instead of < len.
+            if id == 0 || id > len {
+                return Err(ProfileDataError::InvalidLocationId);
+            }
         }
         Ok(())
     }
@@ -825,33 +881,28 @@ impl Profile {
     /// Fetches the endpoint information for the label. There may be errors,
     /// but there may also be no endpoint information for a given endpoint.
     /// Hence, the return type of Result<Option<_>, _>.
-    fn get_endpoint_for_label(&self, label: &Label) -> anyhow::Result<Option<Label>> {
-        anyhow::ensure!(
-            label.get_key() == self.endpoints.local_root_span_id_label,
-            "bug: get_endpoint_for_label should only be called on labels with the key \"local root span id\""
-        );
+    fn get_endpoint_for_label(&self, label: &Label) -> Result<Option<Label>, ProfileDataError> {
+        if label.get_key() != self.endpoints.local_root_span_id_label {
+            debug_assert_eq!(label.get_key(), self.endpoints.local_root_span_id_label);
+            return Err(ProfileDataError::UnexpectedEndpointLabelKey);
+        }
 
-        anyhow::ensure!(
-            label.has_num_value(),
-            "the local root span id label value must be sent as a number, not a string, given {:?}",
-            label
-        );
+        if !label.has_num_value() {
+            return Err(ProfileDataError::LocalRootSpanIdLabelNotNumeric);
+        }
 
-        let local_root_span_id = if let LabelValue::Num { num, .. } = label.get_value() {
-            // Safety: the value is an u64, but pprof only has signed values, so we
-            // transmute it; the backend does the same.
-            #[allow(
-                unknown_lints,
-                unnecessary_transmutes,
-                reason = "i64::cast_unsigned requires MSRV 1.87.0"
-            )]
-            unsafe {
-                std::mem::transmute::<i64, u64>(*num)
-            }
-        } else {
-            return Err(anyhow::format_err!("the local root span id label value must be sent as a number, not a string, given {:?}",
-            label));
+        let LabelValue::Num { num, .. } = *label.get_value() else {
+            return Err(ProfileDataError::LocalRootSpanIdLabelNotNumeric);
         };
+
+        // Safety: the value is an u64, but pprof only has signed values, so we
+        // transmute it; the backend does the same.
+        #[allow(
+            unknown_lints,
+            unnecessary_transmutes,
+            reason = "i64::cast_unsigned requires MSRV 1.87.0"
+        )]
+        let local_root_span_id = unsafe { std::mem::transmute::<i64, u64>(num) };
 
         Ok(self
             .endpoints
@@ -860,25 +911,39 @@ impl Profile {
             .map(|v| Label::str(self.endpoints.endpoint_label, *v)))
     }
 
-    fn get_endpoint_for_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Option<Label>> {
-        if let Some(label) = label_set.iter().find_map(|id| {
-            if let Ok(label) = self.get_label(*id) {
-                if label.get_key() == self.endpoints.local_root_span_id_label {
-                    return Some(label);
-                }
+    fn get_endpoint_for_label_set(
+        &self,
+        label_set: &LabelSet,
+    ) -> Result<Option<Label>, ProfileDataError> {
+        for id in label_set.iter() {
+            let label = self.get_label(*id)?;
+            if label.get_key() == self.endpoints.local_root_span_id_label {
+                return self.get_endpoint_for_label(label);
             }
-            None
-        }) {
-            self.get_endpoint_for_label(label)
-        } else {
-            Ok(None)
         }
+
+        Ok(None)
     }
 
-    fn get_label(&self, id: LabelId) -> anyhow::Result<&Label> {
+    /// Resolves label ids into labels and appends the endpoint label, leaving
+    /// one spare slot for a sample timestamp label.
+    fn expand_label_set(&self, label_set: &LabelSet) -> Result<Vec<Label>, ProfileEncodingError> {
+        let endpoint_label = self.get_endpoint_for_label_set(label_set)?;
+        let mut labels =
+            Vec::with_capacity(label_set.len() + 1 + usize::from(endpoint_label.is_some()));
+        for l in label_set.iter() {
+            labels.push(*self.get_label(*l)?);
+        }
+        if let Some(endpoint_label) = endpoint_label {
+            labels.push(endpoint_label);
+        }
+        Ok(labels)
+    }
+
+    fn get_label(&self, id: LabelId) -> Result<&Label, ProfileDataError> {
         self.labels
             .get_index(id.to_offset())
-            .context("LabelId to have a valid interned index")
+            .ok_or(ProfileDataError::InvalidLabelId)
     }
 
     #[allow(dead_code)]
@@ -888,10 +953,10 @@ impl Profile {
             .context("LabelSetId to have a valid interned index")
     }
 
-    fn get_stacktrace(&self, st: StackTraceId) -> anyhow::Result<&StackTrace> {
+    fn get_stacktrace(&self, st: StackTraceId) -> Result<&StackTrace, ProfileDataError> {
         self.stack_traces
             .get_index(st.to_raw_id())
-            .with_context(|| format!("StackTraceId {st:?} to exist in profile"))
+            .ok_or(ProfileDataError::InvalidStackTraceId)
     }
 
     /// Interns the `str` as a string, returning the id in the string table.
@@ -2901,7 +2966,7 @@ mod api_tests {
     }
 
     #[test]
-    fn reproduce_crash_with_anyhow_bailout() {
+    fn serialize_fails_with_invalid_location_ids() {
         let sample_types = [api::SampleType::CpuSamples];
         let mapping = api::Mapping {
             filename: "test.php",
@@ -2948,11 +3013,9 @@ mod api_tests {
                 "Expected serialization to fail due to invalid location IDs, but it succeeded"
             ),
             Err(err) => {
-                assert!(
-                    err.to_string().contains("invalid location id"),
-                    "Expected error about invalid location id, got: {}",
-                    err
-                );
+                _ = err
+                    .downcast_ref::<ProfileDataError>()
+                    .expect("expected invalid location id error to be a ProfileDataError");
             }
         }
     }

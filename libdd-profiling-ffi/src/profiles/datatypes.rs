@@ -5,11 +5,13 @@ use crate::string_storage::{get_inner_string_storage, ManagedStringStorage};
 use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileError, ProfileStatus};
 use anyhow::Context;
 use function_name::named;
+use libdd_common::error::FfiSafeErrorMessage;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
 use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
 use libdd_profiling::api::{self, ManagedStringId};
 use libdd_profiling::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_profiling::{api2, internal};
+use std::ffi::CStr;
 use std::num::NonZeroI64;
 use std::str::Utf8Error;
 use std::time::SystemTime;
@@ -46,6 +48,26 @@ impl Profile {
 impl Drop for Profile {
     fn drop(&mut self) {
         drop(self.take())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ProfilePtrError {
+    #[error("profile pointer was null")]
+    NullProfilePointer,
+    #[error("profile's inner pointer was null (indicates use-after-free)")]
+    NullInnerPointer,
+}
+
+// SAFETY: all cases are utf-8 c-str literals.
+unsafe impl FfiSafeErrorMessage for ProfilePtrError {
+    fn as_ffi_str(&self) -> &'static CStr {
+        match self {
+            ProfilePtrError::NullProfilePointer => c"profile pointer was null",
+            ProfilePtrError::NullInnerPointer => {
+                c"profile's inner pointer was null (indicates use-after-free)"
+            }
+        }
     }
 }
 
@@ -614,12 +636,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
 
 pub(crate) unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
-) -> anyhow::Result<&'a mut internal::Profile> {
+) -> Result<&'a mut internal::Profile, ProfilePtrError> {
     match profile_ptr.as_mut() {
-        None => anyhow::bail!("profile pointer was null"),
+        None => Err(ProfilePtrError::NullProfilePointer),
         Some(inner_ptr) => match inner_ptr.inner.as_mut() {
             Some(profile) => Ok(profile),
-            None => anyhow::bail!("profile's inner pointer was null (indicates use-after-free)"),
+            None => Err(ProfilePtrError::NullInnerPointer),
         },
     }
 }

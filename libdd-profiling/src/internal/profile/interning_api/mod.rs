@@ -195,6 +195,7 @@ impl Profile {
 
     /// Prevent any new samples from starting.
     /// Returns the number of remaining samples.
+    #[inline]
     pub fn sample_block(&mut self) -> anyhow::Result<u64> {
         let current = self.active_samples.fetch_add(Self::FLAG, SeqCst);
         if current >= Self::FLAG {
