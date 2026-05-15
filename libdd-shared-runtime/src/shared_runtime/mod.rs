@@ -106,10 +106,6 @@ mod native {
             let runtime_guard = self.runtime.lock_or_panic();
             let mut workers_guard = self.workers.lock_or_panic();
 
-            // Reject post-shutdown spawns under the workers lock — this is the
-            // same lock `shutdown_async` acquires before draining, so once
-            // shutdown wins the workers lock, every subsequent spawn observes
-            // the flag and bails instead of silently registering a dead worker.
             if self.shutdown.load(Ordering::Acquire) {
                 return Err(SharedRuntimeError::AlreadyShutdown);
             }
@@ -190,10 +186,6 @@ mod native {
 
             let mut workers_lock = self.workers.lock_or_panic();
 
-            // Log-and-continue: a single worker in `InvalidState` (e.g. its
-            // previous task was aborted) must not abort the whole restart
-            // loop and leave every other component dead. This matches the
-            // failure-tolerance pattern already used by `before_fork`.
             for worker_entry in workers_lock.iter_mut() {
                 if let Err(e) = worker_entry.worker.start(tokio_spawn_fn(&handle)) {
                     error!(
@@ -230,9 +222,6 @@ mod native {
 
             workers_lock.retain(|entry| entry.restart_on_fork);
 
-            // Log-and-continue: see `after_fork_parent`. In the child this
-            // matters even more — a single InvalidState worker must not
-            // silence every other component for the lifetime of the process.
             for worker_entry in workers_lock.iter_mut() {
                 worker_entry.worker.reset();
                 if let Err(e) = worker_entry.worker.start(tokio_spawn_fn(&handle)) {
@@ -443,9 +432,7 @@ pub struct SharedRuntime {
     runtime: Arc<Mutex<Option<Arc<tokio::runtime::Runtime>>>>,
     workers: Arc<Mutex<Vec<WorkerEntry>>>,
     next_worker_id: AtomicU64,
-    /// Set once `shutdown` / `shutdown_async` is called. After this point
-    /// `spawn_worker` rejects with `AlreadyShutdown` instead of silently
-    /// registering a worker that will never run.
+    /// Set once `shutdown` / `shutdown_async` is called
     shutdown: AtomicBool,
 }
 
