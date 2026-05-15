@@ -72,7 +72,9 @@ jobs:
     name: "cargo test #${{ matrix.platform }} ${{ matrix.rust_version }}"
     needs: setup
     if: needs.setup.outputs.packages-count != '0'
-    runs-on: ${{ matrix.platform }}
+    # Ubuntu jobs run on the larger APM runner pool — the default GitHub-hosted
+    # ubuntu-latest disk fills up partway through the workspace build.
+    runs-on: ${{ (matrix.platform == 'ubuntu-latest' && fromJSON('{"labels":"ubuntu-latest-16-cores","group":"APM Larger Runners"}')) || matrix.platform }}
     permissions:
       checks: write
       contents: read
