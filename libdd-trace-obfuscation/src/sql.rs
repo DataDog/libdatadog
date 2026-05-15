@@ -127,9 +127,10 @@ fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
                 if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
                     i += 2; // '' escape
                     continue;
+                } else {
+                    result = Some(i + 1);
+                    break;
                 }
-                result = Some(i + 1);
-                break;
             }
             i += 1;
         }

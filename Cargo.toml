@@ -141,6 +141,7 @@ redundant_feature_names = "allow"
 # --- Whitelist ---
 redundant_else = "allow" # less clear
 option_if_let_else = "allow" # less clear
+unreadable_literal = "allow" # annoying for all the ids in the codebase
 
 [workspace.lints.rust]
 future_incompatible = { level = "warn", priority = -1 }

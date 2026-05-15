@@ -111,7 +111,7 @@ enum FuzzyBool {
 const fn valid_card_prefix(n: u32) -> FuzzyBool {
     // Validates IIN prefix possibilities
     // Source: https://www.regular-expressions.info/creditcard.html
-    if n > 699_999 {
+    if n > 699999 {
         // too long for any known prefix; stop looking
         return FuzzyBool::False;
     }
@@ -145,15 +145,15 @@ const fn valid_card_prefix(n: u32) -> FuzzyBool {
             _ => FuzzyBool::False,
         };
     }
-    if n < 100_000 {
+    if n < 100000 {
         return match n {
             22210..=27209 | 50000..=50999 | 56000..=58999 | 60000..=69999 => FuzzyBool::Maybe,
             _ => FuzzyBool::False,
         };
     }
-    if n < 1_000_000 {
+    if n < 1000000 {
         return match n {
-            222_100..=272_099 | 500_000..=509_999 | 560_000..=589_999 | 600_000..=699_999 => {
+            222100..=272099 | 500000..=509999 | 560000..=589999 | 600000..=699999 => {
                 FuzzyBool::True
             }
             _ => FuzzyBool::False,
@@ -248,18 +248,18 @@ mod tests {
             (21000, FuzzyBool::False),
             (55555, FuzzyBool::False),
             // yes
-            (222_100, FuzzyBool::True),
-            (272_099, FuzzyBool::True),
-            (500_000, FuzzyBool::True),
-            (509_999, FuzzyBool::True),
-            (560_000, FuzzyBool::True),
-            (589_999, FuzzyBool::True),
-            (600_000, FuzzyBool::True),
-            (699_999, FuzzyBool::True),
+            (222100, FuzzyBool::True),
+            (272099, FuzzyBool::True),
+            (500000, FuzzyBool::True),
+            (509999, FuzzyBool::True),
+            (560000, FuzzyBool::True),
+            (589999, FuzzyBool::True),
+            (600000, FuzzyBool::True),
+            (699999, FuzzyBool::True),
             // no
-            (551_234, FuzzyBool::False),
-            (594_388, FuzzyBool::False),
-            (219_899, FuzzyBool::False),
+            (551234, FuzzyBool::False),
+            (594388, FuzzyBool::False),
+            (219899, FuzzyBool::False),
         ];
 
         for (num, expected) in test_cases {
