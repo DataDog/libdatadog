@@ -64,6 +64,6 @@ The build command creates executables in the `examples/ffi/build` folder:
 
 - **crashtracking**: This example may intentionally trigger a crash to test crash handling.
   Consider adding it to the skip list in `tools/src/bin/ffi_test.rs` if running it causes issues.
-- Tests run in a temporary directory. Test data paths (like `datadog-ffe/ffe-system-test-data`) are
+- Tests run in a temporary directory. Test data paths (like `datadog-ffe-test-suite/ffe-system-test-data`) are
   symlinked into the temp directory automatically.
 - Generated artifacts are listed at the end of the run and cleaned up unless `--keep-artifacts` is used.

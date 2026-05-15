@@ -1354,9 +1354,7 @@ name = "datadog-ffe"
 version = "1.0.0"
 dependencies = [
  "chrono",
- "criterion",
  "derive_more",
- "env_logger",
  "faststr",
  "libdd-common",
  "log",
@@ -1380,6 +1378,18 @@ dependencies = [
  "datadog-ffe",
  "function_name",
  "libdd-common-ffi",
+]
+
+[[package]]
+name = "datadog-ffe-test-suite"
+version = "33.0.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "datadog-ffe",
+ "env_logger",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,0 +1,24 @@
+[package]
+name = "datadog-ffe-test-suite"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+autobenches = false
+publish = false
+
+[lib]
+bench = false
+
+[dev-dependencies]
+datadog-ffe = { path = "../datadog-ffe" }
+chrono = { version = "0.4.38", default-features = false, features = ["now", "serde"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+env_logger = "0.10"
+serde = { version = "1.0", default-features = false, features = ["derive", "rc"] }
+serde_json = { version = "1.0", default-features = false, features = ["std", "raw_value"] }
+
+[[bench]]
+name = "ffe-eval"
+harness = false
+path = "benches/eval.rs"

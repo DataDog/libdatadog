@@ -190,7 +190,7 @@ int main(int argc, char* argv[]) {
         config_path = argv[1];
     } else {
         // Default to the canonical FFE test data file
-        config_path = "./datadog-ffe/ffe-system-test-data/ufc-config.json";
+        config_path = "./datadog-ffe-test-suite/ffe-system-test-data/ufc-config.json";
     }
 
     printf("Step 1: Loading configuration from file...\n");

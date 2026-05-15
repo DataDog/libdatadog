@@ -26,6 +26,7 @@ cmake/                               @DataDog/apm-common-components-core
 CONTRIBUTING.md                      @DataDog/libdatadog-core
 Cross.toml                           @DataDog/apm-common-components-core
 datadog-ffe                          @DataDog/feature-flagging-and-experimentation-sdk
+datadog-ffe-test-suite               @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ffe-ffi                      @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ipc*/                        @DataDog/libdatadog-php
 datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
