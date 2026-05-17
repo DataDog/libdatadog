@@ -4,6 +4,7 @@
 mod endpoint_stats;
 mod endpoints;
 mod function;
+pub(crate) mod heap_live;
 mod label;
 mod location;
 mod mapping;
