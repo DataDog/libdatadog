@@ -80,11 +80,11 @@ fn test_meta_crud() {
         assert_eq!(count, 2);
         assert!(keys_slice.iter().any(|k| k == &key));
         assert!(keys_slice.iter().any(|k| k == &key2));
+        ddog_span_free_keys_ptr(keys, count);
 
         ddog_del_span_meta(span, key);
         assert!(!ddog_has_span_meta(span, key));
 
-        ddog_span_free_keys_ptr(keys, count);
         ddog_free_traces(traces);
     }
 }
@@ -125,11 +125,11 @@ fn test_metrics_crud() {
         assert_eq!(count, 2);
         assert!(keys_slice.iter().any(|k| k == &key));
         assert!(keys_slice.iter().any(|k| k == &key2));
+        ddog_span_free_keys_ptr(keys, count);
 
         ddog_del_span_metrics(span, key);
         assert!(!ddog_has_span_metrics(span, key));
 
-        ddog_span_free_keys_ptr(keys, count);
         ddog_free_traces(traces);
     }
 }
@@ -167,11 +167,11 @@ fn test_meta_struct_crud() {
         assert_eq!(count, 2);
         assert!(keys_slice.iter().any(|k| k == &key));
         assert!(keys_slice.iter().any(|k| k == &key2));
+        ddog_span_free_keys_ptr(keys, count);
 
         ddog_del_span_meta_struct(span, key);
         assert!(!ddog_has_span_meta_struct(span, key));
 
-        ddog_span_free_keys_ptr(keys, count);
         ddog_free_traces(traces);
     }
 }
@@ -190,7 +190,9 @@ fn test_span_debug_log_output() {
 
     assert_eq!(debug_output, expected_output);
 
-    ddog_free_charslice(debug_output);
+    unsafe {
+        ddog_free_charslice(debug_output);
+    }
     ddog_free_traces(traces);
 }
 
