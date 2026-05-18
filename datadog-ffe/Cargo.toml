@@ -26,14 +26,5 @@ thiserror = { version = "2.0.3", default-features = false }
 url = { version = "2.5.0", default-features = false, features = ["std"] }
 pyo3 = { version = "0.28", optional = true, default-features = false, features = ["macros"] }
 
-[dev-dependencies]
-env_logger = "0.10"
-criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "ffe-eval"
-harness = false
-path = "benches/eval.rs"
-
 [features]
 pyo3 = ["dep:pyo3"]
