@@ -432,6 +432,8 @@ jobs:
         with:
           cache-targets: true
           cache-bin: true
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: "cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features"
         run: cargo check -p libdd-data-pipeline --target wasm32-unknown-unknown --no-default-features
         env:

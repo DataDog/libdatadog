@@ -81,11 +81,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-<<<<<<< igor/ci/shared-cache
           shared-key: shared-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo fmt --all -- --check
-=======
       - name: Run rustfmt
         env:
           FMT_PACKAGES: ${{ needs.setup.outputs.fmt-packages }}
@@ -96,7 +93,6 @@ jobs:
             # shellcheck disable=SC2086
             cargo fmt $FMT_PACKAGES -- --check
           fi
->>>>>>> main
   clippy:
     needs: setup
     if: needs.setup.outputs.crates-count != '0'
