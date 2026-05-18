@@ -202,6 +202,8 @@ fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, us
     None
 }
 
+const MAX_DOLLAR_QUOTE_RECURSION_DEPTH: usize = 128;
+
 struct Tokenizer<'a> {
     s: &'a str,
     bytes: &'a [u8],
@@ -221,10 +223,16 @@ struct Tokenizer<'a> {
     // True when the last emitted operator was a standalone = (assignment/comparison)
     // Used to detect value context for double-quoted strings
     last_was_assign: bool,
+    recursion_depth: usize,
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(s: &'a str, config: &'a SqlObfuscateConfig, dbms: DbmsKind) -> Self {
+    fn new(
+        s: &'a str,
+        config: &'a SqlObfuscateConfig,
+        dbms: DbmsKind,
+        recursion_depth: usize,
+    ) -> Self {
         Self {
             s,
             bytes: s.as_bytes(),
@@ -237,6 +245,7 @@ impl<'a> Tokenizer<'a> {
             last_was_placeholder: false,
             pending_json_path: false,
             last_was_assign: false,
+            recursion_depth,
         }
     }
 
@@ -1053,7 +1062,12 @@ impl<'a> Tokenizer<'a> {
                                     let inner = &self.s[inner_start..inner_end];
                                     let close_tag = &self.s[inner_end..outer_end];
                                     let normalized_inner =
-                                        obfuscate_sql(inner, self.config, self.dbms);
+                                        obfuscate_sql_with_recursion_limit(
+                                            inner,
+                                            self.config,
+                                            self.dbms,
+                                            self.recursion_depth + 1,
+                                        );
                                     self.space();
                                     self.result.push_str(tag_str);
                                     self.result.push_str(&normalized_inner);
@@ -1064,7 +1078,12 @@ impl<'a> Tokenizer<'a> {
                                     let inner = &self.s[inner_start..inner_end];
                                     let close_tag = &self.s[inner_end..outer_end];
                                     let obfuscated_inner =
-                                        obfuscate_sql(inner, self.config, self.dbms);
+                                        obfuscate_sql_with_recursion_limit(
+                                            inner,
+                                            self.config,
+                                            self.dbms,
+                                            self.recursion_depth + 1,
+                                        );
                                     // If inner collapses to just '?' (trivial content), emit ?
                                     // directly
                                     if obfuscated_inner.trim() == "?" {
@@ -2194,10 +2213,22 @@ fn collapse_limit_two_args(s: &str) -> String {
 
 /// Obfuscates a SQL string using a proper tokenizer.
 pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> String {
+    obfuscate_sql_with_recursion_limit(s, config, dbms, 0)
+}
+
+fn obfuscate_sql_with_recursion_limit(
+    s: &str,
+    config: &SqlObfuscateConfig,
+    dbms: DbmsKind,
+    recursion_depth: usize,
+) -> String {
     if s.is_empty() {
         return String::new();
     }
-    let mut tokenizer = Tokenizer::new(s, config, dbms);
+    if recursion_depth >= MAX_DOLLAR_QUOTE_RECURSION_DEPTH {
+        return "?".to_string();
+    }
+    let mut tokenizer = Tokenizer::new(s, config, dbms, recursion_depth);
     tokenizer.process();
     let raw = tokenizer.finalize();
     // collapse_grouped_values applies in legacy mode and obfuscate_and_normalize mode.
@@ -2906,6 +2937,28 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn test_dollar_quoted_recursion_depth_is_bounded() {
+        let config = SqlObfuscateConfig {
+            dollar_quoted_func: true,
+            ..Default::default()
+        };
+        let depth = 300;
+        let mut sql = String::from("SELECT ");
+        for i in 0..depth {
+            sql.push_str(&format!("$a{i}$"));
+        }
+        sql.push_str("SELECT 1");
+        for i in (0..depth).rev() {
+            sql.push_str(&format!("$a{i}$"));
+        }
+
+        let got = super::obfuscate_sql(&sql, &config, DbmsKind::Generic);
+        assert!(got.starts_with("SELECT "));
+        assert!(got.contains('?'));
+    }
+
     #[test]
     fn test_obfuscate_only_keeps_quotes_and_semi() {
         // In obfuscate_only mode: keep double-quoted identifiers, keep $?, keep trailing ;
@@ -2963,7 +3016,7 @@ mod tests {
         let config = SqlObfuscateConfig::default();
         let input = "SELECT * FROM public.table ( array [ ROW ( array [ 'magic', 'foo',";
         // First check raw (pre-collapse) output
-        let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic);
+        let mut tok = super::Tokenizer::new(input, &config, DbmsKind::Generic, 0);
         tok.process();
         let raw = tok.finalize();
         eprintln!("RAW: {raw:?}");
