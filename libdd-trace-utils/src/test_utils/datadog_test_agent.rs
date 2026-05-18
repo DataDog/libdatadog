@@ -14,7 +14,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 const TEST_AGENT_IMAGE_NAME: &str = "ghcr.io/datadog/dd-apm-test-agent/ddapm-test-agent";
-const TEST_AGENT_IMAGE_TAG: &str = "v1.39.0";
+const TEST_AGENT_IMAGE_TAG: &str = "v1.54.2";
 const TEST_AGENT_READY_MSG: &str =
     "INFO:ddapm_test_agent.agent:Trace request stall seconds setting set to 0.0.";
 
@@ -166,6 +166,12 @@ impl DatadogAgentContainerBuilder {
                 "/snapshots".to_owned(),
             ));
         }
+
+        // The image default is SNAPSHOT_CI=1 (CI mode). Override with the host's CI setting so
+        // local runs (CI unset → "0") can auto-generate missing snapshot files while CI pipelines
+        // (CI=1) validate against committed ones.
+        let snapshot_ci = std::env::var("CI").unwrap_or_else(|_| "0".to_string());
+        env_vars.push(("SNAPSHOT_CI".to_string(), snapshot_ci));
 
         DatadogAgentContainerBuilder {
             mounts,
