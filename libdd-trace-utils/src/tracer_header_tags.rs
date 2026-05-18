@@ -27,7 +27,6 @@ pub struct TracerHeaderTags<'a> {
     pub lang_vendor: &'a str,
     pub tracer_version: &'a str,
     pub container_id: &'a str,
-    pub runtime_id: &'a str,
     // specifies that the client has marked top-level spans, when set. If the header is present
     // this value will resolve to 'true'
     pub client_computed_top_level: bool,
@@ -168,7 +167,6 @@ mod tests {
             lang_vendor: "vendor",
             tracer_version: "1.0",
             container_id: "id",
-            runtime_id: "",
             client_computed_top_level: true,
             client_computed_stats: true,
             dropped_p0_traces: 12,
@@ -205,7 +203,6 @@ mod tests {
             lang_vendor: "vendor",
             tracer_version: "1.0",
             container_id: "",
-            runtime_id: "",
             client_computed_top_level: false,
             client_computed_stats: false,
             dropped_p0_spans: 0,

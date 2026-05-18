@@ -5,6 +5,7 @@ mod span_v04;
 
 use crate::span::v04::Span;
 use crate::span::TraceData;
+use crate::tracer_metadata::TracerMetadata;
 use rmp::encode::{
     write_array_len, write_bin, write_map_len, write_sint, write_str, write_uint, write_uint8,
     ByteBuf, RmpWrite, ValueWriteError,
@@ -74,18 +75,6 @@ impl StringTable {
         }
         Ok(())
     }
-}
-
-/// Tracer-level metadata encoded at the top of the V1 payload (keys 3–6).
-///
-/// These fields are required by the V1 spec: tracers must include them in the payload
-/// (not only in HTTP headers).
-#[derive(Default)]
-pub struct PayloadMetadata<'a> {
-    pub language_name: &'a str,
-    pub language_version: &'a str,
-    pub tracer_version: &'a str,
-    pub runtime_id: &'a str,
 }
 
 /// Promoted fields extracted from the payload's spans, written at the top-level map.
@@ -231,7 +220,7 @@ where
 fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     writer: &mut W,
     traces: &[S],
-    metadata: &PayloadMetadata,
+    metadata: &TracerMetadata,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let mut table = StringTable::new();
     let payload_attrs = extract_payload_attrs(traces);
@@ -241,7 +230,7 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     let has_attributes = attr_count > 0;
 
     let map_len = 1u32 // chunks always present
-        + (!metadata.language_name.is_empty()) as u32
+        + (!metadata.language.is_empty()) as u32
         + (!metadata.language_version.is_empty()) as u32
         + (!metadata.tracer_version.is_empty()) as u32
         + (!metadata.runtime_id.is_empty()) as u32
@@ -252,24 +241,24 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 
     write_map_len(writer, map_len)?;
 
-    if !metadata.language_name.is_empty() {
+    if !metadata.language.is_empty() {
         write_uint8(writer, trace_key::LANGUAGE_NAME)?;
-        table.write_interned(writer, metadata.language_name)?;
+        table.write_interned(writer, &metadata.language)?;
     }
 
     if !metadata.language_version.is_empty() {
         write_uint8(writer, trace_key::LANGUAGE_VERSION)?;
-        table.write_interned(writer, metadata.language_version)?;
+        table.write_interned(writer, &metadata.language_version)?;
     }
 
     if !metadata.tracer_version.is_empty() {
         write_uint8(writer, trace_key::TRACER_VERSION)?;
-        table.write_interned(writer, metadata.tracer_version)?;
+        table.write_interned(writer, &metadata.tracer_version)?;
     }
 
     if !metadata.runtime_id.is_empty() {
         write_uint8(writer, trace_key::RUNTIME_ID)?;
-        table.write_interned(writer, metadata.runtime_id)?;
+        table.write_interned(writer, &metadata.runtime_id)?;
     }
 
     if let Some(env) = payload_attrs.env {
@@ -373,7 +362,7 @@ pub fn write_to_slice<T: TraceData, S: AsRef<[Span<T>]>>(
     // &mut &mut [u8] lets the caller see the slice shrink as bytes are written.
     slice: &mut &mut [u8],
     traces: &[S],
-    metadata: &PayloadMetadata,
+    metadata: &TracerMetadata,
 ) -> Result<(), ValueWriteError> {
     encode_payload(slice, traces, metadata)
 }
@@ -381,7 +370,7 @@ pub fn write_to_slice<T: TraceData, S: AsRef<[Span<T>]>>(
 /// Serializes traces into a `Vec<u8>` using the V1 msgpack format.
 pub fn to_vec<T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
-    metadata: &PayloadMetadata,
+    metadata: &TracerMetadata,
 ) -> Vec<u8> {
     to_vec_with_capacity(traces, 0, metadata)
 }
@@ -390,7 +379,7 @@ pub fn to_vec<T: TraceData, S: AsRef<[Span<T>]>>(
 pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
     capacity: u32,
-    metadata: &PayloadMetadata,
+    metadata: &TracerMetadata,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
     let _ = encode_payload(&mut buf, traces, metadata); // infallible: ByteBuf write never fails
@@ -400,7 +389,7 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
 /// Returns the number of bytes the V1 payload for `traces` would occupy.
 pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
-    metadata: &PayloadMetadata,
+    metadata: &TracerMetadata,
 ) -> u32 {
     let mut counter = super::CountLength(0);
     let _ = encode_payload(&mut counter, traces, metadata); // infallible: CountLength write never fails
@@ -438,14 +427,14 @@ mod tests {
     fn test_to_vec_non_empty() {
         let spans = vec![make_span("svc", "op", 42, 1, 0)];
         let traces = vec![spans];
-        let encoded = to_vec(&traces, &PayloadMetadata::default());
+        let encoded = to_vec(&traces, &TracerMetadata::default());
         assert!(!encoded.is_empty());
     }
 
     #[test]
     fn test_to_vec_empty_traces() {
         let traces: Vec<Vec<SpanBytes>> = vec![];
-        let encoded = to_vec(&traces, &PayloadMetadata::default());
+        let encoded = to_vec(&traces, &TracerMetadata::default());
         // Must still produce a valid msgpack map with an empty chunks array.
         assert!(!encoded.is_empty());
     }
@@ -461,8 +450,8 @@ mod tests {
         let s_single = make_span("my-service", "op1", 1, 1, 0);
         let traces_single = vec![vec![s_single]];
 
-        let encoded_two = to_vec(&traces_two, &PayloadMetadata::default());
-        let encoded_single = to_vec(&traces_single, &PayloadMetadata::default());
+        let encoded_two = to_vec(&traces_two, &TracerMetadata::default());
+        let encoded_single = to_vec(&traces_single, &TracerMetadata::default());
 
         // The two-trace payload should be less than 2× the single-trace payload
         // if interning is working (the second "my-service" is encoded as an integer).
@@ -498,7 +487,7 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = to_vec(&[vec![root]], &PayloadMetadata::default());
+        let encoded = to_vec(&[vec![root]], &TracerMetadata::default());
         assert!(!encoded.is_empty());
         // The payload must contain "lambda" somewhere (the origin string).
         let lambda_bytes = b"lambda";
@@ -517,7 +506,7 @@ mod tests {
             make_span("svc", "child", 1, 2, 1),
         ];
         let traces = vec![spans];
-        let meta = PayloadMetadata::default();
+        let meta = TracerMetadata::default();
         let encoded = to_vec(&traces, &meta);
         let len = to_encoded_byte_len(&traces, &meta);
         assert_eq!(encoded.len() as u32, len);
@@ -543,7 +532,7 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = to_vec(&[vec![root]], &PayloadMetadata::default());
+        let encoded = to_vec(&[vec![root]], &TracerMetadata::default());
         assert!(!encoded.is_empty());
     }
 
@@ -576,7 +565,7 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = to_vec(&[vec![span]], &PayloadMetadata::default());
+        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
         let prod_bytes = b"prod";
         assert!(
             encoded.windows(prod_bytes.len()).any(|w| w == prod_bytes),
@@ -614,7 +603,7 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = to_vec(&[vec![span]], &PayloadMetadata::default());
+        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
 
         // Both attribute strings must appear in the payload bytes.
         let ssi_bytes = b"ssi";
@@ -644,7 +633,7 @@ mod tests {
     fn test_payload_attributes_absent_when_no_relevant_tags() {
         // A span with no _dd.apm_mode or _dd.git.commit.sha must not produce key 10.
         let span = make_span("svc", "op", 1, 1, 0);
-        let encoded = to_vec(&[vec![span]], &PayloadMetadata::default());
+        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
         let apm_key = b"_dd.apm_mode";
         assert!(
             !encoded.windows(apm_key.len()).any(|w| w == apm_key),
@@ -655,11 +644,12 @@ mod tests {
     #[test]
     fn test_payload_metadata_fields_present() {
         let span = make_span("svc", "op", 1, 1, 0);
-        let metadata = PayloadMetadata {
-            language_name: "python",
-            language_version: "3.11",
-            tracer_version: "2.0.0",
-            runtime_id: "abc-123-uuid",
+        let metadata = TracerMetadata {
+            language: "python".to_string(),
+            language_version: "3.11".to_string(),
+            tracer_version: "2.0.0".to_string(),
+            runtime_id: "abc-123-uuid".to_string(),
+            ..Default::default()
         };
         let encoded = to_vec(&[vec![span]], &metadata);
 
@@ -677,12 +667,12 @@ mod tests {
         let span = make_span("svc", "op", 1, 1, 0);
         let encoded_with = to_vec(
             &[vec![span.clone()]],
-            &PayloadMetadata {
-                language_name: "go",
+            &TracerMetadata {
+                language: "go".to_string(),
                 ..Default::default()
             },
         );
-        let encoded_without = to_vec(&[vec![span]], &PayloadMetadata::default());
+        let encoded_without = to_vec(&[vec![span]], &TracerMetadata::default());
         // Payload with metadata must be larger (it carries extra fields).
         assert!(encoded_with.len() > encoded_without.len());
     }
