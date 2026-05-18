@@ -2,6 +2,42 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v3.0.1..libdd-data-pipeline-v4.0.0) - 2026-05-18
+
+### Added
+
+- Trait architecture http ([#1555](https://github.com/datadog/libdatadog/issues/1555)) - ([b863364](https://github.com/datadog/libdatadog/commit/b863364bbb9cb4567b10c80cd11bc4a22b49fcf4))
+- Sleep & spawn capabilities ([#1873](https://github.com/datadog/libdatadog/issues/1873)) - ([b419f6e](https://github.com/datadog/libdatadog/commit/b419f6e1edb7679c750a65713893c68fc697404c))
+- Port dd-trace-rs trace buffer implementation ([#1826](https://github.com/datadog/libdatadog/issues/1826)) - ([555a22e](https://github.com/datadog/libdatadog/commit/555a22e85b1dabed6dee8987839efe0f541e22c6))
+- Add timeout to info fetcher ([#1890](https://github.com/datadog/libdatadog/issues/1890)) - ([c7c315b](https://github.com/datadog/libdatadog/commit/c7c315baf9a5baff11d94d0af1c99ce086049bfa))
+- Add support for OTLP trace export ([#1641](https://github.com/datadog/libdatadog/issues/1641)) - ([ee83a45](https://github.com/datadog/libdatadog/commit/ee83a4522289af457263f83a2877916ad297b44c))
+- Add shared runtime ([#1602](https://github.com/datadog/libdatadog/issues/1602)) - ([33896de](https://github.com/datadog/libdatadog/commit/33896def2418a9c0fc5bf74b05011210d333759f))
+- Allow worker to be stopped after fork ([#1893](https://github.com/datadog/libdatadog/issues/1893)) - ([5b798ae](https://github.com/datadog/libdatadog/commit/5b798aee0be0b47ca3cec0dedda9becc0334e1dc))
+- Add stats computation via SHM ([#1821](https://github.com/datadog/libdatadog/issues/1821)) - ([ff8e912](https://github.com/datadog/libdatadog/commit/ff8e9120c7fe1746f3b0cad5b5e7c1cefa4d99ef))
+- Include dependencies and integrations in app-extended-heartbeat ([#1962](https://github.com/datadog/libdatadog/issues/1962)) - ([91fd13c](https://github.com/datadog/libdatadog/commit/91fd13c8a0ca5335fe39940f8764cd825bbef7e8))
+- Add session id support to trace export ([#1822](https://github.com/datadog/libdatadog/issues/1822)) - ([b1b58fc](https://github.com/datadog/libdatadog/commit/b1b58fc389f1f078a063e8beffbd312f930065b4))
+- Integrate obfuscation to the stats exporter [APMSP-2764] ([#1819](https://github.com/datadog/libdatadog/issues/1819)) - ([540f186](https://github.com/datadog/libdatadog/commit/540f18646d58bd18984990fbed85254b3678ac7f))
+- Added regex-lite feature ([#1939](https://github.com/datadog/libdatadog/issues/1939)) - ([58b86d5](https://github.com/datadog/libdatadog/commit/58b86d5a1b2dc43be98eb9568ec734c259a430a7))
+
+### Changed
+
+- Downgrade version so publish workflow succeeds ([#1870](https://github.com/datadog/libdatadog/issues/1870)) - ([730c122](https://github.com/datadog/libdatadog/commit/730c1221f9f73ecadcdcc90681f54730fe8e92f2))
+- Pre-allocate serialization buffer ([#1949](https://github.com/datadog/libdatadog/issues/1949)) - ([d700bb0](https://github.com/datadog/libdatadog/commit/d700bb0de476a0e2f273f71c3be87227ee58027b))
+- Pre-compute string messagepack encoding ([#1948](https://github.com/datadog/libdatadog/issues/1948)) - ([c713122](https://github.com/datadog/libdatadog/commit/c7131222cb42dd0513821456a4071245c4a819f6))
+- Compilation of libdd-data-pipeline to wasm32 ([#1830](https://github.com/datadog/libdatadog/issues/1830)) - ([32f9679](https://github.com/datadog/libdatadog/commit/32f96790350141f82ad78a4b53babe5b757ea345))
+
+### Fixed
+
+- Gate libdd-common TLS features in remaining internal crates + add CI guard ([#1943](https://github.com/datadog/libdatadog/issues/1943)) - ([db05e1f](https://github.com/datadog/libdatadog/commit/db05e1f8408a76075efb37ecec544d2e74217e57))
+- Remove default-features from of trace-obfuscation ([#1981](https://github.com/datadog/libdatadog/issues/1981)) - ([12b7b09](https://github.com/datadog/libdatadog/commit/12b7b09379215c96751fe204e0a598e8f805fc61))
+- Restore previous Cargo.toml version ([#1993](https://github.com/datadog/libdatadog/issues/1993)) - ([500c147](https://github.com/datadog/libdatadog/commit/500c147ec07e9c768abdfaec074a84ab88885e2a))
+- Missing bench path in data-pipeline ([#1907](https://github.com/datadog/libdatadog/issues/1907)) - ([530cd96](https://github.com/datadog/libdatadog/commit/530cd96349e50dce032a450e88c019e4b47a39fe))
+- Align with css spec ([#1790](https://github.com/datadog/libdatadog/issues/1790)) - ([b1d5bcf](https://github.com/datadog/libdatadog/commit/b1d5bcf7a2a006e2de95925cd8aa5ec13eec4b87))
+- Avoid trigger loop in telemetry worker ([#1950](https://github.com/datadog/libdatadog/issues/1950)) - ([7a24f53](https://github.com/datadog/libdatadog/commit/7a24f534a46367bc2b2007994dd3a3d2d62ad663))
+- Unwrap_or being eager is not good ([#1983](https://github.com/datadog/libdatadog/issues/1983)) - ([68c6519](https://github.com/datadog/libdatadog/commit/68c65192b0d3de960a7b0eb648e26da6952d796c))
+
+
+
 ## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v3.0.0..libdd-data-pipeline-v3.0.1) - 2026-03-25
 
 ### Added

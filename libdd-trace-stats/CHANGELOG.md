@@ -2,6 +2,28 @@
 
 
 
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v2.0.0..libdd-trace-stats-v3.0.0) - 2026-05-18
+
+### Added
+
+- Sleep & spawn capabilities ([#1873](https://github.com/datadog/libdatadog/issues/1873)) - ([b419f6e](https://github.com/datadog/libdatadog/commit/b419f6e1edb7679c750a65713893c68fc697404c))
+- Allow worker to be stopped after fork ([#1893](https://github.com/datadog/libdatadog/issues/1893)) - ([5b798ae](https://github.com/datadog/libdatadog/commit/5b798aee0be0b47ca3cec0dedda9becc0334e1dc))
+- Add stats computation via SHM ([#1821](https://github.com/datadog/libdatadog/issues/1821)) - ([ff8e912](https://github.com/datadog/libdatadog/commit/ff8e9120c7fe1746f3b0cad5b5e7c1cefa4d99ef))
+- Propagate service source from span meta to client stats payload ([#1803](https://github.com/datadog/libdatadog/issues/1803)) - ([5cfc694](https://github.com/datadog/libdatadog/commit/5cfc694173da07ff13b7bff967a46bddc903e3db))
+- Integrate obfuscation to the stats exporter [APMSP-2764] ([#1819](https://github.com/datadog/libdatadog/issues/1819)) - ([540f186](https://github.com/datadog/libdatadog/commit/540f18646d58bd18984990fbed85254b3678ac7f))
+- Use ip quantization when aggregating peer tags for trace stats ([#1944](https://github.com/datadog/libdatadog/issues/1944)) - ([4ae8ebe](https://github.com/datadog/libdatadog/commit/4ae8ebe252451374c292efd159ce254c3f5a72e0))
+
+### Changed
+
+- Pre-compute string messagepack encoding ([#1948](https://github.com/datadog/libdatadog/issues/1948)) - ([c713122](https://github.com/datadog/libdatadog/commit/c7131222cb42dd0513821456a4071245c4a819f6))
+
+### Fixed
+
+- Gate libdd-common TLS features in remaining internal crates + add CI guard ([#1943](https://github.com/datadog/libdatadog/issues/1943)) - ([db05e1f](https://github.com/datadog/libdatadog/commit/db05e1f8408a76075efb37ecec544d2e74217e57))
+- Align with css spec ([#1790](https://github.com/datadog/libdatadog/issues/1790)) - ([b1d5bcf](https://github.com/datadog/libdatadog/commit/b1d5bcf7a2a006e2de95925cd8aa5ec13eec4b87))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v1.0.4..libdd-trace-stats-v2.0.0) - 2026-03-25
 
 ### Changed
