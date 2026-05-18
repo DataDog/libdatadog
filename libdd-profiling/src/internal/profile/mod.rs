@@ -544,7 +544,8 @@ impl Profile {
 
         let iter = std::mem::take(&mut self.observations).try_into_iter()?;
         for (sample, timestamp, mut values) in iter {
-            let labels = &mut extended_label_sets[sample.labels.to_raw_id()];
+            let off = sample.labels.to_offset();
+            let labels = extended_label_sets.get_mut(off).ok_or_else(oob_label_set)?;
             let location_ids: Vec<_> = self
                 .get_stacktrace(sample.stacktrace)?
                 .locations
@@ -1066,6 +1067,14 @@ impl Profile {
     pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
         self.observations.timestamped_samples_count()
     }
+}
+
+#[cold]
+fn oob_label_set() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "out-of-bounds label set id found during serialization",
+    )
 }
 
 #[cfg(test)]
@@ -2968,5 +2977,58 @@ mod api_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn invalid_label_set_id_returns_error_instead_of_panicking() {
+        let sample_types = [api::SampleType::CpuSamples];
+        let mapping = api::Mapping {
+            filename: "test.php",
+            ..Default::default()
+        };
+
+        let mut profile = Profile::new(&sample_types, None);
+
+        let locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "test_function",
+                system_name: "test_function",
+                filename: "test.php",
+            },
+            line: 0,
+            ..Default::default()
+        }];
+
+        let sample = api::Sample {
+            locations,
+            values: &[1],
+            labels: vec![api::Label {
+                key: "iteration",
+                num: 1,
+                ..Default::default()
+            }],
+        };
+
+        profile
+            .try_add_sample(sample, None)
+            .expect("profile to not be full");
+
+        // Simulate an internally inconsistent profile where observations still reference
+        // a label set id, but the label sets table no longer contains that id.
+        profile.label_sets.clear();
+
+        let result = profile.serialize_into_compressed_pprof(None, None);
+
+        let err = match result {
+            Ok(_) => panic!(
+                "Expected serialization to fail due to invalid label set IDs, but it succeeded"
+            ),
+            Err(err) => err,
+        };
+        let io_err = err
+            .downcast_ref::<io::Error>()
+            .expect("Expected serialization error to be an io::Error");
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
     }
 }
