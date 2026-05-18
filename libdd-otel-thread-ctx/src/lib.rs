@@ -286,6 +286,13 @@ pub mod linux {
     /// not thread-safe.
     pub struct ThreadContext(NonNull<ThreadContextRecord>);
 
+    /// Opaque handle to a thread context record. Used to allow the FFI to convert [ThreadContext]
+    /// to and from raw pointers without exposing [ThreadContextRecord], as the latter needs extra
+    /// care to be manipulated (async-signal-safety, seq-lock-like modification protocol through
+    /// [ThreadContextRecord::valid], etc.)
+    #[repr(C)]
+    pub struct ThreadContextHandle {}
+
     impl ThreadContext {
         /// Create a new thread context with the given trace/span IDs and encoded attributes.
         pub fn new(
@@ -302,26 +309,48 @@ pub mod linux {
             ))
         }
 
-        /// Turn this thread context into a raw pointer to the underlying [ThreadContextRecord].
-        /// The pointer must be reconstructed through [`Self::from_raw`] in order to be properly
+        /// Turn this thread context into a pointer to the underlying [ThreadContextRecord].
+        /// The pointer must be reconstructed through [`Self::from_ptr`] in order to be properly
         /// dropped, or the record will leak.
-        fn into_raw(self) -> *mut ThreadContextRecord {
+        fn into_ptr(self) -> NonNull<ThreadContextRecord> {
             let mdrop = mem::ManuallyDrop::new(self);
-            mdrop.0.as_ptr()
+            mdrop.0
         }
 
-        /// Reconstruct a [ThreadContextRecord] from a raw pointer that is either `null` or comes
-        /// from [`Self::into_raw`]. Return `None` if `ptr` is null.
+        /// Turn this thread context into an opaque pointer to the underlying [ThreadContextRecord].
+        /// The pointer must be reconstructed through [`Self::from_opaque_ptr`] in order to be
+        /// properly dropped, or the record will leak.
+        pub fn into_opaque_ptr(self) -> NonNull<ThreadContextHandle> {
+            let mdrop = mem::ManuallyDrop::new(self);
+            mdrop.0.cast()
+        }
+
+        /// Reconstruct a [ThreadContextRecord] from a pointer that comes
+        /// from [`Self::into_ptr`].
         ///
         /// # Safety
         ///
-        /// - `ptr` must be `null` or come from a prior call to [`Self::into_raw`].
+        /// - `ptr` must come from a prior call to [`Self::into_ptr`].
         /// - if `ptr` is aliased, accesses through aliases must not be interleaved with method
         ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
-        unsafe fn from_raw(ptr: *mut ThreadContextRecord) -> Option<Self> {
-            NonNull::new(ptr).map(Self)
+        unsafe fn from_ptr(ptr: NonNull<ThreadContextRecord>) -> Self {
+            Self(ptr)
+        }
+
+        /// Reconstruct an [OpaqueThreadContextRecord] from a pointer that comes from
+        /// [`Self::into_opaque_ptr`].
+        ///
+        /// # Safety
+        ///
+        /// - `ptr` must come from a prior call to [`Self::into_opaque_ptr`].
+        /// - if `ptr` is aliased, accesses through aliases must not be interleaved with method
+        ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
+        ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
+        ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
+        pub unsafe fn from_opaque_ptr(ptr: NonNull<ThreadContextHandle>) -> Self {
+            Self(ptr.cast())
         }
     }
 
@@ -345,8 +374,9 @@ pub mod linux {
             slot: &AtomicPtr<ThreadContextRecord>,
             tgt: *mut ThreadContextRecord,
         ) -> Option<ThreadContext> {
-            // Safety: a non-null value in the slot came from a prior `into_raw` call.
-            unsafe { ThreadContext::from_raw(slot.swap(tgt, Ordering::Relaxed)) }
+            // Safety: a non-null value in the slot came from a prior `into_ptr` call.
+            NonNull::new(slot.swap(tgt, Ordering::Relaxed))
+                .map(|ptr| unsafe { ThreadContext::from_ptr(ptr) })
         }
 
         /// Publish a new (or previously detached) thread context record by writing its pointer
@@ -365,7 +395,7 @@ pub mod linux {
             //
             // We still need a release fence to avoid exposing uninitialized memory to the handler.
             compiler_fence(Ordering::Release);
-            Self::swap(get_tls_slot(), self.into_raw())
+            Self::swap(get_tls_slot(), self.into_ptr().as_ptr())
         }
 
         /// Update the currently attached record in-place. Sets `valid = 0` before the update and
@@ -399,7 +429,9 @@ pub mod linux {
                 // `ThreadContext::new` already initialises `valid = 1`.
                 let _ = Self::swap(
                     slot,
-                    ThreadContext::new(trace_id, span_id, local_root_span_id, attrs).into_raw(),
+                    ThreadContext::new(trace_id, span_id, local_root_span_id, attrs)
+                        .into_ptr()
+                        .as_ptr(),
                 );
             }
         }

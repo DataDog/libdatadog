@@ -105,6 +105,7 @@ impl Flag {
             variation_key: split.variation_key.clone(),
             allocation_key: allocation.key.clone(),
             reason,
+            serial_id: split.serial_id,
             do_log: allocation.do_log,
         })
     }

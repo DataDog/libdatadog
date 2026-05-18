@@ -1,9 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 
-use regex::Regex;
+use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::rules_based::{EvaluationError, FlagType, Str, Timestamp};
@@ -528,6 +528,8 @@ impl From<Vec<String>> for ConditionValue {
 pub(crate) struct SplitWire {
     pub shards: Vec<ShardWire>,
     pub variation_key: Str,
+    #[serde(default)]
+    pub serial_id: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -535,7 +537,7 @@ pub(crate) struct SplitWire {
 #[allow(missing_docs)]
 pub(crate) struct ShardWire {
     pub salt: String,
-    pub total_shards: u32,
+    pub total_shards: NonZeroU32,
     pub ranges: Box<[ShardRange]>,
 }
 
