@@ -3,24 +3,46 @@
 extern crate build_common;
 
 use build_common::{find_rust_lld_dir, generate_and_configure_header};
-use std::{env, path::PathBuf, process::Command};
+use std::{env, fmt::Display, path::PathBuf, process::Command};
 
-/// Parse the major version from `ld.lld --version` output.
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct LldVersion {
+    major: u32,
+    minor: u32,
+}
+
+impl Display for LldVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+/// Parse the major and minor version from `ld.lld --version` output.
 ///
 /// Typical formats:
 ///   "LLD 18.1.3 (compatible with GNU linkers)"
 ///   "LLD 19.1.0"
-fn system_lld_major_version() -> Option<u32> {
+fn system_lld_version() -> Option<LldVersion> {
     let output = Command::new("ld.lld").arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.split_whitespace()
-        .find_map(|tok| tok.split('.').next()?.parse::<u32>().ok())
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .find_map(|tok| {
+            let mut splitted = tok.split('.');
+            let major = splitted.next()?.parse::<u32>().ok()?;
+            let minor = splitted.next()?.parse::<u32>().ok()?;
+
+            Some(LldVersion { major, minor })
+        })
 }
 
-const MIN_LLD_VERSION_FOR_TLSDESC: u32 = 18;
+/// TLSDESC is supported in LLD from version 18.1.
+const MIN_LLD_VERSION_FOR_TLSDESC: LldVersion = LldVersion {
+    major: 18,
+    minor: 1,
+};
 
 /// Validate that a suitable LLD is available for cross-language LTO.
 ///
@@ -32,7 +54,7 @@ fn require_lld_for_inline(target_arch: &str) -> Option<PathBuf> {
         return Some(dir);
     }
 
-    match system_lld_major_version() {
+    match system_lld_version() {
         Some(v) if target_arch != "x86_64" || v >= MIN_LLD_VERSION_FOR_TLSDESC => None,
         Some(v) => panic!(
             "LIBDD_OTEL_THREAD_CTX_INLINE requires LLD >= {MIN_LLD_VERSION_FOR_TLSDESC} on \
@@ -60,12 +82,26 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
+    // Export the TLSDESC thread-local variable to the dynamic symbol table so external readers
+    // (e.g. the eBPF profiler) can discover it. Rust's cdylib linker applies a version script with
+    // `local: *` that hides all symbols not explicitly allowlisted, and also causes lld to relax
+    // the TLSDESC access, eliminating the dynsym entry entirely.
+    //
+    // Passing our own version script with an explicit `global:` entry for the symbol beats the
+    // `local: *` wildcard and prevents that relaxation.
+    //
+    // Merging multiple version scripts is not supported by GNU ld, so we need lld. We prefer the
+    // toolchain's bundled rust-lld (LLD 19+ since Rust 1.84) over the system lld (if it even
+    // exists). If rust-lld is not found we fall back to whatever `lld` the system provides.
+
+    // If `LIBDD_OTEL_THREAD_CTX_INLINE` is set to `1`, we try to inline the C shim. See the README
+    // for more details.
     if inline_mode {
         let rust_lld_dir = require_lld_for_inline(&target_arch);
 
-        // Emit link args for ALL link types (not just cdylib) so that test
-        // binaries also link correctly when RUSTFLAGS sets clang as the linker (although we should
-        // only build the shared object file in inline mode).
+        // Emit link args for ALL link types (not just cdylib) so that test binaries also link
+        // correctly when RUSTFLAGS sets clang as the linker (in practice we should only build/care
+        // about the shared object file in inline mode).
         if let Some(dir) = rust_lld_dir {
             println!("cargo:rustc-link-arg=-B{}", dir.display());
         }
@@ -84,8 +120,6 @@ fn main() {
         println!("cargo:rustc-cdylib-link-arg=-fuse-ld=lld");
     }
 
-    // Version script exports the TLS symbol to the dynamic symbol table so
-    // external readers (eBPF profiler) can discover it.
     println!(
         "cargo:rustc-cdylib-link-arg=-Wl,--version-script={manifest_dir}/tls-dynamic-list.txt"
     );

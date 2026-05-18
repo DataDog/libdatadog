@@ -22,8 +22,7 @@ pub use crate::cbindgen::*;
 /// before any system-wide lld, which
 ///
 /// 1. Avoids the need for a system-wide LLD install.
-/// 2. Picks a recent LLD, as opposed to e.g. CentOS 7's LLVM 7 which is too old to handle TLSDESC
-///    relocations properly.
+/// 2. Picks a recent LLD that match the Rust toolchain's LLVM version
 pub fn find_rust_lld_dir() -> Option<PathBuf> {
     let rustc = env::var("RUSTC").unwrap_or_else(|_| "rustc".into());
     let target = env::var("TARGET").ok()?;

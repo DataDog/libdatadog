@@ -24,7 +24,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LIBDD_OTEL_THREAD_CTX_INLINE");
     println!("cargo:rerun-if-changed=src/tls_shim.c");
 
-    let inline_mode = env::var_os("LIBDD_OTEL_THREAD_CTX_INLINE").is_some();
+    // The otel-thread-ctx FFI crate has a special flag to inline the C shim inside the final
+    // library. This setup has additional requirements for the build of this crate, which are
+    // enforced below when the flag is set.
+    let inline_mode = env::var_os("LIBDD_OTEL_THREAD_CTX_INLINE").is_some_and(|v| v == "1");
 
     let mut build = cc::Build::new();
 
@@ -44,6 +47,9 @@ fn main() {
             println!("cargo:rustc-link-arg=-B{}", dir.display());
         }
         println!("cargo:rustc-link-arg=-fuse-ld=lld");
+
+        // Note: in the inline setup, TLS dialect selection is handled by the linker and is taken
+        // care of by the build script of otel-thread-ctx-ffi
     } else {
         // - On aarch64, TLSDESC is already the only dynamic TLS model so no flag is needed.
         // - On x86-64, we use `-mtls-dialect=gnu2` (supported since GCC 4.4 and Clang 19+) to force
