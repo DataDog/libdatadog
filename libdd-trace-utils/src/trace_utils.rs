@@ -381,10 +381,7 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
         }
     }
 
-    let mut span_ids: HashSet<u64> = HashSet::with_capacity(trace.len());
-    for span in trace.iter() {
-        span_ids.insert(span.span_id);
-    }
+    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id).collect();
 
     let mut root_span_id = None;
     for (i, span) in trace.iter().enumerate() {

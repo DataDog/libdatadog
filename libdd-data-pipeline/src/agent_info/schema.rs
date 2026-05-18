@@ -40,20 +40,25 @@ pub struct AgentInfoStruct {
     /// Container tags hash from HTTP response header
     pub container_tags_hash: Option<String>,
     /// Exact-match tag filters applied before stats computation (root span only).
-    pub filter_tags: Option<FilterTagsConfig>,
+    #[serde(default)]
+    pub filter_tags: FilterTagsConfig,
     /// Regex-match tag filters applied before stats computation (root span only).
-    pub filter_tags_regex: Option<FilterTagsConfig>,
+    #[serde(default)]
+    pub filter_tags_regex: FilterTagsConfig,
     /// Regex patterns for root-span resource names; matching traces are excluded from stats.
-    pub ignore_resources: Option<Vec<String>>,
+    #[serde(default)]
+    pub ignore_resources: Vec<String>,
 }
 
 /// Require/reject lists for tag-based trace filters exposed by the agent /info endpoint.
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct FilterTagsConfig {
     /// All listed filters must match at least one root-span tag for the trace to be accepted.
-    pub require: Option<Vec<String>>,
+    #[serde(default)]
+    pub require: Vec<String>,
     /// If any listed filter matches a root-span tag the trace is rejected.
-    pub reject: Option<Vec<String>>,
+    #[serde(default)]
+    pub reject: Vec<String>,
 }
 
 #[allow(missing_docs)]
@@ -99,14 +104,21 @@ pub struct HttpObfuscationConfig {
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct RedisObfuscationConfig {
+    // Agent sent pascal case fields here in versions <7.79.0
+    #[serde(alias = "Enabled")]
     pub enabled: bool,
+    #[serde(alias = "RemoveAllArgs")]
     pub remove_all_args: bool,
 }
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct MemcachedObfuscationConfig {
+    // Agent sent pascal case fields here in versions <7.79.0
+    #[serde(alias = "Enabled")]
     pub enabled: bool,
+    #[serde(alias = "KeepCommand")]
     pub keep_command: bool,
 }

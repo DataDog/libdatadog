@@ -80,6 +80,7 @@ tokio = { version = "1.23", features = [
     "time",
     "test-util",
 ], default-features = false }
+insta = { version = "1.47.2", features = ["json", "redactions"] }
 
 [features]
 default = ["https", "telemetry"]
