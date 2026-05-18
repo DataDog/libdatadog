@@ -373,6 +373,19 @@ impl<T> fmt::Debug for TraceBuffer<T> {
     }
 }
 
+impl<T> Drop for TraceBuffer<T> {
+    /// Best-effort flush so any buffered chunks are handed to the worker before the producer
+    /// end disappears. The worker itself is owned by the [`SharedRuntime`] and continues to
+    /// run independently — its own [`Worker::shutdown`] hook (invoked by `SharedRuntime`)
+    /// will drain whatever remains after this notify.
+    ///
+    /// Errors are intentionally ignored: a `TraceBuffer` dropped after the runtime has
+    /// already been shut down has nothing useful to do here.
+    fn drop(&mut self) {
+        let _ = self.tx.trigger_flush();
+    }
+}
+
 pub struct QueueMetricsFetcher<T> {
     waiter: Arc<Waiter<T>>,
 }
@@ -1126,6 +1139,57 @@ mod tests {
         let _ = rt.block_on(sem.acquire_many(1)).unwrap().unwrap();
 
         assert_eq!(sender.queue_metrics().get_metrics().spans_queued, 2);
+        rt.shutdown(None).unwrap();
+    }
+
+    /// Regression coverage for the [`Drop`] impl on [`TraceBuffer`]: dropping the producer
+    /// after spans have been buffered (but without an explicit `force_flush`) should
+    /// trigger one final flush so the worker exports the pending chunks instead of losing
+    /// them.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_drop_triggers_flush() {
+        let exported = Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+        let exported_clone = exported.clone();
+        let (rt, sem, sender) = make_buffer(
+            Box::new(move |chunks| {
+                let mut lengths = chunks.into_iter().map(|c| c.len()).collect::<Vec<_>>();
+                lengths.sort();
+                exported_clone.lock().unwrap().extend(lengths);
+            }),
+            TraceBufferConfig::default()
+                .max_buffered_spans(100)
+                .span_flush_threshold(100)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+        );
+
+        sender.send_chunk(vec![()]).unwrap();
+        sender.send_chunk(vec![(), ()]).unwrap();
+        assert_eq!(sem.available_permits(), 0);
+
+        // Drop the sender — no `force_flush`/`flush_and_wait` call — and verify the
+        // background worker still receives the pending chunks because Drop notifies it.
+        drop(sender);
+        let _ = rt.block_on(sem.acquire_many(1)).unwrap().unwrap();
+
+        let exported = exported.lock().unwrap().clone();
+        assert_eq!(exported, vec![1, 2]);
+        rt.shutdown(None).unwrap();
+    }
+
+    /// Dropping a [`TraceBuffer`] from inside a tokio runtime must not panic. The Drop
+    /// impl only does a non-blocking notify, so this is mostly a smoke test — but it
+    /// guards against accidentally introducing a blocking call (like `block_on` or a
+    /// `Condvar::wait`) in the future.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_drop_inside_tokio_runtime() {
+        let (rt, _sem, sender) = make_buffer(Box::new(|_chunks| {}), TraceBufferConfig::default());
+
+        // Send a chunk so the Drop has something to flush — exercises the full
+        // notify path under a tokio scheduler.
+        sender.send_chunk(vec![()]).unwrap();
+        drop(sender);
+
         rt.shutdown(None).unwrap();
     }
 }
