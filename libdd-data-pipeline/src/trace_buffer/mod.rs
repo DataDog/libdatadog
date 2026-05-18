@@ -432,9 +432,7 @@ impl<T> Sender<T> {
     /// Trigger a flush and capture the batch generation that the worker must overtake
     /// before the flush can be considered done. Returns `Ok(None)` if the batch is
     /// currently empty (nothing to flush, no need to wait).
-    fn trigger_flush_and_capture_gen(
-        &self,
-    ) -> Result<Option<BatchGeneration>, TraceBufferError> {
+    fn trigger_flush_and_capture_gen(&self) -> Result<Option<BatchGeneration>, TraceBufferError> {
         let mut state = self.get_running_state()?;
         if state.batch.span_count == 0 {
             return Ok(None);
