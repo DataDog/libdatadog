@@ -319,17 +319,14 @@ impl TraceExporterBuilder {
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
 
         // On native, `C::new_client()` may capture `tokio::runtime::Handle::current()`
-        // internally (e.g. `NativeCapabilities`). Enter the SharedRuntime's tokio context
-        // so that handle is available. On wasm this is a no-op — the JS event loop is
-        // always the implicit executor.
-        #[cfg(not(target_arch = "wasm32"))]
-        let _guard = shared_runtime
-            .runtime_handle()
+        // internally (e.g. `NativeCapabilities`). Run it inside the SharedRuntime's
+        // tokio context so that handle is available. On wasm this is a no-op — the
+        // JS event loop is always the implicit executor.
+        let capabilities = shared_runtime
+            .with_runtime_context(C::new_client)
             .map_err(|e| {
                 TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?
-            .enter();
-        let capabilities = C::new_client();
+            })?;
 
         // --- Platform-specific worker setup ---
         // The blocks below spawn background workers via `SharedRuntime`. On
