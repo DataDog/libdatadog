@@ -36,7 +36,7 @@ libdd-common = { version = "4.1.0", path = "../libdd-common", default-features =
 libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-telemetry = { version = "5.0.0", path = "../libdd-telemetry", default-features = false, optional = true}
 libdd-trace-protobuf = { version = "3.0.2", path = "../libdd-trace-protobuf" }
-libdd-trace-stats = { version = "2.0.0", path = "../libdd-trace-stats", default-features = false }
+libdd-trace-stats = { version = "3.0.0", path = "../libdd-trace-stats", default-features = false }
 libdd-trace-utils = { version = "4.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-trace-obfuscation = { version = "3.0.0", path = "../libdd-trace-obfuscation", default-features = false, optional = true }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
