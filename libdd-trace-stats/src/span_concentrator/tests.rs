@@ -6,6 +6,7 @@ use crate::span_concentrator::aggregation::OwnedAggregationKey;
 use super::*;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
 use rand::{thread_rng, Rng};
+use std::borrow::Cow;
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
@@ -44,11 +45,11 @@ fn get_test_span<'a>(
         parent_id,
         duration,
         start: get_timestamp_in_bucket(aligned_now, BUCKET_SIZE, offset) as i64 - duration,
-        service,
-        name: "query",
-        resource,
+        service: service.into(),
+        name: "query".into(),
+        resource: resource.into(),
         error,
-        r#type: "db",
+        r#type: "db".into(),
         ..Default::default()
     }
 }
@@ -70,11 +71,11 @@ fn get_test_span_with_meta<'a>(
         now, span_id, parent_id, duration, offset, service, resource, error,
     );
     for (k, v) in meta {
-        span.meta.insert(*k, *v);
+        span.meta.insert(Cow::Borrowed(*k), Cow::Borrowed(*v));
     }
     span.metrics = HashMap::new();
     for (k, v) in metrics {
-        span.metrics.insert(*k, *v);
+        span.metrics.insert(Cow::Borrowed(*k), *v);
     }
     span
 }
@@ -649,7 +650,7 @@ fn test_ignore_partial_spans() {
         .get_mut(0)
         .unwrap()
         .metrics
-        .insert("_dd.partial_version", 830604.0);
+        .insert("_dd.partial_version".into(), 830604.0);
     compute_top_level_span(spans.as_mut_slice());
     let mut concentrator = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
@@ -1159,112 +1160,112 @@ fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "server")]),
+                meta: HashMap::from([("span.kind".into(), "server".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "consumer")]),
+                meta: HashMap::from([("span.kind".into(), "consumer".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "client")]),
+                meta: HashMap::from([("span.kind".into(), "client".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "producer")]),
+                meta: HashMap::from([("span.kind".into(), "producer".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "internal")]),
+                meta: HashMap::from([("span.kind".into(), "internal".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "SERVER")]),
+                meta: HashMap::from([("span.kind".into(), "SERVER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CONSUMER")]),
+                meta: HashMap::from([("span.kind".into(), "CONSUMER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CLIENT")]),
+                meta: HashMap::from([("span.kind".into(), "CLIENT".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "PRODUCER")]),
+                meta: HashMap::from([("span.kind".into(), "PRODUCER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "INTERNAL")]),
+                meta: HashMap::from([("span.kind".into(), "INTERNAL".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "SerVER")]),
+                meta: HashMap::from([("span.kind".into(), "SerVER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "ConSUMeR")]),
+                meta: HashMap::from([("span.kind".into(), "ConSUMeR".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CLiENT")]),
+                meta: HashMap::from([("span.kind".into(), "CLiENT".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "PROducER")]),
+                meta: HashMap::from([("span.kind".into(), "PROducER".into())]),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "INtERNAL")]),
+                meta: HashMap::from([("span.kind".into(), "INtERNAL".into())]),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "")]),
+                meta: HashMap::from([("span.kind".into(), "".into())]),
                 ..Default::default()
             },
             false,

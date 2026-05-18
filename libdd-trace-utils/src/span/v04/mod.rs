@@ -327,6 +327,7 @@ mod tests {
     use crate::msgpack_decoder::decode::buffer::Buffer;
     use crate::msgpack_decoder::v04::span::decode_span;
     use crate::span::SliceData;
+    use std::borrow::Cow;
     use std::collections::HashMap;
 
     #[test]
@@ -340,42 +341,50 @@ mod tests {
     #[test]
     fn serialize_deserialize_test() {
         let span: Span<SliceData<'_>> = Span {
-            name: "tracing.operation",
-            resource: "MyEndpoint",
+            name: "tracing.operation".into(),
+            resource: "MyEndpoint".into(),
             span_links: vec![SpanLink {
                 trace_id: 42,
-                attributes: HashMap::from([("span", "link")]),
-                tracestate: "running",
+                attributes: HashMap::from([("span".into(), "link".into())]),
+                tracestate: "running".into(),
                 ..Default::default()
             }],
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
-                name: "exception",
+                name: "exception".into(),
                 attributes: HashMap::from([
                     (
-                        "exception.message",
+                        "exception.message".into(),
                         AttributeAnyValue::SingleValue(AttributeArrayValue::String(
-                            "Cannot divide by zero",
+                            "Cannot divide by zero".into(),
                         )),
                     ),
                     (
-                        "exception.type",
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::String("RuntimeError")),
+                        "exception.type".into(),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(
+                            "RuntimeError".into(),
+                        )),
                     ),
                     (
-                        "exception.escaped",
+                        "exception.escaped".into(),
                         AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(false)),
                     ),
                     (
-                        "exception.count",
+                        "exception.count".into(),
                         AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(1)),
                     ),
                     (
-                        "exception.lines",
+                        "exception.lines".into(),
                         AttributeAnyValue::Array(vec![
-                            AttributeArrayValue::String("  File \"<string>\", line 1, in <module>"),
-                            AttributeArrayValue::String("  File \"<string>\", line 1, in divide"),
-                            AttributeArrayValue::String("RuntimeError: Cannot divide by zero"),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "  File \"<string>\", line 1, in <module>",
+                            )),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "  File \"<string>\", line 1, in divide",
+                            )),
+                            AttributeArrayValue::String(Cow::Borrowed(
+                                "RuntimeError: Cannot divide by zero",
+                            )),
                         ]),
                     ),
                 ]),
@@ -416,9 +425,9 @@ mod tests {
         let span: Span<SliceData<'_>> = Span {
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
-                name: "test",
+                name: "test".into(),
                 attributes: HashMap::from([(
-                    "test.event",
+                    "test.event".into(),
                     AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4.2)),
                 )]),
             }],

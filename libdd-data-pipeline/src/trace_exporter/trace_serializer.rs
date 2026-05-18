@@ -271,10 +271,10 @@ mod tests {
         let original_span = &original_traces[0][0];
         let deserialized_span = &deserialized_traces[0][0];
 
-        assert_eq!(original_span.name, deserialized_span.name);
-        assert_eq!(original_span.service, deserialized_span.service);
-        assert_eq!(original_span.resource, deserialized_span.resource);
-        assert_eq!(original_span.r#type, deserialized_span.r#type);
+        assert_eq!(original_span.name, deserialized_span.name.as_ref());
+        assert_eq!(original_span.service, deserialized_span.service.as_ref());
+        assert_eq!(original_span.resource, deserialized_span.resource.as_ref());
+        assert_eq!(original_span.r#type, deserialized_span.r#type.as_ref());
         assert_eq!(original_span.start, deserialized_span.start);
         assert_eq!(original_span.duration, deserialized_span.duration);
         assert_eq!(original_span.span_id, deserialized_span.span_id);
@@ -306,10 +306,10 @@ mod tests {
         let original_span = &original_traces[0][0];
         let deserialized_span = &deserialized_traces[0][0];
 
-        assert_eq!(original_span.name, deserialized_span.name);
-        assert_eq!(original_span.service, deserialized_span.service);
-        assert_eq!(original_span.resource, deserialized_span.resource);
-        assert_eq!(original_span.r#type, deserialized_span.r#type);
+        assert_eq!(original_span.name, deserialized_span.name.as_ref());
+        assert_eq!(original_span.service, deserialized_span.service.as_ref());
+        assert_eq!(original_span.resource, deserialized_span.resource.as_ref());
+        assert_eq!(original_span.r#type, deserialized_span.r#type.as_ref());
         assert_eq!(original_span.start, deserialized_span.start);
         assert_eq!(original_span.duration, deserialized_span.duration);
         assert_eq!(original_span.span_id, deserialized_span.span_id);
