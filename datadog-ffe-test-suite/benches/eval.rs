@@ -10,8 +10,17 @@ use datadog_ffe::rules_based::{
     UniversalFlagConfig,
 };
 
+const UFC_CONFIG_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/ffe-system-test-data/ufc-config.json"
+);
+const EVALUATION_CASES_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/ffe-system-test-data/evaluation-cases"
+);
+
 fn load_configuration_bytes() -> Vec<u8> {
-    fs::read("tests/data/flags-v1.json").expect("Failed to read flags-v1.json")
+    fs::read(UFC_CONFIG_PATH).expect("Failed to read ufc-config.json")
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,7 +42,7 @@ struct TestResult {
 fn load_test_cases() -> Vec<TestCase> {
     let mut test_cases = Vec::new();
 
-    if let Ok(entries) = fs::read_dir("tests/data/tests") {
+    if let Ok(entries) = fs::read_dir(EVALUATION_CASES_DIR) {
         for entry in entries.flatten() {
             if let Some(path_str) = entry.path().to_str() {
                 if path_str.ends_with(".json") {

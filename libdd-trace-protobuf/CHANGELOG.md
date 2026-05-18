@@ -2,6 +2,14 @@
 
 
 
+## [3.0.2](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v3.0.1..libdd-trace-protobuf-v3.0.2) - 2026-05-18
+
+### Added
+
+- Feature parity on span obfuscation [APMSP-2671] ([#1788](https://github.com/datadog/libdatadog/issues/1788)) - ([102231d](https://github.com/datadog/libdatadog/commit/102231d7f0f35a4e57b18452f0dfbf5d3d97517d))
+
+
+
 ## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-protobuf-v3.0.0..libdd-trace-protobuf-v3.0.1) - 2026-03-25
 
 ### Changed
