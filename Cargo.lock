@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3309,7 +3309,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
@@ -3352,7 +3352,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "3.0.1"
+version = "3.0.2"
 dependencies = [
  "bolero",
  "prost",
@@ -3393,7 +3393,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
