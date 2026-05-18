@@ -8,6 +8,7 @@ members = [
   "libdd-crashtracker",
   "libdd-crashtracker-ffi",
   "datadog-ffe",
+  "datadog-ffe-test-suite",
   "datadog-ffe-ffi",
   "datadog-ipc",
   "datadog-ipc-macros",
@@ -15,6 +16,8 @@ members = [
   "libdd-library-config-ffi",
   "datadog-live-debugger",
   "datadog-live-debugger-ffi",
+  "libdd-otel-thread-ctx",
+  "libdd-otel-thread-ctx-ffi",
   "libdd-profiling",
   "libdd-profiling-ffi",
   "libdd-profiling-protobuf",
@@ -28,7 +31,9 @@ members = [
   "libdd-trace-protobuf",
   "libdd-trace-utils",
   "libdd-trace-stats",
-  "datadog-tracer-flare",
+  "libdd-tracer-flare",
+  "libdd-capabilities",
+  "libdd-capabilities-impl",
   "libdd-common",
   "libdd-common-ffi",
   "libdd-telemetry",
@@ -39,14 +44,18 @@ members = [
   "spawn_worker",
   "tests/spawn_from_lib",
   "bin_tests",
+  "libdd-shared-runtime",
+  "libdd-shared-runtime-ffi",
   "libdd-data-pipeline",
   "libdd-data-pipeline-ffi",
   "libdd-ddsketch",
   "libdd-ddsketch-ffi",
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
+  "libdd-http-client",
   "libdd-log",
-  "libdd-log-ffi", "libdd-libunwind-sys",
+  "libdd-log-ffi",
+  "libdd-sampling",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html
@@ -65,11 +74,12 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.84.1"
 edition = "2021"
-version = "28.0.3"
+version = "33.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
 [workspace.dependencies]
+arc-swap = "1.7.1"
 hyper = { version = "1.6", features = [
   "http1",
   "client",

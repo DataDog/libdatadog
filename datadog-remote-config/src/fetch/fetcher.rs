@@ -277,6 +277,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             env,
             app_version,
             tags,
+            process_tags,
         } = (*target).clone();
 
         let mut cached_target_files = vec![];
@@ -325,6 +326,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     env,
                     app_version,
                     tags: tags.iter().map(|t| t.to_string()).collect(),
+                    process_tags: process_tags.iter().map(|t| t.to_string()).collect(),
+                    container_tags: vec![],
                 }),
                 is_agent: false,
                 client_agent: None,
@@ -601,6 +604,19 @@ pub mod tests {
             env: "env".to_string(),
             app_version: "1.3.5".to_string(),
             tags: vec![],
+            process_tags: vec![],
+        })
+    });
+    pub(crate) static DUMMY_TARGET_WITH_PROCESS_TAGS: LazyLock<Arc<Target>> = LazyLock::new(|| {
+        Arc::new(Target {
+            service: "service".to_string(),
+            env: "env".to_string(),
+            app_version: "1.3.5".to_string(),
+            tags: vec![],
+            process_tags: vec![
+                libdd_common::tag!("entrypoint.workdir", "datadog-remote-config"),
+                libdd_common::tag!("entrypoint.type", "script"),
+            ],
         })
     });
 
@@ -896,6 +912,52 @@ pub mod tests {
             assert_eq!(fetched.len(), 1);
             assert_eq!(storage.files.lock().unwrap().len(), 1);
         }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_process_tags_forwarded_in_client_tracer() {
+        let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (
+                vec![DUMMY_TARGET_WITH_PROCESS_TAGS.clone()],
+                1,
+                "v1".to_string(),
+            ),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage,
+            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+        );
+        let mut opaque_state = ConfigClientState::default();
+
+        let fetched = fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                DUMMY_TARGET_WITH_PROCESS_TAGS.clone(),
+                &server.dummy_product_capabilities(),
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(fetched.len(), 1);
+
+        let req = server.last_request.lock().unwrap();
+        let req = req.as_ref().unwrap();
+        let tracer = req.client.as_ref().unwrap().client_tracer.as_ref().unwrap();
+        assert_eq!(
+            tracer.process_tags,
+            &[
+                "entrypoint.workdir:datadog-remote-config",
+                "entrypoint.type:script"
+            ]
+        );
     }
 
     #[test]

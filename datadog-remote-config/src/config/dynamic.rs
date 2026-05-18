@@ -7,19 +7,43 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfigTarget {
-    pub service: String,
-    pub env: String,
+    #[serde(default)]
+    pub service: Option<String>,
+    #[serde(default)]
+    pub env: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct DynamicConfigFile {
     pub action: String,
-    pub service_target: DynamicConfigTarget,
+    #[serde(default)]
+    pub service_target: Option<DynamicConfigTarget>,
     pub lib_config: DynamicConfig,
 }
 
-#[derive(Debug, Deserialize)]
+impl DynamicConfigFile {
+    /// Returns the priority of this config for merge ordering.
+    /// Lower value = higher priority.
+    /// 0 = service+env specific, 1 = service only, 2 = env only,
+    /// 3 = reserved (k8s cluster), 4 = org-level (wildcard/absent)
+    pub fn priority(&self) -> u8 {
+        fn is_specific(s: &Option<String>) -> bool {
+            s.as_deref().is_some_and(|v| v != "*")
+        }
+        match &self.service_target {
+            None => 4,
+            Some(t) => match (is_specific(&t.service), is_specific(&t.env)) {
+                (true, true) => 0,
+                (true, false) => 1,
+                (false, true) => 2,
+                (false, false) => 4,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub(crate) struct TracingHeaderTag {
     pub header: String,
@@ -33,14 +57,14 @@ pub enum TracingSamplingRuleProvenance {
     Dynamic,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct TracingSamplingRuleTag {
     pub key: String,
     pub value_glob: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct TracingSamplingRule {
     pub service: String,
@@ -102,6 +126,7 @@ impl From<DynamicConfig> for Vec<Configs> {
     }
 }
 
+#[derive(Clone)]
 pub enum Configs {
     TracingHeaderTags(HashMap<String, String>),
     TracingSampleRate(f64),
@@ -125,7 +150,7 @@ pub mod tests {
     pub fn dummy_dynamic_config(enabled: bool) -> DynamicConfigFile {
         DynamicConfigFile {
             action: "".to_string(),
-            service_target: DynamicConfigTarget::default(),
+            service_target: None,
             lib_config: DynamicConfig {
                 tracing_enabled: Some(enabled),
                 ..DynamicConfig::default()

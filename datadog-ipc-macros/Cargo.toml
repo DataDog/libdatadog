@@ -10,5 +10,7 @@ proc-macro = true
 bench = false
 
 [dependencies]
-syn = "^2"
+proc-macro2 = "1"
 quote = "^1"
+syn = { version = "^2", features = ["full"] }
+heck = "0.5"

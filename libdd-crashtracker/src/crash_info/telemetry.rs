@@ -4,7 +4,7 @@ use std::{fmt::Write, time::SystemTime};
 
 use crate::{ErrorKind, SigInfo};
 
-use super::{CrashInfo, Metadata};
+use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use libdd_common::Endpoint;
@@ -121,6 +121,10 @@ impl CrashPing {
         self.siginfo.as_ref()
     }
 
+    pub fn kind(&self) -> ErrorKind {
+        self.kind.clone()
+    }
+
     pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -141,11 +145,7 @@ impl CrashPing {
         let telemetry_future = telemetry_uploader.upload_crash_ping(self);
 
         if errors_intake_uploader.is_enabled() {
-            let errors_intake_future = errors_intake_uploader.upload_crash_ping(
-                &self.crash_uuid,
-                self.siginfo.as_ref(),
-                self.metadata(),
-            );
+            let errors_intake_future = errors_intake_uploader.upload_crash_ping(self);
             let (_telemetry_result, _errors_intake_result) =
                 tokio::join!(telemetry_future, errors_intake_future);
         } else {
@@ -396,6 +396,7 @@ impl TelemetryCrashUploader {
             ));
         }
 
+        write!(tags, ",runtime_platform:{TARGET_TRIPLE}").ok();
         self.append_optional_tags(&mut tags);
         tags
     }
@@ -448,6 +449,7 @@ fn extract_crash_info_tags(crash_info: &CrashInfo) -> anyhow::Result<String> {
             siginfo.si_signo_human_readable
         )?;
     }
+    write!(&mut tags, ",runtime_platform:{TARGET_TRIPLE}")?;
     Ok(tags)
 }
 
@@ -546,7 +548,7 @@ mod tests {
         assert_eq!(
             HashSet::from_iter([
                 "collecting_sample:1",
-                "data_schema_version:1.5",
+                "data_schema_version:1.7",
                 "incomplete:true",
                 "is_crash:true",
                 "not_profiling:0",
@@ -556,6 +558,7 @@ mod tests {
                 "si_signo_human_readable:SIGSEGV",
                 "si_signo:11",
                 "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",
+                &format!("runtime_platform:{}", super::super::TARGET_TRIPLE),
             ]),
             tags
         );

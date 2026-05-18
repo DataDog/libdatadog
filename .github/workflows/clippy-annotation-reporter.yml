@@ -28,7 +28,7 @@ jobs:
         with:
           fetch-depth: 0  # Full history
       - name: Install Rust
-        run: rustup install stable
+        run: rustup set profile minimal && rustup install stable
       - name: Run annotation reporter
         uses: ./.github/actions/clippy-annotation-reporter
         with:

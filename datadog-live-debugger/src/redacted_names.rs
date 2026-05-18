@@ -3,7 +3,7 @@
 
 #![allow(invalid_reference_casting)]
 
-use regex_automata::dfa::regex::Regex;
+use libdd_common::regex_engine::Regex;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
@@ -16,6 +16,7 @@ static REDACTED_NAMES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
         b"apikey",
         b"apisecret",
         b"apisignature",
+        b"appkey",
         b"applicationkey",
         b"auth",
         b"authorization",
@@ -101,6 +102,10 @@ static REDACTED_NAMES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(|| {
 
 static ADDED_REDACTED_NAMES: LazyLock<Vec<Vec<u8>>> = LazyLock::new(Vec::new);
 
+// Exclusions take precedence over the built-in REDACTED_NAMES set.
+static EXCLUDED_NAMES: LazyLock<HashSet<Vec<u8>>> = LazyLock::new(HashSet::new);
+static EXCLUDED_NAMES_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
 static REDACTED_TYPES: LazyLock<HashSet<&'static [u8]>> = LazyLock::new(HashSet::new);
 
 static ADDED_REDACTED_TYPES: LazyLock<Vec<Vec<u8>>> = LazyLock::new(Vec::new);
@@ -140,6 +145,14 @@ pub unsafe fn add_redacted_name<I: Into<Vec<u8>>>(name: I) {
     redacted_names.insert(&added_names[added_names.len() - 1]);
 }
 /// # Safety
+/// May only be called while not running yet - concurrent access to is_excluded_name is forbidden.
+pub unsafe fn add_excluded_name<I: Into<Vec<u8>>>(name: I) {
+    assert!(!EXCLUDED_NAMES_INITIALIZED.load(Ordering::Relaxed));
+    let excluded_names = &mut (*(&*EXCLUDED_NAMES as *const HashSet<Vec<u8>>).cast_mut());
+    excluded_names.insert(name.into());
+}
+
+/// # Safety
 /// May only be called while not running yet - concurrent access to is_redacted_type is forbidden.
 pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
     assert!(!REDACTED_TYPES_INITIALIZED.load(Ordering::Relaxed));
@@ -151,7 +164,7 @@ pub unsafe fn add_redacted_type<I: AsRef<[u8]>>(name: I) {
             regex_str.push('|')
         }
         let name = String::from_utf8_lossy(name);
-        regex_str.push_str(regex::escape(&name[..name.len() - 1]).as_str());
+        regex_str.push_str(libdd_common::regex_engine::escape(&name[..name.len() - 1]).as_str());
         regex_str.push_str(".*");
     } else {
         let added_types = &mut (*(&*ADDED_REDACTED_TYPES as *const Vec<Vec<u8>>).cast_mut());
@@ -182,7 +195,15 @@ pub fn is_redacted_name<I: AsRef<[u8]>>(name: I) -> bool {
         }
         i += 1;
     }
-    REDACTED_NAMES.contains(&copy[0..copy.len()])
+    let normalized = &copy[0..copy.len()];
+    // Exclusions take precedence: if explicitly excluded, do not redact.
+    if !EXCLUDED_NAMES.is_empty() {
+        EXCLUDED_NAMES_INITIALIZED.store(true, Ordering::Relaxed);
+        if EXCLUDED_NAMES.contains(normalized as &[u8]) {
+            return false;
+        }
+    }
+    REDACTED_NAMES.contains(normalized)
 }
 
 pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {
@@ -190,7 +211,7 @@ pub fn is_redacted_type<I: AsRef<[u8]>>(name: I) -> bool {
     if REDACTED_TYPES.contains(name) {
         true
     } else if !REDACTED_WILDCARD_TYPES_PATTERN.is_empty() {
-        REDACTED_TYPES_REGEX.is_match(name)
+        std::str::from_utf8(name).is_ok_and(|s| REDACTED_TYPES_REGEX.is_match(s))
     } else {
         false
     }

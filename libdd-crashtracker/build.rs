@@ -114,6 +114,11 @@ fn build_cpp_file() {
 
 #[cfg(unix)]
 fn main() {
+    println!(
+        "cargo:rustc-env=TARGET={}",
+        std::env::var("TARGET").unwrap()
+    );
+
     cc::Build::new()
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
@@ -139,6 +144,11 @@ fn main() {
 
 #[cfg(not(unix))]
 fn main() {
+    println!(
+        "cargo:rustc-env=TARGET={}",
+        std::env::var("TARGET").unwrap()
+    );
+
     // Build CXX bridge if feature is enabled
     #[cfg(feature = "cxx")]
     build_cxx_bridge();

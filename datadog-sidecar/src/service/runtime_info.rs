@@ -133,7 +133,6 @@ impl ActiveApplication {
         &mut self,
         remote_configs: &RemoteConfigs,
         session: &SessionInfo,
-        instance_id: InstanceId,
         notify_target: RemoteConfigNotifyTarget,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) {
@@ -142,12 +141,15 @@ impl ActiveApplication {
             .as_ref()
             .expect("Expecting remote config invariants to be set early")
             .clone();
+
+        let process_tags = session.process_tags.lock_or_panic().clone();
+
         if *session.remote_config_enabled.lock_or_panic() {
             self.remote_config_guard = Some(
                 remote_configs.add_runtime(
                     options,
                     *session.remote_config_interval.lock_or_panic(),
-                    instance_id.runtime_id,
+                    session.session_id.clone(),
                     notify_target,
                     self.env.clone().expect("set_metadata was called before"),
                     self.service_name
@@ -158,6 +160,7 @@ impl ActiveApplication {
                         .expect("set_metadata was called before"),
                     self.global_tags.clone(),
                     dynamic_instrumentation_state,
+                    process_tags,
                 ),
             );
         }

@@ -433,6 +433,25 @@ pub async fn poll_for_mock_hit(
     mock_hit
 }
 
+/// Poll for a mock to be hit at least `min_hits` times.
+///
+/// Returns `true` as soon as the mock has been called at least `min_hits` times,
+/// or `false` if `poll_attempts` is exhausted before that threshold is reached.
+pub async fn poll_for_mock_hits(
+    mock: &mut Mock<'_>,
+    poll_attempts: i32,
+    sleep_interval_ms: u64,
+    min_hits: usize,
+) -> bool {
+    for _ in 0..poll_attempts {
+        sleep(Duration::from_millis(sleep_interval_ms)).await;
+        if mock.calls_async().await >= min_hits {
+            return true;
+        }
+    }
+    false
+}
+
 /// Creates a `SendData` object with the specified size and target endpoint.
 ///
 /// This function is a test helper to create a `SendData` object.

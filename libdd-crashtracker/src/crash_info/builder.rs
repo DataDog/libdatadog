@@ -18,7 +18,7 @@ pub struct ErrorDataBuilder {
     pub message: Option<String>,
     pub thread_name: Option<String>,
     pub stack: Option<StackTrace>,
-    pub threads: Option<Vec<ThreadData>>,
+    pub threads: Option<Threads>,
 }
 
 impl ErrorDataBuilder {
@@ -94,7 +94,7 @@ impl ErrorDataBuilder {
         Ok(())
     }
 
-    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
+    pub fn with_threads(&mut self, threads: Threads) -> anyhow::Result<()> {
         self.threads = Some(threads);
         Ok(())
     }
@@ -116,6 +116,7 @@ pub struct CrashInfoBuilder {
     pub span_ids: Option<Vec<Span>>,
     pub timestamp: Option<DateTime<Utc>>,
     pub trace_ids: Option<Vec<Span>>,
+    pub ucontext: Option<Ucontext>,
     pub uuid: Uuid,
 }
 
@@ -136,6 +137,7 @@ impl Default for CrashInfoBuilder {
             span_ids: None,
             timestamp: None,
             trace_ids: None,
+            ucontext: None,
             uuid: Uuid::new_v4(),
         }
     }
@@ -158,6 +160,7 @@ impl CrashInfoBuilder {
         let span_ids = self.span_ids.unwrap_or_default();
         let timestamp = self.timestamp.unwrap_or_else(Utc::now).to_string();
         let trace_ids = self.trace_ids.unwrap_or_default();
+        let ucontext = self.ucontext;
         let uuid = self.uuid;
         Ok(CrashInfo {
             counters,
@@ -175,6 +178,7 @@ impl CrashInfoBuilder {
             span_ids,
             timestamp,
             trace_ids,
+            ucontext,
             uuid: uuid.to_string(),
         })
     }
@@ -211,15 +215,6 @@ impl CrashInfoBuilder {
             experimental.additional_tags = additional_tags;
         } else {
             self.experimental = Some(Experimental::new().with_additional_tags(additional_tags));
-        }
-        Ok(())
-    }
-
-    pub fn with_experimental_ucontext(&mut self, ucontext: String) -> anyhow::Result<()> {
-        if let Some(experimental) = &mut self.experimental {
-            experimental.ucontext = Some(ucontext);
-        } else {
-            self.experimental = Some(Experimental::new().with_ucontext(ucontext));
         }
         Ok(())
     }
@@ -366,15 +361,21 @@ impl CrashInfoBuilder {
 
     pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
         if let Some(ref mut threads) = &mut self.error.threads {
-            threads.push(thread);
+            threads.threads.push(thread);
+            threads.count += 1;
         } else {
-            self.error.threads = Some(vec![thread]);
+            self.error.threads = Some(Threads {
+                threads: vec![thread],
+                count: 1,
+                incomplete: false,
+            });
         }
         Ok(())
     }
 
-    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
-        self.error.with_threads(threads)
+    pub fn with_threads(&mut self, threads: Threads) -> anyhow::Result<()> {
+        self.error.threads = Some(threads);
+        Ok(())
     }
 
     pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> anyhow::Result<()> {
@@ -398,6 +399,11 @@ impl CrashInfoBuilder {
 
     pub fn with_trace_ids(&mut self, trace_ids: Vec<Span>) -> anyhow::Result<()> {
         self.trace_ids = Some(trace_ids);
+        Ok(())
+    }
+
+    pub fn with_ucontext(&mut self, ucontext: Ucontext) -> anyhow::Result<()> {
+        self.ucontext = Some(ucontext);
         Ok(())
     }
 

@@ -4,7 +4,6 @@
 #include <datadog/common.h>
 #include <datadog/telemetry.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #ifndef _WIN32
 #include <unistd.h>
@@ -31,6 +30,8 @@ unsigned int sleep(unsigned int seconds) {
     return 0;
 }
 #endif
+
+#define UNUSED(x) (void)(x)
 
 
 ddog_CharSlice charslice_from_ptr(char *str) {
@@ -67,7 +68,8 @@ int main(void) {
 
   ddog_CharSlice metric_name = DDOG_CHARSLICE_C("test.telemetry");
   ddog_Vec_Tag tags = ddog_Vec_Tag_new();
-  ddog_Vec_Tag_push(&tags, charslice_from_ptr("foo"), charslice_from_ptr("bar"));
+  struct ddog_Vec_Tag_PushResult res = ddog_Vec_Tag_push(&tags, charslice_from_ptr("foo"), charslice_from_ptr("bar"));
+  UNUSED(res);
   // tags is consummed
   struct ddog_ContextKey test_temetry = ddog_telemetry_handle_register_metric_context(
       handle, metric_name, DDOG_METRIC_TYPE_COUNT, tags, true, DDOG_METRIC_NAMESPACE_TELEMETRY);
@@ -76,7 +78,8 @@ int main(void) {
   TRY(ddog_telemetry_handle_add_point(handle, &test_temetry, 1.0));
 
   ddog_Vec_Tag extra_tags = ddog_Vec_Tag_new();
-  ddog_Vec_Tag_push(&tags, charslice_from_ptr("baz"), charslice_from_ptr("bat"));
+  res = ddog_Vec_Tag_push(&tags, charslice_from_ptr("baz"), charslice_from_ptr("bat"));
+  UNUSED(res);
   TRY(ddog_telemetry_handle_add_point_with_tags(handle, &test_temetry, 1.0, extra_tags));
   for (int i = 0; i < 10; i++) {
     TRY(ddog_telemetry_handle_add_log(

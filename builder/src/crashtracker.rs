@@ -3,7 +3,7 @@
 
 use crate::arch;
 use crate::module::Module;
-use crate::utils::project_root;
+use crate::utils::{adjust_extern_symbols, project_root};
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
@@ -106,7 +106,8 @@ impl CrashTracker {
             .collect();
 
         let headers = vec![target_path.to_str().unwrap()];
-        fs::copy(origin_path, &target_path).expect("Failed to copy crashtracker.h");
+        adjust_extern_symbols(&origin_path, &target_path)
+            .expect("Failed to adjust extern symbols for crashtracker.h");
 
         dedup_headers(self.base_header.as_ref(), &headers);
 

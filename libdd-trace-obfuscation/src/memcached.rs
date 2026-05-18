@@ -9,11 +9,8 @@ pub fn obfuscate_memcached_string(cmd: &str) -> String {
     // a new line. For non-storage commands, this will have no effect.
     // [1]: https://github.com/memcached/memcached/blob/master/doc/protocol.txt
     let split: Vec<&str> = cmd.splitn(2, "\r\n").collect();
-    if let Some(res) = split.first() {
-        res.to_string()
-    } else {
-        cmd.to_string()
-    }
+    let res = split.first().copied().unwrap_or(cmd);
+    res.trim().to_string()
 }
 
 #[cfg(test)]
@@ -29,6 +26,7 @@ mod tests {
         [test_obfuscate_memcached_3]    ["add newkey 0 60 5\r\nvalue"]              ["add newkey 0 60 5"];
         [test_obfuscate_memcached_4]    ["add newkey 0 60 5\r\nvalue\r\nvalue1"]    ["add newkey 0 60 5"];
         [test_obfuscate_memcached_5]    ["decr mykey 5"]                            ["decr mykey 5"];
+        [fuzzing_2126976840]            ["\t"]                                      [""];
     )]
     #[test]
     fn test_name() {

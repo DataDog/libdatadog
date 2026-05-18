@@ -22,8 +22,7 @@ pub struct ErrorData {
     pub thread_name: Option<String>,
     pub source_type: SourceType,
     pub stack: StackTrace,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub threads: Vec<ThreadData>,
+    pub threads: Threads,
 }
 
 #[cfg(unix)]
@@ -98,7 +97,7 @@ impl ErrorData {
             .normalize_ips(normalizer, pid, elf_resolvers)
             .unwrap_or_else(|_| errors += 1);
 
-        for thread in &mut self.threads {
+        for thread in &mut self.threads.threads {
             thread
                 .stack
                 .normalize_ips(normalizer, pid, elf_resolvers)
@@ -144,7 +143,7 @@ impl ErrorData {
             .resolve_names(src, symbolizer)
             .unwrap_or_else(|_| errors += 1);
 
-        for thread in &mut self.threads {
+        for thread in &mut self.threads.threads {
             thread
                 .stack
                 .resolve_names(src, symbolizer)
@@ -162,7 +161,7 @@ impl ErrorData {
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
         let mut errors = 0;
         self.stack.demangle_names().unwrap_or_else(|_| errors += 1);
-        for thread in &mut self.threads {
+        for thread in &mut self.threads.threads {
             thread
                 .stack
                 .demangle_names()
@@ -189,6 +188,14 @@ pub enum ErrorKind {
     UnixSignal,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
+pub struct Threads {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<ThreadData>,
+    pub count: usize,
+    pub incomplete: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ThreadData {
     pub crashed: bool,
@@ -204,11 +211,15 @@ impl super::test_utils::TestInstance for ErrorData {
         Self {
             is_crash: true,
             kind: ErrorKind::UnixSignal,
-            message: None,
-            thread_name: None,
+            message: Some(format!("Test crash message for seed {seed}")),
+            thread_name: Some(format!("test-thread-{seed}")),
             source_type: SourceType::Crashtracking,
             stack: StackTrace::test_instance(seed),
-            threads: vec![],
+            threads: Threads {
+                threads: vec![],
+                count: 0,
+                incomplete: false,
+            },
         }
     }
 }

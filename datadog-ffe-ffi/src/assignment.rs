@@ -19,7 +19,6 @@ pub struct ResolutionDetails {
     inner: Pin<Box<Result<Assignment, EvaluationError>>>,
     // memoizing some fields, so we can hand off references to them:
     error_message: Option<String>,
-    extra_logging: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
     flag_metadata: Vec<KeyValue<BorrowedStr, BorrowedStr>>,
 }
 impl ResolutionDetails {
@@ -29,32 +28,21 @@ impl ResolutionDetails {
 
         let error_message = (*inner).as_ref().err().map(|err| err.to_string());
 
-        let extra_logging = (*inner)
-            .as_ref()
-            .iter()
-            .flat_map(|it| it.extra_logging.iter())
-            .map(|(k, v)| {
-                KeyValue {
-                    // SAFETY: The returned BorrowedStr does not outlive the source string k. The
-                    // source string k lives in the pinned Assignment inside `inner`, which is owned
-                    // by ResolutionDetails and will not move (guaranteed by Pin) or be modified (we
-                    // only hold shared references).
-                    key: unsafe { BorrowedStr::borrow_from_str(k.as_str()) },
-                    // SAFETY: The returned BorrowedStr does not outlive the source string v. The
-                    // source string v lives in the pinned Assignment inside `inner`, which is owned
-                    // by ResolutionDetails and will not move (guaranteed by Pin) or be modified (we
-                    // only hold shared references).
-                    value: unsafe { BorrowedStr::borrow_from_str(v.as_str()) },
-                }
-            })
-            .collect();
-
-        let flag_metadata = Vec::new();
+        let mut flag_metadata = Vec::new();
+        if let Ok(value) = (*inner).as_ref() {
+            flag_metadata.push(KeyValue {
+                key: BorrowedStr::borrow_static("__dd_allocation_key"),
+                // SAFETY: The returned BorrowedStr does not outlive the source string v. The
+                // source string v lives in the pinned Assignment inside `inner`, which is owned
+                // by ResolutionDetails and will not move (guaranteed by Pin) or be modified (we
+                // only hold shared references).
+                value: unsafe { BorrowedStr::borrow_from_str(&value.allocation_key) },
+            });
+        }
 
         ResolutionDetails {
             inner,
             error_message,
-            extra_logging,
             flag_metadata,
         }
     }
@@ -270,6 +258,13 @@ impl BorrowedStr {
         }
     }
 
+    /// Borrow string from `s`.
+    #[inline]
+    fn borrow_static(s: &'static str) -> BorrowedStr {
+        // SAFETY: static string outlives any scope, so borrowing from it is safe.
+        unsafe { BorrowedStr::borrow_from_str(s) }
+    }
+
     #[inline]
     const fn empty() -> BorrowedStr {
         BorrowedStr {
@@ -437,6 +432,23 @@ pub unsafe extern "C" fn ddog_ffe_assignment_get_error_message(
     }
 }
 
+/// Get the serial_id produced by evaluation.
+///
+/// Returns `None` if the assignment has no serial_id or evaluation did not produce any value.
+///
+/// # Safety
+/// `assignment` must be a valid handle.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_ffe_assignment_get_serial_id(
+    assignment: Handle<ResolutionDetails>,
+) -> libdd_common_ffi::Option<i32> {
+    // SAFETY: the caller must ensure that assignment handle is valid.
+    match unsafe { assignment.as_ref() }.as_ref() {
+        Ok(a) => a.serial_id.into(),
+        Err(_) => libdd_common_ffi::Option::None,
+    }
+}
+
 /// # Safety
 /// `assignment` must be a valid handle.
 #[no_mangle]
@@ -460,18 +472,6 @@ pub unsafe extern "C" fn ddog_ffe_assignnment_get_flag_metadata(
     let a = unsafe { assignment.as_ref() };
     // SAFETY: the caller must ensure that returned value is not used after `assignment` is freed.
     unsafe { ArrayMap::borrow_from_slice(&a.flag_metadata) }
-}
-
-/// # Safety
-/// `assignment` must be a valid handle.
-#[no_mangle]
-pub unsafe extern "C" fn ddog_ffe_assignnment_get_extra_logging(
-    assignment: Handle<ResolutionDetails>,
-) -> ArrayMap<BorrowedStr, BorrowedStr> {
-    // SAFETY: the caller must ensure that assignment is valid
-    let a = unsafe { assignment.as_ref() };
-    // SAFETY: the caller must ensure that returned value is not used after `assignment` is freed.
-    unsafe { ArrayMap::borrow_from_slice(&a.extra_logging) }
 }
 
 /// Frees an Assignment handle.

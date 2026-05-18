@@ -14,6 +14,7 @@ rules:
   - require: commit-signatures
     excluded_emails:
       - '200755185+dd-octo-sts[bot]@users.noreply.github.com' # version-bump bots
+      - '41898282+github-actions[bot]@users.noreply.github.com' # version-bump bots
 ---
 schema-version: v2
 kind: adms

@@ -4,10 +4,10 @@
 //! Types used when calling [`super::send_with_retry`] to configure the retry logic.
 
 use std::time::Duration;
-use tokio::time::sleep;
+
+use libdd_capabilities::sleep::SleepCapability;
 
 /// Enum representing the type of backoff to use for the delay between retries.
-/// ```
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
 pub enum RetryBackoffType {
@@ -91,7 +91,8 @@ impl RetryStrategy {
     /// # Arguments
     ///
     /// * `attempt`: The number of the current attempt (1-indexed).
-    pub(crate) async fn delay(&self, attempt: u32) {
+    /// * `capabilities`: Provides the sleep capability for the delay.
+    pub(crate) async fn delay<C: SleepCapability>(&self, attempt: u32, capabilities: &C) {
         let delay = match self.backoff_type {
             RetryBackoffType::Exponential => self.delay_ms * 2u32.pow(attempt - 1),
             RetryBackoffType::Constant => self.delay_ms,
@@ -100,9 +101,11 @@ impl RetryStrategy {
 
         if let Some(jitter) = self.jitter {
             let jitter = rand::random::<u64>() % jitter.as_millis() as u64;
-            sleep(delay + Duration::from_millis(jitter)).await;
+            capabilities
+                .sleep(delay + Duration::from_millis(jitter))
+                .await;
         } else {
-            sleep(delay).await;
+            capabilities.sleep(delay).await;
         }
     }
 
@@ -116,6 +119,7 @@ impl RetryStrategy {
 // For tests RetryStrategy tests the observed delay should be approximate.
 mod tests {
     use super::*;
+    use libdd_capabilities_impl::NativeSleepCapability;
     use tokio::time::Instant;
 
     // This tolerance is on the higher side to account for github's runners not having consistent
@@ -132,9 +136,10 @@ mod tests {
             backoff_type: RetryBackoffType::Constant,
             jitter: None,
         };
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -147,7 +152,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(2).await;
+        retry_strategy.delay(2, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -169,9 +174,10 @@ mod tests {
             backoff_type: RetryBackoffType::Linear,
             jitter: None,
         };
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -184,7 +190,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(3).await;
+        retry_strategy.delay(3, &capabilities).await;
         let elapsed = start.elapsed();
 
         // For the Linear strategy, the delay for the 3rd attempt should be delay_ms + (delay_ms *
@@ -209,9 +215,10 @@ mod tests {
             backoff_type: RetryBackoffType::Exponential,
             jitter: None,
         };
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         assert!(
@@ -224,7 +231,7 @@ mod tests {
         );
 
         let start = Instant::now();
-        retry_strategy.delay(3).await;
+        retry_strategy.delay(3, &capabilities).await;
         let elapsed = start.elapsed();
         // For the Exponential strategy, the delay for the 3rd attempt should be delay_ms * 2^(3-1)
         // = delay_ms * 4.
@@ -247,9 +254,10 @@ mod tests {
             backoff_type: RetryBackoffType::Constant,
             jitter: Some(Duration::from_millis(50)),
         };
+        let capabilities = NativeSleepCapability;
 
         let start = Instant::now();
-        retry_strategy.delay(1).await;
+        retry_strategy.delay(1, &capabilities).await;
         let elapsed = start.elapsed();
 
         // The delay should be between delay_ms and delay_ms + jitter

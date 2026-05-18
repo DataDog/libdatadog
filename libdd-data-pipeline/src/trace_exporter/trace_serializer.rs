@@ -1,47 +1,49 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::trace_exporter::agent_response::{
-    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION_HEADER,
+    AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
 use crate::trace_exporter::error::TraceExporterError;
 use crate::trace_exporter::TraceExporterOutputFormat;
-use http::header::CONTENT_TYPE;
+use http::{header::CONTENT_TYPE, HeaderMap, HeaderValue};
 use libdd_common::header::{
-    APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
+    APPLICATION_MSGPACK, DATADOG_SEND_REAL_HTTP_STATUS, DATADOG_TRACE_COUNT,
 };
 use libdd_trace_utils::msgpack_decoder::decode::error::DecodeError;
 use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_payload;
-use std::collections::HashMap;
+
+/// Minimal capacity of fresh buffers allocated to encode traces, in bytes.
+const MIN_BUFFER_CAPACITY: usize = 1024;
 
 /// Prepared traces payload ready for sending to the agent
 pub(super) struct PreparedTracesPayload {
     /// Serialized msgpack payload
     pub data: Vec<u8>,
     /// HTTP headers for the request
-    pub headers: HashMap<&'static str, String>,
+    pub headers: HeaderMap,
     /// Number of trace chunks
     pub chunk_count: usize,
 }
 
 /// Trace serialization client for handling payload preparation
-pub(super) struct TraceSerializer<'a> {
+#[derive(Debug)]
+pub(super) struct TraceSerializer {
+    previous_serialised_len: AtomicUsize,
     output_format: TraceExporterOutputFormat,
-    agent_payload_response_version: Option<&'a AgentResponsePayloadVersion>,
 }
 
-impl<'a> TraceSerializer<'a> {
+impl TraceSerializer {
     /// Create a new trace serializer
-    pub(super) fn new(
-        output_format: TraceExporterOutputFormat,
-        agent_payload_response_version: Option<&'a AgentResponsePayloadVersion>,
-    ) -> Self {
+    pub(super) fn new(output_format: TraceExporterOutputFormat) -> Self {
         Self {
+            previous_serialised_len: AtomicUsize::new(MIN_BUFFER_CAPACITY),
             output_format,
-            agent_payload_response_version,
         }
     }
 
@@ -50,10 +52,12 @@ impl<'a> TraceSerializer<'a> {
         &self,
         traces: Vec<Vec<Span<T>>>,
         header_tags: TracerHeaderTags,
+        agent_payload_response_version: Option<&AgentResponsePayloadVersion>,
     ) -> Result<PreparedTracesPayload, TraceExporterError> {
         let payload = self.collect_and_process_traces(traces)?;
         let chunks = payload.size();
-        let headers = self.build_traces_headers(header_tags, chunks);
+        let headers =
+            self.build_traces_headers(header_tags, chunks, agent_payload_response_version);
         let mp_payload = self.serialize_payload(&payload)?;
 
         Ok(PreparedTracesPayload {
@@ -82,16 +86,17 @@ impl<'a> TraceSerializer<'a> {
         &self,
         header_tags: TracerHeaderTags,
         chunk_count: usize,
-    ) -> HashMap<&'static str, String> {
-        let mut headers: HashMap<&'static str, String> = header_tags.into();
-        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS_STR, "1".to_string());
-        headers.insert(DATADOG_TRACE_COUNT_STR, chunk_count.to_string());
-        headers.insert(CONTENT_TYPE.as_str(), APPLICATION_MSGPACK_STR.to_string());
-        if let Some(agent_payload_response_version) = &self.agent_payload_response_version {
-            headers.insert(
-                DATADOG_RATES_PAYLOAD_VERSION_HEADER,
-                agent_payload_response_version.header_value(),
-            );
+        agent_payload_response_version: Option<&AgentResponsePayloadVersion>,
+    ) -> HeaderMap {
+        let mut headers: HeaderMap = header_tags.into();
+        headers.reserve(4);
+        headers.insert(DATADOG_SEND_REAL_HTTP_STATUS, HeaderValue::from_static("1"));
+        headers.insert(DATADOG_TRACE_COUNT, chunk_count.into());
+        headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
+        if let Some(agent_payload_response_version) = agent_payload_response_version {
+            // should never fail, as the version should only contain visible ascii chars
+            let _ = HeaderValue::try_from(agent_payload_response_version.header_value())
+                .map(|v| headers.insert(DATADOG_RATES_PAYLOAD_VERSION, v));
         }
         headers
     }
@@ -101,12 +106,24 @@ impl<'a> TraceSerializer<'a> {
         &self,
         payload: &tracer_payload::TraceChunks<T>,
     ) -> Result<Vec<u8>, TraceExporterError> {
-        match payload {
-            tracer_payload::TraceChunks::V04(p) => Ok(msgpack_encoder::v04::to_vec(p)),
-            tracer_payload::TraceChunks::V05(p) => {
-                rmp_serde::to_vec(p).map_err(TraceExporterError::Serialization)
+        let capacity = self
+            .previous_serialised_len
+            .load(Ordering::Relaxed)
+            .max(MIN_BUFFER_CAPACITY);
+        let buff = match payload {
+            tracer_payload::TraceChunks::V04(p) => {
+                msgpack_encoder::v04::to_vec_with_capacity(p, capacity as u32)
             }
-        }
+            tracer_payload::TraceChunks::V05(p) => {
+                let mut buff = Vec::with_capacity(capacity);
+                rmp_serde::encode::write(&mut buff, p)
+                    .map_err(TraceExporterError::Serialization)?;
+                buff
+            }
+        };
+        self.previous_serialised_len
+            .store(buff.len(), Ordering::Relaxed);
+        Ok(buff)
     }
 }
 
@@ -115,9 +132,7 @@ mod tests {
     use super::*;
     use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
     use http::header::CONTENT_TYPE;
-    use libdd_common::header::{
-        APPLICATION_MSGPACK_STR, DATADOG_SEND_REAL_HTTP_STATUS_STR, DATADOG_TRACE_COUNT_STR,
-    };
+    use libdd_common::header::APPLICATION_MSGPACK_STR;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::span::v04::SpanBytes;
     use libdd_trace_utils::trace_utils::TracerHeaderTags;
@@ -153,38 +168,32 @@ mod tests {
 
     #[test]
     fn test_trace_serializer_new() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         assert!(matches!(
             serializer.output_format,
             TraceExporterOutputFormat::V04
         ));
-        assert!(serializer.agent_payload_response_version.is_none());
     }
 
     #[test]
     fn test_trace_serializer_new_with_agent_version() {
-        let agent_version = AgentResponsePayloadVersion::new();
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V05, Some(&agent_version));
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V05);
         assert!(matches!(
             serializer.output_format,
             TraceExporterOutputFormat::V05
         ));
-        assert!(serializer.agent_payload_response_version.is_some());
     }
 
     #[test]
     fn test_build_traces_headers() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let header_tags = create_test_header_tags();
-        let headers = serializer.build_traces_headers(header_tags, 3);
+        let headers = serializer.build_traces_headers(header_tags, 3, None);
 
         // Check basic headers are present
-        assert_eq!(headers.get(DATADOG_SEND_REAL_HTTP_STATUS_STR).unwrap(), "1");
-        assert_eq!(headers.get(DATADOG_TRACE_COUNT_STR).unwrap(), "3");
-        assert_eq!(
-            headers.get(CONTENT_TYPE.as_str()).unwrap(),
-            APPLICATION_MSGPACK_STR
-        );
+        assert_eq!(headers.get(DATADOG_SEND_REAL_HTTP_STATUS).unwrap(), "1");
+        assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "3");
+        assert_eq!(headers.get(CONTENT_TYPE).unwrap(), APPLICATION_MSGPACK_STR);
 
         // Check tracer metadata headers are present
         assert_eq!(headers.get("datadog-meta-lang").unwrap(), "rust");
@@ -207,18 +216,18 @@ mod tests {
     #[test]
     fn test_build_traces_headers_with_agent_version() {
         let agent_version = AgentResponsePayloadVersion::new();
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, Some(&agent_version));
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let header_tags = create_test_header_tags();
-        let headers = serializer.build_traces_headers(header_tags, 2);
+        let headers = serializer.build_traces_headers(header_tags, 2, Some(&agent_version));
 
         // Check that agent payload version header is included
-        assert!(headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION_HEADER));
-        assert_eq!(headers.get(DATADOG_TRACE_COUNT_STR).unwrap(), "2");
+        assert!(headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
+        assert_eq!(headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
     }
 
     #[test]
     fn test_collect_and_process_traces_v04() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let traces = vec![vec![create_test_span()]];
 
         let result = serializer.collect_and_process_traces(traces);
@@ -231,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_collect_and_process_traces_v05() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V05, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V05);
         let traces = vec![vec![create_test_span()]];
 
         let result = serializer.collect_and_process_traces(traces);
@@ -244,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_collect_and_process_traces_multiple_chunks() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let traces = vec![
             vec![create_test_span()],
             vec![create_test_span(), create_test_span()],
@@ -260,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_serialize_payload_v04() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let original_traces = vec![vec![create_test_span()]];
         let payload = serializer
             .collect_and_process_traces(original_traces.clone())
@@ -295,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_serialize_payload_v05() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V05, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V05);
         let original_traces = vec![vec![create_test_span()]];
         let payload = serializer
             .collect_and_process_traces(original_traces.clone())
@@ -330,14 +339,14 @@ mod tests {
 
     #[test]
     fn test_prepare_traces_payload_v04() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let traces = vec![
             vec![create_test_span()],
             vec![create_test_span(), create_test_span()],
         ];
         let header_tags = create_test_header_tags();
 
-        let result = serializer.prepare_traces_payload(traces, header_tags);
+        let result = serializer.prepare_traces_payload(traces, header_tags, None);
         assert!(result.is_ok());
 
         let prepared = result.unwrap();
@@ -346,17 +355,17 @@ mod tests {
         assert!(!prepared.headers.is_empty());
 
         // Check headers
-        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT_STR).unwrap(), "2");
+        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "2");
         assert_eq!(prepared.headers.get("datadog-meta-lang").unwrap(), "rust");
     }
 
     #[test]
     fn test_prepare_traces_payload_v05() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V05, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V05);
         let traces = vec![vec![create_test_span()]];
         let header_tags = create_test_header_tags();
 
-        let result = serializer.prepare_traces_payload(traces, header_tags);
+        let result = serializer.prepare_traces_payload(traces, header_tags, None);
         assert!(result.is_ok());
 
         let prepared = result.unwrap();
@@ -368,33 +377,31 @@ mod tests {
     #[test]
     fn test_prepare_traces_payload_with_agent_version() {
         let agent_version = AgentResponsePayloadVersion::new();
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, Some(&agent_version));
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let traces = vec![vec![create_test_span()]];
         let header_tags = create_test_header_tags();
 
-        let result = serializer.prepare_traces_payload(traces, header_tags);
+        let result = serializer.prepare_traces_payload(traces, header_tags, Some(&agent_version));
         assert!(result.is_ok());
 
         let prepared = result.unwrap();
         assert_eq!(prepared.chunk_count, 1);
-        assert!(prepared
-            .headers
-            .contains_key(DATADOG_RATES_PAYLOAD_VERSION_HEADER));
+        assert!(prepared.headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
     }
 
     #[test]
     fn test_prepare_traces_payload_empty_traces() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, None);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let traces: Vec<Vec<SpanBytes>> = vec![];
         let header_tags = create_test_header_tags();
 
-        let result = serializer.prepare_traces_payload(traces, header_tags);
+        let result = serializer.prepare_traces_payload(traces, header_tags, None);
         assert!(result.is_ok());
 
         let prepared = result.unwrap();
         assert_eq!(prepared.chunk_count, 0);
         assert!(!prepared.data.is_empty()); // Even empty traces result in some serialized data
-        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT_STR).unwrap(), "0");
+        assert_eq!(prepared.headers.get(DATADOG_TRACE_COUNT).unwrap(), "0");
     }
 
     #[test]
@@ -410,8 +417,8 @@ mod tests {
             ..Default::default()
         };
 
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04, None);
-        let headers = serializer.build_traces_headers(header_tags, 1);
+        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
+        let headers = serializer.build_traces_headers(header_tags, 1, None);
 
         assert_eq!(headers.get("datadog-meta-lang").unwrap(), "python");
         assert_eq!(headers.get("datadog-meta-lang-version").unwrap(), "3.9.0");

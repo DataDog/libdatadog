@@ -109,6 +109,8 @@ mod tests {
             "local root span id",
             "trace endpoint",
             "span id",
+            "thread id",
+            "thread name",
         ];
         for (expected, id) in strs.iter().copied().zip(WELL_KNOWN_STRING_REFS) {
             let actual: &str = id.0.deref();
@@ -140,6 +142,12 @@ mod tests {
 
             let str = set.get(StringRef::SPAN_ID);
             assert_eq!(str, "span id");
+
+            let str = set.get(StringRef::THREAD_ID);
+            assert_eq!(str, "thread id");
+
+            let str = set.get(StringRef::THREAD_NAME);
+            assert_eq!(str, "thread name");
         };
 
         let id = set.try_insert("").unwrap();
@@ -156,6 +164,12 @@ mod tests {
 
         let id = set.try_insert("span id").unwrap();
         assert_eq!(&*id.0, &*StringRef::SPAN_ID.0);
+
+        let id = set.try_insert("thread id").unwrap();
+        assert_eq!(&*id.0, &*StringRef::THREAD_ID.0);
+
+        let id = set.try_insert("thread name").unwrap();
+        assert_eq!(&*id.0, &*StringRef::THREAD_NAME.0);
     }
 
     #[test]

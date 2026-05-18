@@ -16,3 +16,6 @@ RUN sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo \
     && yum clean all
 
 ENV PATH="/opt/rh/devtoolset-11/root/usr/bin:$PATH"
+
+# use the musl binary for nextest since glibc isn't new enough on CentOS7 for nextest
+RUN curl -LsSf https://get.nexte.st/0.9.96/linux-musl | tar zxf - -C /usr/local/bin

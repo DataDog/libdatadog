@@ -1,0 +1,26 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-otel-thread-ctx-ffi"
+version = "1.0.0"
+description = "FFI bindings for the OTel thread-level context publisher"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+bench = false
+
+[dependencies]
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx" }
+
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }

@@ -79,12 +79,10 @@ pub fn compute_artifact_path(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
 /// This crate implements an abstraction over compilation with cargo with the purpose
 /// of testing full binaries or dynamic libraries, instead of just rust static libraries.
 ///
-/// The main entrypoint is `fn build_artifacts` which takes a list of artifacts to build,
-/// either executable crates, cdylib, or extra binaries, invokes cargo and return the path
-/// of the built artifact.
-///
-/// Builds are cached between invocations so that multiple tests can use the same artifact
-/// without doing expensive work twice.
+/// Artifacts are built upfront by the prebuild step via [`rebuild_artifacts`], which
+/// invokes `cargo build` and lets cargo handle staleness. Tests then use
+/// [`fetch_built_artifacts`] to look up the prebuilt paths, failing if any are missing
+/// (indicating the prebuild script needs to be updated).
 ///
 /// It is assumed that functions in this crate are invoked in the context of a cargo #[test]
 /// item, or a `cargo run` command to be able to locate artifacts built by cargo from the position
@@ -115,14 +113,8 @@ pub struct ArtifactsBuild {
     pub panic_abort: Option<bool>,
 }
 
-fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
-    // Compute the expected artifact path first
+fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     let artifact_path = compute_artifact_path(c)?;
-
-    // If the artifact already exists, skip building
-    if artifact_path.exists() {
-        return Ok(artifact_path);
-    }
 
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
@@ -167,29 +159,49 @@ fn inner_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     Ok(artifact_path)
 }
 
-/// Caches and returns the path of the artifacts built by cargo
-/// This function should only be called from cargo tests
-pub fn build_artifacts<'b>(
+/// Returns the paths of prebuilt artifacts, failing if any are missing.
+/// Tests should use this: if an artifact doesn't exist, it means the prebuild
+/// script needs to be updated rather than silently building inline (which would
+/// slow down CI).
+pub fn fetch_built_artifacts<'b>(
+    crates: &[&'b ArtifactsBuild],
+) -> anyhow::Result<HashMap<&'b ArtifactsBuild, PathBuf>> {
+    let mut res = HashMap::new();
+    for &c in crates {
+        let artifact_path = compute_artifact_path(c)?;
+        anyhow::ensure!(
+            artifact_path.exists(),
+            "Prebuilt artifact not found at {path}. \
+             Add this artifact to `artifacts::all_prebuild_artifacts()` \
+             and re-run the prebuild step.",
+            path = artifact_path.display(),
+        );
+        res.insert(c, artifact_path);
+    }
+    Ok(res)
+}
+
+/// Invokes `cargo build` for each artifact, letting cargo's own dependency
+/// tracking decide whether recompilation is needed.
+pub fn rebuild_artifacts<'b>(
     crates: &[&'b ArtifactsBuild],
 ) -> anyhow::Result<HashMap<&'b ArtifactsBuild, PathBuf>> {
     static ARTIFACTS: OnceCell<Mutex<HashMap<ArtifactsBuild, PathBuf>>> = OnceCell::new();
 
     let mut res = HashMap::new();
-
     let artifacts = ARTIFACTS.get_or_init(|| Mutex::new(HashMap::new()));
     for &c in crates {
         let mut artifacts = artifacts.lock().unwrap();
         let artifacts = artifacts.deref_mut();
 
-        if artifacts.contains_key(c) {
-            res.insert(c, artifacts.get(c).unwrap().clone());
+        if let Some(p) = artifacts.get(c) {
+            res.insert(c, p.clone());
         } else {
-            let p = inner_build_artifact(c)?;
+            let p = cargo_build_artifact(c)?;
             res.insert(c, p.clone());
             artifacts.insert(c.clone(), p);
         }
     }
-
     Ok(res)
 }
 

@@ -72,7 +72,7 @@ mod tests {
                             ],
                             "HTTPMethod": "GET",
                             "HTTPEndpoint": "/test",
-                            "GrpcStatusCode": "0"
+                            "GRPCStatusCode": "0"
                         }
                     ]
                 }

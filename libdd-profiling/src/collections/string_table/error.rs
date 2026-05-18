@@ -19,6 +19,16 @@ impl core::fmt::Display for Error {
 
 impl core::error::Error for Error {}
 
+impl From<Error> for std::io::Error {
+    fn from(err: Error) -> Self {
+        let kind = match err {
+            Error::OutOfMemory => std::io::ErrorKind::OutOfMemory,
+            Error::StorageFull => std::io::ErrorKind::Other,
+        };
+        Self::new(kind, err.to_string())
+    }
+}
+
 impl From<libdd_alloc::AllocError> for Error {
     fn from(_: libdd_alloc::AllocError) -> Error {
         Error::OutOfMemory

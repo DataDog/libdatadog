@@ -8,6 +8,12 @@ mod tests {
     };
     use libdd_common::Endpoint;
 
+    /// With rustls-no-provider, reqwest does not auto-install a crypto provider.
+    /// Tests that build a reqwest client must ensure one is installed first.
+    fn ensure_crypto_provider() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     /// Helper to send a simple HTTP request and return the response
     async fn send_request(
         client: reqwest::Client,
@@ -26,6 +32,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn test_file_dump_captures_http_request() {
+        ensure_crypto_provider();
         let file_path = create_temp_file_path("libdd_common_test", "http");
 
         // Create endpoint with file:// scheme
@@ -87,7 +94,9 @@ mod tests {
     /// network). Does not verify which resolver is actually used; that is done by
     /// test_system_resolver_uses_extra_thread.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_both_resolver_configs_build_client() {
+        ensure_crypto_provider();
         let url = "http://example.com/";
         for use_system_resolver in [false, true] {
             let endpoint = Endpoint::from_slice(url).with_system_resolver(use_system_resolver);
@@ -149,6 +158,7 @@ mod tests {
     /// alive, drop client, drop runtime, then count threads after drop. Returns (threads_alive,
     /// threads_after_drop).
     fn run_resolver_phase(url_slice: &str, use_system_resolver: bool) -> (usize, usize) {
+        ensure_crypto_provider();
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

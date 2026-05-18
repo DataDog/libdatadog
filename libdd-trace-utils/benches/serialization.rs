@@ -61,26 +61,20 @@ pub fn serialize_internal_to_msgpack(c: &mut Criterion) {
     let (data, ..) = msgpack_decoder::v04::from_slice(data.as_slice())
         .expect("Failed to deserialize test spans.");
 
-    c.bench_function(
-        "benching serializing traces from their internal representation to msgpack",
-        |b| {
-            b.iter_batched(
-                || vec![0u8; 12_000_000],
-                |mut vec| {
-                    // rmp_serde
-                    // let _ = black_box(rmp_serde::encode::write_named(&mut vec.as_mut_slice(),
-                    // &data));
-                    let _ = black_box(msgpack_encoder::v04::write_to_slice(
-                        &mut vec.as_mut_slice(),
-                        &data,
-                    ));
-                    // Return the result to avoid measuring the deallocation time
-                    vec
-                },
-                criterion::BatchSize::LargeInput,
-            );
-        },
-    );
+    c.bench_function("msgpack_encoder::v04", |b| {
+        b.iter_batched(
+            || vec![0u8; 12_000_000],
+            |mut vec| {
+                let _ = black_box(msgpack_encoder::v04::write_to_slice(
+                    &mut vec.as_mut_slice(),
+                    black_box(&data),
+                ));
+                // Return the result to avoid measuring the deallocation time
+                vec
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
 }
 
 criterion_group!(serialize_benches, serialize_internal_to_msgpack);

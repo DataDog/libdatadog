@@ -39,9 +39,8 @@ impl TlsConfig {
 
         // Use an explicit CryptoProvider rather than relying on
         // `CryptoProvider::get_default_or_install_from_crate_features()`.
-        // Feature unification can enable both `aws-lc-rs` and `ring` in the
-        // same build (reqwest enables aws-lc-rs while libdd-common enables
-        // ring on Windows), which causes the automatic detection to panic.
+        // Feature unification may enable multiple crypto backends in the same
+        // build, which causes the automatic detection to panic.
         let provider = rustls::crypto::CryptoProvider::get_default()
             .cloned()
             .unwrap_or_else(|| std::sync::Arc::new(Self::default_crypto_provider()));
@@ -53,19 +52,32 @@ impl TlsConfig {
         Ok(Self(config))
     }
 
-    /// Returns the platform-appropriate default crypto provider.
+    /// Returns the default crypto provider (ring for non-FIPS builds).
     ///
-    /// Matches the convention used by `libdd-common`: `aws-lc-rs` on Unix,
-    /// `ring` on Windows (where `aws-lc-rs` has issues).
+    /// Matches the convention used by `libdd-common`: ring on all platforms
+    /// for non-FIPS. FIPS builds install the aws-lc-rs FIPS provider externally.
     fn default_crypto_provider() -> rustls::crypto::CryptoProvider {
-        #[cfg(unix)]
-        {
-            rustls::crypto::aws_lc_rs::default_provider()
-        }
-        #[cfg(not(unix))]
-        {
-            rustls::crypto::ring::default_provider()
-        }
+        rustls::crypto::ring::default_provider()
+    }
+}
+
+impl TlsConfig {
+    /// Create a minimal TLS configuration with an empty root store.
+    ///
+    /// Used for non-HTTPS endpoints (HTTP, unix sockets, named pipes) where TLS
+    /// will never actually be negotiated. Providing this to reqwest prevents it
+    /// from attempting to load system CA certificates on its own, which fails in
+    /// minimal container environments that have no CA certificates installed.
+    pub fn new_empty() -> Result<Self, rustls::Error> {
+        let provider = rustls::crypto::CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(|| std::sync::Arc::new(Self::default_crypto_provider()));
+
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()?
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth();
+        Ok(Self(config))
     }
 }
 
@@ -79,4 +91,10 @@ pub(crate) fn cached_tls_config() -> anyhow::Result<TlsConfig> {
         .as_ref()
         .map(Clone::clone)
         .map_err(|err| anyhow::anyhow!("{err}"))
+}
+
+/// Returns a TLS config with an empty root store, for use with non-HTTPS endpoints.
+/// Never fails — no system cert loading is attempted.
+pub(crate) fn empty_tls_config() -> anyhow::Result<TlsConfig> {
+    TlsConfig::new_empty().map_err(|err| anyhow::anyhow!("failed to build TLS config: {err}"))
 }

@@ -1,9 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use libdd_common::regex_engine::{Regex, Replacer};
 use libdd_trace_protobuf::pb;
-use regex::Regex;
-use serde::Deserialize;
+use serde::{ser::SerializeStruct, Deserialize, Deserializer, Serialize};
 
 #[derive(Deserialize)]
 struct RawReplaceRule {
@@ -24,16 +24,44 @@ pub struct ReplaceRule {
     // some exceptions apply such as:
     // * "resource.name" will target the resource
     // * "*" will target all tags and the resource
-    name: String,
+    pub name: String,
 
     // re holds the regex pattern for matching.
-    re: regex::Regex,
+    pub re: Regex,
 
     // repl specifies the replacement string to be used when Pattern matches.
-    repl: String,
+    pub repl: String,
 
     // does the replacement pattern contain references to the capture groups
-    no_expansion: bool,
+    pub no_expansion: bool,
+}
+
+impl<'de> Deserialize<'de> for ReplaceRule {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = RawReplaceRule::deserialize(deserializer)?;
+        let re = Regex::new(&raw.pattern).map_err(serde::de::Error::custom)?;
+        let no_expansion = Replacer::no_expansion(&mut raw.repl.as_str()).is_some();
+        Ok(ReplaceRule {
+            name: raw.name,
+            re,
+            repl: raw.repl,
+            no_expansion,
+        })
+    }
+}
+
+impl Serialize for ReplaceRule {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = serializer.serialize_struct("ReplaceRule", 4)?;
+        s.serialize_field("name", &self.name)?;
+        s.serialize_field("re", &self.re.to_string())?;
+        s.serialize_field("repl", &self.repl)?;
+        s.serialize_field("no_expansion", &self.no_expansion)?;
+        s.end()
+    }
 }
 
 impl ReplaceRule {
@@ -97,7 +125,7 @@ pub fn parse_rules_from_string(
                 anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
             }
         };
-        let no_expansion = regex::Replacer::no_expansion(&mut &raw_rule.repl).is_some();
+        let no_expansion = Replacer::no_expansion(&mut &raw_rule.repl).is_some();
         vec.push(ReplaceRule {
             name: raw_rule.name,
             re: compiled_regex,
@@ -155,7 +183,7 @@ fn replace_all(
             #[allow(clippy::unwrap_used)]
             let m = cap.get(0).unwrap();
             scratch_space.push_str(&haystack[last_match..m.start()]);
-            regex::Replacer::replace_append(&mut replace, &cap, scratch_space);
+            Replacer::replace_append(&mut replace, &cap, scratch_space);
             last_match = m.end();
         }
         scratch_space.push_str(&haystack[last_match..]);
@@ -167,6 +195,7 @@ fn replace_all(
 #[cfg(test)]
 mod tests {
 
+    use super::Regex;
     use crate::replacer;
     use duplicate::duplicate_item;
     use libdd_trace_protobuf::pb;
@@ -287,13 +316,13 @@ mod tests {
     fn test_replace_rule_eq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
         let rule2 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
@@ -305,13 +334,13 @@ mod tests {
     fn test_replace_rule_neq() {
         let rule1 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(token/)([^/]*)").unwrap(),
+            re: Regex::new("(token/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };
         let rule2 = replacer::ReplaceRule {
             name: "http.url".to_string(),
-            re: regex::Regex::new("(broken/)([^/]*)").unwrap(),
+            re: Regex::new("(broken/)([^/]*)").unwrap(),
             repl: "${1}?".to_string(),
             no_expansion: false,
         };

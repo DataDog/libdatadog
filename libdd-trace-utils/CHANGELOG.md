@@ -2,6 +2,70 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v3.0.1..libdd-trace-utils-v4.0.0) - 2026-05-18
+
+### Added
+
+- Trait architecture http ([#1555](https://github.com/datadog/libdatadog/issues/1555)) - ([b863364](https://github.com/datadog/libdatadog/commit/b863364bbb9cb4567b10c80cd11bc4a22b49fcf4))
+- Sleep & spawn capabilities ([#1873](https://github.com/datadog/libdatadog/issues/1873)) - ([b419f6e](https://github.com/datadog/libdatadog/commit/b419f6e1edb7679c750a65713893c68fc697404c))
+- Check for empty value in header datadog-client-computed-stats ([#1900](https://github.com/datadog/libdatadog/issues/1900)) - ([27aa92c](https://github.com/datadog/libdatadog/commit/27aa92cfeeca073d8730a8b4974bd3fdef7ddf3a))
+- Add support for OTLP trace export ([#1641](https://github.com/datadog/libdatadog/issues/1641)) - ([ee83a45](https://github.com/datadog/libdatadog/commit/ee83a4522289af457263f83a2877916ad297b44c))
+- Add shared runtime ([#1602](https://github.com/datadog/libdatadog/issues/1602)) - ([33896de](https://github.com/datadog/libdatadog/commit/33896def2418a9c0fc5bf74b05011210d333759f))
+- Map DD span resource to OTLP resource.name attribute ([#1811](https://github.com/datadog/libdatadog/issues/1811)) - ([9b42048](https://github.com/datadog/libdatadog/commit/9b420483c2e9745be692d7ca4de7ba769f94a5e7))
+- Search all spans to populate tracer payload fields ([#1954](https://github.com/datadog/libdatadog/issues/1954)) - ([0a3304c](https://github.com/datadog/libdatadog/commit/0a3304c6aaf84738786b670d706a01edc22dab81))
+
+### Changed
+
+- Add allocation size tracking allocator ([#1905](https://github.com/datadog/libdatadog/issues/1905)) - ([d29b8d2](https://github.com/datadog/libdatadog/commit/d29b8d22f33ee0bd2ca9baf40f1afee801550c73))
+- Pre-compute string messagepack encoding ([#1948](https://github.com/datadog/libdatadog/issues/1948)) - ([c713122](https://github.com/datadog/libdatadog/commit/c7131222cb42dd0513821456a4071245c4a819f6))
+- Compilation of libdd-data-pipeline to wasm32 ([#1830](https://github.com/datadog/libdatadog/issues/1830)) - ([32f9679](https://github.com/datadog/libdatadog/commit/32f96790350141f82ad78a4b53babe5b757ea345))
+
+### Fixed
+
+- Gate libdd-common TLS features in obfuscation and capabilities-impl ([#1872](https://github.com/datadog/libdatadog/issues/1872)) - ([986aab5](https://github.com/datadog/libdatadog/commit/986aab55cb7941d8453dffb59d35a70599d08665))
+- Update cloud environment detection logic for Serverless [SVLS-8799] ([#1857](https://github.com/datadog/libdatadog/issues/1857)) - ([d60d0a4](https://github.com/datadog/libdatadog/commit/d60d0a4bc7df3841d91929f9b852c5d9ccecd637))
+- Defer trampoline self-deletion to avoid Valgrind false positive ([#1844](https://github.com/datadog/libdatadog/issues/1844)) - ([fc86998](https://github.com/datadog/libdatadog/commit/fc869988ed4f3dc04a081c08d1fda352d4ee2650))
+
+
+
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v3.0.0..libdd-trace-utils-v3.0.1) - 2026-03-25
+
+### Changed
+- Fix previous version.
+
+
+
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.2..libdd-trace-utils-v3.0.0) - 2026-03-23
+
+### Changed
+
+- Change header name type to accept dynamic values ([#1722](https://github.com/datadog/libdatadog/issues/1722)) - ([4dd532f](https://github.com/datadog/libdatadog/commit/4dd532f2c15e928103fc441ab030bc8d94f070c0))
+
+### Fixed
+
+- Rename wrongly cased stats fields ([#1780](https://github.com/datadog/libdatadog/issues/1780)) - ([5ff99ff](https://github.com/datadog/libdatadog/commit/5ff99ff6c465a95a740a494f42cce258c0e80be8))
+
+
+## [2.0.2](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.1..libdd-trace-utils-v2.0.2) - 2026-03-16
+
+### Changed
+
+- Update dependencies ([#1734](https://github.com/DataDog/libdatadog/issues/1734)) - ([38dd71b](https://github.com/DataDog/libdatadog/commit/38dd71bd6fdac45ecab3d74ce1b4a827abae794a))
+
+
+
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v2.0.0..libdd-trace-utils-v2.0.1) - 2026-03-16
+
+### Added
+
+- Add two fields to ClientGroupedStats [SVLS-8627] ([#1630](https://github.com/datadog/libdatadog/issues/1630)) - ([7e909c0](https://github.com/datadog/libdatadog/commit/7e909c0910a15303eb90fdb3399211a3517d70c8))
+
+### Changed
+
+- Update bytes to 1.11.1 to address RUSTSEC-2026-0007 ([#1628](https://github.com/datadog/libdatadog/issues/1628)) - ([0b0863b](https://github.com/datadog/libdatadog/commit/0b0863b2afb7302fe02ea0af77cb9f98550e2a62))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v1.0.0..libdd-trace-utils-v2.0.0) - 2026-02-23
 
 ### Added

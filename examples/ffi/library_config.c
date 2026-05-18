@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #ifdef _WIN32
 // Define setenv for Windows
@@ -74,14 +75,14 @@ int main(int argc, const char *const *argv) {
   if (args.infer) {
     ddog_library_configurator_with_detect_process_info(configurator);
   } else {
-    ddog_CharSlice args[] = {
+    ddog_CharSlice cmd_args[] = {
         DDOG_CHARSLICE_C("/bin/true"),
     };
     ddog_CharSlice envp[] = {
         DDOG_CHARSLICE_C("FOO=BAR"),
     };
     ddog_library_configurator_with_process_info(
-        configurator, (ddog_ProcessInfo){.args = DDOG_SLICE_CHARSLICE(args),
+        configurator, (ddog_ProcessInfo){.args = DDOG_SLICE_CHARSLICE(cmd_args),
                                          .envp = DDOG_SLICE_CHARSLICE(envp),
                                          .language = language});
   }
@@ -104,7 +105,7 @@ int main(int argc, const char *const *argv) {
   }
 
   ddog_Vec_LibraryConfig configs = config_result.ok.value;
-  for (int i = 0; i < configs.len; i++) {
+  for (uintptr_t i = 0; i < configs.len; i++) {
     const ddog_LibraryConfig *cfg = &configs.ptr[i];
 
     printf("Setting env variable: %s=%s from origin %s\n", cfg->name.ptr, cfg->value.ptr,

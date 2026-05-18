@@ -6,24 +6,48 @@ pub mod os {
     use std::ffi::CStr;
 
     // TODO: this function will call API's (fargate, k8s, etc) in the future to get to real host API
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn real_hostname() -> anyhow::Result<String> {
         Ok(sys_info::hostname()?)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn real_hostname() -> anyhow::Result<String> {
+        anyhow::bail!("hostname not available on wasm")
     }
 
     pub const fn os_name() -> &'static str {
         std::env::consts::OS
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn os_version() -> anyhow::Result<String> {
         sys_info::os_release().map_err(|e| e.into())
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn os_version() -> anyhow::Result<String> {
+        anyhow::bail!("os_version not available on wasm")
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn os_type() -> Option<String> {
         sys_info::os_type().ok()
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn os_type() -> Option<String> {
+        None
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn os_release() -> Option<String> {
         sys_info::os_release().ok()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn os_release() -> Option<String> {
+        None
     }
 
     /// Get string similar to `uname -a`'s output

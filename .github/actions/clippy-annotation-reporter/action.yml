@@ -25,7 +25,7 @@ runs:
   steps:
     - name: Set up Rust
       shell: bash
-      run: rustup install stable && rustup default stable
+      run: rustup set profile minimal && rustup install stable && rustup default stable
 
     - name: Fetch all branches
       shell: bash
@@ -37,16 +37,12 @@ runs:
     - name: Build annotation reporter
       shell: bash
       run: |
-        cd ${{ github.action_path }}
-        cargo build --release
-    - name: Debug step
-      shell: bash
-      run: |
-        FILE_PATH="data-pipeline/src/trace_exporter/mod.rs"
+        cd ${{ github.action_path }}/..
+        cargo build --release -p clippy-annotation-reporter
     - name: Run annotation reporter
       shell: bash
       run: |
-        ${{ github.action_path }}/target/release/clippy-annotation-reporter \
+        ${{ github.action_path }}/../target/release/clippy-annotation-reporter \
           --token "${{ inputs.github-token }}" \
           --rules "${{ inputs.allow-annotation-rules }}" \
           --repo "${{ github.repository }}" \

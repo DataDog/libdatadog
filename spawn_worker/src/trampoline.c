@@ -33,8 +33,10 @@ struct trampoline_data {
 
 int main(int argc, char *argv[]) {
   if (argc > 3) {
-    // remove the temp file of this trampoline
-    if (*argv[1]) {
+    // Defer self-deletion when DD_SPAWN_WORKER_STABLE_TRAMPOLINE is set so
+    // Valgrind can read DWARF symbols after execve; otherwise unlink immediately.
+    bool stable = getenv("DD_SPAWN_WORKER_STABLE_TRAMPOLINE") != NULL;
+    if (!stable && *argv[1]) {
       unlink(argv[1]);
     }
 
@@ -200,6 +202,9 @@ int main(int argc, char *argv[]) {
 
     (*fn)(&startup_data);
 #endif
+    if (stable && *argv[1]) {
+      unlink(argv[1]);
+    }
     return 0;
   }
 

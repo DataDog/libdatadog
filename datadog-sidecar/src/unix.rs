@@ -4,17 +4,16 @@
 use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
 use std::ffi::CString;
-use std::os::unix::net::UnixListener as StdUnixListener;
 
 use crate::config::Config;
 use crate::enter_listener_loop;
+use datadog_ipc::{SeqpacketConn, SeqpacketListener};
 use nix::fcntl::{fcntl, OFlag, F_GETFL, F_SETFL};
 use nix::sys::socket::{shutdown, Shutdown};
 use std::io;
 use std::os::fd::RawFd;
 use std::os::unix::prelude::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::time::Instant;
-use tokio::net::{UnixListener, UnixStream};
 use tokio::select;
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info};
@@ -46,8 +45,17 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     let _ = prctl::set_name("dd-ipc-helper");
 
     #[cfg(target_os = "linux")]
-    if let Err(e) = init_crashtracker(trampoline_data.dependency_paths) {
+    if let Err(e) = init_crashtracker(if trampoline_data.argc > 0 {
+        Some(trampoline_data.dependency_paths)
+    } else {
+        None
+    }) {
         warn!("Failed to initialize crashtracker: {e}");
+    }
+
+    let buf_size = Config::get().pipe_buffer_size;
+    if buf_size > 0 {
+        datadog_ipc::platform::set_socket_buffer_size(buf_size);
     }
 
     let now = Instant::now();
@@ -55,20 +63,23 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     let appsec_started = maybe_start_appsec();
 
     if let Some(fd) = spawn_worker::recv_passed_fd() {
-        let listener: StdUnixListener = fd.into();
+        let seqpacket_listener = SeqpacketListener::from_owned_fd(fd);
         info!("Starting sidecar, pid: {}", getpid());
         let acquire_listener = move || {
-            listener.set_nonblocking(true)?;
-            let listener = UnixListener::from_std(listener)?;
+            // Convert to async listener (also sets non-blocking mode).
+            let async_listener = seqpacket_listener.into_async_listener()?;
 
             // shutdown to gracefully dequeue, and immediately relinquish ownership of the socket
             // while shutting down
             let cancel = {
-                let listener_fd = listener.as_raw_fd();
+                let listener_fd = async_listener.as_raw_fd();
                 move || stop_listening(listener_fd)
             };
 
-            Ok((|handler| accept_socket_loop(listener, handler), cancel))
+            Ok((
+                move |handler| accept_socket_loop(async_listener, handler),
+                cancel,
+            ))
         };
         if let Err(err) = enter_listener_loop(acquire_listener) {
             error!("Error: {err}")
@@ -96,22 +107,39 @@ fn stop_listening(listener_fd: RawFd) {
 }
 
 async fn accept_socket_loop(
-    listener: UnixListener,
-    handler: Box<dyn Fn(UnixStream)>,
+    async_listener: tokio::io::unix::AsyncFd<SeqpacketListener>,
+    handler: Box<dyn Fn(SeqpacketConn)>,
 ) -> io::Result<()> {
     #[allow(clippy::unwrap_used)]
     let mut termsig = signal(SignalKind::terminate()).unwrap();
     loop {
         select! {
             _ = termsig.recv() => {
-                stop_listening(listener.as_raw_fd());
+                stop_listening(async_listener.as_raw_fd());
                 break;
             }
-            accept = listener.accept() => {
-                if let Ok((socket, _)) = accept {
-                    handler(socket);
-                } else {
-                    break;
+            ready = async_listener.readable() => {
+                match ready {
+                    Ok(mut guard) => {
+                        match guard.try_io(|inner| inner.get_ref().try_accept()) {
+                            Ok(Ok(conn)) => {
+                                let buf_size = Config::get().pipe_buffer_size;
+                                if buf_size > 0 {
+                                    let _ = conn.set_rcvbuf_size(buf_size);
+                                }
+                                handler(conn);
+                            }
+                            Ok(Err(e)) => {
+                                error!("IPC accept error: {e}");
+                                break;
+                            }
+                            Err(_would_block) => continue,
+                        }
+                    }
+                    Err(e) => {
+                        error!("IPC listener error: {e}");
+                        break;
+                    }
                 }
             }
         }
@@ -120,7 +148,7 @@ async fn accept_socket_loop(
 }
 
 pub fn setup_daemon_process(
-    listener: StdUnixListener,
+    listener: SeqpacketListener,
     spawn_cfg: &mut SpawnWorker,
 ) -> io::Result<()> {
     spawn_cfg
@@ -135,6 +163,10 @@ pub fn setup_daemon_process(
 pub fn primary_sidecar_identifier() -> u32 {
     unsafe { libc::geteuid() }
 }
+
+/// No-op: retained for FFI compatibility.
+/// The master PID is now tracked by MasterListener::start() directly.
+pub fn set_sidecar_master_pid(_pid: u32) {}
 
 fn maybe_start_appsec() -> bool {
     let cfg = &Config::get().appsec_config;
@@ -186,32 +218,44 @@ fn shutdown_appsec() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Result<()> {
+fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> anyhow::Result<()> {
     let entrypoint = entrypoint!(ddog_crashtracker_entry_point);
     let entrypoint_path = match unsafe { get_dl_path_raw(entrypoint.ptr as *const libc::c_void) } {
         (Some(path), _) => path,
         _ => anyhow::bail!("Failed to find crashtracker entrypoint"),
     };
+    let entrypoint_path_str = entrypoint_path.into_string()?;
 
-    let mut receiver_args = vec![
-        "crashtracker_receiver".to_string(),
-        "".to_string(),
-        entrypoint_path.into_string()?,
-    ];
+    let mut receiver_args = vec!["crashtracker_receiver".to_string()];
+    let mut receiver_env = vec![];
+    let entrypoint_name = entrypoint.symbol_name.into_string()?;
 
-    unsafe {
-        let mut descriptors = dependency_paths;
-        if !descriptors.is_null() {
-            loop {
-                if (*descriptors).is_null() {
-                    break;
+    if let Some(dependency_paths) = dependency_paths {
+        receiver_args.push("".to_string());
+        receiver_args.push(entrypoint_path_str.clone());
+        unsafe {
+            let mut descriptors = dependency_paths;
+            if !descriptors.is_null() {
+                loop {
+                    if (*descriptors).is_null() {
+                        break;
+                    }
+                    receiver_args.push(CStr::from_ptr(*descriptors).to_string_lossy().into_owned());
+                    descriptors = descriptors.add(1);
                 }
-                receiver_args.push(CStr::from_ptr(*descriptors).to_string_lossy().into_owned());
-                descriptors = descriptors.add(1);
+            }
+        }
+        receiver_args.push(entrypoint_name);
+    } else {
+        // direct mode: ld.so uses argv[1] as the library to exec
+        receiver_args.push(entrypoint_path_str.clone());
+        receiver_env.push(("_DD_SIDECAR_DIRECT_EXEC".to_string(), entrypoint_name));
+        if let Ok(env) = std::env::var("_DD_SIDECAR_PATH_DEPS") {
+            if !env.is_empty() {
+                receiver_env.push(("_DD_SIDECAR_PATH_DEPS".to_string(), env));
             }
         }
     }
-    receiver_args.push(entrypoint.symbol_name.into_string()?);
 
     let output = match &Config::get().log_method {
         LogMethod::Stdout => Some(format!("/proc/{}/fd/1", unsafe { libc::getpid() })),
@@ -220,21 +264,28 @@ fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Re
         LogMethod::Disabled => None,
     };
 
+    let mut config_builder = CrashtrackerConfiguration::builder()
+        .create_alt_stack(true)
+        .use_alt_stack(true)
+        .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+        .demangle_names(true);
+    if let Some(ep) = Config::get().crashtracker_endpoint.as_ref() {
+        config_builder = config_builder.endpoint_url(&ep.url.to_string());
+        if let Some(api_key) = ep.api_key.as_deref() {
+            config_builder = config_builder.endpoint_api_key(api_key);
+        }
+        config_builder = config_builder
+            .endpoint_timeout_ms(ep.timeout_ms)
+            .endpoint_use_system_resolver(ep.use_system_resolver);
+        if let Some(test_token) = ep.test_token.as_deref() {
+            config_builder = config_builder.endpoint_test_token(test_token);
+        }
+    }
     libdd_crashtracker::init(
-        CrashtrackerConfiguration::new(
-            vec![],
-            true,
-            true,
-            Config::get().crashtracker_endpoint.clone(),
-            StacktraceCollection::EnabledWithSymbolsInReceiver,
-            vec![],
-            None,
-            None,
-            true,
-        )?,
+        config_builder.build()?,
         CrashtrackerReceiverConfig::new(
             receiver_args,
-            vec![],
+            receiver_env,
             format!("/proc/{}/exe", unsafe { libc::getpid() }),
             output,
             None,

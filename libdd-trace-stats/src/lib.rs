@@ -3,9 +3,12 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::unreachable))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 //! This crate provides utilities to compute stats from traces.
 
 pub mod span_concentrator;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stats_exporter;

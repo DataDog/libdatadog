@@ -19,6 +19,9 @@ pub enum TestMode {
     RuntimeCallbackString,
     RuntimeCallbackFrameInvalidUtf8,
     RuntimePreloadLogger,
+    ErrnoPreservation,
+    MultiThreadCollection,
+    ThreadLimit,
 }
 
 impl TestMode {
@@ -39,6 +42,9 @@ impl TestMode {
             Self::RuntimeCallbackString => "runtime_callback_string",
             Self::RuntimeCallbackFrameInvalidUtf8 => "runtime_callback_frame_invalid_utf8",
             Self::RuntimePreloadLogger => "runtime_preload_logger",
+            Self::ErrnoPreservation => "errno_preservation",
+            Self::MultiThreadCollection => "multi_thread_collection",
+            Self::ThreadLimit => "thread_limit",
         }
     }
 
@@ -59,6 +65,9 @@ impl TestMode {
             Self::RuntimeCallbackString,
             Self::RuntimeCallbackFrameInvalidUtf8,
             Self::RuntimePreloadLogger,
+            Self::ErrnoPreservation,
+            Self::MultiThreadCollection,
+            Self::ThreadLimit,
         ]
     }
 }
@@ -88,6 +97,9 @@ impl std::str::FromStr for TestMode {
             "runtime_callback_string" => Ok(Self::RuntimeCallbackString),
             "runtime_callback_frame_invalid_utf8" => Ok(Self::RuntimeCallbackFrameInvalidUtf8),
             "runtime_preload_logger" => Ok(Self::RuntimePreloadLogger),
+            "errno_preservation" => Ok(Self::ErrnoPreservation),
+            "multi_thread_collection" => Ok(Self::MultiThreadCollection),
+            "thread_limit" => Ok(Self::ThreadLimit),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }

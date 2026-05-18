@@ -2,6 +2,14 @@
 
 
 
+## [1.1.1](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.0..libdd-tinybytes-v1.1.1) - 2026-05-18
+
+### Changed
+
+- Pre-compute string messagepack encoding ([#1948](https://github.com/datadog/libdatadog/issues/1948)) - ([c713122](https://github.com/datadog/libdatadog/commit/c7131222cb42dd0513821456a4071245c4a819f6))
+
+
+
 ## [1.1.0](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.0.0..libdd-tinybytes-v1.1.0) - 2026-02-10
 
 ### Added

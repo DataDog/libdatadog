@@ -3,101 +3,105 @@
 use std::{
     fs::File,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
 };
 
-use futures::future::{pending, ready, Pending, Ready};
-use tarpc::context::Context;
-use tarpc::server::Channel;
-
-use super::{
-    platform::PlatformHandle,
-    transport::{blocking::BlockingTransport, Transport},
-};
+use super::platform::{FileBackedHandle, PlatformHandle, ShmHandle};
 
 extern crate self as datadog_ipc;
 
-#[datadog_ipc_macros::impl_transfer_handles]
-#[tarpc::service]
+#[datadog_ipc_macros::service]
 pub trait ExampleInterface {
-    async fn notify() -> ();
-    async fn ping() -> ();
+    async fn notify();
+    #[blocking]
+    async fn ping();
     async fn time_now() -> Duration;
     async fn req_cnt() -> u32;
-    async fn store_file(#[SerializedHandle] file: PlatformHandle<File>) -> ();
-    #[SerializedHandle]
-    async fn retrieve_file() -> Option<PlatformHandle<File>>;
+    async fn store_file(#[SerializedHandle] file: PlatformHandle<File>);
+    /// Receives a shared memory handle, maps it, and returns the sum of the first `len` bytes.
+    /// Used to verify cross-process handle transfer (Windows DuplicateHandle / Unix SCM_RIGHTS).
+    async fn shm_sum(#[SerializedHandle] handle: ShmHandle, len: usize) -> u64;
+    /// Receives a byte payload and returns its length.
+    /// Used to verify that messages larger than mio's 4 KB internal read buffer are handled
+    /// correctly (no ERROR_MORE_DATA panic).
+    async fn echo_len(payload: Vec<u8>) -> u32;
 }
 
-pub type ExampleTransport = BlockingTransport<ExampleInterfaceResponse, ExampleInterfaceRequest>;
-
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone)]
 pub struct ExampleServer {
-    req_cnt: Arc<AtomicU32>,
+    req_cnt: Arc<AtomicU64>,
     stored_files: Arc<Mutex<Vec<PlatformHandle<File>>>>,
 }
 
 impl ExampleServer {
-    pub async fn accept_connection(self, channel: crate::platform::Channel) {
-        #[allow(clippy::unwrap_used)]
-        let server = tarpc::server::BaseChannel::new(
-            tarpc::server::Config::default(),
-            Transport::try_from(channel).unwrap(),
-        );
-
-        server.execute(self.serve()).await
+    pub async fn accept_connection(self, conn: crate::SeqpacketConn) {
+        serve_example_interface_connection(conn, Arc::new(self)).await
     }
 }
 
 impl ExampleInterface for ExampleServer {
-    type PingFut = Ready<()>;
-
-    fn ping(self, _: Context) -> Self::PingFut {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
-        ready(())
+    fn recv_counter(&self) -> &AtomicU64 {
+        &self.req_cnt
     }
 
-    type NotifyFut = Pending<()>;
-
-    fn notify(self, _: Context) -> Self::NotifyFut {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
-        pending() // returning pending future, ensures the RPC system will not try to return a
-                  // response to the client
+    fn notify(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+    ) -> impl std::future::Future<Output = ()> + Send + '_ {
+        std::future::ready(())
     }
 
-    type TimeNowFut = Ready<Duration>;
-
-    fn time_now(self, _: Context) -> Self::TimeNowFut {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
-        ready(Instant::now().elapsed())
+    fn ping(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+    ) -> impl std::future::Future<Output = ()> + Send + '_ {
+        std::future::ready(())
     }
 
-    type ReqCntFut = Ready<u32>;
-
-    fn req_cnt(self, _: Context) -> Self::ReqCntFut {
-        ready(self.req_cnt.fetch_add(1, Ordering::AcqRel))
+    fn time_now(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+    ) -> impl std::future::Future<Output = Duration> + Send + '_ {
+        std::future::ready(Instant::now().elapsed())
     }
 
-    type StoreFileFut = Ready<()>;
+    fn req_cnt(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+    ) -> impl std::future::Future<Output = u32> + Send + '_ {
+        std::future::ready(self.req_cnt.load(Ordering::Relaxed) as u32)
+    }
 
-    fn store_file(self, _: Context, file: PlatformHandle<File>) -> Self::StoreFileFut {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
-
+    fn store_file(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+        file: PlatformHandle<File>,
+    ) -> impl std::future::Future<Output = ()> + Send + '_ {
         #[allow(clippy::unwrap_used)]
         self.stored_files.lock().unwrap().push(file);
-
-        ready(())
+        std::future::ready(())
     }
 
-    type RetrieveFileFut = Ready<Option<PlatformHandle<File>>>;
+    async fn shm_sum(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+        handle: ShmHandle,
+        len: usize,
+    ) -> u64 {
+        match handle.map() {
+            Ok(mapped) => mapped.as_slice()[..len].iter().map(|&b| b as u64).sum(),
+            Err(_) => u64::MAX,
+        }
+    }
 
-    fn retrieve_file(self, _: Context) -> Self::RetrieveFileFut {
-        self.req_cnt.fetch_add(1, Ordering::AcqRel);
-
-        #[allow(clippy::unwrap_used)]
-        ready(self.stored_files.lock().unwrap().pop())
+    fn echo_len(
+        &self,
+        _peer: datadog_ipc::PeerCredentials,
+        payload: Vec<u8>,
+    ) -> impl std::future::Future<Output = u32> + Send + '_ {
+        std::future::ready(payload.len() as u32)
     }
 }

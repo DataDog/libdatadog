@@ -99,8 +99,14 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
 #[test]
 fn test_concentrator_oldest_timestamp_cold() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -149,8 +155,14 @@ fn test_concentrator_oldest_timestamp_cold() {
 #[test]
 fn test_concentrator_oldest_timestamp_hot() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -222,8 +234,14 @@ fn test_concentrator_oldest_timestamp_hot() {
 #[test]
 fn test_concentrator_stats_totals() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -282,8 +300,14 @@ fn test_concentrator_stats_totals() {
 /// buckets.
 fn test_concentrator_stats_counts() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -578,6 +602,8 @@ fn test_span_should_be_included_in_stats() {
         now,
         get_span_kinds(),
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -656,6 +682,8 @@ fn test_ignore_partial_spans() {
         now,
         get_span_kinds(),
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -679,6 +707,8 @@ fn test_force_flush() {
         now,
         get_span_kinds(),
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -760,12 +790,16 @@ fn test_peer_tags_aggregation() {
         now,
         get_span_kinds(),
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     let mut concentrator_with_peer_tags = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator_without_peer_tags.add_span(span);
@@ -870,6 +904,287 @@ fn test_peer_tags_aggregation() {
     assert_counts_equal(
         expected_without_peer_tags,
         stats_without_peer_tags
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
+/// Test that spans differing only by peer-tag IPs aggregate after IP quantization
+#[test]
+fn test_peer_tags_quantization_aggregation() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            2,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "10.1.2.3"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            3,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "10.1.2.4"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            4,
+            1,
+            75,
+            5,
+            "A1",
+            "SELECT user_id from users WHERE user_name = ?",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+                ("region", "us1"),
+                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+    let mut concentrator_with_peer_tags = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![
+            "db.instance".to_string(),
+            "db.system".to_string(),
+            "peer.hostname".to_string(),
+        ],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    for span in &spans {
+        concentrator_with_peer_tags.add_span(span);
+    }
+
+    let flushtime = now
+        + Duration::from_nanos(
+            concentrator_with_peer_tags.bucket_size * concentrator_with_peer_tags.buffer_len as u64,
+        );
+
+    let expected_with_peer_tags = vec![pb::ClientGroupedStats {
+        service: "A1".to_string(),
+        resource: "SELECT user_id from users WHERE user_name = ?".to_string(),
+        r#type: "db".to_string(),
+        name: "query".to_string(),
+        duration: 225,
+        hits: 3,
+        top_level_hits: 3,
+        errors: 0,
+        is_trace_root: pb::Trilean::False.into(),
+        span_kind: "client".to_string(),
+        peer_tags: vec![
+            "db.instance:i-1234".to_string(),
+            "db.system:postgres".to_string(),
+            "peer.hostname:blocked-ip-address".to_string(),
+        ],
+        ..Default::default()
+    }];
+
+    let stats_with_peer_tags = concentrator_with_peer_tags.flush(flushtime, false);
+    assert_counts_equal(
+        expected_with_peer_tags,
+        stats_with_peer_tags
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
+/// Test that internal spans with _dd.base_service use it as their sole peer tag
+#[test]
+fn test_base_service_peer_tag() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        // Regular internal span without base_service (no peer tags)
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "internal.operation",
+            0,
+            &[],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Internal span with _dd.base_service (should have base_service as peer tag)
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            75,
+            5,
+            "A1",
+            "internal.with.base.service",
+            0,
+            &[("_dd.base_service", "original-service")],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Another internal span with same _dd.base_service (should aggregate together)
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            50,
+            5,
+            "A1",
+            "internal.with.base.service",
+            0,
+            &[("_dd.base_service", "original-service")],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Internal span with different _dd.base_service (should be separate group)
+        get_test_span_with_meta(
+            now,
+            4,
+            0,
+            60,
+            5,
+            "A1",
+            "internal.with.base.service",
+            0,
+            &[("_dd.base_service", "other-service")],
+            &[("_dd.measured", 1.0)],
+        ),
+        // Client span with _dd.base_service and other peer tags enabled
+        // (should use configured peer tags, not base_service)
+        get_test_span_with_meta(
+            now,
+            5,
+            0,
+            80,
+            5,
+            "A1",
+            "SELECT * FROM users",
+            0,
+            &[
+                ("span.kind", "client"),
+                ("_dd.base_service", "ignored-for-client"),
+                ("db.instance", "i-1234"),
+                ("db.system", "postgres"),
+            ],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec!["db.instance".to_string(), "db.system".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+
+    let expected = vec![
+        // Internal span without base_service - no peer tags
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "internal.operation".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Internal spans with _dd.base_service="original-service" - aggregated with base_service
+        // peer tag
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "internal.with.base.service".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            peer_tags: vec!["_dd.base_service:original-service".to_string()],
+            duration: 125,
+            hits: 2,
+            top_level_hits: 2,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Internal span with _dd.base_service="other-service" - separate group
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "internal.with.base.service".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            peer_tags: vec!["_dd.base_service:other-service".to_string()],
+            duration: 60,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        // Client span - uses configured peer tags, not base_service
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "SELECT * FROM users".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            span_kind: "client".to_string(),
+            peer_tags: vec![
+                "db.instance:i-1234".to_string(),
+                "db.system:postgres".to_string(),
+            ],
+            duration: 80,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    let stats = concentrator.flush(flushtime, false);
+    assert_counts_equal(
+        expected,
+        stats
             .first()
             .expect("There should be at least one time bucket")
             .stats
@@ -1014,6 +1329,8 @@ fn test_pb_span() {
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
@@ -1131,6 +1448,30 @@ fn test_pb_span() {
                 span_events: vec![],
             }
         },
+        // Grpc span
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("span.kind".to_string(), "client".to_string());
+            meta.insert("rpc.grpc.status_code".to_string(), "aborted".to_string());
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "rpc.grpc".to_string(),
+                resource: "serviceName.methodName".to_string(),
+                trace_id: 1,
+                span_id: 3,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 50) as i64,
+                duration: 300,
+                error: 0,
+                r#type: "rpc".to_string(),
+                meta,
+                metrics: std::collections::HashMap::new(),
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
     ];
 
     libdd_trace_utils::trace_utils::compute_top_level_span(pb_spans.as_mut_slice());
@@ -1206,6 +1547,20 @@ fn test_pb_span() {
             hits: 1,
             top_level_hits: 0,
             errors: 1,
+            is_trace_root: pb::Trilean::False.into(),
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            name: "rpc.grpc".to_string(),
+            resource: "serviceName.methodName".to_string(),
+            http_status_code: 0,
+            r#type: "rpc".to_string(),
+            hits: 1,
+            errors: 0,
+            duration: 300,
+            span_kind: "client".to_string(),
+            grpc_status_code: "10".to_string(),
             is_trace_root: pb::Trilean::False.into(),
             ..Default::default()
         },

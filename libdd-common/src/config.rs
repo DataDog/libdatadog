@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod parse_env {
-    use hyper::Uri;
+    use http::Uri;
     use std::{env, str::FromStr, time::Duration};
 
     use crate::parse_uri;

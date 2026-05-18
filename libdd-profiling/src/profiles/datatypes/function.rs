@@ -23,8 +23,12 @@ pub struct Function {
 
 /// An FFI-safe version of the Function which allows null. Be sure to maintain
 /// layout-compatibility with it, except that StringId2 may be null.
+///
+/// Equality and hashing are defined by pointer identity, so they are only
+/// meaningful when comparing ids that originate from the same
+/// `ProfilesDictionary`.
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct Function2 {
     pub name: StringId2,
     pub system_name: StringId2,

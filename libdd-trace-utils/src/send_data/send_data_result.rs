@@ -3,13 +3,13 @@
 
 use crate::send_with_retry::{SendWithRetryError, SendWithRetryResult};
 use anyhow::anyhow;
-use libdd_common::http_common;
+use bytes::Bytes;
 use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct SendDataResult {
     /// Keeps track of the last request result.
-    pub last_result: anyhow::Result<http_common::HttpResponse>,
+    pub last_result: anyhow::Result<http::Response<Bytes>>,
     /// Count metric for 'trace_api.requests'.
     pub requests_count: u64,
     /// Count metric for 'trace_api.responses'. Each key maps a different HTTP status code.
@@ -83,6 +83,11 @@ impl SendDataResult {
                     self.requests_count += u64::from(attempts);
                 }
                 SendWithRetryError::Network(_, attempts) => {
+                    self.errors_network += 1;
+                    self.chunks_dropped += chunks;
+                    self.requests_count += u64::from(attempts);
+                }
+                SendWithRetryError::ResponseBody(attempts) => {
                     self.errors_network += 1;
                     self.chunks_dropped += chunks;
                     self.requests_count += u64::from(attempts);

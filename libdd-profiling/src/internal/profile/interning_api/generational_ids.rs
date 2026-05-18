@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Opaque identifier for the profiler generation
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -17,7 +17,7 @@ impl Generation {
     pub fn new() -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         Self {
-            id: COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+            id: COUNTER.fetch_add(1, Ordering::Relaxed),
         }
     }
 }

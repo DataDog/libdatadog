@@ -37,18 +37,18 @@ fn add_proc_info(report: &mut String) {
 fn add_config(report: &mut String) {
     writeln!(report, "{DD_CRASHTRACK_BEGIN_CONFIG}")
         .expect("Failed to write DD_CRASHTRACK_BEGIN_CONFIG");
-    let config = CrashtrackerConfiguration::new(
-        vec![], // additional_files
-        true,   // create_alt_stack
-        true,   // use_alt_stack
-        None,
-        StacktraceCollection::EnabledWithSymbolsInReceiver,
-        default_signals(),
-        Some(Duration::from_secs(10)),
-        Some("".to_string()), // unix_socket_path
-        true,                 // demangle_names
-    )
-    .expect("Failed to create crashtracker configuration");
+
+    let config = CrashtrackerConfiguration::builder()
+        .create_alt_stack(true)
+        .use_alt_stack(true)
+        .resolve_frames(StacktraceCollection::EnabledWithSymbolsInReceiver)
+        .signals(default_signals())
+        .timeout(Duration::from_secs(10))
+        .unix_socket_path("".to_string())
+        .demangle_names(true)
+        .build()
+        .expect("Failed to create crashtracker configuration");
+
     let config_str =
         serde_json::to_string(&config).expect("Failed to serialize crashtracker configuration");
     writeln!(report, "{config_str}").expect("Failed to write crashtracker configuration");

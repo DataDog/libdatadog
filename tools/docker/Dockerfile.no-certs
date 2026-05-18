@@ -1,0 +1,16 @@
+FROM ubuntu:22.04
+
+# Install build tools required to compile Rust deps (e.g. aws-lc-sys runs cmake/cc).
+# Rust itself is mounted from the runner — no need to install it here.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Intentionally purge CA certificates.
+# This simulates minimal container environments (e.g. bare ubuntu:20.04) where
+# ProfileExporter::new must not attempt to load the system cert store when
+# targeting non-HTTPS endpoints (HTTP agent, unix socket, named pipe).
+RUN dpkg --force-depends --purge ca-certificates

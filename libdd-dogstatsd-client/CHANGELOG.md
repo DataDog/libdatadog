@@ -2,6 +2,22 @@
 
 
 
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v1.0.2..libdd-dogstatsd-client-v2.0.0) - 2026-03-25
+
+### Changed
+
+  - Fix previous version.
+
+
+
+## [1.0.2](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v1.0.1..libdd-dogstatsd-client-v1.0.2) - 2026-03-23
+
+### Changed
+
+- Update dependencies ([#1781](https://github.com/DataDog/libdatadog/issues/1781)) - ([557c06d](https://github.com/DataDog/libdatadog/commit/557c06da7a9171e452a128b419767b75ba7d78db))
+
+
+
 ## [1.0.1](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v1.0.0..libdd-dogstatsd-client-v1.0.1) - 2026-02-23
 
 ### Changed

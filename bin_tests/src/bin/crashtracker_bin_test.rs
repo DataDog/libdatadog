@@ -22,7 +22,7 @@ mod unix {
     use std::process;
     use std::time::Duration;
 
-    use libdd_common::{tag, Endpoint};
+    use libdd_common::tag;
     use libdd_crashtracker::{
         self as crashtracker, CrashtrackerConfiguration, CrashtrackerReceiverConfig, Metadata,
         StackFrame, StackTrace,
@@ -73,12 +73,6 @@ mod unix {
         let stdout_filename = format!("{output_dir}/out.stdout");
         let output_dir: &Path = output_dir.as_ref();
 
-        let endpoint = if output_url.is_empty() {
-            None
-        } else {
-            Some(Endpoint::from_slice(output_url))
-        };
-
         // The configuration can be modified by a Behavior (testing plan), so it is mut here.
         // Unlike a normal harness, in this harness tests are run in individual processes, so race
         // issues are avoided.
@@ -92,22 +86,31 @@ mod unix {
                 "receiver_symbols" => {
                     crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver
                 }
-                _ => crashtracker::StacktraceCollection::WithoutSymbols,
+                _ => crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
             },
-            Err(_) => crashtracker::StacktraceCollection::WithoutSymbols,
+            Err(_) => crashtracker::StacktraceCollection::EnabledWithSymbolsInReceiver,
         };
 
-        let mut config = CrashtrackerConfiguration::new(
-            vec![],
-            true,
-            true,
-            endpoint,
-            stacktrace_collection,
-            crashtracker::default_signals(),
-            Some(TEST_COLLECTOR_TIMEOUT),
-            Some("".to_string()),
-            true,
-        )?;
+        // Ensure the receiver gets a timeout consistent with the collector's.
+        // In Debug builds the collector is slow, so the default 4 s receiver timeout
+        // can expire before DD_CRASHTRACK_DONE is sent.
+        if env::var("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS").is_err() {
+            env::set_var(
+                "DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS",
+                TEST_COLLECTOR_TIMEOUT.as_millis().to_string(),
+            );
+        }
+
+        let mut config = CrashtrackerConfiguration::builder()
+            .create_alt_stack(true)
+            .demangle_names(true)
+            .endpoint_url(output_url)
+            .resolve_frames(stacktrace_collection)
+            .signals(crashtracker::default_signals())
+            .timeout(TEST_COLLECTOR_TIMEOUT)
+            .unix_socket_path("".to_string())
+            .use_alt_stack(true)
+            .build()?;
 
         let metadata = Metadata {
             library_name: "libdatadog".to_owned(),
@@ -174,7 +177,7 @@ mod unix {
 
                 crashtracker::report_unhandled_exception(
                     Some("RuntimeException"),
-                    Some("an exception occured"),
+                    Some("\n an exception \n occured \n"),
                     stacktrace,
                 )?;
 

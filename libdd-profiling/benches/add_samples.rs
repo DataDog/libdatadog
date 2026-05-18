@@ -47,6 +47,27 @@ fn make_stack_api2(frames: &[Frame2]) -> (Vec<Location2>, Vec<i64>) {
     (locations, values)
 }
 
+fn make_timestamped_profile(
+    sample_types: &[api::SampleType],
+    frames: &[Frame],
+    labels: &[api::Label<'static>],
+) -> profiling::internal::Profile {
+    let mut profile = profiling::internal::Profile::try_new(sample_types, None).unwrap();
+    let (locations, values) = make_stack_api(frames);
+
+    for i in 0..1000 {
+        let sample = api::Sample {
+            locations: locations.clone(),
+            values: &values,
+            labels: labels.to_vec(),
+        };
+        let ts = std::num::NonZeroI64::new(i + 1);
+        black_box(profile.try_add_sample(sample, ts)).unwrap();
+    }
+
+    profile
+}
+
 #[derive(Clone, Copy)]
 struct Frame {
     file_name: &'static str,
@@ -106,12 +127,20 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
     let functions = dict.functions();
     let thread_id = get_current_thread_id();
     let thread_id_key: StringId2 = strings.try_insert("thread id").unwrap().into();
-    let labels_api = vec![api::Label {
-        key: "thread id",
-        str: "",
-        num: thread_id,
-        num_unit: "",
-    }];
+    let labels_api = vec![
+        api::Label {
+            key: "thread id",
+            str: "",
+            num: thread_id,
+            num_unit: "",
+        },
+        api::Label {
+            key: "thread name",
+            str: "this thread",
+            num: 0,
+            num_unit: "",
+        },
+    ];
 
     let frames2 = frames.map(|f| {
         let set_id = functions
@@ -127,6 +156,23 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
         }
     });
     let dict = profiling::profiles::collections::Arc::try_new(dict).unwrap();
+
+    c.bench_function("profile_add_sample_timestamped_x1000", |b| {
+        b.iter(|| {
+            let mut profile = profiling::internal::Profile::try_new(&sample_types, None).unwrap();
+            let (locations, values) = make_stack_api(frames.as_slice());
+            for i in 0..1000 {
+                let sample = api::Sample {
+                    locations: locations.clone(),
+                    values: &values,
+                    labels: labels_api.clone(),
+                };
+                let ts = std::num::NonZeroI64::new(i + 1);
+                black_box(profile.try_add_sample(sample, ts)).unwrap();
+            }
+            black_box(profile.only_for_testing_num_aggregated_samples())
+        })
+    });
 
     c.bench_function("profile_add_sample_frames_x1000", |b| {
         b.iter(|| {
@@ -164,6 +210,23 @@ pub fn bench_add_sample_vs_add2(c: &mut Criterion) {
             black_box(profile.only_for_testing_num_aggregated_samples())
         })
     });
+
+    c.bench_function(
+        "profile_serialize_compressed_pprof_timestamped_x1000",
+        |b| {
+            b.iter_batched(
+                || {
+                    make_timestamped_profile(
+                        &sample_types,
+                        frames.as_slice(),
+                        labels_api.as_slice(),
+                    )
+                },
+                |profile| black_box(profile.serialize_into_compressed_pprof(None, None)).unwrap(),
+                BatchSize::SmallInput,
+            )
+        },
+    );
 }
 
 criterion_group!(benches, bench_add_sample_vs_add2);

@@ -38,6 +38,13 @@ mod queuehashmap {
             self.items.is_empty()
         }
 
+        /// Clear the map, reusing existing allocations
+        pub fn clear(&mut self) {
+            self.table.clear();
+            self.items.clear();
+            self.popped = 0;
+        }
+
         // Remove the oldest item in the queue and return it
         pub fn pop_front(&mut self) -> Option<(K, V)> {
             let (k, v) = self.items.pop_front()?;
@@ -207,6 +214,12 @@ where
 
     pub fn len_stored(&self) -> usize {
         self.items.len()
+    }
+
+    /// Discard pending unflushed items and clear stored dedupe history.
+    pub fn clear(&mut self) {
+        self.unflushed.clear();
+        self.items.clear();
     }
 }
 

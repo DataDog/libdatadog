@@ -30,7 +30,20 @@ pub struct LocalLimiter {
 
 const TIME_PER_SECOND: i64 = 1_000_000_000; // nanoseconds
 
+/// When set to a non-zero value, `now()` returns this instead of the real clock.
+/// This allows tests to control time deterministically, avoiding flakiness from
+/// wall-clock timing on CI machines.
+#[cfg(test)]
+static MOCK_NOW: AtomicU64 = AtomicU64::new(0);
+
 fn now() -> u64 {
+    #[cfg(test)]
+    {
+        let mock = MOCK_NOW.load(Ordering::Relaxed);
+        if mock != 0 {
+            return mock;
+        }
+    }
     #[cfg(windows)]
     let now = unsafe {
         static FREQUENCY: AtomicU64 = AtomicU64::new(0);
@@ -144,64 +157,89 @@ impl Limiter for LocalLimiter {
 
 #[cfg(test)]
 mod tests {
-    use crate::rate_limiter::{Limiter, LocalLimiter, TIME_PER_SECOND};
+    use crate::rate_limiter::{now, Limiter, LocalLimiter, MOCK_NOW, TIME_PER_SECOND};
     use std::sync::atomic::Ordering;
-    use std::thread::sleep;
-    use std::time::Duration;
+
+    fn set_mock_time(nanos: u64) {
+        MOCK_NOW.store(nanos, Ordering::Relaxed);
+    }
+
+    fn advance_mock_time(nanos: u64) {
+        MOCK_NOW.fetch_add(nanos, Ordering::Relaxed);
+    }
+
+    /// A small time tick (100ns) used to simulate minimal time passing between operations.
+    const TICK: u64 = 100;
 
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_rate_limiter() {
+        // Use mock time for deterministic behavior — real wall-clock sleeps are flaky on CI.
+        set_mock_time(1_000_000_000);
+
         let limiter = LocalLimiter::default();
-        // Two are allowed, then one more because a small amount of time passed since the first one
+
+        // First inc uses 1 of 2 slots: rate is exactly 0.5
         assert!(limiter.inc(2));
-        // Work around floating point precision issues
-        assert!(limiter.rate() > 0.49999 && limiter.rate() <= 0.5);
-        // Add a minimal amount of time to ensure the test doesn't run faster than timer precision
-        sleep(Duration::from_micros(100));
+        assert_eq!(0.5, limiter.rate());
+
+        // Second inc: rate approaches 1.0 but not quite (tiny time elapsed)
+        advance_mock_time(TICK);
         assert!(limiter.inc(2));
-        // We're close to 1, but not quite, due to the minimal time passed
         assert!(limiter.rate() > 0.5 && limiter.rate() < 1.);
-        sleep(Duration::from_micros(100));
+
+        // Third inc fills the bucket: rate clamps to 1.0
+        advance_mock_time(TICK);
         assert!(limiter.inc(2));
-        // Rate capped at 1
         assert_eq!(1., limiter.rate());
-        sleep(Duration::from_micros(100));
-        assert!(!limiter.inc(2));
-        sleep(Duration::from_micros(100));
-        assert!(!limiter.inc(2));
-        sleep(Duration::from_micros(100));
 
-        // reduce 4 times, we're going into negative territory. Next increment will reset to zero.
-        limiter
-            .last_update
-            .fetch_sub(3 * TIME_PER_SECOND as u64, Ordering::Relaxed);
-        assert!(limiter.inc(2));
-        // Work around floating point precision issues
-        assert!(limiter.rate() > 0.49999 && limiter.rate() <= 0.5); // We're starting from scratch
-        sleep(Duration::from_micros(100));
-        assert!(limiter.inc(2));
-        sleep(Duration::from_micros(100));
-        assert!(limiter.inc(2));
-        sleep(Duration::from_micros(100));
+        // Over limit — both rejected
+        advance_mock_time(TICK);
         assert!(!limiter.inc(2));
-        sleep(Duration::from_micros(100));
+        advance_mock_time(TICK);
+        assert!(!limiter.inc(2));
 
-        // Test change to higher value
+        // 3 seconds pass — capacity fully refills, hit count goes negative then resets to zero
+        advance_mock_time(3 * TIME_PER_SECOND as u64);
+        assert!(limiter.inc(2));
+        assert_eq!(0.5, limiter.rate()); // Starting from scratch
+
+        advance_mock_time(TICK);
+        assert!(limiter.inc(2));
+        advance_mock_time(TICK);
+        assert!(limiter.inc(2));
+        advance_mock_time(TICK);
+        assert!(!limiter.inc(2));
+
+        // Test change to higher limit
+        advance_mock_time(TICK);
         assert!(limiter.inc(3));
-        sleep(Duration::from_micros(100));
+        advance_mock_time(TICK);
         assert!(!limiter.inc(3));
 
-        // Then change to lower value - but we have no capacity
+        // Change to lower limit — no capacity available
         assert!(!limiter.inc(1));
 
-        // The counter is around 4 (because last limit was 3)
-        // We're keeping the highest successful limit stored, thus subtracting 3 twice will reset it
-        limiter
-            .last_update
-            .fetch_sub(2 * TIME_PER_SECOND as u64, Ordering::Relaxed);
+        // 2 seconds pass — the counter resets (last successful limit was 3, so subtracting
+        // 3 per second twice clears it)
+        advance_mock_time(2 * TIME_PER_SECOND as u64);
 
-        // And now 1 succeeds again.
+        // Now 1 succeeds again
         assert!(limiter.inc(1));
+
+        set_mock_time(0);
+    }
+
+    /// Validates the real clock implementation (MOCK_NOW is 0, so `now()` hits the actual
+    /// platform clock).
+    // We normally shouldn't test private functions directly, but is necessary here since
+    // now() is mocked for the other tests.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_now_monotonic() {
+        let t1 = now();
+        assert!(t1 > 0);
+        let t2 = now();
+        assert!(t2 >= t1);
     }
 }

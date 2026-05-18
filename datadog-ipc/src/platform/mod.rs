@@ -16,6 +16,4 @@ pub use unix::*;
 #[cfg(windows)]
 pub use windows::*;
 
-mod channel;
-
 mod message;

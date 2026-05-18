@@ -4,7 +4,6 @@
 #include <datadog/common.h>
 #include <datadog/telemetry.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 #define TRY(expr)                                                                                  \
   {                                                                                                \

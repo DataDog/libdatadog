@@ -99,6 +99,8 @@ use nix::libc;
 #[derive(Clone)]
 pub enum SpawnMethod {
     #[cfg(target_os = "linux")]
+    Direct,
+    #[cfg(target_os = "linux")]
     FdExec,
     #[cfg(not(target_os = "macos"))]
     LdPreload,
@@ -294,6 +296,16 @@ impl SpawnWorker {
         self
     }
 
+    /// Set an env var, removing any existing entry with the same key first.
+    /// Use this instead of `append_env` when the parent process may already
+    /// have the variable set and the child must use the new value.
+    pub fn set_env<K: Into<OsString>, V: Into<OsString>>(&mut self, key: K, value: V) -> &mut Self {
+        let key = key.into();
+        self.env.retain(|(k, _)| k != &key);
+        self.env.push((key, value.into()));
+        self
+    }
+
     fn wait_pid(pid: Option<libc::pid_t>) -> anyhow::Result<()> {
         let pid = match pid {
             Some(pid) => Pid::from_raw(pid),
@@ -316,13 +328,25 @@ impl SpawnWorker {
     }
 
     fn do_spawn(&self) -> anyhow::Result<Option<libc::pid_t>> {
+        #[allow(unused_mut)]
+        let mut spawn_method = match &self.spawn_method {
+            Some(m) => m.clone(),
+            None => self.target.detect_spawn_method()?,
+        };
+
         let mut argv = ExecVec::empty();
+
+        // On Linux, Direct mode uses env vars for deps instead of argv entries.
+        #[cfg(target_os = "linux")]
+        let use_direct = matches!(spawn_method, SpawnMethod::Direct);
+        #[cfg(not(target_os = "linux"))]
+        let use_direct = false;
+
         // set argv[0] and process name shown eg in `ps`
         let process_name = CString::new(self.process_name.as_deref().unwrap_or("spawned_worker"))?;
         argv.push(process_name);
-        argv.push(CString::new("")?);
 
-        let entrypoint_symbol_name = match &self.target {
+        let (entrypoint_object, entrypoint_symbol_name) = match &self.target {
             Target::Entrypoint(entrypoint) => {
                 let path = match unsafe {
                     crate::get_dl_path_raw(entrypoint.ptr as *const libc::c_void)
@@ -331,15 +355,19 @@ impl SpawnWorker {
                     _ => return Err(anyhow::format_err!("can't read symbol pointer data")),
                 };
 
-                argv.push(path);
-                entrypoint.symbol_name.clone()
+                (path, entrypoint.symbol_name.clone())
             }
-            Target::ManualTrampoline(path, symbol_name) => {
-                argv.push(CString::new(path.as_str())?);
-                CString::new(symbol_name.as_str())?
-            }
+            Target::ManualTrampoline(path, symbol_name) => (
+                CString::new(path.as_str())?,
+                CString::new(symbol_name.as_str())?,
+            ),
             Target::Noop => return Ok(None),
         };
+
+        if !use_direct {
+            argv.push(CString::new("")?);
+        }
+        argv.push(entrypoint_object);
 
         let mut envp = ExecVec::empty();
         for (k, v) in &self.env {
@@ -377,62 +405,92 @@ impl SpawnWorker {
         // make sure the fd_to_pass is not dropped until the end of the function
         let fd_to_pass = fd_to_pass.as_ref();
 
-        // setup final spawn
-
-        #[allow(unused_mut)]
-        let mut spawn_method = match &self.spawn_method {
-            Some(m) => m.clone(),
-            None => self.target.detect_spawn_method()?,
-        };
-
         let mut temp_files = vec![];
         #[cfg(target_os = "linux")]
         let mut temp_memfds = vec![];
-        for dep in &self.shared_lib_dependencies {
-            match dep {
-                LibDependency::Path(path) => {
-                    argv.push(CString::new(path.to_string_lossy().to_string())?)
-                }
-                LibDependency::Binary(bin) => {
-                    let mut tempfile = || -> anyhow::Result<()> {
-                        let path = CString::new(
-                            write_to_tmp_file(bin)?
-                                .into_temp_path()
-                                .keep()? // ensure the file is not auto cleaned in parent process
-                                .as_os_str()
-                                .to_str()
-                                .ok_or_else(|| {
-                                    anyhow::format_err!("can't convert tmp file path")
-                                })?,
-                        )?;
-                        temp_files.push(path.clone());
-                        argv.push(CString::new("-")?);
-                        argv.push(path);
-                        Ok(())
-                    };
-                    #[cfg(target_os = "linux")]
-                    if matches!(spawn_method, SpawnMethod::FdExec) {
-                        if let Ok(memfd) = linux::write_memfd("trampoline_dependencies.so", bin) {
-                            let basefds = if fd_to_pass.is_some() { 4 } else { 3 };
-                            argv.push(CString::new(format!(
-                                "/proc/self/fd/{}",
-                                temp_memfds.len() + basefds
-                            ))?);
-                            temp_memfds.push(memfd);
-                        } else {
-                            spawn_method = SpawnMethod::Exec;
-                            tempfile()?;
-                        }
-                    } else {
-                        tempfile()?;
-                    }
-                    #[cfg(not(target_os = "linux"))]
-                    tempfile()?;
+
+        #[cfg(target_os = "linux")]
+        let direct_ld_cstr = if use_direct {
+            let mut env = b"_DD_SIDECAR_DIRECT_EXEC=".to_vec();
+            env.extend_from_slice(entrypoint_symbol_name.as_bytes_with_nul());
+            envp.push(CString::from_vec_with_nul(env)?);
+            // Binary deps (mock_php) skipped: PHP symbols are weakened in .dynsym.
+            let path_deps: Vec<String> = self
+                .shared_lib_dependencies
+                .iter()
+                .filter_map(|dep| match dep {
+                    LibDependency::Path(p) => Some(p.to_string_lossy().into_owned()),
+                    LibDependency::Binary(_) => None,
+                })
+                .collect();
+            if !path_deps.is_empty() {
+                if let Ok(s) =
+                    CString::new(format!("_DD_SIDECAR_PATH_DEPS={}", path_deps.join(":")))
+                {
+                    envp.push(s);
                 }
             }
-        }
 
-        argv.push(entrypoint_symbol_name);
+            Some(CString::new(
+                crate::read_pt_interp_self()
+                    .ok_or_else(|| {
+                        anyhow::format_err!("Direct spawn: no PT_INTERP in current process")
+                    })?
+                    .to_str()
+                    .ok_or_else(|| anyhow::format_err!("non-UTF8 interp path"))?,
+            )?)
+        } else {
+            None
+        };
+
+        if !use_direct {
+            for dep in &self.shared_lib_dependencies {
+                match dep {
+                    LibDependency::Path(path) => {
+                        argv.push(CString::new(path.to_string_lossy().to_string())?)
+                    }
+                    LibDependency::Binary(bin) => {
+                        let mut tempfile = || -> anyhow::Result<()> {
+                            let path = CString::new(
+                                write_to_tmp_file(bin)?
+                                    .into_temp_path()
+                                    .keep()? // ensure the file is not auto cleaned in parent process
+                                    .as_os_str()
+                                    .to_str()
+                                    .ok_or_else(|| {
+                                        anyhow::format_err!("can't convert tmp file path")
+                                    })?,
+                            )?;
+                            temp_files.push(path.clone());
+                            argv.push(CString::new("-")?);
+                            argv.push(path);
+                            Ok(())
+                        };
+                        #[cfg(target_os = "linux")]
+                        if matches!(spawn_method, SpawnMethod::FdExec) {
+                            if let Ok(memfd) = linux::write_memfd("trampoline_dependencies.so", bin)
+                            {
+                                let basefds = if fd_to_pass.is_some() { 4 } else { 3 };
+                                argv.push(CString::new(format!(
+                                    "/proc/self/fd/{}",
+                                    temp_memfds.len() + basefds
+                                ))?);
+                                temp_memfds.push(memfd);
+                            } else {
+                                spawn_method = SpawnMethod::Exec;
+                                tempfile()?;
+                            }
+                        } else {
+                            tempfile()?;
+                        }
+                        #[cfg(not(target_os = "linux"))]
+                        tempfile()?;
+                    }
+                }
+            }
+
+            argv.push(entrypoint_symbol_name);
+        }
 
         // build and allocate final exec fn and its dependencies
         #[cfg(target_os = "linux")]
@@ -441,6 +499,15 @@ impl SpawnWorker {
         let skip_close_fd = 0;
 
         let mut spawn: Box<dyn FnMut()> = match spawn_method {
+            #[cfg(target_os = "linux")]
+            SpawnMethod::Direct => {
+                // argv is already [ld_interp, so_path]; envp has Direct-specific entries.
+                let ld_cstr = direct_ld_cstr.expect("ld_cstr built above for Direct");
+                Box::new(move || unsafe {
+                    libc::execve(ld_cstr.as_ptr(), argv.as_ptr(), envp.as_ptr());
+                    panic!("{}", std::io::Error::last_os_error());
+                })
+            }
             #[cfg(target_os = "linux")]
             SpawnMethod::FdExec => {
                 let fd = linux::write_trampoline()?;
@@ -500,7 +567,7 @@ impl SpawnWorker {
                         }
                     }
 
-                    panic!("Failed lauching via fexecve(): {fexecve_error}");
+                    panic!("Failed launching via fexecve(): {fexecve_error}");
                 })
             }
             #[cfg(not(target_os = "macos"))]

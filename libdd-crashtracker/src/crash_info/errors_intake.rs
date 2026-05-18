@@ -3,15 +3,17 @@
 
 use std::time::SystemTime;
 
-use crate::{OsInfo, SigInfo};
+use crate::{OsInfo, SigInfo, ThreadData, Ucontext};
 
-use super::{build_crash_ping_message, CrashInfo, Experimental, Metadata, StackTrace};
+use super::{
+    telemetry::CrashPing, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, TARGET_TRIPLE,
+};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
 use http::{uri::PathAndQuery, Uri};
 use libdd_common::{config::parse_env, parse_uri, Endpoint};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, time::Duration};
+use std::{borrow::Cow, collections::HashMap, time::Duration};
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
 pub const PROD_ERRORS_INTAKE_SUBDOMAIN: &str = "error-tracking-intake";
@@ -108,7 +110,7 @@ impl ErrorsIntakeSettings {
             errors_intake_dd_url: parse_env::str_not_empty(Self::DD_ERRORS_INTAKE_DD_URL),
             shared_lib_debug: parse_env::bool(Self::_DD_SHARED_LIB_DEBUG).unwrap_or(false),
             errors_intake_enabled: parse_env::bool(Self::DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED)
-                .unwrap_or(false),
+                .unwrap_or(true),
 
             agent_uds_socket_found: (|| {
                 #[cfg(unix)]
@@ -239,39 +241,47 @@ pub struct ErrorObject {
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub error_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stack: Option<StackTrace>,
+    pub experimental: Option<Experimental>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_crash: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fingerprint: Option<String>,
+    pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub experimental: Option<Experimental>,
+    pub stack: Option<StackTrace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<ThreadData>,
 }
 
 #[derive(serde::Serialize, Debug)]
 pub struct ErrorsIntakePayload {
-    pub timestamp: u64,
     pub ddsource: String,
     pub ddtags: String,
     pub error: ErrorObject,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub files: HashMap<String, Vec<String>>,
     pub os_info: OsInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub proc_info: Option<ProcInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sig_info: Option<SigInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ucontext: Option<Ucontext>,
+    pub timestamp: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
 }
 
 #[derive(Debug, Default)]
 struct ExtractedMetadata {
-    service_name: String,
     env: Option<String>,
-    service_version: Option<String>,
     language_name: Option<String>,
     language_version: Option<String>,
+    service_name: String,
+    service_version: Option<String>,
     tracer_version: Option<String>,
 }
 
@@ -363,6 +373,7 @@ fn build_crash_info_tags(crash_info: &CrashInfo) -> String {
         append_signal_tags(&mut tags, siginfo);
     }
 
+    tags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
     tags
 }
 
@@ -386,29 +397,27 @@ impl ErrorsIntakePayload {
         let crash_tags = build_crash_info_tags(crash_info);
         ddtags.push_str(&format!(",{crash_tags}"));
 
-        let (error_type, error_message) = if let Some(sig_info) = &crash_info.sig_info {
-            (
-                Some(format!("{:?}", sig_info.si_signo_human_readable)),
-                Some(format!(
-                    "Process terminated by signal {:?}",
-                    sig_info.si_signo_human_readable
-                )),
-            )
+        let error_type = if let Some(sig_info) = &crash_info.sig_info {
+            Some(format!("{:?}", sig_info.si_signo_human_readable))
         } else {
-            (
-                Some("Unknown".to_string()),
-                crash_info.error.message.clone(),
-            )
+            Some(format!("{:?}", crash_info.error.kind))
         };
 
-        // Use crash stack if available
+        let error_message = crash_info.error.message.clone().or_else(|| {
+            crash_info.sig_info.as_ref().map(|sig_info| {
+                format!(
+                    "Process terminated with {:?} ({:?})",
+                    sig_info.si_code_human_readable, sig_info.si_signo_human_readable
+                )
+                .to_string()
+            })
+        });
+
         let error_stack = if !crash_info.error.stack.frames.is_empty() {
             Some(crash_info.error.stack.clone())
         } else {
             None
         };
-
-        let sig_info = crash_info.sig_info.clone();
 
         Ok(Self {
             timestamp,
@@ -417,27 +426,31 @@ impl ErrorsIntakePayload {
             error: ErrorObject {
                 error_type,
                 message: error_message,
+                thread_name: crash_info.error.thread_name.clone(),
                 stack: error_stack,
                 is_crash: Some(true),
-                fingerprint: crash_info.fingerprint.clone(),
                 source_type: Some("Crashtracking".to_string()),
                 experimental: crash_info.experimental.clone(),
+                threads: crash_info.error.threads.threads.clone(),
             },
             trace_id: None,
-            os_info: ::os_info::get().into(),
-            sig_info,
+            ucontext: crash_info.ucontext.clone(),
+            os_info: crash_info.os_info.clone(),
+            sig_info: crash_info.sig_info.clone(),
+            proc_info: crash_info.proc_info.clone(),
+            files: crash_info.files.clone(),
         })
     }
 
-    pub fn from_crash_ping(
-        crash_uuid: &str,
-        sig_info: Option<&SigInfo>,
-        metadata: &Metadata,
-    ) -> anyhow::Result<Self> {
+    pub fn from_crash_ping(crash_ping: &CrashPing) -> anyhow::Result<Self> {
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+
+        let crash_uuid = crash_ping.crash_uuid();
+        let sig_info = crash_ping.siginfo();
+        let metadata = crash_ping.metadata();
 
         let extracted_metadata = ExtractedMetadata::from_metadata(metadata);
         let mut ddtags = format!(
@@ -456,20 +469,14 @@ impl ErrorsIntakePayload {
             append_signal_tags(&mut ddtags, sig_info);
         }
 
-        let (error_type, message) = if let Some(sig_info) = sig_info {
-            (
-                Some(format!("{:?}", sig_info.si_signo_human_readable)),
-                Some(build_crash_ping_message(sig_info)),
-            )
-        } else {
-            (
-                Some("Unknown".to_string()),
-                Some(
-                    "Crashtracker crash ping: crash processing started - Process terminated"
-                        .to_string(),
-                ),
-            )
-        };
+        ddtags.push_str(&format!(",runtime_platform:{TARGET_TRIPLE}"));
+
+        let error_type = Some(
+            sig_info
+                .map(|s| format!("{:?}", s.si_signo_human_readable))
+                .unwrap_or_else(|| format!("{:?}", crash_ping.kind())),
+        );
+        let message = Some(crash_ping.message().to_string());
 
         Ok(Self {
             timestamp,
@@ -478,17 +485,19 @@ impl ErrorsIntakePayload {
             error: ErrorObject {
                 error_type,
                 message,
+                thread_name: None,
                 stack: None,
                 is_crash: Some(false),
-                fingerprint: None,
                 source_type: Some("Crashtracking".to_string()),
                 experimental: None,
+                threads: vec![],
             },
             sig_info: sig_info.cloned(),
             trace_id: None,
-            // Crash ping does not include os_info, but we can recalculate it here
-            // so that errors intake crash pings include this information
             os_info: ::os_info::get().into(),
+            ucontext: None,
+            proc_info: None,
+            files: HashMap::new(),
         })
     }
 }
@@ -511,13 +520,8 @@ impl ErrorsIntakeUploader {
         self.cfg.is_errors_intake_enabled()
     }
 
-    pub async fn upload_crash_ping(
-        &self,
-        crash_uuid: &str,
-        sig_info: Option<&SigInfo>,
-        metadata: &Metadata,
-    ) -> anyhow::Result<()> {
-        let payload = ErrorsIntakePayload::from_crash_ping(crash_uuid, sig_info, metadata)?;
+    pub async fn upload_crash_ping(&self, crash_ping: &CrashPing) -> anyhow::Result<()> {
+        let payload = ErrorsIntakePayload::from_crash_ping(crash_ping)?;
         self.send_payload(&payload).await
     }
 
@@ -616,9 +620,47 @@ mod tests {
         let crash_info = CrashInfo::test_instance(1);
         let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
 
+        // Basic structure
         assert_eq!(payload.ddsource, "crashtracker");
         assert_eq!(payload.error.source_type, Some("Crashtracking".to_string()));
         assert_eq!(payload.error.is_crash, Some(true));
+
+        // error.message inherits from crash_info.error.message
+        assert_eq!(payload.error.message, crash_info.error.message);
+
+        // error.thread_name inherits from crash_info.error.thread_name
+        assert_eq!(payload.error.thread_name, crash_info.error.thread_name);
+
+        // error.stack inherits from crash_info.error.stack
+        assert_eq!(payload.error.stack, Some(crash_info.error.stack.clone()));
+
+        // error_type: signal name when sig_info present, ErrorKind as fallback
+        assert_eq!(
+            payload.error.error_type,
+            Some(format!(
+                "{:?}",
+                crash_info
+                    .sig_info
+                    .as_ref()
+                    .unwrap()
+                    .si_signo_human_readable
+            ))
+        );
+
+        // experimental inherits from crash_info
+        assert_eq!(payload.error.experimental, crash_info.experimental);
+
+        // os_info inherits from crash_info
+        assert_eq!(payload.os_info, crash_info.os_info);
+
+        // sig_info inherits from crash_info
+        assert_eq!(payload.sig_info, crash_info.sig_info);
+
+        // proc_info inherits from crash_info
+        assert_eq!(payload.proc_info, crash_info.proc_info);
+
+        // files inherits from crash_info
+        assert_eq!(payload.files, crash_info.files);
 
         let ddtags = &payload.ddtags;
 
@@ -626,7 +668,7 @@ mod tests {
         assert!(ddtags.contains("version:bar"));
         assert!(ddtags.contains("language_name:native"));
 
-        assert!(ddtags.contains("data_schema_version:1.5"));
+        assert!(ddtags.contains("data_schema_version:1.7"));
         assert!(ddtags.contains("incomplete:true"));
         assert!(ddtags.contains("is_crash:true"));
         assert!(ddtags.contains("uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781"));
@@ -646,19 +688,30 @@ mod tests {
     fn test_errors_payload_from_crash_ping() {
         let metadata = Metadata::test_instance(1);
         let sig_info = crate::SigInfo::test_instance(42);
-        let crash_uuid = "test-uuid-123";
+        let crash_uuid = uuid::Uuid::from_u128(0x01);
 
-        let payload =
-            ErrorsIntakePayload::from_crash_ping(crash_uuid, Some(&sig_info), &metadata).unwrap();
+        let crash_ping = crate::CrashPingBuilder::new(crash_uuid)
+            .with_metadata(metadata.clone())
+            .with_kind(crate::ErrorKind::UnixSignal)
+            .with_sig_info(sig_info.clone())
+            .build()
+            .unwrap();
+
+        let payload = ErrorsIntakePayload::from_crash_ping(&crash_ping).unwrap();
 
         assert_eq!(payload.ddsource, "crashtracker");
         assert_eq!(payload.error.source_type, Some("Crashtracking".to_string()));
         assert_eq!(payload.error.is_crash, Some(false));
         assert!(payload.error.stack.is_none());
+        assert_eq!(payload.error.message.as_deref(), Some(crash_ping.message()));
+        assert_eq!(
+            payload.error.error_type,
+            Some(format!("{:?}", sig_info.si_signo_human_readable))
+        );
 
         let ddtags = &payload.ddtags;
 
-        assert!(ddtags.contains("uuid:test-uuid-123"));
+        assert!(ddtags.contains(&format!("uuid:{crash_uuid}")));
         assert!(ddtags.contains("is_crash_ping:true"));
         assert!(ddtags.contains("service:foo"));
 
@@ -678,7 +731,7 @@ mod tests {
         let payload = ErrorsIntakePayload::from_crash_info(&crash_info).unwrap();
 
         let expected_crash_tags = [
-            "data_schema_version:1.5",
+            "data_schema_version:1.7",
             "incomplete:true",
             "is_crash:true",
             "uuid:1d6b97cb-968c-40c9-af6e-e4b4d71e8781",
@@ -689,6 +742,7 @@ mod tests {
             "si_code_human_readable:SEGV_BNDERR",
             "si_signo:11",
             "si_signo_human_readable:SIGSEGV",
+            &format!("runtime_platform:{}", super::super::TARGET_TRIPLE),
         ];
 
         let expected_metadata_tags = ["service:foo", "version:bar", "language_name:native"];
@@ -711,14 +765,24 @@ mod tests {
     fn test_crash_ping_has_all_telemetry_tags() {
         let metadata = Metadata::test_instance(1);
         let sig_info = crate::SigInfo::test_instance(42);
-        let crash_uuid = "test-crash-ping-uuid";
+        let crash_uuid = uuid::Uuid::from_u128(0x02);
 
-        let payload =
-            ErrorsIntakePayload::from_crash_ping(crash_uuid, Some(&sig_info), &metadata).unwrap();
+        let crash_ping = crate::CrashPingBuilder::new(crash_uuid)
+            .with_metadata(metadata.clone())
+            .with_kind(crate::ErrorKind::UnixSignal)
+            .with_sig_info(sig_info.clone())
+            .build()
+            .unwrap();
+
+        let payload = ErrorsIntakePayload::from_crash_ping(&crash_ping).unwrap();
 
         // This test ensures we have all the tags that telemetry crash ping produces
+        assert!(
+            payload.ddtags.contains(&format!("uuid:{crash_uuid}")),
+            "Missing uuid tag in ddtags: {}",
+            payload.ddtags
+        );
         let expected_tags = [
-            "uuid:test-crash-ping-uuid",
             "is_crash_ping:true",
             "service:foo",
             "language_name:native",
@@ -726,6 +790,7 @@ mod tests {
             "si_code_human_readable:SEGV_BNDERR",
             "si_signo:11",
             "si_signo_human_readable:SIGSEGV",
+            &format!("runtime_platform:{}", super::super::TARGET_TRIPLE),
         ];
 
         for tag in expected_tags {
@@ -829,31 +894,22 @@ mod tests {
     }
 
     #[test]
-    fn test_errors_intake_enabled_flag() {
+    fn test_errors_intake_disabled_flag() {
         let _lock = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Test default behavior (should be enabled)
         clear_errors_intake_env();
-        let cfg = ErrorsIntakeConfig::from_env();
-        assert!(!cfg.is_errors_intake_enabled());
 
-        // Test explicitly enabled
-        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
+        // Default behavior is enabled
         let cfg = ErrorsIntakeConfig::from_env();
         assert!(cfg.is_errors_intake_enabled());
 
-        // Test explicitly disabled
-        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false");
-        let cfg = ErrorsIntakeConfig::from_env();
-        assert!(!cfg.is_errors_intake_enabled());
-
         // Test with uploader
         let uploader = ErrorsIntakeUploader::new(&None).unwrap();
-        assert!(!uploader.is_enabled());
-
-        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "true");
-        let uploader = ErrorsIntakeUploader::new(&None).unwrap();
         assert!(uploader.is_enabled());
+
+        std::env::set_var("DD_CRASHTRACKING_ERRORS_INTAKE_ENABLED", "false");
+        let uploader = ErrorsIntakeUploader::new(&None).unwrap();
+        assert!(!uploader.is_enabled());
     }
 
     #[test]
