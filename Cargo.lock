@@ -695,7 +695,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1354,9 +1354,7 @@ name = "datadog-ffe"
 version = "1.0.0"
 dependencies = [
  "chrono",
- "criterion",
  "derive_more",
- "env_logger",
  "faststr",
  "libdd-common",
  "log",
@@ -1380,6 +1378,18 @@ dependencies = [
  "datadog-ffe",
  "function_name",
  "libdd-common-ffi",
+]
+
+[[package]]
+name = "datadog-ffe-test-suite"
+version = "33.0.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "datadog-ffe",
+ "env_logger",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1463,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1507,6 +1517,7 @@ name = "datadog-sidecar"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "arrayref",
  "base64 0.22.1",
  "bincode",
@@ -2195,6 +2206,11 @@ name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "hdrhistogram"
@@ -2819,7 +2835,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2829,18 +2845,19 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "bytes",
  "http",
  "http-body-util",
  "libdd-capabilities",
  "libdd-common",
+ "tokio",
 ]
 
 [[package]]
 name = "libdd-common"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2883,7 +2900,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2936,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2971,11 +2988,13 @@ dependencies = [
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
+ "libdd-ddsketch",
  "libdd-dogstatsd-client",
  "libdd-log",
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-stats",
  "libdd-trace-utils",
@@ -2994,7 +3013,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3019,7 +3038,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3041,7 +3060,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3112,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3124,6 +3143,15 @@ name = "libdd-otel-thread-ctx"
 version = "1.0.0"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "libdd-otel-thread-ctx-ffi"
+version = "1.0.0"
+dependencies = [
+ "build_common",
+ "libdd-common-ffi",
+ "libdd-otel-thread-ctx",
 ]
 
 [[package]]
@@ -3210,21 +3238,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-sampling"
+version = "1.0.0"
+dependencies = [
+ "criterion",
+ "libdd-common",
+ "libdd-trace-utils",
+ "lru",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "libdd-shared-runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "futures",
+ "futures-util",
  "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "tokio",
  "tokio-util",
  "tracing",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3233,7 +3276,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3243,6 +3286,7 @@ dependencies = [
  "hashbrown 0.15.1",
  "http",
  "http-body-util",
+ "httpmock",
  "libc",
  "libdd-common",
  "libdd-ddsketch",
@@ -3260,7 +3304,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3269,12 +3313,13 @@ dependencies = [
  "libdd-common-ffi",
  "libdd-telemetry",
  "paste",
+ "serde_json",
  "tempfile",
 ]
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
@@ -3317,7 +3362,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "3.0.1"
+version = "3.0.2"
 dependencies = [
  "bolero",
  "prost",
@@ -3334,6 +3379,7 @@ name = "libdd-trace-stats"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "async-trait",
  "criterion",
  "hashbrown 0.15.1",
@@ -3357,7 +3403,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3489,6 +3535,15 @@ checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
 dependencies = [
  "serde",
  "value-bag",
+]
+
+[[package]]
+name = "lru"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
+dependencies = [
+ "hashbrown 0.16.1",
 ]
 
 [[package]]
@@ -5500,7 +5555,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5942,7 +5997,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "32.0.0"
+version = "33.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

@@ -105,6 +105,7 @@ impl Flag {
             variation_key: split.variation_key.clone(),
             allocation_key: allocation.key.clone(),
             reason,
+            serial_id: split.serial_id,
             do_log: allocation.do_log,
         })
     }
@@ -195,90 +196,5 @@ impl Shard {
         let h = self.sharder.shard(&[targeting_key]);
 
         self.ranges.iter().any(|range| range.contains(h))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{
-        collections::HashMap,
-        fs::{self, File},
-        sync::Arc,
-    };
-
-    use chrono::Utc;
-    use serde::{Deserialize, Serialize};
-
-    use crate::rules_based::{
-        eval::get_assignment,
-        ufc::{AssignmentValue, UniversalFlagConfig},
-        Attribute, Configuration, EvaluationContext, FlagType, Str,
-    };
-
-    #[derive(Debug, Serialize, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct TestCase {
-        flag: String,
-        variation_type: FlagType,
-        default_value: Arc<serde_json::value::RawValue>,
-        targeting_key: Option<Str>,
-        attributes: Arc<HashMap<Str, Attribute>>,
-        result: TestResult,
-    }
-
-    #[derive(Debug, Serialize, Deserialize)]
-    struct TestResult {
-        value: Arc<serde_json::value::RawValue>,
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)] // this test is way too slow on miri
-    fn evaluation_sdk_test_data() {
-        let _ = env_logger::builder().is_test(true).try_init();
-
-        let config =
-            UniversalFlagConfig::from_json(std::fs::read("tests/data/flags-v1.json").unwrap())
-                .unwrap();
-        let config = Configuration::from_server_response(config);
-        let now = Utc::now();
-
-        for entry in fs::read_dir("tests/data/tests/").unwrap() {
-            let entry = entry.unwrap();
-            println!("Processing test file: {:?}", entry.path());
-
-            let f = File::open(entry.path()).unwrap();
-            let test_cases: Vec<TestCase> = serde_json::from_reader(f).unwrap();
-
-            for test_case in test_cases {
-                let default_assignment = AssignmentValue::from_wire(
-                    test_case.variation_type.into(),
-                    test_case.default_value,
-                )
-                .unwrap();
-
-                print!("test subject {:?} ... ", test_case.targeting_key);
-                let subject = EvaluationContext::new(test_case.targeting_key, test_case.attributes);
-                let result = get_assignment(
-                    Some(&config),
-                    &test_case.flag,
-                    &subject,
-                    test_case.variation_type.into(),
-                    now,
-                );
-
-                let result_assingment = result
-                    .as_ref()
-                    .map(|assignment| &assignment.value)
-                    .unwrap_or(&default_assignment);
-                let expected_assignment = AssignmentValue::from_wire(
-                    test_case.variation_type.into(),
-                    test_case.result.value,
-                )
-                .unwrap();
-
-                assert_eq!(result_assingment, &expected_assignment);
-                println!("ok");
-            }
-        }
     }
 }

@@ -17,3 +17,5 @@ pub mod test_013_panic_hook_after_fork;
 pub mod test_014_panic_hook_string;
 pub mod test_015_panic_hook_unknown_type;
 pub mod test_016_errno_preservation;
+pub mod test_017_multi_thread_collection;
+pub mod test_018_thread_limit;

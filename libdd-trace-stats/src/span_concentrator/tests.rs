@@ -100,8 +100,14 @@ fn assert_counts_equal(expected: Vec<pb::ClientGroupedStats>, actual: Vec<pb::Cl
 #[test]
 fn test_concentrator_oldest_timestamp_cold() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -150,8 +156,14 @@ fn test_concentrator_oldest_timestamp_cold() {
 #[test]
 fn test_concentrator_oldest_timestamp_hot() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let mut spans = vec![
         get_test_span(now, 1, 0, 50, 5, "A1", "resource1", 0),
         get_test_span(now, 1, 0, 40, 4, "A1", "resource1", 0),
@@ -223,8 +235,14 @@ fn test_concentrator_oldest_timestamp_hot() {
 #[test]
 fn test_concentrator_stats_totals() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -283,8 +301,14 @@ fn test_concentrator_stats_totals() {
 /// buckets.
 fn test_concentrator_stats_counts() {
     let now = SystemTime::now();
-    let mut concentrator =
-        SpanConcentrator::new(Duration::from_nanos(BUCKET_SIZE), now, vec![], vec![]);
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,
         concentrator.bucket_size,
@@ -579,6 +603,8 @@ fn test_span_should_be_included_in_stats() {
         now,
         get_span_kinds(),
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -657,6 +683,8 @@ fn test_ignore_partial_spans() {
         now,
         get_span_kinds(),
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -680,6 +708,8 @@ fn test_force_flush() {
         now,
         get_span_kinds(),
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator.add_span(span);
@@ -761,12 +791,16 @@ fn test_peer_tags_aggregation() {
         now,
         get_span_kinds(),
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     let mut concentrator_with_peer_tags = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator_without_peer_tags.add_span(span);
@@ -948,6 +982,8 @@ fn test_peer_tags_quantization_aggregation() {
             "db.system".to_string(),
             "peer.hostname".to_string(),
         ],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator_with_peer_tags.add_span(span);
@@ -1072,6 +1108,8 @@ fn test_base_service_peer_tag() {
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
 
     for span in &spans {
@@ -1292,6 +1330,8 @@ fn test_pb_span() {
         now,
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     let aligned_now = align_timestamp(
         system_time_to_unix_duration(now).as_nanos() as u64,

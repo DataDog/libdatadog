@@ -15,7 +15,7 @@ use datadog_ipc::shm_stats::{
     ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
 };
 use http::uri::PathAndQuery;
-use libdd_capabilities_impl::{HttpClientTrait, NativeCapabilities};
+use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::collections::HashMap;
@@ -110,6 +110,14 @@ fn make_exporter(
         s.meta.clone(),
         endpoint,
         NativeCapabilities::new_client(),
+        // Sidecar does not perform client-side stats obfuscation. Pass a disabled
+        // default so the `datadog-obfuscation-version` header is never sent.
+        #[cfg(feature = "stats-obfuscation")]
+        Arc::new(arc_swap::ArcSwap::from_pointee(
+            libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig::default(),
+        )),
+        #[cfg(feature = "stats-obfuscation")]
+        "0",
     )
 }
 
