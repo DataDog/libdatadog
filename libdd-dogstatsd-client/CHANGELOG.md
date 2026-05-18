@@ -2,6 +2,14 @@
 
 
 
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v2.0.0..libdd-dogstatsd-client-v3.0.0) - 2026-05-18
+
+### Fixed
+
+- Gate libdd-common TLS features in remaining internal crates + add CI guard ([#1943](https://github.com/datadog/libdatadog/issues/1943)) - ([db05e1f](https://github.com/datadog/libdatadog/commit/db05e1f8408a76075efb37ecec544d2e74217e57))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v1.0.2..libdd-dogstatsd-client-v2.0.0) - 2026-03-25
 
 ### Changed
