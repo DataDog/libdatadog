@@ -4,6 +4,8 @@
 use anyhow::Context;
 #[cfg(unix)]
 use libdd_crashtracker;
+#[cfg(target_os = "linux")]
+use spawn_worker::read_pt_interp_self;
 use spawn_worker::{entrypoint, Stdio};
 use std::fs::File;
 use std::future::Future;
@@ -221,6 +223,11 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
     #[allow(unused_unsafe)] // the unix method is unsafe
     let mut spawn_cfg = unsafe { spawn_worker::SpawnWorker::new() };
 
+    #[cfg(target_os = "linux")]
+    if cfg.spawn_without_trampoline && read_pt_interp_self().is_some() {
+        spawn_cfg.spawn_method(spawn_worker::SpawnMethod::Direct);
+    }
+
     spawn_cfg.target(entrypoint!(ddog_daemon_entry_point));
 
     match cfg.log_method {
@@ -255,6 +262,26 @@ pub fn daemonize(listener: IpcServer, mut cfg: Config) -> anyhow::Result<()> {
         spawn_cfg.append_env(env, val);
     }
     spawn_cfg.append_env("LSAN_OPTIONS", "detect_leaks=0");
+
+    // In ASAN builds the sidecar is the "main object" when exec'd directly by
+    // ld.so, so libclang_rt.asan lands behind libc in the link map. ASAN
+    // would otherwise abort with "does not come first in initial library list."
+    // set_env replaces any inherited ASAN_OPTIONS so getenv in the child finds
+    // our value first.
+    #[cfg(target_os = "linux")]
+    {
+        let asan_init =
+            unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"__asan_init".as_ptr() as *const _) };
+        if !asan_init.is_null() {
+            let existing = std::env::var("ASAN_OPTIONS").unwrap_or_default();
+            let asan_opts = if existing.is_empty() {
+                "verify_asan_link_order=0".to_owned()
+            } else {
+                format!("{}:verify_asan_link_order=0", existing)
+            };
+            spawn_cfg.set_env("ASAN_OPTIONS", asan_opts);
+        }
+    }
 
     setup_daemon_process(listener, &mut spawn_cfg)?;
 

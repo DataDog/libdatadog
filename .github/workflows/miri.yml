@@ -73,6 +73,6 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5
+      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5 --no-tests=pass
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"

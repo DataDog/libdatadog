@@ -35,12 +35,13 @@ impl TryFrom<&str> for DbmsKind {
 }
 
 #[allow(deprecated)]
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SqlObfuscationMode {
     #[default]
     #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
+    #[serde(alias = "")]
     Unspecified,
     NormalizeOnly,
     ObfuscateOnly,

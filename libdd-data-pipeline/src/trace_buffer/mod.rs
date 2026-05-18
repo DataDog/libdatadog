@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_shared_runtime::Worker;
 
 use crate::trace_exporter::{
@@ -640,18 +640,18 @@ pub trait Export<T>: Send + Debug {
 }
 
 #[derive(Debug)]
-pub struct DefaultExport<H: HttpClientTrait + MaybeSend + Sync + 'static> {
-    trace_exporter: TraceExporter<H>,
+pub struct DefaultExport<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
+    trace_exporter: TraceExporter<C>,
 }
 
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static> DefaultExport<H> {
-    pub fn new(trace_exporter: TraceExporter<H>) -> Self {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> DefaultExport<C> {
+    pub fn new(trace_exporter: TraceExporter<C>) -> Self {
         Self { trace_exporter }
     }
 }
 
-impl<H: HttpClientTrait + MaybeSend + Sync + 'static>
-    Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<H>
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
+    Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C>
 {
     fn export_trace_chunks(
         &mut self,
@@ -754,6 +754,11 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
     async fn trigger(&mut self) {
         let message = self.rx.receive(self.config.max_flush_interval).await;
         let Ok(trace_chunks) = message else {
+            // Mailbox mutex is poisoned and unrecoverable. Park forever to avoid a hot loop
+            // where the runtime would immediately call trigger() again; the worker will be
+            // torn down via its handle / SharedRuntime shutdown.
+            tracing::error!("TraceExporterWorker mailbox poisoned; parking until shutdown");
+            std::future::pending::<()>().await;
             return;
         };
         self.run_input = Some(TraceExporterRunInput { trace_chunks });
@@ -833,7 +838,7 @@ mod tests {
             ),
             Box::new(AssertExporter(assert_export, sem.clone())),
         );
-        rt.spawn_worker(worker, true).unwrap();
+        let _ = rt.spawn_worker(worker, true).unwrap();
         (rt, sem, sender)
     }
 

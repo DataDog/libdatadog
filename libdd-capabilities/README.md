@@ -10,7 +10,7 @@ This crate has **zero platform dependencies**: it compiles on any target includi
 
 ## Traits
 
-- **`HttpClientTrait`**: Async HTTP request/response using `http::Request<Bytes>` / `http::Response<Bytes>`.
+- **`HttpClientCapability`**: Async HTTP request/response using `http::Request<Bytes>` / `http::Response<Bytes>`.
 - **`MaybeSend`**: Conditional `Send` bound: equivalent to `Send` on native, auto-implemented for all types on wasm. This bridges the gap between tokio's multi-threaded runtime (requires `Send` futures) and wasm's single-threaded model (where JS interop types are `!Send`).
 
 ## Architecture
@@ -18,15 +18,15 @@ This crate has **zero platform dependencies**: it compiles on any target includi
 Three-layer design:
 
 1. **Trait definitions** (this crate): Pure traits, no platform deps.
-2. **Core crates** (`libdd-trace-utils`, `libdd-data-pipeline`): Generic over `C: HttpClientTrait`. Depend only on this crate for trait bounds.
+2. **Core crates** (`libdd-trace-utils`, `libdd-data-pipeline`): Generic over `C: HttpClientCapability`. Depend only on this crate for trait bounds.
 3. **Leaf crates** (FFI, wasm bindings): Pin a concrete type, `NativeCapabilities` from `libdd-capabilities-impl` on native, `WasmCapabilities` from the Node.js binding crate on wasm.
 
 ## Usage
 
 ```rust
-use libdd_capabilities::{HttpClientTrait, MaybeSend};
+use libdd_capabilities::{HttpClientCapability, MaybeSend};
 
-async fn fetch<C: HttpClientTrait>(client: &C, req: http::Request<bytes::Bytes>) {
+async fn fetch<C: HttpClientCapability>(client: &C, req: http::Request<bytes::Bytes>) {
     let response = client.request(req).await.unwrap();
     println!("status: {}", response.status());
 }
