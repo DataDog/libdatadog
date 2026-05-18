@@ -79,6 +79,7 @@ pub fn quantize_redis_string(query: &str) -> String {
     result
 }
 
+#[must_use]
 pub fn obfuscate_redis_string(cmd: &str) -> String {
     // Go's newRedisTokenizer calls bytes.TrimSpace before tokenizing
     let cmd = cmd.trim();
@@ -105,7 +106,7 @@ pub fn obfuscate_redis_string(cmd: &str) -> String {
             break;
         }
     }
-    s.to_string()
+    s.clone()
 }
 
 fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str>) -> Vec<&'a str> {
@@ -127,13 +128,22 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
                 args.clear();
                 args.push("?");
             }
-        b"ACL"
-            // Obfuscate all arguments after the subcommand:
+        b"ACL" | b"GEOHASH" | b"GEOPOS" | b"GEODIST" | b"LPUSH" | b"RPUSH" | b"SREM" | b"ZREM"
+        | b"SADD"
+            // Obfuscate all arguments after the first token:
             // • ACL SETUSER username on >password ~keys &channels +commands
             // • ACL GETUSER username
             // • ACL DELUSER username [username ...]
             // • ACL LIST
             // • ACL WHOAMI
+            // • GEOHASH key member [member ...]
+            // • GEOPOS key member [member ...]
+            // • GEODIST key member1 member2 [unit]
+            // • LPUSH key value [value ...]
+            // • RPUSH key value [value ...]
+            // • SREM key member [member ...]
+            // • ZREM key member [member ...]
+            // • SADD key member [member ...]
             if args.len() > 1 => {
                 args[1] = "?";
                 args.drain(2..);
@@ -176,35 +186,21 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             // • LINSERT key BEFORE|AFTER pivot value
             args = obfuscate_redis_args_n(args, 3);
         }
-        b"GEOHASH" | b"GEOPOS" | b"GEODIST" | b"LPUSH" | b"RPUSH" | b"SREM" | b"ZREM" | b"SADD"
-            // Obfuscate all arguments after the first one.
-            // • GEOHASH key member [member ...]
-            // • GEOPOS key member [member ...]
-            // • GEODIST key member1 member2 [unit]
-            // • LPUSH key value [value ...]
-            // • RPUSH key value [value ...]
-            // • SREM key member [member ...]
-            // • ZREM key member [member ...]
-            // • SADD key member [member ...]
-            if args.len() > 1 => {
-                args[1] = "?";
-                args.drain(2..);
-            }
         b"GEOADD" => {
             // Obfuscating every 3rd argument starting from first
             // • GEOADD key longitude latitude member [longitude latitude member ...]
-            args = obfuscate_redis_args_step(args, 1, 3)
+            args = obfuscate_redis_args_step(args, 1, 3);
         }
         b"HMSET" | b"HSET" => {
             // Every 2nd argument starting from first.
             // • HMSET key field value [field value ...]
-            args = obfuscate_redis_args_step(args, 1, 2)
+            args = obfuscate_redis_args_step(args, 1, 2);
         }
         b"MSET" | b"MSETNX" => {
             // Every 2nd argument starting from command.
             // • MSET key value [key value ...]
             // • MSETNX key value [key value ...]
-            args = obfuscate_redis_args_step(args, 0, 2)
+            args = obfuscate_redis_args_step(args, 0, 2);
         }
         b"CONFIG" => {
             // Obfuscate 2nd argument to SET sub-command.
@@ -212,7 +208,7 @@ fn obfuscate_redis_cmd<'a>(str: &mut String, cmd: &'a str, mut args: Vec<&'a str
             let mut uppercase_arg = [0; 8];
             let uppercase_arg = ascii_uppercase(args[0], &mut uppercase_arg).unwrap_or(b"");
             if uppercase_arg == b"SET" {
-                args = obfuscate_redis_args_n(args, 2)
+                args = obfuscate_redis_args_n(args, 2);
             }
         }
         b"BITFIELD" => {
@@ -271,14 +267,14 @@ fn obfuscate_redis_args_step(mut args: Vec<&str>, start: usize, step: usize) -> 
     args
 }
 
+#[must_use]
 pub fn remove_all_redis_args(redis_cmd: &str) -> String {
     let mut redis_cmd_iter = redis_cmd.split_whitespace().peekable();
     let mut obfuscated_cmd = String::new();
 
     // If the redis command is empty, return immediately. Otherwise, store the command token.
-    let cmd = match redis_cmd_iter.next() {
-        Some(cmd) => cmd,
-        None => return obfuscated_cmd,
+    let Some(cmd) = redis_cmd_iter.next() else {
+        return obfuscated_cmd;
     };
     obfuscated_cmd.push_str(cmd);
 
@@ -881,12 +877,12 @@ mod tests {
         ]
         [
             test_name   [test_obfuscate_redis_string_66]
-            input       [r#"
+            input       [r"
 CONFIG command
 SET k v
-                        "#]
-            expected    [r#"CONFIG command
-SET k ?"#];
+                        "]
+            expected    [r"CONFIG command
+SET k ?"];
         ]
         [
             test_name   [test_obfuscate_redis_string_67]

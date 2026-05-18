@@ -116,3 +116,38 @@ codegen-units = 1
 # so benchmarks are not measuring the same thing as the release build. This patch removes
 # the default dependency on libm. A PR will be opened to proptest to make this optional.
 proptest = { git = 'https://github.com/bantonsson/proptest.git', branch = "ban/avoid-libm-in-std" }
+
+
+# Using `warn` instead of `deny` for iterating in local without blocking the build. Warnings fail CI anyway
+[workspace.lints.clippy]
+blanket_clippy_restriction_lints = "allow" # Required when enabling restriction as a group. Clippy itself warns about this
+# Groups of lints
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# No panics
+panic = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+todo = "warn"
+unimplemented = "warn"
+unreachable = "warn"
+panic_in_result_fn = "warn"
+# TODO: Re-enable once every crate defines package keywords and categories.
+cargo_common_metadata = "allow"
+# TODO: Re-enable once the workspace dependency graph is deduplicated.
+multiple_crate_versions = "allow"
+# FIXME: rename libdd-crashtracker-ffi/use_webpki_roots feature to webpki_roots ?
+redundant_feature_names = "allow"
+# --- Whitelist ---
+redundant_else = "allow" # less clear
+option_if_let_else = "allow" # less clear
+unreadable_literal = "allow" # annoying for all the ids in the codebase
+cognitive_complexity = "allow" # using clippy::too_many_lines already
+
+[workspace.lints.rust]
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused = { level = "warn", priority = -1 }
