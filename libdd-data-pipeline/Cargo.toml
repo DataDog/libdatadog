@@ -41,7 +41,7 @@ libdd-trace-utils = { version = "3.0.1", path = "../libdd-trace-utils", default-
 libdd-trace-obfuscation = { version = "2.0.0", path = "../libdd-trace-obfuscation", default-features = false, optional = true }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-dogstatsd-client = { version = "2.0.0", path = "../libdd-dogstatsd-client", default-features = false }
-libdd-tinybytes = { version = "1.1.0", path = "../libdd-tinybytes", features = [
+libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
