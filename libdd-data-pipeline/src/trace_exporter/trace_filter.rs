@@ -59,7 +59,9 @@ impl FromStr for RegexTagFilter {
                 Ok(regex) => regex,
                 Err(err) => {
                     error!(
-                        "Invalid regex pattern in tag filter, skipping it: tag=`{tag}` err={err}"
+                        ?tag,
+                        ?err,
+                        "Invalid regex pattern in tag filter, skipping it"
                     );
                     return Err(err);
                 }
@@ -107,9 +109,15 @@ impl TraceFilteredConf {
             ignore_resources: ignore_resources
                 .iter()
                 .filter_map(|regex| {
-                    regex_engine::Regex::new(regex).inspect_err(|err| {
-                    error!("Invalid regex pattern in ignore resources filter, skipping it: regex=`{regex}` err={err}")
-                }).ok()
+                    regex_engine::Regex::new(regex)
+                        .inspect_err(|err| {
+                            error!(
+                                ?regex,
+                                ?err,
+                                "Invalid regex pattern in ignore resources filter, skipping it"
+                            )
+                        })
+                        .ok()
                 })
                 .collect(),
         }
