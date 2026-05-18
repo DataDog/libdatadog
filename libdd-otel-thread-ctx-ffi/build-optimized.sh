@@ -10,8 +10,10 @@
 # The requirements are checked by the build.rs script.
 #
 # Usage:
-#   ./build-optimized.sh              # auto-detect host triple
-#   ./build-optimized.sh --target aarch64-unknown-linux-gnu  # explicit target
+#   # auto-detect host triple
+#   ./build-optimized.sh
+#   # explicit target
+#   ./build-optimized.sh --target aarch64-unknown-linux-gnu
 #
 # Any extra arguments are forwarded to `cargo build`.
 set -euo pipefail
@@ -55,7 +57,7 @@ else
 
     if [[ -f "$SO" ]] && nm "$SO" 2>/dev/null | grep -q 'libdd_get_otel_thread_ctx'; then
         echo >&2 "WARNING: build succeeded but the C TLS shim (libdd_get_otel_thread_ctx_v1) was NOT inlined."
-        echo >&2 "Cross-language LTO may not be working. Check that clang and lld versions are compatible with the Rust toolchain's LLVM."
+        echo >&2 "Cross-language LTO may not be working. Check that clang and lld versions are recent enough and compatible with the Rust toolchain's LLVM."
         exit 1
     fi
 fi
