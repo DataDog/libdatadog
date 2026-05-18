@@ -327,7 +327,6 @@ mod tests {
     use crate::msgpack_decoder::decode::buffer::Buffer;
     use crate::msgpack_decoder::v04::span::decode_span;
     use crate::span::SliceData;
-    use std::borrow::Cow;
     use std::collections::HashMap;
 
     #[test]
@@ -376,15 +375,15 @@ mod tests {
                     (
                         "exception.lines".into(),
                         AttributeAnyValue::Array(vec![
-                            AttributeArrayValue::String(Cow::Borrowed(
-                                "  File \"<string>\", line 1, in <module>",
-                            )),
-                            AttributeArrayValue::String(Cow::Borrowed(
-                                "  File \"<string>\", line 1, in divide",
-                            )),
-                            AttributeArrayValue::String(Cow::Borrowed(
-                                "RuntimeError: Cannot divide by zero",
-                            )),
+                            AttributeArrayValue::String(
+                                "  File \"<string>\", line 1, in <module>".into(),
+                            ),
+                            AttributeArrayValue::String(
+                                "  File \"<string>\", line 1, in divide".into(),
+                            ),
+                            AttributeArrayValue::String(
+                                "RuntimeError: Cannot divide by zero".into(),
+                            ),
                         ]),
                     ),
                 ]),
