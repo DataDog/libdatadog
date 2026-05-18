@@ -482,7 +482,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
-    ) -> Result<AgentResponse, TraceExporterError> {
+    ) -> Result<AgentResponse, TraceExporterError>
+    where
+        // The runtime-aware `SharedRuntime::block_on` requires a `Send` future. All concrete
+        // `TraceData` implementations have `Send` associated types, so this bound is satisfied
+        // by every in-tree caller.
+        T::Text: Send,
+        T::Bytes: Send,
+    {
         self.check_agent_info();
         self.shared_runtime
             .block_on(async { self.send_trace_chunks_inner(trace_chunks).await })?
