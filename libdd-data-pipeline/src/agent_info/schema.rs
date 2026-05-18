@@ -99,14 +99,21 @@ pub struct HttpObfuscationConfig {
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct RedisObfuscationConfig {
+    // Agent sent pascal case fields here in versions <7.79.0
+    #[serde(alias = "Enabled")]
     pub enabled: bool,
+    #[serde(alias = "RemoveAllArgs")]
     pub remove_all_args: bool,
 }
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct MemcachedObfuscationConfig {
+    // Agent sent pascal case fields here in versions <7.79.0
+    #[serde(alias = "Enabled")]
     pub enabled: bool,
+    #[serde(alias = "KeepCommand")]
     pub keep_command: bool,
 }
