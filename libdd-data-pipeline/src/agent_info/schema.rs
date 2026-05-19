@@ -194,6 +194,6 @@ mod tests {
     #[test]
     fn test_name() {
         let _info: AgentInfoStruct = serde_json::from_str(input)
-            .expect("AgentInfoStruct should be parsed succefully from input");
+            .expect("AgentInfoStruct should be parsed successfully from input");
     }
 }
