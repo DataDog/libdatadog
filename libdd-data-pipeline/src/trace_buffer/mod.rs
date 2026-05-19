@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Trace buffer that batches trace chunks and periodically flushes them through a
-//! [`TraceExporter`]. A background worker handles the actual export, allowing callers to
+//! [`TraceExporter`].
+//!
+//! A background worker handles the actual export, allowing callers to
 //! enqueue traces without blocking on network I/O (unless synchronous mode is enabled).
 
 use std::{
@@ -81,8 +83,7 @@ where
     match v {
         AttributeArrayValue::String(s) => s.as_ref().len(),
         AttributeArrayValue::Boolean(_) => 1,
-        AttributeArrayValue::Integer(_) => 8,
-        AttributeArrayValue::Double(_) => 8,
+        AttributeArrayValue::Integer(_) | AttributeArrayValue::Double(_) => 8,
     }
 }
 
@@ -707,7 +708,7 @@ impl<T: Debug> std::fmt::Debug for TraceExporterWorker<T> {
             .field("export_operation", &self.export_operation)
             .field("config", &self.config)
             .field("run_input", &self.run_input)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

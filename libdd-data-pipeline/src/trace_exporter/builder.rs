@@ -337,8 +337,10 @@ impl TraceExporterBuilder {
         // event loop via `spawn_local`. Telemetry remains native-only for now.
 
         #[cfg(feature = "stats-obfuscation")]
+        #[allow(clippy::items_after_statements)]
         use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
 
+        #[allow(clippy::items_after_statements)]
         use crate::trace_exporter::stats::StatsComputationConfig;
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));

@@ -900,7 +900,7 @@ mod tests {
             ..Default::default()
         };
 
-        let tracer_header_tags: TracerHeaderTags = (&tracer_tags).into();
+        let tracer_header_tags: TracerHeaderTags<'_> = (&tracer_tags).into();
 
         assert_eq!(tracer_header_tags.tracer_version, "v0.1");
         assert_eq!(tracer_header_tags.lang, "rust");

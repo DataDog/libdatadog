@@ -800,7 +800,7 @@ mod tests {
                     assert_eq!(name, SERIALIZE_TRACES_ERRORS);
                     assert_eq!(count, 1);
                 }
-                _ => panic!("Expected Count metric"),
+                HealthMetric::Distribution(..) => panic!("Expected Count metric"),
             }
         }
     }

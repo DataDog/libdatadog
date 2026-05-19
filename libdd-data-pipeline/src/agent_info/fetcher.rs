@@ -653,6 +653,8 @@ mod single_threaded_tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agent_info_trigger_different_state() {
+        const MAX_ATTEMPTS: u32 = 500;
+        const SLEEP_DURATION_MS: u64 = 10;
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.path("/info");
@@ -686,9 +688,6 @@ mod single_threaded_tests {
         response_observer.check_response(&response);
 
         // Wait for the fetch to complete
-        const MAX_ATTEMPTS: u32 = 500;
-        const SLEEP_DURATION_MS: u64 = 10;
-
         let mut attempts = 0;
         while mock.calls() == 0 && attempts < MAX_ATTEMPTS {
             attempts += 1;

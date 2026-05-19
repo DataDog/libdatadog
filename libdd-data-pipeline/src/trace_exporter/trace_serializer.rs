@@ -278,12 +278,12 @@ mod tests {
         let result = serializer.serialize_payload(&payload);
         assert!(result.is_ok());
 
-        let serialized = result.unwrap();
-        assert!(!serialized.is_empty());
+        let serialized_bytes = result.unwrap();
+        assert!(!serialized_bytes.is_empty());
 
         // Verify we can deserialize it back and data integrity is preserved
         let (deserialized_traces, _) =
-            libdd_trace_utils::msgpack_decoder::v04::from_slice(&serialized).unwrap();
+            libdd_trace_utils::msgpack_decoder::v04::from_slice(&serialized_bytes).unwrap();
         assert_eq!(deserialized_traces.len(), 1);
         assert_eq!(deserialized_traces[0].len(), 1);
 
@@ -313,12 +313,12 @@ mod tests {
         let result = serializer.serialize_payload(&payload);
         assert!(result.is_ok());
 
-        let serialized = result.unwrap();
-        assert!(!serialized.is_empty());
+        let serialized_bytes = result.unwrap();
+        assert!(!serialized_bytes.is_empty());
 
         // Verify we can deserialize it back and data integrity is preserved
         let (deserialized_traces, _) =
-            libdd_trace_utils::msgpack_decoder::v05::from_slice(&serialized).unwrap();
+            libdd_trace_utils::msgpack_decoder::v05::from_slice(&serialized_bytes).unwrap();
         assert_eq!(deserialized_traces.len(), 1);
         assert_eq!(deserialized_traces[0].len(), 1);
 
