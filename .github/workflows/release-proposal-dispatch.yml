@@ -4,10 +4,8 @@ on:
     inputs:
       crates:
         description: >
-          Crate(s) to release. Provide one or more publishable workspace crate names separated
-          by commas or whitespace (e.g. "libdd-common" or "libdd-common, libdd-telemetry").
+          Crate(s) to release. Names separated by commas or whitespace (e.g. "libdd-common" or "libdd-common, libdd-telemetry").
           Each selected crate is released along with its workspace dependencies (other libdd-* crates it depends on).
-          Selecting libdd-telemetry alone releases libdd-telemetry plus every libdd-* crate it transitively depends on.
           Hotfix releases (main_start_ref matching hotfix/<crate>/<N>.x.x) accept a single crate only.
         required: true
         type: string
@@ -63,7 +61,7 @@ jobs:
             exit 1
           fi
 
-          AVAILABLE=$(cargo metadata --no-deps --format-version=1 | jq -r '
+          mapfile -t AVAILABLE < <(cargo metadata --no-deps --format-version=1 | jq -r '
             .packages[]
             | select(.publish == null or (.publish | type == "array" and length > 0))
             | .name
@@ -71,14 +69,14 @@ jobs:
 
           UNKNOWN=()
           for c in "${CRATES[@]}"; do
-            if ! grep -qx "$c" <<< "$AVAILABLE"; then
+            if ! printf '%s\n' "${AVAILABLE[@]}" | grep -qxF "$c"; then
               UNKNOWN+=("$c")
             fi
           done
           if [ "${#UNKNOWN[@]}" -gt 0 ]; then
             echo "Error: unknown or unpublishable crate(s): ${UNKNOWN[*]}" >&2
             echo "Available crates:" >&2
-            sed 's/^/  - /' <<< "$AVAILABLE" >&2
+            printf '  - %s\n' "${AVAILABLE[@]}" >&2
             exit 1
           fi
 
@@ -775,6 +773,7 @@ jobs:
           BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
           PROPOSAL_BRANCH_PREFIX: ${{ env.PROPOSAL_BRANCH_PREFIX }}
           RELEASE_BRANCH_PREFIX: ${{ env.RELEASE_BRANCH_PREFIX }}
+          CRATES_COUNT: ${{ needs.validate-inputs.outputs.count }}
         run: |
           BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
           EPHEMERAL_BRANCH="${{ needs.cargo-release.outputs.ephemeral_branch }}"
@@ -823,7 +822,7 @@ jobs:
 
           COMMITS_AND_API_BODY=$(jq -nr --slurpfile api /tmp/api-changes-with-major-bumps.json "$JQ_FILTER")
 
-          if [ "${{ needs.validate-inputs.outputs.count }}" -gt 1 ]; then
+          if [ "$CRATES_COUNT" -gt 1 ]; then
             POSSESSIVE="their"
           else
             POSSESSIVE="its"
