@@ -8,6 +8,7 @@ use rmp::encode::{
     ValueWriteError,
 };
 use std::borrow::Borrow;
+use std::time;
 
 use super::StringTable;
 
@@ -299,12 +300,19 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     write_uint8(writer, SpanKey::SpanId as u8)?;
     write_u64(writer, span.span_id)?;
 
-    // `start` and `duration` are stored as i64 but the V1 spec encodes them as u64. A
-    // negative tracer-side value would wrap to a large unsigned integer; tracers must
-    // never emit negatives and the agent does the same `uint64(...)` cast in
-    // `pkg/trace/api/converter.go`.
     write_uint8(writer, SpanKey::Start as u8)?;
-    write_u64(writer, span.start as u64)?;
+    if span.start < 0 {
+        // Fall back to wall-clock now (UNIX nanos). Matches the agent's
+        // `validateAndFixStartTime` which substitutes `time.Now().UnixNano()`
+        // for invalid start values.
+        let now = time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        write_u64(writer, now)?;
+    } else {
+        write_u64(writer, span.start as u64)?;
+    }
 
     if is_parent {
         write_uint8(writer, SpanKey::ParentId as u8)?;
@@ -313,7 +321,11 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 
     if has_duration {
         write_uint8(writer, SpanKey::Duration as u8)?;
-        write_u64(writer, span.duration as u64)?;
+        if span.duration < 0 {
+            write_u64(writer, 0)?;
+        } else {
+            write_u64(writer, span.duration as u64)?;
+        }
     }
 
     if has_error {
