@@ -183,8 +183,9 @@ pub(crate) struct TraceExporterWorkers {
 /// deserializing them.
 ///
 /// # Features
-/// When the input format is set to `V04` the `TraceExporter` will deserialize the traces and perform
-/// some operation before sending them to the agent. The available operations are described below.
+/// When the input format is set to `V04` the `TraceExporter` will deserialize the traces and
+/// perform some operation before sending them to the agent. The available operations are described
+/// below.
 ///
 /// ## V07 Serialization
 /// The Trace exporter can serialize the traces to V07 before sending them to the agent.
@@ -437,8 +438,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// 2) It's not guaranteed to not block forever, since the /info endpoint might not be
     ///    available.
     ///
-    /// The `send` function will check `agent_info` when running, which will only be available if the
-    /// fetcher had time to reach to the agent.
+    /// The `send` function will check `agent_info` when running, which will only be available if
+    /// the fetcher had time to reach to the agent.
     /// Since `agent_info` can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
     #[cfg(feature = "test-utils")]
@@ -1959,7 +1960,10 @@ mod single_threaded_tests {
         // tests on CI where we shutdown before the stats worker had time to start
         let start_time = std::time::Instant::now();
         while !exporter.is_stats_worker_active() {
-            assert!(start_time.elapsed() <= Duration::from_secs(10), "Timeout waiting for stats worker to become active");
+            assert!(
+                start_time.elapsed() <= Duration::from_secs(10),
+                "Timeout waiting for stats worker to become active"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
 
@@ -2055,7 +2059,10 @@ mod single_threaded_tests {
         // tests on CI where we shutdown before the stats worker had time to start
         let start_time = std::time::Instant::now();
         while !exporter.is_stats_worker_active() {
-            assert!(start_time.elapsed() <= Duration::from_secs(10), "Timeout waiting for stats worker to become active");
+            assert!(
+                start_time.elapsed() <= Duration::from_secs(10),
+                "Timeout waiting for stats worker to become active"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
 
@@ -2141,7 +2148,10 @@ mod single_threaded_tests {
 
         let start = std::time::Instant::now();
         while !exporter.is_stats_worker_active() {
-            assert!(start.elapsed() <= Duration::from_secs(10), "Timeout waiting for stats worker to become active");
+            assert!(
+                start.elapsed() <= Duration::from_secs(10),
+                "Timeout waiting for stats worker to become active"
+            );
             std::thread::sleep(Duration::from_millis(10));
         }
 

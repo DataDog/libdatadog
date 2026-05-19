@@ -22,7 +22,8 @@ mod tracing_integration_tests {
         assert_eq!(
             info.info
                 .version
-                .expect("Missing version field in agent response"), "test"
+                .expect("Missing version field in agent response"),
+            "test"
         );
     }
 
@@ -49,7 +50,8 @@ mod tracing_integration_tests {
             info.info
                 .version
                 .as_ref()
-                .expect("Missing version field in agent response"), "test"
+                .expect("Missing version field in agent response"),
+            "test"
         );
     }
 }

@@ -112,8 +112,7 @@ pub const TRANSPORT_TRACES_SENT: &str = "datadog.tracer.exporter.transport.trace
 /// **Type**: Count\
 /// **When Emitted**: After successful HTTP response from the agent (2xx status codes)\
 /// **Tags**: `libdatadog_version`
-pub const TRANSPORT_TRACES_SUCCESSFUL: &str =
-    "datadog.tracer.exporter.transport.traces.successful";
+pub const TRANSPORT_TRACES_SUCCESSFUL: &str = "datadog.tracer.exporter.transport.traces.successful";
 
 /// Number of errors encountered while sending traces to the agent.
 ///
@@ -147,8 +146,7 @@ pub const TRANSPORT_TRACES_FAILED: &str = "datadog.tracer.exporter.transport.tra
 ///
 /// **Note**: 404 and 415 status codes are excluded as they represent endpoint/format issues rather
 /// than dropped payloads. While they aren't counted as dropped traces, they may still be dropped.
-pub const TRANSPORT_TRACES_DROPPED: &str =
-    "datadog.tracer.exporter.transport.traces.dropped";
+pub const TRANSPORT_TRACES_DROPPED: &str = "datadog.tracer.exporter.transport.traces.dropped";
 
 // =============================================================================
 // Transport - Payload Metrics
@@ -224,10 +222,7 @@ impl TransportErrorType {
     /// - 404 and 415 status codes do NOT emit dropped metrics
     /// - All other HTTP errors and non-HTTP errors emit dropped metrics
     pub(crate) const fn should_emit_dropped_metrics(&self) -> bool {
-        !matches!(
-            self,
-            Self::Http(404 | 415)
-        )
+        !matches!(self, Self::Http(404 | 415))
     }
 }
 

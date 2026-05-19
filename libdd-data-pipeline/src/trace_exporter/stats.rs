@@ -213,7 +213,9 @@ pub(crate) fn handle_stats_disabled_by_agent<
             #[cfg(feature = "stats-obfuscation")]
             update_obfuscation_config(agent_info, client_side_stats);
             debug!("Client-side stats enabled");
-        } else { error!("Failed to start stats computation") }
+        } else {
+            error!("Failed to start stats computation")
+        }
     } else {
         debug!("Client-side stats computation has been disabled by the agent");
     }

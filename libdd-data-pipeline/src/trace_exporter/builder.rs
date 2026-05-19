@@ -168,7 +168,10 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub const fn set_output_format(&mut self, output_format: TraceExporterOutputFormat) -> &mut Self {
+    pub const fn set_output_format(
+        &mut self,
+        output_format: TraceExporterOutputFormat,
+    ) -> &mut Self {
         self.output_format = output_format;
         self
     }

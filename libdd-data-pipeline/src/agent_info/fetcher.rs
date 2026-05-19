@@ -191,7 +191,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 /// `C` is the capability bundle, see [`HttpClientCapability`] and [`SleepCapability`].
 /// Leaf crates pin it to a concrete type.
 #[derive(Debug)]
-pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
+pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability + Sync> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
@@ -201,7 +201,7 @@ pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     _phantom: PhantomData<C>,
 }
 
-impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
+impl<C: HttpClientCapability + SleepCapability + Sync> AgentInfoFetcher<C> {
     /// Return a new `AgentInfoFetcher` fetching the `info_endpoint` on each `refresh_interval`
     /// and updating the stored info.
     ///
@@ -275,7 +275,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         // Release the IoStack waker stored in trigger_rx by waking the channel and drain the
         // message to avoid a spurious fetch on restart. If the channel is not empty then it has
         // already been waked.
-        if self.trigger_rx.as_ref().is_some_and(tokio::sync::mpsc::Receiver::is_empty) {
+        if self
+            .trigger_rx
+            .as_ref()
+            .is_some_and(tokio::sync::mpsc::Receiver::is_empty)
+        {
             let _ = self.trigger_tx.try_send(());
             self.drain();
         }
@@ -286,7 +290,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     }
 }
 
-impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
+impl<C: HttpClientCapability + SleepCapability + Sync> AgentInfoFetcher<C> {
     /// Fetch agent info and update cache if needed
     async fn fetch_and_update(&self) {
         let current_info = AGENT_INFO_CACHE.load();
@@ -584,10 +588,8 @@ mod single_threaded_tests {
                 .body(r#"{"version":"1"}"#);
         });
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
-        let (fetcher, _response_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
-            endpoint,
-            Duration::from_millis(100),
-        );
+        let (fetcher, _response_observer) =
+            AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_millis(100));
         assert!(agent_info::get_agent_info().is_none());
         let shared_runtime = SharedRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
