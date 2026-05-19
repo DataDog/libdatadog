@@ -8,7 +8,7 @@ use std::time::Duration;
 
 /// OTLP trace export protocol. HTTP/JSON is currently supported.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum OtlpProtocol {
+pub enum OtlpProtocol {
     /// HTTP with JSON body (Content-Type: application/json). Default for HTTP.
     #[default]
     HttpJson,
@@ -32,7 +32,7 @@ pub struct OtlpTraceConfig {
     pub headers: HeaderMap,
     /// Request timeout.
     pub timeout: Duration,
-    /// Protocol (for future use; currently only HttpJson is supported).
+    /// Protocol (for future use; currently only `HttpJson` is supported).
     #[allow(dead_code)]
     pub(crate) protocol: OtlpProtocol,
 }

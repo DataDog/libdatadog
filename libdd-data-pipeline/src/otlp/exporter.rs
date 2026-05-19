@@ -30,8 +30,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
 ) -> Result<(), TraceExporterError> {
     let url = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
         TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
-            "Invalid OTLP endpoint URL: {}",
-            e
+            "Invalid OTLP endpoint URL: {e}"
         )))
     })?;
 

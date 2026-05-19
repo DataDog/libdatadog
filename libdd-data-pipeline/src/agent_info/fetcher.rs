@@ -59,7 +59,7 @@ async fn fetch_info_with_state_and_container_tags<C: HttpClientCapability + Slee
     Ok(FetchInfoStatus::NewState(info))
 }
 
-/// Fetch info from the given info_endpoint and compare its state to the current state hash.
+/// Fetch info from the given `info_endpoint` and compare its state to the current state hash.
 ///
 /// If the state hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
@@ -104,7 +104,7 @@ pub async fn fetch_info<C: HttpClientCapability + SleepCapability>(
 
 /// Fetch and hash the response from the agent info endpoint.
 ///
-/// Returns a tuple of (state_hash, response_body_bytes, container_tags_hash).
+/// Returns a tuple of (`state_hash`, `response_body_bytes`, `container_tags_hash`).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
 async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
@@ -123,7 +123,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
     let res = tokio::select! {
         biased;
         result = client.request(req) => result?,
-        _ = sleeper.sleep(timeout) => {
+        () = sleeper.sleep(timeout) => {
             return Err(anyhow!("Request to /info timed out after {:?}", timeout));
         }
     };
@@ -133,7 +133,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
         .headers()
         .get("Datadog-Container-Tags-Hash")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     let body_data = res.into_body();
     let hash = format!("{:x}", Sha256::digest(&body_data));
@@ -141,7 +141,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
     Ok((hash, body_data, container_tags_hash))
 }
 
-/// Fetch the info endpoint and update an ArcSwap keeping it up-to-date.
+/// Fetch the info endpoint and update an `ArcSwap` keeping it up-to-date.
 ///
 /// This type implements [`libdd_shared_runtime::Worker`] and is intended to be driven by a worker
 /// runner such as [`libdd_shared_runtime::SharedRuntime`].
@@ -205,9 +205,9 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
     /// Return a new `AgentInfoFetcher` fetching the `info_endpoint` on each `refresh_interval`
     /// and updating the stored info.
     ///
-    /// Returns a tuple of (fetcher, trigger_component) where:
-    /// - `fetcher`: The AgentInfoFetcher to be run in a background task
-    /// - `response_observer`: The ResponseObserver component for checking HTTP responses
+    /// Returns a tuple of (fetcher, `trigger_component`) where:
+    /// - `fetcher`: The `AgentInfoFetcher` to be run in a background task
+    /// - `response_observer`: The `ResponseObserver` component for checking HTTP responses
     pub fn new(info_endpoint: Endpoint, refresh_interval: Duration) -> (Self, ResponseObserver) {
         // The trigger channel stores a single message to avoid multiple triggers.
         let (trigger_tx, trigger_rx) = mpsc::channel(1);
@@ -244,7 +244,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         if AGENT_INFO_CACHE.load().is_none() {
             return;
         }
-        self.trigger().await
+        self.trigger().await;
     }
 
     async fn trigger(&mut self) {
@@ -261,7 +261,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
                         }
                     }
                     // Regular periodic fetch timer
-                    _ = sleeper.sleep(self.refresh_interval) => {}
+                    () = sleeper.sleep(self.refresh_interval) => {}
                 }
             }
             None => {
@@ -275,10 +275,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         // Release the IoStack waker stored in trigger_rx by waking the channel and drain the
         // message to avoid a spurious fetch on restart. If the channel is not empty then it has
         // already been waked.
-        if self.trigger_rx.as_ref().is_some_and(|rx| rx.is_empty()) {
+        if self.trigger_rx.as_ref().is_some_and(tokio::sync::mpsc::Receiver::is_empty) {
             let _ = self.trigger_tx.try_send(());
             self.drain();
-        };
+        }
     }
 
     async fn run(&mut self) {
@@ -306,7 +306,7 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
                 AGENT_INFO_CACHE.store(Some(Arc::new(*new_info)));
             }
             Ok(FetchInfoStatus::SameState) => {
-                debug!("Agent info is up-to-date")
+                debug!("Agent info is up-to-date");
             }
             Err(err) => {
                 warn!(?err, "Error while fetching /info");
@@ -325,8 +325,9 @@ pub struct ResponseObserver {
 }
 
 impl ResponseObserver {
-    /// Create a new ResponseObserver with the given channel sender.
-    pub fn new(trigger_tx: mpsc::Sender<()>) -> Self {
+    /// Create a new `ResponseObserver` with the given channel sender.
+    #[must_use]
+    pub const fn new(trigger_tx: mpsc::Sender<()>) -> Self {
         Self { trigger_tx }
     }
 
@@ -344,11 +345,11 @@ impl ResponseObserver {
             let current_state = AGENT_INFO_CACHE.load();
             if current_state.as_ref().map(|s| s.state_hash.as_str()) != Some(state_str) {
                 match self.trigger_tx.try_send(()) {
-                    Ok(_) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) => {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(())) => {
                         debug!("Response observer channel full, fetch has already been triggered");
                     }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                    Err(mpsc::error::TrySendError::Closed(())) => {
                         debug!("Agent info fetcher channel closed, unable to trigger refresh");
                     }
                 }
@@ -584,7 +585,7 @@ mod single_threaded_tests {
         });
         let endpoint = Endpoint::from_url(server.url("/info").parse().unwrap());
         let (fetcher, _response_observer) = AgentInfoFetcher::<NativeCapabilities>::new(
-            endpoint.clone(),
+            endpoint,
             Duration::from_millis(100),
         );
         assert!(agent_info::get_agent_info().is_none());

@@ -79,7 +79,7 @@ impl TelemetryClientBuilder {
     }
 
     /// Sets the heartbeat notification interval in millis.
-    pub fn set_heartbeat(mut self, interval: u64) -> Self {
+    pub const fn set_heartbeat(mut self, interval: u64) -> Self {
         if interval > 0 {
             self.config.telemetry_heartbeat_interval = Duration::from_millis(interval);
         }
@@ -111,7 +111,7 @@ impl TelemetryClientBuilder {
     }
 
     /// Sets the debug enabled flag for the telemetry client.
-    pub fn set_debug_enabled(mut self, debug: bool) -> Self {
+    pub const fn set_debug_enabled(mut self, debug: bool) -> Self {
         self.config.debug_enabled = debug;
         self
     }
@@ -156,7 +156,7 @@ pub struct TelemetryClient {
 
 /// Telemetry describing the sending of a trace payload
 /// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
-#[derive(PartialEq, Debug, Default)]
+#[derive(PartialEq, Eq, Debug, Default)]
 pub struct SendPayloadTelemetry {
     requests_count: u64,
     errors_network: u64,
@@ -211,7 +211,7 @@ impl SendPayloadTelemetry {
                 telemetry
                     .responses_count_per_code
                     .insert(response.status().as_u16(), 1);
-                telemetry.requests_count = *attempts as u64;
+                telemetry.requests_count = u64::from(*attempts);
             }
             Err(err) => match err {
                 SendWithRetryError::Http(response, attempts) => {
@@ -220,29 +220,29 @@ impl SendPayloadTelemetry {
                     telemetry
                         .responses_count_per_code
                         .insert(response.status().as_u16(), 1);
-                    telemetry.requests_count = *attempts as u64;
+                    telemetry.requests_count = u64::from(*attempts);
                 }
                 SendWithRetryError::Timeout(attempts) => {
                     telemetry.chunks_dropped_send_failure = chunks;
                     telemetry.errors_timeout = 1;
-                    telemetry.requests_count = *attempts as u64;
+                    telemetry.requests_count = u64::from(*attempts);
                 }
                 SendWithRetryError::Network(_, attempts) => {
                     telemetry.chunks_dropped_send_failure = chunks;
                     telemetry.errors_network = 1;
-                    telemetry.requests_count = *attempts as u64;
+                    telemetry.requests_count = u64::from(*attempts);
                 }
                 SendWithRetryError::ResponseBody(attempts) => {
                     telemetry.chunks_dropped_send_failure = chunks;
                     telemetry.errors_network = 1;
-                    telemetry.requests_count = *attempts as u64;
+                    telemetry.requests_count = u64::from(*attempts);
                 }
                 SendWithRetryError::Build(attempts) => {
                     telemetry.chunks_dropped_serialization_error = chunks;
-                    telemetry.requests_count = *attempts as u64;
+                    telemetry.requests_count = u64::from(*attempts);
                 }
             },
-        };
+        }
         telemetry
     }
 }
@@ -714,7 +714,7 @@ mod tests {
                 responses_count_per_code: HashMap::from([(200, 1)]),
                 ..Default::default()
             }
-        )
+        );
     }
 
     #[test]
@@ -737,7 +737,7 @@ mod tests {
                 responses_count_per_code: HashMap::from([(200, 1)]),
                 ..Default::default()
             }
-        )
+        );
     }
 
     #[test]
@@ -757,7 +757,7 @@ mod tests {
                 responses_count_per_code: HashMap::from([(400, 1)]),
                 ..Default::default()
             }
-        )
+        );
     }
 
     #[test]
@@ -775,7 +775,7 @@ mod tests {
                 errors_network: 1,
                 ..Default::default()
             }
-        )
+        );
     }
 
     #[test]
@@ -790,7 +790,7 @@ mod tests {
                 errors_timeout: 1,
                 ..Default::default()
             }
-        )
+        );
     }
 
     #[cfg_attr(miri, ignore)]
@@ -805,7 +805,7 @@ mod tests {
                 requests_count: 5,
                 ..Default::default()
             }
-        )
+        );
     }
 
     #[test]
@@ -834,7 +834,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(SendPayloadTelemetry::from(&result), expected_telemetry)
+        assert_eq!(SendPayloadTelemetry::from(&result), expected_telemetry);
     }
 
     #[cfg_attr(miri, ignore)]

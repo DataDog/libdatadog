@@ -48,7 +48,7 @@ pub struct AgentInfoStruct {
 }
 
 /// Require/reject lists for tag-based trace filters exposed by the agent /info endpoint.
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct FilterTagsConfig {
     /// All listed filters must match at least one root-span tag for the trace to be accepted.
     pub require: Option<Vec<String>>,
@@ -91,21 +91,21 @@ pub struct ObfuscationConfig {
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct HttpObfuscationConfig {
     pub remove_query_string: bool,
     pub remove_path_digits: bool,
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct RedisObfuscationConfig {
     pub enabled: bool,
     pub remove_all_args: bool,
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct MemcachedObfuscationConfig {
     pub enabled: bool,
     pub keep_command: bool,

@@ -19,11 +19,10 @@ mod tracing_integration_tests {
         let info = fetch_info::<NativeCapabilities>(&endpoint)
             .await
             .expect("Failed to fetch agent info");
-        assert!(
+        assert_eq!(
             info.info
                 .version
-                .expect("Missing version field in agent response")
-                == "test"
+                .expect("Missing version field in agent response"), "test"
         );
     }
 
@@ -46,12 +45,11 @@ mod tracing_integration_tests {
             .await
             .expect("Agent request timed out");
 
-        assert!(
+        assert_eq!(
             info.info
                 .version
                 .as_ref()
-                .expect("Missing version field in agent response")
-                == "test"
+                .expect("Missing version field in agent response"), "test"
         );
     }
 }

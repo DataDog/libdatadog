@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Provides an abstraction layer to hold metrics that comes from 'SendDataResult'.
+//! Provides an abstraction layer to hold metrics that comes from '`SendDataResult`'.
 use libdd_common::tag;
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
@@ -11,30 +11,30 @@ use std::ops::Index;
 /// Used as identifier to match the different metrics.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub enum MetricKind {
-    /// trace_api.requests metric
+    /// `trace_api.requests` metric
     ApiRequest,
-    /// trace_api.errors (network) metric
+    /// `trace_api.errors` (network) metric
     ApiErrorsNetwork,
-    /// trace_api.errors (timeout) metric
+    /// `trace_api.errors` (timeout) metric
     ApiErrorsTimeout,
-    /// trace_api.errors (status_code) metric
+    /// `trace_api.errors` (`status_code`) metric
     ApiErrorsStatusCode,
-    /// trace_api.bytes metric
+    /// `trace_api.bytes` metric
     ApiBytes,
-    /// trace_api.responses metric
+    /// `trace_api.responses` metric
     ApiResponses,
-    /// trace_chunks_sent metric
+    /// `trace_chunks_sent` metric
     ChunksSent,
-    /// trace_chunks_dropped metric (reason: p0_drop)
+    /// `trace_chunks_dropped` metric (reason: `p0_drop`)
     ChunksDroppedP0,
-    /// trace_chunks_dropped metric (reason: serialization_error)
+    /// `trace_chunks_dropped` metric (reason: `serialization_error`)
     ChunksDroppedSerializationError,
-    /// trace_chunks_dropped metric (reason: send_failure)
+    /// `trace_chunks_dropped` metric (reason: `send_failure`)
     ChunksDroppedSendFailure,
 }
 
 /// Constants for metric names
-/// These must match https://github.com/DataDog/dd-go/blob/prod/trace/apps/tracer-telemetry-intake/telemetry-metrics/static/common_metrics.json
+/// These must match <https://github.com/DataDog/dd-go/blob/prod/trace/apps/tracer-telemetry-intake/telemetry-metrics/static/common_metrics.json>
 const API_REQUEST_STR: &str = "trace_api.requests";
 const API_ERRORS_STR: &str = "trace_api.errors";
 const API_BYTES_STR: &str = "trace_api.bytes";

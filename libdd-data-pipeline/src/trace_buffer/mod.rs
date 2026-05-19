@@ -7,7 +7,6 @@
 
 use std::{
     fmt::{self, Debug},
-    ops::DerefMut,
     pin::Pin,
     sync::{Arc, Condvar, Mutex, MutexGuard},
     time::{Duration, Instant},
@@ -97,24 +96,27 @@ pub struct TraceBufferConfig {
 }
 
 impl TraceBufferConfig {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Whether the async exporter waits for the trace chunks to be exported before returning from
-    /// export_chunk
-    pub fn synchronous_export(self, synchronous_writes: bool) -> Self {
+    /// `export_chunk`
+    #[must_use]
+    pub const fn synchronous_export(self, synchronous_writes: bool) -> Self {
         Self {
             synchronous_export: synchronous_writes,
             ..self
         }
     }
 
-    /// The maximum amount of time the export_chunk waits for a flush if synchronous_writes is
-    /// enabled. If this is zero send_chunk will always return an error
+    /// The maximum amount of time the `export_chunk` waits for a flush if `synchronous_writes` is
+    /// enabled. If this is zero `send_chunk` will always return an error
     ///
     /// If it is None, the send will wait forever
-    pub fn synchronous_export_timeout(self, timeout: Option<Duration>) -> Self {
+    #[must_use]
+    pub const fn synchronous_export_timeout(self, timeout: Option<Duration>) -> Self {
         Self {
             synchronous_export_timeout: timeout,
             ..self
@@ -122,7 +124,8 @@ impl TraceBufferConfig {
     }
 
     /// The maximum amount of time between two flushes
-    pub fn max_flush_interval(self, interval: Duration) -> Self {
+    #[must_use]
+    pub const fn max_flush_interval(self, interval: Duration) -> Self {
         Self {
             max_flush_interval: interval,
             ..self
@@ -130,7 +133,8 @@ impl TraceBufferConfig {
     }
 
     /// The maximum number of bytes that will be buffered before we drop data
-    pub fn max_buffered_bytes(self, max: usize) -> Self {
+    #[must_use]
+    pub const fn max_buffered_bytes(self, max: usize) -> Self {
         Self {
             max_buffered_bytes: max,
             ..self
@@ -138,7 +142,8 @@ impl TraceBufferConfig {
     }
 
     /// The number of bytes that will be buffered before we decide to flush
-    pub fn flush_threshold_bytes(self, threshold: usize) -> Self {
+    #[must_use]
+    pub const fn flush_threshold_bytes(self, threshold: usize) -> Self {
         Self {
             flush_threshold_bytes: threshold,
             ..self
@@ -248,7 +253,7 @@ impl<T> Batch<T> {
             return Ok(());
         }
 
-        self.byte_count += chunk.iter().map(|s| s.byte_size()).sum::<usize>();
+        self.byte_count += chunk.iter().map(BufferSize::byte_size).sum::<usize>();
         self.chunks.push(chunk);
         Ok(())
     }
@@ -265,10 +270,10 @@ impl<T> Batch<T> {
     }
 }
 
-/// # TraceBuffer
+/// # `TraceBuffer`
 ///
-/// Creating an instance of the TraceBuffer will spawn a background task that
-/// periodically sends trace chunks through the TraceExporter
+/// Creating an instance of the `TraceBuffer` will spawn a background task that
+/// periodically sends trace chunks through the `TraceExporter`
 ///
 /// # Buffering behavior
 ///
@@ -291,8 +296,8 @@ pub struct TraceBuffer<T> {
     ///
     /// Each batch in the queue will get a generation associated. Generations are strictly
     /// incremental and processed in order by the background thread.
-    /// When the background thread processes a batch it will increment it's 'last_flushed_batch'
-    /// and an export can wait until the 'last_flushed_batch' is equal to the batch it added it's
+    /// When the background thread processes a batch it will increment it's '`last_flushed_batch`'
+    /// and an export can wait until the '`last_flushed_batch`' is equal to the batch it added it's
     /// trace chunks to.
     synchronous_export: bool,
     synchronous_export_timeout: Option<Duration>,
@@ -301,6 +306,7 @@ pub struct TraceBuffer<T> {
 pub type ResponseHandler = Box<dyn Fn(Result<AgentResponse, TraceExporterError>) + Send + Sync>;
 
 impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
+    #[must_use]
     pub fn new(
         config: TraceBufferConfig,
         response_handler: ResponseHandler,
@@ -343,6 +349,7 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
         self.tx.trigger_flush()
     }
 
+    #[must_use]
     pub fn queue_metrics(&self) -> QueueMetricsFetcher<T> {
         QueueMetricsFetcher {
             waiter: self.tx.waiter.clone(),
@@ -365,6 +372,7 @@ pub struct QueueMetricsFetcher<T> {
 }
 
 impl<T> QueueMetricsFetcher<T> {
+    #[must_use]
     pub fn get_metrics(&self) -> QueueMetrics {
         let Some(mut state) = self.waiter.state.lock().ok() else {
             return QueueMetrics::default();
@@ -529,7 +537,7 @@ impl<T> Receiver<T> {
             has_shutdown,
             batch,
             metrics,
-        } = state.deref_mut();
+        } = &mut *state;
         *flush_needed = false;
         *last_flush_generation = BatchGeneration::default();
         *has_shutdown = false;
@@ -563,8 +571,8 @@ impl<T> Receiver<T> {
 
             tokio::select! {
                 biased;
-                _ = notified.as_mut() => {}  // woken by sender; loop to re-check state
-                _ = tokio::time::sleep(leftover) => {
+                () = notified.as_mut() => {}  // woken by sender; loop to re-check state
+                () = tokio::time::sleep(leftover) => {
                     let mut state = self.lock_state()?;
                     return Ok(state.batch.export());
                 }
@@ -584,7 +592,7 @@ impl<T> Receiver<T> {
 struct BatchGeneration(u64);
 
 impl BatchGeneration {
-    fn incr(&mut self) {
+    const fn incr(&mut self) {
         self.0 = self.0.wrapping_add(1);
     }
 }
@@ -645,7 +653,7 @@ pub struct DefaultExport<C: HttpClientCapability + SleepCapability + MaybeSend +
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> DefaultExport<C> {
-    pub fn new(trace_exporter: TraceExporter<C>) -> Self {
+    pub const fn new(trace_exporter: TraceExporter<C>) -> Self {
         Self { trace_exporter }
     }
 }
@@ -738,7 +746,7 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
         };
         if !trace_chunks.is_empty() {
             self.export_trace_chunks(trace_chunks).await;
-            if let Err(MutexPoisonedError) = self.rx.ack_export() {}
+            if matches!(self.rx.ack_export(), Err(MutexPoisonedError)) {}
         }
     }
 
@@ -748,7 +756,7 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
             #[allow(clippy::unwrap_used)]
             self.export_operation.wait_ready().await.unwrap();
         }
-        self.trigger().await
+        self.trigger().await;
     }
 
     async fn trigger(&mut self) {
@@ -849,13 +857,13 @@ mod tests {
             Box::new(|chunks| {
                 assert_eq!(chunks.len(), 2);
                 let mut lengths = chunks.into_iter().map(|c| c.len()).collect::<Vec<_>>();
-                lengths.sort();
+                lengths.sort_unstable();
                 assert_eq!(lengths, &[1, 2]);
             }),
             TraceBufferConfig::default()
                 .max_buffered_bytes(4)
                 .flush_threshold_bytes(2)
-                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+                .max_flush_interval(Duration::from_secs(u64::from(u32::MAX))),
         );
 
         std::thread::scope(|s| {
@@ -884,7 +892,7 @@ mod tests {
             TraceBufferConfig::default()
                 .max_buffered_bytes(4)
                 .flush_threshold_bytes(3)
-                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+                .max_flush_interval(Duration::from_secs(u64::from(u32::MAX))),
         );
 
         // pause
@@ -980,7 +988,7 @@ mod tests {
             TraceBufferConfig::default()
                 .max_buffered_bytes(100)
                 .flush_threshold_bytes(100)
-                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
+                .max_flush_interval(Duration::from_secs(u64::from(u32::MAX))),
         );
 
         sender.send_chunk(vec![()]).unwrap();

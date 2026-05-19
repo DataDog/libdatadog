@@ -143,7 +143,7 @@ fn create_and_start_stats_worker<
         stats_concentrator.clone(),
         StatsMetadata::from(ctx.metadata.clone()),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
-        capabilities.clone(),
+        capabilities,
         #[cfg(feature = "stats-obfuscation")]
         client_side_stats.obfuscation_config.clone(),
         #[cfg(feature = "stats-obfuscation")]
@@ -209,16 +209,13 @@ pub(crate) fn handle_stats_disabled_by_agent<
             capabilities,
             client_side_stats,
         );
-        match status {
-            Ok(()) => {
-                #[cfg(feature = "stats-obfuscation")]
-                update_obfuscation_config(agent_info, client_side_stats);
-                debug!("Client-side stats enabled");
-            }
-            Err(_) => error!("Failed to start stats computation"),
-        }
+        if matches!(status, Ok(())) {
+            #[cfg(feature = "stats-obfuscation")]
+            update_obfuscation_config(agent_info, client_side_stats);
+            debug!("Client-side stats enabled");
+        } else { error!("Failed to start stats computation") }
     } else {
-        debug!("Client-side stats computation has been disabled by the agent")
+        debug!("Client-side stats computation has been disabled by the agent");
     }
 }
 
@@ -269,7 +266,7 @@ pub(crate) fn handle_stats_enabled(
         update_obfuscation_config(agent_info, client_side_stats);
     } else {
         stop_stats_computation(ctx, &client_side_stats.status);
-        debug!("Client-side stats computation has been disabled by the agent")
+        debug!("Client-side stats computation has been disabled by the agent");
     }
 }
 
@@ -341,8 +338,8 @@ pub(crate) fn is_stats_worker_active(client_side_stats: &ArcSwap<StatsComputatio
 
 #[cfg(not(target_arch = "wasm32"))]
 impl From<TracerMetadata> for StatsMetadata {
-    fn from(m: TracerMetadata) -> StatsMetadata {
-        StatsMetadata {
+    fn from(m: TracerMetadata) -> Self {
+        Self {
             hostname: m.hostname,
             env: m.env,
             app_version: m.app_version,

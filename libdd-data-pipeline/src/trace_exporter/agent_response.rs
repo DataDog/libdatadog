@@ -10,7 +10,7 @@ pub const DATADOG_RATES_PAYLOAD_VERSION: HeaderName =
     HeaderName::from_static("datadog-rates-payload-version");
 
 /// `AgentResponse` structure holds agent response information upon successful request.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AgentResponse {
     Unchanged,
     Changed { body: String },
@@ -23,7 +23,7 @@ pub(crate) struct AgentResponsePayloadVersion {
 
 impl AgentResponsePayloadVersion {
     pub fn new() -> Self {
-        AgentResponsePayloadVersion {
+        Self {
             payload_version: ArcSwap::new(Arc::new("0".to_string())),
         }
     }

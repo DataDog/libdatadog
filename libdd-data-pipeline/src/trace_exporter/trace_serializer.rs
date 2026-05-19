@@ -40,7 +40,7 @@ pub(super) struct TraceSerializer {
 
 impl TraceSerializer {
     /// Create a new trace serializer
-    pub(super) fn new(output_format: TraceExporterOutputFormat) -> Self {
+    pub(super) const fn new(output_format: TraceExporterOutputFormat) -> Self {
         Self {
             previous_serialised_len: AtomicUsize::new(MIN_BUFFER_CAPACITY),
             output_format,

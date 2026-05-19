@@ -63,9 +63,9 @@ pub struct TelemetryInstrumentationSessions {
     pub parent_session_id: Option<String>,
 }
 
-/// TraceExporterInputFormat represents the format of the input traces.
+/// `TraceExporterInputFormat` represents the format of the input traces.
 /// The input format can be either Proxy or V0.4, where V0.4 is the default.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub enum TraceExporterInputFormat {
     #[allow(missing_docs)]
@@ -74,9 +74,9 @@ pub enum TraceExporterInputFormat {
     V05,
 }
 
-/// TraceExporterOutputFormat represents the format of the output traces.
+/// `TraceExporterOutputFormat` represents the format of the output traces.
 /// The output format can be either V0.4 or v0.5, where V0.4 is the default.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub enum TraceExporterOutputFormat {
     #[allow(missing_docs)]
@@ -91,8 +91,8 @@ impl TraceExporterOutputFormat {
         add_path(
             url,
             match self {
-                TraceExporterOutputFormat::V04 => "/v0.4/traces",
-                TraceExporterOutputFormat::V05 => "/v0.5/traces",
+                Self::V04 => "/v0.4/traces",
+                Self::V05 => "/v0.5/traces",
             },
         )
     }
@@ -146,7 +146,7 @@ pub struct TracerMetadata {
 }
 
 impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
-    fn from(tags: &'a TracerMetadata) -> TracerHeaderTags<'a> {
+    fn from(tags: &'a TracerMetadata) -> Self {
         TracerHeaderTags::<'_> {
             lang: &tags.language,
             lang_version: &tags.language_version,
@@ -161,7 +161,7 @@ impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
 }
 
 impl<'a> From<&'a TracerMetadata> for HeaderMap {
-    fn from(tags: &'a TracerMetadata) -> HeaderMap {
+    fn from(tags: &'a TracerMetadata) -> Self {
         TracerHeaderTags::from(tags).into()
     }
 }
@@ -175,7 +175,7 @@ pub(crate) struct TraceExporterWorkers {
     telemetry: Option<WorkerHandle>,
 }
 
-/// The TraceExporter ingest traces from the tracers serialized as messagepack and forward them to
+/// The `TraceExporter` ingest traces from the tracers serialized as messagepack and forward them to
 /// the agent while applying some transformation.
 ///
 /// # Proxy
@@ -183,7 +183,7 @@ pub(crate) struct TraceExporterWorkers {
 /// deserializing them.
 ///
 /// # Features
-/// When the input format is set to `V04` the TraceExporter will deserialize the traces and perform
+/// When the input format is set to `V04` the `TraceExporter` will deserialize the traces and perform
 /// some operation before sending them to the agent. The available operations are described below.
 ///
 /// ## V07 Serialization
@@ -192,7 +192,7 @@ pub(crate) struct TraceExporterWorkers {
 /// ## Stats computation
 /// The Trace Exporter can compute stats on traces. In this case the trace exporter will start
 /// another task to send stats when a time bucket expire. When this feature is enabled the
-/// TraceExporter drops all spans that may not be sampled by the agent.
+/// `TraceExporter` drops all spans that may not be sampled by the agent.
 #[allow(missing_docs)]
 enum DeserInputFormat {
     V04,
@@ -202,8 +202,8 @@ enum DeserInputFormat {
 impl From<TraceExporterInputFormat> for DeserInputFormat {
     fn from(f: TraceExporterInputFormat) -> Self {
         match f {
-            TraceExporterInputFormat::V04 => DeserInputFormat::V04,
-            TraceExporterInputFormat::V05 => DeserInputFormat::V05,
+            TraceExporterInputFormat::V04 => Self::V04,
+            TraceExporterInputFormat::V05 => Self::V05,
         }
     }
 }
@@ -240,6 +240,7 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
     #[allow(missing_docs)]
+    #[must_use]
     pub fn builder() -> TraceExporterBuilder {
         TraceExporterBuilder::default()
     }
@@ -311,7 +312,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// # Arguments
     ///
     /// * data: A slice containing the serialized traces. This slice should be encoded following the
-    ///   input_format passed to the TraceExporter on creating.
+    ///   `input_format` passed to the `TraceExporter` on creating.
     ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent
@@ -375,7 +376,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 .previous_info_state
                 .load()
                 .as_deref()
-                .map(|s| s.as_str())
+                .map(std::string::String::as_str)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -414,7 +415,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                     }
                 }
                 self.previous_info_state
-                    .store(Some(agent_info.state_hash.clone().into()))
+                    .store(Some(agent_info.state_hash.clone().into()));
             }
         }
     }
@@ -427,7 +428,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
     /// !!! This function is only for testing purposes !!!
     ///
-    /// Waits the agent info to be ready by checking the agent_info state.
+    /// Waits the agent info to be ready by checking the `agent_info` state.
     /// It will only return Ok after the agent info has been fetched at least once or Err if timeout
     /// has been reached
     ///
@@ -436,9 +437,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// 2) It's not guaranteed to not block forever, since the /info endpoint might not be
     ///    available.
     ///
-    /// The `send` function will check agent_info when running, which will only be available if the
+    /// The `send` function will check `agent_info` when running, which will only be available if the
     /// fetcher had time to reach to the agent.
-    /// Since agent_info can enable CSS computation, waiting for this during testing can make
+    /// Since `agent_info` can enable CSS computation, waiting for this during testing can make
     /// snapshots non-deterministic.
     #[cfg(feature = "test-utils")]
     pub async fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
@@ -462,7 +463,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         }
     }
 
-    /// Emit all health metrics from a SendResult
+    /// Emit all health metrics from a `SendResult`
     fn emit_send_result(&self, result: &SendResult) {
         if self.health_metrics_enabled {
             let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
@@ -473,7 +474,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Send a list of trace chunks to the agent (or OTLP endpoint when configured).
     ///
     /// # Arguments
-    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    /// * `trace_chunks`: A list of trace chunks. Each trace chunk is a list of spans.
     ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
@@ -491,7 +492,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
     ///
     /// # Arguments
-    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    /// * `trace_chunks`: A list of trace chunks. Each trace chunk is a list of spans.
     ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
@@ -968,7 +969,7 @@ mod tests {
 
         if let Some(url) = dogstatsd_url {
             builder.set_dogstatsd_url(&url);
-        };
+        }
 
         if enable_telemetry {
             builder.enable_telemetry(TelemetryConfig {
@@ -1642,7 +1643,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    /// Tests that if agent_response_payload_version is not enabled
+    /// Tests that if `agent_response_payload_version` is not enabled
     /// the exporter always returns the response body
     fn test_agent_response_payload_version_disabled() {
         let server = MockServer::start();
@@ -1676,7 +1677,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    /// Tests that if agent_response_payload_version is enabled
+    /// Tests that if `agent_response_payload_version` is enabled
     /// the exporter returns the response body only once
     /// and then returns Unchanged response until the payload version header changes
     fn test_agent_response_payload_version() {
@@ -1962,9 +1963,7 @@ mod single_threaded_tests {
         // tests on CI where we shutdown before the stats worker had time to start
         let start_time = std::time::Instant::now();
         while !exporter.is_stats_worker_active() {
-            if start_time.elapsed() > Duration::from_secs(10) {
-                panic!("Timeout waiting for stats worker to become active");
-            }
+            assert!(start_time.elapsed() <= Duration::from_secs(10), "Timeout waiting for stats worker to become active");
             std::thread::sleep(Duration::from_millis(10));
         }
 
@@ -2060,9 +2059,7 @@ mod single_threaded_tests {
         // tests on CI where we shutdown before the stats worker had time to start
         let start_time = std::time::Instant::now();
         while !exporter.is_stats_worker_active() {
-            if start_time.elapsed() > Duration::from_secs(10) {
-                panic!("Timeout waiting for stats worker to become active");
-            }
+            assert!(start_time.elapsed() <= Duration::from_secs(10), "Timeout waiting for stats worker to become active");
             std::thread::sleep(Duration::from_millis(10));
         }
 
@@ -2148,9 +2145,7 @@ mod single_threaded_tests {
 
         let start = std::time::Instant::now();
         while !exporter.is_stats_worker_active() {
-            if start.elapsed() > Duration::from_secs(10) {
-                panic!("Timeout waiting for stats worker to become active");
-            }
+            assert!(start.elapsed() <= Duration::from_secs(10), "Timeout waiting for stats worker to become active");
             std::thread::sleep(Duration::from_millis(10));
         }
 

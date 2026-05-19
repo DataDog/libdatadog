@@ -7,7 +7,7 @@ use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{Client, DogStatsDAction};
 use tracing::debug;
 
-/// Handles emission of health metrics to DogStatsD
+/// Handles emission of health metrics to `DogStatsD`
 #[derive(Debug)]
 pub(crate) struct MetricsEmitter<'a> {
     dogstatsd: Option<&'a Client>,
@@ -15,8 +15,8 @@ pub(crate) struct MetricsEmitter<'a> {
 }
 
 impl<'a> MetricsEmitter<'a> {
-    /// Create a new MetricsEmitter
-    pub(crate) fn new(dogstatsd: Option<&'a Client>, common_tags: &'a [Tag]) -> Self {
+    /// Create a new `MetricsEmitter`
+    pub(crate) const fn new(dogstatsd: Option<&'a Client>, common_tags: &'a [Tag]) -> Self {
         Self {
             dogstatsd,
             common_tags,
@@ -39,7 +39,7 @@ impl<'a> MetricsEmitter<'a> {
                         has_custom_tags = has_custom_tags,
                         "Emitting health metric to dogstatsd"
                     );
-                    flusher.send(vec![DogStatsDAction::Count(name, c, tags.into_iter())])
+                    flusher.send(vec![DogStatsDAction::Count(name, c, tags.into_iter())]);
                 }
                 HealthMetric::Distribution(name, value) => {
                     debug!(
@@ -52,7 +52,7 @@ impl<'a> MetricsEmitter<'a> {
                         name,
                         value as f64,
                         tags.into_iter(),
-                    )])
+                    )]);
                 }
             }
         } else {
@@ -63,9 +63,9 @@ impl<'a> MetricsEmitter<'a> {
         }
     }
 
-    /// Emit all health metrics from a SendResult
+    /// Emit all health metrics from a `SendResult`
     ///
-    /// This method processes the SendResult and emits all appropriate metrics
+    /// This method processes the `SendResult` and emits all appropriate metrics
     /// based on the operation's outcome (success/failure, error type, etc.)
     pub(crate) fn emit_from_send_result(&self, result: &SendResult) {
         for (metric, type_tag_value) in result.collect_metrics() {

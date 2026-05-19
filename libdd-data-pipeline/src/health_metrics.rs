@@ -4,12 +4,12 @@
 //! # Trace Exporter Health Metrics
 //!
 //! This module defines all health metrics emitted by the libdatadog trace exporter. These metrics
-//! are sent to DogStatsD to provide visibility for Datadog support.
+//! are sent to `DogStatsD` to provide visibility for Datadog support.
 //!
 //! ## Overview
 //!
 //! Health metrics help monitor the trace exporter's behavior, including successful operations,
-//! error conditions, and performance characteristics. They are emitted via DogStatsD and follow
+//! error conditions, and performance characteristics. They are emitted via `DogStatsD` and follow
 //! consistent naming conventions.
 //!
 //! **Note**: Health metrics are **disabled by default**. They must be explicitly enabled using
@@ -77,24 +77,24 @@ use std::borrow::Cow;
 
 /// Number of trace chunks successfully deserialized from input.
 ///
-/// **Type**: Count  
-/// **When Emitted**: After successful deserialization of trace data from msgpack format  
+/// **Type**: Count\
+/// **When Emitted**: After successful deserialization of trace data from msgpack format\
 /// **Tags**: `libdatadog_version`
-pub(crate) const DESERIALIZE_TRACES: &str = "datadog.tracer.exporter.deserialize.traces";
+pub const DESERIALIZE_TRACES: &str = "datadog.tracer.exporter.deserialize.traces";
 
 /// Number of trace deserialization errors.
 ///
-/// **Type**: Count  
-/// **When Emitted**: When msgpack deserialization fails due to invalid format or corrupted data  
+/// **Type**: Count\
+/// **When Emitted**: When msgpack deserialization fails due to invalid format or corrupted data\
 /// **Tags**: `libdatadog_version`
-pub(crate) const DESERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.deserialize.errors";
+pub const DESERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.deserialize.errors";
 
 /// Number of trace serialization errors.
 ///
-/// **Type**: Count  
-/// **When Emitted**: When msgpack serialization fails  
+/// **Type**: Count\
+/// **When Emitted**: When msgpack serialization fails\
 /// **Tags**: `libdatadog_version`
-pub(crate) const SERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.serialize.errors";
+pub const SERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.serialize.errors";
 
 // =============================================================================
 // Transport - Trace Metrics
@@ -102,22 +102,22 @@ pub(crate) const SERIALIZE_TRACES_ERRORS: &str = "datadog.tracer.exporter.serial
 
 /// Number of trace chunks included in HTTP requests to the agent (all attempts).
 ///
-/// **Type**: Distribution  
-/// **When Emitted**: Always emitted for every send attempt, regardless of success or failure  
+/// **Type**: Distribution\
+/// **When Emitted**: Always emitted for every send attempt, regardless of success or failure\
 /// **Tags**: `libdatadog_version`
-pub(crate) const TRANSPORT_TRACES_SENT: &str = "datadog.tracer.exporter.transport.traces.sent";
+pub const TRANSPORT_TRACES_SENT: &str = "datadog.tracer.exporter.transport.traces.sent";
 
 /// Number of trace chunks successfully sent to the agent.
 ///
-/// **Type**: Count  
-/// **When Emitted**: After successful HTTP response from the agent (2xx status codes)  
+/// **Type**: Count\
+/// **When Emitted**: After successful HTTP response from the agent (2xx status codes)\
 /// **Tags**: `libdatadog_version`
-pub(crate) const TRANSPORT_TRACES_SUCCESSFUL: &str =
+pub const TRANSPORT_TRACES_SUCCESSFUL: &str =
     "datadog.tracer.exporter.transport.traces.successful";
 
 /// Number of errors encountered while sending traces to the agent.
 ///
-/// **Type**: Count  
+/// **Type**: Count\
 /// **When Emitted**:
 /// - HTTP error responses (4xx, 5xx status codes)
 /// - Network/connection errors
@@ -133,11 +133,11 @@ pub(crate) const TRANSPORT_TRACES_SUCCESSFUL: &str =
 /// - `type:response_body`: Response body read errors
 /// - `type:build`: Request build errors
 /// - `type:unknown`: Fallback for unrecognized error types
-pub(crate) const TRANSPORT_TRACES_FAILED: &str = "datadog.tracer.exporter.transport.traces.failed";
+pub const TRANSPORT_TRACES_FAILED: &str = "datadog.tracer.exporter.transport.traces.failed";
 
 /// Number of trace chunks dropped due to errors.
 ///
-/// **Type**: Distribution  
+/// **Type**: Distribution\
 /// **When Emitted**:
 /// - HTTP error responses (excluding 404 Not Found and 415 Unsupported Media Type)
 /// - Network/connection errors
@@ -147,7 +147,7 @@ pub(crate) const TRANSPORT_TRACES_FAILED: &str = "datadog.tracer.exporter.transp
 ///
 /// **Note**: 404 and 415 status codes are excluded as they represent endpoint/format issues rather
 /// than dropped payloads. While they aren't counted as dropped traces, they may still be dropped.
-pub(crate) const TRANSPORT_TRACES_DROPPED: &str =
+pub const TRANSPORT_TRACES_DROPPED: &str =
     "datadog.tracer.exporter.transport.traces.dropped";
 
 // =============================================================================
@@ -156,14 +156,14 @@ pub(crate) const TRANSPORT_TRACES_DROPPED: &str =
 
 /// Size in bytes of HTTP payloads sent to the agent.
 ///
-/// **Type**: Distribution  
-/// **When Emitted**: Always emitted for every send attempt, regardless of success or failure  
+/// **Type**: Distribution\
+/// **When Emitted**: Always emitted for every send attempt, regardless of success or failure\
 /// **Tags**: `libdatadog_version`
-pub(crate) const TRANSPORT_SENT_BYTES: &str = "datadog.tracer.exporter.transport.sent.bytes";
+pub const TRANSPORT_SENT_BYTES: &str = "datadog.tracer.exporter.transport.sent.bytes";
 
 /// Size in bytes of HTTP payloads dropped due to errors.
 ///
-/// **Type**: Distribution  
+/// **Type**: Distribution\
 /// **When Emitted**:
 /// - HTTP error responses (excluding 404 Not Found and 415 Unsupported Media Type)
 /// - Network/connection errors
@@ -173,30 +173,30 @@ pub(crate) const TRANSPORT_SENT_BYTES: &str = "datadog.tracer.exporter.transport
 ///
 /// **Note**: 404 and 415 status codes are excluded as they represent endpoint/format issues rather
 /// than dropped payloads
-pub(crate) const TRANSPORT_DROPPED_BYTES: &str = "datadog.tracer.exporter.transport.dropped.bytes";
+pub const TRANSPORT_DROPPED_BYTES: &str = "datadog.tracer.exporter.transport.dropped.bytes";
 
 /// Number of HTTP requests made to the agent.
 ///
-/// **Type**: Distribution  
+/// **Type**: Distribution\
 /// **When Emitted**: Always emitted after each send operation, counting all HTTP attempts including
 /// retries **Tags**: `libdatadog_version`
 ///
 /// **Note**: Value represents total request attempts (1 for success without retries, >1 when
 /// retries occur)
-pub(crate) const TRANSPORT_REQUESTS: &str = "datadog.tracer.exporter.transport.requests";
+pub const TRANSPORT_REQUESTS: &str = "datadog.tracer.exporter.transport.requests";
 
 #[derive(Debug)]
-#[cfg_attr(test, derive(PartialEq))]
-pub(crate) enum HealthMetric {
+#[cfg_attr(test, derive(PartialEq, Eq))]
+pub enum HealthMetric {
     Count(&'static str, i64),
     Distribution(&'static str, i64),
 }
 
 /// Categorization of errors from different sources (direct hyper responses vs
-/// send_with_retry results) for consistent metric emission
+/// `send_with_retry` results) for consistent metric emission
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
-pub(crate) enum TransportErrorType {
+pub enum TransportErrorType {
     /// HTTP error with a specific status code (4xx, 5xx)
     Http(u16),
     /// Network/connection error
@@ -212,21 +212,21 @@ pub(crate) enum TransportErrorType {
 impl TransportErrorType {
     pub(crate) fn as_tag_value(&self) -> Cow<'static, str> {
         match self {
-            TransportErrorType::Http(code) => Cow::Owned(code.to_string()),
-            TransportErrorType::Network => Cow::Borrowed("network"),
-            TransportErrorType::Timeout => Cow::Borrowed("timeout"),
-            TransportErrorType::ResponseBody => Cow::Borrowed("response_body"),
-            TransportErrorType::Build => Cow::Borrowed("build"),
+            Self::Http(code) => Cow::Owned(code.to_string()),
+            Self::Network => Cow::Borrowed("network"),
+            Self::Timeout => Cow::Borrowed("timeout"),
+            Self::ResponseBody => Cow::Borrowed("response_body"),
+            Self::Build => Cow::Borrowed("build"),
         }
     }
 
     /// Per the health metrics specification:
     /// - 404 and 415 status codes do NOT emit dropped metrics
     /// - All other HTTP errors and non-HTTP errors emit dropped metrics
-    pub(crate) fn should_emit_dropped_metrics(&self) -> bool {
+    pub(crate) const fn should_emit_dropped_metrics(&self) -> bool {
         !matches!(
             self,
-            TransportErrorType::Http(404) | TransportErrorType::Http(415)
+            Self::Http(404 | 415)
         )
     }
 }
@@ -236,8 +236,8 @@ impl TransportErrorType {
 /// This structure captures all the information needed to emit the appropriate
 /// health metric for a send operation regardless whence it came
 #[derive(Debug)]
-#[cfg_attr(test, derive(Clone, PartialEq))]
-pub(crate) struct SendResult {
+#[cfg_attr(test, derive(Clone, PartialEq, Eq))]
+pub struct SendResult {
     /// The error type if the operation failed, or `None` if it succeeded.
     pub error_type: Option<TransportErrorType>,
     /// Size of the payload in bytes
@@ -288,7 +288,7 @@ impl SendResult {
 
     /// Returns whether the send operation was successful
     #[cfg(test)]
-    pub(crate) fn is_success(&self) -> bool {
+    pub(crate) const fn is_success(&self) -> bool {
         self.error_type.is_none()
     }
 
@@ -296,7 +296,7 @@ impl SendResult {
     ///
     /// This method encapsulates all the logic for determining which metrics to
     /// emit based on the send operation. It returns a vector of metrics that
-    /// should be sent to DogStatsD
+    /// should be sent to `DogStatsD`
     ///
     /// # Returns
     ///
@@ -317,7 +317,7 @@ impl SendResult {
             None,
         ));
         metrics.push((
-            HealthMetric::Distribution(TRANSPORT_REQUESTS, self.request_attempts as i64),
+            HealthMetric::Distribution(TRANSPORT_REQUESTS, i64::from(self.request_attempts)),
             None,
         ));
 
@@ -363,7 +363,7 @@ impl SendResult {
 mod tests {
     use super::*;
 
-    /// Test-only extension methods for SendResult
+    /// Test-only extension methods for `SendResult`
     impl SendResult {
         /// Create a `SendResult` from a `SendWithRetryResult`.
         ///
@@ -646,17 +646,17 @@ mod tests {
             let has_sent_bytes = metrics.iter().any(|(m, _)| {
                 matches!(m, HealthMetric::Distribution(name, _) if *name == TRANSPORT_SENT_BYTES)
             });
-            assert!(has_sent_bytes, "Missing sent_bytes for {:?}", result);
+            assert!(has_sent_bytes, "Missing sent_bytes for {result:?}");
 
             let has_sent_traces = metrics.iter().any(|(m, _)| {
                 matches!(m, HealthMetric::Distribution(name, _) if *name == TRANSPORT_TRACES_SENT)
             });
-            assert!(has_sent_traces, "Missing sent_traces for {:?}", result);
+            assert!(has_sent_traces, "Missing sent_traces for {result:?}");
 
             let has_requests = metrics.iter().any(|(m, _)| {
                 matches!(m, HealthMetric::Distribution(name, _) if *name == TRANSPORT_REQUESTS)
             });
-            assert!(has_requests, "Missing requests for {:?}", result);
+            assert!(has_requests, "Missing requests for {result:?}");
         }
     }
 

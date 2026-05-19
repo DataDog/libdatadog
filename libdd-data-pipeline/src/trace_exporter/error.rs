@@ -11,7 +11,7 @@ use std::error::Error;
 use std::fmt::{Debug, Display};
 
 /// Represents different kinds of errors that can occur when interacting with the agent.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AgentErrorKind {
     /// Indicates that the agent returned an empty response.
     EmptyResponse,
@@ -20,13 +20,13 @@ pub enum AgentErrorKind {
 impl Display for AgentErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AgentErrorKind::EmptyResponse => write!(f, "Agent empty response"),
+            Self::EmptyResponse => write!(f, "Agent empty response"),
         }
     }
 }
 
 /// Represents different kinds of errors that can occur during the builder process.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BuilderErrorKind {
     /// Represents an error when an invalid URI is provided.
     /// The associated `String` contains underlying error message.
@@ -40,11 +40,11 @@ pub enum BuilderErrorKind {
 impl Display for BuilderErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuilderErrorKind::InvalidUri(msg) => write!(f, "Invalid URI: {msg}"),
-            BuilderErrorKind::InvalidTelemetryConfig(msg) => {
+            Self::InvalidUri(msg) => write!(f, "Invalid URI: {msg}"),
+            Self::InvalidTelemetryConfig(msg) => {
                 write!(f, "Invalid telemetry configuration: {msg}")
             }
-            BuilderErrorKind::InvalidConfiguration(msg) => {
+            Self::InvalidConfiguration(msg) => {
                 write!(f, "Invalid configuration: {msg}")
             }
         }
@@ -52,7 +52,7 @@ impl Display for BuilderErrorKind {
 }
 
 /// Represents different kinds of internal errors.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum InternalErrorKind {
     /// Indicates that some background workers are in an invalid state. The associated `String`
     /// contains the error message.
@@ -62,7 +62,7 @@ pub enum InternalErrorKind {
 impl Display for InternalErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InternalErrorKind::InvalidWorkerState(msg) => {
+            Self::InvalidWorkerState(msg) => {
                 write!(f, "Invalid worker state: {msg}")
             }
         }
@@ -111,7 +111,8 @@ impl NetworkError {
         }
     }
 
-    pub fn kind(&self) -> NetworkErrorKind {
+    #[must_use]
+    pub const fn kind(&self) -> NetworkErrorKind {
         self.kind
     }
 }
@@ -123,7 +124,7 @@ impl Display for NetworkError {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RequestError {
     code: StatusCode,
     msg: String,
@@ -140,6 +141,7 @@ impl Display for RequestError {
 }
 
 impl RequestError {
+    #[must_use]
     pub fn new(code: StatusCode, msg: &str) -> Self {
         Self {
             code,
@@ -147,10 +149,12 @@ impl RequestError {
         }
     }
 
-    pub fn status(&self) -> StatusCode {
+    #[must_use]
+    pub const fn status(&self) -> StatusCode {
         self.code
     }
 
+    #[must_use]
     pub fn msg(&self) -> &str {
         &self.msg
     }
@@ -164,14 +168,14 @@ pub enum ShutdownError {
 impl Display for ShutdownError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ShutdownError::TimedOut(dur) => {
+            Self::TimedOut(dur) => {
                 write!(f, "Shutdown timed out after {}s", dur.as_secs_f32())
             }
         }
     }
 }
 
-/// TraceExporterError holds different types of errors that occur when handling traces.
+/// `TraceExporterError` holds different types of errors that occur when handling traces.
 #[derive(Debug)]
 pub enum TraceExporterError {
     /// Error in agent response processing.
@@ -199,18 +203,18 @@ pub enum TraceExporterError {
 impl Display for TraceExporterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TraceExporterError::Agent(e) => write!(f, "Agent response processing: {e}"),
-            TraceExporterError::Builder(e) => write!(f, "Invalid builder input: {e}"),
-            TraceExporterError::Internal(e) => write!(f, "Internal: {e}"),
-            TraceExporterError::Deserialization(e) => {
+            Self::Agent(e) => write!(f, "Agent response processing: {e}"),
+            Self::Builder(e) => write!(f, "Invalid builder input: {e}"),
+            Self::Internal(e) => write!(f, "Internal: {e}"),
+            Self::Deserialization(e) => {
                 write!(f, "Deserialization of incoming payload: {e}")
             }
-            TraceExporterError::Io(e) => write!(f, "IO: {e}"),
-            TraceExporterError::Shutdown(e) => write!(f, "Shutdown: {e}"),
-            TraceExporterError::Telemetry(e) => write!(f, "Telemetry: {e}"),
-            TraceExporterError::Network(e) => write!(f, "Network: {e}"),
-            TraceExporterError::Request(e) => write!(f, "Agent responded with an error code: {e}"),
-            TraceExporterError::Serialization(e) => {
+            Self::Io(e) => write!(f, "IO: {e}"),
+            Self::Shutdown(e) => write!(f, "Shutdown: {e}"),
+            Self::Telemetry(e) => write!(f, "Telemetry: {e}"),
+            Self::Network(e) => write!(f, "Network: {e}"),
+            Self::Request(e) => write!(f, "Agent responded with an error code: {e}"),
+            Self::Serialization(e) => {
                 write!(f, "Serialization of trace payload payload: {e}")
             }
         }
@@ -219,21 +223,21 @@ impl Display for TraceExporterError {
 
 impl From<EncodeError> for TraceExporterError {
     fn from(value: EncodeError) -> Self {
-        TraceExporterError::Serialization(value)
+        Self::Serialization(value)
     }
 }
 
 impl From<http::uri::InvalidUri> for TraceExporterError {
     fn from(value: http::uri::InvalidUri) -> Self {
-        TraceExporterError::Builder(BuilderErrorKind::InvalidUri(value.to_string()))
+        Self::Builder(BuilderErrorKind::InvalidUri(value.to_string()))
     }
 }
 
 impl From<http_common::Error> for TraceExporterError {
     fn from(err: http_common::Error) -> Self {
         match err {
-            http_common::Error::Client(e) => TraceExporterError::from(e),
-            http_common::Error::Other(e) => TraceExporterError::Network(NetworkError {
+            http_common::Error::Client(e) => Self::from(e),
+            http_common::Error::Other(e) => Self::Network(NetworkError {
                 kind: NetworkErrorKind::Unknown,
                 source: e,
             }),
@@ -254,25 +258,25 @@ impl From<http_common::ClientError> for TraceExporterError {
             ErrorKind::Timeout => NetworkErrorKind::TimedOut,
             ErrorKind::Other => NetworkErrorKind::Unknown,
         };
-        TraceExporterError::Network(NetworkError::new(network_kind, err))
+        Self::Network(NetworkError::new(network_kind, err))
     }
 }
 
 impl From<DecodeError> for TraceExporterError {
     fn from(err: DecodeError) -> Self {
-        TraceExporterError::Deserialization(err)
+        Self::Deserialization(err)
     }
 }
 
 impl From<std::io::Error> for TraceExporterError {
     fn from(err: std::io::Error) -> Self {
-        TraceExporterError::Io(err)
+        Self::Io(err)
     }
 }
 
 impl From<http::Error> for TraceExporterError {
     fn from(err: http::Error) -> Self {
-        TraceExporterError::Network(NetworkError {
+        Self::Network(NetworkError {
             kind: NetworkErrorKind::Parse,
             source: err.into(),
         })
@@ -281,7 +285,7 @@ impl From<http::Error> for TraceExporterError {
 
 impl From<libdd_capabilities::HttpError> for TraceExporterError {
     fn from(err: libdd_capabilities::HttpError) -> Self {
-        TraceExporterError::Network(NetworkError {
+        Self::Network(NetworkError {
             kind: match &err {
                 libdd_capabilities::HttpError::Timeout => NetworkErrorKind::TimedOut,
                 libdd_capabilities::HttpError::Network(_) => NetworkErrorKind::ConnectionClosed,
@@ -299,9 +303,9 @@ impl From<TelemetryError> for TraceExporterError {
     fn from(value: TelemetryError) -> Self {
         match value {
             TelemetryError::Builder(e) => {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidTelemetryConfig(e))
+                Self::Builder(BuilderErrorKind::InvalidTelemetryConfig(e))
             }
-            TelemetryError::Send(e) => TraceExporterError::Telemetry(e),
+            TelemetryError::Send(e) => Self::Telemetry(e),
         }
     }
 }
@@ -316,6 +320,6 @@ mod tests {
     fn test_request_error() {
         let error = RequestError::new(StatusCode::NOT_FOUND, "Not found");
         assert_eq!(error.status(), StatusCode::NOT_FOUND);
-        assert_eq!(error.msg(), "Not found")
+        assert_eq!(error.msg(), "Not found");
     }
 }

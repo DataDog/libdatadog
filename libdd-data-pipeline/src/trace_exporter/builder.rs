@@ -162,26 +162,26 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
-    pub fn set_input_format(&mut self, input_format: TraceExporterInputFormat) -> &mut Self {
+    pub const fn set_input_format(&mut self, input_format: TraceExporterInputFormat) -> &mut Self {
         self.input_format = input_format;
         self
     }
 
     #[allow(missing_docs)]
-    pub fn set_output_format(&mut self, output_format: TraceExporterOutputFormat) -> &mut Self {
+    pub const fn set_output_format(&mut self, output_format: TraceExporterOutputFormat) -> &mut Self {
         self.output_format = output_format;
         self
     }
 
     /// Set the header indicating the tracer has computed the top-level tag
-    pub fn set_client_computed_top_level(&mut self) -> &mut Self {
+    pub const fn set_client_computed_top_level(&mut self) -> &mut Self {
         self.client_computed_top_level = true;
         self
     }
 
     /// Set the header indicating the tracer has already computed stats.
     /// This should not be used when stats computation is enabled.
-    pub fn set_client_computed_stats(&mut self) -> &mut Self {
+    pub const fn set_client_computed_stats(&mut self) -> &mut Self {
         self.client_computed_stats = true;
         self
     }
@@ -193,7 +193,7 @@ impl TraceExporterBuilder {
     }
 
     /// Enable stats computation on traces sent through this exporter
-    pub fn enable_stats(&mut self, bucket_size: Duration) -> &mut Self {
+    pub const fn enable_stats(&mut self, bucket_size: Duration) -> &mut Self {
         self.stats_bucket_size = Some(bucket_size);
         self
     }
@@ -208,7 +208,7 @@ impl TraceExporterBuilder {
 
     /// Enable stats eligibility by span kind (requires stats computation to be
     /// enabled)
-    pub fn enable_compute_stats_by_span_kind(&mut self) -> &mut Self {
+    pub const fn enable_compute_stats_by_span_kind(&mut self) -> &mut Self {
         self.compute_stats_by_span_kind = true;
         self
     }
@@ -219,7 +219,7 @@ impl TraceExporterBuilder {
     /// `obfuscation_version` via the `/info` endpoint. When disabled, no
     /// `datadog-obfuscation-version` header is sent on stats payloads.
     #[cfg(feature = "stats-obfuscation")]
-    pub fn enable_client_side_stats_obfuscation(&mut self) -> &mut Self {
+    pub const fn enable_client_side_stats_obfuscation(&mut self) -> &mut Self {
         self.client_side_stats_obfuscation_enabled = true;
         self
     }
@@ -247,19 +247,19 @@ impl TraceExporterBuilder {
     }
 
     /// Enables health metrics emission.
-    pub fn enable_health_metrics(&mut self) -> &mut Self {
+    pub const fn enable_health_metrics(&mut self) -> &mut Self {
         self.health_metrics_enabled = true;
         self
     }
 
     /// Enables storing and checking the agent payload
-    pub fn enable_agent_rates_payload_version(&mut self) -> &mut Self {
+    pub const fn enable_agent_rates_payload_version(&mut self) -> &mut Self {
         self.agent_rates_payload_version_enabled = true;
         self
     }
 
     /// Sets the agent's connection timeout.
-    pub fn set_connection_timeout(&mut self, timeout_ms: Option<u64>) -> &mut Self {
+    pub const fn set_connection_timeout(&mut self, timeout_ms: Option<u64>) -> &mut Self {
         self.connection_timeout = timeout_ms;
         self
     }
@@ -432,8 +432,7 @@ impl TraceExporterBuilder {
                 headers,
                 timeout: self
                     .connection_timeout
-                    .map(Duration::from_millis)
-                    .unwrap_or(DEFAULT_OTLP_TIMEOUT),
+                    .map_or(DEFAULT_OTLP_TIMEOUT, Duration::from_millis),
                 protocol: OtlpProtocol::HttpJson,
             }
         });
@@ -441,7 +440,7 @@ impl TraceExporterBuilder {
         Ok(TraceExporter {
             endpoint: Endpoint {
                 url: agent_url,
-                test_token: self.test_session_token.map(|token| token.into()),
+                test_token: self.test_session_token.map(std::convert::Into::into),
                 timeout_ms: self
                     .connection_timeout
                     .unwrap_or(Endpoint::default().timeout_ms),
@@ -498,7 +497,7 @@ impl TraceExporterBuilder {
         })
     }
 
-    fn is_inputs_outputs_formats_compatible(
+    const fn is_inputs_outputs_formats_compatible(
         input: TraceExporterInputFormat,
         output: TraceExporterOutputFormat,
     ) -> bool {

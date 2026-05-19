@@ -18,7 +18,7 @@ use libdd_trace_utils::span::v04::SpanBytes;
 // Number of chunks each sender thread sends per benchmark iteration.
 const CHUNKS_PER_SENDER: usize = 900;
 
-fn bs(s: &'static str) -> BytesString {
+const fn bs(s: &'static str) -> BytesString {
     BytesString::from_static(s)
 }
 
@@ -101,7 +101,7 @@ fn bench_trace_buffer(c: &mut Criterion) {
             ));
 
             group.bench_function(
-                BenchmarkId::new(format!("{}_senders", num_senders), delay_label),
+                BenchmarkId::new(format!("{num_senders}_senders"), delay_label),
                 |b| {
                     b.iter_batched(
                         || {

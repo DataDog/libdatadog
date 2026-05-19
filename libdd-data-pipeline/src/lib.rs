@@ -7,7 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-//! TraceExporter provides a minimum viable product (MVP) to send traces to agents. The aim of the
+//! `TraceExporter` provides a minimum viable product (MVP) to send traces to agents. The aim of the
 //! project at this state is to provide a basic API in order to test its viability and integration
 //! in different languages.
 
