@@ -220,7 +220,8 @@ fn make_configs() -> Vec<BenchConfig> {
             let mut span = make_span("http.request", "api-service", "/api/v1/users");
             span.meta.insert("environment".into(), "production".into());
             span.meta.insert("http.method".into(), "POST".into());
-            span.meta.insert("http.route".into(), "/api/v1/users".into());
+            span.meta
+                .insert("http.route".into(), "/api/v1/users".into());
             BenchConfig {
                 name: "complex_rule_matching",
                 sampler: DatadogSampler::new(

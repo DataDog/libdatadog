@@ -260,9 +260,9 @@ mod tests {
         resource: &'static str,
     ) -> Span<SliceData<'static>> {
         Span {
-            name,
-            service,
-            resource,
+            name: name.into(),
+            service: service.into(),
+            resource: resource.into(),
             ..Default::default()
         }
     }
@@ -324,8 +324,9 @@ mod tests {
     #[test]
     fn test_v04_span_properties_with_meta() {
         let mut span = make_span("op", "svc", "res");
-        span.meta.insert("env", "staging");
-        span.meta.insert("http.url", "https://example.com");
+        span.meta.insert("env".into(), "staging".into());
+        span.meta
+            .insert("http.url".into(), "https://example.com".into());
 
         let props = V04SpanProperties::from_span(&span);
         assert_eq!(props.env(), "staging");
@@ -338,7 +339,7 @@ mod tests {
     #[test]
     fn test_v04_span_properties_status_code_from_metrics() {
         let mut span = make_span("op", "svc", "res");
-        span.metrics.insert("http.status_code", 200.0);
+        span.metrics.insert("http.status_code".into(), 200.0);
 
         let props = V04SpanProperties::from_span(&span);
         assert_eq!(props.status_code(), Some(200));
@@ -348,7 +349,7 @@ mod tests {
     #[test]
     fn test_v04_span_properties_status_code_from_meta() {
         let mut span = make_span("op", "svc", "res");
-        span.meta.insert("http.status_code", "404");
+        span.meta.insert("http.status_code".into(), "404".into());
 
         let props = V04SpanProperties::from_span(&span);
         assert_eq!(props.status_code(), Some(404));
@@ -357,7 +358,7 @@ mod tests {
     #[test]
     fn test_v04_span_properties_metrics_in_attributes() {
         let mut span = make_span("op", "svc", "res");
-        span.metrics.insert("_sampling_priority_v1", 1.0);
+        span.metrics.insert("_sampling_priority_v1".into(), 1.0);
 
         let props = V04SpanProperties::from_span(&span);
         let attr = props
@@ -398,7 +399,7 @@ mod tests {
         // compiler resolves correctly.
         let sampler = DatadogSampler::new(vec![], 100);
         let mut span = make_span("op", "my-service", "my-resource");
-        span.meta.insert("env", "prod");
+        span.meta.insert("env".into(), "prod".into());
         let data = V04SamplingData {
             is_parent_sampled: None,
             span: &span,
@@ -516,8 +517,8 @@ mod tests {
     fn test_integration_tags_apply_to_span() {
         let sampler = DatadogSampler::new(vec![], 100);
         let span = Span::<SliceData<'static>> {
-            name: "op",
-            service: "svc",
+            name: "op".into(),
+            service: "svc".into(),
             ..Default::default()
         };
 
@@ -538,7 +539,7 @@ mod tests {
                         assert!(!value.is_empty());
                     }
                     V04SamplingTag::Metric { key, value } => {
-                        out_span.metrics.insert(key, value);
+                        out_span.metrics.insert(key.into(), value);
                     }
                 }
             }
