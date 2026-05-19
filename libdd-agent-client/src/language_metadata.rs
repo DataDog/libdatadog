@@ -13,6 +13,8 @@ pub struct LanguageMetadata {
     pub language_version: String,
     /// Value of `Datadog-Meta-Lang-Interpreter`, e.g. `"CPython"`.
     pub interpreter: String,
+    /// Value of `Datadog-Meta-Lang-Interpreter-Vendor`, e.g. `"Oracle"`, `"Apple"`.
+    pub interpreter_vendor: String,
     /// Value of `Datadog-Meta-Tracer-Version`, e.g. `"2.18.0"`.
     pub tracer_version: String,
 }
@@ -23,12 +25,14 @@ impl LanguageMetadata {
         language: impl Into<String>,
         language_version: impl Into<String>,
         interpreter: impl Into<String>,
+        interpreter_vendor: impl Into<String>,
         tracer_version: impl Into<String>,
     ) -> Self {
         Self {
             language: language.into(),
             language_version: language_version.into(),
             interpreter: interpreter.into(),
+            interpreter_vendor: interpreter_vendor.into(),
             tracer_version: tracer_version.into(),
         }
     }
@@ -48,22 +52,23 @@ mod tests {
 
     #[test]
     fn new_stores_fields() {
-        let m = LanguageMetadata::new("python", "3.12.1", "CPython", "2.18.0");
+        let m = LanguageMetadata::new("python", "3.12.1", "CPython", "", "2.18.0");
         assert_eq!(m.language, "python");
         assert_eq!(m.language_version, "3.12.1");
         assert_eq!(m.interpreter, "CPython");
+        assert_eq!(m.interpreter_vendor, "");
         assert_eq!(m.tracer_version, "2.18.0");
     }
 
     #[test]
     fn user_agent_format() {
-        let m = LanguageMetadata::new("python", "3.12.1", "CPython", "2.18.0");
+        let m = LanguageMetadata::new("python", "3.12.1", "CPython", "", "2.18.0");
         assert_eq!(m.user_agent(), "dd-trace-python/2.18.0");
     }
 
     #[test]
     fn user_agent_ruby() {
-        let m = LanguageMetadata::new("ruby", "3.2.0", "MRI", "1.13.0");
+        let m = LanguageMetadata::new("ruby", "3.2.0", "MRI", "", "1.13.0");
         assert_eq!(m.user_agent(), "dd-trace-ruby/1.13.0");
     }
 }

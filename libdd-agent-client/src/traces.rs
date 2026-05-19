@@ -33,6 +33,11 @@ pub struct TraceSendOptions {
     /// Signals to the agent that the client has already marked top-level spans, allowing the agent
     /// to skip its own top-level computation.
     pub computed_top_level: bool,
+    /// When `true`, appends `Datadog-Client-Computed-Stats: yes`.
+    ///
+    /// Signals to the agent that the client has already computed APM stats for these traces,
+    /// allowing the agent to skip its own stats computation.
+    pub client_computed_stats: bool,
 }
 
 /// Parsed response from the agent after a successful trace submission.

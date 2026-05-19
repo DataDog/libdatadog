@@ -118,6 +118,34 @@ async fn computed_top_level_injects_header() {
             TraceFormat::MsgpackV5,
             TraceSendOptions {
                 computed_top_level: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    mock.assert();
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore)]
+async fn client_computed_stats_injects_header() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(PUT)
+            .path("/v0.5/traces")
+            .header("Datadog-Client-Computed-Stats", "yes");
+        then.status(200).body(r#"{}"#);
+    });
+
+    common::client_for(&server)
+        .send_traces(
+            Bytes::from_static(b""),
+            0,
+            TraceFormat::MsgpackV5,
+            TraceSendOptions {
+                client_computed_stats: true,
+                ..Default::default()
             },
         )
         .await

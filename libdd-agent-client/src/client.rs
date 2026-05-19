@@ -86,6 +86,10 @@ impl AgentClient {
             request = request.with_header("Datadog-Client-Computed-Top-Level", "yes");
         }
 
+        if opts.client_computed_stats {
+            request = request.with_header("Datadog-Client-Computed-Stats", "yes");
+        }
+
         let response = self.http.send(request).await?;
 
         if response.status_code() >= 400 {
@@ -285,7 +289,7 @@ mod tests {
         ensure_crypto_provider();
         AgentClient::builder()
             .http("localhost", port)
-            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "2.0"))
+            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "", "2.0"))
             .build()
             .unwrap()
     }
@@ -314,7 +318,7 @@ mod tests {
         ensure_crypto_provider();
         let client = AgentClient::builder()
             .http("localhost", 80)
-            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "2.0"))
+            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "", "2.0"))
             .extra_headers(vec![("X-Custom".to_owned(), "custom value".to_owned())])
             .build()
             .unwrap();

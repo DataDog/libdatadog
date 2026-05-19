@@ -13,7 +13,7 @@ pub fn client_for(server: &MockServer) -> AgentClient {
     AgentClient::builder()
         .http("localhost", server.port())
         .language_metadata(LanguageMetadata::new(
-            "python", "3.12.1", "CPython", "2.18.0",
+            "python", "3.12.1", "CPython", "", "2.18.0",
         ))
         .build()
         .expect("client build failed")

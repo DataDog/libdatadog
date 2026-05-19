@@ -14,7 +14,7 @@
 //! let client = AgentClient::builder()
 //!     .http("localhost", 8126)
 //!     .language_metadata(LanguageMetadata::new(
-//!         "python", "3.12.1", "CPython", "2.18.0",
+//!         "python", "3.12.1", "CPython", "", "2.18.0",
 //!     ))
 //!     .build()?;
 //! # Ok(())

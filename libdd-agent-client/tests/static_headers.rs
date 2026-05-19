@@ -17,6 +17,7 @@ async fn language_metadata_headers_injected_on_all_requests() {
             .header("Datadog-Meta-Lang", "python")
             .header("Datadog-Meta-Lang-Version", "3.12.1")
             .header("Datadog-Meta-Lang-Interpreter", "CPython")
+            .header("Datadog-Meta-Lang-Interpreter-Vendor", "")
             .header("Datadog-Meta-Tracer-Version", "2.18.0")
             .header("User-Agent", "dd-trace-python/2.18.0");
         then.status(200).body(r#"{}"#);
@@ -50,7 +51,7 @@ async fn test_token_injected_when_set() {
     let client = AgentClient::builder()
         .http("localhost", server.port())
         .language_metadata(LanguageMetadata::new(
-            "python", "3.12.1", "CPython", "2.18.0",
+            "python", "3.12.1", "CPython", "", "2.18.0",
         ))
         .test_agent_session_token("my-token")
         .build()
