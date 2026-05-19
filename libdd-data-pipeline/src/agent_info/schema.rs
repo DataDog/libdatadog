@@ -75,7 +75,7 @@ pub struct Config {
 }
 
 #[allow(missing_docs)]
-#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct ObfuscationConfig {
     pub elastic_search: bool,
     pub mongo: bool,
