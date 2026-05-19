@@ -34,6 +34,7 @@ static PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// This quantization is used to reduce cardinality on peer tags in trace metrics. As such it is
 /// not exhaustive and some ip format may not be obfuscated.
 /// The reference implementation lives in [dd-go](https://github.com/DataDog/dd-go/blob/393e6de733807b20597d80b1e5103d6e823d8a0c/trace/pkg/peertags/peer_tags.go#L56)
+#[must_use]
 pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
     let values = s.split(',');
     let mut should_return_new_string = false; // Set to true if the function should return a modified
@@ -54,7 +55,7 @@ pub fn quantize_peer_ip_addresses<'a>(s: &'a str) -> Cow<'a, str> {
     let mut quantized_values_dedup: Vec<&str> = Vec::new();
     let mut quantized_values_set: HashSet<&str> = HashSet::new();
 
-    for quantized_value in quantized_values.iter() {
+    for quantized_value in &quantized_values {
         if quantized_values_set.insert(quantized_value) {
             quantized_values_dedup.push(quantized_value);
         } else {
@@ -87,7 +88,6 @@ fn quantize_ip(s: &str) -> Option<String> {
 
 /// Split the ip prefix, can be either a provider specific prefix or a protocol
 fn split_prefix(s: &str) -> (&str, &str) {
-    #[allow(clippy::unwrap_used)]
     if let Some(tail) = s.strip_prefix("ip-") {
         ("ip-", tail)
     } else if let Some(protocol) = PREFIX_REGEX.find(s) {
@@ -102,7 +102,7 @@ fn parse_ip(s: &str) -> Option<(&str, &str)> {
     for ch in s.chars() {
         // Determine the version of the ip
         match ch {
-            '0'..='9' => continue,
+            '0'..='9' => {}
             '.' | '-' | '_' => return parse_ip_v4(s, ch),
             ':' | 'A'..='F' | 'a'..='f' if s.parse::<Ipv6Addr>().is_ok() => {
                 return Some((s, ""));
@@ -130,14 +130,12 @@ fn parse_ip_v4(s: &str, sep: char) -> Option<(&str, &str)> {
     let mut current_field = 0;
     let mut last_index = s.len();
     for (i, ch) in s.char_indices() {
-        #[allow(clippy::unwrap_used)]
-        if ch.is_ascii_digit() {
+        if let Some(digit) = ch.to_digit(10) {
             // A field can't have a leading 0
             if field_digits == 1 && field_value == 0 {
                 return None;
             }
-            // Add digit to value, safe since ch is a digit
-            field_value = field_value * 10 + ch.to_digit(10).unwrap();
+            field_value = field_value * 10 + digit;
             field_digits += 1;
             if field_value > 255 {
                 return None;
@@ -183,6 +181,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cognitive_complexity)]
     fn test_quantize_peer_ip_addresses() {
         // Special cases
         // - localhost
