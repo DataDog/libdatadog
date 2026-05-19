@@ -105,7 +105,7 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
 pub(crate) fn start_stats_computation<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 >(
-    ctx: &StatsContext,
+    ctx: &StatsContext<'_>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
     capabilities: C,
@@ -132,7 +132,7 @@ pub(crate) fn start_stats_computation<
 fn create_and_start_stats_worker<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 >(
-    ctx: &StatsContext,
+    ctx: &StatsContext<'_>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
@@ -170,7 +170,7 @@ fn create_and_start_stats_worker<
 ///
 /// Used when client-side stats is disabled by the agent
 pub(crate) fn stop_stats_computation(
-    ctx: &StatsContext,
+    ctx: &StatsContext<'_>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
 ) {
     if let StatsComputationStatus::Enabled {
@@ -196,7 +196,7 @@ pub(crate) fn stop_stats_computation(
 pub(crate) fn handle_stats_disabled_by_agent<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 >(
-    ctx: &StatsContext,
+    ctx: &StatsContext<'_>,
     agent_info: &Arc<AgentInfo>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
@@ -253,7 +253,7 @@ fn update_obfuscation_config(
 #[cfg(not(target_arch = "wasm32"))]
 /// Handle stats computation when it's already enabled
 pub(crate) fn handle_stats_enabled(
-    ctx: &StatsContext,
+    ctx: &StatsContext<'_>,
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     client_side_stats: &StatsComputationConfig,
@@ -262,6 +262,7 @@ pub(crate) fn handle_stats_enabled(
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
+        drop(concentrator);
         #[cfg(feature = "stats-obfuscation")]
         update_obfuscation_config(agent_info, client_side_stats);
     } else {
@@ -291,7 +292,7 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 /// Returns the number of P0 traces and spans that were dropped.
 pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
-    header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
+    header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags<'_>,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
 ) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {

@@ -287,6 +287,7 @@ impl TraceExporterBuilder {
     }
 
     #[allow(missing_docs)]
+    #[allow(clippy::items_after_statements)]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
@@ -337,10 +338,8 @@ impl TraceExporterBuilder {
         // event loop via `spawn_local`. Telemetry remains native-only for now.
 
         #[cfg(feature = "stats-obfuscation")]
-        #[allow(clippy::items_after_statements)]
         use libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig;
 
-        #[allow(clippy::items_after_statements)]
         use crate::trace_exporter::stats::StatsComputationConfig;
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
@@ -445,7 +444,7 @@ impl TraceExporterBuilder {
                 test_token: self.test_session_token.map(std::convert::Into::into),
                 timeout_ms: self
                     .connection_timeout
-                    .unwrap_or(Endpoint::default().timeout_ms),
+                    .unwrap_or_else(|| Endpoint::default().timeout_ms),
                 ..Default::default()
             },
             metadata: TracerMetadata {

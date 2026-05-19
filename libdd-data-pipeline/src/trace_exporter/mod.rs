@@ -513,12 +513,12 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     ) -> Result<AgentResponse, TraceExporterError> {
         let resource_info = {
             let mut r = OtlpResourceInfo::default();
-            r.service = self.metadata.service.clone();
-            r.env = self.metadata.env.clone();
-            r.app_version = self.metadata.app_version.clone();
-            r.language = self.metadata.language.clone();
-            r.tracer_version = self.metadata.tracer_version.clone();
-            r.runtime_id = self.metadata.runtime_id.clone();
+            r.service.clone_from(&self.metadata.service);
+            r.env.clone_from(&self.metadata.env);
+            r.app_version.clone_from(&self.metadata.app_version);
+            r.language.clone_from(&self.metadata.language);
+            r.tracer_version.clone_from(&self.metadata.tracer_version);
+            r.runtime_id.clone_from(&self.metadata.runtime_id);
             r
         };
         let request = map_traces_to_otlp(traces, &resource_info);
@@ -609,7 +609,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+        let mut header_tags: TracerHeaderTags<'_> = self.metadata.borrow().into();
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
@@ -769,10 +769,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             self.agent_payload_response_version.as_ref(),
             version_header,
         ) {
-            (false, _, _) => {
-                // If the status is not success, the rates are considered unchanged
-                false
-            }
             (true, None, _) => {
                 // if the agent_payload_response_version fingerprint is not enabled we always
                 // return the new rates

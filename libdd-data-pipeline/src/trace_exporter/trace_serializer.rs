@@ -51,7 +51,7 @@ impl TraceSerializer {
     pub(super) fn prepare_traces_payload<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
-        header_tags: TracerHeaderTags,
+        header_tags: TracerHeaderTags<'_>,
         agent_payload_response_version: Option<&AgentResponsePayloadVersion>,
     ) -> Result<PreparedTracesPayload, TraceExporterError> {
         let payload = self.collect_and_process_traces(traces)?;
@@ -84,7 +84,7 @@ impl TraceSerializer {
     /// Build HTTP headers for traces request
     fn build_traces_headers(
         &self,
-        header_tags: TracerHeaderTags,
+        header_tags: TracerHeaderTags<'_>,
         chunk_count: usize,
         agent_payload_response_version: Option<&AgentResponsePayloadVersion>,
     ) -> HeaderMap {

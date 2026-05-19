@@ -435,21 +435,23 @@ impl<T> Sender<T> {
                 return Err(TraceBufferError::TimedOut(Duration::ZERO));
             }
             let state = self.lock_state()?;
-            let (_state, res) = self
+            let (state, res) = self
                 .waiter
                 .sender_notifier
                 .wait_timeout_while(state, timeout, cond)
                 .map_err(|_| TraceBufferError::MutexPoisoned)?;
+            drop(state);
             if res.timed_out() {
                 return Err(TraceBufferError::TimedOut(timeout));
             }
         } else {
             let state = self.lock_state()?;
-            let _state = self
+            let state = self
                 .waiter
                 .sender_notifier
                 .wait_while(state, cond)
                 .map_err(|_| TraceBufferError::MutexPoisoned)?;
+            drop(state);
         }
         Ok(())
     }
@@ -486,6 +488,8 @@ impl<T> Sender<T> {
         {
             state.flush_needed = true;
             self.waiter.notify_receiver(state);
+        } else {
+            drop(state);
         }
         Ok(gen)
     }
@@ -502,11 +506,12 @@ impl<T> Sender<T> {
             return Err(TraceBufferError::TimedOut(Duration::ZERO));
         }
         let state = self.lock_state()?;
-        let (_state, res) = self
+        let (state, res) = self
             .waiter
             .sender_notifier
             .wait_timeout_while(state, timeout, |state| !state.has_shutdown)
             .map_err(|_| TraceBufferError::MutexPoisoned)?;
+        drop(state);
         if res.timed_out() {
             return Err(TraceBufferError::TimedOut(timeout));
         }
@@ -544,6 +549,7 @@ impl<T> Receiver<T> {
         *has_shutdown = false;
         batch.reset();
         *metrics = QueueMetrics::default();
+        drop(state);
         Ok(())
     }
 

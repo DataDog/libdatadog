@@ -107,7 +107,7 @@ fn bench_trace_buffer(c: &mut Criterion) {
                         || {
                             (0..num_senders)
                                 .map(|_| (0..CHUNKS_PER_SENDER).map(|_| vec![make_span()]))
-                                .map(|x| x.collect::<Vec<_>>())
+                                .map(std::iter::Iterator::collect::<Vec<_>>)
                                 .collect::<Vec<_>>()
                         },
                         |input| {

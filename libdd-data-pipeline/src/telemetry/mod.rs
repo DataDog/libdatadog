@@ -227,12 +227,8 @@ impl SendPayloadTelemetry {
                     telemetry.errors_timeout = 1;
                     telemetry.requests_count = u64::from(*attempts);
                 }
-                SendWithRetryError::Network(_, attempts) => {
-                    telemetry.chunks_dropped_send_failure = chunks;
-                    telemetry.errors_network = 1;
-                    telemetry.requests_count = u64::from(*attempts);
-                }
-                SendWithRetryError::ResponseBody(attempts) => {
+                SendWithRetryError::Network(_, attempts)
+                | SendWithRetryError::ResponseBody(attempts) => {
                     telemetry.chunks_dropped_send_failure = chunks;
                     telemetry.errors_network = 1;
                     telemetry.requests_count = u64::from(*attempts);
