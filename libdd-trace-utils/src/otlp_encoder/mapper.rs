@@ -22,6 +22,10 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
 /// meta["error.msg"].
+///
+/// The high 64 bits of a 128-bit trace ID are carried as the `_dd.p.tid` meta tag, which
+/// per RFC #85 is set on the chunk root only. We resolve it once per chunk and apply it to
+/// every span so OTLP receivers see the full 128-bit trace_id on every span in the trace.
 pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
     resource_info: &OtlpResourceInfo,
@@ -29,8 +33,19 @@ pub fn map_traces_to_otlp<T: TraceData>(
     let resource = build_resource(resource_info);
     let mut all_spans: Vec<OtlpSpan> = Vec::new();
     for chunk in &trace_chunks {
+        // Per RFC #85 the high 64 bits of a 128-bit trace ID live on the chunk root as the
+        // `_dd.p.tid` meta tag. Scan the chunk for the first parseable value so a malformed
+        // root tag doesn't poison the rest of the chunk; absence (legacy 64-bit traces) → 0.
+        let chunk_trace_id_high: u64 = chunk
+            .iter()
+            .find_map(|s| {
+                s.meta
+                    .get("_dd.p.tid")
+                    .and_then(|v| u64::from_str_radix(v.borrow(), 16).ok())
+            })
+            .unwrap_or(0);
         for span in chunk {
-            all_spans.push(map_span(span, &resource_info.service));
+            all_spans.push(map_span(span, &resource_info.service, chunk_trace_id_high));
         }
     }
     let scope_spans = ScopeSpans {
@@ -92,15 +107,20 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
     Resource { attributes }
 }
 
-fn map_span<T: TraceData>(span: &Span<T>, resource_service: &str) -> OtlpSpan {
+fn map_span<T: TraceData>(
+    span: &Span<T>,
+    resource_service: &str,
+    chunk_trace_id_high: u64,
+) -> OtlpSpan {
     // Reconstruct the full 128-bit trace ID. The v04/v05 wire format carries only the low 64 bits
     // in the trace_id field; when a tracer emits a 128-bit ID the high 64 bits are propagated as
-    // the hex string meta tag "_dd.p.tid".
+    // the hex string meta tag "_dd.p.tid". Per-span tag wins (forward-compat with tracers that
+    // propagate it everywhere), then the chunk-root value resolved by the caller, then 0.
     let trace_id_high: u128 = span
         .meta
         .get("_dd.p.tid")
         .and_then(|v| u64::from_str_radix(v.borrow(), 16).ok())
-        .unwrap_or(0) as u128;
+        .unwrap_or(chunk_trace_id_high) as u128;
     let trace_id_128 = (trace_id_high << 64) | span.trace_id;
     let trace_id_hex = format!("{:032x}", trace_id_128);
     let span_id_hex = format!("{:016x}", span.span_id);
@@ -471,7 +491,8 @@ mod tests {
 
     #[test]
     fn test_128bit_trace_id_without_dd_p_tid() {
-        // When "_dd.p.tid" is absent the high 64 bits default to zero.
+        // When the entire chunk has no "_dd.p.tid" the high 64 bits default to zero
+        // (legacy 64-bit-only trace IDs).
         let resource_info = OtlpResourceInfo::default();
         let span: Span<BytesData> = Span {
             trace_id: 0xD269B633813FC60C_u128,
@@ -484,6 +505,226 @@ mod tests {
         let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
         let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(otlp_span.trace_id, "0000000000000000d269b633813fc60c");
+    }
+
+    #[test]
+    fn test_128bit_trace_id_propagated_to_chunk_children() {
+        // Per RFC #85 dd-trace tracers set "_dd.p.tid" only on the chunk root.
+        // The OTLP mapper must apply that high-bits value to every span in the chunk
+        // so receivers see the full 128-bit trace_id on every span.
+        let resource_info = OtlpResourceInfo::default();
+        let low: u128 = 0xD269B633813FC60C_u128;
+        let mut root: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        root.meta.insert(
+            "_dd.p.tid".into(),
+            libdd_tinybytes::BytesString::from_static("5b8efff798038103"),
+        );
+        let child_a: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 2,
+            parent_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("child_a"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let child_b: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 3,
+            parent_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("child_b"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![root, child_a, child_b]], &resource_info);
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert_eq!(spans.len(), 3);
+        let expected = "5b8efff798038103d269b633813fc60c";
+        for s in spans {
+            assert_eq!(s.trace_id, expected, "span {} mismatched", s.span_id);
+        }
+    }
+
+    #[test]
+    fn test_128bit_trace_id_isolation_across_chunks() {
+        // The chunk-level high bits must not leak across chunks. Each chunk's spans
+        // get only their own chunk root's "_dd.p.tid".
+        let resource_info = OtlpResourceInfo::default();
+        let low_a: u128 = 0x1111111111111111_u128;
+        let low_b: u128 = 0x2222222222222222_u128;
+        let mut root_a: Span<BytesData> = Span {
+            trace_id: low_a,
+            span_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("root_a"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        root_a.meta.insert(
+            "_dd.p.tid".into(),
+            libdd_tinybytes::BytesString::from_static("aaaaaaaaaaaaaaaa"),
+        );
+        let child_a: Span<BytesData> = Span {
+            trace_id: low_a,
+            span_id: 2,
+            parent_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("child_a"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let mut root_b: Span<BytesData> = Span {
+            trace_id: low_b,
+            span_id: 3,
+            name: libdd_tinybytes::BytesString::from_static("root_b"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        root_b.meta.insert(
+            "_dd.p.tid".into(),
+            libdd_tinybytes::BytesString::from_static("bbbbbbbbbbbbbbbb"),
+        );
+        let child_b: Span<BytesData> = Span {
+            trace_id: low_b,
+            span_id: 4,
+            parent_id: 3,
+            name: libdd_tinybytes::BytesString::from_static("child_b"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(
+            vec![vec![root_a, child_a], vec![root_b, child_b]],
+            &resource_info,
+        );
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert_eq!(spans.len(), 4);
+        // Spans 1, 2 belong to chunk A; spans 3, 4 to chunk B.
+        let expect_a = "aaaaaaaaaaaaaaaa1111111111111111";
+        let expect_b = "bbbbbbbbbbbbbbbb2222222222222222";
+        assert_eq!(spans[0].trace_id, expect_a);
+        assert_eq!(spans[1].trace_id, expect_a);
+        assert_eq!(spans[2].trace_id, expect_b);
+        assert_eq!(spans[3].trace_id, expect_b);
+    }
+
+    #[test]
+    fn test_per_span_dd_p_tid_overrides_chunk() {
+        // If a span carries its own "_dd.p.tid", that value wins over the chunk-root value.
+        // This matters for tracers that may propagate the tag everywhere (forward-compat),
+        // or pathological mixed-chunk scenarios.
+        let resource_info = OtlpResourceInfo::default();
+        let low: u128 = 0xD269B633813FC60C_u128;
+        let mut root: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        root.meta.insert(
+            "_dd.p.tid".into(),
+            libdd_tinybytes::BytesString::from_static("aaaaaaaaaaaaaaaa"),
+        );
+        let mut child_own: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 2,
+            parent_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("child_own"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        child_own.meta.insert(
+            "_dd.p.tid".into(),
+            libdd_tinybytes::BytesString::from_static("cccccccccccccccc"),
+        );
+        let child_inherits: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 3,
+            parent_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("child_inherits"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![root, child_own, child_inherits]], &resource_info);
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert_eq!(spans[0].trace_id, "aaaaaaaaaaaaaaaad269b633813fc60c");
+        assert_eq!(spans[1].trace_id, "ccccccccccccccccd269b633813fc60c");
+        assert_eq!(spans[2].trace_id, "aaaaaaaaaaaaaaaad269b633813fc60c");
+    }
+
+    #[test]
+    fn test_chunk_with_malformed_dd_p_tid_on_root_falls_back() {
+        // If the chunk root's "_dd.p.tid" fails to parse, the scan continues looking for
+        // any other parseable value in the chunk before giving up. This keeps a malformed
+        // tag on one span from poisoning the rest of the trace.
+        let resource_info = OtlpResourceInfo::default();
+        let low: u128 = 0xD269B633813FC60C_u128;
+        let mut root: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        root.meta.insert(
+            "_dd.p.tid".into(),
+            libdd_tinybytes::BytesString::from_static("not-hex"),
+        );
+        let child_no_tag: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 2,
+            parent_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("child_no_tag"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let mut child_valid: Span<BytesData> = Span {
+            trace_id: low,
+            span_id: 3,
+            parent_id: 1,
+            name: libdd_tinybytes::BytesString::from_static("child_valid"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        child_valid.meta.insert(
+            "_dd.p.tid".into(),
+            libdd_tinybytes::BytesString::from_static("dddddddddddddddd"),
+        );
+        let req = map_traces_to_otlp(vec![vec![root, child_no_tag, child_valid]], &resource_info);
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        // root keeps its malformed tag → per-span lookup fails → fall back to chunk-level
+        // which itself skips the malformed root and picks up child_valid's tag.
+        let expected = "ddddddddddddddddd269b633813fc60c";
+        assert_eq!(spans[0].trace_id, expected);
+        assert_eq!(spans[1].trace_id, expected);
+        // child_valid keeps its own (which equals the chunk value here).
+        assert_eq!(spans[2].trace_id, expected);
+    }
+
+    #[test]
+    fn test_empty_chunk_does_not_panic() {
+        // Defensive: an empty chunk should produce no spans and not panic.
+        let resource_info = OtlpResourceInfo::default();
+        let empty: Vec<Vec<Span<BytesData>>> = vec![vec![]];
+        let req = map_traces_to_otlp(empty, &resource_info);
+        let spans = &req.resource_spans[0].scope_spans[0].spans;
+        assert!(spans.is_empty());
     }
 
     #[test]
