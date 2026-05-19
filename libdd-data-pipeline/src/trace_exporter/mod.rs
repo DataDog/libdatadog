@@ -501,6 +501,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    #[allow(clippy::future_not_send, reason = "T: TraceData text/bytes not required to be Send; adding bound would be an API break")]
     pub async fn send_trace_chunks_async<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
@@ -510,6 +511,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     }
 
     /// Sends trace chunks via OTLP HTTP/JSON when OTLP config is enabled.
+    #[allow(clippy::future_not_send, reason = "T: TraceData text/bytes not required to be Send; adding bound would be an API break")]
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
@@ -610,6 +612,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         self.handle_send_result(result, chunks, payload_len)
     }
 
+    #[allow(clippy::future_not_send, reason = "T: TraceData text/bytes not required to be Send; adding bound would be an API break")]
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,

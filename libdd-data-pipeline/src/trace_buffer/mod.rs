@@ -559,6 +559,7 @@ impl<T> Receiver<T> {
         Ok(())
     }
 
+    #[allow(clippy::future_not_send, reason = "T lacks Send bound; adding it would be an API break")]
     async fn receive(&self, timeout: Duration) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
         loop {
             // Enable the notify future BEFORE acquiring the lock to avoid lost wakeups:

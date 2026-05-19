@@ -34,6 +34,7 @@ pub enum FetchInfoStatus {
 /// If either the agent state hash or container tags hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
+#[allow(clippy::future_not_send, reason = "C lacks Sync bound; adding it would be an API break")]
 async fn fetch_info_with_state_and_container_tags<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
@@ -64,6 +65,7 @@ async fn fetch_info_with_state_and_container_tags<C: HttpClientCapability + Slee
 /// If the state hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
+#[allow(clippy::future_not_send, reason = "C lacks Sync bound; adding it would be an API break")]
 pub async fn fetch_info_with_state<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
@@ -92,6 +94,7 @@ pub async fn fetch_info_with_state<C: HttpClientCapability + SleepCapability>(
 /// # Ok(())
 /// # }
 /// ```
+#[allow(clippy::future_not_send, reason = "C lacks Sync bound; adding it would be an API break")]
 pub async fn fetch_info<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
 ) -> Result<Box<AgentInfo>> {
@@ -106,6 +109,7 @@ pub async fn fetch_info<C: HttpClientCapability + SleepCapability>(
 ///
 /// Returns a tuple of (`state_hash`, `response_body_bytes`, `container_tags_hash`).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
+#[allow(clippy::future_not_send, reason = "C lacks Sync bound; adding it would be an API break")]
 async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
 ) -> Result<(String, bytes::Bytes, Option<String>)> {
@@ -120,7 +124,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
     // Runtime-agnostic timeout: race the request against a capability-driven
     // sleep instead of `tokio::time::timeout`, which requires a tokio reactor
     // (not available on wasm where we run on the JS event loop).
-    let res = tokio::select! {
+    let response = tokio::select! {
         biased;
         result = client.request(req) => result?,
         () = sleeper.sleep(timeout) => {
@@ -129,13 +133,13 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
     };
 
     // Extract the Datadog-Container-Tags-Hash header
-    let container_tags_hash = res
+    let container_tags_hash = response
         .headers()
         .get("Datadog-Container-Tags-Hash")
         .and_then(|v| v.to_str().ok())
         .map(std::string::ToString::to_string);
 
-    let body_data = res.into_body();
+    let body_data = response.into_body();
     let hash = format!("{:x}", Sha256::digest(&body_data));
 
     Ok((hash, body_data, container_tags_hash))
@@ -292,6 +296,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
 
 impl<C: HttpClientCapability + SleepCapability + Sync> AgentInfoFetcher<C> {
     /// Fetch agent info and update cache if needed
+    #[allow(clippy::future_not_send, reason = "C lacks Sync bound; adding it would be an API break")]
     async fn fetch_and_update(&self) {
         let current_info = AGENT_INFO_CACHE.load();
         let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
