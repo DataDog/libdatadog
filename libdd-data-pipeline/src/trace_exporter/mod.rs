@@ -603,7 +603,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             }
         }
 
-        self.handle_send_result(result, chunks, payload_len).await
+        self.handle_send_result(result, chunks, payload_len)
     }
 
     async fn send_trace_chunks_inner<T: TraceData>(
@@ -664,7 +664,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     }
 
     /// Handle the result of sending traces to the agent
-    async fn handle_send_result(
+    fn handle_send_result(
         &self,
         result: SendWithRetryResult,
         chunks: usize,
@@ -673,14 +673,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         match result {
             Ok((response, attempts)) => {
                 self.handle_agent_response(chunks, response, payload_len, attempts)
-                    .await
             }
-            Err(err) => self.handle_send_error(err, payload_len, chunks).await,
+            Err(err) => self.handle_send_error(err, payload_len, chunks),
         }
     }
 
     /// Handle errors from send with retry operation
-    async fn handle_send_error(
+    fn handle_send_error(
         &self,
         err: SendWithRetryError,
         payload_len: usize,
@@ -691,7 +690,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         match err {
             SendWithRetryError::Http(response, attempts) => {
                 self.handle_http_send_error(response, payload_len, chunks, attempts)
-                    .await
             }
             SendWithRetryError::Timeout(attempts) => {
                 let send_result =
@@ -732,7 +730,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     }
 
     /// Handle HTTP error responses from send with retry
-    async fn handle_http_send_error(
+    fn handle_http_send_error(
         &self,
         response: http::Response<Bytes>,
         payload_len: usize,
@@ -790,19 +788,19 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         attempts: u32,
         body: String,
         payload_version_changed: bool,
-    ) -> Result<AgentResponse, TraceExporterError> {
+    ) -> AgentResponse {
         debug!(chunks = chunks, "Trace chunks sent successfully to agent");
         let send_result = SendResult::success(payload_len, chunks, attempts);
         self.emit_send_result(&send_result);
 
-        Ok(if payload_version_changed {
+        if payload_version_changed {
             AgentResponse::Changed { body }
         } else {
             AgentResponse::Unchanged
-        })
+        }
     }
 
-    async fn handle_agent_response(
+    fn handle_agent_response(
         &self,
         chunks: usize,
         response: http::Response<Bytes>,
@@ -833,13 +831,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             )));
         }
 
-        self.handle_successful_trace_response(
+        Ok(self.handle_successful_trace_response(
             chunks,
             payload_len,
             attempts,
             body,
             payload_version_changed,
-        )
+        ))
     }
 
     fn get_agent_url(&self) -> Uri {
@@ -941,7 +939,7 @@ mod tests {
     }
 
     fn build_test_exporter(
-        url: String,
+        url: &str,
         dogstatsd_url: Option<String>,
         input: TraceExporterInputFormat,
         output: TraceExporterOutputFormat,
@@ -950,7 +948,7 @@ mod tests {
     ) -> TraceExporter<NativeCapabilities> {
         let mut builder = TraceExporterBuilder::default();
         builder
-            .set_url(&url)
+            .set_url(url)
             .set_service("test")
             .set_env("staging")
             .set_tracer_version("v0.1")
@@ -992,7 +990,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            &fake_agent.url("/v0.4/traces"),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1062,7 +1060,7 @@ mod tests {
         let fake_agent = MockServer::start();
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            &fake_agent.url("/v0.4/traces"),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1098,7 +1096,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            &fake_agent.url("/v0.4/traces"),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1206,7 +1204,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            &fake_agent.url("/v0.4/traces"),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1310,7 +1308,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            &fake_agent.url("/v0.4/traces"),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1554,7 +1552,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            server.url("/"),
+            &server.url("/"),
             None,
             TraceExporterInputFormat::V05,
             TraceExporterOutputFormat::V05,
@@ -2075,13 +2073,13 @@ mod single_threaded_tests {
 
     #[cfg(feature = "stats-obfuscation")]
     fn build_obfuscation_test_exporter(
-        url: String,
+        url: &str,
         runtime: Arc<SharedRuntime>,
         opt_in: bool,
     ) -> TraceExporter<NativeCapabilities> {
         let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
-            .set_url(&url)
+            .set_url(url)
             .set_service("test")
             .set_env("staging")
             .set_tracer_version("v0.1")
@@ -2133,7 +2131,7 @@ mod single_threaded_tests {
         });
 
         let runtime = Arc::new(SharedRuntime::new().unwrap());
-        let exporter = build_obfuscation_test_exporter(server.url("/"), runtime.clone(), opt_in);
+        let exporter = build_obfuscation_test_exporter(&server.url("/"), runtime.clone(), opt_in);
 
         while agent_info::get_agent_info().is_none() {
             std::thread::sleep(Duration::from_millis(100));

@@ -57,7 +57,7 @@ impl TraceSerializer {
         let payload = self.collect_and_process_traces(traces)?;
         let chunks = payload.size();
         let headers =
-            self.build_traces_headers(header_tags, chunks, agent_payload_response_version);
+            Self::build_traces_headers(header_tags, chunks, agent_payload_response_version);
         let mp_payload = self.serialize_payload(&payload)?;
 
         Ok(PreparedTracesPayload {
@@ -83,7 +83,6 @@ impl TraceSerializer {
 
     /// Build HTTP headers for traces request
     fn build_traces_headers(
-        &self,
         header_tags: TracerHeaderTags<'_>,
         chunk_count: usize,
         agent_payload_response_version: Option<&AgentResponsePayloadVersion>,
@@ -186,9 +185,9 @@ mod tests {
 
     #[test]
     fn test_build_traces_headers() {
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
+        let _serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let header_tags = create_test_header_tags();
-        let headers = serializer.build_traces_headers(header_tags, 3, None);
+        let headers = TraceSerializer::build_traces_headers(header_tags, 3, None);
 
         // Check basic headers are present
         assert_eq!(headers.get(DATADOG_SEND_REAL_HTTP_STATUS).unwrap(), "1");
@@ -216,9 +215,9 @@ mod tests {
     #[test]
     fn test_build_traces_headers_with_agent_version() {
         let agent_version = AgentResponsePayloadVersion::new();
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
+        let _serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
         let header_tags = create_test_header_tags();
-        let headers = serializer.build_traces_headers(header_tags, 2, Some(&agent_version));
+        let headers = TraceSerializer::build_traces_headers(header_tags, 2, Some(&agent_version));
 
         // Check that agent payload version header is included
         assert!(headers.contains_key(DATADOG_RATES_PAYLOAD_VERSION));
@@ -417,8 +416,8 @@ mod tests {
             ..Default::default()
         };
 
-        let serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
-        let headers = serializer.build_traces_headers(header_tags, 1, None);
+        let _serializer = TraceSerializer::new(TraceExporterOutputFormat::V04);
+        let headers = TraceSerializer::build_traces_headers(header_tags, 1, None);
 
         assert_eq!(headers.get("datadog-meta-lang").unwrap(), "python");
         assert_eq!(headers.get("datadog-meta-lang-version").unwrap(), "3.9.0");

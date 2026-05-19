@@ -195,7 +195,7 @@ struct Batch<T> {
     last_flush: Instant,
     byte_count: usize,
     max_buffered_bytes: usize,
-    batch_gen: BatchGeneration,
+    generation: BatchGeneration,
 }
 
 // Pre-allocate the batch buffer to avoid reallocations on small sizes.
@@ -204,13 +204,13 @@ const PRE_ALLOCATE_CHUNKS: usize = 400;
 
 impl<T> Batch<T> {
     fn new(max_buffered_bytes: usize) -> Self {
-        let mut batch_gen = BatchGeneration::default();
-        batch_gen.incr();
+        let mut generation = BatchGeneration::default();
+        generation.incr();
         Self {
             chunks: Vec::with_capacity(PRE_ALLOCATE_CHUNKS),
             last_flush: Instant::now(),
             byte_count: 0,
-            batch_gen,
+            generation,
             max_buffered_bytes,
         }
     }
@@ -220,17 +220,17 @@ impl<T> Batch<T> {
             chunks,
             last_flush,
             byte_count,
-            batch_gen,
+            generation,
             max_buffered_bytes: _max_buffered_bytes,
         } = self;
         chunks.clear();
         *last_flush = Instant::now();
         *byte_count = 0;
 
-        *batch_gen = {
-            let mut batch_gen = BatchGeneration::default();
-            batch_gen.incr();
-            batch_gen
+        *generation = {
+            let mut generation = BatchGeneration::default();
+            generation.incr();
+            generation
         };
     }
 
@@ -265,7 +265,7 @@ impl<T> Batch<T> {
         self.byte_count = 0;
         self.last_flush = Instant::now();
         if !chunks.is_empty() {
-            self.batch_gen.incr();
+            self.generation.incr();
         }
         chunks
     }
@@ -482,7 +482,7 @@ impl<T> Sender<T> {
             return Err(TraceBufferError::BatchFull(e));
         }
         state.metrics.spans_queued += chunk_len;
-        let gen = state.batch.batch_gen;
+        let gen = state.batch.generation;
         if !state.flush_needed
             && (state.batch.byte_count > self.flush_trigger_bytes || self.synchronous_write)
         {
@@ -494,6 +494,7 @@ impl<T> Sender<T> {
         Ok(gen)
     }
 
+    #[allow(clippy::significant_drop_tightening)] // notify_receiver consumes the guard by value
     fn trigger_flush(&self) -> Result<(), TraceBufferError> {
         let mut state = self.get_running_state()?;
         state.flush_needed = true;
@@ -528,6 +529,7 @@ impl<T> Receiver<T> {
         self.waiter.state.lock().map_err(|_| MutexPoisonedError)
     }
 
+    #[allow(clippy::significant_drop_tightening)] // notify_sender consumes the guard by value
     fn shutdown_done(&self) -> Result<(), MutexPoisonedError> {
         let mut state = self.lock_state()?;
         state.has_shutdown = true;
@@ -587,6 +589,7 @@ impl<T> Receiver<T> {
         }
     }
 
+    #[allow(clippy::significant_drop_tightening)] // notify_sender consumes the guard by value
     fn ack_export(&self) -> Result<(), MutexPoisonedError> {
         let mut state = self.lock_state()?;
         state.last_flush_generation.incr();

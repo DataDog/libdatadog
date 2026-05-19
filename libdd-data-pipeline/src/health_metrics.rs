@@ -183,7 +183,7 @@ pub const TRANSPORT_DROPPED_BYTES: &str = "datadog.tracer.exporter.transport.dro
 /// retries occur)
 pub const TRANSPORT_REQUESTS: &str = "datadog.tracer.exporter.transport.requests";
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub enum HealthMetric {
     Count(&'static str, i64),
@@ -208,7 +208,7 @@ pub enum TransportErrorType {
 }
 
 impl TransportErrorType {
-    pub(crate) fn as_tag_value(&self) -> Cow<'static, str> {
+    pub(crate) fn as_tag_value(self) -> Cow<'static, str> {
         match self {
             Self::Http(code) => Cow::Owned(code.to_string()),
             Self::Network => Cow::Borrowed("network"),

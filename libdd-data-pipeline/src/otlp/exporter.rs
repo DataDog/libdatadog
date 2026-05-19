@@ -63,11 +63,11 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
 
     match send_with_retry(capabilities, &target, json_body, &headers, &retry_strategy).await {
         Ok(_) => Ok(()),
-        Err(e) => Err(map_send_error(e).await),
+        Err(e) => Err(map_send_error(e)),
     }
 }
 
-async fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
+fn map_send_error(err: SendWithRetryError) -> TraceExporterError {
     match err {
         SendWithRetryError::Http(response, _) => {
             let status = response.status();

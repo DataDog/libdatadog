@@ -45,7 +45,7 @@ const CHUNKS_DROPPED_STR: &str = "trace_chunks_dropped";
 #[derive(Debug)]
 struct Metric {
     name: &'static str,
-    metric_type: MetricType,
+    kind: MetricType,
     namespace: MetricNamespace,
     tags: &'static [libdd_common::tag::Tag],
 }
@@ -53,25 +53,25 @@ struct Metric {
 const METRICS: &[Metric] = &[
     Metric {
         name: API_REQUEST_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[tag!["src_library", "libdatadog"]],
     },
     Metric {
         name: API_ERRORS_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[tag!["src_library", "libdatadog"], tag!["type", "network"]],
     },
     Metric {
         name: API_ERRORS_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[tag!["src_library", "libdatadog"], tag!["type", "timeout"]],
     },
     Metric {
         name: API_ERRORS_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[
             tag!["src_library", "libdatadog"],
@@ -80,31 +80,31 @@ const METRICS: &[Metric] = &[
     },
     Metric {
         name: API_BYTES_STR,
-        metric_type: MetricType::Distribution,
+        kind: MetricType::Distribution,
         namespace: MetricNamespace::Tracers,
         tags: &[tag!["src_library", "libdatadog"]],
     },
     Metric {
         name: API_RESPONSES_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[tag!["src_library", "libdatadog"]],
     },
     Metric {
         name: CHUNKS_SENT_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[tag!["src_library", "libdatadog"]],
     },
     Metric {
         name: CHUNKS_DROPPED_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[tag!["src_library", "libdatadog"], tag!["reason", "p0_drop"]],
     },
     Metric {
         name: CHUNKS_DROPPED_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[
             tag!["src_library", "libdatadog"],
@@ -113,7 +113,7 @@ const METRICS: &[Metric] = &[
     },
     Metric {
         name: CHUNKS_DROPPED_STR,
-        metric_type: MetricType::Count,
+        kind: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[
             tag!["src_library", "libdatadog"],
@@ -141,7 +141,7 @@ impl Metrics {
             let key = worker.register_metric_context(
                 metric.name.to_string(),
                 metric.tags.to_vec(),
-                metric.metric_type,
+                metric.kind,
                 true,
                 metric.namespace,
             );
