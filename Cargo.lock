@@ -1354,9 +1354,7 @@ name = "datadog-ffe"
 version = "1.0.0"
 dependencies = [
  "chrono",
- "criterion",
  "derive_more",
- "env_logger",
  "faststr",
  "libdd-common",
  "log",
@@ -1380,6 +1378,18 @@ dependencies = [
  "datadog-ffe",
  "function_name",
  "libdd-common-ffi",
+]
+
+[[package]]
+name = "datadog-ffe-test-suite"
+version = "33.0.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "datadog-ffe",
+ "env_logger",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2962,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3037,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3229,7 +3239,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3309,7 +3319,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
@@ -3335,7 +3345,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3352,7 +3362,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "3.0.1"
+version = "3.0.2"
 dependencies = [
  "bolero",
  "prost",
@@ -3366,7 +3376,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3393,7 +3403,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
