@@ -167,12 +167,6 @@ impl DatadogAgentContainerBuilder {
             ));
         }
 
-        // The image default is SNAPSHOT_CI=1 (CI mode). Override with the host's CI setting so
-        // local runs (CI unset → "0") can auto-generate missing snapshot files while CI pipelines
-        // (CI=1) validate against committed ones.
-        let snapshot_ci = std::env::var("CI").unwrap_or_else(|_| "0".to_string());
-        env_vars.push(("SNAPSHOT_CI".to_string(), snapshot_ci));
-
         DatadogAgentContainerBuilder {
             mounts,
             env_vars,
