@@ -289,7 +289,9 @@ mod tests {
         ensure_crypto_provider();
         AgentClient::builder()
             .http("localhost", port)
-            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "", "2.0"))
+            .language_metadata(LanguageMetadata::new(
+                "python", "3.12", "CPython", "", "2.0",
+            ))
             .build()
             .unwrap()
     }
@@ -318,7 +320,9 @@ mod tests {
         ensure_crypto_provider();
         let client = AgentClient::builder()
             .http("localhost", 80)
-            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "", "2.0"))
+            .language_metadata(LanguageMetadata::new(
+                "python", "3.12", "CPython", "", "2.0",
+            ))
             .extra_headers(vec![("X-Custom".to_owned(), "custom value".to_owned())])
             .build()
             .unwrap();

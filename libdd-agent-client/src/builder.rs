@@ -308,7 +308,9 @@ mod tests {
     #[test]
     fn build_fails_without_transport() {
         let result = AgentClientBuilder::new()
-            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "", "2.0"))
+            .language_metadata(LanguageMetadata::new(
+                "python", "3.12", "CPython", "", "2.0",
+            ))
             .build();
         assert!(matches!(result, Err(BuildError::MissingTransport)));
     }
@@ -324,7 +326,9 @@ mod tests {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let result = AgentClientBuilder::new()
             .http("localhost", 8126)
-            .language_metadata(LanguageMetadata::new("python", "3.12", "CPython", "", "2.0"))
+            .language_metadata(LanguageMetadata::new(
+                "python", "3.12", "CPython", "", "2.0",
+            ))
             .build();
         assert!(result.is_ok());
     }
