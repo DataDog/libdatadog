@@ -28,6 +28,14 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Build `libdatadog` as usual with `cargo build`.
 
+This repository uses git submodules for shared test data. If tests that depend
+on fixture data fail because files are missing, initialize submodules from the
+repository root:
+
+```bash
+git submodule update --init --recursive
+```
+
 #### Builder crate
 
 You can generate a release using the builder crate. This will trigger all the necessary steps to create the libraries, binaries, headers and package config files needed to use a pre-built libdatadog binary in a (non-rust) project.
