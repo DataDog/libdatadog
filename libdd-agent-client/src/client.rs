@@ -248,7 +248,7 @@ fn parse_rate_by_service(body: &Bytes) -> Option<HashMap<String, f64>> {
         .and_then(|r| r.rate_by_service)
 }
 
-/// Return `Ok(())` for 2xx, or `Err(SendError::HttpError)` for anything else.
+/// Return `Ok(())` for status codes below 400, or `Err(SendError::HttpError)` for 4xx/5xx.
 fn check_status(response: libdd_http_client::HttpResponse) -> Result<(), SendError> {
     if response.status_code() >= 400 {
         Err(SendError::HttpError {
