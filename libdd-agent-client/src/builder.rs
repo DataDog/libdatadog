@@ -288,25 +288,14 @@ impl AgentClientBuilder {
             headers.push(("x-datadog-test-session-token".to_string(), token));
         }
 
-        headers.extend(Self::container_headers());
+        // This reads `DD_EXTERNAL_ENV` from the process environment, which can race
+        // with non-Rust code (e.g. the host runtime) mutating the env concurrently.
+        // Long-term this value should be passed in explicitly via the builder API.
+        headers.extend(
+            libdd_common::entity_id::get_entity_headers()
+                .map(|(k, v)| (k.to_owned(), v.to_owned())),
+        );
         headers.extend(extra_headers);
-
-        headers
-    }
-
-    /// Read container / entity-ID headers from the host environment.
-    fn container_headers() -> Vec<(String, String)> {
-        use libdd_common::entity_id;
-
-        let mut headers = Vec::new();
-
-        if let Some(container_id) = entity_id::get_container_id() {
-            headers.push(("Datadog-Container-Id".to_string(), container_id.to_owned()));
-        }
-
-        if let Some(entity_id) = entity_id::get_entity_id() {
-            headers.push(("Datadog-Entity-ID".to_string(), entity_id.to_owned()));
-        }
 
         headers
     }

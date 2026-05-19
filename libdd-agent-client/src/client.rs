@@ -28,8 +28,8 @@ use crate::{
 ///   `Datadog-Meta-Lang-Interpreter`, `Datadog-Meta-Tracer-Version`) from the [`LanguageMetadata`]
 ///   supplied when creating the client.
 /// - `User-Agent` derived from [`LanguageMetadata::user_agent`].
-/// - Container/entity-ID headers (`Datadog-Container-Id`, `Datadog-Entity-ID`,
-///   `Datadog-External-Env`) read from `/proc/self/cgroup` at startup.
+/// - Container/entity-ID headers (`Datadog-Container-Id`, `Datadog-Entity-ID`) read from
+///   `/proc/self/cgroup` at startup, and `Datadog-External-Env` from `DD_EXTERNAL_ENV`.
 /// - `x-datadog-test-session-token` when a test token was set.
 /// - Any extra headers registered via [`AgentClientBuilder::extra_headers`].
 ///
