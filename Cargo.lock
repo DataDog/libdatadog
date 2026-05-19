@@ -2972,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3345,7 +3345,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3376,7 +3376,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
