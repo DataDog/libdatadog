@@ -329,6 +329,7 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
         )
     }
 
+    #[allow(clippy::significant_drop_tightening, reason = "guard must be held across the condvar wait; early drop would be incorrect")]
     pub fn send_chunk(&self, trace_chunk: Vec<T>) -> Result<(), TraceBufferError> {
         if trace_chunk.is_empty() {
             return Ok(());
@@ -357,6 +358,7 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
         }
     }
 
+    #[allow(clippy::significant_drop_tightening, reason = "guard must be held across the condvar wait; early drop would be incorrect")]
     pub fn wait_shutdown_done(&self, timeout: Duration) -> Result<(), TraceBufferError> {
         self.tx.wait_shutdown_done(timeout)
     }
@@ -421,6 +423,7 @@ struct Sender<T> {
 }
 
 impl<T> Sender<T> {
+    #[allow(clippy::significant_drop_tightening, reason = "guard must be held across the condvar wait; early drop would be incorrect")]
     fn wait_flush_done(
         &self,
         flush_gen: BatchGeneration,
@@ -502,6 +505,7 @@ impl<T> Sender<T> {
         Ok(())
     }
 
+    #[allow(clippy::significant_drop_tightening, reason = "guard must be held across the condvar wait; early drop would be incorrect")]
     fn wait_shutdown_done(&self, timeout: Duration) -> Result<(), TraceBufferError> {
         if timeout.is_zero() {
             return Err(TraceBufferError::TimedOut(Duration::ZERO));

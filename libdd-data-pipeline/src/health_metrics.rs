@@ -221,7 +221,7 @@ impl TransportErrorType {
     /// Per the health metrics specification:
     /// - 404 and 415 status codes do NOT emit dropped metrics
     /// - All other HTTP errors and non-HTTP errors emit dropped metrics
-    pub(crate) const fn should_emit_dropped_metrics(&self) -> bool {
+    pub(crate) const fn should_emit_dropped_metrics(self) -> bool {
         !matches!(self, Self::Http(404 | 415))
     }
 }
@@ -298,6 +298,7 @@ impl SendResult {
     /// A vector of `(HealthMetric, Option<Cow<'static, str>>)` tuples where:
     /// - The first element is the metric to emit
     /// - The second element is an optional tag value for error classification
+    #[allow(clippy::cast_possible_wrap, reason = "trace/byte counts never realistically exceed i64::MAX")]
     pub(crate) fn collect_metrics(&self) -> Vec<(HealthMetric, Option<Cow<'static, str>>)> {
         // Max capacity: 3 base + 1 outcome + 2 dropped
         let mut metrics = Vec::with_capacity(6);

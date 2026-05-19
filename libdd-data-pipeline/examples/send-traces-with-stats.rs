@@ -1,5 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![allow(
+    clippy::expect_used,
+    clippy::cast_possible_wrap,
+    clippy::cast_possible_truncation,
+    reason = "example binary: panics and lossy casts are acceptable"
+)]
 
 use clap::Parser;
 use libdd_capabilities_impl::NativeCapabilities;

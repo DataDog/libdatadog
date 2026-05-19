@@ -22,6 +22,7 @@ const OTLP_RETRY_DELAY_MS: u64 = 100;
 ///
 /// `test_token` is forwarded as `X-Datadog-Test-Session-Token` when set, enabling snapshot tests
 /// against the Datadog test agent's OTLP endpoint.
+#[allow(clippy::future_not_send, reason = "&C is not Send because C lacks Sync bound; adding it would be an API break")]
 pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &OtlpTraceConfig,
@@ -36,6 +37,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
 
     let target = Endpoint {
         url,
+        #[allow(clippy::cast_possible_truncation, reason = "timeout in millis fits comfortably in u64")]
         timeout_ms: config.timeout.as_millis() as u64,
         ..Endpoint::default()
     };

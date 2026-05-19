@@ -87,7 +87,7 @@ pub enum TraceExporterOutputFormat {
 
 impl TraceExporterOutputFormat {
     /// Add the agent trace endpoint path to the URL.
-    fn add_path(&self, url: &Uri) -> Uri {
+    fn add_path(self, url: &Uri) -> Uri {
         add_path(
             url,
             match self {
@@ -195,6 +195,7 @@ pub(crate) struct TraceExporterWorkers {
 /// another task to send stats when a time bucket expire. When this feature is enabled the
 /// `TraceExporter` drops all spans that may not be sampled by the agent.
 #[allow(missing_docs)]
+#[derive(Copy, Clone)]
 enum DeserInputFormat {
     V04,
     V05,
@@ -319,6 +320,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// * Ok(AgentResponse): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::cast_possible_wrap, reason = "trace counts never realistically exceed i64::MAX")]
     pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
@@ -355,6 +357,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             trace_count = traces.len(),
             "Trace deserialization completed successfully"
         );
+        #[allow(clippy::cast_possible_wrap, reason = "trace counts never realistically exceed i64::MAX")]
         self.emit_metric(
             HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
             None,
@@ -539,6 +542,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
     /// Deserializes, processes and sends trace chunks to the agent
     #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::cast_possible_wrap, reason = "trace counts never realistically exceed i64::MAX")]
     fn send_deser(
         &self,
         data: &[u8],
@@ -672,7 +676,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     ) -> Result<AgentResponse, TraceExporterError> {
         match result {
             Ok((response, attempts)) => {
-                self.handle_agent_response(chunks, response, payload_len, attempts)
+                self.handle_agent_response(chunks, &response, payload_len, attempts)
             }
             Err(err) => self.handle_send_error(err, payload_len, chunks),
         }
@@ -689,7 +693,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
         match err {
             SendWithRetryError::Http(response, attempts) => {
-                self.handle_http_send_error(response, payload_len, chunks, attempts)
+                self.handle_http_send_error(&response, payload_len, chunks, attempts)
             }
             SendWithRetryError::Timeout(attempts) => {
                 let send_result =
@@ -732,7 +736,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Handle HTTP error responses from send with retry
     fn handle_http_send_error(
         &self,
-        response: http::Response<Bytes>,
+        response: &http::Response<Bytes>,
         payload_len: usize,
         chunks: usize,
         attempts: u32,
@@ -740,7 +744,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         let status = response.status();
 
         // Check if the agent state has changed for error responses
-        self.info_response_observer.check_response(&response);
+        self.info_response_observer.check_response(response);
 
         let send_result = SendResult::failure(
             TransportErrorType::Http(status.as_u16()),
@@ -803,15 +807,15 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     fn handle_agent_response(
         &self,
         chunks: usize,
-        response: http::Response<Bytes>,
+        response: &http::Response<Bytes>,
         payload_len: usize,
         attempts: u32,
     ) -> Result<AgentResponse, TraceExporterError> {
         // Check if the agent state has changed
-        self.info_response_observer.check_response(&response);
+        self.info_response_observer.check_response(response);
 
         let status = response.status();
-        let payload_version_changed = self.check_payload_version_changed(&response);
+        let payload_version_changed = self.check_payload_version_changed(response);
         let body = String::from_utf8_lossy(response.body()).to_string();
 
         if !status.is_success() {

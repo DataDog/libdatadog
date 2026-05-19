@@ -111,7 +111,10 @@ impl TraceSerializer {
             .max(MIN_BUFFER_CAPACITY);
         let buff = match payload {
             tracer_payload::TraceChunks::V04(p) => {
-                msgpack_encoder::v04::to_vec_with_capacity(p, capacity as u32)
+                msgpack_encoder::v04::to_vec_with_capacity(
+                    p,
+                    u32::try_from(capacity).unwrap_or(u32::MAX),
+                )
             }
             tracer_payload::TraceChunks::V05(p) => {
                 let mut buff = Vec::with_capacity(capacity);

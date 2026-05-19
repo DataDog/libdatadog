@@ -1,5 +1,6 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![allow(clippy::expect_used, reason = "bench harness: panics are acceptable")]
 
 use std::collections::HashMap;
 use std::pin::Pin;

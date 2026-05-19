@@ -24,6 +24,7 @@ impl<'a> MetricsEmitter<'a> {
     }
 
     /// Emit a health metric to dogstatsd
+    #[allow(clippy::cast_precision_loss, reason = "metric values losing mantissa precision at >2^53 has no observable effect")]
     pub(crate) fn emit(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
         let has_custom_tags = custom_tags.is_some();
         if let Some(flusher) = self.dogstatsd {
