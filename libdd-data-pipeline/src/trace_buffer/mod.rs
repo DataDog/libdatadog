@@ -559,7 +559,7 @@ impl<T> Receiver<T> {
         Ok(())
     }
 
-    #[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — 1.84 fires on any async fn holding a non-Send T across .await; nightly 1.97+ only fires when the future is actually required to be Send")]
+    #[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
     async fn receive(&self, timeout: Duration) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
         loop {
             // Enable the notify future BEFORE acquiring the lock to avoid lost wakeups:

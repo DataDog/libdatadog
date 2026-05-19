@@ -34,7 +34,7 @@ pub enum FetchInfoStatus {
 /// If either the agent state hash or container tags hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-#[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — 1.84 fires on any async fn holding a non-Sync C across .await; nightly 1.97+ only fires when the future is actually required to be Send")]
+#[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
 async fn fetch_info_with_state_and_container_tags<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
@@ -65,7 +65,7 @@ async fn fetch_info_with_state_and_container_tags<C: HttpClientCapability + Slee
 /// If the state hash is different from the current one:
 /// - Return a `FetchInfoStatus::NewState` of the info struct
 /// - Else return `FetchInfoStatus::SameState`
-#[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — 1.84 fires on any async fn holding a non-Sync C across .await; nightly 1.97+ only fires when the future is actually required to be Send")]
+#[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
 pub async fn fetch_info_with_state<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
     current_state_hash: Option<&str>,
@@ -94,7 +94,7 @@ pub async fn fetch_info_with_state<C: HttpClientCapability + SleepCapability>(
 /// # Ok(())
 /// # }
 /// ```
-#[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — 1.84 fires on any async fn holding a non-Sync C across .await; nightly 1.97+ only fires when the future is actually required to be Send")]
+#[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
 pub async fn fetch_info<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
 ) -> Result<Box<AgentInfo>> {
@@ -109,7 +109,7 @@ pub async fn fetch_info<C: HttpClientCapability + SleepCapability>(
 ///
 /// Returns a tuple of (`state_hash`, `response_body_bytes`, `container_tags_hash`).
 /// The hash is calculated using SHA256 to match the agent's calculation method.
-#[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — 1.84 fires on any async fn holding a non-Sync C across .await; nightly 1.97+ only fires when the future is actually required to be Send")]
+#[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
 async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
     info_endpoint: &Endpoint,
 ) -> Result<(String, bytes::Bytes, Option<String>)> {
@@ -296,7 +296,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
 
 impl<C: HttpClientCapability + SleepCapability + Sync> AgentInfoFetcher<C> {
     /// Fetch agent info and update cache if needed
-    #[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — 1.84 fires on any async fn holding a non-Sync C across .await; nightly 1.97+ only fires when the future is actually required to be Send")]
+    #[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
     async fn fetch_and_update(&self) {
         let current_info = AGENT_INFO_CACHE.load();
         let current_hash = current_info.as_ref().map(|info| info.state_hash.as_str());
