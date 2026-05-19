@@ -39,7 +39,8 @@
          "_dd.p.tid": "0x0",
          "env": "test-env",
          "runtime-id": "test-runtime-id-value",
-         "service": "test-service"
+         "service": "test-service",
+         "span.kind": "internal"
        },
        "metrics": {
          "_dd_metric1": 1.0,

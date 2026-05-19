@@ -90,15 +90,21 @@ struct PayloadAttrs<'a> {
 
 fn extract_payload_attrs<'a, T: TraceData + 'a, S: AsRef<[Span<T>]>>(
     traces: &'a [S],
+    metadata: &'a TracerMetadata,
 ) -> PayloadAttrs<'a>
 where
     T::Text: 'a,
 {
-    let mut env = None;
-    let mut hostname = None;
-    let mut app_version = None;
+    // Prefer TracerMetadata (set once on the builder) over span scanning. Fall back to
+    // span meta only when the builder-level value is missing — e.g. v04 payloads where
+    // the SDK propagated these as span tags.
+    let mut env = (!metadata.env.is_empty()).then_some(metadata.env.as_str());
+    let mut hostname = (!metadata.hostname.is_empty()).then_some(metadata.hostname.as_str());
+    let mut app_version =
+        (!metadata.app_version.is_empty()).then_some(metadata.app_version.as_str());
+    let mut git_commit_sha =
+        (!metadata.git_commit_sha.is_empty()).then_some(metadata.git_commit_sha.as_str());
     let mut apm_mode = None;
-    let mut git_commit_sha = None;
 
     'outer: for trace in traces {
         for span in trace.as_ref() {
@@ -153,14 +159,25 @@ fn extract_chunk_attrs<'a, T: TraceData>(spans: &'a [Span<T>]) -> ChunkAttrs<'a>
 where
     T::Text: 'a,
 {
-    let mut trace_id = 0u128;
+    // trace_id is invariant per chunk. The v04 wire format carries only the low 64 bits;
+    // the high 64 bits are propagated as the hex string meta tag "_dd.p.tid".
+    let trace_id = spans
+        .first()
+        .map(|s| {
+            let high = s
+                .meta
+                .get("_dd.p.tid")
+                .and_then(|v| u64::from_str_radix(v.borrow(), 16).ok())
+                .unwrap_or(0);
+            ((high as u128) << 64) | s.trace_id
+        })
+        .unwrap_or(0);
+
     let mut sampling_priority = None;
     let mut origin = None;
     let mut sampling_mechanism = None;
 
     for span in spans {
-        trace_id = span.trace_id;
-
         // Root span: either no parent in this chunk, or tagged _dd.top_level=1 (remote parent).
         let is_root =
             span.parent_id == 0 || span.metrics.get("_dd.top_level").copied().unwrap_or(0.0) == 1.0;
@@ -223,7 +240,7 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     metadata: &TracerMetadata,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let mut table = StringTable::new();
-    let payload_attrs = extract_payload_attrs(traces);
+    let payload_attrs = extract_payload_attrs(traces, metadata);
 
     let attr_count =
         payload_attrs.apm_mode.is_some() as u32 + payload_attrs.git_commit_sha.is_some() as u32;
@@ -675,5 +692,167 @@ mod tests {
         let encoded_without = to_vec(&[vec![span]], &TracerMetadata::default());
         // Payload with metadata must be larger (it carries extra fields).
         assert!(encoded_with.len() > encoded_without.len());
+    }
+
+    #[test]
+    fn test_128bit_trace_id_from_dd_p_tid() {
+        let mut meta = HashMap::new();
+        meta.insert(
+            BytesString::from_static("_dd.p.tid"),
+            BytesString::from_static("640cfd5400000000"),
+        );
+        let span = SpanBytes {
+            service: BytesString::from_slice(b"svc").unwrap(),
+            name: BytesString::from_slice(b"op").unwrap(),
+            resource: BytesString::from_slice(b"res").unwrap(),
+            trace_id: 0x0123456789abcdef,
+            span_id: 1,
+            parent_id: 0,
+            start: 1000,
+            duration: 100,
+            meta,
+            ..Default::default()
+        };
+        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
+
+        // Expected 16-byte BE: high = 0x640cfd5400000000, low = 0x0123456789abcdef
+        let expected = [
+            0x64, 0x0c, 0xfd, 0x54, 0x00, 0x00, 0x00, 0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
+            0xcd, 0xef,
+        ];
+        assert!(
+            encoded.windows(16).any(|w| w == expected),
+            "128-bit trace_id big-endian bytes should appear in payload"
+        );
+        // _dd.p.tid must not also leak into span attributes.
+        let tid_key = b"_dd.p.tid";
+        assert!(
+            !encoded.windows(tid_key.len()).any(|w| w == tid_key),
+            "_dd.p.tid should be consumed, not encoded as a span attribute"
+        );
+    }
+
+    #[test]
+    fn test_128bit_trace_id_without_dd_p_tid() {
+        // Absent _dd.p.tid → high 64 bits zero.
+        let span = make_span("svc", "op", 0x0123456789abcdef, 1, 0);
+        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
+        let expected = [
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
+            0xcd, 0xef,
+        ];
+        assert!(
+            encoded.windows(16).any(|w| w == expected),
+            "absent _dd.p.tid should yield zero high 64 bits"
+        );
+    }
+
+    #[test]
+    fn test_sampling_mechanism_negative_value() {
+        // `_dd.p.dm` is a signed integer stored as a string (e.g. "-4" → manual rule).
+        // The encoder must parse it, take unsigned_abs, and emit it at chunk level.
+        let mut meta = HashMap::new();
+        meta.insert(
+            BytesString::from_static("_dd.p.dm"),
+            BytesString::from_static("-4"),
+        );
+        let root = SpanBytes {
+            service: BytesString::from_slice(b"svc").unwrap(),
+            name: BytesString::from_slice(b"op").unwrap(),
+            resource: BytesString::from_slice(b"res").unwrap(),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 1000,
+            duration: 100,
+            meta,
+            ..Default::default()
+        };
+        let encoded = to_vec(&[vec![root]], &TracerMetadata::default());
+
+        // The chunk-level sampling_mechanism (key 7) must be encoded as uint 4.
+        // The byte sequence is `chunk_key::SAMPLING_MECHANISM (0x07)` followed by the
+        // msgpack representation of 4 (positive fixint 0x04).
+        let expected = [chunk_key::SAMPLING_MECHANISM, 0x04];
+        assert!(
+            encoded.windows(2).any(|w| w == expected),
+            "sampling_mechanism should be encoded as unsigned_abs(\"-4\") = 4"
+        );
+    }
+
+    #[test]
+    fn test_chunk_attrs_fallback_no_root_span() {
+        // Partial flush: no root span (every span has a non-zero parent and no
+        // `_dd.top_level`). Values must be accumulated from non-root spans.
+        let mut meta1 = HashMap::new();
+        meta1.insert(
+            BytesString::from_static("_dd.origin"),
+            BytesString::from_static("lambda"),
+        );
+        let mut metrics2 = HashMap::new();
+        metrics2.insert(BytesString::from_static("_sampling_priority_v1"), 2.0f64);
+        let mut meta3 = HashMap::new();
+        meta3.insert(
+            BytesString::from_static("_dd.p.dm"),
+            BytesString::from_static("-3"),
+        );
+
+        let s1 = SpanBytes {
+            service: BytesString::from_slice(b"svc").unwrap(),
+            name: BytesString::from_slice(b"op1").unwrap(),
+            resource: BytesString::from_slice(b"res").unwrap(),
+            trace_id: 1,
+            span_id: 11,
+            parent_id: 10, // non-zero parent → not a root
+            start: 1000,
+            duration: 100,
+            meta: meta1,
+            ..Default::default()
+        };
+        let s2 = SpanBytes {
+            service: BytesString::from_slice(b"svc").unwrap(),
+            name: BytesString::from_slice(b"op2").unwrap(),
+            resource: BytesString::from_slice(b"res").unwrap(),
+            trace_id: 1,
+            span_id: 12,
+            parent_id: 11,
+            start: 1000,
+            duration: 100,
+            metrics: metrics2,
+            ..Default::default()
+        };
+        let s3 = SpanBytes {
+            service: BytesString::from_slice(b"svc").unwrap(),
+            name: BytesString::from_slice(b"op3").unwrap(),
+            resource: BytesString::from_slice(b"res").unwrap(),
+            trace_id: 1,
+            span_id: 13,
+            parent_id: 12,
+            start: 1000,
+            duration: 100,
+            meta: meta3,
+            ..Default::default()
+        };
+        let encoded = to_vec(&[vec![s1, s2, s3]], &TracerMetadata::default());
+
+        // Each attribute must be present at chunk level — collected from a different
+        // non-root span.
+        let lambda = b"lambda";
+        assert!(
+            encoded.windows(lambda.len()).any(|w| w == lambda),
+            "origin 'lambda' from span 1 should appear in payload"
+        );
+        // priority 2 → msgpack positive fixint 0x02 preceded by PRIORITY key
+        let prio = [chunk_key::PRIORITY, 0x02];
+        assert!(
+            encoded.windows(2).any(|w| w == prio),
+            "sampling_priority 2 from span 2 should appear"
+        );
+        // sampling_mechanism = unsigned_abs("-3") = 3 → 0x03 preceded by SAMPLING_MECHANISM key
+        let mech = [chunk_key::SAMPLING_MECHANISM, 0x03];
+        assert!(
+            encoded.windows(2).any(|w| w == mech),
+            "sampling_mechanism 3 from span 3 should appear"
+        );
     }
 }

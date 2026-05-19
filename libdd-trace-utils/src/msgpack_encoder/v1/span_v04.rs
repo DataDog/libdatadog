@@ -66,14 +66,17 @@ pub(super) enum AnyValueKey {
 }
 
 /// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
-fn span_kind_from_str(s: &str) -> Option<u32> {
+///
+/// Per the OTEL spec, missing or unrecognized values default to `Internal` (1) — this
+/// matches the agent's behavior in `pkg/trace/api/converter.go`.
+fn span_kind_from_str(s: &str) -> u32 {
     match s {
-        "internal" => Some(1),
-        "server" => Some(2),
-        "client" => Some(3),
-        "producer" => Some(4),
-        "consumer" => Some(5),
-        _ => None,
+        "server" => 2,
+        "client" => 3,
+        "producer" => 4,
+        "consumer" => 5,
+        // "internal" and any other string fall through to Internal.
+        _ => 1,
     }
 }
 
@@ -238,38 +241,43 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     span: &Span<T>,
     table: &mut StringTable,
 ) -> Result<(), ValueWriteError<W::Error>> {
+    let is_parent = span.parent_id != 0;
+    let has_duration = span.duration != 0;
+    let has_error = span.error != 0;
+
     // Extract promoted fields from meta — these get dedicated span-level keys and must
-    // not appear in the attributes array.
-    let env = span.meta.get("env").map(|v| v.borrow());
-    let version = span.meta.get("version").map(|v| v.borrow());
-    let component = span.meta.get("component").map(|v| v.borrow());
-    let kind = span
-        .meta
-        .get("span.kind")
-        .and_then(|v| span_kind_from_str(v.borrow()));
-
-    let is_promoted =
-        |k: &T::Text| matches!(k.borrow(), "env" | "version" | "component" | "span.kind");
-
+    // not appear in the attributes array. `_dd.p.tid` is consumed to reconstruct the
+    // 128-bit chunk-level trace_id and is dropped here so it doesn't appear twice.
+    let is_promoted = |k: &T::Text| {
+        matches!(
+            k.borrow(),
+            "env" | "version" | "component" | "span.kind" | "_dd.p.tid"
+        )
+    };
     let non_promoted_meta = span.meta.iter().filter(|(k, _)| !is_promoted(k)).count() as u32;
     let attr_count = non_promoted_meta + span.metrics.len() as u32 + span.meta_struct.len() as u32;
     let has_attributes = attr_count > 0;
 
-    let span_len = 2 // span_id, start — always present
+    let env = span.meta.get("env").map(|v| v.borrow());
+    let version = span.meta.get("version").map(|v| v.borrow());
+    let component = span.meta.get("component").map(|v| v.borrow());
+    // span.kind is always emitted — defaults to Internal per OTEL spec.
+    let kind = span_kind_from_str(span.meta.get("span.kind").map(|v| v.borrow()).unwrap_or(""));
+
+    let span_len = 3 // span_id, start, kind — always present
         + (!span.service.borrow().is_empty()) as u32
         + (!span.name.borrow().is_empty()) as u32
         + (!span.resource.borrow().is_empty()) as u32
         + (!span.r#type.borrow().is_empty()) as u32
-        + (span.parent_id != 0) as u32
-        + (span.duration != 0) as u32
-        + (span.error != 0) as u32
+        + is_parent as u32
+        + has_duration as u32
+        + has_error as u32
         + has_attributes as u32
         + (!span.span_links.is_empty()) as u32
         + (!span.span_events.is_empty()) as u32
         + env.is_some() as u32
         + version.is_some() as u32
-        + component.is_some() as u32
-        + kind.is_some() as u32;
+        + component.is_some() as u32;
 
     rmp::encode::write_map_len(writer, span_len)?;
 
@@ -291,22 +299,26 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     write_uint8(writer, SpanKey::SpanId as u8)?;
     write_u64(writer, span.span_id)?;
 
+    // `start` and `duration` are stored as i64 but the V1 spec encodes them as u64. A
+    // negative tracer-side value would wrap to a large unsigned integer; tracers must
+    // never emit negatives and the agent does the same `uint64(...)` cast in
+    // `pkg/trace/api/converter.go`.
     write_uint8(writer, SpanKey::Start as u8)?;
     write_u64(writer, span.start as u64)?;
 
-    if span.parent_id != 0 {
+    if is_parent {
         write_uint8(writer, SpanKey::ParentId as u8)?;
         write_u64(writer, span.parent_id)?;
     }
 
-    if span.duration != 0 {
+    if has_duration {
         write_uint8(writer, SpanKey::Duration as u8)?;
         write_u64(writer, span.duration as u64)?;
     }
 
-    if span.error != 0 {
+    if has_error {
         write_uint8(writer, SpanKey::Error as u8)?;
-        write_bool(writer, span.error != 0).map_err(ValueWriteError::InvalidDataWrite)?;
+        write_bool(writer, has_error).map_err(ValueWriteError::InvalidDataWrite)?;
     }
 
     if !span.r#type.borrow().is_empty() {
@@ -363,10 +375,8 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
         write_uint8(writer, SpanKey::Component as u8)?;
         table.write_interned(writer, v)?;
     }
-    if let Some(k) = kind {
-        write_uint8(writer, SpanKey::Kind as u8)?;
-        write_uint(writer, k as u64)?;
-    }
+    write_uint8(writer, SpanKey::Kind as u8)?;
+    write_uint(writer, kind as u64)?;
 
     Ok(())
 }
