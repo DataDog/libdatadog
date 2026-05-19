@@ -298,7 +298,10 @@ impl SendResult {
     /// A vector of `(HealthMetric, Option<Cow<'static, str>>)` tuples where:
     /// - The first element is the metric to emit
     /// - The second element is an optional tag value for error classification
-    #[allow(clippy::cast_possible_wrap, reason = "trace/byte counts never realistically exceed i64::MAX")]
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "trace/byte counts never realistically exceed i64::MAX"
+    )]
     pub(crate) fn collect_metrics(&self) -> Vec<(HealthMetric, Option<Cow<'static, str>>)> {
         // Max capacity: 3 base + 1 outcome + 2 dropped
         let mut metrics = Vec::with_capacity(6);

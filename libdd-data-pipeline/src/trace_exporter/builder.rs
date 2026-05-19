@@ -28,7 +28,10 @@ use std::time::Duration;
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
 #[allow(missing_docs)]
-#[allow(clippy::struct_excessive_bools, reason = "builder flags are independent feature toggles; enum refactor would break the API")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "builder flags are independent feature toggles; enum refactor would break the API"
+)]
 #[derive(Debug, Default)]
 pub struct TraceExporterBuilder {
     url: Option<String>,
@@ -292,7 +295,10 @@ impl TraceExporterBuilder {
 
     #[allow(missing_docs)]
     #[allow(clippy::items_after_statements)]
-    #[allow(clippy::too_many_lines, reason = "linear wiring function; splitting adds helpers with no independent meaning")]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "linear wiring function; splitting adds helpers with no independent meaning"
+    )]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
@@ -365,7 +371,10 @@ impl TraceExporterBuilder {
         let _ = info_fetcher_handle;
 
         #[allow(unused_mut)]
-        #[allow(clippy::useless_let_if_seq, reason = "cfg guard on the if-block prevents the if-let-else rewrite clippy wants")]
+        #[allow(
+            clippy::useless_let_if_seq,
+            reason = "cfg guard on the if-block prevents the if-let-else rewrite clippy wants"
+        )]
         let mut stats = StatsComputationStatus::Disabled;
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(bucket_size) = self.stats_bucket_size {

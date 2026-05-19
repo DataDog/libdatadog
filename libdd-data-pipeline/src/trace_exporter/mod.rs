@@ -320,7 +320,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// * Ok(AgentResponse): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
     #[cfg(not(target_arch = "wasm32"))]
-    #[allow(clippy::cast_possible_wrap, reason = "trace counts never realistically exceed i64::MAX")]
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "trace counts never realistically exceed i64::MAX"
+    )]
     pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info();
 
@@ -357,7 +360,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             trace_count = traces.len(),
             "Trace deserialization completed successfully"
         );
-        #[allow(clippy::cast_possible_wrap, reason = "trace counts never realistically exceed i64::MAX")]
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "trace counts never realistically exceed i64::MAX"
+        )]
         self.emit_metric(
             HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
             None,
@@ -501,7 +507,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
-    #[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
+    #[allow(
+        clippy::future_not_send,
+        reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0"
+    )]
     pub async fn send_trace_chunks_async<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
@@ -511,7 +520,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     }
 
     /// Sends trace chunks via OTLP HTTP/JSON when OTLP config is enabled.
-    #[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
+    #[allow(
+        clippy::future_not_send,
+        reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0"
+    )]
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
@@ -544,7 +556,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
     /// Deserializes, processes and sends trace chunks to the agent
     #[cfg(not(target_arch = "wasm32"))]
-    #[allow(clippy::cast_possible_wrap, reason = "trace counts never realistically exceed i64::MAX")]
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "trace counts never realistically exceed i64::MAX"
+    )]
     fn send_deser(
         &self,
         data: &[u8],
@@ -612,7 +627,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         self.handle_send_result(result, chunks, payload_len)
     }
 
-    #[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
+    #[allow(
+        clippy::future_not_send,
+        reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0"
+    )]
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,

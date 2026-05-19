@@ -329,7 +329,10 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
         )
     }
 
-    #[allow(clippy::significant_drop_tightening, reason = "guard must be held across the condvar wait; early drop would be incorrect")]
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "guard must be held across the condvar wait; early drop would be incorrect"
+    )]
     pub fn send_chunk(&self, trace_chunk: Vec<T>) -> Result<(), TraceBufferError> {
         if trace_chunk.is_empty() {
             return Ok(());
@@ -358,7 +361,10 @@ impl<T: Send + BufferSize + 'static> TraceBuffer<T> {
         }
     }
 
-    #[allow(clippy::significant_drop_tightening, reason = "guard must be held across the condvar wait; early drop would be incorrect")]
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "guard must be held across the condvar wait; early drop would be incorrect"
+    )]
     pub fn wait_shutdown_done(&self, timeout: Duration) -> Result<(), TraceBufferError> {
         self.tx.wait_shutdown_done(timeout)
     }
@@ -423,7 +429,10 @@ struct Sender<T> {
 }
 
 impl<T> Sender<T> {
-    #[allow(clippy::significant_drop_tightening, reason = "guard must be held across the condvar wait; early drop would be incorrect")]
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "guard must be held across the condvar wait; early drop would be incorrect"
+    )]
     fn wait_flush_done(
         &self,
         flush_gen: BatchGeneration,
@@ -505,7 +514,10 @@ impl<T> Sender<T> {
         Ok(())
     }
 
-    #[allow(clippy::significant_drop_tightening, reason = "guard must be held across the condvar wait; early drop would be incorrect")]
+    #[allow(
+        clippy::significant_drop_tightening,
+        reason = "guard must be held across the condvar wait; early drop would be incorrect"
+    )]
     fn wait_shutdown_done(&self, timeout: Duration) -> Result<(), TraceBufferError> {
         if timeout.is_zero() {
             return Err(TraceBufferError::TimedOut(Duration::ZERO));
@@ -559,7 +571,10 @@ impl<T> Receiver<T> {
         Ok(())
     }
 
-    #[allow(clippy::future_not_send, reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0")]
+    #[allow(
+        clippy::future_not_send,
+        reason = "FIXME: remove when MSRV > 1.84.1 — regression in 1.84.1 patch: future_not_send fires spuriously on async fns holding non-Send/Sync generics across .await even when the future is never required to be Send; fixed in 1.85.0"
+    )]
     async fn receive(&self, timeout: Duration) -> Result<Vec<TraceChunk<T>>, MutexPoisonedError> {
         loop {
             // Enable the notify future BEFORE acquiring the lock to avoid lost wakeups:

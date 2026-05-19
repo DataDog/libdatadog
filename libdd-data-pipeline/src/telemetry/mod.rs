@@ -249,7 +249,10 @@ impl TelemetryClient {
     /// # Arguments:
     ///
     /// * `telemetry_handle`: telemetry worker handle used to enqueue metrics.
-    #[allow(clippy::cast_precision_loss, reason = "metric counter values losing last few bits at >2^53 has no observable effect on dashboards")]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "metric counter values losing last few bits at >2^53 has no observable effect on dashboards"
+    )]
     pub fn send(&self, data: &SendPayloadTelemetry) -> Result<(), TelemetryError> {
         if data.requests_count > 0 {
             let key = self.metrics.get(metrics::MetricKind::ApiRequest);
