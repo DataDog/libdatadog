@@ -17,8 +17,8 @@
 //! use libdd_trace_utils::span::{v04::Span, SliceData};
 //!
 //! let mut span = Span::<SliceData<'_>>::default();
-//! span.name = "my-operation";
-//! span.service = "my-service";
+//! span.name = "my-operation".into();
+//! span.service = "my-service".into();
 //! span.trace_id = 1234567890u128;
 //!
 //! let sampler = DatadogSampler::new(vec![], 100);
