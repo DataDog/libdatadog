@@ -1,8 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::json_scanner::{Op, Scanner};
 use crate::obfuscation_config::{JsonObfuscatorConfig, JsonStringTransformer};
+mod scanner;
+use scanner::{Op, Scanner};
 
 /// Obfuscates a JSON string by replacing all leaf values with `"?"`, unless the value belongs to a
 /// key listed in `keep_keys`, in which case it is left verbatim.
