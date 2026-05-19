@@ -269,10 +269,10 @@ impl Profile {
 
         self.validate_string_id_sample_labels(&sample)?;
 
-        let labels = sample
-            .labels
-            .iter()
-            .map(|label| -> anyhow::Result<LabelId> {
+        let labels = {
+            let mut vec = Vec::new();
+            vec.try_reserve_exact(sample.labels.len())?;
+            for label in sample.labels.iter() {
                 let key = self.resolve(label.key)?;
                 let internal_label = if label.str != ManagedStringId::empty() {
                     let str = self.resolve(label.str)?;
@@ -283,9 +283,10 @@ impl Profile {
                     Label::num(key, num, num_unit)
                 };
 
-                self.labels.try_dedup(internal_label)
-            })
-            .collect::<Result<Box<[_]>, _>>()?;
+                vec.push(self.labels.try_dedup(internal_label)?);
+            }
+            vec.into_boxed_slice()
+        };
 
         let mut locations = Vec::new();
         locations.try_reserve_exact(sample.locations.len())?;
@@ -546,12 +547,10 @@ impl Profile {
         for (sample, timestamp, mut values) in iter {
             let off = sample.labels.to_offset();
             let labels = extended_label_sets.get_mut(off).ok_or_else(oob_label_set)?;
-            let location_ids: Vec<_> = self
-                .get_stacktrace(sample.stacktrace)?
-                .locations
-                .iter()
-                .map(Id::to_raw_id)
-                .collect();
+            let locations = &self.get_stacktrace(sample.stacktrace)?.locations;
+            let mut location_ids = Vec::new();
+            location_ids.try_reserve_exact(locations.len())?;
+            location_ids.extend(locations.iter().map(LocationId::to_raw_id));
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, labels);
 
