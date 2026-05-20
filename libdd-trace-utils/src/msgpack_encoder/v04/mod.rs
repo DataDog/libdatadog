@@ -128,27 +128,6 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
     buf.into_vec()
 }
 
-struct CountLength(u32);
-
-impl std::io::Write for CountLength {
-    #[inline]
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.write_all(buf)?;
-        Ok(buf.len())
-    }
-
-    #[inline]
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-
-    #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        self.0 += buf.len() as u32;
-        Ok(())
-    }
-}
-
 /// Computes the number of bytes required to encode the given traces.
 ///
 /// This does not allocate any actual buffer, but simulates writing in order to measure
@@ -165,7 +144,7 @@ impl std::io::Write for CountLength {
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::to_len;
+/// use libdd_trace_utils::msgpack_encoder::v04::to_encoded_byte_len;
 /// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let span = SpanSlice {
@@ -173,12 +152,12 @@ impl std::io::Write for CountLength {
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
-/// let encoded_len = to_len(&traces);
+/// let encoded_len = to_encoded_byte_len(&traces);
 ///
 /// assert!(encoded_len > 0);
 /// ```
-pub fn to_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
-    let mut counter = CountLength(0);
+pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
+    let mut counter = super::CountLength(0);
     #[allow(clippy::expect_used)]
     to_writer(&mut counter, traces).expect("infallible: CountLength never fails");
     counter.0
