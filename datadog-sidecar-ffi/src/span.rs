@@ -141,10 +141,6 @@ pub extern "C" fn ddog_get_traces_size(traces: &TracesBytes) -> usize {
     traces.len()
 }
 
-// Note that per [RFC3391](https://rust-lang.github.io/rfcs/3391-result_ffi_guarantees.html), we
-// can return values as `Option<&/&mut>` that will have the same ABI `*const/*mut TraceBytes`, with
-// `None` corresponding to `null`.
-
 // TODO: I don't think we need to return a mutable reference here
 #[no_mangle]
 pub extern "C" fn ddog_get_trace(
