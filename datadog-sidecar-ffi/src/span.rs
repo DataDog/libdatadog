@@ -163,8 +163,7 @@ pub extern "C" fn ddog_get_trace_size(trace: &TraceBytes) -> usize {
     trace.len()
 }
 
-// I don't think we need to return a mutable reference here, but when changing the return value
-// from `*mut` to `Option<&mut>`, we wanted to preserve the FFI at first.
+// TODO:I don't think we need to return a mutable reference here
 #[no_mangle]
 pub extern "C" fn ddog_get_span(trace: &mut TraceBytes, index: usize) -> Option<&mut SpanBytes> {
     trace.get_mut(index)
