@@ -257,7 +257,7 @@ fn check_status(response: libdd_http_client::HttpResponse) -> Result<(), SendErr
 }
 
 /// Default, fixed compression level for pipeline stats payloads.
-const GZIP_COMPRESSION_LEVEL : u32 = 6;
+const GZIP_COMPRESSION_LEVEL: u32 = 6;
 
 /// Gzip-compress `payload` at level [GZIP_COMPRESSION_LEVEL].
 fn gzip_compress(payload: Bytes) -> Result<Bytes, SendError> {

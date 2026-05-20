@@ -40,7 +40,7 @@ pub use agent_info::AgentInfo;
 pub use builder::{AgentClientBuilder, AgentTransport};
 pub use client::AgentClient;
 pub use error::{BuildError, SendError};
-pub use language_metadata::LanguageMetadata;
 pub use evp::EvpEventRequest;
+pub use language_metadata::LanguageMetadata;
 pub use telemetry::TelemetryRequest;
 pub use traces::{AgentResponse, TraceFormat, TraceSendOptions};
