@@ -15,6 +15,7 @@ use crate::{
     agent_info::AgentInfo,
     builder::AgentClientBuilder,
     error::SendError,
+    evp::EvpEventRequest,
     telemetry::TelemetryRequest,
     traces::{AgentResponse, TraceFormat, TraceSendOptions},
 };
@@ -158,27 +159,18 @@ impl AgentClient {
 
     /// Send an event via the agent's EVP (Event Platform) proxy.
     ///
-    /// The agent forwards the request to `<subdomain>.datadoghq.com<path>`. `subdomain`
-    /// controls the target intake (injected as `X-Datadog-EVP-Subdomain`); `path` is the
-    /// endpoint on that intake (e.g. `/api/v2/exposures`).
-    pub async fn send_evp_event(
-        &self,
-        subdomain: &str,
-        path: &str,
-        payload: Bytes,
-        content_type: &str,
-    ) -> Result<(), SendError> {
-        if !path.starts_with('/') {
-            return Err(SendError::InvalidPath {
-                path: path.to_owned(),
-            });
+    /// The agent forwards the request to `<subdomain>.datadoghq.com<path>`. See
+    /// [`EvpEventRequest`] for field details.
+    pub async fn send_evp_event(&self, req: EvpEventRequest) -> Result<(), SendError> {
+        if !req.path.starts_with('/') {
+            return Err(SendError::InvalidPath { path: req.path });
         }
 
-        let request = HttpRequest::new(HttpMethod::Post, format!("{}{}", self.base_url, path))
-            .with_body(payload)
+        let request = HttpRequest::new(HttpMethod::Post, format!("{}{}", self.base_url, req.path))
+            .with_body(req.body)
             .with_headers(self.static_headers.iter().cloned())
-            .with_header("Content-Type", content_type)
-            .with_header("X-Datadog-EVP-Subdomain", subdomain);
+            .with_header("Content-Type", req.content_type)
+            .with_header("X-Datadog-EVP-Subdomain", req.subdomain);
 
         let response = self.http.send(request).await?;
         check_status(response)
