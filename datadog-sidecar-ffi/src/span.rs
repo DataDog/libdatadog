@@ -218,9 +218,10 @@ pub unsafe extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
         return;
     }
 
-    // Safety: the owned char slices returned by functions of this API are `Box`-allocated.
+    // Safety: the owned char slices returned by functions comes from `CString::into_raw` in
+    // `ddog_span_debug_log`.
     unsafe {
-        let _ = Box::from_raw(ptr as *mut c_char);
+        let _ = CString::from_raw(ptr as *mut c_char);
     }
 }
 
