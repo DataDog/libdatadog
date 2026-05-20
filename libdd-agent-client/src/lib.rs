@@ -23,8 +23,9 @@
 //!
 //! # Fork safety
 //!
-//! The underlying `libdd-http-client` uses the `hickory-dns` DNS resolver by default, which is
-//! in-process and fork-safe.
+//! If this crate is used from a runtime that might fork, please enable the `reqwest-backend`
+//! feature which use the `hickory-dns` DNS resolver by default. The latter is in-process and
+//! fork-safe.
 
 pub(crate) mod agent_info;
 mod builder;
