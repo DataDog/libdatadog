@@ -8,15 +8,6 @@ use std::collections::HashMap;
 /// Wire format of the trace payload.
 ///
 /// Determines both the `Content-Type` header and the target endpoint.
-///
-/// # Format selection
-///
-/// The caller is currently responsible for choosing the format. In practice this means starting
-/// with [`TraceFormat::MsgpackV5`] and downgrading to [`TraceFormat::MsgpackV4`] when the agent
-/// returns 404 or 415 (e.g. on Windows, or when AppSec/IAST is active).
-///
-/// In a future version this negotiation may be moved into the client itself so that format
-/// selection becomes automatic and callers no longer need to track the downgrade state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TraceFormat {
     /// `application/msgpack` to `/v0.5/traces`. Preferred format.
