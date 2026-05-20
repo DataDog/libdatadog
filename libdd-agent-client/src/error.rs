@@ -30,7 +30,7 @@ pub enum SendError {
     #[error("transport error: {0}")]
     Transport(#[source] std::io::Error),
     /// The server returned an HTTP error status. Includes the raw status and body.
-    #[error("HTTP error {status}: {body:?}")]
+    #[error("HTTP error {status}: {body:.80?}")]
     HttpError {
         /// HTTP status code returned by the server.
         status: u16,
