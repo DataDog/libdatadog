@@ -12,6 +12,9 @@ use std::ffi::{c_char, CString};
 
 fn convert_char_slice_to_bytes_string(slice: CharSlice) -> BytesString {
     // TODO: Strip the invalid bytes in the tracer instead
+    // TODO: replace with
+    // [from_utf8_lossy_owned](https://doc.rust-lang.org/std/string/struct.String.html#method.from_utf8_lossy_owned)
+    // once stabilized
     match String::from_utf8_lossy(slice.as_bytes()) {
         Cow::Owned(s) => s.into(),
         Cow::Borrowed(_) => unsafe {
