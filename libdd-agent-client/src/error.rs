@@ -4,9 +4,10 @@
 //! Error types for [`crate::AgentClient`].
 
 use bytes::Bytes;
-use libdd_http_client::HttpClientError;
 use std::io::{Error, ErrorKind};
 use thiserror::Error;
+
+pub use libdd_http_client::HttpClientError;
 
 /// Errors that can occur when building an [`crate::AgentClient`].
 #[derive(Debug, Error)]
@@ -19,7 +20,7 @@ pub enum BuildError {
     MissingLanguageMetadata,
     /// The underlying HTTP client could not be constructed.
     #[error("HTTP client error: {0}")]
-    HttpClient(String),
+    HttpClient(HttpClientError),
 }
 
 /// Errors that can occur when sending a request via [`crate::AgentClient`].

@@ -206,7 +206,7 @@ impl AgentClientBuilder {
 
         let http =
             Self::build_http_client(transport, timeout, retry, self.allow_connection_pooling)
-                .map_err(|e| BuildError::HttpClient(e.to_string()))?;
+                .map_err(BuildError::HttpClient)?;
 
         let static_headers =
             Self::build_static_headers(language, self.test_token, self.extra_headers);
