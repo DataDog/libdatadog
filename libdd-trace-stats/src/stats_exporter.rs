@@ -316,7 +316,7 @@ mod tests {
 
         for i in 1..100 {
             trace.push(SpanSlice {
-                service: "libdatadog-test",
+                service: "libdatadog-test".into(),
                 duration: i,
                 ..Default::default()
             })
