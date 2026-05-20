@@ -42,6 +42,10 @@ jobs:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
       - name: Generate code coverage (including doc tests)
+        env:
+          # Override rust-toolchain.toml so cargo-llvm-cov runs on the dated
+          # nightly (doc-test coverage needs nightly) instead of the workspace MSRV.
+          RUSTUP_TOOLCHAIN: nightly-2026-02-08
         run: |
           cargo llvm-cov --all-features --workspace --no-report nextest --no-tests=pass
           cargo llvm-cov --all-features --workspace --no-report --doc

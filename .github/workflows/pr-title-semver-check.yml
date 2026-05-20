@@ -113,6 +113,11 @@ jobs:
 
       - name: Run semver checks on changed crates
         id: semver
+        env:
+          # Override rust-toolchain.toml so cargo-semver-checks / cargo-public-api
+          # run on the explicit RUST_VERSION (1.92.0) the workflow installed,
+          # instead of the workspace MSRV from rust-toolchain.toml.
+          RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}
         run: |
           set -euo pipefail
 

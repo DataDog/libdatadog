@@ -29,5 +29,9 @@ jobs:
         run: rustup install nightly-2026-02-08 && rustup default nightly-2026-02-08 && rustup component add rustfmt
       - name: Run rustfmt and commit changes
         uses: mbrobbel/rustfmt-check@e7ac5685995bd39fb14f6c83fa6f10627e92e680 # master
+        env:
+          # Override rust-toolchain.toml so rustfmt runs on nightly (required by
+          # the unstable_features in rustfmt.toml) instead of the workspace MSRV.
+          RUSTUP_TOOLCHAIN: nightly-2026-02-08
         with:
           token: ${{ steps.octo-sts.outputs.token }}

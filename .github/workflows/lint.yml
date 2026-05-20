@@ -15,10 +15,14 @@ jobs:
       crates-count: ${{ steps.set-packages.outputs.crates-count }}
       fmt-packages: ${{ steps.set-packages.outputs.fmt-packages }}
       clippy-packages: ${{ steps.set-packages.outputs.clippy-packages }}
+      rust-version: ${{ steps.rust-version.outputs.version }}
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
         fetch-depth: 0
+    - name: Read Rust version from rust-toolchain.toml
+      id: rust-version
+      run: echo "version=$(grep -Po '^channel = "\K[^"]+' rust-toolchain.toml)" >> $GITHUB_OUTPUT
     - name: Get crate report
       id: changed-crates
       uses: ./.github/actions/crates-reporter
@@ -84,6 +88,9 @@ jobs:
       - name: Run rustfmt
         env:
           FMT_PACKAGES: ${{ needs.setup.outputs.fmt-packages }}
+          # Override rust-toolchain.toml so rustfmt runs on nightly (required by
+          # the unstable_features in rustfmt.toml) instead of the workspace MSRV.
+          RUSTUP_TOOLCHAIN: nightly-2026-02-08
         run: |
           if [[ -z "$FMT_PACKAGES" ]]; then
             cargo fmt --all -- --check
@@ -99,7 +106,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust_version: ["1.84.1", "stable", "nightly-2026-02-08"]
+        rust_version: ["msrv", "stable", "nightly-2026-02-08"]
         platform: [windows-latest, ubuntu-latest]
     steps:
       - name: Checkout sources
@@ -107,7 +114,17 @@ jobs:
         with:
           submodules: recursive
       - name: Install ${{ matrix.rust_version }} toolchain and clippy
-        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }} && rustup component add clippy
+        id: install-toolchain
+        shell: bash
+        run: |
+          VERSION="${{ matrix.rust_version }}"
+          if [ "$VERSION" = "msrv" ]; then
+            VERSION="${{ needs.setup.outputs.rust-version }}"
+          fi
+          rustup set profile minimal
+          rustup install "$VERSION"
+          rustup component add clippy --toolchain "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
         with:
@@ -117,17 +134,18 @@ jobs:
         shell: bash
         env:
           CLIPPY_PACKAGES: ${{ needs.setup.outputs.clippy-packages }}
+          # Override rust-toolchain.toml so each matrix entry actually runs on
+          # its chosen toolchain instead of falling back to the workspace MSRV.
+          RUSTUP_TOOLCHAIN: ${{ steps.install-toolchain.outputs.version }}
         run: |
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
-          EXTRA_CLIPPY_FLAG=$([ ${{ matrix.rust_version }} = 1.84.1 ] || echo -Aclippy::manual_is_multiple_of)
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
-            # shellcheck disable=SC2086
-            cargo clippy --workspace --all-targets --all-features -- -D warnings $EXTRA_CLIPPY_FLAG
+            cargo clippy --workspace --all-targets --all-features -- -D warnings
           else
             # shellcheck disable=SC2086
-            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings $EXTRA_CLIPPY_FLAG
+            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings
           fi
 
   licensecheck:
