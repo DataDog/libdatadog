@@ -16,17 +16,6 @@ use crate::{error::BuildError, language_metadata::LanguageMetadata, AgentClient}
 /// Default timeout for agent requests.
 pub const DEFAULT_TIMEOUT_MS: u64 = 2_000;
 
-/// Default retry configuration: 2 retries (3 total attempts), 100 ms initial delay,
-/// exponential backoff with full jitter.
-//TODO: Do we really want something different from `RetryConfig::default()` for the agent? The only
-//difference is the number of retries : 3 vs 2
-pub fn default_retry_config() -> RetryConfig {
-    RetryConfig::new()
-        .max_retries(2)
-        .initial_delay(Duration::from_millis(100))
-        .with_jitter(true)
-}
-
 /// Transport configuration for the agent client.
 ///
 /// Determines how the client connects to the Datadog agent.
@@ -160,7 +149,7 @@ impl AgentClientBuilder {
 
     /// Override the default retry configuration.
     ///
-    /// Defaults to [`default_retry_config`].
+    /// Defaults to [`RetryConfig::default`].
     pub fn retry(mut self, config: RetryConfig) -> Self {
         self.retry = Some(config);
         self
@@ -202,7 +191,7 @@ impl AgentClientBuilder {
         let timeout = self
             .timeout
             .unwrap_or(Duration::from_millis(DEFAULT_TIMEOUT_MS));
-        let retry = self.retry.unwrap_or_else(default_retry_config);
+        let retry = self.retry.unwrap_or_default();
 
         let http =
             Self::build_http_client(transport, timeout, retry, self.allow_connection_pooling)
