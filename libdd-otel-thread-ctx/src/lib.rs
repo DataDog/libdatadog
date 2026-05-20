@@ -137,8 +137,7 @@ pub mod linux {
     // Note: we don't need to make this struct packed, because it's already designed to avoid
     // padding. Moreover, doing so would make it 1-aligned, potentially making access to
     // `attrs_data_size` unaligned and thus slower, and prevent us from using `AtomicU8` for
-    // `valid`. We just use a const assertion in `new()` to avoid surprises and make sure this
-    // struct has the right total size.
+    // `valid`. We use const assertions below to verify size and offsets at compile time.
     #[repr(C)]
     struct ThreadContextRecord {
         /// Trace identifier; all-zeroes means "no trace".
@@ -168,6 +167,16 @@ pub mod linux {
         attrs_data: [u8; MAX_ATTRS_DATA_SIZE],
     }
 
+    const _: () = {
+        assert!(size_of::<ThreadContextRecord>() == 640);
+        assert!(mem::offset_of!(ThreadContextRecord, trace_id) == 0);
+        assert!(mem::offset_of!(ThreadContextRecord, span_id) == 16);
+        assert!(mem::offset_of!(ThreadContextRecord, valid) == 24);
+        assert!(mem::offset_of!(ThreadContextRecord, _reserved) == 25);
+        assert!(mem::offset_of!(ThreadContextRecord, attrs_data_size) == 26);
+        assert!(mem::offset_of!(ThreadContextRecord, attrs_data) == 28);
+    };
+
     impl ThreadContextRecord {
         /// Build a record with the given trace id, span id and attributes. The
         /// `local_root_span_id` is a distinguished attribute with special handling for
@@ -178,8 +187,6 @@ pub mod linux {
             local_root_span_id: [u8; 8],
             attrs: &[(u8, &str)],
         ) -> Self {
-            const { assert!(size_of::<ThreadContextRecord>() == 640) }
-
             let mut record = Self {
                 trace_id,
                 span_id,
