@@ -10,9 +10,9 @@ use std::collections::HashMap;
 /// Determines both the `Content-Type` header and the target endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TraceFormat {
-    /// `application/msgpack` to `/v0.5/traces`. Preferred format.
+    /// `application/msgpack` to `/v0.5/traces`.
     MsgpackV5,
-    /// `application/msgpack` to `/v0.4/traces`. Fallback for Windows / AppSec.
+    /// `application/msgpack` to `/v0.4/traces`.
     MsgpackV4,
 }
 
