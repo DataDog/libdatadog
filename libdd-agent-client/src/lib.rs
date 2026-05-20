@@ -26,13 +26,13 @@
 //! The underlying `libdd-http-client` uses the `hickory-dns` DNS resolver by default, which is
 //! in-process and fork-safe.
 
-pub mod agent_info;
-pub mod builder;
-pub mod client;
-pub mod error;
-pub mod language_metadata;
-pub mod telemetry;
-pub mod traces;
+pub(crate) mod agent_info;
+mod builder;
+pub(crate) mod client;
+pub(crate) mod error;
+pub(crate) mod language_metadata;
+pub(crate) mod telemetry;
+pub(crate) mod traces;
 
 pub use agent_info::AgentInfo;
 pub use builder::{AgentClientBuilder, AgentTransport};
