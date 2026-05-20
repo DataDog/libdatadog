@@ -196,7 +196,7 @@ pub mod linux {
             record
         }
 
-        /// Encode `attributes` into `record.attrs_data` as packed key-value records. Existing data
+        /// Encode `attributes` into `self.attrs_data` as packed key-value records. Existing data
         /// are overridden (and if there were more entries than `attributes.len()`, they aren't
         /// zeroed, but they will be ignored by readers).
         ///
@@ -239,14 +239,11 @@ pub mod linux {
 
             for &(key_index, val) in attributes {
                 let val_bytes = val.as_bytes();
-                let val_len = val_bytes.len();
-                let val_len = if val_len > 255 {
+                let val_len = u8::try_from(val_bytes.len()).unwrap_or_else(|_| {
                     fully_encoded = false;
-                    255
-                } else {
-                    val_len
-                };
-                let entry_size = 2 + val_len;
+                    u8::MAX
+                });
+                let entry_size = 2 + val_len as usize;
 
                 if offset + entry_size > MAX_ATTRS_DATA_SIZE {
                     fully_encoded = false;
@@ -254,10 +251,9 @@ pub mod linux {
                 }
 
                 self.attrs_data[offset] = key_index;
-                // `val_len <= 255` thanks to the `min()`
-                self.attrs_data[offset + 1] = val_len as u8;
-                self.attrs_data[offset + 2..offset + 2 + val_len]
-                    .copy_from_slice(&val_bytes[..val_len]);
+                self.attrs_data[offset + 1] = val_len;
+                self.attrs_data[offset + 2..offset + 2 + val_len as usize]
+                    .copy_from_slice(&val_bytes[..val_len as usize]);
                 offset += entry_size;
             }
 
@@ -419,6 +415,9 @@ pub mod linux {
             attrs: &[(u8, &str)],
         ) {
             with_tls_slot(|slot| {
+                // Safety: a non-null value in the slot came from `into_ptr` (i.e. `Box::into_raw`),
+                // and only this thread ever writes to the slot, so the pointer is valid and not
+                // accessed for the duration of this closure.
                 if let Some(current) = unsafe { slot.load(Ordering::Relaxed).as_mut() } {
                     current.valid.store(0, Ordering::Relaxed);
                     compiler_fence(Ordering::SeqCst);
