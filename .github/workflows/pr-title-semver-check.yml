@@ -89,13 +89,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
       - name: Install Rust ${{ env.RUST_VERSION }}
         run: |
           rustup set profile minimal
           rustup install ${{ env.RUST_VERSION }} && rustup default ${{ env.RUST_VERSION }}
-          rustup toolchain install nightly-2026-02-08
+          rustup toolchain install ${{ steps.nightly-version.outputs.version }}
           # Link the dated nightly as 'nightly' for tools (like cargo-public-api) that expect it
-          ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
+          ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
 
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
