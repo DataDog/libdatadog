@@ -13,8 +13,7 @@ const UUID_SOURCE: &str =
     r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
 /// PCF / Garden container UUID source: 8-4-4-4-4 hex (28 chars).
 /// Distinct from `UUID_SOURCE` (8-4-4-4-12) because the last group is 4 hex.
-const PCF_UUID_SOURCE: &str =
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}";
+const PCF_UUID_SOURCE: &str = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}";
 const CONTAINER_SOURCE: &str = r"[0-9a-f]{64}";
 const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
 
