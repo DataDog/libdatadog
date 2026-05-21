@@ -53,9 +53,11 @@ jobs:
           files: lcov.info
           fail_ci_if_error: true
       - name: Upload coverage to Datadog
-        if: always()
+        if: always() && env.DATADOG_API_KEY != ''
         continue-on-error: true
         uses: DataDog/coverage-upload-github-action@d2cf302a39c05e0ad22063360a2bf6ce0cc4906c # v1
+        env:
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         with:
           api_key: ${{ secrets.DATADOG_API_KEY }}
           files: lcov.info

@@ -218,7 +218,7 @@ jobs:
           check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
           include_passed: true
       - name: Upload test results to Datadog
-        if: success() || failure()
+        if: (success() || failure()) && env.DATADOG_API_KEY != ''
         shell: bash
         run: |
           # Download datadog-ci binary
@@ -332,7 +332,7 @@ jobs:
           check_name: "[centos7] test report"
           include_passed: true
       - name: Upload test results to Datadog
-        if: success() || failure()
+        if: (success() || failure()) && env.DATADOG_API_KEY != ''
         run: |
           URL="https://github.com/DataDog/datadog-ci/releases/download/v4.2.2/datadog-ci_linux-x64"
           OUTPUT="datadog-ci"

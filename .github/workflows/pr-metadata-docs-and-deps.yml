@@ -1,9 +1,27 @@
 name: Metadata, docs and deps
+# Using `pull_request_target` over `pull_request` for elevated `GITHUB_TOKEN`
+# privileges, so that fork PRs can also receive PR comments from this workflow.
+#
+# Security model:
+# - `pull_request_target` runs in the base repository context, so the default
+#   checkout is the target branch (`main`). This is trusted code.
+# - The `changed-crates` job intentionally does NOT override `ref`, so it checks
+#   out the base branch. The `.github/actions/crates-reporter` composite action
+#   (including the binary it compiles) comes from the trusted base, not from the
+#   fork. The action fetches all remote refs and diffs against the PR head as
+#   data only. This avoids the "pwn request" attack where an attacker modifies
+#   action code in a fork and runs it with the elevated token.
+# - All other jobs that do need the PR's source (cargo check, cargo deny) use
+#   `ref: ${{ github.event.pull_request.head.sha }}` and treat that code as
+#   passive data (read but not executed as part of the workflow itself). Those
+#   jobs invoke `cargo check`/`cargo deny` which compiles and executes code, but
+#   they do not load untrusted composite actions or shell scripts from the checkout.
+# See: https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, labeled, unlabeled]
     branches-ignore:
       - "v[0-9]+.[0-9]+.[0-9]+.[0-9]+"
@@ -22,6 +40,10 @@ jobs:
       crates_count: ${{ steps.changed-crates.outputs.crates_count }}
       base_ref: ${{ steps.changed-crates.outputs.base_ref }}
     steps:
+    # Do NOT override `ref` here: we want the base branch checkout so that
+    # `.github/actions/crates-reporter` (and the binary it builds) come from
+    # trusted base-branch code, not from the potentially-untrusted fork HEAD.
+    # The action itself fetches all remote refs and diffs against the PR head.
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
         fetch-depth: 0  # Need full history for git diff
@@ -38,6 +60,7 @@ jobs:
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
+        ref: ${{ github.event.pull_request.head.sha }}
         fetch-depth: 0  # Need full history for git diff
     - name: Check Cargo.toml version is not changed in the PR
       run: |
@@ -100,10 +123,10 @@ jobs:
     needs: changed-crates
     if: needs.changed-crates.outputs.crates_count > 0
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       with:
         cache-targets: true
@@ -188,8 +211,6 @@ jobs:
     needs: changed-crates
     if: needs.changed-crates.outputs.crates_count == 0
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     steps:
     - name: Find existing comment
       uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0
@@ -218,6 +239,7 @@ jobs:
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       with:
+        ref: ${{ github.event.pull_request.head.sha }}
         fetch-depth: 0  # Need full history for git diff
     - name: Check for CHANGELOG.md changes in publishable crates
       run: |
@@ -271,10 +293,10 @@ jobs:
     needs: changed-crates
     if: needs.changed-crates.outputs.crates_count > 0
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       with:
         cache-targets: true
@@ -372,8 +394,6 @@ jobs:
     needs: changed-crates
     if: needs.changed-crates.outputs.crates_count == 0
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     steps:
     - name: Find existing comment
       uses: peter-evans/find-comment@3eae4d37986fb5a8592848f6a574fdf654e61f9e # v3.1.0

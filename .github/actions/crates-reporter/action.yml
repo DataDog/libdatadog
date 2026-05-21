@@ -28,12 +28,12 @@ runs:
   using: 'composite'
   steps:
     - name: Set up Rust
-      if: ${{ github.event_name == 'pull_request' }}
+      if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
       shell: bash
       run: rustup install stable && rustup default stable
 
     - name: Fetch all branches
-      if: ${{ github.event_name == 'pull_request' }}
+      if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
       shell: bash
       run: |
         git fetch --all
@@ -41,7 +41,7 @@ runs:
         git branch -a
 
     - name: Build change reporter
-      if: ${{ github.event_name == 'pull_request' }}
+      if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
       shell: bash
       run: |
         cd ${{ github.action_path }}/..
@@ -55,7 +55,7 @@ runs:
         PR_BASE_REF: ${{ github.base_ref }}
         PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
       run: |
-        if [[ "$EVENT_NAME" != "pull_request" ]]; then
+        if [[ "$EVENT_NAME" != "pull_request" && "$EVENT_NAME" != "pull_request_target" ]]; then
           echo "status=skipped" >> $GITHUB_OUTPUT
           exit 0
         fi
