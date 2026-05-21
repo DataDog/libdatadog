@@ -1044,3 +1044,650 @@ mod segment_isolation_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::span::SliceData;
+    use std::borrow::Cow;
+
+    /// Helper to build the binary buffer layout that flush_change_buffer expects.
+    /// Layout: [count: u32][operations...]
+    trait ToLeBytes {
+        fn extend_le_bytes(&self, buf: &mut Vec<u8>);
+    }
+
+    macro_rules! impl_to_le_bytes {
+        ($($ty:ty),*) => {
+            $(impl ToLeBytes for $ty {
+                fn extend_le_bytes(&self, buf: &mut Vec<u8>) {
+                    buf.extend_from_slice(&self.to_le_bytes());
+                }
+            })*
+        };
+    }
+
+    impl_to_le_bytes!(u32, u64, u128, i32, i64, f64);
+
+    struct BufBuilder {
+        data: Vec<u8>,
+        op_count: u32,
+    }
+
+    impl BufBuilder {
+        fn new() -> Self {
+            // 8 bytes for the count field (u64: low u32 is count, high u32 is 0)
+            Self {
+                data: vec![0u8; 8],
+                op_count: 0,
+            }
+        }
+
+        fn push<T: ToLeBytes>(&mut self, val: T) {
+            val.extend_le_bytes(&mut self.data);
+        }
+
+        fn push_op_header(&mut self, opcode: OpCode, slot: u32) {
+            // Opcode is written as u64 (low u32 = opcode, high u32 = 0),
+            // matching the JS encoding.
+            self.push(opcode as u32);
+            self.push(0u32);
+            self.push(slot);
+            self.op_count += 1;
+        }
+
+        /// Write a Create operation: op_header(slot) + span_id + trace_id + parent_id
+        fn push_create(&mut self, slot: u32, span_id: u64, trace_id: u128, parent_id: u64) {
+            self.push_op_header(OpCode::Create, slot);
+            self.push(span_id);
+            self.push(trace_id);
+            self.push(parent_id);
+        }
+
+        fn finalize(&mut self) -> ChangeBuffer {
+            // Write count as u64 LE (low u32 = count, high u32 = 0)
+            self.data[0..4].copy_from_slice(&self.op_count.to_le_bytes());
+            self.data[4..8].copy_from_slice(&0u32.to_le_bytes());
+            unsafe { ChangeBuffer::from_raw_parts(self.data.as_mut_ptr(), self.data.len()) }
+        }
+    }
+
+    fn make_state(buf: ChangeBuffer) -> ChangeBufferState<SliceData<'static>> {
+        ChangeBufferState::new(buf, "my-service".into(), "rust".into(), 1234)
+    }
+
+    fn create_span_directly(
+        state: &mut ChangeBufferState<SliceData<'static>>,
+        slot: u32,
+        span_id: u64,
+        trace_id: u128,
+        parent_id: u64,
+    ) {
+        let span = Span {
+            span_id,
+            trace_id,
+            parent_id,
+            meta: Vec::with_capacity(8),
+            metrics: Vec::with_capacity(4),
+            ..Default::default()
+        };
+        let idx = slot as usize;
+        if idx >= state.spans.len() {
+            state.spans.resize_with(idx + 1, || None);
+        }
+        if idx >= state.deferred_meta.len() {
+            state.deferred_meta.resize_with(idx + 1, Vec::new);
+            state.deferred_metrics.resize_with(idx + 1, Vec::new);
+        }
+        state.spans[idx] = Some(span);
+        state.deferred_meta[idx].clear();
+        state.deferred_metrics[idx].clear();
+        state.traces.get_or_insert_default(trace_id).span_count += 1;
+    }
+
+    // -- string table --
+
+    #[test]
+    fn string_table_insert_and_evict() {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        assert!(state.string_table.is_empty());
+
+        state.string_table_insert_one(1, "hello".into());
+        assert_eq!(state.string_table.get(1), Some(&Some(Cow::from("hello"))));
+
+        state.string_table_insert_one(2, "world".into());
+        assert_eq!(state.string_table.get(1), Some(&Some(Cow::from("hello"))));
+        assert_eq!(state.string_table.get(2), Some(&Some(Cow::from("world"))));
+
+        state.string_table_evict_one(1);
+        assert_eq!(state.string_table.get(1), Some(&None));
+        assert_eq!(state.string_table.get(2), Some(&Some(Cow::from("world"))));
+
+        state.string_table_evict_one(2);
+        assert_eq!(state.string_table.get(2), Some(&None));
+    }
+
+    // -- get_span / get_trace --
+
+    #[test]
+    fn get_span_missing_returns_error() {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let state = make_state(buf);
+        assert!(state.get_span(0).is_err());
+    }
+
+    #[test]
+    fn get_trace_missing_returns_none() {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let state = make_state(buf);
+        assert!(state.get_trace(&42).is_none());
+    }
+
+    // -- flush_change_buffer: Create --
+
+    #[test]
+    fn flush_create_inserts_span_and_trace() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 100, 200, 50);
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        state.flush_change_buffer()?;
+
+        let span = state.get_span(0)?;
+        assert_eq!(span.span_id, 100);
+        assert_eq!(span.trace_id, 200);
+        assert_eq!(span.parent_id, 50);
+
+        assert!(state.get_trace(&200).is_some());
+        assert_eq!(state.get_trace(&200).unwrap().span_count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn flush_create_multiple_spans_same_trace() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_create(1, 2, 100, 1);
+        builder.push_create(2, 3, 100, 1);
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        state.flush_change_buffer()?;
+
+        assert_eq!(state.get_trace(&100).unwrap().span_count, 3);
+        assert!(state.get_span(0).is_ok());
+        assert!(state.get_span(1).is_ok());
+        assert!(state.get_span(2).is_ok());
+        Ok(())
+    }
+
+    // -- flush_change_buffer: Set* operations --
+
+    #[test]
+    fn flush_set_meta_attr() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetMetaAttr, 0);
+        builder.push(10u32); // string table key for name
+        builder.push(11u32); // string table key for value
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.string_table_insert_one(10, "http.method".into());
+        state.string_table_insert_one(11, "GET".into());
+
+        state.flush_change_buffer()?;
+
+        // Meta is deferred — materialize before reading
+        state.materialize_slot(0);
+        let span = state.get_span(0)?;
+        assert_eq!(vec_get(&span.meta, &Cow::from("http.method")), Some(&Cow::from("GET")));
+        Ok(())
+    }
+
+    #[test]
+    fn flush_set_metric_attr() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetMetricAttr, 0);
+        builder.push(10u32); // string table key for name
+        builder.push(99.5f64);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.string_table_insert_one(10, "my.metric".into());
+
+        state.flush_change_buffer()?;
+
+        // Metrics are deferred — materialize before reading
+        state.materialize_slot(0);
+        let span = state.get_span(0)?;
+        assert_eq!(vec_get(&span.metrics, &Cow::from("my.metric")), Some(&99.5));
+        Ok(())
+    }
+
+    #[test]
+    fn flush_set_service_name() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetServiceName, 0);
+        builder.push(10u32);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.string_table_insert_one(10, "web-server".into());
+
+        state.flush_change_buffer()?;
+        assert_eq!(state.get_span(0)?.service, "web-server");
+        Ok(())
+    }
+
+    #[test]
+    fn flush_set_resource_name() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetResourceName, 0);
+        builder.push(10u32);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.string_table_insert_one(10, "GET /api/users".into());
+
+        state.flush_change_buffer()?;
+        assert_eq!(state.get_span(0)?.resource, "GET /api/users");
+        Ok(())
+    }
+
+    #[test]
+    fn flush_set_error() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetError, 0);
+        builder.push(1i32);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.flush_change_buffer()?;
+        assert_eq!(state.get_span(0)?.error, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn flush_set_start_and_duration() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetStart, 0);
+        builder.push(1_000_000i64);
+        builder.push_op_header(OpCode::SetDuration, 0);
+        builder.push(500i64);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.flush_change_buffer()?;
+
+        let span = state.get_span(0)?;
+        assert_eq!(span.start, 1_000_000);
+        assert_eq!(span.duration, 500);
+        Ok(())
+    }
+
+    #[test]
+    fn flush_set_type_and_name() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetType, 0);
+        builder.push(10u32);
+        builder.push_op_header(OpCode::SetName, 0);
+        builder.push(11u32);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.string_table_insert_one(10, "web".into());
+        state.string_table_insert_one(11, "http.request".into());
+
+        state.flush_change_buffer()?;
+
+        let span = state.get_span(0)?;
+        assert_eq!(span.r#type, "web");
+        assert_eq!(span.name, "http.request");
+        Ok(())
+    }
+
+    // -- flush_change_buffer: trace-level operations --
+
+    #[test]
+    fn flush_set_trace_meta_attr() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetTraceMetaAttr, 0);
+        builder.push(10u32);
+        builder.push(11u32);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.string_table_insert_one(10, "env".into());
+        state.string_table_insert_one(11, "production".into());
+
+        state.flush_change_buffer()?;
+
+        let trace = state.get_trace(&100).unwrap();
+        assert_eq!(vec_get(&trace.meta, &Cow::from("env")), Some(&Cow::from("production")));
+        Ok(())
+    }
+
+    #[test]
+    fn flush_set_trace_metrics_attr() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetTraceMetricsAttr, 0);
+        builder.push(10u32);
+        builder.push(0.75f64);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.string_table_insert_one(10, "_sampling_priority_v1".into());
+
+        state.flush_change_buffer()?;
+
+        let trace = state.get_trace(&100).unwrap();
+        assert_eq!(
+            vec_get(&trace.metrics, &Cow::from("_sampling_priority_v1")),
+            Some(&0.75)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn flush_set_trace_origin() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        builder.push_op_header(OpCode::SetTraceOrigin, 0);
+        builder.push(10u32);
+        let buf = builder.finalize();
+
+        let mut state = make_state(buf);
+        state.string_table_insert_one(10, "synthetics".into());
+
+        state.flush_change_buffer()?;
+
+        let trace = state.get_trace(&100).unwrap();
+        assert_eq!(trace.origin, Some("synthetics".into()));
+        Ok(())
+    }
+
+    // -- flush_change_buffer resets count --
+
+    #[test]
+    fn flush_change_buffer_resets_count_to_zero() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        builder.push_create(0, 1, 100, 0);
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        state.flush_change_buffer()?;
+
+        // The count at offset 0 should now be 0
+        let mut index = 0;
+        let count = state.change_buffer.read::<u64>(&mut index)?;
+        assert_eq!(count, 0);
+        Ok(())
+    }
+
+    // -- flush_change_buffer with zero count --
+
+    #[test]
+    fn flush_change_buffer_empty_is_noop() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        // No operations pushed, count stays 0
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        state.flush_change_buffer()?;
+        assert_eq!(state.spans_count(), 0);
+        assert!(state.traces.is_empty());
+        Ok(())
+    }
+
+    // -- flush_chunk --
+
+    #[test]
+    fn flush_chunk_returns_spans_and_removes_from_state() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
+
+        let spans = state.flush_chunk(vec![0, 1], false)?;
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].span_id, 1);
+        assert_eq!(spans[1].span_id, 2);
+
+        // Spans removed from state
+        assert!(state.get_span(0).is_err());
+        assert!(state.get_span(1).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_missing_span_returns_error() {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        assert!(state.flush_chunk(vec![0], false).is_err());
+    }
+
+    #[test]
+    fn flush_chunk_local_root_gets_top_level_tag() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
+
+        let spans = state.flush_chunk(vec![0, 1], true)?;
+
+        // First span (local root) gets _dd.top_level
+        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.top_level")), Some(&1.0));
+        // Second span does not
+        assert_eq!(vec_get(&spans[1].metrics, &Cow::from("_dd.top_level")), None);
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_local_root_gets_sampling_tags() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+
+        // Set sampling decisions on the trace
+        let trace = state.traces.get_mut(&100).unwrap();
+        trace.sampling_rule_decision = Some(0.5);
+        trace.sampling_limit_decision = Some(0.8);
+        trace.sampling_agent_decision = Some(1.0);
+
+        let spans = state.flush_chunk(vec![0], true)?;
+
+        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.rule_psr")), Some(&0.5));
+        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.limit_psr")), Some(&0.8));
+        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.agent_psr")), Some(&1.0));
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_chunk_root_gets_trace_tags() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
+
+        // Set trace-level meta and metrics
+        let trace = state.traces.get_mut(&100).unwrap();
+        vec_insert(&mut trace.meta, "env".into(), "staging".into());
+        vec_insert(&mut trace.metrics, "_sampling_priority_v1".into(), 2.0);
+
+        let spans = state.flush_chunk(vec![0, 1], false)?;
+
+        // First span (chunk root) gets trace tags
+        assert_eq!(vec_get(&spans[0].meta, &Cow::from("env")), Some(&Cow::from("staging")));
+        assert_eq!(
+            vec_get(&spans[0].metrics, &Cow::from("_sampling_priority_v1")),
+            Some(&2.0)
+        );
+        // Second span does not get trace-level tags
+        assert_eq!(vec_get(&spans[1].meta, &Cow::from("env")), None);
+        assert_eq!(
+            vec_get(&spans[1].metrics, &Cow::from("_sampling_priority_v1")),
+            None
+        );
+        Ok(())
+    }
+
+    // -- process_one_span behaviors (tested via flush_chunk) --
+
+    #[test]
+    fn flush_chunk_sets_language_and_pid() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(vec_get(&spans[0].meta, &Cow::from("language")), Some(&Cow::from("rust")));
+        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("process_id")), Some(&1234.0));
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_sets_origin_from_trace() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        state.traces.get_mut(&100).unwrap().origin = Some("synthetics".into());
+
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(
+            vec_get(&spans[0].meta, &Cow::from("_dd.origin")),
+            Some(&Cow::from("synthetics"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_sets_measured_for_non_internal_kind() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        vec_insert(
+            &mut state.spans[0].as_mut().unwrap().meta,
+            "kind".into(),
+            "client".into(),
+        );
+
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.measured")), Some(&1.0));
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_does_not_set_measured_for_internal_kind() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        vec_insert(
+            &mut state.spans[0].as_mut().unwrap().meta,
+            "kind".into(),
+            "internal".into(),
+        );
+
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.measured")), None);
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_sets_base_service_when_service_differs() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        state.spans[0].as_mut().unwrap().service = "other-service".into();
+
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(
+            vec_get(&spans[0].meta, &Cow::from("_dd.base_service")),
+            Some(&Cow::from("my-service"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_no_base_service_when_service_matches() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        state.spans[0].as_mut().unwrap().service = "my-service".into();
+
+        let spans = state.flush_chunk(vec![0], false)?;
+        assert_eq!(vec_get(&spans[0].meta, &Cow::from("_dd.base_service")), None);
+        Ok(())
+    }
+
+    // -- flush_chunk trace cleanup --
+
+    #[test]
+    fn flush_chunk_cleans_up_trace_when_all_spans_flushed() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
+
+        state.flush_chunk(vec![0, 1], false)?;
+
+        assert!(state.get_trace(&100).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn flush_chunk_keeps_trace_when_spans_remain() -> Result<()> {
+        let mut builder = BufBuilder::new();
+        let buf = builder.finalize();
+        let mut state = make_state(buf);
+
+        create_span_directly(&mut state, 0, 1, 100, 0);
+        create_span_directly(&mut state, 1, 2, 100, 1);
+        create_span_directly(&mut state, 2, 3, 100, 1);
+
+        // Flush only 2 of 3 spans
+        state.flush_chunk(vec![0, 1], false)?;
+
+        assert!(state.get_trace(&100).is_some());
+        assert_eq!(state.get_trace(&100).unwrap().span_count, 1);
+        Ok(())
+    }
+}
