@@ -7,6 +7,7 @@ use criterion::{black_box, criterion_group, Criterion};
 use libdd_trace_obfuscation::replacer;
 use libdd_trace_protobuf::pb;
 
+#[allow(clippy::unwrap_used)]
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("tags");
     let rules: &[replacer::ReplaceRule] = &replacer::parse_rules_from_string(
@@ -55,7 +56,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             || trace.to_owned(),
             |t| replacer::replace_trace_tags(black_box(t), black_box(rules)),
             criterion::BatchSize::LargeInput,
-        )
+        );
     });
 }
 

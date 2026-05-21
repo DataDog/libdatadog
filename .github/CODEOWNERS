@@ -4,6 +4,7 @@
 
 .claude/                             @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
+.pre-commit-config.yaml              @DataDog/libdatadog-core
 .codecov.yml                         @DataDog/apm-common-components-core
 .cargo/*                             @DataDog/libdatadog-core
 .config/nextest.toml                 @DataDog/apm-common-components-core
@@ -12,6 +13,7 @@
 .dockerignore                        @DataDog/libdatadog-core
 .github/                             @DataDog/apm-common-components-core
 .gitignore                           @DataDog/libdatadog
+.gitmodules                          @DataDog/libdatadog
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
 .gitlab/fuzz.yml                     @DataDog/chaos-platform
@@ -21,10 +23,12 @@ build-common/                        @DataDog/apm-common-components-core
 builder                              @DataDog/apm-common-components-core
 Cargo.*                              @DataDog/libdatadog
 cliff.toml                           @DataDog/libdatadog-core
+clippy.toml                          @DataDog/libdatadog
 cmake/                               @DataDog/apm-common-components-core
 CONTRIBUTING.md                      @DataDog/libdatadog-core
 Cross.toml                           @DataDog/apm-common-components-core
 datadog-ffe                          @DataDog/feature-flagging-and-experimentation-sdk
+datadog-ffe-test-suite               @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ffe-ffi                      @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ipc*/                        @DataDog/libdatadog-php
 datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm

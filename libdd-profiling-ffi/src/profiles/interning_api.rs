@@ -383,7 +383,8 @@ pub unsafe extern "C" fn ddog_prof_Profile_intern_strings(
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         anyhow::ensure!(strings.len() == out.len());
-        let mut v = Vec::with_capacity(strings.len());
+        let mut v = Vec::new();
+        v.try_reserve_exact(strings.len())?;
         for s in strings.iter() {
             v.push(s.try_to_utf8()?);
         }

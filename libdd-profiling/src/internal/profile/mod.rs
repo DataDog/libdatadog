@@ -269,10 +269,10 @@ impl Profile {
 
         self.validate_string_id_sample_labels(&sample)?;
 
-        let labels = sample
-            .labels
-            .iter()
-            .map(|label| -> anyhow::Result<LabelId> {
+        let labels = {
+            let mut vec = Vec::new();
+            vec.try_reserve_exact(sample.labels.len())?;
+            for label in sample.labels.iter() {
                 let key = self.resolve(label.key)?;
                 let internal_label = if label.str != ManagedStringId::empty() {
                     let str = self.resolve(label.str)?;
@@ -283,9 +283,10 @@ impl Profile {
                     Label::num(key, num, num_unit)
                 };
 
-                self.labels.try_dedup(internal_label)
-            })
-            .collect::<Result<Box<[_]>, _>>()?;
+                vec.push(self.labels.try_dedup(internal_label)?);
+            }
+            vec.into_boxed_slice()
+        };
 
         let mut locations = Vec::new();
         locations.try_reserve_exact(sample.locations.len())?;
@@ -496,6 +497,22 @@ impl Profile {
         Ok(encoded_profile)
     }
 
+    /// Resolves label ids into labels and appends the endpoint label, leaving
+    /// one spare slot for a sample timestamp label.
+    fn expand_label_set(&self, label_set: &LabelSet) -> anyhow::Result<Vec<Label>> {
+        let endpoint_label = self.get_endpoint_for_label_set(label_set)?;
+        let mut labels = Vec::new();
+        // +1 for the timestamp label
+        labels.try_reserve_exact(label_set.len() + usize::from(endpoint_label.is_some()) + 1)?;
+        for l in label_set.iter() {
+            labels.push(*self.get_label(*l)?);
+        }
+        if let Some(endpoint_label) = endpoint_label {
+            labels.push(endpoint_label);
+        }
+        Ok(labels)
+    }
+
     /// Encodes the profile. Note that the buffer will be empty. The caller
     /// needs to flush/finish the writer, then fill/replace the buffer.
     fn encode<W: io::Write>(
@@ -518,40 +535,36 @@ impl Profile {
             .as_nanos()
             .min(i64::MAX as u128) as i64;
 
-        let mut extended_label_sets: Vec<Vec<Label>> = Vec::with_capacity(self.label_sets.len());
+        let label_sets = std::mem::take(&mut self.label_sets);
+        let mut extended_label_sets: Vec<Vec<Label>> = Vec::new();
+        extended_label_sets.try_reserve_exact(label_sets.len())?;
 
-        for label_set in std::mem::take(&mut self.label_sets) {
-            let endpoint_label = self.get_endpoint_for_label_set(&label_set)?;
-            // Leave one space for the timestamp if needed
-            let mut labels = Vec::with_capacity(
-                label_set.len() + 1 + if endpoint_label.is_some() { 1 } else { 0 },
-            );
-            for l in label_set.iter() {
-                labels.push(*self.get_label(*l)?);
-            }
-            if let Some(endpoint_label) = endpoint_label {
-                labels.push(endpoint_label);
-            }
-            extended_label_sets.push(labels);
+        for label_set in label_sets {
+            extended_label_sets.push(self.expand_label_set(&label_set)?);
         }
 
         let iter = std::mem::take(&mut self.observations).try_into_iter()?;
         for (sample, timestamp, mut values) in iter {
-            let labels = &mut extended_label_sets[sample.labels.to_raw_id()];
-            let location_ids: Vec<_> = self
-                .get_stacktrace(sample.stacktrace)?
-                .locations
-                .iter()
-                .map(Id::to_raw_id)
-                .collect();
+            let off = sample.labels.to_offset();
+            let labels = extended_label_sets.get_mut(off).ok_or_else(oob_label_set)?;
+            let locations = &self.get_stacktrace(sample.stacktrace)?.locations;
+            let mut location_ids = Vec::new();
+            location_ids.try_reserve_exact(locations.len())?;
+            location_ids.extend(locations.iter().map(LocationId::to_raw_id));
             self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
             self.upscaling_rules.upscale_values(&mut values, labels);
 
-            // Use the extra slot in the labels vector to store the timestamp without any reallocs.
+            let mut pprof_labels: Vec<_> = Vec::new();
+            // + 1 for the timestamp (which hasn't ben pushed yet)
+            pprof_labels.try_reserve_exact(labels.len() + 1)?;
+
+            // Try not to fail between labels.push and labels.pop, which would
+            // leave the push.
             if let Some(ts) = timestamp {
+                // The memory was reserved by `expand_label_set`.
                 labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
             }
-            let pprof_labels: Vec<_> = labels.iter().map(protobuf::Label::from).collect();
+            pprof_labels.extend(labels.iter().map(protobuf::Label::from));
             if timestamp.is_some() {
                 labels.pop();
             }
@@ -1053,6 +1066,14 @@ impl Profile {
     pub fn only_for_testing_num_timestamped_samples(&self) -> usize {
         self.observations.timestamped_samples_count()
     }
+}
+
+#[cold]
+fn oob_label_set() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        "out-of-bounds label set id found during serialization",
+    )
 }
 
 #[cfg(test)]
@@ -2955,5 +2976,58 @@ mod api_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn invalid_label_set_id_returns_error_instead_of_panicking() {
+        let sample_types = [api::SampleType::CpuSamples];
+        let mapping = api::Mapping {
+            filename: "test.php",
+            ..Default::default()
+        };
+
+        let mut profile = Profile::new(&sample_types, None);
+
+        let locations = vec![api::Location {
+            mapping,
+            function: api::Function {
+                name: "test_function",
+                system_name: "test_function",
+                filename: "test.php",
+            },
+            line: 0,
+            ..Default::default()
+        }];
+
+        let sample = api::Sample {
+            locations,
+            values: &[1],
+            labels: vec![api::Label {
+                key: "iteration",
+                num: 1,
+                ..Default::default()
+            }],
+        };
+
+        profile
+            .try_add_sample(sample, None)
+            .expect("profile to not be full");
+
+        // Simulate an internally inconsistent profile where observations still reference
+        // a label set id, but the label sets table no longer contains that id.
+        profile.label_sets.clear();
+
+        let result = profile.serialize_into_compressed_pprof(None, None);
+
+        let err = match result {
+            Ok(_) => panic!(
+                "Expected serialization to fail due to invalid label set IDs, but it succeeded"
+            ),
+            Err(err) => err,
+        };
+        let io_err = err
+            .downcast_ref::<io::Error>()
+            .expect("Expected serialization error to be an io::Error");
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
     }
 }

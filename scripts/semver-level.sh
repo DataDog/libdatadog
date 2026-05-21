@@ -90,6 +90,13 @@ compute_semver_results() {
             LEVEL="minor"
             REASON="New crate (not present in baseline)"
             log_verbose "New crate '$crate' not found in baseline, treating as minor change" >&2
+        elif echo "$SEMVER_OUTPUT" | grep -qE "Summary semver requires new minor version"; then
+            LEVEL="minor"
+            REASON="cargo-semver-checks detected minor breaking changes"
+            # Extract the relevant violation details (skip the header/summary lines)
+            DETAILS=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
+            log_verbose "Detected semver violations (minor change)" >&2
+            log_verbose "$SEMVER_OUTPUT" >&2
         else
             echo "Error running cargo-semver-checks: $SEMVER_OUTPUT" >&2
             exit $SEMVER_EXIT_CODE

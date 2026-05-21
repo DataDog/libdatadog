@@ -2,6 +2,22 @@
 
 
 
+## [4.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.0.0..libdd-common-v4.1.0) - 2026-05-15
+
+### Added
+
+- Added regex-lite feature ([#1939](https://github.com/datadog/libdatadog/issues/1939)) - ([58b86d5](https://github.com/datadog/libdatadog/commit/58b86d5a1b2dc43be98eb9568ec734c259a430a7))
+
+### Changed
+
+- Move the sampling logic from dd-trace-rs [APMSP-2946] ([#1927](https://github.com/datadog/libdatadog/issues/1927)) - ([040260c](https://github.com/datadog/libdatadog/commit/040260c5d72ec011a36934cb77d203688990609e))
+
+### Fixed
+
+- Crashes caused by `getenv` while retrieving AAS env vars ([#1930](https://github.com/datadog/libdatadog/issues/1930)) - ([43c0973](https://github.com/datadog/libdatadog/commit/43c0973da14911168b7283283be901e4ed41ab31))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.2..libdd-common-v4.0.0) - 2026-04-27
 
 ### Added
