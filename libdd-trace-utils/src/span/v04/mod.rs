@@ -9,6 +9,8 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
 
+pub use super::vec_map::VecMap;
+
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
     Service,
@@ -66,11 +68,16 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 /// [`SpanValue`] trait:
 /// ```
 /// use libdd_trace_utils::span::{v04::Span, TraceData};
-/// fn foo<T: TraceData>(span: Span<T>) {
+/// use std::borrow::Borrow;
+/// fn foo<T: TraceData>(span: Span<T>)
+/// where
+///     T::Text: Borrow<str>,
+/// {
 ///     let _ = span.meta.get("foo");
 /// }
 /// ```
-#[derive(Debug, Default, PartialEq, Serialize)]
+#[derive(Debug, Default, Serialize)]
+#[cfg_attr(any(test, feature = "test-utils"), derive(PartialEq))]
 pub struct Span<T: TraceData> {
     pub service: T::Text,
     pub name: T::Text,
@@ -86,12 +93,12 @@ pub struct Span<T: TraceData> {
     pub duration: i64,
     #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta: HashMap<T::Text, T::Text>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub metrics: HashMap<T::Text, f64>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<T::Text, T::Bytes>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub meta: VecMap<T::Text, T::Text>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub metrics: VecMap<T::Text, f64>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub meta_struct: VecMap<T::Text, T::Bytes>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

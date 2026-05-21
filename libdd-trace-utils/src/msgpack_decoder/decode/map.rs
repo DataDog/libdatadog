@@ -51,6 +51,27 @@ where
     Ok(map)
 }
 
+/// Reads a map from the buffer and returns it as a `Vec<(K, V)>`.
+///
+/// Like `read_map` but returns pairs in a Vec instead of HashMap for better
+/// cache locality when iteration order doesn't matter.
+#[inline]
+pub fn read_map_vec<K, V, F, B>(
+    len: usize,
+    buf: &mut B,
+    read_pair: F,
+) -> Result<Vec<(K, V)>, DecodeError>
+where
+    F: Fn(&mut B) -> Result<(K, V), DecodeError>,
+{
+    let mut vec = Vec::with_capacity(len);
+    for _ in 0..len {
+        let pair = read_pair(buf)?;
+        vec.push(pair);
+    }
+    Ok(vec)
+}
+
 /// Reads map length from the buffer
 ///
 /// # Arguments

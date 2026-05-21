@@ -35,6 +35,7 @@ libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["coll
 
 [dev-dependencies]
 http = "1.1"
+libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 tempfile = { version = "3.3" }
 
 [lints.rust]

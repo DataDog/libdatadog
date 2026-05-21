@@ -3,11 +3,10 @@
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
-use crate::msgpack_decoder::decode::map::{read_map, read_map_len};
+use crate::msgpack_decoder::decode::map::{read_map_len, read_map_vec};
 use crate::msgpack_decoder::decode::string::handle_null_marker;
 use crate::span::DeserializableTraceData;
 use rmp::decode;
-use std::collections::HashMap;
 
 fn read_byte_array_len<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
@@ -20,9 +19,9 @@ fn read_byte_array_len<T: DeserializableTraceData>(
 #[inline]
 pub fn read_meta_struct<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
-) -> Result<HashMap<T::Text, T::Bytes>, DecodeError> {
+) -> Result<Vec<(T::Text, T::Bytes)>, DecodeError> {
     if handle_null_marker(buf) {
-        return Ok(HashMap::default());
+        return Ok(Vec::new());
     }
 
     fn read_meta_struct_pair<T: DeserializableTraceData>(
@@ -41,7 +40,7 @@ pub fn read_meta_struct<T: DeserializableTraceData>(
     }
 
     let len = read_map_len(buf)?;
-    read_map(len, buf, read_meta_struct_pair)
+    read_map_vec(len, buf, read_meta_struct_pair)
 }
 
 #[cfg(test)]
@@ -49,6 +48,7 @@ mod tests {
     use super::*;
     use crate::span::SliceData;
     use libdd_tinybytes::Bytes;
+    use std::collections::HashMap;
 
     #[test]
     fn read_meta_test() {
@@ -58,7 +58,8 @@ mod tests {
         let mut slice = Buffer::<SliceData>::new(serialized.as_ref());
         let res = read_meta_struct(&mut slice).unwrap();
 
-        assert_eq!(res.get("key").unwrap().to_vec(), vec![1, 2, 3, 4]);
+        let val = res.iter().find(|(k, _)| *k == "key").map(|(_, v)| v);
+        assert_eq!(val.unwrap().to_vec(), vec![1, 2, 3, 4]);
     }
 
     #[test]

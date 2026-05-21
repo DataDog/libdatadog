@@ -45,7 +45,7 @@ where
         for (k, v) in &self.meta {
             size += k.as_ref().len() + v.as_ref().len();
         }
-        for k in self.metrics.keys() {
+        for (k, _) in &self.metrics {
             size += k.as_ref().len() + 8;
         }
         for (k, v) in &self.meta_struct {

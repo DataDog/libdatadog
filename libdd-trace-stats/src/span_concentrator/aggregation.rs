@@ -440,7 +440,7 @@ mod tests {
     use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
 
     use super::*;
-    use std::{collections::HashMap, hash::Hash};
+    use std::hash::Hash;
 
     fn get_hash(v: &impl Hash) -> u64 {
         use std::hash::Hasher;
@@ -494,7 +494,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind".into(), "client".into())]),
+                    meta: vec![("span.kind".into(), "client".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -515,10 +515,11 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
-                        ("span.kind".into(), "client".into()),
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                    ]),
+                    meta: vec![
+                        ("span.kind", "client"),
+                        ("aws.s3.bucket", "bucket-a"),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -539,12 +540,13 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "producer".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
                         ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -566,12 +568,13 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "server".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
                         ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -592,7 +595,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.origin".into(), "synthetics-browser".into())]),
+                    meta: vec![("_dd.origin".into(), "synthetics-browser".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -613,7 +616,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "418".into())]),
+                    meta: vec![("http.status_code".into(), "418".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -635,7 +638,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "x".into())]),
+                    meta: vec![("http.status_code".into(), "x".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -656,7 +659,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    metrics: HashMap::from([("http.status_code".into(), 418.0)]),
+                    metrics: vec![("http.status_code".into(), 418.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -678,10 +681,11 @@ mod tests {
                     resource: "GET /api/v1/users".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("http.method".into(), "GET".into()),
                         ("http.route".into(), "/api/v1/users".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -704,11 +708,12 @@ mod tests {
                     resource: "POST /users/create".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("http.method".into(), "POST".into()),
                         ("http.route".into(), "/users/create".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -726,7 +731,7 @@ mod tests {
             // Span with grpc status from meta as named string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "OK".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "OK".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -739,7 +744,7 @@ mod tests {
             // Span with grpc status from meta as numeric string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "14".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "14".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -752,7 +757,7 @@ mod tests {
             // Span with grpc status from meta with StatusCode. prefix
             (
                 SpanBytes {
-                    meta: HashMap::from([("grpc.code".into(), "StatusCode.UNAVAILABLE".into())]),
+                    meta: vec![("grpc.code".into(), "StatusCode.UNAVAILABLE".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -765,11 +770,8 @@ mod tests {
             // Span with grpc status from metrics takes precedence over meta
             (
                 SpanBytes {
-                    meta: HashMap::from([(
-                        "rpc.grpc.status_code".into(),
-                        "PERMISSION_DENIED".into(),
-                    )]),
-                    metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
+                    meta: vec![("rpc.grpc.status_code".into(), "PERMISSION_DENIED".into())].into(),
+                    metrics: vec![("rpc.grpc.status_code".into(), 2.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -782,7 +784,7 @@ mod tests {
             // Span with grpc status from metrics via secondary key
             (
                 SpanBytes {
-                    metrics: HashMap::from([("grpc.code".into(), 3.0)]),
+                    metrics: vec![("grpc.code".into(), 3.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -795,7 +797,7 @@ mod tests {
             // Span with invalid grpc status string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "NOPE".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -812,7 +814,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "redis".into())]),
+                    meta: vec![("_dd.svc_src".into(), "redis".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -833,7 +835,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
+                    meta: vec![("_dd.svc_src".into(), "opt.split_by_tag".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -883,7 +885,11 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
+                    meta: vec![
+                        ("span.kind".into(), "client".into()),
+                        ("aws.s3.bucket".into(), "bucket-a".into()),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -904,12 +910,13 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind", "producer"),
                         ("aws.s3.bucket", "bucket-a"),
                         ("db.instance", "dynamo.test.us1"),
                         ("db.system", "dynamodb"),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -935,12 +942,13 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind", "server"),
                         ("aws.s3.bucket", "bucket-a"),
                         ("db.instance", "dynamo.test.us1"),
                         ("db.system", "dynamodb"),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -989,11 +997,12 @@ mod tests {
             resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([
+            meta: vec![
                 ("span.kind", "client"),
                 ("peer.hostname", "10.1.2.3"),
                 ("db.instance", "my-db"),
-            ]),
+            ]
+            .into(),
             ..Default::default()
         };
         let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys);
@@ -1016,10 +1025,14 @@ mod tests {
             resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([
+            meta: vec![
                 ("span.kind", "client"),
-                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
-            ]),
+                (
+                    "peer.hostname",
+                    "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF",
+                ),
+            ]
+            .into(),
             ..Default::default()
         };
         let ipv6_keys = vec!["peer.hostname".to_string()];
@@ -1040,7 +1053,11 @@ mod tests {
             resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([("span.kind", "client"), ("db.instance", "dynamo.test.us1")]),
+            meta: vec![
+                ("span.kind", "client"),
+                ("db.instance", "dynamo.test.us1"),
+            ]
+            .into(),
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];
