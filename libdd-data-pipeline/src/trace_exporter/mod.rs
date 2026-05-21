@@ -84,6 +84,7 @@ pub enum TraceExporterOutputFormat {
     #[default]
     V04,
     V05,
+    V1,
 }
 
 impl TraceExporterOutputFormat {
@@ -94,6 +95,7 @@ impl TraceExporterOutputFormat {
             match self {
                 TraceExporterOutputFormat::V04 => "/v0.4/traces",
                 TraceExporterOutputFormat::V05 => "/v0.5/traces",
+                TraceExporterOutputFormat::V1 => "/v1.0/traces",
             },
         )
     }
@@ -128,44 +130,7 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
-#[derive(Clone, Default, Debug)]
-pub struct TracerMetadata {
-    pub hostname: String,
-    pub env: String,
-    pub app_version: String,
-    pub runtime_id: String,
-    pub service: String,
-    pub tracer_version: String,
-    pub language: String,
-    pub language_version: String,
-    pub language_interpreter: String,
-    pub language_interpreter_vendor: String,
-    pub git_commit_sha: String,
-    pub process_tags: String,
-    pub client_computed_stats: bool,
-    pub client_computed_top_level: bool,
-}
-
-impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
-    fn from(tags: &'a TracerMetadata) -> TracerHeaderTags<'a> {
-        TracerHeaderTags::<'_> {
-            lang: &tags.language,
-            lang_version: &tags.language_version,
-            tracer_version: &tags.tracer_version,
-            lang_interpreter: &tags.language_interpreter,
-            lang_vendor: &tags.language_interpreter_vendor,
-            client_computed_stats: tags.client_computed_stats,
-            client_computed_top_level: tags.client_computed_top_level,
-            ..Default::default()
-        }
-    }
-}
-
-impl<'a> From<&'a TracerMetadata> for HeaderMap {
-    fn from(tags: &'a TracerMetadata) -> HeaderMap {
-        TracerHeaderTags::from(tags).into()
-    }
-}
+pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
 /// Handles for the background workers owned by a [`TraceExporter`].
 #[cfg(not(target_arch = "wasm32"))]
@@ -652,6 +617,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         let prepared = match self.serializer.prepare_traces_payload(
             traces,
             header_tags,
+            &self.metadata,
             self.agent_payload_response_version.as_ref(),
         ) {
             Ok(p) => p,

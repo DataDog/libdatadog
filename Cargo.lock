@@ -695,7 +695,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1365,9 +1365,7 @@ name = "datadog-ffe"
 version = "1.0.0"
 dependencies = [
  "chrono",
- "criterion",
  "derive_more",
- "env_logger",
  "faststr",
  "libdd-common",
  "log",
@@ -1391,6 +1389,18 @@ dependencies = [
  "datadog-ffe",
  "function_name",
  "libdd-common-ffi",
+]
+
+[[package]]
+name = "datadog-ffe-test-suite"
+version = "34.0.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "datadog-ffe",
+ "env_logger",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1474,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1710,6 +1720,17 @@ checksum = "a0a4be4cd710e92098de6ad258e6e7c24af11c29c5142f3c6f2a545652480ff8"
 dependencies = [
  "heck 0.4.1",
  "proc-macro-error",
+]
+
+[[package]]
+name = "duplicate"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e92f10a49176cbffacaedabfaa11d51db1ea0f80a83c26e1873b43cd1742c24"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "proc-macro2-diagnostics",
 ]
 
 [[package]]
@@ -2857,7 +2878,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2867,7 +2888,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "bytes",
  "http",
@@ -2879,7 +2900,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2922,7 +2943,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2975,7 +2996,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2994,7 +3015,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3002,6 +3023,7 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
+ "duplicate 2.0.1",
  "either",
  "getrandom 0.2.15",
  "http",
@@ -3037,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3062,7 +3084,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3071,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3084,7 +3106,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3155,7 +3177,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3263,7 +3285,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3275,7 +3297,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3291,7 +3313,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3328,7 +3350,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3343,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-tinybytes"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "libdd-tinybytes",
  "once_cell",
@@ -3362,18 +3384,18 @@ dependencies = [
  "anyhow",
  "arbitrary",
  "criterion",
- "duplicate",
+ "duplicate 0.4.1",
  "libdd-trace-protobuf",
  "rand 0.8.5",
 ]
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "criterion",
- "duplicate",
+ "duplicate 0.4.1",
  "fluent-uri",
  "libdd-common",
  "libdd-trace-protobuf",
@@ -3386,7 +3408,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "3.0.1"
+version = "3.0.2"
 dependencies = [
  "bolero",
  "prost",
@@ -3400,7 +3422,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3427,7 +3449,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "3.0.1"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4387,6 +4409,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f139b0662de085916d1fb67d2b4169d1addddda1919e696f3252b740b629986e"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+ "version_check",
 ]
 
 [[package]]
@@ -5622,7 +5656,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6064,7 +6098,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

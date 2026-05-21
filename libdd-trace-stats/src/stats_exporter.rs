@@ -19,6 +19,7 @@ use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
+use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use std::fmt::Debug;
 use tracing::error;
 
@@ -50,6 +51,25 @@ impl<'a> From<&'a StatsMetadata> for TracerHeaderTags<'a> {
             lang_vendor: &m.lang_vendor,
             tracer_version: &m.tracer_version,
             ..Default::default()
+        }
+    }
+}
+
+impl From<TracerMetadata> for StatsMetadata {
+    fn from(m: TracerMetadata) -> StatsMetadata {
+        StatsMetadata {
+            hostname: m.hostname,
+            env: m.env,
+            app_version: m.app_version,
+            runtime_id: m.runtime_id,
+            language: m.language,
+            lang_version: m.language_version,
+            lang_interpreter: m.language_interpreter,
+            lang_vendor: m.language_interpreter_vendor,
+            tracer_version: m.tracer_version,
+            git_commit_sha: m.git_commit_sha,
+            process_tags: m.process_tags,
+            service: m.service,
         }
     }
 }
@@ -296,7 +316,7 @@ mod tests {
 
         for i in 1..100 {
             trace.push(SpanSlice {
-                service: "libdatadog-test",
+                service: "libdatadog-test".into(),
                 duration: i,
                 ..Default::default()
             })

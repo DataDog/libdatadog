@@ -17,6 +17,29 @@ benchmarks:
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
     - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
     - ./steps/capture-hardware-software-info.sh
+    - |
+      SCRIPT_DIR="$(pwd)/steps"
+      source ./steps/config-benchmark-env.sh
+
+      checkout_source_with_submodules() {
+        local repo_url=$1
+        local dest=$2
+        local target=$3
+
+        if [[ -d "${dest}" ]]; then
+          return
+        fi
+
+        git clone "${repo_url}" "${dest}"
+        git -C "${dest}" checkout "${target}"
+        git -C "${dest}" submodule update --init --recursive
+      }
+
+      checkout_source_with_submodules "${UPSTREAM_REPO_URL}" "${CANDIDATE_PATH}" "${CANDIDATE_IDENTIFIER}"
+
+      # Refresh benchmark-platform's derived baseline after candidate checkout.
+      VERBOSE="true" source ./steps/config-benchmark-env.sh
+      checkout_source_with_submodules "${UPSTREAM_REPO_URL}" "${BASELINE_PATH}" "${BASELINE_IDENTIFIER}"
     - ./steps/run-benchmarks.sh
     - ./steps/analyze-results.sh
     - "./steps/upload-results-to-s3.sh || :"

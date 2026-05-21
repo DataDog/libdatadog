@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Obfuscates the memcached command cmd.
+#[must_use]
 pub fn obfuscate_memcached_string(cmd: &str) -> String {
     // All memcached commands end with new lines [1]. In the case of storage
     // commands, key values follow after. Knowing this, all we have to do

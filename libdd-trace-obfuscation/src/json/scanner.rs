@@ -5,7 +5,7 @@
 
 /// Opcode returned by [`Scanner::step`] for each input char.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Op {
+pub enum Op {
     Continue,     // uninteresting char (inside a literal)
     BeginLiteral, // first char of a string / number / bool / null
     BeginObject,  // '{'
@@ -57,7 +57,7 @@ enum State {
 
 /// A streaming JSON scanner. Feed chars one at a time via [`Scanner::step`];
 /// the returned [`Op`] describes the structural significance of each char.
-pub(crate) struct Scanner {
+pub struct Scanner {
     state: State,
     end_top: bool,
     parse_state: Vec<ParseState>,
@@ -67,8 +67,8 @@ pub(crate) struct Scanner {
 }
 
 impl Scanner {
-    pub(crate) fn new() -> Self {
-        Scanner {
+    pub(crate) const fn new() -> Self {
+        Self {
             state: State::BeginValue,
             end_top: false,
             parse_state: Vec::new(),
@@ -107,6 +107,7 @@ impl Scanner {
     }
 
     /// Advances the scanner by one char and returns its structural opcode.
+    #[allow(clippy::too_many_lines, reason = "FIXME: split this function")]
     pub(crate) fn step(&mut self, c: char) -> Op {
         self.position += 1;
         match self.state {
@@ -312,20 +313,19 @@ impl Scanner {
     }
 
     fn end_value(&mut self, c: char) -> Op {
-        let n = self.parse_state.len();
-        if n == 0 {
+        let Some(parse_state) = self.parse_state.last_mut() else {
             self.state = State::EndTop;
             self.end_top = true;
             return self.end_top(c);
-        }
+        };
         if is_space(c) {
             self.state = State::EndValue;
             return Op::SkipSpace;
         }
-        match self.parse_state[n - 1] {
+        match *parse_state {
             ParseState::ObjectKey => {
                 if c == ':' {
-                    self.parse_state[n - 1] = ParseState::ObjectValue;
+                    *parse_state = ParseState::ObjectValue;
                     self.state = State::BeginValue;
                     Op::ObjectKey
                 } else {
@@ -334,7 +334,7 @@ impl Scanner {
             }
             ParseState::ObjectValue => {
                 if c == ',' {
-                    self.parse_state[n - 1] = ParseState::ObjectKey;
+                    *parse_state = ParseState::ObjectKey;
                     self.state = State::BeginString;
                     Op::ObjectValue
                 } else if c == '}' {
@@ -359,13 +359,13 @@ impl Scanner {
     }
 
     fn end_top(&mut self, c: char) -> Op {
-        if !is_space(c) {
+        if is_space(c) {
+            Op::End
+        } else {
             // A new JSON value is starting. Reset and process this char fresh.
             // This allows multiple concatenated JSON objects (ElasticSearch bulk API).
             self.reset();
             self.step(c)
-        } else {
-            Op::End
         }
     }
 
@@ -436,13 +436,13 @@ impl Scanner {
 
     fn error(&mut self, c: char, ctx: &str) -> Op {
         self.state = State::Error;
-        self.err = Some(format!("invalid character '{}' {}", c, ctx));
+        self.err = Some(format!("invalid character '{c}' {ctx}"));
         Op::Error
     }
 }
 
 #[inline]
-fn is_space(c: char) -> bool {
+const fn is_space(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r' | '\n')
 }
 

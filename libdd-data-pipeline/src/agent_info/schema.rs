@@ -122,3 +122,84 @@ pub struct MemcachedObfuscationConfig {
     #[serde(alias = "KeepCommand")]
     pub keep_command: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AgentInfoStruct;
+    #[duplicate::duplicate_item(
+        test_name input;
+        [parse_empty] ["{}"];
+        [parse_old_obfuscation_config] [r#"{
+            "config": {
+                "obfuscation": {
+                    "elastic_search": true,
+                    "mongo": true,
+                    "sql_exec_plan": false,
+                    "sql_exec_plan_normalize": false,
+                    "http": {
+                        "remove_query_string": false,
+                        "remove_path_digits": false
+                    },
+                    "remove_stack_traces": false,
+                    "redis": {
+                        "Enabled": true,
+                        "RemoveAllArgs": false
+                    },
+                    "memcached": {
+                        "Enabled": true,
+                        "KeepCommand": false
+                    }
+                }
+            }
+        }"#];
+        [parse_new_obfuscation_config] [r#"{
+            "config": {
+                "obfuscation": {
+                    "elastic_search": true,
+                    "mongo": true,
+                    "sql_exec_plan": false,
+                    "sql_exec_plan_normalize": false,
+                    "http": {
+                        "remove_query_string": false,
+                        "remove_path_digits": false
+                    },
+                    "remove_stack_traces": false,
+                    "redis": {
+                        "enabled": true,
+                        "remove_all_args": false
+                    },
+                    "memcached": {
+                        "enabled": true,
+                        "keep_command": false
+                    }
+                }
+            }
+        }"#];
+        [parse_filter_tags] [r#"{
+            "filter_tags": {
+                "reject": [
+                  "appsec.events.system_tests_appsec_event.value:tf-reject-exact"
+                ],
+                "require": [
+                  "appsec.events.system_tests_appsec_event.value:tf-require-exact"
+                ]
+            },
+            "filter_tags_regex": {
+                "reject": [
+                  "appsec.events.system_tests_appsec_event.value:tf-reject-regex-.*"
+                ],
+                "require": [
+                  "appsec.events.system_tests_appsec_event.value:tf-require-regex-.*"
+                ]
+            },
+            "ignore_resources": [
+                ".*(stats-unique|StatsUniqueHandler).*"
+            ]
+        }"#]
+    )]
+    #[test]
+    fn test_name() {
+        let _info: AgentInfoStruct = serde_json::from_str(input)
+            .expect("AgentInfoStruct should be parsed successfully from input");
+    }
+}
