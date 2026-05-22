@@ -170,7 +170,7 @@ impl<K, V> Extend<(K, V)> for VecMap<K, V> {
 
 impl<K: Serialize + Eq + Hash, V: Serialize> Serialize for VecMap<K, V> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        let mut map = serializer.serialize_map(None)?;
         let mut seen = HashSet::with_capacity(self.len());
         for (k, v) in self.0.iter().rev() {
             if seen.insert(k) {
