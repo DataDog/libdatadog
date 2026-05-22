@@ -45,8 +45,7 @@ use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
-use libdd_capabilities::http::HttpClientTrait;
-use libdd_capabilities_impl::DefaultHttpClient;
+use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_telemetry::config::Config;
@@ -517,7 +516,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                         if let Some(base) = trace_config.endpoint.as_ref() {
                             if let Some(ep) = ffe_flusher::exposure_endpoint(base) {
                                 tokio::spawn(async move {
-                                    let client = DefaultHttpClient::new_client();
+                                    let client = NativeCapabilities::new_client();
                                     ffe_flusher::send_payload(&client, &ep, payload).await;
                                 });
                             } else {

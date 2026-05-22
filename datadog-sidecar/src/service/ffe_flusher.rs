@@ -10,9 +10,8 @@
 
 use http::uri::PathAndQuery;
 use http::Method;
-use libdd_capabilities::http::HttpClientTrait;
 use libdd_capabilities::Bytes;
-use libdd_capabilities_impl::DefaultHttpClient;
+use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::Endpoint;
 use tracing::{debug, warn};
 
@@ -41,7 +40,11 @@ pub(crate) fn exposure_endpoint(base: &Endpoint) -> Option<Endpoint> {
 /// POST a single FFE exposure payload to the agent EVP proxy.
 /// Fire-and-forget: non-2xx responses and network errors are logged at `debug`
 /// and dropped (matches dd-trace-go behaviour).
-pub(crate) async fn send_payload(client: &DefaultHttpClient, endpoint: &Endpoint, payload: String) {
+pub(crate) async fn send_payload<C: HttpClientCapability>(
+    client: &C,
+    endpoint: &Endpoint,
+    payload: String,
+) {
     let builder = match endpoint.to_request_builder(USER_AGENT) {
         Ok(b) => b,
         Err(e) => {
@@ -89,7 +92,6 @@ fn truncate(bytes: &[u8], cap: usize) -> String {
 mod tests {
     use super::*;
     use httpmock::MockServer;
-    use libdd_capabilities::http::HttpClientTrait;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
         Endpoint {
@@ -115,7 +117,7 @@ mod tests {
 
         let base = endpoint_for(&server);
         let ep = exposure_endpoint(&base).unwrap();
-        let client = DefaultHttpClient::new_client();
+        let client = NativeCapabilities::new_client();
 
         let payload =
             r#"{"context":{"service":"svc","env":"prod","version":"1"},"exposures":[]}"#.to_owned();
@@ -141,7 +143,7 @@ mod tests {
 
         let base = endpoint_for(&server);
         let ep = exposure_endpoint(&base).unwrap();
-        let client = DefaultHttpClient::new_client();
+        let client = NativeCapabilities::new_client();
         send_payload(&client, &ep, "{}".to_owned()).await;
     }
 
