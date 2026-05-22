@@ -2,7 +2,7 @@
 
 
 
-## [3.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v3.0.0..libdd-trace-stats-v3.1.0) - 2026-05-22
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v3.0.0..libdd-trace-stats-v4.0.0) - 2026-05-22
 
 ### Added
 
