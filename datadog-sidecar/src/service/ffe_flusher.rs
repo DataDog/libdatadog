@@ -98,7 +98,7 @@ mod tests {
         }
     }
 
-    /// V3 — POST hits `/evp_proxy/v2/api/v2/exposures` with the correct
+    /// V3: POST hits `/evp_proxy/v2/api/v2/exposures` with the correct
     /// subdomain header and application/json content type. Body round-trips.
     #[tokio::test]
     async fn posts_to_evp_proxy() {
