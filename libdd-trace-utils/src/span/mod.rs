@@ -4,6 +4,7 @@
 pub mod trace_utils;
 pub mod v04;
 pub mod v05;
+pub mod vec_map;
 
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;
