@@ -9,7 +9,6 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod normalize_utils;
-pub mod normalizer;
 pub(crate) mod utf8_helpers;
 
 #[cfg(feature = "fuzzing")]

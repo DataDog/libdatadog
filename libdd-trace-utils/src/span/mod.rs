@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod stat_span;
 pub mod trace_utils;
 pub mod v04;
 pub mod v05;

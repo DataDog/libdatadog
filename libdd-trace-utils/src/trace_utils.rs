@@ -1,6 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+// FIXME: replace anyhow errors with proper errors (thiserror)
 
+use crate::normalizer;
 pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 use crate::span::v05::dict::SharedDict;
@@ -13,7 +15,6 @@ use bytes::buf::Reader;
 use bytes::Buf;
 use http_body_util::BodyExt;
 use libdd_common::azure_app_services;
-use libdd_trace_normalization::normalizer;
 use libdd_trace_protobuf::pb;
 use rmp::decode::read_array_len;
 use rmpv::decode::read_value;

@@ -72,13 +72,13 @@ pub fn normalize_span_start_duration(start: &mut i64, duration: &mut i64) {
     }
 }
 
-pub fn normalize_parent_id(parent_id: &mut u64, trace_id: u64, span_id: u64) {
+pub fn normalize_parent_id(parent_id: &mut u128, trace_id: u128, span_id: u64) {
     // ParentID, TraceID and SpanID set in the client could be the same
     // Supporting the ParentID == TraceID == SpanID for the root span, is compliant
     // with the Zipkin implementation. Furthermore, as described in the PR
     // https://github.com/openzipkin/zipkin/pull/851 the constraint that the
     // root span's ``trace id = span id`` has been removed
-    if *parent_id == trace_id && *parent_id == span_id {
+    if *parent_id == trace_id && *parent_id == span_id.into() {
         *parent_id = 0;
     }
 }

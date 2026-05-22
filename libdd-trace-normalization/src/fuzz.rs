@@ -1,9 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::normalizer;
+// use crate::normalizer;
 use arbitrary::{Arbitrary, Unstructured};
-use libdd_trace_protobuf::pb;
 use std::collections::HashMap;
 
 // Limit size to avoid OOM and similar issues with large payloads.

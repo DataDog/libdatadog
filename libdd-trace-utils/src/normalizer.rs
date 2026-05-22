@@ -1,8 +1,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::normalize_utils;
+use libdd_trace_normalization::normalize_utils;
 use libdd_trace_protobuf::pb;
+
+use crate::span::stat_span::{StatSpan, StatSpanMut};
 
 const TAG_SAMPLING_PRIORITY: &str = "_sampling_priority_v1";
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -16,19 +18,19 @@ pub enum SamplerPriority {
     None = i8::MIN as isize,
 }
 
-pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
-    anyhow::ensure!(s.trace_id != 0, "TraceID is zero (reason:trace_id_zero)");
-    anyhow::ensure!(s.span_id != 0, "SpanID is zero (reason:span_id_zero)");
+pub(crate) fn normalize_span(s: impl StatSpan + StatSpanMut) -> anyhow::Result<()> {
+    anyhow::ensure!(s.trace_id() != 0, "TraceID is zero (reason:trace_id_zero)");
+    anyhow::ensure!(s.span_id() != 0, "SpanID is zero (reason:span_id_zero)");
 
     // TODO: component2name: check for a feature flag to determine the component tag to become the
     // span name https://github.com/DataDog/datadog-agent/blob/dc88d14851354cada1d15265220a39dce8840dcc/pkg/trace/agent/normalizer.go#L64
 
-    normalize_utils::normalize_service(&mut s.service);
-    normalize_utils::normalize_name(&mut s.name);
-    normalize_utils::normalize_resource(&mut s.resource, &s.name);
-    normalize_utils::normalize_parent_id(&mut s.parent_id, s.trace_id, s.span_id);
-    normalize_utils::normalize_span_start_duration(&mut s.start, &mut s.duration);
-    normalize_utils::normalize_span_type(&mut s.r#type);
+    s.set_service(normalize_utils::normalize_service(s.service()));
+    normalize_utils::normalize_name(s.name_mut().into());
+    normalize_utils::normalize_resource(s.resource_mut().into(), &s.name());
+    normalize_utils::normalize_parent_id(&mut s.parent_id_mut(), s.trace_id(), s.span_id());
+    normalize_utils::normalize_span_start_duration(&mut s.start_mut(), &mut s.duration_mut());
+    normalize_utils::normalize_span_type(&mut s.type_mut());
 
     if let Some(env_tag) = s.meta.get_mut("env") {
         normalize_utils::normalize_tag(env_tag);

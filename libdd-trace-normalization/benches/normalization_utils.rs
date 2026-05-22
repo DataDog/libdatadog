@@ -85,67 +85,67 @@ fn normalize_fnmut_string<F>(
     group.finish();
 }
 
-fn normalize_span_bench(c: &mut Criterion) {
-    let trace = [
-        pb::Span {
-            duration: 10000000,
-            error: 0,
-            resource: "GET /some/raclette".to_string(),
-            service: "django".to_string(),
-            name: "django.controller".to_string(),
-            span_id: 1388,
-            start: 1448466874000000000,
-            trace_id: 424242,
-            meta: HashMap::from([
-                ("user".to_string(), "leo".to_string()),
-                ("pool".to_string(), "fondue".to_string()),
-            ]),
-            metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
-            parent_id: 1111,
-            r#type: "http".to_string(),
-            meta_struct: HashMap::new(),
-            span_links: vec![],
-            span_events: vec![],
-        },
-        pb::Span {
-            duration: 12000000,
-            error: 1,
-            resource: "GET /some/reblochon".to_string(),
-            service: "".to_string(),
-            name: "django.controller".to_string(),
-            span_id: 1456,
-            start: 1448466849000000000,
-            trace_id: 424242,
-            meta: HashMap::from([
-                ("user".to_string(), "leo".to_string()),
-                ("pool".to_string(), "tartiflette".to_string()),
-            ]),
-            metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
-            parent_id: 1123,
-            r#type: "http".to_string(),
-            meta_struct: HashMap::new(),
-            span_links: vec![],
-            span_events: vec![],
-        },
-    ];
+// fn normalize_span_bench(c: &mut Criterion) {
+//     let trace = [
+//         pb::Span {
+//             duration: 10000000,
+//             error: 0,
+//             resource: "GET /some/raclette".to_string(),
+//             service: "django".to_string(),
+//             name: "django.controller".to_string(),
+//             span_id: 1388,
+//             start: 1448466874000000000,
+//             trace_id: 424242,
+//             meta: HashMap::from([
+//                 ("user".to_string(), "leo".to_string()),
+//                 ("pool".to_string(), "fondue".to_string()),
+//             ]),
+//             metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
+//             parent_id: 1111,
+//             r#type: "http".to_string(),
+//             meta_struct: HashMap::new(),
+//             span_links: vec![],
+//             span_events: vec![],
+//         },
+//         pb::Span {
+//             duration: 12000000,
+//             error: 1,
+//             resource: "GET /some/reblochon".to_string(),
+//             service: "".to_string(),
+//             name: "django.controller".to_string(),
+//             span_id: 1456,
+//             start: 1448466849000000000,
+//             trace_id: 424242,
+//             meta: HashMap::from([
+//                 ("user".to_string(), "leo".to_string()),
+//                 ("pool".to_string(), "tartiflette".to_string()),
+//             ]),
+//             metrics: HashMap::from([("cheese_weight".to_string(), 100000.0)]),
+//             parent_id: 1123,
+//             r#type: "http".to_string(),
+//             meta_struct: HashMap::new(),
+//             span_links: vec![],
+//             span_events: vec![],
+//         },
+//     ];
 
-    c.bench_with_input(
-        BenchmarkId::new("normalization/normalize_trace", "test_trace"),
-        &trace,
-        |b, case| {
-            b.iter_batched_ref(
-                || case.to_owned(),
-                |t| black_box(normalize_trace(black_box(t))),
-                BatchSize::LargeInput,
-            )
-        },
-    );
-}
+//     c.bench_with_input(
+//         BenchmarkId::new("normalization/normalize_trace", "test_trace"),
+//         &trace,
+//         |b, case| {
+//             b.iter_batched_ref(
+//                 || case.to_owned(),
+//                 |t| black_box(normalize_trace(black_box(t))),
+//                 BatchSize::LargeInput,
+//             )
+//         },
+//     );
+// }
 
 criterion_group!(
     benches,
     normalize_service_bench,
     normalize_name_bench,
-    normalize_span_bench
+    // normalize_span_bench
 );
 criterion_main!(benches);
