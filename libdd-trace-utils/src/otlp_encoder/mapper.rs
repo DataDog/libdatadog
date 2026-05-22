@@ -113,15 +113,9 @@ fn map_span<T: TraceData>(
     chunk_trace_id_high: u64,
 ) -> OtlpSpan {
     // Reconstruct the full 128-bit trace ID. The v04/v05 wire format carries only the low 64 bits
-    // in the trace_id field; when a tracer emits a 128-bit ID the high 64 bits are propagated as
-    // the hex string meta tag "_dd.p.tid". Per-span tag wins (forward-compat with tracers that
-    // propagate it everywhere), then the chunk-root value resolved by the caller, then 0.
-    let trace_id_high: u128 = span
-        .meta
-        .get("_dd.p.tid")
-        .and_then(|v| u64::from_str_radix(v.borrow(), 16).ok())
-        .unwrap_or(chunk_trace_id_high) as u128;
-    let trace_id_128 = (trace_id_high << 64) | span.trace_id;
+    // in the trace_id field; the high 64 bits live on the chunk root as the "_dd.p.tid" meta tag
+    // and are resolved once per chunk by the caller. All spans in a chunk share the same trace.
+    let trace_id_128 = ((chunk_trace_id_high as u128) << 64) | span.trace_id;
     let trace_id_hex = format!("{:032x}", trace_id_128);
     let span_id_hex = format!("{:016x}", span.span_id);
     let parent_span_id = if span.parent_id != 0 {
@@ -618,54 +612,6 @@ mod tests {
     }
 
     #[test]
-    fn test_per_span_dd_p_tid_overrides_chunk() {
-        // If a span carries its own "_dd.p.tid", that value wins over the chunk-root value.
-        // This matters for tracers that may propagate the tag everywhere (forward-compat),
-        // or pathological mixed-chunk scenarios.
-        let resource_info = OtlpResourceInfo::default();
-        let low: u128 = 0xD269B633813FC60C_u128;
-        let mut root: Span<BytesData> = Span {
-            trace_id: low,
-            span_id: 1,
-            name: libdd_tinybytes::BytesString::from_static("root"),
-            start: 0,
-            duration: 1,
-            ..Default::default()
-        };
-        root.meta.insert(
-            "_dd.p.tid".into(),
-            libdd_tinybytes::BytesString::from_static("aaaaaaaaaaaaaaaa"),
-        );
-        let mut child_own: Span<BytesData> = Span {
-            trace_id: low,
-            span_id: 2,
-            parent_id: 1,
-            name: libdd_tinybytes::BytesString::from_static("child_own"),
-            start: 0,
-            duration: 1,
-            ..Default::default()
-        };
-        child_own.meta.insert(
-            "_dd.p.tid".into(),
-            libdd_tinybytes::BytesString::from_static("cccccccccccccccc"),
-        );
-        let child_inherits: Span<BytesData> = Span {
-            trace_id: low,
-            span_id: 3,
-            parent_id: 1,
-            name: libdd_tinybytes::BytesString::from_static("child_inherits"),
-            start: 0,
-            duration: 1,
-            ..Default::default()
-        };
-        let req = map_traces_to_otlp(vec![vec![root, child_own, child_inherits]], &resource_info);
-        let spans = &req.resource_spans[0].scope_spans[0].spans;
-        assert_eq!(spans[0].trace_id, "aaaaaaaaaaaaaaaad269b633813fc60c");
-        assert_eq!(spans[1].trace_id, "ccccccccccccccccd269b633813fc60c");
-        assert_eq!(spans[2].trace_id, "aaaaaaaaaaaaaaaad269b633813fc60c");
-    }
-
-    #[test]
     fn test_chunk_with_malformed_dd_p_tid_on_root_falls_back() {
         // If the chunk root's "_dd.p.tid" fails to parse, the scan continues looking for
         // any other parseable value in the chunk before giving up. This keeps a malformed
@@ -708,12 +654,11 @@ mod tests {
         );
         let req = map_traces_to_otlp(vec![vec![root, child_no_tag, child_valid]], &resource_info);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
-        // root keeps its malformed tag → per-span lookup fails → fall back to chunk-level
-        // which itself skips the malformed root and picks up child_valid's tag.
+        // The chunk-level scan skips the malformed root and picks up child_valid's tag,
+        // which is then applied to every span in the chunk.
         let expected = "ddddddddddddddddd269b633813fc60c";
         assert_eq!(spans[0].trace_id, expected);
         assert_eq!(spans[1].trace_id, expected);
-        // child_valid keeps its own (which equals the chunk value here).
         assert_eq!(spans[2].trace_id, expected);
     }
 
