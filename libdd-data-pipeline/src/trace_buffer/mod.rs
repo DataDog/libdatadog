@@ -519,7 +519,7 @@ impl<T> Sender<T> {
     /// currently empty (nothing to flush, no need to wait).
     fn trigger_flush_and_capture_gen(&self) -> Result<Option<BatchGeneration>, TraceBufferError> {
         let mut state = self.get_running_state()?;
-        if state.batch.span_count == 0 {
+        if state.batch.byte_count == 0 {
             return Ok(None);
         }
         state.flush_needed = true;
@@ -1046,8 +1046,8 @@ mod tests {
                 exported_clone.lock().unwrap().extend(lengths);
             }),
             TraceBufferConfig::default()
-                .max_buffered_spans(100)
-                .span_flush_threshold(100)
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
                 .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
         );
 
@@ -1070,8 +1070,8 @@ mod tests {
         let (rt, sem, sender) = make_buffer(
             Box::new(|chunks| assert_eq!(chunks.len(), 2)),
             TraceBufferConfig::default()
-                .max_buffered_spans(100)
-                .span_flush_threshold(100)
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
                 .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
         );
 
