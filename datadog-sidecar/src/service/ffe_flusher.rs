@@ -11,7 +11,7 @@
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::Bytes;
-use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
+use libdd_capabilities_impl::HttpClientCapability;
 use libdd_common::Endpoint;
 use tracing::{debug, warn};
 
@@ -92,6 +92,7 @@ fn truncate(bytes: &[u8], cap: usize) -> String {
 mod tests {
     use super::*;
     use httpmock::MockServer;
+    use libdd_capabilities_impl::NativeCapabilities;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
         Endpoint {
