@@ -209,33 +209,19 @@ mod native {
         /// If the runtime is not available (e.g. after calling before_fork), a temporary
         /// single-threaded runtime is used.
         ///
-        /// Safe to call from inside another tokio runtime: when invoked from a thread that is
-        /// already driving a tokio scheduler, the future is run on a temporary OS thread via
-        /// [`std::thread::scope`] to avoid the "Cannot start a runtime from within a runtime"
-        /// panic that `Runtime::block_on` raises in that situation.
-        ///
         /// Not available on wasm32 -- use async paths instead.
         ///
         /// # Errors
         /// Returns an error if it fails to create a fallback runtime.
-        pub fn block_on<F>(&self, f: F) -> Result<F::Output, io::Error>
-        where
-            F: std::future::Future + Send,
-            F::Output: Send,
-        {
+        pub fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
             let runtime = match self.runtime.lock_or_panic().as_ref() {
                 None => Arc::new(Builder::new_current_thread().enable_all().build()?),
                 Some(runtime) => runtime.clone(),
             };
-            Ok(block_on_outside_runtime(runtime, f))
+            Ok(runtime.block_on(f))
         }
 
         /// Shutdown the runtime and all workers synchronously with optional timeout.
-        ///
-        /// Safe to call from inside another tokio runtime (see [`Self::block_on`] for details).
-        /// When invoked from a tokio context, both the worker shutdown and the eventual
-        /// `Runtime` drop happen on a scoped OS thread; both require blocking and would
-        /// otherwise panic.
         ///
         /// Not available on wasm32 -- use [`shutdown_async`](Self::shutdown_async) instead.
         ///
@@ -248,73 +234,22 @@ mod native {
             timeout: Option<std::time::Duration>,
         ) -> Result<(), SharedRuntimeError> {
             debug!(?timeout, "Shutting down SharedRuntime");
-            let runtime = match self.runtime.lock_or_panic().take() {
-                Some(rt) => rt,
-                None => return Ok(()),
-            };
-
-            // Both `runtime.block_on(...)` and the subsequent `Arc<Runtime>` drop require
-            // blocking, which tokio rejects from inside another runtime's async context. When
-            // we detect that, drive both on a scoped OS thread so the local Arc — which is
-            // (usually) the last remaining reference — also drops outside the async context.
-            let run = move || -> Result<(), SharedRuntimeError> {
-                let result = if let Some(timeout) = timeout {
-                    match runtime.block_on(async {
-                        tokio::time::timeout(timeout, self.shutdown_async()).await
-                    }) {
-                        Ok(()) => Ok(()),
-                        Err(_) => Err(SharedRuntimeError::ShutdownTimedOut(timeout)),
+            match self.runtime.lock_or_panic().take() {
+                Some(runtime) => {
+                    if let Some(timeout) = timeout {
+                        match runtime.block_on(async {
+                            tokio::time::timeout(timeout, self.shutdown_async()).await
+                        }) {
+                            Ok(()) => Ok(()),
+                            Err(_) => Err(SharedRuntimeError::ShutdownTimedOut(timeout)),
+                        }
+                    } else {
+                        runtime.block_on(self.shutdown_async());
+                        Ok(())
                     }
-                } else {
-                    runtime.block_on(self.shutdown_async());
-                    Ok(())
-                };
-                drop(runtime);
-                result
-            };
-
-            if tokio::runtime::Handle::try_current().is_ok() {
-                std::thread::scope(|s| {
-                    s.spawn(run)
-                        .join()
-                        .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
-                })
-            } else {
-                run()
+                }
+                None => Ok(()),
             }
-        }
-    }
-
-    /// Drive `f` to completion via `runtime.block_on`, escaping to a scoped OS thread when the
-    /// caller is already inside a tokio runtime.
-    ///
-    /// `Runtime::block_on` panics with "Cannot start a runtime from within a runtime" when
-    /// invoked from a thread that is already executing a tokio scheduler. This helper detects
-    /// that case via [`tokio::runtime::Handle::try_current`] and bridges through
-    /// [`std::thread::scope`] so the borrowing future does not need to be `'static`.
-    ///
-    /// Ownership of the `Arc<Runtime>` is taken so its eventual drop (which also blocks while
-    /// joining worker threads) lands on the same scoped thread when applicable. Otherwise the
-    /// `Arc<Runtime>` drop would panic with "Cannot drop a runtime in a context where blocking
-    /// is not allowed" whenever it was the last remaining reference.
-    pub(super) fn block_on_outside_runtime<F>(runtime: Arc<Runtime>, f: F) -> F::Output
-    where
-        F: std::future::Future + Send,
-        F::Output: Send,
-    {
-        let run = move || {
-            let result = runtime.block_on(f);
-            drop(runtime);
-            result
-        };
-        if tokio::runtime::Handle::try_current().is_ok() {
-            std::thread::scope(|s| {
-                s.spawn(run)
-                    .join()
-                    .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
-            })
-        } else {
-            run()
         }
     }
 }
@@ -760,87 +695,5 @@ mod tests {
             receiver.recv_timeout(Duration::from_millis(200)).is_err(),
             "worker should not run or shut down after fork in child when restart_on_fork is false"
         );
-    }
-
-    /// Regression test: previously calling [`SharedRuntime::block_on`] from within a tokio
-    /// runtime panicked with "Cannot start a runtime from within a runtime". The runtime-aware
-    /// bridge should escape to a temporary OS thread and complete normally.
-    ///
-    /// Calling `shutdown` at the end is required to drop the underlying [`tokio::runtime::Runtime`]
-    /// off the test's async context (its drop joins worker threads, which itself blocks).
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_block_on_from_within_tokio_runtime() {
-        let shared_runtime = SharedRuntime::new().unwrap();
-        let result = shared_runtime.block_on(async { 42 }).unwrap();
-        assert_eq!(result, 42);
-        shared_runtime.shutdown(None).unwrap();
-    }
-
-    /// Same regression coverage when the [`SharedRuntime`] has no runtime installed (e.g. between
-    /// `before_fork` and `after_fork_*`). The fallback current-thread runtime must also be driven
-    /// — and dropped — from a temporary OS thread.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_block_on_from_within_tokio_runtime_after_take() {
-        let shared_runtime = SharedRuntime::new().unwrap();
-        // Drop the embedded runtime on a plain OS thread. tokio blocking threads still have
-        // a current `Handle`, which would make the runtime drop panic too.
-        let runtime_slot = shared_runtime.runtime.clone();
-        std::thread::spawn(move || {
-            runtime_slot.lock_or_panic().take();
-        })
-        .join()
-        .unwrap();
-        let result = shared_runtime.block_on(async { 7 }).unwrap();
-        assert_eq!(result, 7);
-    }
-
-    /// Regression test: previously calling [`SharedRuntime::shutdown`] from within a tokio
-    /// runtime panicked through `Runtime::block_on`. The runtime-aware bridge should make this
-    /// work and still drive the worker's `shutdown` hook to completion.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_shutdown_from_within_tokio_runtime() {
-        let shared_runtime = SharedRuntime::new().unwrap();
-        let (worker, receiver) = make_test_worker();
-
-        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
-
-        // Wait for at least one run before shutting down (off the tokio worker so we don't
-        // starve the scheduler).
-        let receiver = tokio::task::spawn_blocking(move || {
-            receiver
-                .recv_timeout(Duration::from_secs(1))
-                .expect("worker did not run");
-            receiver
-        })
-        .await
-        .unwrap();
-
-        shared_runtime.shutdown(None).unwrap();
-
-        // Drain all messages after shutdown — the last one must be the shutdown sentinel.
-        let last = tokio::task::spawn_blocking(move || {
-            let mut last = receiver
-                .recv_timeout(Duration::from_secs(1))
-                .expect("shutdown did not send a value");
-            while let Ok(v) = receiver.try_recv() {
-                last = v;
-            }
-            last
-        })
-        .await
-        .unwrap();
-        assert_eq!(last, -1);
-    }
-
-    /// Regression test for shutdown's timeout arm: previously panicked from inside tokio.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_shutdown_with_timeout_from_within_tokio_runtime() {
-        let shared_runtime = SharedRuntime::new().unwrap();
-        let (worker, _receiver) = make_test_worker();
-        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
-
-        shared_runtime
-            .shutdown(Some(Duration::from_secs(5)))
-            .unwrap();
     }
 }
