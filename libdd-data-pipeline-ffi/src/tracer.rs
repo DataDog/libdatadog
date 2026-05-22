@@ -13,10 +13,10 @@ use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::Error as DdogError;
-use libdd_common_ffi::MaybeError;
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
+use libdd_common_ffi::Error as DdogError;
+use libdd_common_ffi::MaybeError;
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::v04::SpanBytes;
 use std::ptr::NonNull;
@@ -30,8 +30,7 @@ use std::ptr::NonNull;
 /// Returns an error if the slice is not valid UTF-8.
 #[inline]
 fn charslice_to_bytesstring(s: CharSlice) -> anyhow::Result<BytesString> {
-    BytesString::from_slice(s.as_bytes())
-        .map_err(|e| anyhow::anyhow!("invalid UTF-8: {e}"))
+    BytesString::from_slice(s.as_bytes()).map_err(|e| anyhow::anyhow!("invalid UTF-8: {e}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -86,8 +85,7 @@ pub unsafe extern "C" fn ddog_tracer_span_new(
         let resource = charslice_to_bytesstring(fields.resource)?;
         let span_type = charslice_to_bytesstring(fields.span_type)?;
 
-        let trace_id: u128 =
-            ((fields.trace_id_high as u128) << 64) | (fields.trace_id_low as u128);
+        let trace_id: u128 = ((fields.trace_id_high as u128) << 64) | (fields.trace_id_low as u128);
 
         let span = SpanBytes {
             service,
@@ -260,9 +258,7 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
         return MaybeError::Some(DdogError::from("null handle"));
     };
     let Some(chunk) = chunks.0.last_mut() else {
-        return MaybeError::Some(DdogError::from(
-            "no chunk started; call begin_chunk first",
-        ));
+        return MaybeError::Some(DdogError::from("no chunk started; call begin_chunk first"));
     };
     chunk.push(span.0);
     MaybeError::None
