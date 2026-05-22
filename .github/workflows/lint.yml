@@ -81,6 +81,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run rustfmt
         env:
           FMT_PACKAGES: ${{ needs.setup.outputs.fmt-packages }}
@@ -113,6 +115,8 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+          shared-key: shared-${{ runner.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Run clippy on ${{ matrix.platform }} ${{ matrix.rust_version }}
         shell: bash
         env:
