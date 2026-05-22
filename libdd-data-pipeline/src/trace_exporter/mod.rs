@@ -577,18 +577,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         self.handle_send_result(result, chunks, payload_len).await
     }
 
-    fn normalize_traces<T: TraceData>(&self, traces: &mut [Vec<Span<T>>]) {
-        for trace in traces.iter_mut() {
-            libdd_trace_normalization::normalizer::normalize_trace(trace);
-        }
-    }
-
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
-        self.normalize_traces(&mut traces);
         // FIXME: when client_computed_top_level is true, looking twice for the root span here is
         // inefficient and just below in process_traces_for_stats.
         // Also, only do it when css is on
