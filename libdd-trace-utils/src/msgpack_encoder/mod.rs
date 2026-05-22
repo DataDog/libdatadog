@@ -4,6 +4,21 @@
 pub mod v04;
 pub mod v1;
 
+use rmp::encode::ValueWriteError;
+use std::convert::Infallible;
+
+/// Flatten `ValueWriteError<Infallible>` (uninhabited because both variants wrap
+/// `Infallible`) into the bare `Infallible` so callers can use
+/// [`libdd_common::ResultInfallibleExt`].
+#[inline(always)]
+pub(crate) fn flatten_value_write_infallible(err: ValueWriteError<Infallible>) -> Infallible {
+    match err {
+        ValueWriteError::InvalidMarkerWrite(never) | ValueWriteError::InvalidDataWrite(never) => {
+            never
+        }
+    }
+}
+
 /// A writer that counts bytes without storing them, used to compute encoded payload size.
 pub(crate) struct CountLength(u32);
 

@@ -12,7 +12,7 @@ use std::iter::Iterator;
 pub type TracerPayloadV04 = Vec<v04::SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 /// Enumerates the different encoding types.
 pub enum TraceEncoding {
     /// v0.4 encoding (TracerPayloadV04).
@@ -228,7 +228,7 @@ pub fn decode_to_trace_chunks(
     data: libdd_tinybytes::Bytes,
     encoding_type: TraceEncoding,
 ) -> Result<(TraceChunks<BytesData>, usize), anyhow::Error> {
-    let (data, size) = match &encoding_type {
+    let (data, size) = match encoding_type {
         TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
         TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),
     }

@@ -599,14 +599,10 @@ pub fn collect_trace_chunks<T: TraceData>(
             let mut shared_dict = SharedDict::default();
             let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
             for trace in traces {
-                let trace_len = trace.len();
-                let v05_trace = trace.into_iter().try_fold(
-                    Vec::with_capacity(trace_len),
-                    |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
-                        acc.push(v05::from_v04_span(span, &mut shared_dict)?);
-                        Ok(acc)
-                    },
-                )?;
+                let v05_trace = trace
+                    .into_iter()
+                    .map(|span| v05::from_v04_span(span, &mut shared_dict))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
                 v05_traces.push(v05_trace);
             }
             Ok(TraceChunks::V05((shared_dict, v05_traces)))
@@ -1201,6 +1197,27 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    #[test]
+    fn test_collect_trace_chunks_v04() {
+        let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
+
+        let collection = collect_trace_chunks(vec![chunk], TraceEncoding::V04).unwrap();
+
+        let traces = match collection {
+            TraceChunks::V04(traces) => traces,
+            _ => panic!("Unexpected type"),
+        };
+
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].len(), 1);
+        let span = &traces[0][0];
+        assert_eq!(span.trace_id, 123);
+        assert_eq!(span.span_id, 456);
+        assert_eq!(span.parent_id, 789);
+        assert_eq!(span.start, 1);
+        assert_eq!(span.error, 0);
     }
 
     #[test]

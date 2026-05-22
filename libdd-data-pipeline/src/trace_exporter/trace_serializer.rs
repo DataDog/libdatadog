@@ -74,16 +74,17 @@ impl TraceSerializer {
         &self,
         traces: Vec<Vec<Span<T>>>,
     ) -> Result<tracer_payload::TraceChunks<T>, TraceExporterError> {
-        let map_err = |e: anyhow::Error| {
-            TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
-        };
         match self.output_format {
             TraceExporterOutputFormat::V1 => Ok(tracer_payload::TraceChunks::V1(traces)),
             TraceExporterOutputFormat::V04 => {
-                trace_utils::collect_trace_chunks(traces, TraceEncoding::V04).map_err(map_err)
+                trace_utils::collect_trace_chunks(traces, TraceEncoding::V04).map_err(|e| {
+                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+                })
             }
             TraceExporterOutputFormat::V05 => {
-                trace_utils::collect_trace_chunks(traces, TraceEncoding::V05).map_err(map_err)
+                trace_utils::collect_trace_chunks(traces, TraceEncoding::V05).map_err(|e| {
+                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+                })
             }
         }
     }

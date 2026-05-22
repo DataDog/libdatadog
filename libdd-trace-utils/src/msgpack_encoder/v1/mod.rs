@@ -6,6 +6,7 @@ mod span_v04;
 use crate::span::v04::Span;
 use crate::span::TraceData;
 use crate::tracer_metadata::TracerMetadata;
+use libdd_common::ResultInfallibleExt;
 use rmp::encode::{
     write_array_len, write_bin, write_map_len, write_sint, write_str, write_uint, write_uint8,
     ByteBuf, RmpWrite, ValueWriteError,
@@ -399,7 +400,11 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
     metadata: &TracerMetadata,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    let _ = encode_payload(&mut buf, traces, metadata); // infallible: ByteBuf write never fails
+    // `ByteBuf`'s `RmpWrite::Error` is `Infallible`, so `encode_payload` cannot fail. The
+    // compiler proves the `Err` arm unreachable through `unwrap_infallible`.
+    encode_payload(&mut buf, traces, metadata)
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
     buf.into_vec()
 }
 
@@ -409,7 +414,12 @@ pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(
     metadata: &TracerMetadata,
 ) -> u32 {
     let mut counter = super::CountLength(0);
-    let _ = encode_payload(&mut counter, traces, metadata); // infallible: CountLength write never fails
+    // `CountLength` impls `std::io::Write` (whose error type is `std::io::Error`, not
+    // `Infallible`), so we can't statically prove infallibility via `unwrap_infallible`
+    // the way we do for `ByteBuf`. In practice `CountLength::write*` only ever return
+    // `Ok`, so the error path here is unreachable today; should `CountLength` ever grow
+    // a fallible code path, fuzz tests on the msgpack encoded length would catch it.
+    let _ = encode_payload(&mut counter, traces, metadata);
     counter.0
 }
 
