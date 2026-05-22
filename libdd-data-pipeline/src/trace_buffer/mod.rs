@@ -1158,8 +1158,8 @@ mod tests {
                 exported_clone.lock().unwrap().extend(lengths);
             }),
             TraceBufferConfig::default()
-                .max_buffered_spans(100)
-                .span_flush_threshold(100)
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
                 .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
         );
 

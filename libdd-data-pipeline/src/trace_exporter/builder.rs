@@ -297,6 +297,7 @@ impl TraceExporterBuilder {
     /// Calling this from within an existing tokio context will panic. Async callers
     /// should use [`Self::build_async`] directly.
     #[allow(missing_docs)]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         mut self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
