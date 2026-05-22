@@ -286,8 +286,49 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Build the [`TraceExporter`] synchronously.
+    ///
+    /// Sync facade over [`Self::build_async`]. It materializes the [`SharedRuntime`]
+    /// up-front (creating a fresh owned one if none was supplied) and drives the async
+    /// builder to completion via `block_on`. This is the only place in the builder that
+    /// blocks; all internal I/O — including telemetry start-up — happens inside
+    /// `build_async`.
+    ///
+    /// Calling this from within an existing tokio context will panic. Async callers
+    /// should use [`Self::build_async`] directly.
     #[allow(missing_docs)]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        mut self,
+    ) -> Result<TraceExporter<C>, TraceExporterError> {
+        // Materialize the SharedRuntime here so we have something to block_on with and
+        // so build_async reuses the same instance rather than creating a second one.
+        let shared_runtime = match &self.shared_runtime {
+            Some(rt) => rt.clone(),
+            None => {
+                let rt = Arc::new(SharedRuntime::new().map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?);
+                self.shared_runtime = Some(rt.clone());
+                rt
+            }
+        };
+        shared_runtime
+            .block_on(self.build_async::<C>())
+            .map_err(TraceExporterError::Io)?
+    }
+
+    /// Build the [`TraceExporter`] asynchronously.
+    ///
+    /// This is the async-internal entry point: every operation that used to live behind
+    /// `SharedRuntime::block_on` (currently just telemetry start-up) is awaited directly.
+    /// It is safe to drive from any async context, but note that on native targets
+    /// `C::new_client()` may capture `tokio::runtime::Handle::current()` — the caller
+    /// must be inside a tokio runtime that should own the resulting HTTP client.
+    pub async fn build_async<
+        C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    >(
         self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -322,14 +363,21 @@ impl TraceExporterBuilder {
         // internally (e.g. `NativeCapabilities`). Enter the SharedRuntime's tokio context
         // so that handle is available. On wasm this is a no-op — the JS event loop is
         // always the implicit executor.
-        #[cfg(not(target_arch = "wasm32"))]
-        let _guard = shared_runtime
-            .runtime_handle()
-            .map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?
-            .enter();
-        let capabilities = C::new_client();
+        //
+        // The `EnterGuard` returned by `Handle::enter()` is `!Send`, so we scope it to a
+        // block that drops it before any later `.await` to keep this future `Send`.
+        let capabilities = {
+            #[cfg(not(target_arch = "wasm32"))]
+            let _guard = shared_runtime
+                .runtime_handle()
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?
+                .enter();
+            C::new_client()
+        };
 
         // --- Platform-specific worker setup ---
         // The blocks below spawn background workers via `SharedRuntime`. On
@@ -400,11 +448,7 @@ impl TraceExporterBuilder {
                             e.to_string(),
                         ))
                     })?;
-                    shared_runtime.block_on(client_tel.start()).map_err(|e| {
-                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                            e.to_string(),
-                        ))
-                    })?;
+                    client_tel.start().await;
                     (Some(client_tel), Some(handle))
                 }
                 Some(Err(e)) => return Err(e),

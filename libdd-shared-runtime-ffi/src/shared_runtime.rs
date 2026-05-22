@@ -23,6 +23,11 @@ pub enum SharedRuntimeErrorCode {
     RuntimeCreation,
     /// Shutdown timed out.
     ShutdownTimedOut,
+    /// The operation is not supported in borrowed mode (e.g. fork hooks or sync
+    /// shutdown on a `SharedRuntime` created via `from_handle`). FFI callers should
+    /// never see this since they construct owned runtimes via
+    /// `ddog_shared_runtime_new`.
+    NotSupportedInBorrowedMode,
     /// An unexpected panic occurred inside the FFI call.
     #[cfg(feature = "catch_panic")]
     Panic,
@@ -54,6 +59,10 @@ impl From<SharedRuntimeError> for SharedRuntimeFFIError {
             SharedRuntimeError::WorkerError(_) => SharedRuntimeErrorCode::WorkerError,
             SharedRuntimeError::RuntimeCreation(_) => SharedRuntimeErrorCode::RuntimeCreation,
             SharedRuntimeError::ShutdownTimedOut(_) => SharedRuntimeErrorCode::ShutdownTimedOut,
+            SharedRuntimeError::ForkUnsupportedInBorrowedMode
+            | SharedRuntimeError::SyncShutdownNotSupportedInBorrowedMode => {
+                SharedRuntimeErrorCode::NotSupportedInBorrowedMode
+            }
         };
         SharedRuntimeFFIError::new(code, &err.to_string())
     }
@@ -142,8 +151,10 @@ pub unsafe extern "C" fn ddog_shared_runtime_before_fork(
             match handle {
                 Some(runtime) => {
                     // SAFETY: handle was produced by Arc::into_raw and the Arc is still alive.
-                    runtime.before_fork();
-                    None
+                    match runtime.before_fork() {
+                        Ok(()) => None,
+                        Err(err) => Some(Box::new(SharedRuntimeFFIError::from(err))),
+                    }
                 }
                 None => Some(Box::new(SharedRuntimeFFIError::new(
                     SharedRuntimeErrorCode::InvalidArgument,

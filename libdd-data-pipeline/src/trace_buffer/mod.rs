@@ -951,7 +951,7 @@ mod tests {
         );
 
         // pause
-        rt.before_fork();
+        rt.before_fork().expect("error pausing");
 
         for i in 1..=3 {
             sender.send_chunk(vec![(); i]).unwrap();
@@ -1132,7 +1132,7 @@ mod tests {
         sender.send_chunk(vec![()]).unwrap();
         assert_eq!(sem.available_permits(), 0);
 
-        rt.before_fork();
+        rt.before_fork().unwrap();
         rt.after_fork_child().unwrap();
 
         sender.send_chunk(vec![(), ()]).unwrap();
@@ -1177,19 +1177,33 @@ mod tests {
         rt.shutdown(None).unwrap();
     }
 
-    /// Dropping a [`TraceBuffer`] from inside a tokio runtime must not panic. The Drop
-    /// impl only does a non-blocking notify, so this is mostly a smoke test — but it
-    /// guards against accidentally introducing a blocking call (like `block_on` or a
-    /// `Condvar::wait`) in the future.
+    /// Dropping a [`TraceBuffer`] (and shutting down the surrounding [`SharedRuntime`])
+    /// from inside a host tokio runtime must not panic. Uses the borrowed-mode
+    /// `SharedRuntime::from_handle` so the trigger + Condvar wait path is exercised
+    /// instead of sync `block_on` (which would panic "Cannot start a runtime from
+    /// within a runtime" on a host worker thread).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_drop_inside_tokio_runtime() {
-        let (rt, _sem, sender) = make_buffer(Box::new(|_chunks| {}), TraceBufferConfig::default());
+        let rt = Arc::new(SharedRuntime::from_handle(tokio::runtime::Handle::current()));
+        let (sender, worker) = TraceBuffer::new(
+            TraceBufferConfig::default(),
+            Box::new(
+                |_r: Result<AgentResponse, crate::trace_exporter::error::TraceExporterError>| {},
+            ),
+            Box::new(AssertExporter(
+                Box::new(|_chunks| {}),
+                Arc::new(tokio::sync::Semaphore::new(0)),
+            )),
+        );
+        let _ = rt.spawn_worker(worker, true).unwrap();
 
         // Send a chunk so the Drop has something to flush — exercises the full
         // notify path under a tokio scheduler.
         sender.send_chunk(vec![()]).unwrap();
         drop(sender);
 
-        rt.shutdown(None).unwrap();
+        // Borrowed mode: use trigger + Condvar wait, never block_on.
+        rt.trigger_shutdown_signal().unwrap();
+        rt.wait_shutdown_done(Duration::from_secs(5)).unwrap();
     }
 }

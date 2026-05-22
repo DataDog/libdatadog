@@ -214,26 +214,39 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Only the workers spawned for this exporter are stopped. Workers from other components
     /// sharing the same [`SharedRuntime`] are unaffected.
     ///
+    /// Sync facade over [`Self::shutdown_async`]. Will panic if called from inside an
+    /// existing tokio context; async callers should use [`Self::shutdown_async`] directly.
+    ///
     /// # Errors
-    /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
-    /// all workers finished.
+    /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
+    /// given and elapsed before all workers finished.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         let runtime = self.shared_runtime.clone();
+        runtime
+            .block_on(self.shutdown_async(timeout))
+            .map_err(TraceExporterError::Io)?
+    }
+
+    /// Async version of [`Self::shutdown`].
+    ///
+    /// Stops every worker owned by this exporter; safe to drive from any async context.
+    /// Workers belonging to other components on the same [`SharedRuntime`] are unaffected.
+    ///
+    /// # Errors
+    /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
+    /// given and elapsed before all workers finished.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn shutdown_async(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         if let Some(timeout) = timeout {
-            match runtime
-                .block_on(async { tokio::time::timeout(timeout, self.shutdown_workers()).await })
-                .map_err(TraceExporterError::Io)?
-            {
+            match tokio::time::timeout(timeout, self.shutdown_workers()).await {
                 Ok(()) => Ok(()),
                 Err(_) => Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(
                     timeout,
                 ))),
             }
         } else {
-            runtime
-                .block_on(self.shutdown_workers())
-                .map_err(TraceExporterError::Io)?;
+            self.shutdown_workers().await;
             Ok(())
         }
     }
@@ -281,24 +294,22 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    ///
+    /// This is the sync facade: it drives [`Self::send_async`] to completion on the
+    /// [`SharedRuntime`]. The single `block_on` here is intentional — every internal
+    /// libdatadog path is async, and this wrapper exists for FFI / non-tokio callers.
+    /// Calling it from within an existing tokio context will panic.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
-
-        let res = self.send_deser(data, self.input_format.into())?;
-        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
-            return Err(TraceExporterError::Agent(
-                error::AgentErrorKind::EmptyResponse,
-            ));
-        }
-
-        Ok(res)
+        self.shared_runtime
+            .block_on(self.send_async(data))
+            .map_err(TraceExporterError::Io)?
     }
 
     /// **WARNING**: This method is experimental and should not be used for production.
     /// Async version of [`Self::send`] for platforms that cannot use `block_on` (e.g. wasm)
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
+        self.check_agent_info().await;
 
         let format: DeserInputFormat = self.input_format.into();
 
@@ -344,48 +355,54 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn check_agent_info(&self) {
-        if let Some(agent_info) = agent_info::get_agent_info() {
-            if self.has_agent_info_state_changed(&agent_info) {
-                match &**self.client_side_stats.status.load() {
-                    StatsComputationStatus::Disabled => {}
-                    StatsComputationStatus::DisabledByAgent { .. } => {
-                        let ctx = stats::StatsContext {
-                            metadata: &self.metadata,
-                            endpoint_url: &self.endpoint.url,
-                            shared_runtime: &self.shared_runtime,
-                        };
-                        stats::handle_stats_disabled_by_agent(
-                            &ctx,
-                            &agent_info,
-                            self.capabilities.clone(),
-                            &self.client_side_stats,
-                        );
-                    }
-                    StatsComputationStatus::Enabled {
-                        stats_concentrator, ..
-                    } => {
-                        let ctx = stats::StatsContext {
-                            metadata: &self.metadata,
-                            endpoint_url: &self.endpoint.url,
-                            shared_runtime: &self.shared_runtime,
-                        };
-                        stats::handle_stats_enabled(
-                            &ctx,
-                            &agent_info,
-                            stats_concentrator,
-                            &self.client_side_stats,
-                        );
-                    }
-                }
-                self.previous_info_state
-                    .store(Some(agent_info.state_hash.clone().into()))
+    /// Reconcile in-process stats computation state with the latest agent info.
+    ///
+    /// Async because the `Enabled` arm may need to await a stats-worker shutdown
+    /// (see [`stats::handle_stats_enabled`]). Internally, no `block_on` is used —
+    /// this future is safe to await from any tokio context.
+    async fn check_agent_info(&self) {
+        let Some(agent_info) = agent_info::get_agent_info() else {
+            return;
+        };
+        if !self.has_agent_info_state_changed(&agent_info) {
+            return;
+        }
+
+        // Take an owned snapshot via `load_full()`. `ArcSwap::load()` returns a
+        // `!Send` guard that cannot be held across `.await`.
+        let status = self.client_side_stats.status.load_full();
+        match &*status {
+            StatsComputationStatus::Disabled => {}
+            StatsComputationStatus::DisabledByAgent { .. } => {
+                let ctx = stats::StatsContext {
+                    metadata: &self.metadata,
+                    endpoint_url: &self.endpoint.url,
+                    shared_runtime: &self.shared_runtime,
+                };
+                stats::handle_stats_disabled_by_agent(
+                    &ctx,
+                    &agent_info,
+                    self.capabilities.clone(),
+                    &self.client_side_stats,
+                );
+            }
+            StatsComputationStatus::Enabled {
+                stats_concentrator, ..
+            } => {
+                stats::handle_stats_enabled(
+                    &agent_info,
+                    stats_concentrator,
+                    &self.client_side_stats,
+                )
+                .await;
             }
         }
+        self.previous_info_state
+            .store(Some(agent_info.state_hash.clone().into()))
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn check_agent_info(&self) {
+    async fn check_agent_info(&self) {
         // No background workers on wasm — agent info is never fetched, stats are
         // never computed. This is intentionally a no-op.
     }
@@ -443,14 +460,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
     /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    ///
+    /// Sync facade over [`Self::send_trace_chunks_async`].
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
         self.shared_runtime
-            .block_on(async { self.send_trace_chunks_inner(trace_chunks).await })?
+            .block_on(self.send_trace_chunks_async(trace_chunks))
+            .map_err(TraceExporterError::Io)?
     }
 
     /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
@@ -465,7 +484,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
+        self.check_agent_info().await;
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
@@ -498,38 +517,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         )
         .await?;
         Ok(AgentResponse::Unchanged)
-    }
-
-    /// Deserializes, processes and sends trace chunks to the agent
-    #[cfg(not(target_arch = "wasm32"))]
-    fn send_deser(
-        &self,
-        data: &[u8],
-        format: DeserInputFormat,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let (traces, _) = match format {
-            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
-            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
-        }
-        .map_err(|e| {
-            error!("Error deserializing trace from request body: {e}");
-            self.emit_metric(
-                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
-                None,
-            );
-            TraceExporterError::Deserialization(e)
-        })?;
-        debug!(
-            trace_count = traces.len(),
-            "Trace deserialization completed successfully"
-        );
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
-            None,
-        );
-
-        self.shared_runtime
-            .block_on(async { self.send_trace_chunks_inner(traces).await })?
     }
 
     /// Send traces payload to agent with retry and telemetry reporting

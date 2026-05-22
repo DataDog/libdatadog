@@ -168,25 +168,27 @@ fn create_and_start_stats_worker<
 #[cfg(not(target_arch = "wasm32"))]
 /// Stops the stats exporter and disable stats computation
 ///
-/// Used when client-side stats is disabled by the agent
-pub(crate) fn stop_stats_computation(
-    ctx: &StatsContext,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
-) {
+/// Used when client-side stats is disabled by the agent.
+///
+/// This is the async-internal API. The future awaits the stats worker shutdown directly
+/// instead of routing it through `SharedRuntime::block_on`, so it is safe to call from
+/// any async context — including code running on the host tokio runtime.
+pub(crate) async fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComputationStatus>) {
+    // Take an owned snapshot of the current status. `ArcSwap::load()` returns a Guard
+    // that is `!Send` and cannot be held across an `.await`, so we use `load_full()`.
+    let snapshot = client_side_stats.load_full();
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
         worker_handle,
         ..
-    } = &**client_side_stats.load()
+    } = &*snapshot
     {
         let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
         client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
             bucket_size,
         }));
-        match ctx.shared_runtime.block_on(worker_handle.clone().stop()) {
-            Ok(Err(e)) => error!("Failed to stop stats worker: {e}"),
-            Err(e) => error!("Failed to stop stats worker: {e}"),
-            _ => {}
+        if let Err(e) = worker_handle.clone().stop().await {
+            error!("Failed to stop stats worker: {e}");
         }
     }
 }
@@ -254,21 +256,25 @@ fn update_obfuscation_config(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Handle stats computation when it's already enabled
-pub(crate) fn handle_stats_enabled(
-    ctx: &StatsContext,
+/// Handle stats computation when it's already enabled.
+///
+/// Async because the `disabled-by-agent` branch needs to await the stats worker
+/// shutdown via [`stop_stats_computation`].
+pub(crate) async fn handle_stats_enabled(
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     client_side_stats: &StatsComputationConfig,
 ) {
     if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+        // The mutex guard is scoped to this block so it is *not* held across the
+        // `.await` in the `else` branch, which keeps the resulting future `Send`.
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
         #[cfg(feature = "stats-obfuscation")]
         update_obfuscation_config(agent_info, client_side_stats);
     } else {
-        stop_stats_computation(ctx, &client_side_stats.status);
+        stop_stats_computation(&client_side_stats.status).await;
         debug!("Client-side stats computation has been disabled by the agent")
     }
 }
