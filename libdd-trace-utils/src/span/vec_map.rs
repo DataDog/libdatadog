@@ -20,7 +20,7 @@ use std::hash::Hash;
 /// return the *last* matching entry so that later writes shadow earlier ones. This optimizes for
 /// fast insert and construction (that might happen on the client's application hot path), avoiding
 /// a linear scan on each insert (or a potential costly full re-hashing with a hashmap).
-/// Additionally, while overriding a metric or a meta definitively happen, it's assumed to be rare
+/// Additionally, while overriding a metric or a meta definitively happens, it's assumed to be rare
 /// enough so such that the size penalty of duplication is expected to be reasonable.
 ///
 /// **Important**: note that only [VecMap::get] and [VecMap::get_mut] are duplicate-aware, so to
@@ -55,7 +55,7 @@ impl<K, V> VecMap<K, V> {
     pub fn get<Q>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
-        Q: PartialEq + ?Sized,
+        Q: ?Sized + PartialEq,
     {
         self.0
             .iter()
@@ -68,7 +68,7 @@ impl<K, V> VecMap<K, V> {
     pub fn get_mut<Q>(&mut self, key: &Q) -> Option<&mut V>
     where
         K: Borrow<Q>,
-        Q: PartialEq + ?Sized,
+        Q: ?Sized + PartialEq,
     {
         self.0
             .iter_mut()
@@ -81,12 +81,12 @@ impl<K, V> VecMap<K, V> {
     pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
         K: Borrow<Q>,
-        Q: PartialEq + ?Sized,
+        Q: ?Sized + PartialEq,
     {
         self.0.iter().any(|(k, _)| k.borrow() == key)
     }
 
-    /// Remove all entries matching this key from the map. This method use [Vec::retain], and is
+    /// Remove all entries matching this key from the map. This method uses [Vec::retain], and is
     /// thus potentially costly (like any removal in a vector-like datastructure).
     // Note: we might implement a tombstone or option-based deletion later, if removal is a bit too
     // costly.
@@ -94,7 +94,7 @@ impl<K, V> VecMap<K, V> {
     pub fn remove_slow<Q>(&mut self, key: &Q)
     where
         K: Borrow<Q>,
-        Q: PartialEq + ?Sized,
+        Q: ?Sized + PartialEq,
     {
         self.0.retain(|(k, _)| k.borrow() != key);
     }
