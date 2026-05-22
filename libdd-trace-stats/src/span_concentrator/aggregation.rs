@@ -131,7 +131,7 @@ fn float_to_int(f: f64) -> Option<u8> {
     Some(f as u8)
 }
 
-fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
+fn get_grpc_status_code(span: &impl StatSpan) -> Option<u8> {
     for key in GRPC_STATUS_CODE_FIELD {
         if let Some(val) = span.get_meta(key) {
             if let Some(code) = grpc_status_str_to_int_value(val) {
@@ -201,20 +201,15 @@ impl<'a> BorrowedAggregationKey<'a> {
     ///
     /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
+    pub(super) fn from_span<T: StatSpan>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
         Self::from_obfuscated_span(span.resource(), span, peer_tag_keys)
     }
 
-    pub(crate) fn from_obfuscated_span<'b, T>(
+    pub(crate) fn from_obfuscated_span(
         resource_name: &'a str,
-        span: &'b T,
-        peer_tag_keys: &'b [String],
-    ) -> BorrowedAggregationKey<'a>
-    where
-        T: StatSpan<'b>,
-        // resource_name is a temporary string on the stack the span will outlive it
-        'b: 'a,
-    {
+        span: &'a impl StatSpan,
+        peer_tag_keys: &'a [String],
+    ) -> BorrowedAggregationKey<'a> {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list

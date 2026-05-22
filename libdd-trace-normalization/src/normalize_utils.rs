@@ -21,13 +21,35 @@ const MAX_SERVICE_LEN: usize = 100;
 /// MAX_SERVICE_LEN the maximum length a tag can have
 const MAX_TAG_LEN: usize = 200;
 
-// normalize_service normalizes a span service
+// normalize_service normalizes a span service in place
 pub fn normalize_service(svc: &mut String) {
     truncate_utf8(svc, MAX_SERVICE_LEN);
     normalize_tag(svc);
     if svc.is_empty() {
         DEFAULT_SERVICE_NAME.clone_into(svc);
     }
+}
+
+// normalize_service normalizes a span service by cloning it
+pub fn normalize_service_cloned(svc: &str) -> String {
+    let mut svc = svc.to_owned();
+    normalize_service(&mut svc);
+    svc
+}
+
+/// checks if a service name is normalized
+pub fn service_is_normalized(svc: &str) -> bool {
+    if should_truncate_utf8(svc, MAX_SERVICE_LEN) {
+        return false;
+    }
+    if should_normalize_tag(svc) {
+        return false;
+    }
+    if svc.is_empty() {
+        return false;
+    }
+
+    true
 }
 
 // normalize_name normalizes a span name or an error describing why normalization failed.
@@ -216,6 +238,105 @@ pub fn normalize_tag(tag: &mut String) {
     bytes.truncate(write_cursor);
 }
 
+fn should_normalize_tag(tag: &str) -> bool {
+    // Since we know that we're only going to write valid utf8 we can work with the Vec directly
+    let bytes = tag.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut read_cursor = 0;
+    let mut write_cursor = 0;
+    let mut is_in_illegal_span = true;
+    let mut codepoints_written = 0;
+
+    loop {
+        if read_cursor >= bytes.len()
+            || write_cursor >= 2 * MAX_TAG_LEN
+            || codepoints_written >= MAX_TAG_LEN
+        {
+            break;
+        }
+
+        let b = bytes[read_cursor];
+        // ascii fast-path
+        match b {
+            b'a'..=b'z' | b':' => {
+                is_in_illegal_span = false;
+                write_cursor += 1;
+                codepoints_written += 1;
+                read_cursor += 1;
+                continue;
+            }
+            b'A'..=b'Z' => {
+                return true;
+            }
+            b'0'..=b'9' | b'.' | b'/' | b'-' => {
+                if write_cursor != 0 {
+                    is_in_illegal_span = false;
+                    write_cursor += 1;
+                    codepoints_written += 1;
+                }
+                read_cursor += 1;
+                continue;
+            }
+            b'_' if !is_in_illegal_span => {
+                if write_cursor != 0 {
+                    is_in_illegal_span = true;
+                    write_cursor += 1;
+                    codepoints_written += 1;
+                }
+                read_cursor += 1;
+                continue;
+            }
+            // ASCII range
+            0x00..=0x7F => {
+                return true;
+            }
+            _ => {}
+        }
+
+        // Grab current unicode codepoint
+        let mut c = {
+            let mut it = bytes[read_cursor..].iter();
+            // This won't panic because we now bytes is a valid utf8 array, and next_code_point
+            // returns and actual utf8 codepoint
+            #[allow(clippy::unwrap_used)]
+            std::char::from_u32(crate::utf8_helpers::next_code_point(&mut it).unwrap()).unwrap()
+        };
+        let mut len_utf8 = c.len_utf8();
+        read_cursor += len_utf8;
+
+        if c.is_lowercase() {
+            is_in_illegal_span = false;
+            write_cursor += len_utf8;
+            codepoints_written += 1;
+            continue;
+        }
+        if c.is_uppercase() {
+            return false;
+        }
+
+        // The method in the agent checks if the character is of a Letter unicode class,
+        // which is not exactly the same. Alphabetics also contains Nl and Other_aplhabetics
+        // unicode character classes https://www.unicode.org/reports/tr44/#Alphabetic , but
+        // close enough
+        if c.is_alphabetic() {
+            return false;
+        } else if c.is_numeric() {
+            return false;
+        } else if !is_in_illegal_span {
+            is_in_illegal_span = true;
+            write_cursor += 1;
+            codepoints_written += 1;
+        }
+    }
+    // If we end up in an illegal span, remove the last written _
+    if is_in_illegal_span && write_cursor > 0 {
+        return true;
+    }
+    return false;
+}
+
 fn normalize_metric_name(name: &mut String) {
     // Since we know that we're only going to write valid utf8 we can work with the Vec directly
     let bytes = unsafe { name.as_mut_vec() };
@@ -278,6 +399,11 @@ fn normalize_metric_name(name: &mut String) {
 pub(crate) fn truncate_utf8(s: &mut String, limit: usize) {
     let boundary = crate::utf8_helpers::floor_char_boundary(s, limit);
     s.truncate(boundary);
+}
+
+fn should_truncate_utf8(s: &str, limit: usize) -> bool {
+    let boundary = crate::utf8_helpers::floor_char_boundary(s, limit);
+    boundary < s.len()
 }
 
 #[cfg(test)]

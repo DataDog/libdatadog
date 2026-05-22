@@ -49,12 +49,6 @@ pub(crate) trait StatSpanMut {
 
     fn start_mut(&mut self) -> &mut i64;
     fn duration_mut(&mut self) -> &mut i64;
-    fn is_error_mut(&mut self) -> &mut bool;
-    fn is_trace_root_mut(&mut self) -> &mut bool;
-    fn is_measured_mut(&mut self) -> &mut bool;
-    fn is_partial_snapshot_mut(&mut self) -> &mut bool;
-    fn has_top_level_mut(&mut self) -> &mut bool;
-    fn trace_id_mut(&mut self) -> &mut u128;
     fn span_id_mut(&mut self) -> &mut u64;
 }
 
@@ -194,28 +188,22 @@ impl<T: TraceData> StatSpanMut for Span<T> {
         &mut self.duration
     }
 
-    fn is_error_mut(&mut self) -> &mut bool {
-        &mut self.is_error
+    fn span_id_mut(&mut self) -> &mut u64 {
+        &mut self.span_id
+    }
+}
+
+impl StatSpanMut for pb::Span {
+    fn set_service(&mut self, service: String) {
+        self.service = service;
     }
 
-    fn is_trace_root_mut(&mut self) -> &mut bool {
-        &mut self.is_trace_root
+    fn start_mut(&mut self) -> &mut i64 {
+        &mut self.start
     }
 
-    fn is_measured_mut(&mut self) -> &mut bool {
-        &mut self.is_measured
-    }
-
-    fn is_partial_snapshot_mut(&mut self) -> &mut bool {
-        &mut self.is_partial_snapshot
-    }
-
-    fn has_top_level_mut(&mut self) -> &mut bool {
-        &mut self.has_top_level
-    }
-
-    fn trace_id_mut(&mut self) -> &mut u128 {
-        &mut self.trace_id
+    fn duration_mut(&mut self) -> &mut i64 {
+        &mut self.duration
     }
 
     fn span_id_mut(&mut self) -> &mut u64 {

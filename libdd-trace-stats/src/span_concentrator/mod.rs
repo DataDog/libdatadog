@@ -12,8 +12,7 @@ mod aggregation;
 use aggregation::BorrowedAggregationKey;
 pub use aggregation::FixedAggregationKey;
 
-pub mod stat_span;
-pub use stat_span::StatSpan;
+pub use libdd_trace_utils::span::stat_span::StatSpan;
 
 /// Concentrators that can provide raw time buckets for export implement this trait.
 ///
@@ -43,10 +42,7 @@ fn align_timestamp(t: u64, bucket_size: u64) -> u64 {
 }
 
 /// Return true if the span is eligible for stats computation
-pub fn is_span_eligible<'a, T>(span: &'a T, span_kinds_stats_computed: &[String]) -> bool
-where
-    T: StatSpan<'a>,
-{
+pub fn is_span_eligible(span: &impl StatSpan, span_kinds_stats_computed: &[String]) -> bool {
     (span.has_top_level() || span.is_measured() || {
         span.get_meta("span.kind")
             .is_some_and(|span_kind| span_kinds_stats_computed.contains(&span_kind.to_lowercase()))
@@ -156,7 +152,7 @@ impl SpanConcentrator {
 
     /// Add a span into the concentrator, by computing stats if the span is eligible for stats
     /// computation.
-    pub fn add_span<'a>(&'a mut self, span: &'a impl StatSpan<'a>) {
+    pub fn add_span(&mut self, span: &impl StatSpan) {
         if !is_span_eligible(span, self.span_kinds_stats_computed.as_slice()) {
             return;
         }
@@ -187,10 +183,7 @@ impl SpanConcentrator {
             );
     }
 
-    fn compute_obfuscated_span<'a>(
-        &self,
-        #[allow(unused)] span: &'a impl StatSpan<'a>,
-    ) -> Option<String> {
+    fn compute_obfuscated_span(&self, #[allow(unused)] span: &impl StatSpan) -> Option<String> {
         #[cfg(feature = "stats-obfuscation")]
         if self.obfuscation_config.load().enabled {
             let dbms_hint: Option<&str> = span.get_meta("db.type");
