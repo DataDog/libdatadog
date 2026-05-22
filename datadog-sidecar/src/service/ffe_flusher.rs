@@ -104,6 +104,7 @@ mod tests {
     /// V3: POST hits `/evp_proxy/v2/api/v2/exposures` with the correct
     /// subdomain header and application/json content type. Body round-trips.
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn posts_to_evp_proxy() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -133,6 +134,7 @@ mod tests {
 
     /// Non-2xx responses are logged and dropped; no panic, no retry.
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn non_2xx_does_not_panic() {
         let server = MockServer::start_async().await;
         let _mock = server
