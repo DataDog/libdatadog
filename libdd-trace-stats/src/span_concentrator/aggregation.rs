@@ -8,7 +8,6 @@
 use hashbrown::HashMap;
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::span::SpanText;
 use std::borrow::{Borrow, Cow};
 
 use crate::span_concentrator::StatSpan;
@@ -305,12 +304,9 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
 }
 
 /// Return true if we care about peer tags on the span
-fn should_track_peer_tags<T>(span_kind: T) -> bool
-where
-    T: SpanText,
-{
+fn should_track_peer_tags(span_kind: &str) -> bool {
     matches!(
-        span_kind.borrow().to_lowercase().as_str(),
+        span_kind.to_lowercase().as_str(),
         "client" | "producer" | "consumer"
     )
 }
@@ -878,12 +874,15 @@ mod tests {
             // Span with peer tags with peertags aggregation enabled
             (
                 SpanSlice {
-                    service: "service",
-                    name: "op",
-                    resource: "res",
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
+                    meta: HashMap::from([
+                        ("span.kind".into(), "client".into()),
+                        ("aws.s3.bucket".into(), "bucket-a".into()),
+                    ]),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -899,16 +898,16 @@ mod tests {
             // Span with multiple peer tags with peertags aggregation enabled
             (
                 SpanSlice {
-                    service: "service",
-                    name: "op",
-                    resource: "res",
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
                     meta: HashMap::from([
-                        ("span.kind", "producer"),
-                        ("aws.s3.bucket", "bucket-a"),
-                        ("db.instance", "dynamo.test.us1"),
-                        ("db.system", "dynamodb"),
+                        ("span.kind".into(), "producer".into()),
+                        ("aws.s3.bucket".into(), "bucket-a".into()),
+                        ("db.instance".into(), "dynamo.test.us1".into()),
+                        ("db.system".into(), "dynamodb".into()),
                     ]),
                     ..Default::default()
                 },
@@ -930,16 +929,16 @@ mod tests {
             // server
             (
                 SpanSlice {
-                    service: "service",
-                    name: "op",
-                    resource: "res",
+                    service: "service".into(),
+                    name: "op".into(),
+                    resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
                     meta: HashMap::from([
-                        ("span.kind", "server"),
-                        ("aws.s3.bucket", "bucket-a"),
-                        ("db.instance", "dynamo.test.us1"),
-                        ("db.system", "dynamodb"),
+                        ("span.kind".into(), "server".into()),
+                        ("aws.s3.bucket".into(), "bucket-a".into()),
+                        ("db.instance".into(), "dynamo.test.us1".into()),
+                        ("db.system".into(), "dynamodb".into()),
                     ]),
                     ..Default::default()
                 },
@@ -984,15 +983,15 @@ mod tests {
 
         // IPv4 address peer tag gets replaced with blocked-ip-address
         let span_ipv4 = SpanSlice {
-            service: "service",
-            name: "op",
-            resource: "res",
+            service: "service".into(),
+            name: "op".into(),
+            resource: "res".into(),
             span_id: 1,
             parent_id: 0,
             meta: HashMap::from([
-                ("span.kind", "client"),
-                ("peer.hostname", "10.1.2.3"),
-                ("db.instance", "my-db"),
+                ("span.kind".into(), "client".into()),
+                ("peer.hostname".into(), "10.1.2.3".into()),
+                ("db.instance".into(), "my-db".into()),
             ]),
             ..Default::default()
         };
@@ -1011,14 +1010,17 @@ mod tests {
 
         // IPv6 address peer tag gets replaced with blocked-ip-address
         let span_ipv6 = SpanSlice {
-            service: "service",
-            name: "op",
-            resource: "res",
+            service: "service".into(),
+            name: "op".into(),
+            resource: "res".into(),
             span_id: 1,
             parent_id: 0,
             meta: HashMap::from([
-                ("span.kind", "client"),
-                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+                ("span.kind".into(), "client".into()),
+                (
+                    "peer.hostname".into(),
+                    "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF".into(),
+                ),
             ]),
             ..Default::default()
         };
@@ -1035,12 +1037,15 @@ mod tests {
 
         // Non-IP peer tags pass through unchanged
         let span_non_ip = SpanSlice {
-            service: "service",
-            name: "op",
-            resource: "res",
+            service: "service".into(),
+            name: "op".into(),
+            resource: "res".into(),
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([("span.kind", "client"), ("db.instance", "dynamo.test.us1")]),
+            meta: HashMap::from([
+                ("span.kind".into(), "client".into()),
+                ("db.instance".into(), "dynamo.test.us1".into()),
+            ]),
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];
