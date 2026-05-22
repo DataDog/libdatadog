@@ -75,8 +75,11 @@ pub struct TracerSpanFields<'a> {
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_new(
     out_handle: NonNull<Box<TracerSpan>>,
-    fields: &TracerSpanFields,
+    fields: Option<&TracerSpanFields>,
 ) -> MaybeError {
+    let Some(fields) = fields else {
+        return MaybeError::Some(DdogError::from("null fields"));
+    };
     let inner = || -> anyhow::Result<()> {
         let service = charslice_to_bytesstring(fields.service)?;
         let name = charslice_to_bytesstring(fields.name)?;
@@ -336,7 +339,7 @@ mod tests {
                 duration: 0,
                 error: 0,
             };
-            let err = ddog_tracer_span_new(out, &fields);
+            let err = ddog_tracer_span_new(out, Some(&fields));
             assert!(matches!(err, MaybeError::None));
             handle.assume_init()
         }
@@ -361,7 +364,7 @@ mod tests {
                 duration: 25_000_000,
                 error: 0,
             };
-            let err = ddog_tracer_span_new(out, &fields);
+            let err = ddog_tracer_span_new(out, Some(&fields));
             assert!(matches!(err, MaybeError::None));
 
             let span = handle.assume_init();
@@ -475,7 +478,7 @@ mod tests {
                 duration: 0,
                 error: 0,
             };
-            let err = ddog_tracer_span_new(out, &fields);
+            let err = ddog_tracer_span_new(out, Some(&fields));
             assert!(matches!(err, MaybeError::None));
 
             let span = handle.assume_init();
