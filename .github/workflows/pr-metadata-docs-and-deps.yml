@@ -282,6 +282,8 @@ jobs:
     - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
       with:
         tool: cargo-deny
+      env:
+        RUSTUP_TOOLCHAIN: stable
     - name: Run cargo-deny on changed crates
       id: cargo-deny
       run: |
