@@ -408,6 +408,49 @@ impl SidecarInterface for ConnectionSidecarHandler {
             trace_config.tracer_version.clone(),
         );
 
+        // FFE actions are session-scoped, not application-scoped: dispatch them
+        // before the `applications.entry(queue_id)` check so they are not silently
+        // dropped when the PHP runtime hasn't yet registered the application via
+        // remote-config metadata. The PHP exposure/metric writers can fire as soon
+        // as evaluations begin, which is often earlier than the first RC config
+        // registration call.
+        let actions: Vec<SidecarAction> = actions
+            .into_iter()
+            .filter(|a| match a {
+                SidecarAction::FfeExposures(payload) => {
+                    if let Some(base) = trace_config.endpoint.as_ref() {
+                        if let Some(ep) = ffe_flusher::exposure_endpoint(base) {
+                            let payload = payload.clone();
+                            tokio::spawn(async move {
+                                let client = NativeCapabilities::new_client();
+                                ffe_flusher::send_payload(&client, &ep, payload).await;
+                            });
+                        } else {
+                            debug!("ffe_flusher: could not derive endpoint, dropping batch");
+                        }
+                    } else {
+                        debug!("ffe_flusher: no session endpoint, dropping batch");
+                    }
+                    false
+                }
+                SidecarAction::FfeMetrics { endpoint, payload } => {
+                    if let Some(ep) = ffe_metrics_flusher::otlp_metrics_endpoint(endpoint) {
+                        let payload = payload.clone();
+                        tokio::spawn(async move {
+                            let client = NativeCapabilities::new_client();
+                            ffe_metrics_flusher::send_payload(&client, &ep, payload).await;
+                        });
+                    } else {
+                        debug!(
+                            "ffe_metrics_flusher: unparseable endpoint {endpoint:?}, dropping batch"
+                        );
+                    }
+                    false
+                }
+                _ => true,
+            })
+            .collect();
+
         let rt_info = self.server.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
 
@@ -509,40 +552,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     )) => {
                         remove_client = true;
                         actions_to_process.push(action);
-                    }
-                    SidecarAction::FfeExposures(payload) => {
-                        // Fire-and-forget: spawn a task that POSTs the batch to
-                        // the agent EVP proxy. The endpoint is derived from the
-                        // session's base agent URL by swapping the path.
-                        if let Some(base) = trace_config.endpoint.as_ref() {
-                            if let Some(ep) = ffe_flusher::exposure_endpoint(base) {
-                                tokio::spawn(async move {
-                                    let client = NativeCapabilities::new_client();
-                                    ffe_flusher::send_payload(&client, &ep, payload).await;
-                                });
-                            } else {
-                                debug!("ffe_flusher: could not derive endpoint, dropping batch");
-                            }
-                        } else {
-                            debug!("ffe_flusher: no session endpoint, dropping batch");
-                        }
-                    }
-                    SidecarAction::FfeMetrics { endpoint, payload } => {
-                        // Fire-and-forget: spawn a task that POSTs the OTLP/protobuf
-                        // metric batch to the user-supplied OTLP endpoint
-                        // (typically OTEL_EXPORTER_OTLP_METRICS_ENDPOINT).
-                        // The endpoint travels with the payload because OTLP
-                        // collectors are unrelated to the agent base.
-                        if let Some(ep) = ffe_metrics_flusher::otlp_metrics_endpoint(&endpoint) {
-                            tokio::spawn(async move {
-                                let client = NativeCapabilities::new_client();
-                                ffe_metrics_flusher::send_payload(&client, &ep, payload).await;
-                            });
-                        } else {
-                            debug!(
-                                "ffe_metrics_flusher: unparseable endpoint {endpoint:?}, dropping batch"
-                            );
-                        }
                     }
                     _ => {
                         actions_to_process.push(action);
