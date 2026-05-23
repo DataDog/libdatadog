@@ -426,7 +426,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
                                 ffe_exposures_flusher::send_payload(&client, &ep, payload).await;
                             });
                         } else {
-                            debug!("ffe_exposures_flusher: could not derive endpoint, dropping batch");
+                            debug!(
+                                "ffe_exposures_flusher: could not derive endpoint, dropping batch"
+                            );
                         }
                     } else {
                         debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
