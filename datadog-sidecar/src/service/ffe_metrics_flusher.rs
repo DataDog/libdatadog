@@ -4,7 +4,7 @@
 //! Forwards FFE (Feature Flag Evaluation) metric payloads from the PHP tracer
 //! to a user-configured OTLP HTTP metrics intake.
 //!
-//! Unlike `ffe_flusher`, which targets the Datadog Agent's EVP proxy, this
+//! Unlike `ffe_exposures_flusher`, which targets the Datadog Agent's EVP proxy, this
 //! flusher targets an OpenTelemetry-compatible OTLP metrics endpoint
 //! (typically configured via `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`). The
 //! endpoint is supplied per-call by the PHP tracer, not derived from the

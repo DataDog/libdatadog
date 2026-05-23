@@ -48,7 +48,7 @@ pub(crate) async fn send_payload<C: HttpClientCapability>(
     let builder = match endpoint.to_request_builder(USER_AGENT) {
         Ok(b) => b,
         Err(e) => {
-            debug!("ffe_flusher: failed to build request: {e:?}");
+            debug!("ffe_exposures_flusher: failed to build request: {e:?}");
             return;
         }
     };
@@ -61,7 +61,7 @@ pub(crate) async fn send_payload<C: HttpClientCapability>(
     {
         Ok(r) => r,
         Err(e) => {
-            debug!("ffe_flusher: failed to construct request body: {e:?}");
+            debug!("ffe_exposures_flusher: failed to construct request body: {e:?}");
             return;
         }
     };
@@ -72,13 +72,13 @@ pub(crate) async fn send_payload<C: HttpClientCapability>(
             if !status.is_success() {
                 // dd-trace-go logs a readable error body on non-2xx.
                 let body_preview = truncate(resp.body().as_ref(), 256);
-                warn!("ffe_flusher: non-2xx response {status}: {body_preview}");
+                warn!("ffe_exposures_flusher: non-2xx response {status}: {body_preview}");
             } else {
-                debug!("ffe_flusher: sent exposure batch, status={status}");
+                debug!("ffe_exposures_flusher: sent exposure batch, status={status}");
             }
         }
         Err(e) => {
-            debug!("ffe_flusher: request failed: {e:?}");
+            debug!("ffe_exposures_flusher: request failed: {e:?}");
         }
     }
 }

@@ -35,7 +35,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
-use crate::service::ffe_flusher;
+use crate::service::ffe_exposures_flusher;
 use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
@@ -419,17 +419,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .filter(|a| match a {
                 SidecarAction::FfeExposures(payload) => {
                     if let Some(base) = trace_config.endpoint.as_ref() {
-                        if let Some(ep) = ffe_flusher::exposure_endpoint(base) {
+                        if let Some(ep) = ffe_exposures_flusher::exposure_endpoint(base) {
                             let payload = payload.clone();
                             tokio::spawn(async move {
                                 let client = NativeCapabilities::new_client();
-                                ffe_flusher::send_payload(&client, &ep, payload).await;
+                                ffe_exposures_flusher::send_payload(&client, &ep, payload).await;
                             });
                         } else {
-                            debug!("ffe_flusher: could not derive endpoint, dropping batch");
+                            debug!("ffe_exposures_flusher: could not derive endpoint, dropping batch");
                         }
                     } else {
-                        debug!("ffe_flusher: no session endpoint, dropping batch");
+                        debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
                     }
                     false
                 }
