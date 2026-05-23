@@ -35,7 +35,7 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use libc::c_char;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
-use libdd_common_ffi::slice::{AsBytes, CharSlice};
+use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice};
 use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
 use libdd_crashtracker_ffi::Metadata;
@@ -1144,6 +1144,41 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposures(
         instance_id,
         queue_id,
         vec![SidecarAction::FfeExposures(payload)],
+    ));
+    MaybeError::None
+}
+
+/// Forward a single FFE (Feature Flag Evaluation) metrics batch payload to
+/// the sidecar. The sidecar asynchronously POSTs the OTLP/protobuf bytes to
+/// the OTLP HTTP metrics intake at the given `endpoint` URL (typically the
+/// value of `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, default
+/// `http://localhost:4318/v1/metrics`).
+///
+/// The PHP-side `OtlpMetricEncoder` produces `payload`. A null/empty payload
+/// or an empty endpoint is a no-op.
+///
+/// # Safety
+/// `endpoint` must be a valid UTF-8 `CharSlice`. `payload` must be a valid
+/// `ByteSlice` (as returned by the PHP encoder).
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_ffe_metrics(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    endpoint: CharSlice,
+    payload: ByteSlice,
+) -> MaybeError {
+    if endpoint.is_empty() || payload.is_empty() {
+        return MaybeError::None;
+    }
+    let endpoint = endpoint.to_utf8_lossy().into_owned();
+    let payload = payload.as_slice().to_vec();
+    try_c!(blocking::enqueue_actions(
+        transport,
+        instance_id,
+        queue_id,
+        vec![SidecarAction::FfeMetrics { endpoint, payload }],
     ));
     MaybeError::None
 }

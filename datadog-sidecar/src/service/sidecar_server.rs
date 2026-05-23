@@ -36,6 +36,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::ffe_flusher;
+use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
     flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
@@ -524,6 +525,23 @@ impl SidecarInterface for ConnectionSidecarHandler {
                             }
                         } else {
                             debug!("ffe_flusher: no session endpoint, dropping batch");
+                        }
+                    }
+                    SidecarAction::FfeMetrics { endpoint, payload } => {
+                        // Fire-and-forget: spawn a task that POSTs the OTLP/protobuf
+                        // metric batch to the user-supplied OTLP endpoint
+                        // (typically OTEL_EXPORTER_OTLP_METRICS_ENDPOINT).
+                        // The endpoint travels with the payload because OTLP
+                        // collectors are unrelated to the agent base.
+                        if let Some(ep) = ffe_metrics_flusher::otlp_metrics_endpoint(&endpoint) {
+                            tokio::spawn(async move {
+                                let client = NativeCapabilities::new_client();
+                                ffe_metrics_flusher::send_payload(&client, &ep, payload).await;
+                            });
+                        } else {
+                            debug!(
+                                "ffe_metrics_flusher: unparseable endpoint {endpoint:?}, dropping batch"
+                            );
                         }
                     }
                     _ => {

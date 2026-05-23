@@ -29,6 +29,7 @@ pub mod blocking;
 mod debugger_diagnostics_bookkeeper;
 pub mod exception_hash_rate_limiter;
 pub(crate) mod ffe_flusher;
+pub(crate) mod ffe_metrics_flusher;
 mod instance_id;
 mod queue_id;
 mod remote_configs;
@@ -88,4 +89,15 @@ pub enum SidecarAction {
     /// EVP proxy at `/evp_proxy/v2/api/v2/exposures` with the
     /// `X-Datadog-EVP-Subdomain: event-platform-intake` header.
     FfeExposures(String),
+    /// FFE evaluation-metric payload (OTLP/protobuf encoded by the PHP-side
+    /// `OtlpMetricEncoder`). The sidecar POSTs it as `application/x-protobuf`
+    /// to the user-configured OTLP metrics endpoint (typically
+    /// `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, default
+    /// `http://localhost:4318/v1/metrics`). The endpoint travels with the
+    /// payload because OTLP collectors are not the Datadog Agent and the
+    /// sidecar has no session-level OTLP base.
+    FfeMetrics {
+        endpoint: String,
+        payload: Vec<u8>,
+    },
 }
