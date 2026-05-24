@@ -1123,4 +1123,81 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::{Method::POST, MockServer};
+    use tokio::time::{sleep, Duration as TokioDuration};
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn ffe_actions_dispatch_without_registered_application() {
+        let http_server = MockServer::start_async().await;
+        let exposures_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(ffe_exposures_flusher::EVP_EXPOSURES_PATH);
+                then.status(202);
+            })
+            .await;
+        let metrics_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1/metrics");
+                then.status(202);
+            })
+            .await;
+
+        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+
+        handler
+            .enqueue_actions(
+                PeerCredentials::default(),
+                instance_id.clone(),
+                queue_id,
+                vec![
+                    SidecarAction::FfeExposures(r#"{"exposures":[]}"#.to_owned()),
+                    SidecarAction::FfeMetrics {
+                        endpoint: http_server.url("/v1/metrics"),
+                        payload: vec![0x0a, 0x00],
+                    },
+                ],
+            )
+            .await;
+
+        for _ in 0..100 {
+            if exposures_mock.calls_async().await == 1 && metrics_mock.calls_async().await == 1 {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+
+        exposures_mock.assert_async().await;
+        metrics_mock.assert_async().await;
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+    }
+}
+
 // TODO: APMSP-1079 - Unit tests are sparse for the sidecar server. We should add more.
