@@ -67,7 +67,10 @@ ${arg#--exclude=}"
             echo "  ./commits-since-release.sh --exclude='^chore:' --exclude='^ci:' \"\$JSON\""
             echo ""
             echo "Output JSON format:"
-            echo '  [{"name":"crate-name","version":"1.0.0","tag":"crate-name-v1.0.0","tag_exists":true,"commits":[...]}]'
+            echo '  [{"name":"crate-name","version":"1.0.0","tag":"crate-name-v1.0.0","tag_exists":true,"breaking_change":false,"commits":[...]}]'
+            echo ""
+            echo "breaking_change: true when any non-excluded commit subject uses the conventional-commit"
+            echo "  breaking marker, e.g. 'feat!:', 'fix(scope)!:', 'refactor(api)!:'."
             exit 0
             ;;
         -*)
@@ -103,6 +106,14 @@ log_verbose() {
     if [ "$VERBOSE" = true ]; then
         echo "$@" >&2
     fi
+}
+
+# Check if a commit subject signals a conventional-commit breaking change.
+# Matches a leading type (optionally with a parenthesised scope) followed by '!:',
+# e.g. 'feat!:', 'fix(scope)!:', 'refactor(libdd-foo)!:'.
+is_breaking_change_subject() {
+    local subject="$1"
+    echo "$subject" | grep -qE '^[a-zA-Z]+(\([^)]+\))?!:'
 }
 
 # Check if a commit subject should be excluded
@@ -157,6 +168,7 @@ while read -r crate; do
     TAG_EXISTS=false
     TAG_ANCESTOR="unknown"
     COMMITS_JSON="[]"
+    BREAKING_CHANGE=false
     
     if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
         TAG_EXISTS=true
@@ -210,15 +222,19 @@ while read -r crate; do
                 # Escape special characters in subject for JSON
                 subject_escaped=$(echo "$subject" | jq -R .)
                 author_escaped=$(echo "$author" | jq -R .)
-                
+
+                if is_breaking_change_subject "$subject"; then
+                    BREAKING_CHANGE=true
+                fi
+
                 COMMITS_JSON+="{\"hash\":\"$hash\",\"subject\":$subject_escaped,\"author\":$author_escaped,\"date\":\"$date\"}"
             fi
         done < <(git log "$COMMIT_RANGE" --format="%H%x1F%s%x1F%an%x1F%aI" -- "$CRATE_PATH" 2>/dev/null || true)
         
         COMMITS_JSON+="]"
-        
+
         COMMIT_COUNT=$(echo "$COMMITS_JSON" | jq 'length')
-        log_verbose "  Found $COMMIT_COUNT commits since $TAG"
+        log_verbose "  Found $COMMIT_COUNT commits since $TAG (breaking_change=$BREAKING_CHANGE)"
     else
         log_verbose "  Tag does NOT exist - no previous release found"
     fi
@@ -230,7 +246,7 @@ while read -r crate; do
         OUTPUT_JSON+=","
     fi
     
-    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"commits\":$COMMITS_JSON}"
+    OUTPUT_JSON+="{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"path\":\"$CRATE_PATH\",\"tag\":\"$TAG\",\"tag_exists\":$TAG_EXISTS,\"tag_ancestor\":\"$TAG_ANCESTOR\",\"breaking_change\":$BREAKING_CHANGE,\"commits\":$COMMITS_JSON}"
     
 done < <(echo "$INPUT_JSON" | jq -c '.[]')
 
@@ -248,14 +264,14 @@ case "$FORMAT" in
     summary)
         echo "Commits since last release by crate:"
         echo "========================================"
-        echo "$OUTPUT_JSON" | jq -r '.[] | 
-            "\(.name) v\(.version)" + 
-            (if .tag_exists then 
-                " (tag: \(.tag) ancestor: \(.tag_ancestor))\n  Commits: \(.commits | length)" +
+        echo "$OUTPUT_JSON" | jq -r '.[] |
+            "\(.name) v\(.version)" +
+            (if .tag_exists then
+                " (tag: \(.tag) ancestor: \(.tag_ancestor))\n  Commits: \(.commits | length)\n  Breaking change in commits: \(.breaking_change)" +
                 (if (.commits | length) > 0 then
                     "\n" + (.commits | map("    - \(.hash[0:8]) \(.subject)") | join("\n"))
                 else "" end)
-            else 
+            else
                 "\n  No previous release tag found"
             end) + "\n"'
         ;;

@@ -416,6 +416,7 @@ jobs:
             CRATE_PATH=$(echo "$crate" | jq -r '.path')
             TAG_EXISTS=$(echo "$crate" | jq -r '.tag_exists')
             COMMITS=$(echo "$crate" | jq -r '.commits')
+            BREAKING_CHANGE=$(echo "$crate" | jq -r '.breaking_change // false')
             INITIAL_RELEASE=false
 
             # if there are no commits and there is an existing tag, skip the release                                                                                      
@@ -531,7 +532,8 @@ jobs:
             --argjson commits "$COMMITS" \
             --arg path "$CRATE_PATH" \
             --arg initial_release "$INITIAL_RELEASE" \
-            '. += [{"name": $name, "level": $level, "tag": $tag, "prev_tag": $prev_tag, "version": $version, "range": $range, "commits": $commits, "path": $path, "initial_release": $initial_release}]' \
+            --argjson breaking_change "$BREAKING_CHANGE" \
+            '. += [{"name": $name, "level": $level, "tag": $tag, "prev_tag": $prev_tag, "version": $version, "range": $range, "commits": $commits, "path": $path, "initial_release": $initial_release, "breaking_change": $breaking_change}]' \
               /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
           done
 
@@ -809,6 +811,10 @@ jobs:
                   + ((.major_bumps // []) | map("- `\(.dependency)`: \(.previous_req) → \(.current_req)") | join("\n"))
                   + "\n"
                 else null end),
+                (if (.breaking_change // false) and (.level != "major") then
+                  "### :rotating_light: Breaking-change commits detected without a major bump\n\n"
+                  + "One or more commits since `\(.prev_tag)` use a conventional-commit breaking marker (`type!:`), but the proposed semver bump is `\(.level)`. Review the commits below and reconsider whether a **major** bump is required.\n"
+                else null end),
                 (if .initial_release == "true" then
                   "**Warning:** this is an initial release. Please verify that the version and commits included are correct.\n"
                 else null end),
@@ -865,4 +871,176 @@ jobs:
               echo "Deleting ephemeral release branch $EPHEMERAL_BRANCH..."
               git push origin --delete "$EPHEMERAL_BRANCH" || echo "Failed to delete ephemeral branch (may not exist on remote)"
             fi
+          fi
+
+  create-pr-alternative:
+    # Runs in parallel with create-pr. Looks at api-changes-with-major-bumps.json for crates
+    # flagged with breaking_change=true and level != "major", asks scripts/breaking-change-bumps.sh
+    # to verify which of those actually need a major bump, and if any do, opens a stacked PR
+    # against the release proposal branch with the additional version bumps.
+    needs: [cargo-release, validate-inputs]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      pull-requests: write
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          ref: ${{ needs.cargo-release.outputs.branch_name }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download release data
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dispatch-data
+          path: /tmp
+
+      - name: Snapshot scripts from workflow revision
+        run: |
+          set -euo pipefail
+          WF_SHA="${{ github.sha }}"
+          git fetch --no-tags origin "$WF_SHA" 2>/dev/null || true
+          if ! git rev-parse -q --verify "${WF_SHA}^{commit}" >/dev/null; then
+            echo "Error: could not resolve workflow revision ${WF_SHA}." >&2
+            exit 1
+          fi
+          DEST="/tmp/workflow-scripts-libdatadog-breaking"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          git archive "$WF_SHA" scripts | tar -x -C "$DEST"
+          echo "WORKFLOW_SCRIPTS_ROOT=${DEST}/scripts" >> "$GITHUB_ENV"
+
+      - name: Identify crates needing a verified major bump
+        id: identify
+        run: |
+          set -euo pipefail
+          "${WORKFLOW_SCRIPTS_ROOT}/breaking-change-bumps.sh" /tmp/api-changes-with-major-bumps.json > /tmp/breaking-bumps.json
+          echo "Verified breaking-change bumps:"
+          jq . /tmp/breaking-bumps.json
+          COUNT=$(jq 'length' /tmp/breaking-bumps.json)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Skip notice
+        if: steps.identify.outputs.count == '0'
+        run: echo "No verified breaking-change major bumps required; skipping stacked PR."
+
+      - uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        if: steps.identify.outputs.count != '0'
+        with:
+          cache-targets: true
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.identify.outputs.count != '0'
+        with:
+          toolchain: 1.92.0
+      - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
+        if: steps.identify.outputs.count != '0'
+        with:
+          tool: cargo-release
+
+      - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
+        if: steps.identify.outputs.count != '0'
+        id: octo-sts
+        with:
+          scope: DataDog/libdatadog
+          policy: self.write.pr
+
+      - name: Create stacked branch and apply major bumps
+        if: steps.identify.outputs.count != '0'
+        id: stacked-branch
+        env:
+          PROPOSAL_BRANCH_PREFIX: ${{ env.PROPOSAL_BRANCH_PREFIX }}
+          CRATES_BRANCH: ${{ needs.validate-inputs.outputs.crates_branch }}
+        run: |
+          set -euo pipefail
+          PROPOSAL_BRANCH="${{ needs.cargo-release.outputs.branch_name }}"
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          STACKED_BRANCH="${PROPOSAL_BRANCH_PREFIX}/${CRATES_BRANCH}/${TIMESTAMP}-alternative"
+
+          BASE_SHA=$(git rev-parse HEAD)
+          git checkout -b "$STACKED_BRANCH"
+
+          jq -c '.[]' /tmp/breaking-bumps.json | while read -r row; do
+            NAME=$(echo "$row" | jq -r '.name')
+            PREV_TAG=$(echo "$row" | jq -r '.prev_tag // empty')
+            echo "Applying major bump for $NAME (prev_tag=${PREV_TAG:-<none>})..."
+            if [ -n "$PREV_TAG" ]; then
+              cargo release version -p "$NAME" --prev-tag-name "$PREV_TAG" --allow-branch "$STACKED_BRANCH" -x major --no-confirm
+            else
+              cargo release version -p "$NAME" --allow-branch "$STACKED_BRANCH" -x major --no-confirm
+            fi
+            git commit -am "chore(release): promote $NAME to major due to breaking-change commits"
+          done
+
+          if git diff --quiet "$BASE_SHA" HEAD; then
+            echo "No commits produced after bumping; aborting." >&2
+            exit 1
+          fi
+
+          # Oldest → newest, matching the pattern used by cargo-release.
+          COMMITS=$(git log --reverse "$BASE_SHA"..HEAD --format='%H' | tr '\n' ' ' | xargs)
+          echo "stacked_branch=$STACKED_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "commits=$COMMITS" >> "$GITHUB_OUTPUT"
+
+      - name: Push stacked commits
+        if: steps.identify.outputs.count != '0'
+        uses: DataDog/commit-headless@action/v2.0.3
+        with:
+          branch: ${{ steps.stacked-branch.outputs.stacked_branch }}
+          head-sha: ${{ steps.stacked-branch.outputs.base_sha }}
+          command: push
+          commits: "${{ steps.stacked-branch.outputs.commits }}"
+
+      - name: Create stacked PR
+        if: steps.identify.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+        run: |
+          set -euo pipefail
+          PROPOSAL_BRANCH="${{ needs.cargo-release.outputs.branch_name }}"
+          STACKED_BRANCH="${{ steps.stacked-branch.outputs.stacked_branch }}"
+
+          # Body lists each crate that was promoted to major and the commits that motivated it.
+          read -r -d '' JQ_FILTER << 'EOF' || true
+          [ $bumps[0][]
+            | "## \(.name)\n\n"
+              + "**Previous tag:** `\(.prev_tag // "n/a")`\n"
+              + "**Previous level:** `\(.level)`\n"
+              + "**Promoted to:** `major`\n"
+              + (if (.commits // [] | length) > 0
+                 then "\n### Breaking-change commits\n\n" + (.commits | map("- \(.subject)") | join("\n"))
+                 else "" end)
+          ]
+          | join("\n\n")
+          EOF
+          BUMPS_BODY=$(jq -nr --slurpfile bumps /tmp/breaking-bumps.json "$JQ_FILTER")
+
+          PR_BODY="# Major-bump follow-up to \`$PROPOSAL_BRANCH\`
+
+          The breaking-change verifier (\`scripts/breaking-change-bumps.sh\`) flagged the crates below as needing a major bump that the main proposal did not apply. This PR is stacked on top of the release proposal and must be merged together with it.
+
+          ${BUMPS_BODY}"
+
+          echo "$PR_BODY" > /tmp/stacked-pr-body.md
+
+          gh pr create \
+            --head "$STACKED_BRANCH" \
+            --title "chore(release): major-bump follow-up for ${{ needs.validate-inputs.outputs.crates_display }}" \
+            --body-file /tmp/stacked-pr-body.md \
+            --label "release-proposal" \
+            --label "skip-metadata-check" \
+            --label "skip-changelog-check" \
+            --label "skip-pr-title-semver-check" \
+            --base "$PROPOSAL_BRANCH" \
+            --draft
+
+      - name: Cleanup on failure
+        if: failure() && steps.stacked-branch.outputs.stacked_branch != ''
+        run: |
+          STACKED_BRANCH="${{ steps.stacked-branch.outputs.stacked_branch }}"
+          if [ -n "$STACKED_BRANCH" ]; then
+            echo "Job failed, deleting stacked branch $STACKED_BRANCH..."
+            git push origin --delete "$STACKED_BRANCH" || echo "Failed to delete stacked branch (may not exist on remote)"
           fi
