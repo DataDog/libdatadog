@@ -93,7 +93,7 @@ jobs:
           if [ "${#CRATES[@]}" -eq 1 ]; then
             CRATES_BRANCH="${CRATES[0]}"
           else
-            CRATES_BRANCH="${CRATES[0]}+$(( ${#CRATES[@]} - 1 ))-more"
+            CRATES_BRANCH="${CRATES[0]}-$(( ${#CRATES[@]} - 1 ))-more"
           fi
 
           echo "Normalized crates: $CRATES_SPACE"
@@ -168,6 +168,9 @@ jobs:
       contents: write
     needs: [validate-inputs] #[check-membership, validate-inputs]
     runs-on: ubuntu-latest
+    env:
+      # Checked-out main still has rust-toolchain.toml (MSRV 1.87); tool installs need >= 1.88.
+      RUSTUP_TOOLCHAIN: 1.92.0
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
