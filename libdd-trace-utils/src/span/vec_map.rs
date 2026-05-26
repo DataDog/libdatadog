@@ -9,7 +9,7 @@
 
 use serde::ser::{Serialize, SerializeMap, Serializer};
 use std::borrow::Borrow;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::hash::Hash;
 
 /// A Vec-backed map that provides HashMap-like lookup by key.
@@ -24,8 +24,8 @@ use std::hash::Hash;
 /// enough so such that the size penalty of duplication is expected to be reasonable.
 ///
 /// **Important**: note that only [VecMap::get] and [VecMap::get_mut] are duplicate-aware, so to
-/// speak. [VecMap::len], [VecMap::iter], and others just delegates to the underlying `Vec`, and won't
-/// deduplicate.
+/// speak. [VecMap::len], [VecMap::iter], and others just delegates to the underlying `Vec`, and
+/// won't deduplicate.
 ///
 /// Explicit deduplication is currently being done automatically and on-the-fly during
 /// serialization. If needed, in the future, we might trigger deduplication on other events, for
@@ -170,14 +170,16 @@ impl<K, V> Extend<(K, V)> for VecMap<K, V> {
 
 impl<K: Serialize + Eq + Hash, V: Serialize> Serialize for VecMap<K, V> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(None)?;
-        let mut seen = HashSet::with_capacity(self.len());
-        for (k, v) in self.0.iter().rev() {
-            if seen.insert(k) {
-                map.serialize_entry(k, v)?;
-            }
-        }
-        map.end()
+        // We pre-compute the deduped map. If deduplication is done on the fly during serialization,
+        // we can't provide a length up front to the serializer, and the current one (rmp) will
+        // allocate an intermediate buffer defensively.
+        self.0
+            .iter()
+            .map(|(k, v)| (k, v))
+            // Since the iterator is sized, `collect()` should pre-allocate with the right capacity
+            // directly.
+            .collect::<HashMap<&K, &V>>()
+            .serialize(serializer)
     }
 }
 
