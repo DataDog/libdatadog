@@ -2,15 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
-use std::{str::FromStr, sync::Arc};
+use std::{borrow::Borrow as _, str::FromStr, sync::Arc};
 
 use libdd_common::regex_engine;
 use libdd_trace_stats::span_concentrator::StatSpan;
 use libdd_trace_utils::span::trace_utils::get_root_span_index_v4;
 use tracing::{debug, error};
 
+trait TagFilter {
+    /// Returns true if the given tag value matches the Filterer.
+    fn matches_tag_value(&self, value: &str) -> bool;
+    /// Getter to the filter key
+    fn key(&self) -> &str;
+}
+
 #[derive(Debug)]
-struct TagFilter {
+struct TagStringFilter {
     key: String,
     value: Option<String>,
 }
@@ -31,9 +38,9 @@ struct TagRegexFilter {
 /// Parsed config
 #[derive(Debug)]
 struct TraceFilteredConf {
-    reject: Vec<TagFilter>,
+    reject: Vec<TagStringFilter>,
     reject_regex: Vec<TagRegexFilter>,
-    require: Vec<TagFilter>,
+    require: Vec<TagStringFilter>,
     require_regex: Vec<TagRegexFilter>,
     ignore_resources: Vec<regex_engine::Regex>,
 }
@@ -43,19 +50,32 @@ pub struct TraceFilterer {
     conf: arc_swap::ArcSwap<TraceFilteredConf>,
 }
 
-impl TagFilter {
+impl TagStringFilter {
     fn from_str(tag: &str) -> Self {
         if let Some((key, value)) = tag.split_once(":") {
-            TagFilter {
+            TagStringFilter {
                 key: key.to_owned(),
                 value: Some(value.to_owned()),
             }
         } else {
-            TagFilter {
+            TagStringFilter {
                 key: tag.to_owned(),
                 value: None,
             }
         }
+    }
+}
+
+impl TagFilter for TagStringFilter {
+    fn matches_tag_value(&self, value: &str) -> bool {
+        match &self.value {
+            None => true, // No value requirement => Any value is a match
+            Some(required_value) => value == required_value,
+        }
+    }
+
+    fn key(&self) -> &str {
+        &self.key
     }
 }
 
@@ -88,6 +108,19 @@ impl FromStr for TagRegexFilter {
     }
 }
 
+impl TagFilter for TagRegexFilter {
+    fn matches_tag_value(&self, value: &str) -> bool {
+        match &self.value {
+            None => true, // No value requirement => Any value is a match
+            Some(pattern) => pattern.is_match(value),
+        }
+    }
+
+    fn key(&self) -> &str {
+        &self.key
+    }
+}
+
 impl TraceFilteredConf {
     fn parse(
         filter_tags: &crate::agent_info::schema::FilterTagsConfig,
@@ -98,7 +131,7 @@ impl TraceFilteredConf {
             reject: filter_tags
                 .reject
                 .iter()
-                .map(|tag| TagFilter::from_str(tag))
+                .map(|tag| TagStringFilter::from_str(tag))
                 .collect(),
             reject_regex: filter_tags_regex
                 .reject
@@ -108,7 +141,7 @@ impl TraceFilteredConf {
             require: filter_tags
                 .require
                 .iter()
-                .map(|tag| TagFilter::from_str(tag))
+                .map(|tag| TagStringFilter::from_str(tag))
                 .collect(),
             require_regex: filter_tags_regex
                 .require
@@ -175,57 +208,43 @@ impl TraceFilterer {
         });
     }
 
+    /// Checks if the trace with root span `root_span` should be dropped based on filter configuration.
+    ///
+    /// Applies a subset of trace normalization logic from `libdd-trace-normalization` before checking.
     fn should_drop<T: libdd_trace_utils::span::TraceData>(
         conf: &TraceFilteredConf,
         root_span: &libdd_trace_utils::span::v04::Span<T>,
     ) -> bool {
-        let has_tag_filters = !conf.reject.is_empty()
-            || !conf.reject_regex.is_empty()
-            || !conf.require.is_empty()
-            || !conf.require_regex.is_empty();
-        if has_tag_filters {
-            // let env_tag = root_span
-            //     .meta
-            //     .get("env")
-            //     .map(|v| libdd_trace_normalization::normalize_utils::normalize_tag(v.borrow()));
+        if conf
+            .reject
+            .iter()
+            .any(|filter| check_tag_filter_with_normalization(filter, root_span))
+        {
+            return true;
+        }
 
-            // if let Some(code) = s.meta.get("http.status_code") {
-            //     if !is_valid_status_code(code) {
-            //         s.meta.remove("http.status_code");
-            //     }
-            // };
+        if conf
+            .reject_regex
+            .iter()
+            .any(|filter| check_tag_filter_with_normalization(filter, root_span))
+        {
+            return true;
+        }
 
-            if conf.reject.iter().any(|tag| {
-                root_span
-                    .get_meta(&tag.key)
-                    .is_some_and(|value| tag.value.as_ref().is_none_or(|v| v == value))
-            }) {
-                return true;
-            }
+        if !conf
+            .require
+            .iter()
+            .all(|filter| check_tag_filter_with_normalization(filter, root_span))
+        {
+            return true;
+        }
 
-            if conf.reject_regex.iter().any(|tag| {
-                root_span
-                    .get_meta(&tag.key)
-                    .is_some_and(|value| tag.value.as_ref().is_none_or(|pat| pat.is_match(value)))
-            }) {
-                return true;
-            }
-
-            if !conf.require.iter().all(|tag| {
-                root_span
-                    .get_meta(&tag.key)
-                    .is_some_and(|value| tag.value.as_ref().is_none_or(|v| v == value))
-            }) {
-                return true;
-            }
-
-            if !conf.require_regex.iter().all(|tag| {
-                root_span
-                    .get_meta(&tag.key)
-                    .is_some_and(|value| tag.value.as_ref().is_none_or(|pat| pat.is_match(value)))
-            }) {
-                return true;
-            }
+        if !conf
+            .require_regex
+            .iter()
+            .all(|filter| check_tag_filter_with_normalization(filter, root_span))
+        {
+            return true;
         }
 
         if !conf.ignore_resources.is_empty() {
@@ -235,7 +254,7 @@ impl TraceFilterer {
                 let span_name = root_span.name();
                 debug!(
                     ?span_name,
-                    "Fixing malformed trace. Resource is empty setting span.resource=span.name"
+                    "Trace filter fixing malformed trace. Resource is empty so using name instead"
                 );
                 span_name
             } else {
@@ -252,5 +271,30 @@ impl TraceFilterer {
         }
 
         false
+    }
+}
+
+fn check_tag_filter_with_normalization<T: libdd_trace_utils::span::TraceData>(
+    filter: &impl TagFilter,
+    root_span: &libdd_trace_utils::span::v04::Span<T>,
+) -> bool {
+    let Some(value) = root_span.meta.get(filter.key()) else {
+        return false;
+    };
+    let value = value.borrow();
+    match filter.key() {
+        "env" => {
+            let normalized_value =
+                libdd_trace_normalization::normalize_utils::normalize_tag_cloned(value);
+            filter.matches_tag_value(&normalized_value)
+        }
+        "http.status_code" => {
+            if !libdd_trace_normalization::normalizer::is_valid_http_status_code(value) {
+                debug!(?value,"trace filter on http.status_code ignored because root span's `http.status_code` is invalid");
+                return false;
+            }
+            filter.matches_tag_value(value)
+        }
+        _ => filter.matches_tag_value(value),
     }
 }
