@@ -57,7 +57,7 @@ fn main() {
 
         // Note: in the inline setup, TLS dialect selection is handled by the linker and is taken
         // care of by the build script of otel-thread-ctx-ffi
-    } else if target == "x86_64" {
+    } else if target_arch == "x86_64" {
         // - On aarch64, TLSDESC is already the only dynamic TLS model so no flag is needed.
         // - On x86-64, we use `-mtls-dialect=gnu2` (supported since GCC 4.4 and Clang 19+) to force
         //   the use of TLSDESC as mandated by the spec. If it's not supported, this build will
