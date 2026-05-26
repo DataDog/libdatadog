@@ -101,9 +101,14 @@ impl AgentClient {
         }
 
         let rate_by_service = parse_rate_by_service(response.body());
+
+        if rate_by_service.is_err() {
+            tracing::warn!("Couldn't deserialize the `rate_by_service` from the agent's response body");
+        }
+
         Ok(AgentResponse {
             status: response.status_code(),
-            rate_by_service,
+            rate_by_service: rate_by_service.unwrap_or_default(),
         })
     }
 
@@ -233,15 +238,13 @@ impl AgentClient {
 }
 
 /// Parse `rate_by_service` from an agent trace response body.
-fn parse_rate_by_service(body: &Bytes) -> Option<HashMap<String, f64>> {
+fn parse_rate_by_service(body: &Bytes) -> serde_json::Result<Option<HashMap<String, f64>>> {
     #[derive(serde::Deserialize)]
     struct TraceResponse {
         rate_by_service: Option<HashMap<String, f64>>,
     }
 
-    from_slice::<TraceResponse>(body)
-        .ok()
-        .and_then(|r| r.rate_by_service)
+    from_slice::<TraceResponse>(body).map(|r| r.rate_by_service)
 }
 
 /// Return `Ok(())` for status codes below 400, or `Err(SendError::HttpError)` for 4xx/5xx.
@@ -342,13 +345,13 @@ mod tests {
     #[test]
     fn parse_rate_by_service_valid_json() {
         let body = Bytes::from(r#"{"rate_by_service":{"service:env":0.5}}"#);
-        let rates = parse_rate_by_service(&body).unwrap();
+        let rates = parse_rate_by_service(&body).unwrap().unwrap();
         assert_eq!(rates.get("service:env"), Some(&0.5));
     }
 
     #[test]
     fn parse_rate_by_service_absent_field() {
         let body = Bytes::from(r#"{"other":"value"}"#);
-        assert!(parse_rate_by_service(&body).is_none());
+        assert!(parse_rate_by_service(&body).unwrap().is_none());
     }
 }
