@@ -288,7 +288,7 @@ unsafe fn alloc_str(pool: *mut u8, cursor: &AtomicU32, pool_size: u32, s: &str) 
             return StringRef { offset: old, len };
         }
         spins += 1;
-        if spins % YIELD_AFTER_SPINS == 0 {
+        if spins.is_multiple_of(YIELD_AFTER_SPINS) {
             thread::yield_now();
         } else {
             hint::spin_loop();
@@ -509,7 +509,7 @@ impl ShmSpanConcentrator {
                             break;
                         }
                         spins += 1;
-                        if spins % YIELD_AFTER_SPINS == 0 {
+                        if spins.is_multiple_of(YIELD_AFTER_SPINS) {
                             thread::yield_now();
                         } else {
                             hint::spin_loop();
@@ -517,7 +517,7 @@ impl ShmSpanConcentrator {
                     }
                     SLOT_INIT => {
                         spins += 1;
-                        if spins % YIELD_AFTER_SPINS == 0 {
+                        if spins.is_multiple_of(YIELD_AFTER_SPINS) {
                             thread::yield_now();
                         } else {
                             hint::spin_loop();
@@ -687,7 +687,7 @@ impl ShmSpanConcentrator {
         let mut spins = 0u32;
         while bh.in_flight.load(Relaxed) != 0 && spins < MAX_FLUSH_WAIT_ITERS {
             spins += 1;
-            if spins % YIELD_AFTER_SPINS == 0 {
+            if spins.is_multiple_of(YIELD_AFTER_SPINS) {
                 thread::yield_now();
             } else {
                 hint::spin_loop();

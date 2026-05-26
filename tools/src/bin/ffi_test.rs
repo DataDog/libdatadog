@@ -188,6 +188,31 @@ fn library_search_path_env(lib_dir: &Path) -> (String, String) {
     (search_path_var.to_string(), lib_path)
 }
 
+/// Env vars applied to every spawned test, regardless of name.
+///
+/// On Windows the test executables are dynamically linked against
+/// `datadog_profiling_ffi.dll` (CMake's `find_library` picks the import library
+/// over the static `.lib`). The DLL lives in `release/lib/` but the executables
+/// run from a temp work directory, so without help Windows can't locate it and
+/// every test exits with STATUS_DLL_NOT_FOUND (0xC0000135).
+#[cfg(windows)]
+fn base_env_vars(project_root: &Path) -> Vec<(String, String)> {
+    let lib_dir = project_root.join("release").join("lib");
+    if !lib_dir.exists() {
+        return vec![];
+    }
+    let new_path = match std::env::var("PATH") {
+        Ok(existing) if !existing.is_empty() => format!("{};{}", lib_dir.display(), existing),
+        _ => lib_dir.display().to_string(),
+    };
+    vec![("PATH".to_string(), new_path)]
+}
+
+#[cfg(not(windows))]
+fn base_env_vars(_project_root: &Path) -> Vec<(String, String)> {
+    vec![]
+}
+
 /// Per-test environment variables.  The runner sets these before spawning
 /// the test executable so that tests which need external resources (e.g. the
 /// receiver binary) can find them without hard-coding paths.
@@ -528,7 +553,8 @@ fn run_test(
 ) -> TestResult {
     let is_expected_failure = expected_failures().contains_key(name);
     let expected_crash = expected_crashes().get(name);
-    let env_vars = per_test_env(name, project_root, work_dir);
+    let mut env_vars = base_env_vars(project_root);
+    env_vars.extend(per_test_env(name, project_root, work_dir));
     let start = Instant::now();
 
     let child = match spawn_test(exe_path, work_dir, &env_vars) {

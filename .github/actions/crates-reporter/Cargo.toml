@@ -5,7 +5,7 @@
 name = "crates-reporter"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.84.1"
+rust-version = "1.87.0"
 description = "GitHub Action for reporting modified crates and transitive dependencies"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/crates-reporter"
 repository = "https://github.com/DataDog/libdatadog/tree/main/.github/actions/crates-reporter"
