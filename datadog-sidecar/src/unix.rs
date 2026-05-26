@@ -45,7 +45,11 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
     let _ = prctl::set_name("dd-ipc-helper");
 
     #[cfg(target_os = "linux")]
-    if let Err(e) = init_crashtracker(trampoline_data.dependency_paths) {
+    if let Err(e) = init_crashtracker(if trampoline_data.argc > 0 {
+        Some(trampoline_data.dependency_paths)
+    } else {
+        None
+    }) {
         warn!("Failed to initialize crashtracker: {e}");
     }
 
@@ -214,32 +218,44 @@ fn shutdown_appsec() -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Result<()> {
+fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> anyhow::Result<()> {
     let entrypoint = entrypoint!(ddog_crashtracker_entry_point);
     let entrypoint_path = match unsafe { get_dl_path_raw(entrypoint.ptr as *const libc::c_void) } {
         (Some(path), _) => path,
         _ => anyhow::bail!("Failed to find crashtracker entrypoint"),
     };
+    let entrypoint_path_str = entrypoint_path.into_string()?;
 
-    let mut receiver_args = vec![
-        "crashtracker_receiver".to_string(),
-        "".to_string(),
-        entrypoint_path.into_string()?,
-    ];
+    let mut receiver_args = vec!["crashtracker_receiver".to_string()];
+    let mut receiver_env = vec![];
+    let entrypoint_name = entrypoint.symbol_name.into_string()?;
 
-    unsafe {
-        let mut descriptors = dependency_paths;
-        if !descriptors.is_null() {
-            loop {
-                if (*descriptors).is_null() {
-                    break;
+    if let Some(dependency_paths) = dependency_paths {
+        receiver_args.push("".to_string());
+        receiver_args.push(entrypoint_path_str.clone());
+        unsafe {
+            let mut descriptors = dependency_paths;
+            if !descriptors.is_null() {
+                loop {
+                    if (*descriptors).is_null() {
+                        break;
+                    }
+                    receiver_args.push(CStr::from_ptr(*descriptors).to_string_lossy().into_owned());
+                    descriptors = descriptors.add(1);
                 }
-                receiver_args.push(CStr::from_ptr(*descriptors).to_string_lossy().into_owned());
-                descriptors = descriptors.add(1);
+            }
+        }
+        receiver_args.push(entrypoint_name);
+    } else {
+        // direct mode: ld.so uses argv[1] as the library to exec
+        receiver_args.push(entrypoint_path_str.clone());
+        receiver_env.push(("_DD_SIDECAR_DIRECT_EXEC".to_string(), entrypoint_name));
+        if let Ok(env) = std::env::var("_DD_SIDECAR_PATH_DEPS") {
+            if !env.is_empty() {
+                receiver_env.push(("_DD_SIDECAR_PATH_DEPS".to_string(), env));
             }
         }
     }
-    receiver_args.push(entrypoint.symbol_name.into_string()?);
 
     let output = match &Config::get().log_method {
         LogMethod::Stdout => Some(format!("/proc/{}/fd/1", unsafe { libc::getpid() })),
@@ -269,7 +285,7 @@ fn init_crashtracker(dependency_paths: *const *const libc::c_char) -> anyhow::Re
         config_builder.build()?,
         CrashtrackerReceiverConfig::new(
             receiver_args,
-            vec![],
+            receiver_env,
             format!("/proc/{}/exe", unsafe { libc::getpid() }),
             output,
             None,

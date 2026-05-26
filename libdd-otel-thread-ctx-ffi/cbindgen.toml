@@ -1,0 +1,29 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+language = "C"
+cpp_compat = true
+tab_width = 2
+header = """// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+"""
+include_guard = "DDOG_OTEL_THREAD_CTX_H"
+style = "both"
+pragma_once = true
+no_includes = true
+sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+
+[parse]
+parse_deps = true
+include = ["libdd-common-ffi", "libdd-otel-thread-ctx"]
+
+[export]
+prefix = "ddog_"
+renaming_overrides_prefixing = true
+
+[export.mangle]
+rename_types = "PascalCase"
+
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"

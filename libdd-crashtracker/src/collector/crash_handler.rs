@@ -247,12 +247,6 @@ fn handle_posix_signal_impl(
         return Ok(());
     }
 
-    // Mark this process as a collector for the preload logger
-    #[cfg(target_os = "linux")]
-    {
-        super::api::mark_preload_logger_collector();
-    }
-
     // If this code hits a stack overflow, then it will result in a segfault.  That situation is
     // protected by the one-time guard.
 
@@ -262,6 +256,11 @@ fn handle_posix_signal_impl(
         // In the case where some lower-level signal handler recovered the error
         // we don't want to spam the system with calls.  Make this one shot.
         return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        super::api::mark_preload_logger_collector();
     }
 
     // Suppress SIGPIPE and defer SIGCHLD during crash handling.
@@ -302,6 +301,20 @@ fn handle_posix_signal_impl(
     let timeout_manager = TimeoutManager::new(config.timeout());
 
     let receiver = Receiver::from_crashtracker_config(config)?;
+
+    // Enable ptrace permissions for receiver if multi-thread collection is enabled
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() {
+        if let Some(receiver_pid) = receiver.handle.pid {
+            // Allow the receiver to ptrace this process for thread context collection.
+            // PR_SET_PTRACER only uses arg2 (the pid); the trailing zeros satisfy
+            // libc::prctl's fixed 5-argument FFI binding.
+            // SAFETY: prctl is async-signal-safe and we're just setting ptrace permissions
+            unsafe {
+                libc::prctl(libc::PR_SET_PTRACER, receiver_pid as libc::c_ulong);
+            }
+        }
+    }
 
     let collector = Collector::spawn(
         &receiver,
