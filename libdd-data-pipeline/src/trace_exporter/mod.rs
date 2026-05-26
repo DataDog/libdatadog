@@ -47,6 +47,7 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
@@ -182,6 +183,10 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
+    /// Latched true once the agent advertises `/v1.0/traces` in its `/info` endpoints
+    /// list, latched false otherwise. Only consulted when `output_format` is V1; for
+    /// V0.4 and V0.5 it is a no-op flag.
+    v1_active: AtomicBool,
     serializer: TraceSerializer,
     shared_runtime: Arc<SharedRuntime>,
     /// None if dogstatsd is disabled
@@ -347,6 +352,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     fn check_agent_info(&self) {
         if let Some(agent_info) = agent_info::get_agent_info() {
             if self.has_agent_info_state_changed(&agent_info) {
+                if matches!(self.output_format, TraceExporterOutputFormat::V1) {
+                    self.refresh_v1_active(&agent_info);
+                }
                 match &**self.client_side_stats.status.load() {
                     StatsComputationStatus::Disabled => {}
                     StatsComputationStatus::DisabledByAgent { .. } => {
@@ -388,6 +396,26 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     fn check_agent_info(&self) {
         // No background workers on wasm — agent info is never fetched, stats are
         // never computed. This is intentionally a no-op.
+    }
+
+    /// Reconcile `v1_active` with the agent's currently-advertised endpoints. Called only when
+    /// V1 is configured and the agent info state has changed, so transitions are logged at most
+    /// once per change.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn refresh_v1_active(&self, agent_info: &Arc<AgentInfo>) {
+        let supports_v1 = agent_info
+            .info
+            .endpoints
+            .as_ref()
+            .is_some_and(|e| e.iter().any(|p| p == "/v1.0/traces"));
+        let previous = self.v1_active.swap(supports_v1, Ordering::Relaxed);
+        match (previous, supports_v1) {
+            (false, true) => debug!("V1 trace protocol enabled (agent advertises /v1.0/traces)"),
+            (true, false) => {
+                warn!("V1 trace protocol no longer advertised by agent; falling back to v0.4")
+            }
+            _ => {}
+        }
     }
 
     /// !!! This function is only for testing purposes !!!
@@ -600,6 +628,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             header_tags,
             &self.metadata,
             self.agent_payload_response_version.as_ref(),
+            self.effective_output_format(),
         ) {
             Ok(p) => p,
             Err(e) => {
@@ -811,7 +840,24 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     }
 
     fn get_agent_url(&self) -> Uri {
-        self.output_format.add_path(&self.endpoint.url)
+        self.effective_output_format().add_path(&self.endpoint.url)
+    }
+
+    /// Return the trace output format that will actually be used to encode and send the next
+    /// payload.
+    ///
+    /// When V1 is configured, the effective format is V1 only after the agent has advertised
+    /// `/v1.0/traces` via the `/info` endpoint (fail-closed). Until then — and any time the
+    /// agent rolls back this capability — V1 transparently falls back to V0.4. V0.4 and V0.5
+    /// pass through unchanged.
+    fn effective_output_format(&self) -> TraceExporterOutputFormat {
+        match self.output_format {
+            TraceExporterOutputFormat::V1 if self.v1_active.load(Ordering::Relaxed) => {
+                TraceExporterOutputFormat::V1
+            }
+            TraceExporterOutputFormat::V1 => TraceExporterOutputFormat::V04,
+            other => other,
+        }
     }
 
     #[cfg(test)]
@@ -899,6 +945,143 @@ mod tests {
         );
         assert!(headers.contains_key("datadog-client-computed-stats"));
         assert!(headers.contains_key("datadog-client-computed-top-level"));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_effective_output_format_v04_passthrough() {
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
+            false,
+            false,
+        );
+        assert!(matches!(
+            exporter.effective_output_format(),
+            TraceExporterOutputFormat::V04
+        ));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_effective_output_format_v1_pre_negotiation_falls_back_to_v04() {
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        // v1_active starts false → fallback path
+        assert!(matches!(
+            exporter.effective_output_format(),
+            TraceExporterOutputFormat::V04
+        ));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_effective_output_format_v1_post_negotiation_uses_v1() {
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        exporter
+            .v1_active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(matches!(
+            exporter.effective_output_format(),
+            TraceExporterOutputFormat::V1
+        ));
+        assert_eq!(
+            exporter.get_agent_url().to_string(),
+            "http://127.0.0.1:8126/v1.0/traces"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_refresh_v1_active_enables_when_endpoint_advertised() {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        let agent_info = Arc::new(AgentInfo {
+            state_hash: "hash-1".to_string(),
+            info: AgentInfoStruct {
+                endpoints: Some(vec!["/v0.4/traces".to_string(), "/v1.0/traces".to_string()]),
+                ..Default::default()
+            },
+        });
+        exporter.refresh_v1_active(&agent_info);
+        assert!(exporter
+            .v1_active
+            .load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_refresh_v1_active_disables_when_endpoint_disappears() {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        exporter
+            .v1_active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let agent_info = Arc::new(AgentInfo {
+            state_hash: "hash-2".to_string(),
+            info: AgentInfoStruct {
+                endpoints: Some(vec!["/v0.4/traces".to_string()]),
+                ..Default::default()
+            },
+        });
+        exporter.refresh_v1_active(&agent_info);
+        assert!(!exporter
+            .v1_active
+            .load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_refresh_v1_active_handles_missing_endpoints_field() {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        let agent_info = Arc::new(AgentInfo {
+            state_hash: "hash-3".to_string(),
+            info: AgentInfoStruct {
+                endpoints: None,
+                ..Default::default()
+            },
+        });
+        exporter.refresh_v1_active(&agent_info);
+        assert!(!exporter
+            .v1_active
+            .load(std::sync::atomic::Ordering::Relaxed));
     }
 
     fn read(socket: &net::UdpSocket) -> String {

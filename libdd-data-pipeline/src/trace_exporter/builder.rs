@@ -173,6 +173,16 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Opt in to the V1 trace protocol.
+    ///
+    /// V1 is only used after runtime negotiation with the agent via `/info`. When the agent does
+    /// not advertise the `/v1.0/traces` endpoint, the exporter falls back to V0.4 transparently.
+    /// V1 is only compatible with V0.4 input.
+    pub fn enable_v1_protocol(&mut self) -> &mut Self {
+        self.output_format = TraceExporterOutputFormat::V1;
+        self
+    }
+
     /// Set the header indicating the tracer has computed the top-level tag
     pub fn set_client_computed_top_level(&mut self) -> &mut Self {
         self.client_computed_top_level = true;
@@ -288,8 +298,12 @@ impl TraceExporterBuilder {
 
     #[allow(missing_docs)]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
-        self,
+        mut self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
+        if Self::env_requests_v1_protocol() {
+            self.output_format = TraceExporterOutputFormat::V1;
+        }
+
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -465,7 +479,8 @@ impl TraceExporterBuilder {
             },
             input_format: self.input_format,
             output_format: self.output_format,
-            serializer: TraceSerializer::new(self.output_format),
+            v1_active: std::sync::atomic::AtomicBool::new(false),
+            serializer: TraceSerializer::new(),
             client_computed_top_level: self.client_computed_top_level,
             shared_runtime,
             dogstatsd,
@@ -496,6 +511,16 @@ impl TraceExporterBuilder {
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
         })
+    }
+
+    /// Returns true when the `DD_TRACE_AGENT_PROTOCOL_VERSION` environment variable opts in to
+    /// the V1 protocol. Accepts `"1"` and `"1.0"`. Other values (including unset) yield false.
+    fn env_requests_v1_protocol() -> bool {
+        Self::parse_v1_protocol_env(std::env::var("DD_TRACE_AGENT_PROTOCOL_VERSION").ok())
+    }
+
+    fn parse_v1_protocol_env(value: Option<String>) -> bool {
+        matches!(value.as_deref().map(str::trim), Some("1") | Some("1.0"))
     }
 
     fn is_inputs_outputs_formats_compatible(
@@ -619,6 +644,80 @@ mod tests {
         assert_eq!(
             err.unwrap(),
             BuilderErrorKind::InvalidUri("empty string".to_string())
+        );
+    }
+
+    #[test]
+    fn test_enable_v1_protocol_sets_output_format() {
+        let mut builder = TraceExporterBuilder::default();
+        builder.enable_v1_protocol();
+        assert!(matches!(
+            builder.output_format,
+            TraceExporterOutputFormat::V1
+        ));
+    }
+
+    #[test]
+    fn test_parse_v1_protocol_env() {
+        assert!(TraceExporterBuilder::parse_v1_protocol_env(Some(
+            "1".to_string()
+        )));
+        assert!(TraceExporterBuilder::parse_v1_protocol_env(Some(
+            "1.0".to_string()
+        )));
+        assert!(TraceExporterBuilder::parse_v1_protocol_env(Some(
+            "  1.0 ".to_string()
+        )));
+        assert!(!TraceExporterBuilder::parse_v1_protocol_env(Some(
+            "2".to_string()
+        )));
+        assert!(!TraceExporterBuilder::parse_v1_protocol_env(Some(
+            "v1".to_string()
+        )));
+        assert!(!TraceExporterBuilder::parse_v1_protocol_env(Some(
+            "".to_string()
+        )));
+        assert!(!TraceExporterBuilder::parse_v1_protocol_env(None));
+    }
+
+    #[test]
+    fn test_v1_input_v05_incompatible() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_input_format(TraceExporterInputFormat::V05)
+            .set_output_format(TraceExporterOutputFormat::V1);
+        let result = builder.build::<NativeCapabilities>();
+        assert!(matches!(
+            result,
+            Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(_)
+            ))
+        ));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_build_with_v1_starts_inactive() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_input_format(TraceExporterInputFormat::V04)
+            .enable_v1_protocol();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        // V1 is configured but the agent hasn't been negotiated with yet → v0.4 is effective.
+        assert!(matches!(
+            exporter.output_format,
+            TraceExporterOutputFormat::V1
+        ));
+        assert!(!exporter
+            .v1_active
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(
+            exporter
+                .effective_output_format()
+                .add_path(&exporter.endpoint.url)
+                .to_string(),
+            "http://127.0.0.1:8126/v0.4/traces"
         );
     }
 }
