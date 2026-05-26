@@ -13,7 +13,6 @@ on:
     - cron: '0 6 * * *'
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.84.1
 
 jobs:
   setup:
@@ -69,7 +68,7 @@ jobs:
         } >> $GITHUB_OUTPUT
 
   test:
-    name: "cargo test #${{ matrix.platform }} ${{ matrix.rust_version }}"
+    name: "cargo test #${{ matrix.platform }}"
     needs: setup
     if: needs.setup.outputs.packages-count != '0'
     # Ubuntu jobs run on the larger APM runner pool — the default GitHub-hosted
@@ -87,10 +86,6 @@ jobs:
     strategy:
       matrix:
         platform: [windows-latest, ubuntu-latest, macos-15]
-        rust_version: [""]
-        include:
-          - platform: "ubuntu-latest"
-            rust_version: "${RUST_VERSION}"
       fail-fast: false
     steps:
       - name: Free Disk Space (Ubuntu only)
@@ -108,12 +103,10 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           submodules: recursive
-      - name: Install Rust ${{ matrix.rust_version }}
-        if: matrix.rust_version != ''
-        run: rustup set profile minimal && rustup install ${{ matrix.rust_version }} && rustup default ${{ matrix.rust_version }}
       - id: rust-version
-        # On Windows run happens in a PowerShell, so start bash explicitly
-        run: bash -c 'echo "version=$(rustc --version)" >> $GITHUB_OUTPUT'
+        # rustup auto-installs the version pinned in rust-toolchain.toml on first invocation.
+        # On Windows run happens in a PowerShell, so start bash explicitly.
+        run: bash -c 'echo "version=$(rustc --version | cut -d" " -f2)" >> $GITHUB_OUTPUT'
       - name: Install cargo nextest
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
@@ -215,7 +208,7 @@ jobs:
         uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe # 4.3.1
         with:
           report_paths: "target/nextest/ci/junit.xml"
-          check_name: "[${{ matrix.platform }}:${{ matrix.rust_version }}] test report"
+          check_name: "[${{ matrix.platform }}:${{ steps.rust-version.outputs.version }}] test report"
           include_passed: true
       - name: Upload test results to Datadog
         if: success() || failure()
@@ -259,7 +252,7 @@ jobs:
             --service libdatadog \
             --env ci \
             --logs \
-            --tags rustc:${{ matrix.rust_version }},arch:${{ runner.arch }},os:${{ runner.os }},platform:${{ matrix.platform }} \
+            --tags rustc:${{ steps.rust-version.outputs.version }},arch:${{ runner.arch }},os:${{ runner.os }},platform:${{ matrix.platform }} \
             target/nextest/ci/junit.xml
         env:
           DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}

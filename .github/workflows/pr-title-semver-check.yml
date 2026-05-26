@@ -89,13 +89,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
       - name: Install Rust ${{ env.RUST_VERSION }}
         run: |
           rustup set profile minimal
           rustup install ${{ env.RUST_VERSION }} && rustup default ${{ env.RUST_VERSION }}
-          rustup toolchain install nightly-2026-02-08
+          rustup toolchain install ${{ steps.nightly-version.outputs.version }}
           # Link the dated nightly as 'nightly' for tools (like cargo-public-api) that expect it
-          ln -sf ~/.rustup/toolchains/nightly-2026-02-08-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
+          ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
 
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
@@ -110,9 +113,16 @@ jobs:
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: cargo-public-api@0.50.2, cargo-semver-checks@0.45.0
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}
 
       - name: Run semver checks on changed crates
         id: semver
+        env:
+          # Override rust-toolchain.toml so cargo-semver-checks / cargo-public-api
+          # run on the explicit RUST_VERSION (1.92.0) the workflow installed,
+          # instead of the workspace MSRV from rust-toolchain.toml.
+          RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}
         run: |
           set -euo pipefail
 

@@ -402,8 +402,6 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
     metadata: &TracerMetadata,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    // `ByteBuf`'s `RmpWrite::Error` is `Infallible`, so `encode_payload` cannot fail. The
-    // compiler proves the `Err` arm unreachable through `unwrap_infallible`.
     encode_payload(&mut buf, traces, metadata)
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();

@@ -2,6 +2,15 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v4.0.0..libdd-trace-utils-v5.0.0) - 2026-05-22
+
+### Added
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) - ([ecdca7d](https://github.com/datadog/libdatadog/commit/ecdca7d4ef4e7f11c0194ed2f4e25173973404e7))
+- Add encoder from v04 to v1 ([#1896](https://github.com/datadog/libdatadog/issues/1896)) - ([e2fb886](https://github.com/datadog/libdatadog/commit/e2fb8860d002d1b56d0dc8b0b185fca7954371df))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v3.0.1..libdd-trace-utils-v4.0.0) - 2026-05-18
 
 ### Added
