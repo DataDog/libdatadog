@@ -216,10 +216,9 @@ pub unsafe extern "C" fn ddog_free_charslice(slice: CharSlice<'static>) {
         return;
     }
 
-    // Safety: the owned char slices returned by functions comes from `CString::into_raw` in
-    // `ddog_span_debug_log`.
     unsafe {
-        let _ = CString::from_raw(ptr as *mut c_char);
+        let owned_ptr = ptr as *mut c_char;
+        let _ = Box::from_raw(owned_ptr);
     }
 }
 
