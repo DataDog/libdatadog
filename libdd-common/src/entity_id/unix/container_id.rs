@@ -11,6 +11,9 @@ use std::sync::LazyLock;
 
 const UUID_SOURCE: &str =
     r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
+/// PCF / Garden container UUID source: 8-4-4-4-4 hex (28 chars).
+/// Distinct from `UUID_SOURCE` (8-4-4-4-12) because the last group is 4 hex.
+const PCF_UUID_SOURCE: &str = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}";
 const CONTAINER_SOURCE: &str = r"[0-9a-f]{64}";
 const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
 
@@ -22,7 +25,7 @@ pub(crate) static LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 pub(crate) static CONTAINER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::unwrap_used)]
     Regex::new(&format!(
-        r"({UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:\.scope(?:/[^/ \t]+)?)? *$"
+        r"({UUID_SOURCE}|{PCF_UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:\.scope(?:/[^/ \t]+)?)? *$"
     ))
     .unwrap()
 });
@@ -92,6 +95,17 @@ mod tests {
             // invalid hex
             "13:name=systemd:/docker/3726184226f5d3147g25fdeab5b60097e378e8a720503a5e19ecfdf29f869860"
                 => None,
+            // PCF Garden 8-4-4-4-4 UUID
+            "1:name=systemd:/system.slice/garden.service/garden/6f265890-5165-7fab-6b52-18d1"
+                => Some("6f265890-5165-7fab-6b52-18d1"),
+            "10:freezer:/garden/6f265890-5165-7fab-6b52-18d1"
+                => Some("6f265890-5165-7fab-6b52-18d1"),
+            // Regression guard: 8-4-4-4-12 standard UUID must NOT be truncated to 28 chars
+            "1:name=systemd:/uuid/5a081c13-b8cf-4801-b427-f4601742204d"
+                => Some("5a081c13-b8cf-4801-b427-f4601742204d"),
+            // First group only 7 chars -> no match
+            "1:name=systemd:/garden/6f26589-5165-7fab-6b52-18d1"
+                => None,
         };
         for (line, &expected_result) in test_lines.iter() {
             assert_eq!(
@@ -118,6 +132,7 @@ mod tests {
             "cgroup.fargate" => Some("432624d2150b349fe35ba397284dea788c2bf66b885d14dfc1569b01890ca7da"),
             // parse a Fargate 1.4+ container ID
             "cgroup.fargate.1.4" => Some("8cd79a803caf4d2aa945152e934a5c00-1053176469"),
+            "cgroup.pcf" => Some("6f265890-5165-7fab-6b52-18d1"),
 
             // Whitespace around the matching ID is permitted so long as it is matched within a valid cgroup line.
             // parse a container ID with leading and trailing whitespace
