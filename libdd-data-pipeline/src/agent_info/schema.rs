@@ -104,7 +104,6 @@ pub struct HttpObfuscationConfig {
 
 #[allow(missing_docs)]
 #[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
-#[serde(rename_all = "PascalCase")]
 pub struct RedisObfuscationConfig {
     // Agent sent pascal case fields here in versions <7.79.0
     #[serde(alias = "Enabled")]
