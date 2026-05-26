@@ -61,8 +61,6 @@ pub(super) enum AnyValueKey {
     Int64 = 4,
     Bytes = 5,
     Array = 6,
-    /// Not used in V04→V1 conversion (V04 has no key-value list type), defined for completeness.
-    #[allow(dead_code)]
     KeyValueList = 7,
 }
 

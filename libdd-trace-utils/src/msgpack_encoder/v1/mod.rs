@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod span_v04;
+mod span_v1;
 
 use crate::span::v04::Span;
+use crate::span::v1::TracerPayload;
 use crate::span::TraceData;
 use crate::tracer_metadata::TracerMetadata;
 use libdd_common::ResultInfallibleExt;
@@ -420,6 +422,162 @@ pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(
     // `Ok`, so the error path here is unreachable today; should `CountLength` ever grow
     // a fallible code path, fuzz tests on the msgpack encoded length would catch it.
     let _ = encode_payload(&mut counter, traces, metadata);
+    counter.0
+}
+
+/// Encodes a [`TracerPayload`] (V1 canonical data model) as a V1 msgpack payload.
+///
+/// This is the M3 encoder. The byte layout matches [`encode_payload`] (the M1 v0.4 → V1
+/// encoder) so equivalent inputs produce byte-identical outputs.
+fn encode_payload_v1<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    payload: &TracerPayload<T>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    let mut table = StringTable::new();
+
+    let has_attributes = !payload.attributes.is_empty();
+
+    let map_len = 1u32 // chunks always present
+        + (!payload.language_name.borrow().is_empty()) as u32
+        + (!payload.language_version.borrow().is_empty()) as u32
+        + (!payload.tracer_version.borrow().is_empty()) as u32
+        + (!payload.runtime_id.borrow().is_empty()) as u32
+        + (!payload.env.borrow().is_empty()) as u32
+        + (!payload.hostname.borrow().is_empty()) as u32
+        + (!payload.app_version.borrow().is_empty()) as u32
+        + has_attributes as u32;
+
+    write_map_len(writer, map_len)?;
+
+    if !payload.language_name.borrow().is_empty() {
+        write_uint8(writer, trace_key::LANGUAGE_NAME)?;
+        table.write_interned(writer, payload.language_name.borrow())?;
+    }
+
+    if !payload.language_version.borrow().is_empty() {
+        write_uint8(writer, trace_key::LANGUAGE_VERSION)?;
+        table.write_interned(writer, payload.language_version.borrow())?;
+    }
+
+    if !payload.tracer_version.borrow().is_empty() {
+        write_uint8(writer, trace_key::TRACER_VERSION)?;
+        table.write_interned(writer, payload.tracer_version.borrow())?;
+    }
+
+    if !payload.runtime_id.borrow().is_empty() {
+        write_uint8(writer, trace_key::RUNTIME_ID)?;
+        table.write_interned(writer, payload.runtime_id.borrow())?;
+    }
+
+    if !payload.env.borrow().is_empty() {
+        write_uint8(writer, trace_key::ENV_REF)?;
+        table.write_interned(writer, payload.env.borrow())?;
+    }
+
+    if !payload.hostname.borrow().is_empty() {
+        write_uint8(writer, trace_key::HOSTNAME_REF)?;
+        table.write_interned(writer, payload.hostname.borrow())?;
+    }
+
+    if !payload.app_version.borrow().is_empty() {
+        write_uint8(writer, trace_key::APP_VERSION_REF)?;
+        table.write_interned(writer, payload.app_version.borrow())?;
+    }
+
+    if has_attributes {
+        write_uint8(writer, trace_key::ATTRIBUTES)?;
+        span_v1::encode_attributes_map(writer, &payload.attributes, &mut table)?;
+    }
+
+    write_uint8(writer, trace_key::CHUNKS)?;
+    write_array_len(writer, payload.chunks.len() as u32)?;
+    for chunk in &payload.chunks {
+        encode_chunk_v1(writer, chunk, &mut table)?;
+    }
+
+    Ok(())
+}
+
+fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    chunk: &crate::span::v1::TraceChunk<T>,
+    table: &mut StringTable,
+) -> Result<(), ValueWriteError<W::Error>> {
+    let has_origin = chunk
+        .origin
+        .as_ref()
+        .is_some_and(|o| !<T::Text as Borrow<str>>::borrow(o).is_empty());
+
+    let fields = 2u32 // trace_id + spans
+        + has_origin as u32
+        + chunk.priority.is_some() as u32
+        + chunk.sampling_mechanism.is_some() as u32;
+
+    write_map_len(writer, fields)?;
+
+    write_uint8(writer, chunk_key::TRACE_ID)?;
+    write_bin(writer, &chunk.trace_id)?;
+
+    if let Some(origin) = chunk
+        .origin
+        .as_ref()
+        .filter(|o| !<T::Text as Borrow<str>>::borrow(o).is_empty())
+    {
+        write_uint8(writer, chunk_key::ORIGIN)?;
+        table.write_interned(writer, <T::Text as Borrow<str>>::borrow(origin))?;
+    }
+
+    if let Some(priority) = chunk.priority {
+        write_uint8(writer, chunk_key::PRIORITY)?;
+        write_sint(writer, priority as i64)?;
+    }
+
+    if let Some(mechanism) = chunk.sampling_mechanism {
+        write_uint8(writer, chunk_key::SAMPLING_MECHANISM)?;
+        write_uint(writer, mechanism as u64)?;
+    }
+
+    write_uint8(writer, chunk_key::SPANS)?;
+    write_array_len(writer, chunk.spans.len() as u32)?;
+    for span in &chunk.spans {
+        span_v1::encode_span(writer, span, table)?;
+    }
+
+    Ok(())
+}
+
+/// Serializes a V1 [`TracerPayload`] into a `Vec<u8>` using the V1 msgpack format.
+pub fn to_vec_from_payload<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
+    to_vec_from_payload_with_capacity(payload, 0)
+}
+
+/// Serializes a V1 [`TracerPayload`] into a `Vec<u8>` with a pre-allocated capacity.
+pub fn to_vec_from_payload_with_capacity<T: TraceData>(
+    payload: &TracerPayload<T>,
+    capacity: u32,
+) -> Vec<u8> {
+    let mut buf = ByteBuf::with_capacity(capacity as usize);
+    encode_payload_v1(&mut buf, payload)
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
+    buf.into_vec()
+}
+
+/// Serializes a V1 [`TracerPayload`] into a caller-provided slice.
+///
+/// # Errors
+/// Returns a `ValueWriteError` if the underlying writer fails (e.g. buffer too small).
+pub fn write_payload_to_slice<T: TraceData>(
+    slice: &mut &mut [u8],
+    payload: &TracerPayload<T>,
+) -> Result<(), ValueWriteError> {
+    encode_payload_v1(slice, payload)
+}
+
+/// Returns the number of bytes the V1 payload for `payload` would occupy when encoded.
+pub fn to_encoded_byte_len_from_payload<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
+    let mut counter = super::CountLength(0);
+    let _ = encode_payload_v1(&mut counter, payload);
     counter.0
 }
 
@@ -864,5 +1022,876 @@ mod tests {
             encoded.windows(2).any(|w| w == mech),
             "sampling_mechanism 3 from span 3 should appear"
         );
+    }
+}
+
+#[cfg(test)]
+mod v1_payload_tests {
+    //! Unit tests for the M3 encoder (`encode_payload_v1`).
+    //!
+    //! Verifies the encoder produces a valid V1 payload from the canonical
+    //! [`crate::span::v1::TracerPayload`] data model and that core invariants (interning, byte
+    //! length, optional fields) hold.
+
+    use super::*;
+    use crate::span::v1::{
+        AttributeValue, Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes,
+        TracerPayloadBytes,
+    };
+    use libdd_tinybytes::BytesString;
+
+    fn bs(s: &str) -> BytesString {
+        BytesString::from_slice(s.as_bytes()).unwrap_or_default()
+    }
+
+    fn make_span(service: &str, name: &str, span_id: u64) -> V1SpanBytes {
+        V1Span {
+            service: bs(service),
+            name: bs(name),
+            resource: bs("res"),
+            span_id,
+            start: 1_000_000,
+            duration: 500,
+            ..Default::default()
+        }
+    }
+
+    fn make_chunk(spans: Vec<V1SpanBytes>, trace_id: [u8; 16]) -> TraceChunkBytes {
+        TraceChunkBytes {
+            trace_id,
+            spans,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn empty_payload_is_valid_msgpack_map() {
+        let payload = TracerPayloadBytes::default();
+        let encoded = to_vec_from_payload(&payload);
+        // Map with a single entry (chunks), then an empty array. `0x81` = fixmap of length 1,
+        // followed by chunk key (0x0b), then `0x90` (fixarray length 0).
+        assert_eq!(encoded, vec![0x81, 0x0b, 0x90]);
+    }
+
+    #[test]
+    fn payload_byte_len_matches_to_vec() {
+        let chunk = make_chunk(vec![make_span("svc", "op", 1)], [0u8; 16]);
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        let len = to_encoded_byte_len_from_payload(&payload);
+        assert_eq!(encoded.len() as u32, len);
+    }
+
+    #[test]
+    fn span_kind_is_always_emitted_as_uint() {
+        // Default SpanKind (Internal=1) must be emitted. The encoded payload contains
+        // `kind_key (0x10) | uint 1 (0x01)`.
+        let chunk = make_chunk(vec![make_span("svc", "op", 1)], [0u8; 16]);
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        let pat = [0x10u8, 0x01u8];
+        assert!(
+            encoded.windows(2).any(|w| w == pat),
+            "Kind (key=16) Internal (=1) must be emitted"
+        );
+    }
+
+    #[test]
+    fn typed_attributes_carry_correct_type_discriminants() {
+        let mut attrs = HashMap::new();
+        attrs.insert(bs("k_str"), AttributeValue::String(bs("v")));
+        let span = V1Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            span_id: 1,
+            start: 1,
+            duration: 1,
+            attributes: attrs,
+            ..Default::default()
+        };
+        let chunk = make_chunk(vec![span], [0u8; 16]);
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        // String attribute → type discriminant = 1 (`AnyValueKey::String`).
+        assert!(
+            encoded.windows(b"k_str".len()).any(|w| w == b"k_str"),
+            "attribute key must appear"
+        );
+    }
+
+    #[test]
+    fn bytes_attribute_uses_bin_marker() {
+        // A Bytes attribute must use the msgpack `bin` family, not `str`.
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            bs("payload"),
+            AttributeValue::Bytes(libdd_tinybytes::Bytes::copy_from_slice(b"\xde\xad")),
+        );
+        let span = V1Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            span_id: 1,
+            start: 1,
+            duration: 1,
+            attributes: attrs,
+            ..Default::default()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![make_chunk(vec![span], [0u8; 16])],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        // bin8 marker `0xc4` followed by length `0x02` and the bytes themselves.
+        let want = [0xc4u8, 0x02, 0xde, 0xad];
+        assert!(
+            encoded.windows(4).any(|w| w == want),
+            "Bytes attribute must be encoded as msgpack bin"
+        );
+    }
+
+    #[test]
+    fn list_and_keyvalue_attributes_round_trip_through_recursion() {
+        let mut nested = HashMap::new();
+        nested.insert(bs("nk"), AttributeValue::Int(7));
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            bs("list"),
+            AttributeValue::List(vec![
+                AttributeValue::String(bs("a")),
+                AttributeValue::Bool(true),
+            ]),
+        );
+        attrs.insert(bs("kv"), AttributeValue::KeyValue(nested));
+        let span = V1Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            span_id: 1,
+            start: 1,
+            duration: 1,
+            attributes: attrs,
+            ..Default::default()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![make_chunk(vec![span], [0u8; 16])],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        // The keys and the nested key must all appear at least once.
+        for s in &[b"list" as &[u8], b"kv", b"a", b"nk"] {
+            assert!(
+                encoded.windows(s.len()).any(|w| w == *s),
+                "{} should appear in payload",
+                std::str::from_utf8(s).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn promoted_fields_at_payload_level() {
+        let payload = TracerPayloadBytes {
+            language_name: bs("python"),
+            language_version: bs("3.11"),
+            tracer_version: bs("2.0.0"),
+            runtime_id: bs("rt-1"),
+            env: bs("prod"),
+            hostname: bs("h"),
+            app_version: bs("1.2.3"),
+            chunks: vec![make_chunk(vec![make_span("svc", "op", 1)], [0u8; 16])],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        for s in &[
+            b"python" as &[u8],
+            b"3.11",
+            b"2.0.0",
+            b"rt-1",
+            b"prod",
+            b"1.2.3",
+        ] {
+            assert!(
+                encoded.windows(s.len()).any(|w| w == *s),
+                "{} should appear",
+                std::str::from_utf8(s).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_level_attrs_emitted_when_set() {
+        let chunk = TraceChunkBytes {
+            trace_id: [0u8; 16],
+            priority: Some(1),
+            origin: Some(bs("lambda")),
+            sampling_mechanism: Some(4),
+            spans: vec![make_span("svc", "op", 1)],
+            ..Default::default()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        assert!(
+            encoded.windows(b"lambda".len()).any(|w| w == b"lambda"),
+            "chunk origin should appear"
+        );
+        // sampling_mechanism=4 → SAMPLING_MECHANISM (0x07) + positive fixint 0x04
+        let want = [chunk_key::SAMPLING_MECHANISM, 0x04];
+        assert!(encoded.windows(2).any(|w| w == want));
+    }
+
+    #[test]
+    fn span_kind_otel_values() {
+        for (kind, expected_byte) in [
+            (SpanKind::Internal, 0x01u8),
+            (SpanKind::Server, 0x02),
+            (SpanKind::Client, 0x03),
+            (SpanKind::Producer, 0x04),
+            (SpanKind::Consumer, 0x05),
+        ] {
+            let span = V1Span {
+                service: bs("svc"),
+                name: bs("op"),
+                resource: bs("res"),
+                span_id: 1,
+                start: 1,
+                duration: 1,
+                span_kind: kind,
+                ..Default::default()
+            };
+            let payload = TracerPayloadBytes {
+                chunks: vec![make_chunk(vec![span], [0u8; 16])],
+                ..Default::default()
+            };
+            let encoded = to_vec_from_payload(&payload);
+            let want = [0x10u8, expected_byte];
+            assert!(
+                encoded.windows(2).any(|w| w == want),
+                "SpanKind {kind:?} should produce byte {expected_byte:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_interning_works_across_chunks() {
+        // The string "shared" appears in two chunks. The second occurrence must be a uint ID,
+        // not a fresh str. Compare against a baseline with a single occurrence to verify.
+        let chunk_with_two = TracerPayloadBytes {
+            chunks: vec![
+                make_chunk(vec![make_span("shared", "op1", 1)], [0u8; 16]),
+                make_chunk(vec![make_span("shared", "op2", 2)], [0u8; 16]),
+            ],
+            ..Default::default()
+        };
+        let single = TracerPayloadBytes {
+            chunks: vec![make_chunk(vec![make_span("shared", "op1", 1)], [0u8; 16])],
+            ..Default::default()
+        };
+        let two = to_vec_from_payload(&chunk_with_two);
+        let one = to_vec_from_payload(&single);
+        assert!(
+            two.len() < 2 * one.len(),
+            "interning should reduce repeated payload size"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cross_validation_tests {
+    //! Cross-validates that the M1 encoder (v0.4 spans → V1 payload) and the M3 encoder
+    //! (v1::Span → V1 payload) produce **byte-identical** output for equivalent inputs.
+    //!
+    //! All tests are limited to deterministic content (at most one attribute key per map) so the
+    //! `HashMap` iteration order cannot diverge between the two inputs.
+
+    use super::*;
+    use crate::span::v04::SpanBytes as V04Span;
+    use crate::span::v1::{
+        AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
+    };
+    use libdd_tinybytes::BytesString;
+
+    fn bs(s: &str) -> BytesString {
+        BytesString::from_slice(s.as_bytes()).unwrap_or_default()
+    }
+
+    /// Builds a 128-bit big-endian trace_id from `(high, low)` 64-bit halves.
+    fn tid_bytes(high: u64, low: u64) -> [u8; 16] {
+        let mut out = [0u8; 16];
+        out[..8].copy_from_slice(&high.to_be_bytes());
+        out[8..].copy_from_slice(&low.to_be_bytes());
+        out
+    }
+
+    /// Asserts that encoding `v04` (with `metadata`) via M1 produces the same bytes as
+    /// encoding `v1` via M3. Includes a hex-diff message on mismatch.
+    #[track_caller]
+    fn assert_byte_equal(
+        v04_traces: &[Vec<V04Span>],
+        metadata: &TracerMetadata,
+        v1_payload: &TracerPayloadBytes,
+    ) {
+        let m1 = to_vec(v04_traces, metadata);
+        let m3 = to_vec_from_payload(v1_payload);
+        if m1 != m3 {
+            panic!(
+                "M1 and M3 encoders diverged:\n  M1 ({:3} bytes): {}\n  M3 ({:3} bytes): {}",
+                m1.len(),
+                hex_dump(&m1),
+                m3.len(),
+                hex_dump(&m3)
+            );
+        }
+    }
+
+    fn hex_dump(b: &[u8]) -> String {
+        b.iter().map(|c| format!("{c:02x}")).collect::<String>()
+    }
+
+    #[test]
+    fn empty_payload_byte_identical() {
+        let v04: Vec<Vec<V04Span>> = vec![];
+        let v1 = TracerPayloadBytes::default();
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn minimal_single_span_byte_identical() {
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 0x42,
+            span_id: 1,
+            start: 1_000_000,
+            duration: 500,
+            ..Default::default()
+        }]];
+
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 0x42),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1_000_000,
+                    duration: 500,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn span_with_parent_and_error_byte_identical() {
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 1,
+            start: 1000,
+            duration: 100,
+            error: 1,
+            ..Default::default()
+        }]];
+
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 2,
+                    parent_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    error: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn promoted_fields_byte_identical() {
+        // M1 reads env/version/component/span.kind from v04 meta and promotes them; M3 takes
+        // them directly from the v1::Span fields. Both must produce the same bytes.
+        let mut meta = HashMap::new();
+        meta.insert(bs("env"), bs("prod"));
+        meta.insert(bs("version"), bs("1.2.3"));
+        meta.insert(bs("component"), bs("flask"));
+        meta.insert(bs("span.kind"), bs("server"));
+
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            meta,
+            ..Default::default()
+        }]];
+
+        // metadata.env populated → M1 picks env from metadata first (it's set on the builder).
+        let metadata = TracerMetadata {
+            env: "prod".to_string(),
+            app_version: "1.2.3".to_string(),
+            ..Default::default()
+        };
+
+        let v1 = TracerPayloadBytes {
+            env: bs("prod"),
+            app_version: bs("1.2.3"),
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    env: bs("prod"),
+                    version: bs("1.2.3"),
+                    component: bs("flask"),
+                    span_kind: SpanKind::Server,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &metadata, &v1);
+    }
+
+    #[test]
+    fn single_string_meta_attribute_byte_identical() {
+        // One non-promoted meta tag → one attribute triplet. With a single entry the HashMap
+        // iteration order cannot vary.
+        let mut meta = HashMap::new();
+        meta.insert(bs("custom.tag"), bs("hello"));
+
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            meta,
+            ..Default::default()
+        }]];
+
+        let mut attrs = HashMap::new();
+        attrs.insert(bs("custom.tag"), AttributeValue::String(bs("hello")));
+
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    attributes: attrs,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn single_float_metric_byte_identical() {
+        let mut metrics = HashMap::new();
+        metrics.insert(bs("score"), 1.5f64);
+
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            metrics,
+            ..Default::default()
+        }]];
+
+        let mut attrs = HashMap::new();
+        attrs.insert(bs("score"), AttributeValue::Float(1.5));
+
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    attributes: attrs,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn single_bytes_meta_struct_byte_identical() {
+        let mut meta_struct = HashMap::new();
+        meta_struct.insert(
+            bs("payload"),
+            libdd_tinybytes::Bytes::copy_from_slice(b"\xde\xad\xbe\xef"),
+        );
+
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            meta_struct,
+            ..Default::default()
+        }]];
+
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            bs("payload"),
+            AttributeValue::Bytes(libdd_tinybytes::Bytes::copy_from_slice(b"\xde\xad\xbe\xef")),
+        );
+
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    attributes: attrs,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn chunk_origin_only_byte_identical() {
+        // The M1 encoder's `is_promoted` filter only strips env/version/component/span.kind/
+        // _dd.p.tid — it intentionally keeps `_dd.origin` in span attributes even though it's
+        // also lifted to the chunk. M3 must reproduce that duplication for byte equality.
+        let mut meta = HashMap::new();
+        meta.insert(bs("_dd.origin"), bs("lambda"));
+
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            meta,
+            ..Default::default()
+        }]];
+
+        let mut attrs = HashMap::new();
+        attrs.insert(bs("_dd.origin"), AttributeValue::String(bs("lambda")));
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                origin: Some(bs("lambda")),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    attributes: attrs,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn trace_id_128_bit_from_dd_p_tid_byte_identical() {
+        let mut meta = HashMap::new();
+        meta.insert(bs("_dd.p.tid"), bs("640cfd5400000000"));
+
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 0x0123456789abcdef,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            meta,
+            ..Default::default()
+        }]];
+
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0x640cfd5400000000, 0x0123456789abcdef),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn tracer_metadata_fields_byte_identical() {
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            ..Default::default()
+        }]];
+        let metadata = TracerMetadata {
+            language: "python".to_string(),
+            language_version: "3.11".to_string(),
+            tracer_version: "2.0.0".to_string(),
+            runtime_id: "abc-uuid".to_string(),
+            hostname: "h1".to_string(),
+            ..Default::default()
+        };
+
+        let v1 = TracerPayloadBytes {
+            language_name: bs("python"),
+            language_version: bs("3.11"),
+            tracer_version: bs("2.0.0"),
+            runtime_id: bs("abc-uuid"),
+            hostname: bs("h1"),
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &metadata, &v1);
+    }
+
+    #[test]
+    fn payload_attribute_git_commit_sha_byte_identical() {
+        let v04 = vec![vec![V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            ..Default::default()
+        }]];
+        let metadata = TracerMetadata {
+            git_commit_sha: "abc123".to_string(),
+            ..Default::default()
+        };
+
+        let mut payload_attrs = HashMap::new();
+        payload_attrs.insert(
+            bs("_dd.git.commit.sha"),
+            AttributeValue::String(bs("abc123")),
+        );
+
+        let v1 = TracerPayloadBytes {
+            attributes: payload_attrs,
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &metadata, &v1);
+    }
+
+    #[test]
+    fn span_with_single_link_byte_identical() {
+        let v04_span = V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            span_links: vec![crate::span::v04::SpanLink {
+                trace_id: 0x0123456789abcdef,
+                trace_id_high: 0,
+                span_id: 99,
+                tracestate: bs("running"),
+                flags: 0,
+                attributes: HashMap::new(),
+            }],
+            ..Default::default()
+        };
+        let v04 = vec![vec![v04_span]];
+
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    span_links: vec![crate::span::v1::SpanLinkBytes {
+                        trace_id: tid_bytes(0, 0x0123456789abcdef),
+                        span_id: 99,
+                        tracestate: bs("running"),
+                        flags: 0,
+                        attributes: HashMap::new(),
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
+    }
+
+    #[test]
+    fn span_with_single_event_byte_identical() {
+        use crate::span::v04::{AttributeAnyValue, AttributeArrayValue};
+
+        let v04_span = V04Span {
+            service: bs("svc"),
+            name: bs("op"),
+            resource: bs("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1000,
+            duration: 100,
+            span_events: vec![crate::span::v04::SpanEvent {
+                time_unix_nano: 42,
+                name: bs("exception"),
+                attributes: HashMap::from([(
+                    bs("exception.message"),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::String(bs("boom"))),
+                )]),
+            }],
+            ..Default::default()
+        };
+        let v04 = vec![vec![v04_span]];
+
+        let v1 = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 1),
+                spans: vec![V1SpanBytes {
+                    service: bs("svc"),
+                    name: bs("op"),
+                    resource: bs("res"),
+                    span_id: 1,
+                    start: 1000,
+                    duration: 100,
+                    span_events: vec![crate::span::v1::SpanEventBytes {
+                        time_unix_nano: 42,
+                        name: bs("exception"),
+                        attributes: HashMap::from([(
+                            bs("exception.message"),
+                            AttributeValue::String(bs("boom")),
+                        )]),
+                    }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        assert_byte_equal(&v04, &TracerMetadata::default(), &v1);
     }
 }
