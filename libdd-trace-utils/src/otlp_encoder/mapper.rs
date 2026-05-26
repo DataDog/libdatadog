@@ -23,9 +23,10 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
 /// meta["error.msg"].
 ///
-/// The high 64 bits of a 128-bit trace ID are carried in the trace_id field itself or (if not present)
-//  as the `_dd.p.tid` meta tag, which per RFC #85 is set on the chunk root only. We resolve it once per chunk and apply it to
-/// every span so OTLP receivers see the full 128-bit trace_id on every span in the trace.
+/// The high 64 bits of a 128-bit trace ID are carried in the trace_id field itself or (if not
+/// present) as the `_dd.p.tid` meta tag, which per RFC #85 is set on the chunk root only.
+/// We resolve it once per chunk and apply it to every span so OTLP receivers see the full 128-bit
+/// trace_id on every span in the trace.
 pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
     resource_info: &OtlpResourceInfo,
