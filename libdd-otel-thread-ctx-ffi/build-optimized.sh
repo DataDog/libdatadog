@@ -61,7 +61,7 @@ else
         if ! NM_OUTPUT=$(nm "$SO" 2>&1); then
             echo >&2 "WARNING: command \`nm\` failed on $SO. Skipping sanity check that the C TLS shim was inlined."
         elif echo "$NM_OUTPUT" | grep -q 'libdd_get_otel_thread_ctx'; then
-            echo >&2 "WARNING: build succeeded but the C TLS shim (libdd_get_otel_thread_ctx_v1) was NOT inlined."
+            echo >&2 "ERROR: build succeeded but the C TLS shim (libdd_get_otel_thread_ctx_v1) was NOT inlined."
             echo >&2 "Cross-language LTO may not be working. Check that clang and lld versions are recent enough and compatible with the Rust toolchain's LLVM."
             exit 1
         fi
