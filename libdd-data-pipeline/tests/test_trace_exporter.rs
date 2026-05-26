@@ -283,12 +283,6 @@ mod tracing_integration_tests {
         rmp_serde::to_vec_named(&vec![vec![root_span, child_span]]).unwrap()
     }
 
-    // Ignored: the V1 path is now gated by /info negotiation (fail-closed), and the pinned
-    // ddapm-test-agent image does not advertise `/v1.0/traces` in its /info endpoints, so the
-    // exporter falls back to V04 and the snapshot no longer matches. Re-enable once the
-    // test-agent supports V1. The V1 negotiation logic is covered by unit tests in
-    // `trace_exporter::mod` (`test_refresh_v1_active_*`, `test_effective_output_format_*`).
-    #[ignore]
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_to_v1_trace_snapshot_test() {
@@ -319,6 +313,17 @@ mod tracing_integration_tests {
                 .expect("Unable to build TraceExporter");
 
             let data = get_v04_to_v1_trace_snapshot_test_payload("test_exporter_v04_v1_snapshot");
+
+            // V1 is gated by /info negotiation (fail-closed). Wait until the background
+            // fetcher has populated agent_info so the first send promotes v1_active=true
+            // and the payload is encoded as V1.
+            let start = std::time::Instant::now();
+            while libdd_data_pipeline::agent_info::get_agent_info().is_none() {
+                if start.elapsed() > std::time::Duration::from_secs(5) {
+                    panic!("timeout waiting for /info");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
 
             let response = trace_exporter.send(data.as_ref());
             assert!(response.is_ok(), "send failed: {:?}", response.err());
