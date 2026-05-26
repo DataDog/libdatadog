@@ -1,22 +1,11 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Canonical internal representation of a V1 trace.
-//!
-//! See the design doc and `RFC: Efficient Trace Payload Protocol`. Compared to v0.4, V1:
-//! - promotes `env`, `version`, `component`, and `span.kind` out of the meta map into dedicated
-//!   span fields;
-//! - merges `meta`, `metrics`, and `meta_struct` into a single typed [`AttributeValue`] map;
-//! - represents `error` as `bool` and `trace_id` as a 128-bit big-endian byte array carried at the
-//!   chunk level.
-
 use crate::span::{BytesData, SliceData, TraceData};
 use std::collections::HashMap;
 
 /// OpenTelemetry SpanKind values, encoded on the wire as a `uint32`.
-///
-/// Unset / unknown kinds default to [`SpanKind::Internal`] to match the OTEL spec and the agent's
-/// behavior in `pkg/trace/api/converter.go`.
+/// Unset or unrecognized kinds default to [`SpanKind::Internal`].
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpanKind {
@@ -29,11 +18,8 @@ pub enum SpanKind {
 }
 
 impl SpanKind {
-    /// Parses the legacy v0.4 `span.kind` meta string into a [`SpanKind`].
-    ///
-    /// Unrecognized values map to [`SpanKind::Internal`] per OTEL semantics. This is the
-    /// infallible counterpart to [`FromStr::from_str`]: callers converting from v0.4 always have a
-    /// well-defined SpanKind, even if the upstream tag is missing or invalid.
+    /// Parses a v0.4 `span.kind` meta value into a [`SpanKind`].
+    /// Unrecognized values map to [`SpanKind::Internal`].
     pub fn from_meta(s: &str) -> Self {
         match s {
             "server" => SpanKind::Server,
@@ -46,9 +32,7 @@ impl SpanKind {
 }
 
 /// Typed V1 attribute value.
-///
-/// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps. The byte layout on the wire is a
-/// `(key, type_uint8, value)` triplet — see `msgpack_encoder::v1::span_v1`.
+/// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
 #[derive(Debug, PartialEq)]
 pub enum AttributeValue<T: TraceData> {
     String(T::Text),
@@ -78,18 +62,24 @@ where
     }
 }
 
-/// Canonical V1 span model.
+/// The generic representation of a V1 span.
 ///
-/// Generic over [`TraceData`] so the same type can be used with owned (`BytesData`) or borrowed
-/// (`SliceData`) string buffers — matching the v0.4 [`crate::span::v04::Span`] pattern.
+/// `T` is the type used to represent strings in the span, it can be either owned (e.g.
+/// BytesString) or borrowed (e.g. &str). To define a generic function taking any `Span<T>` you can
+/// use the [`TraceData`] trait:
+/// ```
+/// use libdd_trace_utils::span::{v1::Span, TraceData};
+/// fn foo<T: TraceData>(span: Span<T>) {
+///     let _ = span.attributes.get("foo");
+/// }
+/// ```
 #[derive(Debug, PartialEq, Default)]
 pub struct Span<T: TraceData> {
     pub service: T::Text,
     pub name: T::Text,
     pub resource: T::Text,
     pub r#type: T::Text,
-    /// 128-bit trace ID stored as big-endian bytes. Wire-level trace ID lives at the chunk; the
-    /// per-span copy lets callers route a span to its chunk without scanning siblings.
+    /// 128-bit trace ID stored as big-endian bytes.
     pub trace_id: [u8; 16],
     pub span_id: u64,
     pub parent_id: u64,
@@ -133,7 +123,8 @@ where
     }
 }
 
-/// V1 span link. The 128-bit linked trace ID is stored in big-endian bytes.
+/// The generic representation of a V1 span link.
+/// `T` is the type used to represent strings in the span link.
 #[derive(Debug, PartialEq, Default)]
 pub struct SpanLink<T: TraceData> {
     pub trace_id: [u8; 16],
@@ -159,7 +150,8 @@ where
     }
 }
 
-/// V1 span event.
+/// The generic representation of a V1 span event.
+/// `T` is the type used to represent strings in the span event.
 #[derive(Debug, PartialEq, Default)]
 pub struct SpanEvent<T: TraceData> {
     pub time_unix_nano: u64,
@@ -181,8 +173,7 @@ where
     }
 }
 
-/// A V1 trace chunk: a group of spans sharing the same `trace_id`, plus chunk-level metadata
-/// promoted out of span meta (priority, origin, sampling mechanism).
+/// A V1 trace chunk: a group of spans sharing the same `trace_id`, plus chunk-level metadata.
 #[derive(Debug, PartialEq, Default)]
 pub struct TraceChunk<T: TraceData> {
     pub trace_id: [u8; 16],
@@ -212,7 +203,7 @@ where
     }
 }
 
-/// A V1 tracer payload: tracer-level metadata and the list of trace chunks it carries.
+/// A V1 tracer payload: tracer-level metadata and the trace chunks it carries.
 #[derive(Debug, PartialEq, Default)]
 pub struct TracerPayload<T: TraceData> {
     pub language_name: T::Text,

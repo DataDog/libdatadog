@@ -423,10 +423,7 @@ pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(
     counter.0
 }
 
-/// Encodes a [`TracerPayload`] (V1 canonical data model) as a V1 msgpack payload.
-///
-/// This is the M3 encoder. The byte layout matches [`encode_payload`] (the M1 v0.4 → V1
-/// encoder) so equivalent inputs produce byte-identical outputs.
+/// Encodes a [`TracerPayload`] (V1 data model) as a V1 msgpack payload.
 fn encode_payload_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
@@ -496,6 +493,7 @@ fn encode_payload_v1<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
+/// Encodes one V1 chunk (a group of spans sharing a trace ID).
 fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     chunk: &crate::span::v1::TraceChunk<T>,
@@ -544,12 +542,12 @@ fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Serializes a V1 [`TracerPayload`] into a `Vec<u8>` using the V1 msgpack format.
+/// Serializes a [`TracerPayload`] into a `Vec<u8>` using the V1 msgpack format.
 pub fn to_vec_from_payload<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
     to_vec_from_payload_with_capacity(payload, 0)
 }
 
-/// Serializes a V1 [`TracerPayload`] into a `Vec<u8>` with a pre-allocated capacity.
+/// Serializes a [`TracerPayload`] into a `Vec<u8>` with a pre-allocated capacity.
 pub fn to_vec_from_payload_with_capacity<T: TraceData>(
     payload: &TracerPayload<T>,
     capacity: u32,
@@ -561,10 +559,10 @@ pub fn to_vec_from_payload_with_capacity<T: TraceData>(
     buf.into_vec()
 }
 
-/// Serializes a V1 [`TracerPayload`] into a caller-provided slice.
+/// Serializes a [`TracerPayload`] into a caller-provided slice.
 ///
 /// # Errors
-/// Returns a `ValueWriteError` if the underlying writer fails (e.g. buffer too small).
+/// Returns a `ValueWriteError` if the underlying writer fails.
 pub fn write_payload_to_slice<T: TraceData>(
     slice: &mut &mut [u8],
     payload: &TracerPayload<T>,
@@ -572,7 +570,7 @@ pub fn write_payload_to_slice<T: TraceData>(
     encode_payload_v1(slice, payload)
 }
 
-/// Returns the number of bytes the V1 payload for `payload` would occupy when encoded.
+/// Returns the number of bytes `payload` would occupy when encoded.
 pub fn to_encoded_byte_len_from_payload<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
     let mut counter = super::CountLength(0);
     let _ = encode_payload_v1(&mut counter, payload);

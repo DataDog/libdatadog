@@ -1,12 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! V1 msgpack encoder that consumes the canonical [`crate::span::v1`] data model.
+//! V1 msgpack encoder that consumes the [`crate::span::v1`] data model.
 //!
-//! Mirrors the encoder in [`super::span_v04`] but takes pre-promoted fields directly from the
-//! struct instead of extracting them from v0.4 meta. The byte layout is identical so payloads
-//! produced from equivalent inputs by either encoder are byte-for-byte equal — see the
-//! cross-validation tests in [`super::cross_validation_tests`].
+//! The byte layout matches [`super::span_v04`] so equivalent inputs produce byte-identical output.
 
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
@@ -20,9 +17,6 @@ use super::span_v04::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey};
 use super::StringTable;
 
 /// Encodes a typed [`AttributeValue`] as `[type_uint8, value]`.
-///
-/// Recursive: [`AttributeValue::List`] and [`AttributeValue::KeyValue`] contain nested
-/// [`AttributeValue`]s that are encoded in the same `[type, value]` shape.
 pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     value: &AttributeValue<T>,
@@ -68,9 +62,7 @@ pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a flat triplet attributes array: `[key, type_uint8, value, key, type_uint8, value, ...]`.
-///
-/// The array length is `3 * map.len()` per the V1 wire format.
+/// Encodes a flat triplet attributes array: `[key, type_uint8, value, ...]`.
 pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     map: &std::collections::HashMap<T::Text, AttributeValue<T>>,
@@ -160,9 +152,6 @@ pub(super) fn encode_span_events<W: RmpWrite, T: TraceData>(
 }
 
 /// Encodes a [`Span`] (V1 data model) into V1 msgpack.
-///
-/// Field-write order matches [`super::span_v04::encode_span`] so equivalent inputs produce
-/// byte-identical output across the two encoders.
 pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span: &Span<T>,
@@ -212,9 +201,6 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     write_u64(writer, span.span_id)?;
 
     write_uint8(writer, SpanKey::Start as u8)?;
-    // V1 normalization is the producer's responsibility: a negative `start` is not expected in
-    // the canonical data model. Cast preserves bits — callers that need wall-clock substitution
-    // should perform it before constructing the v1::Span.
     write_u64(writer, span.start as u64)?;
 
     if is_parent {
@@ -224,7 +210,6 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
 
     if has_duration {
         write_uint8(writer, SpanKey::Duration as u8)?;
-        // Same rationale as for `start`: V1 inputs are expected to be normalized.
         write_u64(writer, span.duration.max(0) as u64)?;
     }
 
@@ -263,7 +248,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_uint8(writer, SpanKey::Component as u8)?;
         table.write_interned(writer, span.component.borrow())?;
     }
-    // SpanKind is always emitted per OTEL spec (default = Internal = 1).
+    // SpanKind is always emitted (default = Internal).
     write_uint8(writer, SpanKey::Kind as u8)?;
     write_uint(writer, span.span_kind as u64)?;
 
