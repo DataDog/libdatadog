@@ -21,8 +21,7 @@ use bin_tests::{
     ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames,
-    StacktraceCollection,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
 };
 use serde_json::Value;
 
