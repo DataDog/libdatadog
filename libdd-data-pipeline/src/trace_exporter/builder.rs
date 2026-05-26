@@ -704,7 +704,6 @@ mod tests {
             .enable_v1_protocol();
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
-        // V1 is configured but the agent hasn't been negotiated with yet → v0.4 is effective.
         assert!(matches!(
             exporter.output_format,
             TraceExporterOutputFormat::V1

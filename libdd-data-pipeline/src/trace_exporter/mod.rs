@@ -183,9 +183,8 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
-    /// Latched true once the agent advertises `/v1.0/traces` in its `/info` endpoints
-    /// list, latched false otherwise. Only consulted when `output_format` is V1; for
-    /// V0.4 and V0.5 it is a no-op flag.
+    /// Set to true while the agent advertises `/v1.0/traces` in `/info`; false otherwise.
+    /// Only consulted when `output_format` is V1.
     v1_active: AtomicBool,
     serializer: TraceSerializer,
     shared_runtime: Arc<SharedRuntime>,
@@ -975,7 +974,6 @@ mod tests {
             false,
             false,
         );
-        // v1_active starts false → fallback path
         assert!(matches!(
             exporter.effective_output_format(),
             TraceExporterOutputFormat::V04
