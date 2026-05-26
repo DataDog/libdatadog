@@ -49,7 +49,7 @@ const MIN_LLD_VERSION_FOR_TLSDESC: LldVersion = LldVersion {
 /// Returns the rust-lld `gcc-ld/` directory if found; `None` means the system
 /// `ld.lld` will be used instead. Panics with a clear message when the
 /// requirements are not met.
-fn require_lld_for_inline(target_arch: &str) -> Option<PathBuf> {
+fn resolve_lld_for_inline(target_arch: &str) -> Option<PathBuf> {
     if let Some(dir) = find_rust_lld_dir() {
         return Some(dir);
     }
@@ -97,7 +97,7 @@ fn main() {
     // If `LIBDD_OTEL_THREAD_CTX_INLINE` is set to `1`, we try to inline the C shim. See the README
     // for more details.
     if inline_mode {
-        let rust_lld_dir = require_lld_for_inline(&target_arch);
+        let rust_lld_dir = resolve_lld_for_inline(&target_arch);
 
         // Emit link args for ALL link types (not just cdylib) so that test binaries also link
         // correctly when RUSTFLAGS sets clang as the linker (in practice we should only build/care
