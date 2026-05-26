@@ -21,10 +21,13 @@ use bin_tests::{
     ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    default_max_threads, CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames,
     StacktraceCollection,
 };
 use serde_json::Value;
+
+#[cfg(target_os = "linux")]
+use libdd_crashtracker::default_max_threads;
 
 /// Macro to generate simple crash tracking tests using the new infrastructure.
 /// This replaces 16+ nearly identical test functions with a single declaration.

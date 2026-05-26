@@ -4,7 +4,7 @@
 use crate::{
     crash_info::{
         CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TelemetryCrashUploader,
-        Threads, Ucontext,
+        Ucontext,
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
@@ -17,6 +17,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
+
+#[cfg(target_os = "linux")]
+use crate::crash_info::Threads;
 
 #[derive(Debug)]
 enum ReceiverIssue {
