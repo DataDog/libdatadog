@@ -3,6 +3,7 @@
 
 use crate::span::v04::Span;
 use crate::span::TraceData;
+use libdd_common::ResultInfallibleExt;
 use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 
 mod span;
@@ -123,8 +124,9 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    #[allow(clippy::expect_used)]
-    to_writer(&mut buf, traces).expect("infallible: the error is std::convert::Infallible");
+    to_writer(&mut buf, traces)
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
     buf.into_vec()
 }
 
@@ -158,7 +160,11 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
 /// ```
 pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
     let mut counter = super::CountLength(0);
-    #[allow(clippy::expect_used)]
-    to_writer(&mut counter, traces).expect("infallible: CountLength never fails");
+    // `CountLength` impls `std::io::Write` (whose error type is `std::io::Error`, not
+    // `Infallible`), so we can't statically prove infallibility via `unwrap_infallible`
+    // the way we do for `ByteBuf`. In practice `CountLength::write*` only ever return
+    // `Ok`, so the error path here is unreachable today; should `CountLength` ever grow
+    // a fallible code path, fuzz tests on the msgpack encoded length would catch it.
+    let _ = to_writer(&mut counter, traces);
     counter.0
 }
