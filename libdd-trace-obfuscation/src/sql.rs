@@ -274,7 +274,7 @@ impl<'a> Tokenizer<'a> {
         )
     }
 
-    fn last_char(&self) -> Option<u8> {
+    const fn last_char(&self) -> Option<u8> {
         self.result.as_bytes().last().copied()
     }
 

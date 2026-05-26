@@ -27,11 +27,8 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Set up Rust
-      if: ${{ github.event_name == 'pull_request' }}
-      shell: bash
-      run: rustup install stable && rustup default stable
-
+    # Rust is auto-installed by rustup from the workspace's rust-toolchain.toml
+    # on first cargo invocation; no explicit setup needed.
     - name: Fetch all branches
       if: ${{ github.event_name == 'pull_request' }}
       shell: bash
