@@ -31,9 +31,9 @@ fn make_span(
     resource: &'static str,
 ) -> Span<SliceData<'static>> {
     Span {
-        name,
-        service,
-        resource,
+        name: name.into(),
+        service: service.into(),
+        resource: resource.into(),
         trace_id: 0x1234_5678_9012_3456_7890_1234_5678_9012_u128,
         ..Default::default()
     }
@@ -170,7 +170,7 @@ fn make_configs() -> Vec<BenchConfig> {
         // 9. Tag rule — matching
         {
             let mut span = make_span("test-operation", "my-service", "test");
-            span.meta.insert("environment", "production");
+            span.meta.insert("environment".into(), "production".into());
             BenchConfig {
                 name: "tag_rule_matching",
                 sampler: DatadogSampler::new(
@@ -194,7 +194,7 @@ fn make_configs() -> Vec<BenchConfig> {
         // 10. Tag rule — not matching
         {
             let mut span = make_span("test-operation", "my-service", "test");
-            span.meta.insert("environment", "staging");
+            span.meta.insert("environment".into(), "staging".into());
             BenchConfig {
                 name: "tag_rule_not_matching",
                 sampler: DatadogSampler::new(
@@ -218,9 +218,10 @@ fn make_configs() -> Vec<BenchConfig> {
         // 11. Complex rule — all fields matching
         {
             let mut span = make_span("http.request", "api-service", "/api/v1/users");
-            span.meta.insert("environment", "production");
-            span.meta.insert("http.method", "POST");
-            span.meta.insert("http.route", "/api/v1/users");
+            span.meta.insert("environment".into(), "production".into());
+            span.meta.insert("http.method".into(), "POST".into());
+            span.meta
+                .insert("http.route".into(), "/api/v1/users".into());
             BenchConfig {
                 name: "complex_rule_matching",
                 sampler: DatadogSampler::new(
@@ -244,9 +245,9 @@ fn make_configs() -> Vec<BenchConfig> {
         // 12. Complex rule — partial match (resource doesn't match)
         {
             let mut span = make_span("http.request", "api-service", "/health");
-            span.meta.insert("environment", "staging");
-            span.meta.insert("http.method", "POST");
-            span.meta.insert("http.route", "/health");
+            span.meta.insert("environment".into(), "staging".into());
+            span.meta.insert("http.method".into(), "POST".into());
+            span.meta.insert("http.route".into(), "/health".into());
             BenchConfig {
                 name: "complex_rule_partial_match",
                 sampler: DatadogSampler::new(
@@ -299,7 +300,7 @@ fn make_configs() -> Vec<BenchConfig> {
         {
             let mut span = make_span("test-operation", "my-service", "test");
             for (k, v) in MANY_ATTR_PAIRS {
-                span.meta.insert(k, v);
+                span.meta.insert((*k).into(), (*v).into());
             }
             BenchConfig {
                 name: "many_attributes_tag_rule",

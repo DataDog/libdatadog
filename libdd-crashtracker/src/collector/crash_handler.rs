@@ -247,12 +247,6 @@ fn handle_posix_signal_impl(
         return Ok(());
     }
 
-    // Mark this process as a collector for the preload logger
-    #[cfg(target_os = "linux")]
-    {
-        super::api::mark_preload_logger_collector();
-    }
-
     // If this code hits a stack overflow, then it will result in a segfault.  That situation is
     // protected by the one-time guard.
 
@@ -262,6 +256,11 @@ fn handle_posix_signal_impl(
         // In the case where some lower-level signal handler recovered the error
         // we don't want to spam the system with calls.  Make this one shot.
         return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        super::api::mark_preload_logger_collector();
     }
 
     // Suppress SIGPIPE and defer SIGCHLD during crash handling.
