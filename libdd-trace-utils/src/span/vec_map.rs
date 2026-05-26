@@ -24,7 +24,7 @@ use std::hash::Hash;
 /// enough so such that the size penalty of duplication is expected to be reasonable.
 ///
 /// **Important**: note that only [VecMap::get] and [VecMap::get_mut] are duplicate-aware, so to
-/// speak. [Vec::len], [Vec::iter], and others just delegates to the underlying `Vec`, and won't
+/// speak. [VecMap::len], [VecMap::iter], and others just delegates to the underlying `Vec`, and won't
 /// deduplicate.
 ///
 /// Explicit deduplication is currently being done automatically and on-the-fly during
