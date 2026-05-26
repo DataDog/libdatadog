@@ -407,8 +407,10 @@ mod tests {
         unsafe {
             let mut span = make_minimal_span();
 
-            ddog_tracer_span_set_meta(Some(&mut *span), cs("k"), cs("v1"));
-            ddog_tracer_span_set_meta(Some(&mut *span), cs("k"), cs("v2"));
+            let err = ddog_tracer_span_set_meta(Some(&mut *span), cs("k"), cs("v1"));
+            assert!(matches!(err, MaybeError::None));
+            let err = ddog_tracer_span_set_meta(Some(&mut *span), cs("k"), cs("v2"));
+            assert!(matches!(err, MaybeError::None));
 
             assert_eq!(span.0.meta.len(), 1);
             assert_eq!(span.0.meta.get("k").unwrap().as_ref(), "v2");
