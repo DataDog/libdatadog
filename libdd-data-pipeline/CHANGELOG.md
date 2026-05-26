@@ -2,6 +2,20 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v4.0.0..libdd-data-pipeline-v5.0.0) - 2026-05-22
+
+### Added
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) - ([ecdca7d](https://github.com/datadog/libdatadog/commit/ecdca7d4ef4e7f11c0194ed2f4e25173973404e7))
+- Flush based on size of chunks in bytes ([#1953](https://github.com/datadog/libdatadog/issues/1953)) - ([bc8f375](https://github.com/datadog/libdatadog/commit/bc8f37585deb16c873fdb126cb3033d7757dd426))
+- Add encoder from v04 to v1 ([#1896](https://github.com/datadog/libdatadog/issues/1896)) - ([e2fb886](https://github.com/datadog/libdatadog/commit/e2fb8860d002d1b56d0dc8b0b185fca7954371df))
+
+### Fixed
+
+- Allow old PascalCase fields in obfuscation config scheme ([#2008](https://github.com/datadog/libdatadog/issues/2008)) - ([cea1e44](https://github.com/datadog/libdatadog/commit/cea1e44edddd9124f75d5095f31026904a1f58d8))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v3.0.1..libdd-data-pipeline-v4.0.0) - 2026-05-18
 
 ### Added
