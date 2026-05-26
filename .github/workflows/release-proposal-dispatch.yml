@@ -137,7 +137,7 @@ jobs:
         run: ln -sf ~/.rustup/toolchains/${{ steps.nightly-version.outputs.version }}-x86_64-unknown-linux-gnu ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.92.0
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
       - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
         with:
           tool: cargo-public-api@0.50.2
