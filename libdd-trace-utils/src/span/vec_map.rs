@@ -7,7 +7,7 @@
 //! involved. Fetching and removing a value is, on the other hand, linear time in the size of the
 //! map.
 
-use serde::ser::{Serialize, SerializeMap, Serializer};
+use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::hash::Hash;
