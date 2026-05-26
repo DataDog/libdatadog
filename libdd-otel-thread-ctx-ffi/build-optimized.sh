@@ -39,7 +39,9 @@ fi
 # CARGO_TARGET_<TRIPLE>_RUSTFLAGS scopes the flags to the target only, keeping
 # build scripts and proc-macros unaffected.
 TARGET_ENV=$(echo "$TARGET" | tr 'a-z-' 'A-Z_')
-export "CARGO_TARGET_${TARGET_ENV}_RUSTFLAGS=-Clinker-plugin-lto -Clinker=clang"
+FLAGS_VAR="CARGO_TARGET_${TARGET_ENV}_RUSTFLAGS"
+EXISTING_FLAGS="${!FLAGS_VAR:-}"
+export "$FLAGS_VAR=${EXISTING_FLAGS:+$EXISTING_FLAGS }-Clinker-plugin-lto -Clinker=clang"
 export LIBDD_OTEL_THREAD_CTX_INLINE=1
 
 cargo build --release \
