@@ -18,9 +18,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncBufReadExt;
 
-#[cfg(target_os = "linux")]
-use crate::crash_info::Threads;
-
 #[derive(Debug)]
 enum ReceiverIssue {
     Timeout,
@@ -563,7 +560,7 @@ fn collect_and_add_thread_contexts(
     crashing_tid: Option<u32>,
     budget: Duration,
 ) -> anyhow::Result<()> {
-    use crate::crash_info::ThreadData;
+    use crate::crash_info::{ThreadData, Threads};
     use crate::receiver::ptrace_collector::stream_thread_contexts;
 
     let crashing_tid = crashing_tid.unwrap_or(0) as i32;

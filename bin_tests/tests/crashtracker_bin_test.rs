@@ -25,9 +25,6 @@ use libdd_crashtracker::{
 };
 use serde_json::Value;
 
-#[cfg(target_os = "linux")]
-use libdd_crashtracker::default_max_threads;
-
 /// Macro to generate simple crash tracking tests using the new infrastructure.
 /// This replaces 16+ nearly identical test functions with a single declaration.
 macro_rules! crash_tracking_tests {
@@ -315,7 +312,7 @@ fn test_crash_tracking_multi_thread_collection() {
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_thread_limit() {
-    const THREAD_COUNT: usize = default_max_threads();
+    const THREAD_COUNT: usize = libdd_crashtracker::default_max_threads();
 
     let config = CrashTestConfig::new(
         BuildProfile::Release,
