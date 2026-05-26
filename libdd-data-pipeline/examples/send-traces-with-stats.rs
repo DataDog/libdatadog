@@ -27,7 +27,7 @@ fn get_span(now: i64, trace_id: u64, span_id: u64) -> pb::Span {
         service: "data-pipeline-test".to_string(),
         name: format!("test-name-{}", span_id % 2),
         resource: format!("test-resource-{}", (span_id + trace_id) % 3),
-        error: if trace_id % 10 == 0 { 1 } else { 0 },
+        error: if trace_id.is_multiple_of(10) { 1 } else { 0 },
         metrics: HashMap::from([
             ("_sampling_priority_v1".to_string(), 1.0),
             ("_dd.measured".to_string(), 1.0),

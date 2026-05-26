@@ -59,12 +59,14 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           submodules: recursive
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
       - name: Set up Rust
         run: |
           set -e
           rustup set profile minimal
-          rustup toolchain install nightly-2026-02-08 --component miri
-          rustup default nightly-2026-02-08
+          rustup toolchain install ${{ steps.nightly-version.outputs.version }} --component miri
       - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.96
@@ -73,6 +75,10 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5 --no-tests=pass
+      - env:
+          # Override rust-toolchain.toml so miri runs on the dated nightly
+          # (miri is nightly-only) instead of the workspace MSRV.
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
+        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5 --no-tests=pass
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"
