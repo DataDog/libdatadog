@@ -6,6 +6,7 @@ use crate::msgpack_decoder::decode::{
     buffer::Buffer, map::read_map_len, number::read_number, string::handle_null_marker,
 };
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
+use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
 
 const PAYLOAD_LEN: u32 = 2;
@@ -207,8 +208,8 @@ where
     span.start = read_number(data)?;
     span.duration = read_number(data)?;
     span.error = read_number(data)?;
-    span.meta = read_indexed_map_to_bytes_strings(data, dict)?.into();
-    span.metrics = read_metrics(data, dict)?.into();
+    span.meta = read_indexed_map_to_bytes_strings(data, dict)?;
+    span.metrics = read_metrics(data, dict)?;
     span.r#type = get_from_dict(data, dict)?;
 
     Ok(span)
@@ -233,7 +234,7 @@ where
 fn read_indexed_map_to_bytes_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     dict: &[T::Text],
-) -> Result<Vec<(T::Text, T::Text)>, DecodeError>
+) -> Result<VecMap<T::Text, T::Text>, DecodeError>
 where
     T::Text: Clone,
 {
@@ -242,35 +243,35 @@ where
 
     #[allow(clippy::expect_used)]
     let len_usize: usize = len.try_into().expect("Unable to cast map len to usize");
-    let mut vec = Vec::with_capacity(len_usize);
+    let mut map = VecMap::with_capacity(len_usize);
     for _ in 0..len {
         let key = get_from_dict(buf, dict)?;
         let value = get_from_dict(buf, dict)?;
-        vec.push((key, value));
+        map.insert(key, value);
     }
-    Ok(vec)
+    Ok(map)
 }
 
 fn read_metrics<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     dict: &[T::Text],
-) -> Result<Vec<(T::Text, f64)>, DecodeError>
+) -> Result<VecMap<T::Text, f64>, DecodeError>
 where
     T::Text: Clone,
 {
     if handle_null_marker(buf) {
-        return Ok(Vec::new());
+        return Ok(VecMap::new());
     }
 
     let len = read_map_len(buf)?;
 
-    let mut vec = Vec::with_capacity(len);
+    let mut map = VecMap::with_capacity(len);
     for _ in 0..len {
         let k = get_from_dict(buf, dict)?;
         let v = read_number(buf)?;
-        vec.push((k, v));
+        map.insert(k, v);
     }
-    Ok(vec)
+    Ok(map)
 }
 
 #[cfg(test)]

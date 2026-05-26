@@ -3,6 +3,7 @@
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
 use rmp::decode;
 
@@ -33,22 +34,22 @@ pub fn read_nullable_string<T: DeserializableTraceData>(
 #[inline]
 pub fn read_str_map_to_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
-) -> Result<Vec<(T::Text, T::Text)>, DecodeError> {
+) -> Result<VecMap<T::Text, T::Text>, DecodeError> {
     let len = decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
     #[allow(clippy::expect_used)]
     let capacity: usize = len.try_into().expect("Unable to cast map len to usize");
-    let mut vec = Vec::with_capacity(capacity);
+    let mut map = VecMap::with_capacity(capacity);
     for _ in 0..len {
         let key = buf.read_string()?;
         // Only insert if value is not null
         if !handle_null_marker(buf) {
             let value = buf.read_string()?;
-            vec.push((key, value));
+            map.insert(key, value);
         }
     }
-    Ok(vec)
+    Ok(map)
 }
 
 /// Read a nullable vec of (string, string) pairs from the slices `buf`.
@@ -60,9 +61,9 @@ pub fn read_str_map_to_strings<T: DeserializableTraceData>(
 #[inline]
 pub fn read_nullable_str_map_to_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
-) -> Result<Vec<(T::Text, T::Text)>, DecodeError> {
+) -> Result<VecMap<T::Text, T::Text>, DecodeError> {
     if handle_null_marker(buf) {
-        return Ok(Vec::new());
+        return Ok(VecMap::new());
     }
 
     read_str_map_to_strings(buf)

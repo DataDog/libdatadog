@@ -68,9 +68,9 @@ fn fill_span<T: DeserializableTraceData>(
         SpanKey::Duration => span.duration = read_nullable_number(buf)?,
         SpanKey::Error => span.error = read_nullable_number(buf)?,
         SpanKey::Type => span.r#type = read_nullable_string(buf)?,
-        SpanKey::Meta => span.meta = read_nullable_str_map_to_strings(buf)?.into(),
-        SpanKey::Metrics => span.metrics = read_metrics(buf)?.into(),
-        SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?.into(),
+        SpanKey::Meta => span.meta = read_nullable_str_map_to_strings(buf)?,
+        SpanKey::Metrics => span.metrics = read_metrics(buf)?,
+        SpanKey::MetaStruct => span.meta_struct = read_meta_struct(buf)?,
         SpanKey::SpanLinks => span.span_links = read_span_links(buf)?,
         SpanKey::SpanEvents => span.span_events = read_span_events(buf)?,
     }

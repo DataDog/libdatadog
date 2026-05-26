@@ -5,6 +5,7 @@ use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::msgpack_decoder::decode::map::{read_map_len, read_map_vec};
 use crate::msgpack_decoder::decode::string::handle_null_marker;
+use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
 use rmp::decode;
 
@@ -19,9 +20,9 @@ fn read_byte_array_len<T: DeserializableTraceData>(
 #[inline]
 pub fn read_meta_struct<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
-) -> Result<Vec<(T::Text, T::Bytes)>, DecodeError> {
+) -> Result<VecMap<T::Text, T::Bytes>, DecodeError> {
     if handle_null_marker(buf) {
-        return Ok(Vec::new());
+        return Ok(VecMap::new());
     }
 
     fn read_meta_struct_pair<T: DeserializableTraceData>(
