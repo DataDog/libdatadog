@@ -103,7 +103,9 @@ impl AgentClient {
         let rate_by_service = parse_rate_by_service(response.body());
 
         if rate_by_service.is_err() {
-            tracing::warn!("Couldn't deserialize the `rate_by_service` from the agent's response body");
+            tracing::warn!(
+                "Couldn't deserialize the `rate_by_service` from the agent's response body"
+            );
         }
 
         Ok(AgentResponse {
