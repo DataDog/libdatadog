@@ -27,16 +27,26 @@ inline the C wrapper at link time. The requirements are:
   toolchain without `rust-lld`)
 - `lld` version is at least 18.1 (TLSDESC support)
 
-If those requirements are met, you can use the small wrapper script provided in
-this directory to build an optimized release version where the C shim is
-inlined. A wrapper script is needed because cross-language LTO requires two
-`rustc` codegen flags (`-Clinker-plugin-lto` and `-Clinker=clang`) that cannot
-be set from a Cargo build script: they must come from `RUSTFLAGS` or
-`.cargo/config.toml`, which can't be entirely automated from Rust only. The
-script sets them via the target-scoped `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` env
-var so they don't leak to build scripts or proc-macros if cross-compiling.
+**If those requirements are met, setting the environment variables
+`CARGO_TARGET_<TARGET>_RUSTFLAGS=-Clinker-plugin-lto -Clinker=clang` and
+`LIBDD_OTEL_THREAD_CTX_INLINE=1` when calling to `cargo` will trigger the
+optimized build where the C shim is inlined.** Here, `<TARGET>` is the target
+triple in screaming snake case.
 
-### Example usage
+External environment variables are needed because cross-language LTO requires
+two `rustc` codegen flags (`-Clinker-plugin-lto` and `-Clinker=clang`) that
+cannot be set from a Cargo build script: they must come from `RUSTFLAGS` or
+`.cargo/config.toml`, which can't be entirely automated from Rust only. We
+advise to set those flags via the target-scoped
+`CARGO_TARGET_<TARGET>_RUSTFLAGS` env var so they don't leak to build scripts
+or proc-macros if cross-compiling.
+
+### Build script
+
+The `build-optimized.sh` wrapper script is provided as a convenience and as an
+example.
+
+#### Usage
 
 ```bash
 ./build-optimized.sh
