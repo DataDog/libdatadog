@@ -156,7 +156,9 @@ impl TraceFilteredConf {
                             ?err,
                             "Invalid regex pattern in tag filter's value, skipping it"
                         );
-                        // FIXME: dd-trace-php considers that if the value pattern is bad, we still keep the filter by only matching on the key. I find it more intuitive to drop the filter altogether
+                        // FIXME: dd-trace-php considers that if the value pattern is bad, we still
+                        // keep the filter by only matching on the key. I find it more intuitive to
+                        // drop the filter altogether
                         continue;
                     }
                 },
@@ -274,9 +276,11 @@ impl TraceFilterer {
         });
     }
 
-    /// Checks if the trace with root span `root_span` should be dropped based on filter configuration.
+    /// Checks if the trace with root span `root_span` should be dropped based on filter
+    /// configuration.
     ///
-    /// Applies a subset of trace normalization logic from `libdd-trace-normalization` before checking.
+    /// Applies a subset of trace normalization logic from `libdd-trace-normalization` before
+    /// checking.
     fn should_drop<T: libdd_trace_utils::span::TraceData>(
         conf: &TraceFilteredConf,
         root_span: &libdd_trace_utils::span::v04::Span<T>,
