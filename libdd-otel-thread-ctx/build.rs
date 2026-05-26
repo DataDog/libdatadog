@@ -21,6 +21,13 @@ fn main() {
         return;
     }
 
+    if !matches!(target_arch.as_str(), "x86_64" | "aarch64") {
+        panic!(
+            "Unsupported architecture `{}` for otel-thread-ctx on Linux. Only x86_64 and aarch64 are currently supported.",
+            target_arch
+        )
+    }
+
     println!("cargo:rerun-if-env-changed=LIBDD_OTEL_THREAD_CTX_INLINE");
     println!("cargo:rerun-if-changed=src/tls_shim.c");
 
@@ -50,14 +57,12 @@ fn main() {
 
         // Note: in the inline setup, TLS dialect selection is handled by the linker and is taken
         // care of by the build script of otel-thread-ctx-ffi
-    } else {
+    } else if target == "x86_64" {
         // - On aarch64, TLSDESC is already the only dynamic TLS model so no flag is needed.
         // - On x86-64, we use `-mtls-dialect=gnu2` (supported since GCC 4.4 and Clang 19+) to force
         //   the use of TLSDESC as mandated by the spec. If it's not supported, this build will
         //   fail.
-        if target_arch == "x86_64" {
-            build.flag("-mtls-dialect=gnu2");
-        }
+        build.flag("-mtls-dialect=gnu2");
     }
 
     build.file("src/tls_shim.c").compile("tls_shim");
