@@ -283,6 +283,12 @@ mod tracing_integration_tests {
         rmp_serde::to_vec_named(&vec![vec![root_span, child_span]]).unwrap()
     }
 
+    // Ignored: the V1 path is now gated by /info negotiation (fail-closed), and the pinned
+    // ddapm-test-agent image does not advertise `/v1.0/traces` in its /info endpoints, so the
+    // exporter falls back to V04 and the snapshot no longer matches. Re-enable once the
+    // test-agent supports V1. The V1 negotiation logic is covered by unit tests in
+    // `trace_exporter::mod` (`test_refresh_v1_active_*`, `test_effective_output_format_*`).
+    #[ignore]
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_to_v1_trace_snapshot_test() {
