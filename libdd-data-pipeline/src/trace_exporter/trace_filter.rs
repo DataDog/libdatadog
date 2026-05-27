@@ -384,3 +384,316 @@ impl TraceFilterer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_info::schema::FilterTagsConfig;
+    use libdd_trace_utils::span::v04::SpanBytes;
+    use std::collections::HashMap;
+
+    // ---- helpers ----
+
+    fn ftc(require: &[&str], reject: &[&str]) -> FilterTagsConfig {
+        FilterTagsConfig {
+            require: require.iter().map(|s| s.to_string()).collect(),
+            reject: reject.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn no_tags() -> FilterTagsConfig {
+        FilterTagsConfig::default()
+    }
+
+    fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
+        SpanBytes {
+            service: "svc".into(),
+            name: "op".into(),
+            resource: resource.into(),
+            span_id: 1,
+            trace_id: 1,
+            parent_id: 0,
+            meta: meta
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect::<HashMap<_, _>>(),
+            ..Default::default()
+        }
+    }
+
+    fn one_trace(s: SpanBytes) -> Vec<Vec<SpanBytes>> {
+        vec![vec![s]]
+    }
+
+    fn reject_str(tags: &[&str]) -> TraceFilterer {
+        TraceFilterer::new(&ftc(&[], tags), &no_tags(), &[])
+    }
+
+    fn require_str(tags: &[&str]) -> TraceFilterer {
+        TraceFilterer::new(&ftc(tags, &[]), &no_tags(), &[])
+    }
+
+    fn reject_regex(tags: &[&str]) -> TraceFilterer {
+        TraceFilterer::new(&no_tags(), &ftc(&[], tags), &[])
+    }
+
+    fn require_regex(tags: &[&str]) -> TraceFilterer {
+        TraceFilterer::new(&no_tags(), &ftc(tags, &[]), &[])
+    }
+
+    fn ignore_resources(patterns: &[&str]) -> TraceFilterer {
+        let pats: Vec<String> = patterns.iter().map(|s| s.to_string()).collect();
+        TraceFilterer::new(&no_tags(), &no_tags(), &pats)
+    }
+
+    // ---- reject (TagStringFilter) ----
+
+    #[test]
+    fn reject_string_exact_match_drops() {
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        reject_str(&["env:prod"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn reject_string_wrong_value_keeps() {
+        let mut traces = one_trace(span_with("r", &[("env", "staging")]));
+        reject_str(&["env:prod"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn reject_string_missing_tag_keeps() {
+        let mut traces = one_trace(span_with("r", &[]));
+        reject_str(&["env:prod"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn reject_string_key_only_matches_any_value() {
+        // A key-only filter (no `:value` part) matches regardless of the tag's value.
+        let mut traces = one_trace(span_with("r", &[("env", "anything")]));
+        reject_str(&["env"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    // ---- reject_regex (TagRegexFilter – literal key, regex value) ----
+
+    #[test]
+    fn reject_regex_value_match_drops() {
+        let mut traces = one_trace(span_with("r", &[("env", "production")]));
+        reject_regex(&["env:prod.*"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn reject_regex_value_no_match_keeps() {
+        let mut traces = one_trace(span_with("r", &[("env", "staging")]));
+        reject_regex(&["env:prod.*"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    // ---- reject_key_regex (TagRegexKeyFilter – regex key) ----
+    // A key pattern containing `*` triggers the key-regex path.
+
+    #[test]
+    fn reject_key_regex_key_and_value_match_drops() {
+        // "err.*" contains `*` → key is compiled as a regex; matches "error".
+        let mut traces = one_trace(span_with("r", &[("error", "timeout")]));
+        reject_regex(&["err.*:timeout"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn reject_key_regex_wrong_value_keeps() {
+        let mut traces = one_trace(span_with("r", &[("error", "network")]));
+        reject_regex(&["err.*:timeout"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn reject_key_regex_missing_key_keeps() {
+        let mut traces = one_trace(span_with("r", &[]));
+        reject_regex(&["err.*:timeout"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    // ---- require (TagStringFilter) ----
+
+    #[test]
+    fn require_string_present_and_matching_keeps() {
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        require_str(&["env:prod"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn require_string_missing_tag_drops() {
+        let mut traces = one_trace(span_with("r", &[]));
+        require_str(&["env:prod"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn require_string_wrong_value_drops() {
+        let mut traces = one_trace(span_with("r", &[("env", "staging")]));
+        require_str(&["env:prod"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    // ---- require_regex (TagRegexFilter – literal key, regex value) ----
+
+    #[test]
+    fn require_regex_value_match_keeps() {
+        let mut traces = one_trace(span_with("r", &[("env", "production")]));
+        require_regex(&["env:prod.*"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn require_regex_missing_drops() {
+        let mut traces = one_trace(span_with("r", &[]));
+        require_regex(&["env:prod.*"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    // ---- require_key_regex (TagRegexKeyFilter – regex key) ----
+
+    #[test]
+    fn require_key_regex_key_exists_keeps() {
+        // Key-only pattern → value: None → any tag value satisfies the requirement.
+        let mut traces = one_trace(span_with("r", &[("error", "any")]));
+        require_regex(&["err.*"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn require_key_regex_missing_key_drops() {
+        let mut traces = one_trace(span_with("r", &[]));
+        require_regex(&["err.*"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    // ---- ignore_resources ----
+
+    #[test]
+    fn ignore_resources_match_drops() {
+        let mut traces = one_trace(span_with("GET /health", &[]));
+        ignore_resources(&["GET /health"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn ignore_resources_no_match_keeps() {
+        let mut traces = one_trace(span_with("POST /data", &[]));
+        ignore_resources(&["GET /health"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn ignore_resources_empty_resource_falls_back_to_name() {
+        // When resource is empty the span's name field is used for matching.
+        // The helper sets name = "op", so ignore_resources("op") must drop it.
+        let mut traces = one_trace(span_with("", &[]));
+        ignore_resources(&["op"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    // ---- env tag normalization ----
+
+    #[test]
+    fn env_normalization_reject_matches_after_lowercase() {
+        // normalize_tag_cloned("PROD") == "prod"; the reject filter "env:prod" must fire.
+        let mut traces = one_trace(span_with("r", &[("env", "PROD")]));
+        reject_str(&["env:prod"]).filter_traces(&mut traces);
+        assert!(
+            traces.is_empty(),
+            "env value should be normalized before matching"
+        );
+    }
+
+    #[test]
+    fn env_normalization_require_matches_normalized_value() {
+        // normalize_tag_cloned("Prod Env") == "prod_env" (uppercase + space → underscore).
+        let mut traces = one_trace(span_with("r", &[("env", "Prod Env")]));
+        require_str(&["env:prod_env"]).filter_traces(&mut traces);
+        assert_eq!(
+            traces.len(),
+            1,
+            "normalized env should satisfy the require filter"
+        );
+    }
+
+    // ---- http.status_code special handling ----
+
+    #[test]
+    fn http_status_code_invalid_value_skips_reject_filter() {
+        // is_valid_http_status_code("abc") == false → check_tag_filter returns false
+        // → reject never fires → trace kept even though the raw value equals the filter.
+        let mut traces = one_trace(span_with("r", &[("http.status_code", "abc")]));
+        reject_str(&["http.status_code:abc"]).filter_traces(&mut traces);
+        assert_eq!(
+            traces.len(),
+            1,
+            "invalid status code should not trigger the filter"
+        );
+    }
+
+    #[test]
+    fn http_status_code_valid_value_triggers_reject_filter() {
+        let mut traces = one_trace(span_with("r", &[("http.status_code", "500")]));
+        reject_str(&["http.status_code:500"]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    // ---- update_conf ----
+
+    #[test]
+    fn update_conf_takes_effect() {
+        let f = TraceFilterer::new(&no_tags(), &no_tags(), &[]);
+
+        // No filters: trace is kept.
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        f.filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+
+        // Swap in a reject filter: same trace is now dropped.
+        f.update_conf(&ftc(&[], &["env:prod"]), &no_tags(), &[]);
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        f.filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    // ---- edge / misc ----
+
+    #[test]
+    fn multiple_traces_partial_rejection() {
+        let f = reject_str(&["env:prod"]);
+        let mut traces = vec![
+            vec![span_with("r", &[("env", "prod")])],    // dropped
+            vec![span_with("r", &[("env", "staging")])], // kept
+        ];
+        f.filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn no_filters_keeps_all_traces() {
+        let f = TraceFilterer::new(&no_tags(), &no_tags(), &[]);
+        let mut traces = vec![
+            vec![span_with("r1", &[])],
+            vec![span_with("r2", &[("env", "prod")])],
+        ];
+        f.filter_traces(&mut traces);
+        assert_eq!(traces.len(), 2);
+    }
+
+    #[test]
+    fn invalid_regex_in_filter_is_skipped_gracefully() {
+        // A bad regex pattern is silently discarded; no panic, trace is kept.
+        let f = reject_regex(&["env:[invalid"]);
+        let mut traces = one_trace(span_with("r", &[("env", "anything")]));
+        f.filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+}
