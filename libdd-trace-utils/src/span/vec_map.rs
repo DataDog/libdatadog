@@ -34,13 +34,19 @@ use std::hash::Hash;
 ///
 /// In the future, we could trigger deduplication on other events, for example at insertion if the
 /// size is bigger than a threshold (and we haven't deduped for `x` operations).
+///
+/// # Ordering
+///
+/// As this is a map, iteration order is not defined nor guaranteed. In practice, iteration follows
+/// insertion order, but [Self::dedup] will reverse the underlying vector.
 #[derive(Clone, Debug, PartialEq)]
 pub struct VecMap<K, V> {
     data: Vec<(K, V)>,
     /// Deduped is a flag that is set after entry deduplication. It is dirtied (set to `false`)
-    /// when any modification is performed (`deduped == false` doesn't imply there are actual
-    /// duplicates, just than there might be). This is useful to avoid performing deduplication
-    /// several times in the export pipeline.
+    /// when any modification that could create duplicates is performed (`deduped == false`
+    /// doesn't imply there are actual duplicates, just than there might be). This is useful to
+    /// avoid performing deduplication several times in a row, for example in the export
+    /// pipeline.
     deduped: bool,
 }
 
@@ -228,6 +234,8 @@ impl<'a, K, V> IntoIterator for &'a mut VecMap<K, V> {
     type IntoIter = std::slice::IterMut<'a, (K, V)>;
 
     fn into_iter(self) -> Self::IntoIter {
+        // Since we iterate on keys as well, they can modified, and introduce duplicates.
+        self.dirty();
         self.data.iter_mut()
     }
 }
