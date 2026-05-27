@@ -397,8 +397,8 @@ pub extern "C" fn ddog_get_span_metrics(
 ) -> bool {
     let bytes_str_key = convert_char_slice_to_bytes_string(key);
     match span.metrics.get(&bytes_str_key) {
-        Some(value) => {
-            *result = *value;
+        Some(&value) => {
+            *result = value;
             true
         }
         None => false,

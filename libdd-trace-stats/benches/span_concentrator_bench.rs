@@ -17,7 +17,7 @@ fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> SpanBytes {
         metrics.insert("_dd.top_level".into(), 1.0);
     }
     let mut meta: VecMap<_, _> = vec![("db_name".into(), "postgres".into())].into();
-    if span_id % 3 == 0 {
+    if span_id.is_multiple_of(3) {
         meta.insert("bucket_s3".into(), "aws_bucket".into());
     }
     SpanBytes {
