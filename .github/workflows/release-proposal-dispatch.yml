@@ -295,9 +295,15 @@ jobs:
           set -euo pipefail
           # cargo-release supports pre-release-hook (arbitrary command execution) and
           # pre-release-replacements (arbitrary file rewriting). Neither is used by this repo,
-          # so reject any tree that injects them. This stops a malicious main_start_ref from
+          # so reject any tree that mentions them. This stops a malicious main_start_ref from
           # executing code with the job's OIDC mint capability via the cargo-release step.
-          FORBIDDEN=$(grep -rEn '(^|[[:space:]])"?(pre-release-hook|pre-release-replacements)"?[[:space:]]*=' \
+          #
+          # The match is intentionally broad: it catches every TOML key form cargo-release
+          # accepts — bare `pre-release-hook = ...`, dotted `package.metadata.release.pre-release-hook = ...`,
+          # quoted `"pre-release-hook" = ...`, inline-table `{ pre-release-hook = ... }`, and
+          # array-of-table `[[package.metadata.release.pre-release-replacements]]`. `^[^#]*`
+          # excludes the substring when it only appears after a `#` comment marker.
+          FORBIDDEN=$(grep -rEn '^[^#]*(pre-release-hook|pre-release-replacements)' \
             --include='Cargo.toml' --include='release.toml' . || true)
           if [ -n "$FORBIDDEN" ]; then
             echo "Error: forbidden cargo-release configuration detected in the checked-out tree:" >&2
