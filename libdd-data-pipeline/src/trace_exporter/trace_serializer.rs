@@ -17,7 +17,7 @@ use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
-use libdd_trace_utils::tracer_payload;
+use libdd_trace_utils::tracer_payload::{self, TraceEncoding};
 
 /// Minimal capacity of fresh buffers allocated to encode traces, in bytes.
 const MIN_BUFFER_CAPACITY: usize = 1024;
@@ -76,9 +76,13 @@ impl TraceSerializer {
     ) -> Result<tracer_payload::TraceChunks<T>, TraceExporterError> {
         match self.output_format {
             TraceExporterOutputFormat::V1 => Ok(tracer_payload::TraceChunks::V1(traces)),
-            format => {
-                let use_v05_format = matches!(format, TraceExporterOutputFormat::V05);
-                trace_utils::collect_trace_chunks(traces, use_v05_format).map_err(|e| {
+            TraceExporterOutputFormat::V04 => {
+                trace_utils::collect_trace_chunks(traces, TraceEncoding::V04).map_err(|e| {
+                    TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
+                })
+            }
+            TraceExporterOutputFormat::V05 => {
+                trace_utils::collect_trace_chunks(traces, TraceEncoding::V05).map_err(|e| {
                     TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
                 })
             }

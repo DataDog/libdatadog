@@ -135,6 +135,40 @@ impl<T> RwLockExt<T> for RwLock<T> {
     }
 }
 
+/// Extension trait that extracts the value from a `Result` whose error type is uninhabited.
+///
+/// The signature constrains callers at compile time: the method is only available when the
+/// error type is [`core::convert::Infallible`]. No panics — the compiler proves the `Err`
+/// arm unreachable from the type.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::ResultInfallibleExt;
+/// use std::convert::Infallible;
+///
+/// let result: Result<i32, Infallible> = Ok(42);
+/// assert_eq!(result.unwrap_infallible(), 42);
+/// ```
+pub trait ResultInfallibleExt<T>: sealed::Sealed {
+    fn unwrap_infallible(self) -> T;
+}
+
+impl<T> ResultInfallibleExt<T> for Result<T, core::convert::Infallible> {
+    #[inline(always)]
+    fn unwrap_infallible(self) -> T {
+        match self {
+            Ok(value) => value,
+            Err(never) => match never {},
+        }
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl<T> Sealed for Result<T, core::convert::Infallible> {}
+}
+
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use http::{header::HeaderName, HeaderValue};
