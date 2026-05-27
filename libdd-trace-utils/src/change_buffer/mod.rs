@@ -92,11 +92,16 @@ use crate::span::v04::Span;
 use crate::span::vec_map::VecMap;
 use crate::span::{SpanText, TraceData};
 
+/// A stateful wrapper around a change buffer for processing and span reconstructions.
 pub struct ChangeBufferState<T: TraceData> {
     change_buffer: ChangeBuffer,
     spans: Vec<Option<Span<T>>>,
     traces: SmallTraceMap<T::Text>,
-    /// String table indexed by sequential u32 IDs (O(1) lookup vs HashMap).
+    /// Interned string table (O(1) lookup vs HashMap).
+    ///
+    /// Note: currently the string table never shrinks (it is never compacted). When entries are
+    /// evicted (freeing the backing strings), a small amount of memory is leaked (to hold the
+    /// `None` value).
     string_table: Vec<Option<T::Text>>,
     tracer_service: T::Text,
     tracer_language: T::Text,
@@ -175,10 +180,6 @@ where
         tracer_language: T::Text,
         pid: u32,
     ) -> Self {
-        eprintln!(
-            "[libdatadog pipeline] experiment: baseline (commit: {})",
-            env!("GIT_COMMIT")
-        );
         ChangeBufferState {
             change_buffer,
             spans: Vec::with_capacity(256),
@@ -346,6 +347,11 @@ where
         let mut count = self.change_buffer.read::<u64>(&mut index)? as u32;
 
         let mut cached_slot: u32 = u32::MAX;
+        // We keep a bunch of cached internal pointers. They are safe to use as long as we don't
+        // modify their parent vector and keep a unique borrow to `self` overall.
+        //
+        // Using mutable references instead would be better, but is not possible (or very hard)
+        // given we iterate and nest calls to different submethods taking a `&mut self`.
         let mut cached_span_ptr: *mut Span<T> = std::ptr::null_mut();
         let mut cached_deferred_meta: *mut VecMap<u32, u32> = std::ptr::null_mut();
         let mut cached_deferred_metrics: *mut VecMap<u32, f64> = std::ptr::null_mut();
@@ -407,11 +413,18 @@ where
             span
         };
 
-        // SAFETY: span_ptr is valid — it was obtained from self.spans above
-        // or from the cache which was set in a previous iteration of the same loop.
-        // self.spans is not modified during this function (no inserts/removes).
+        // SAFETY: span_ptr is valid for read and writes: it was obtained from self.spans above or
+        // from the cache which was set in a previous iteration of the same loop. self.spans is not
+        // modified during this function (no inserts/removes).
         let span = unsafe { &mut *span_ptr };
 
+        // SAFETY:
+        //
+        // - `cached_deferred_xxx`: they point to writable memory (derived from self), and we don't
+        //   modify, move nor drop the parent `deferred_xxx` vec, so the pointer should remain
+        //   valid.
+        // - `xxx_unchecked`: we rely on the encoder side to write the correct arguments to an
+        //   opcode.
         match op.opcode {
             OpCode::SetMetaAttr => {
                 let key_id: u32 = self.get_num_arg(index)?;
@@ -501,6 +514,9 @@ where
             .ok_or(ChangeBufferError::StringNotFound(num))
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure `*index + size_of::<T::Tex>() <= self.change_buffer.len`.
     #[inline(always)]
     unsafe fn get_string_arg_unchecked(&self, index: &mut usize) -> T::Text {
         let num: u32 = self.change_buffer.read_unchecked(index);
@@ -514,12 +530,16 @@ where
         self.change_buffer.read(index)
     }
 
+    /// # Safety
+    ///
+    /// Caller must ensure `*index + size_of::<U>() <= self.change_buffer.len`.
     #[inline(always)]
     unsafe fn get_num_arg_unchecked<U: Copy + FromBytes>(&self, index: &mut usize) -> U {
-        self.change_buffer.read_unchecked(index)
+        // Safety: this function's pre-condition
+        unsafe { self.change_buffer.read_unchecked(index) }
     }
 
-    fn get_mut_span(&mut self, slot: u32) -> Result<&mut Span<T>> {
+    fn get_span_mut(&mut self, slot: u32) -> Result<&mut Span<T>> {
         self.spans
             .get_mut(slot as usize)
             .and_then(|opt| opt.as_mut())
@@ -533,6 +553,7 @@ where
             .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
     }
 
+    #[inline]
     pub fn get_trace(&self, id: &u128) -> Option<&Trace<T::Text>> {
         self.traces.get(id)
     }
@@ -627,12 +648,14 @@ where
             .ok_or(ChangeBufferError::SpanNotFound(*slot as u64))
     }
 
+    #[inline]
     pub fn get_string(&self, id: u32) -> Option<T::Text> {
         self.string_table
             .get(id as usize)
             .and_then(|opt| opt.clone())
     }
 
+    #[inline]
     pub fn set_default_meta(&mut self, tags: Vec<(T::Text, T::Text)>) {
         self.default_meta = tags;
     }
@@ -647,6 +670,7 @@ where
         let idx = slot as usize;
         if idx < self.deferred_meta.len() {
             let pairs: Vec<(u32, u32)> = self.deferred_meta[idx].drain(..).collect();
+
             for (key_id, val_id) in pairs {
                 if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id)) {
                     span.meta.insert(key, val);
@@ -655,6 +679,7 @@ where
         }
         if idx < self.deferred_metrics.len() {
             let pairs: Vec<(u32, f64)> = self.deferred_metrics[idx].drain(..).collect();
+
             for (key_id, val) in pairs {
                 if let Some(key) = self.get_string(key_id) {
                     span.metrics.insert(key, val);
@@ -737,25 +762,25 @@ where
                 }
             }
             OpCode::SetServiceName => {
-                self.get_mut_span(op.slot_index)?.service = self.get_string_arg(index)?;
+                self.get_span_mut(op.slot_index)?.service = self.get_string_arg(index)?;
             }
             OpCode::SetResourceName => {
-                self.get_mut_span(op.slot_index)?.resource = self.get_string_arg(index)?;
+                self.get_span_mut(op.slot_index)?.resource = self.get_string_arg(index)?;
             }
             OpCode::SetError => {
-                self.get_mut_span(op.slot_index)?.error = self.get_num_arg(index)?;
+                self.get_span_mut(op.slot_index)?.error = self.get_num_arg(index)?;
             }
             OpCode::SetStart => {
-                self.get_mut_span(op.slot_index)?.start = self.get_num_arg(index)?;
+                self.get_span_mut(op.slot_index)?.start = self.get_num_arg(index)?;
             }
             OpCode::SetDuration => {
-                self.get_mut_span(op.slot_index)?.duration = self.get_num_arg(index)?;
+                self.get_span_mut(op.slot_index)?.duration = self.get_num_arg(index)?;
             }
             OpCode::SetType => {
-                self.get_mut_span(op.slot_index)?.r#type = self.get_string_arg(index)?;
+                self.get_span_mut(op.slot_index)?.r#type = self.get_string_arg(index)?;
             }
             OpCode::SetName => {
-                self.get_mut_span(op.slot_index)?.name = self.get_string_arg(index)?;
+                self.get_span_mut(op.slot_index)?.name = self.get_string_arg(index)?;
             }
             OpCode::SetTraceMetaAttr => {
                 let name = self.get_string_arg(index)?;
