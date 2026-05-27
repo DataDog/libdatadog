@@ -151,10 +151,10 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                         "Received error status code"
                     );
 
-                    if request_attempt < retry_strategy.max_retries() {
+                    if request_attempt <= retry_strategy.max_retries() {
                         debug!(
                             attempt = request_attempt,
-                            remaining_retries = retry_strategy.max_retries() - request_attempt,
+                            remaining_retries = retry_strategy.max_retries() - request_attempt + 1,
                             "Retrying after error status code"
                         );
                         retry_strategy.delay(request_attempt, capabilities).await;
@@ -184,10 +184,10 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                     "Request failed with error"
                 );
 
-                if request_attempt < retry_strategy.max_retries() {
+                if request_attempt <= retry_strategy.max_retries() {
                     debug!(
                         attempt = request_attempt,
-                        remaining_retries = retry_strategy.max_retries() - request_attempt,
+                        remaining_retries = retry_strategy.max_retries() - request_attempt + 1,
                         "Retrying after request error"
                     );
                     retry_strategy.delay(request_attempt, capabilities).await;
@@ -216,10 +216,10 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
                     "Request timed out"
                 );
 
-                if request_attempt < retry_strategy.max_retries() {
+                if request_attempt <= retry_strategy.max_retries() {
                     debug!(
                         attempt = request_attempt,
-                        remaining_retries = retry_strategy.max_retries() - request_attempt,
+                        remaining_retries = retry_strategy.max_retries() - request_attempt + 1,
                         "Retrying after timeout"
                     );
                     retry_strategy.delay(request_attempt, capabilities).await;
@@ -349,7 +349,8 @@ mod tests {
     #[tokio::test]
     async fn test_retry_logic_max_errors() {
         let server = MockServer::start();
-        let expected_retry_attempts = 3;
+        let max_retries = 3;
+        let expected_total_attempts = max_retries + 1;
         let mut mock_503 = server
             .mock_async(|_when, then| {
                 then.status(503)
@@ -364,12 +365,7 @@ mod tests {
             ..Default::default()
         };
 
-        let strategy = RetryStrategy::new(
-            expected_retry_attempts,
-            10,
-            RetryBackoffType::Constant,
-            None,
-        );
+        let strategy = RetryStrategy::new(max_retries, 10, RetryBackoffType::Constant, None);
         let capabilities = NativeCapabilities::new_client();
 
         tokio::spawn(async move {
@@ -382,7 +378,7 @@ mod tests {
             )
             .await;
             assert!(
-                matches!(result.unwrap_err(), SendWithRetryError::Http(_, attempts) if attempts == expected_retry_attempts),
+                matches!(result.unwrap_err(), SendWithRetryError::Http(_, attempts) if attempts == expected_total_attempts),
                 "Expected an error result after max retry attempts"
             );
         });
@@ -392,7 +388,7 @@ mod tests {
                 &mut mock_503,
                 10,
                 100,
-                expected_retry_attempts as usize,
+                expected_total_attempts as usize,
                 true
             )
             .await,
