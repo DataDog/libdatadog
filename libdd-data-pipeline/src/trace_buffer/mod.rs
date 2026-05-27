@@ -375,9 +375,21 @@ impl<T> fmt::Debug for TraceBuffer<T> {
 
 impl<T> Drop for TraceBuffer<T> {
     /// Best-effort flush so any buffered chunks are handed to the worker before the producer
-    /// end disappears. The worker itself is owned by the [`SharedRuntime`] and continues to
-    /// run independently — its own [`Worker::shutdown`] hook (invoked by `SharedRuntime`)
-    /// will drain whatever remains after this notify.
+    /// end disappears. We simply notify the receiver; the worker is owned by the
+    /// [`SharedRuntime`] and consumes the notification through its normal `trigger()` loop.
+    ///
+    /// This drop is **not** a graceful-shutdown contract. Two things have to hold for the
+    /// flushed chunks to actually reach the agent:
+    /// 1. The worker's `trigger()` loop must run after this notify (i.e. the runtime must still be
+    ///    alive and the worker not yet paused).
+    /// 2. The exporter must finish before the runtime is torn down.
+    ///
+    /// If the worker is paused mid-flight by [`SharedRuntime::shutdown`] /
+    /// [`SharedRuntime::trigger_shutdown_signal`] before it processes the notification, the
+    /// `Worker::shutdown` hook drains the remaining batch as a backstop. If the
+    /// `SharedRuntime` is simply dropped without an explicit shutdown call, in-flight tasks
+    /// are aborted by tokio and any unexported chunks are lost — callers that need a
+    /// guaranteed drain must invoke the runtime's shutdown API explicitly.
     ///
     /// Errors are intentionally ignored: a `TraceBuffer` dropped after the runtime has
     /// already been shut down has nothing useful to do here.
@@ -1185,13 +1197,25 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_drop_inside_tokio_runtime() {
         let rt = Arc::new(SharedRuntime::from_handle(tokio::runtime::Handle::current()));
+        let exported = Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+        let exported_clone = exported.clone();
         let (sender, worker) = TraceBuffer::new(
-            TraceBufferConfig::default(),
+            // Configure thresholds so nothing flushes on size or interval — the only way
+            // the exporter runs is if the Drop notify (or the shutdown drain backstop)
+            // hands the chunk over.
+            TraceBufferConfig::default()
+                .max_buffered_bytes(100)
+                .flush_threshold_bytes(100)
+                .max_flush_interval(Duration::from_secs(u32::MAX as u64)),
             Box::new(
                 |_r: Result<AgentResponse, crate::trace_exporter::error::TraceExporterError>| {},
             ),
             Box::new(AssertExporter(
-                Box::new(|_chunks| {}),
+                Box::new(move |chunks| {
+                    let mut lengths = chunks.into_iter().map(|c| c.len()).collect::<Vec<_>>();
+                    lengths.sort();
+                    exported_clone.lock().unwrap().extend(lengths);
+                }),
                 Arc::new(tokio::sync::Semaphore::new(0)),
             )),
         );
@@ -1205,5 +1229,10 @@ mod tests {
         // Borrowed mode: use trigger + Condvar wait, never block_on.
         rt.trigger_shutdown_signal().unwrap();
         rt.wait_shutdown_done(Duration::from_secs(5)).unwrap();
+
+        // The chunk buffered before drop+shutdown must have actually reached the
+        // exporter (either via the Drop notify or the shutdown drain backstop).
+        let exported = exported.lock().unwrap().clone();
+        assert_eq!(exported, vec![1]);
     }
 }

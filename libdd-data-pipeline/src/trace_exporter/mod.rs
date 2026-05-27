@@ -203,6 +203,19 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     otlp_config: Option<OtlpTraceConfig>,
 }
 
+// Note on the sync/async API split:
+//
+// The sync entry points on `TraceExporter` (`send`, `send_trace_chunks`, `shutdown`) and
+// `TraceExporterBuilder::build` are thin `SharedRuntime::block_on` wrappers over their
+// `_async` counterparts. They are always compiled, but they panic / return
+// `io::Error::Unsupported` if invoked from inside a host tokio runtime — i.e. on a
+// `SharedRuntime` built via `from_handle`. Async-only consumers (e.g. dd-trace-rs) must
+// use the `_async` methods directly.
+//
+// A `sync-api` cargo feature was prototyped to make the sync facade a compile-time
+// error for async-only builds; it was reverted as not worth the churn for the current
+// set of in-tree callers. Re-add it the day a consumer wants a build of
+// libdd-data-pipeline that statically forbids the sync facade.
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder {

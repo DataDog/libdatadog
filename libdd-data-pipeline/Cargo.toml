@@ -85,16 +85,6 @@ duplicate = "2.0.1"
 [features]
 default = ["https", "telemetry"]
 telemetry = ["libdd-telemetry"]
-# Note (async-libdatadog-host-runtime): the sync entry points on `TraceExporter`
-# (`send`, `send_trace_chunks`, `shutdown`) and `TraceExporterBuilder::build` are
-# thin `SharedRuntime::block_on` wrappers over their `_async` counterparts. They
-# are always compiled today, but they panic / return `io::Error::Unsupported` if
-# invoked from inside a host tokio runtime (i.e. on a `SharedRuntime` built via
-# `from_handle`). A `sync-api` cargo feature was prototyped to make that a
-# compile-time error for async-only consumers like dd-trace-rs; it was reverted
-# as not worth the churn for the current set of in-tree callers. Re-add it the
-# day a consumer wants a build of libdd-data-pipeline that statically forbids
-# the sync facade.
 https = [
     "libdd-common/https",
     "libdd-capabilities-impl/https",

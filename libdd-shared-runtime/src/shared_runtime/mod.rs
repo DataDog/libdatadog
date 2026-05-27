@@ -96,8 +96,8 @@ mod native {
         ///   [`SharedRuntimeError::ForkUnsupportedInBorrowedMode`]. Rust applications rarely fork
         ///   after init; if you need fork-safety use owned mode.
         /// - Synchronous [`block_on`](Self::block_on): the caller is already inside a tokio runtime
-        ///   and would deadlock; this method returns
-        ///   [`SharedRuntimeError::BlockOnNotSupportedInBorrowedMode`].
+        ///   and would deadlock; this method returns an [`io::Error`] with kind
+        ///   [`io::ErrorKind::Unsupported`].
         /// - Synchronous [`shutdown`](Self::shutdown): same reason — use
         ///   [`trigger_shutdown_signal`](Self::trigger_shutdown_signal) +
         ///   [`wait_shutdown_done`](Self::wait_shutdown_done) (sync) or
@@ -366,6 +366,17 @@ mod native {
         /// poison; the alternative would be a panicky bool accessor in code paths that
         /// can't surface an error.
         pub fn is_borrowed(&self) -> bool {
+            self.is_borrowed_poison_tolerant()
+        }
+
+        /// Read the borrowed-vs-owned flag without panicking on a poisoned mutex.
+        ///
+        /// Shared by [`is_borrowed`](Self::is_borrowed) and the `Drop` impl, both of
+        /// which need to inspect the backing variant from contexts (a public infallible
+        /// accessor and a destructor) where surfacing the poison would be the wrong
+        /// trade-off. The inner state is plain data — no invariant a poisoned writer
+        /// could have broken — so reading through the poison is safe.
+        fn is_borrowed_poison_tolerant(&self) -> bool {
             match self.runtime.lock() {
                 Ok(guard) => guard.as_ref().is_some_and(|b| b.is_borrowed()),
                 Err(poison) => poison
@@ -462,6 +473,13 @@ mod native {
         /// the borrowed/host runtime — because it relies on a `Condvar` rather than
         /// `block_on`. Idempotent; returns immediately if shutdown has already completed.
         ///
+        /// # Do not mix with [`shutdown_async`](Self::shutdown_async)
+        /// Only [`trigger_shutdown_signal`](Self::trigger_shutdown_signal) bumps the
+        /// internal shutdown tracker that this method waits on. If shutdown was
+        /// initiated via `shutdown_async` instead, the expected/completed counters stay
+        /// at zero and this call returns `Ok` immediately even while `shutdown_async`
+        /// is still in flight. Pick one shutdown path per runtime.
+        ///
         /// # Errors
         /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if `timeout` elapses before
         /// all triggered workers complete.
@@ -503,14 +521,7 @@ mod native {
             // poison-tolerant — if a sibling thread previously poisoned the mutex we
             // recover the inner value and degrade gracefully rather than risking a
             // double-panic and abort.
-            let borrowed = match self.runtime.lock() {
-                Ok(guard) => guard.as_ref().is_some_and(|b| b.is_borrowed()),
-                Err(poison) => poison
-                    .into_inner()
-                    .as_ref()
-                    .is_some_and(|b| b.is_borrowed()),
-            };
-            if !borrowed {
+            if !self.is_borrowed_poison_tolerant() {
                 return;
             }
             let workers = {
@@ -815,6 +826,15 @@ impl SharedRuntime {
     /// background workers and the runtime.
     ///
     /// Worker errors are logged but do not cause the function to fail.
+    ///
+    /// # Do not mix with the Condvar shutdown path
+    /// `shutdown_async` does **not** update the internal shutdown tracker used by
+    /// [`trigger_shutdown_signal`](Self::trigger_shutdown_signal) /
+    /// [`wait_shutdown_done`](Self::wait_shutdown_done). Mixing the two paths (e.g.
+    /// awaiting `shutdown_async` from one site while another site calls
+    /// `wait_shutdown_done`) means the Condvar waiter will return `Ok` immediately
+    /// regardless of whether `shutdown_async` has finished. Pick one shutdown path
+    /// per runtime.
     pub async fn shutdown_async(&self) {
         debug!("Shutting down all workers asynchronously");
         let workers = {
