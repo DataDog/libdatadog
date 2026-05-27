@@ -186,7 +186,7 @@ fn test_span_debug_log_output() {
     ddog_set_span_name(span, CharSlice::from("debug-span"));
     let debug_output = ddog_span_debug_log(span);
 
-    let expected_output = CharSlice::from("Span { service: , name: debug-span, resource: , type: , trace_id: 0, span_id: 0, parent_id: 0, start: 0, duration: 0, error: 0, meta: VecMap([]), metrics: VecMap([]), meta_struct: VecMap([]), span_links: [], span_events: [] }");
+    let expected_output = CharSlice::from("Span { service: , name: debug-span, resource: , type: , trace_id: 0, span_id: 0, parent_id: 0, start: 0, duration: 0, error: 0, meta: VecMap { data: [], deduped: false }, metrics: VecMap { data: [], deduped: false }, meta_struct: VecMap { data: [], deduped: false }, span_links: [], span_events: [] }");
 
     assert_eq!(debug_output, expected_output);
 
