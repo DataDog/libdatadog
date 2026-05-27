@@ -69,12 +69,12 @@ libdatadog is integrated into many runtimes and languages via FFI, and runs in D
 - The C FFI does **not** offer C ABI backward-compatibility guarantees: callers (Datadog SDKs) pin to specific libdatadog versions, so `#[repr(C)]` layouts, function signatures, and enum variants may change between releases.
 
 ### Cryptography
-- Non-FIPS builds: ring as TLS crypto provider
-- FIPS builds: aws-lc-rs via `fips` feature flag
+- Default build: ring as TLS crypto provider
+- FIPS (US government cloud) builds: aws-lc-rs via `fips` feature flag
 - Windows FIPS requires env var: `AWS_LC_FIPS_SYS_NO_ASM=1`
 
 ### Commit Messages
-PR titles and commits must follow **Conventional Commits**: `<type>[scope]: <description>`  
+PR titles and commits must follow **Conventional Commits**: `<type>([scope]): <description>`  
 Common types: `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`  
 Breaking changes: append `!` — e.g. `feat!: remove deprecated API`
 
