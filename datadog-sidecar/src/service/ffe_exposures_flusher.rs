@@ -207,8 +207,6 @@ mod tests {
             Self
         }
 
-        fn sleep(&self, _duration: Duration) -> impl future::Future<Output = ()> + MaybeSend {
-            async {}
-        }
+        async fn sleep(&self, _duration: Duration) {}
     }
 }
