@@ -1138,7 +1138,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposures(
     if payload.is_empty() {
         return MaybeError::None;
     }
-    let payload = payload.to_utf8_lossy().into_owned();
+    let payload = try_c!(char_slice_to_string(payload));
     try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
@@ -1172,7 +1172,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_metrics(
     if endpoint.is_empty() || payload.is_empty() {
         return MaybeError::None;
     }
-    let endpoint = endpoint.to_utf8_lossy().into_owned();
+    let endpoint = try_c!(char_slice_to_string(endpoint));
     let payload = payload.as_slice().to_vec();
     try_c!(blocking::enqueue_actions(
         transport,

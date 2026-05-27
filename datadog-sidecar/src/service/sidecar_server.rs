@@ -456,6 +456,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
             })
             .collect();
 
+        if actions.is_empty() {
+            return;
+        }
+
         let rt_info = self.server.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
 

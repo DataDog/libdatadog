@@ -26,8 +26,13 @@ const USER_AGENT: &str = concat!("ddtrace-php-sidecar/", env!("CARGO_PKG_VERSION
 
 /// Build the FFE exposure endpoint from a session's agent base endpoint.
 /// Overrides only the path (`/evp_proxy/v2/api/v2/exposures`), preserving
-/// scheme, authority, api_key (agentless), timeout, and test_token.
+/// scheme, authority, timeout, and test_token.
+/// Returns `None` for agentless mode because EVP proxy routing is agent-only.
 pub(crate) fn exposure_endpoint(base: &Endpoint) -> Option<Endpoint> {
+    if base.api_key.is_some() {
+        return None;
+    }
+
     let mut parts = base.url.clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static(EVP_EXPOSURES_PATH));
     let url = http::Uri::from_parts(parts).ok()?;
@@ -38,7 +43,7 @@ pub(crate) fn exposure_endpoint(base: &Endpoint) -> Option<Endpoint> {
 }
 
 /// POST a single FFE exposure payload to the agent EVP proxy.
-/// Fire-and-forget: non-2xx responses and network errors are logged at `debug`
+/// Fire-and-forget: non-2xx responses are logged at `warn`, network errors at `debug`,
 /// and dropped (matches dd-trace-go behaviour).
 pub(crate) async fn send_payload<C: HttpClientCapability + SleepCapability>(
     client: &C,
@@ -183,6 +188,19 @@ mod tests {
         assert_eq!(ep.url.scheme_str(), Some("http"));
         assert_eq!(ep.url.authority().unwrap().as_str(), "agent.internal:8126");
         assert_eq!(ep.url.path(), EVP_EXPOSURES_PATH);
+    }
+
+    #[test]
+    fn endpoint_rejects_agentless() {
+        let base = Endpoint {
+            url: "https://trace.agent.datadoghq.com/v0.4/traces"
+                .parse()
+                .unwrap(),
+            api_key: Some("api-key".into()),
+            ..Endpoint::default()
+        };
+
+        assert!(exposure_endpoint(&base).is_none());
     }
 
     #[derive(Clone, Debug)]
