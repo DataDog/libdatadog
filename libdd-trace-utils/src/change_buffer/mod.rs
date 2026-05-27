@@ -1,12 +1,32 @@
-#![allow(unused)]
+//! Change buffer.
+//!
+//! A change buffer is a contiguous shared memory area between libdatadog and an external runtime.
+//! In order to amortize the cost of crossing the FFI when using native spans, the runtime write
+//! events in the change buffer instead many times and only flush it by batch, where the call to
+//! libdatadog happens. Libdatadog processes the change buffer and reconstruct the corresponding
+//! spans.
+//!
+//! The change buffer is currently designed and used for dd-trace-js, but the idea could be extended
+//! to other runtime where the FFI cost is high.
+#[allow(unused)]
 
 /// Errors that can occur when operating on a [`ChangeBuffer`] or [`ChangeBufferState`].
 #[derive(Debug)]
 pub enum ChangeBufferError {
     SpanNotFound(u64),
+    /// A string index didn't have any corresponding entry in the string table.
     StringNotFound(u32),
-    ReadOutOfBounds { offset: usize, len: usize },
-    WriteOutOfBounds { offset: usize, len: usize },
+    /// A read is out of bounds.
+    ReadOutOfBounds {
+        offset: usize,
+        len: usize,
+    },
+    /// A is write is out of bounds.
+    WriteOutOfBounds {
+        offset: usize,
+        len: usize,
+    },
+    /// Unknown opcode.
     UnknownOpcode(u32),
 }
 

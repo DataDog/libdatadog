@@ -1,7 +1,13 @@
-use crate::change_buffer::{ChangeBuffer, ChangeBufferError, Result};
+//! Change buffer operations.
+//!
+//! Operations are encoded in the change buffer, and provides an API on spans and their parts.
+//! Instead of calling this API as normal functions, the operations are batched in the change
+//! buffer, similarly to a bytecode.
+use super::{ChangeBuffer, ChangeBufferError, Result};
 
 #[repr(u32)]
 #[derive(Debug, Clone)]
+/// The code of an operation that can be encoded in [ChangeBuffer].
 pub enum OpCode {
     Create = 0,
     SetMetaAttr = 1,
@@ -75,7 +81,10 @@ mod tests {
     use super::*;
     use crate::change_buffer::Result;
 
-    fn change_buffer_from_vec(buffer: &mut Vec<u8>) -> ChangeBuffer {
+    /// # Safety
+    ///
+    /// The original mutable borrowed vec must survive for the lifetime of the change buffer.
+    unsafe fn change_buffer_from_vec(buffer: &mut Vec<u8>) -> ChangeBuffer {
         unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) }
     }
 
@@ -127,7 +136,7 @@ mod tests {
         buffer[0..8].copy_from_slice(&opcode.to_le_bytes());
         buffer[8..12].copy_from_slice(&slot_index.to_le_bytes());
 
-        let buf = change_buffer_from_vec(&mut buffer);
+        let buf = unsafe { change_buffer_from_vec(&mut buffer) };
         let mut index = 0;
         let op = BufferedOperation::from_buf(&buf, &mut index)?;
 
@@ -151,7 +160,7 @@ mod tests {
         buffer[20..28].copy_from_slice(&(OpCode::SetError as u64).to_le_bytes());
         buffer[28..32].copy_from_slice(&2u32.to_le_bytes());
 
-        let buf = change_buffer_from_vec(&mut buffer);
+        let buf = unsafe { change_buffer_from_vec(&mut buffer) };
 
         let mut index = 8;
         let op1 = BufferedOperation::from_buf(&buf, &mut index)?;
@@ -173,7 +182,7 @@ mod tests {
         buffer[0..8].copy_from_slice(&999u64.to_le_bytes());
         buffer[8..12].copy_from_slice(&1u32.to_le_bytes());
 
-        let buf = change_buffer_from_vec(&mut buffer);
+        let buf = unsafe { change_buffer_from_vec(&mut buffer) };
         let mut index = 0;
         assert!(BufferedOperation::from_buf(&buf, &mut index).is_err());
     }
@@ -184,7 +193,7 @@ mod tests {
         let mut buffer = vec![0u8; 8];
         buffer[0..8].copy_from_slice(&0u64.to_le_bytes());
 
-        let buf = change_buffer_from_vec(&mut buffer);
+        let buf = unsafe { change_buffer_from_vec(&mut buffer) };
         let mut index = 0;
         assert!(BufferedOperation::from_buf(&buf, &mut index).is_err());
     }
@@ -192,7 +201,7 @@ mod tests {
     #[test]
     fn buffered_operation_from_buf_empty() {
         let mut buffer = vec![0u8; 0];
-        let buf = change_buffer_from_vec(&mut buffer);
+        let buf = unsafe { change_buffer_from_vec(&mut buffer) };
         let mut index = 0;
         assert!(BufferedOperation::from_buf(&buf, &mut index).is_err());
     }

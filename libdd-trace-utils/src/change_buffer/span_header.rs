@@ -1,12 +1,11 @@
 /// Fixed-layout span header for direct JS DataView access.
 ///
-/// JS creates a DataView over each span's header in WASM linear memory and
-/// writes fields directly — no change buffer protocol, no staging, no copy.
+/// JS creates a DataView over each span's header in WASM linear memory and writes fields directly.
 ///
-/// String fields store string table IDs (u32) resolved to real strings at
+/// Strings are interned. String fields store string table IDs (u32) resolved to real strings at
 /// flush time. Numeric fields are stored directly.
 ///
-/// Meta/metrics tags are NOT in the header — they still go through the
+/// Meta/metrics tags are NOT in the header. They still go through the
 /// change buffer protocol since their count varies per span.
 #[repr(C)]
 #[derive(Default, Clone)]
@@ -27,12 +26,6 @@ pub struct SpanHeader {
     pub active: u32, // offset 68 (1 = in use, 0 = free)
 }
 
-/// Size of the header in bytes. Must match the #[repr(C)] layout.
-pub const SPAN_HEADER_SIZE: usize = std::mem::size_of::<SpanHeader>();
-
-// Compile-time assertion that the struct is the expected size.
-const _: () = assert!(SPAN_HEADER_SIZE == 72);
-
 /// Field offsets for JS DataView access.
 pub mod offsets {
     pub const SPAN_ID: usize = 0;
@@ -48,3 +41,23 @@ pub mod offsets {
     pub const TYPE_ID: usize = 64;
     pub const ACTIVE: usize = 68;
 }
+
+/// Size of the header in bytes. Must match the #[repr(C)] layout.
+pub const SPAN_HEADER_SIZE: usize = std::mem::size_of::<SpanHeader>();
+
+// Compile-time assertions that the struct layout matches the declared offsets and size.
+const _: () = {
+    assert!(SPAN_HEADER_SIZE == 72);
+    assert!(std::mem::offset_of!(SpanHeader, span_id) == offsets::SPAN_ID);
+    assert!(std::mem::offset_of!(SpanHeader, trace_id_lo) == offsets::TRACE_ID_LO);
+    assert!(std::mem::offset_of!(SpanHeader, trace_id_hi) == offsets::TRACE_ID_HI);
+    assert!(std::mem::offset_of!(SpanHeader, parent_id) == offsets::PARENT_ID);
+    assert!(std::mem::offset_of!(SpanHeader, start) == offsets::START);
+    assert!(std::mem::offset_of!(SpanHeader, duration) == offsets::DURATION);
+    assert!(std::mem::offset_of!(SpanHeader, error) == offsets::ERROR);
+    assert!(std::mem::offset_of!(SpanHeader, name_id) == offsets::NAME_ID);
+    assert!(std::mem::offset_of!(SpanHeader, service_id) == offsets::SERVICE_ID);
+    assert!(std::mem::offset_of!(SpanHeader, resource_id) == offsets::RESOURCE_ID);
+    assert!(std::mem::offset_of!(SpanHeader, type_id) == offsets::TYPE_ID);
+    assert!(std::mem::offset_of!(SpanHeader, active) == offsets::ACTIVE);
+};

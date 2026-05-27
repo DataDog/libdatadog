@@ -1,6 +1,8 @@
 use crate::change_buffer::utils::*;
 use crate::change_buffer::{ChangeBufferError, Result};
 
+/// A handle to a change buffer shared with another runtime. The memory is shared, meaning that
+/// cloning is cheap (copying the pointer and length).
 #[derive(Clone, Copy)]
 pub struct ChangeBuffer {
     ptr: *mut u8,
@@ -9,6 +11,8 @@ pub struct ChangeBuffer {
 
 impl ChangeBuffer {
     /// # Safety
+    ///
+    /// The underlying raw memory must be valid for reads and writes.
     ///
     /// The underlying raw memory must not be freed until after this struct's
     /// lifetime. Having the calling code manage the memory makes it simpler to
@@ -20,17 +24,25 @@ impl ChangeBuffer {
         }
     }
 
-    fn as_slice(&self) -> &[u8] {
+    /// # Safety
+    ///
+    /// Same safety conditions as [std::slice::from_raw_parts].
+    unsafe fn as_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
 
-    fn as_mut_slice(&mut self) -> &mut [u8] {
+    /// # Safety
+    ///
+    /// Same safety conditions as [std::slice::from_raw_parts_mut].
+    unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 
     pub fn read<T: Copy + FromBytes>(&self, index: &mut usize) -> Result<T> {
         let size = std::mem::size_of::<T>();
-        let slice = self.as_slice();
+        // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
+        // construction time. We do not materialize other references during the lifetime of `slice`.
+        let slice = unsafe { self.as_slice() };
         let bytes = slice
             .get(*index..*index + size)
             .ok_or(ChangeBufferError::ReadOutOfBounds {
@@ -42,20 +54,27 @@ impl ChangeBuffer {
     }
 
     /// Read a value without bounds checking.
+    ///
     /// # Safety
+    ///
     /// Caller must ensure `*index + size_of::<T>() <= self.len`.
     #[inline(always)]
     pub unsafe fn read_unchecked<T: Copy + FromBytes>(&self, index: &mut usize) -> T {
         let size = std::mem::size_of::<T>();
-        let slice = self.as_slice();
+        // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
+        // construction time. We do not materialize other references during the lifetime of `slice`.
+        let slice = unsafe { self.as_slice() };
         let bytes = slice.get_unchecked(*index..*index + size);
         *index += size;
         T::from_bytes(bytes)
     }
 
+    /// Write a raw `u32` in the buffer.
     pub fn write_u32(&mut self, offset: usize, value: u32) -> Result<()> {
         let len = self.len;
-        let slice = self.as_mut_slice();
+        // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
+        // construction time. We do not materialize other references during the lifetime of `slice`.
+        let slice = unsafe { self.as_mut_slice() };
         let target = slice
             .get_mut(offset..offset + 4)
             .ok_or(ChangeBufferError::WriteOutOfBounds { offset, len })?;
@@ -64,6 +83,8 @@ impl ChangeBuffer {
         Ok(())
     }
 
+    /// Clear the op count, which is stored in the first 4 bytes of the buffer. This effectively
+    /// reset the buffer (semantically), but without actually zeroing the rest.
     pub fn clear_count(&mut self) -> Result<()> {
         self.write_u32(0, 0)
     }
@@ -80,10 +101,14 @@ mod tests {
             let buf: [u8; 256] = std::mem::zeroed();
             ChangeBuffer::from_raw_parts(buf.as_ptr(), 256)
         };
-        let slice = buf.as_mut_slice();
-        assert_eq!(256, slice.len());
-        slice[1] = 42;
-        let slice = buf.as_slice();
+        {
+            // Safety: slice is the only reference to the buffer in its scope.
+            let slice = unsafe { buf.as_mut_slice() };
+            assert_eq!(256, slice.len());
+            slice[1] = 42;
+        }
+        // Safety: slice is the only reference to the buffer in its scope.
+        let slice = unsafe { buf.as_slice() };
         assert_eq!(256, slice.len());
         assert_eq!(42, slice[1]);
     }
