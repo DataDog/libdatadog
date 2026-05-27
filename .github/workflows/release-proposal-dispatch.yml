@@ -55,6 +55,7 @@ env:
   MAIN_BRANCH: main
   RELEASE_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-testing' || 'release' }}
   PROPOSAL_BRANCH_PREFIX: ${{ inputs.bypass_standard_checks && 'release-proposal-testing' || 'release-proposal' }}
+  HOTFIX_REF_PATTERN: '^hotfix/[^/]+/[0-9]+\.x\.x$'
 
 jobs:
   check-proposal-ongoing:
@@ -247,10 +248,36 @@ jobs:
               echo "Try a full SHA, a branch/tag name on origin, or refs/heads/... / refs/tags/..." >&2
               exit 1
             fi
+
+            # Reject pull-request refs outright: they can be pushed by anyone with a fork.
+            case "$REF" in
+              refs/pull/*|pull/*)
+                echo "Error: refs/pull/* refs are not allowed as main_start_ref." >&2
+                exit 1
+                ;;
+            esac
+
+            # Verify the resolved commit is reachable from a trusted ref before checking it out.
+            # Trusted: origin/${{ env.MAIN_BRANCH }}, or the matching origin/hotfix/<crate>/N.x.x branch.
+            TRUSTED=false
+            if git merge-base --is-ancestor "$COMMIT" "origin/${{ env.MAIN_BRANCH }}" 2>/dev/null; then
+              TRUSTED=true
+            elif [[ "$REF" =~ $HOTFIX_REF_PATTERN ]] \
+                 && git rev-parse -q --verify "origin/${REF}^{commit}" >/dev/null 2>&1 \
+                 && git merge-base --is-ancestor "$COMMIT" "origin/${REF}" 2>/dev/null; then
+              TRUSTED=true
+            fi
+
+            if [ "$TRUSTED" != "true" ]; then
+              echo "Error: resolved commit ${COMMIT} is not reachable from origin/${{ env.MAIN_BRANCH }} or a recognised origin/hotfix/<crate>/N.x.x branch." >&2
+              echo "main_start_ref must point at a commit on a trusted branch." >&2
+              exit 1
+            fi
+
             # Hotfix releases use the hotfix branch itself as the ephemeral branch.
             # If a hotfix branch name was provided and exists on origin, check it out as a branch
             # (not a detached commit) so later steps can use it as a PR base.
-            if [[ "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]] && git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
+            if [[ "$REF" =~ $HOTFIX_REF_PATTERN ]] && git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
               git checkout -B "$REF" "origin/$REF"
               echo "Release cut from hotfix branch '$REF' -> $(git rev-parse --short HEAD) ($(git log -1 --oneline))"
             else
@@ -262,15 +289,31 @@ jobs:
             git reset --hard "origin/${{ env.MAIN_BRANCH }}"
             echo "Release cut from origin/${{ env.MAIN_BRANCH }} tip ($(git rev-parse --short HEAD))."
           fi
-      
+
+      - name: Reject untrusted cargo-release configuration
+        run: |
+          set -euo pipefail
+          # cargo-release supports pre-release-hook (arbitrary command execution) and
+          # pre-release-replacements (arbitrary file rewriting). Neither is used by this repo,
+          # so reject any tree that injects them. This stops a malicious main_start_ref from
+          # executing code with the job's OIDC mint capability via the cargo-release step.
+          FORBIDDEN=$(grep -rEn '(^|[[:space:]])"?(pre-release-hook|pre-release-replacements)"?[[:space:]]*=' \
+            --include='Cargo.toml' --include='release.toml' . || true)
+          if [ -n "$FORBIDDEN" ]; then
+            echo "Error: forbidden cargo-release configuration detected in the checked-out tree:" >&2
+            echo "$FORBIDDEN" >&2
+            exit 1
+          fi
+
       - name: Create ephemeral release branch
         id: ephemeral-branch
+        env:
+          MAIN_START_REF: ${{ inputs.main_start_ref }}
         run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-          MAIN_START_REF="${{ inputs.main_start_ref }}"
           REF="$(echo "${MAIN_START_REF:-}" | tr -d '[:space:]')"
 
-          if [[ -n "$REF" && "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]]; then
+          if [[ -n "$REF" && "$REF" =~ $HOTFIX_REF_PATTERN ]]; then
             # Hotfix: use the hotfix branch itself as the ephemeral branch (no new branch created).
             if ! git rev-parse -q --verify "origin/$REF^{commit}" >/dev/null 2>&1; then
               echo "Error: hotfix branch does not exist on origin: $REF" >&2
