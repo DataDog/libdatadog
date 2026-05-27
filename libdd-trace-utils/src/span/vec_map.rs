@@ -183,6 +183,19 @@ impl<K, V> VecMap<K, V> {
     pub fn is_deduped(&self) -> bool {
         self.deduped
     }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.data.clear()
+    }
+
+    #[inline]
+    pub fn drain<R: std::ops::RangeBounds<usize>>(
+        &mut self,
+        range: R,
+    ) -> std::vec::Drain<'_, (K, V)> {
+        self.data.drain(range)
+    }
 }
 
 impl<K: Eq + Hash, V> VecMap<K, V> {
