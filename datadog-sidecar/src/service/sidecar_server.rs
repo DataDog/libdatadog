@@ -46,7 +46,7 @@ use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
-use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_telemetry::config::Config;
@@ -112,6 +112,8 @@ pub struct SidecarServer {
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// Per-env&version SHM span concentrators (global across all sessions).
     pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
+    /// HTTP client shared by FFE fire-and-forget forwarders for connection reuse.
+    pub(crate) ffe_http_client: NativeCapabilities,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -414,6 +416,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         // remote-config metadata. The PHP exposure/metric writers can fire as soon
         // as evaluations begin, which is often earlier than the first RC config
         // registration call.
+        let ffe_http_client = self.server.ffe_http_client.clone();
         let actions: Vec<SidecarAction> = actions
             .into_iter()
             .filter(|a| match a {
@@ -421,8 +424,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     if let Some(base) = trace_config.endpoint.as_ref() {
                         if let Some(ep) = ffe_exposures_flusher::exposure_endpoint(base) {
                             let payload = payload.clone();
+                            let client = ffe_http_client.clone();
                             tokio::spawn(async move {
-                                let client = NativeCapabilities::new_client();
                                 ffe_exposures_flusher::send_payload(&client, &ep, payload).await;
                             });
                         } else {
@@ -438,8 +441,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 SidecarAction::FfeMetrics { endpoint, payload } => {
                     if let Some(ep) = ffe_metrics_flusher::otlp_metrics_endpoint(endpoint) {
                         let payload = payload.clone();
+                        let client = ffe_http_client.clone();
                         tokio::spawn(async move {
-                            let client = NativeCapabilities::new_client();
                             ffe_metrics_flusher::send_payload(&client, &ep, payload).await;
                         });
                     } else {

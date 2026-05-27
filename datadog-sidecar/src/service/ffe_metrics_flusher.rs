@@ -12,9 +12,9 @@
 //! and the sidecar performs the HTTP POST.
 
 use http::Method;
-use libdd_capabilities::Bytes;
-use libdd_capabilities_impl::HttpClientCapability;
+use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use std::time::Duration;
 use tracing::{debug, warn};
 
 const USER_AGENT: &str = concat!("ddtrace-php-sidecar/", env!("CARGO_PKG_VERSION"));
@@ -37,7 +37,7 @@ pub(crate) fn otlp_metrics_endpoint(url: &str) -> Option<Endpoint> {
 /// POST a single OTLP/protobuf metrics payload to the configured intake.
 /// Fire-and-forget: non-2xx responses and network errors are logged and
 /// dropped (matches dd-trace-go/py OTLP exporter behavior).
-pub(crate) async fn send_payload<C: HttpClientCapability>(
+pub(crate) async fn send_payload<C: HttpClientCapability + SleepCapability>(
     client: &C,
     endpoint: &Endpoint,
     payload: Vec<u8>,
@@ -62,7 +62,17 @@ pub(crate) async fn send_payload<C: HttpClientCapability>(
         }
     };
 
-    match client.request(req).await {
+    let timeout = Duration::from_millis(endpoint.timeout_ms);
+    let response = tokio::select! {
+        biased;
+        result = client.request(req) => result,
+        _ = client.sleep(timeout) => {
+            debug!("ffe_metrics_flusher: request timed out after {timeout:?}");
+            return;
+        }
+    };
+
+    match response {
         Ok(resp) => {
             let status = resp.status();
             if !status.is_success() {
@@ -87,7 +97,9 @@ fn truncate(bytes: &[u8], cap: usize) -> String {
 mod tests {
     use super::*;
     use httpmock::MockServer;
+    use libdd_capabilities::{HttpError, MaybeSend};
     use libdd_capabilities_impl::NativeCapabilities;
+    use std::future;
 
     /// POST hits the configured OTLP metrics path with application/x-protobuf.
     #[tokio::test]
@@ -134,6 +146,17 @@ mod tests {
         send_payload(&client, &ep, vec![0u8; 4]).await;
     }
 
+    #[tokio::test]
+    async fn timeout_returns_without_waiting_for_http_response() {
+        let ep = Endpoint {
+            url: "http://localhost:4318/v1/metrics".parse().unwrap(),
+            timeout_ms: 1,
+            ..Endpoint::default()
+        };
+
+        send_payload(&HangingCapabilities, &ep, vec![0u8; 4]).await;
+    }
+
     #[test]
     fn default_endpoint_is_parseable() {
         let ep = otlp_metrics_endpoint("http://localhost:4318/v1/metrics").unwrap();
@@ -144,5 +167,32 @@ mod tests {
     #[test]
     fn invalid_url_returns_none() {
         assert!(otlp_metrics_endpoint("not a url").is_none());
+    }
+
+    #[derive(Clone, Debug)]
+    struct HangingCapabilities;
+
+    impl HttpClientCapability for HangingCapabilities {
+        fn new_client() -> Self {
+            Self
+        }
+
+        fn request(
+            &self,
+            _req: http::Request<Bytes>,
+        ) -> impl future::Future<Output = Result<http::Response<Bytes>, HttpError>> + MaybeSend
+        {
+            future::pending()
+        }
+    }
+
+    impl SleepCapability for HangingCapabilities {
+        fn new() -> Self {
+            Self
+        }
+
+        fn sleep(&self, _duration: Duration) -> impl future::Future<Output = ()> + MaybeSend {
+            async {}
+        }
     }
 }

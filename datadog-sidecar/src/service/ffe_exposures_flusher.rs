@@ -10,9 +10,9 @@
 
 use http::uri::PathAndQuery;
 use http::Method;
-use libdd_capabilities::Bytes;
-use libdd_capabilities_impl::HttpClientCapability;
+use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use std::time::Duration;
 use tracing::{debug, warn};
 
 /// EVP proxy path for FFE exposure intake.
@@ -40,7 +40,7 @@ pub(crate) fn exposure_endpoint(base: &Endpoint) -> Option<Endpoint> {
 /// POST a single FFE exposure payload to the agent EVP proxy.
 /// Fire-and-forget: non-2xx responses and network errors are logged at `debug`
 /// and dropped (matches dd-trace-go behaviour).
-pub(crate) async fn send_payload<C: HttpClientCapability>(
+pub(crate) async fn send_payload<C: HttpClientCapability + SleepCapability>(
     client: &C,
     endpoint: &Endpoint,
     payload: String,
@@ -66,7 +66,17 @@ pub(crate) async fn send_payload<C: HttpClientCapability>(
         }
     };
 
-    match client.request(req).await {
+    let timeout = Duration::from_millis(endpoint.timeout_ms);
+    let response = tokio::select! {
+        biased;
+        result = client.request(req) => result,
+        _ = client.sleep(timeout) => {
+            debug!("ffe_exposures_flusher: request timed out after {timeout:?}");
+            return;
+        }
+    };
+
+    match response {
         Ok(resp) => {
             let status = resp.status();
             if !status.is_success() {
@@ -92,7 +102,9 @@ fn truncate(bytes: &[u8], cap: usize) -> String {
 mod tests {
     use super::*;
     use httpmock::MockServer;
+    use libdd_capabilities::{HttpError, MaybeSend};
     use libdd_capabilities_impl::NativeCapabilities;
+    use std::future;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
         Endpoint {
@@ -150,6 +162,17 @@ mod tests {
         send_payload(&client, &ep, "{}".to_owned()).await;
     }
 
+    #[tokio::test]
+    async fn timeout_returns_without_waiting_for_http_response() {
+        let ep = Endpoint {
+            url: "http://localhost:8126".parse().unwrap(),
+            timeout_ms: 1,
+            ..Endpoint::default()
+        };
+
+        send_payload(&HangingCapabilities, &ep, "{}".to_owned()).await;
+    }
+
     #[test]
     fn endpoint_preserves_authority_overrides_path() {
         let base = Endpoint {
@@ -160,5 +183,32 @@ mod tests {
         assert_eq!(ep.url.scheme_str(), Some("http"));
         assert_eq!(ep.url.authority().unwrap().as_str(), "agent.internal:8126");
         assert_eq!(ep.url.path(), EVP_EXPOSURES_PATH);
+    }
+
+    #[derive(Clone, Debug)]
+    struct HangingCapabilities;
+
+    impl HttpClientCapability for HangingCapabilities {
+        fn new_client() -> Self {
+            Self
+        }
+
+        fn request(
+            &self,
+            _req: http::Request<Bytes>,
+        ) -> impl future::Future<Output = Result<http::Response<Bytes>, HttpError>> + MaybeSend
+        {
+            future::pending()
+        }
+    }
+
+    impl SleepCapability for HangingCapabilities {
+        fn new() -> Self {
+            Self
+        }
+
+        fn sleep(&self, _duration: Duration) -> impl future::Future<Output = ()> + MaybeSend {
+            async {}
+        }
     }
 }
