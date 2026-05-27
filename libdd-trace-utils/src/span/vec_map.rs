@@ -5,7 +5,8 @@
 //! by a vector. Spans are mostly allocated and constructed, and more rarely read or mutated.
 //! [VecMap] is thus optimized for insertion (which is just `Vec::push`), without any hashing
 //! involved. Fetching and removing a value is, on the other hand, linear time in the size of the
-//! map.
+//! map. However, since meta and metrics are expected to be typically small (20ish elements or
+//! less), linear scan is usually still competitive with hashmap's `get`.
 
 use serde::ser::{Serialize, Serializer};
 use std::borrow::Borrow;
@@ -18,8 +19,8 @@ use std::hash::Hash;
 ///
 /// Duplicates are tolerated: [VecMap::insert] always appends, and [VecMap::get]/[VecMap::get_mut]
 /// return the *last* matching entry so that later writes shadow earlier ones. This optimizes for
-/// fast insert and construction (that might happen on the client's application hot path), avoiding
-/// a linear scan on each insert (or a potential costly full re-hashing with a hashmap).
+/// fast insertion and construction (that might happen on the client's application hot path),
+/// avoiding a linear scan on each insert, or a potential full re-hashing with a hashmap.
 /// Additionally, while overriding a metric or a meta definitively happens, it's assumed to be rare
 /// enough so such that the size penalty of duplication is expected to be reasonable.
 ///
@@ -170,14 +171,14 @@ impl<K, V> Extend<(K, V)> for VecMap<K, V> {
 
 impl<K: Serialize + Eq + Hash, V: Serialize> Serialize for VecMap<K, V> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        // We pre-compute the deduped map. If deduplication is done on the fly during serialization,
-        // we can't provide a length up front to the serializer, and the current one (rmp) will
-        // allocate an intermediate buffer defensively.
+        // We pre-compute the deduped map. If deduplication were done on the fly during
+        // serialization, we couldn't provide a length up front to the serializer, and the current
+        // one (rmp) will allocate an intermediate buffer defensively.
         self.0
             .iter()
             .map(|(k, v)| (k, v))
             // Since the iterator is sized, `collect()` should pre-allocate with the right capacity
-            // directly.
+            // in one shot.
             .collect::<HashMap<&K, &V>>()
             .serialize(serializer)
     }
