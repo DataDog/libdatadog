@@ -14,7 +14,7 @@ use libdd_data_pipeline::trace_exporter::{
     TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 
-type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities>;
 
 use libdd_shared_runtime::SharedRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
