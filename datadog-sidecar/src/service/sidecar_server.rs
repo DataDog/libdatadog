@@ -114,6 +114,8 @@ pub struct SidecarServer {
     pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
     /// HTTP client shared by FFE fire-and-forget forwarders for connection reuse.
     pub(crate) ffe_http_client: NativeCapabilities,
+    /// Sidecar-owned exposure cache, shared across sessions/connections.
+    pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -420,13 +422,20 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let actions: Vec<SidecarAction> = actions
             .into_iter()
             .filter(|a| match a {
-                SidecarAction::FfeExposures(payload) => {
+                SidecarAction::FfeExposureBatch(batch) => {
                     if let Some(base) = trace_config.endpoint.as_ref() {
                         if let Some(ep) = ffe_exposures_flusher::exposure_endpoint(base) {
-                            let payload = payload.clone();
+                            let batch = batch.clone();
                             let client = ffe_http_client.clone();
+                            let deduplicator = self.server.ffe_exposure_deduplicator.clone();
                             tokio::spawn(async move {
-                                ffe_exposures_flusher::send_payload(&client, &ep, payload).await;
+                                ffe_exposures_flusher::send_batch(
+                                    &client,
+                                    &ep,
+                                    &deduplicator,
+                                    batch,
+                                )
+                                .await;
                             });
                         } else {
                             debug!(
@@ -438,12 +447,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     }
                     false
                 }
-                SidecarAction::FfeMetrics { endpoint, payload } => {
+                SidecarAction::FfeEvaluationMetrics {
+                    endpoint,
+                    context,
+                    metrics,
+                } => {
                     if let Some(ep) = ffe_metrics_flusher::otlp_metrics_endpoint(endpoint) {
-                        let payload = payload.clone();
                         let client = ffe_http_client.clone();
+                        let context = context.clone();
+                        let metrics = metrics.clone();
                         tokio::spawn(async move {
-                            ffe_metrics_flusher::send_payload(&client, &ep, payload).await;
+                            ffe_metrics_flusher::send_metrics(&client, &ep, context, metrics).await;
                         });
                     } else {
                         debug!(
@@ -1133,8 +1147,38 @@ impl SidecarInterface for ConnectionSidecarHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::{FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeTelemetryContext};
     use httpmock::{Method::POST, MockServer};
     use tokio::time::{sleep, Duration as TokioDuration};
+
+    fn ffe_context() -> FfeTelemetryContext {
+        FfeTelemetryContext {
+            service: "svc".to_owned(),
+            env: "prod".to_owned(),
+            version: "1".to_owned(),
+        }
+    }
+
+    fn ffe_exposure(subject_id: &str) -> FfeExposure {
+        FfeExposure {
+            timestamp_ms: 123,
+            flag_key: "flag".to_owned(),
+            subject_id: subject_id.to_owned(),
+            subject_attributes_json: "{}".to_owned(),
+            allocation_key: "alloc".to_owned(),
+            variant: "variant".to_owned(),
+        }
+    }
+
+    fn ffe_metric() -> FfeEvaluationMetric {
+        FfeEvaluationMetric {
+            flag_key: "flag".to_owned(),
+            variant: "variant".to_owned(),
+            reason: "TARGETING_MATCH".to_owned(),
+            error_type: None,
+            allocation_key: Some("alloc".to_owned()),
+        }
+    }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
@@ -1181,10 +1225,14 @@ mod tests {
                 instance_id.clone(),
                 queue_id,
                 vec![
-                    SidecarAction::FfeExposures(r#"{"exposures":[]}"#.to_owned()),
-                    SidecarAction::FfeMetrics {
+                    SidecarAction::FfeExposureBatch(FfeExposureBatch {
+                        context: ffe_context(),
+                        exposures: vec![ffe_exposure("user")],
+                    }),
+                    SidecarAction::FfeEvaluationMetrics {
                         endpoint: http_server.url("/v1/metrics"),
-                        payload: vec![0x0a, 0x00],
+                        context: ffe_context(),
+                        metrics: vec![ffe_metric()],
                     },
                 ],
             )
@@ -1204,6 +1252,67 @@ mod tests {
             .get_runtime(&instance_id)
             .lock_applications()
             .contains_key(&queue_id));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn registered_sdk_without_ffe_actions_does_not_emit_ffe_telemetry() {
+        let http_server = MockServer::start_async().await;
+        let exposures_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(ffe_exposures_flusher::EVP_EXPOSURES_PATH);
+                then.status(202);
+            })
+            .await;
+        let metrics_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1/metrics");
+                then.status(202);
+            })
+            .await;
+
+        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .entry(queue_id)
+            .or_default();
+
+        assert!(handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+
+        handler
+            .enqueue_actions(
+                PeerCredentials::default(),
+                instance_id,
+                queue_id,
+                Vec::new(),
+            )
+            .await;
+
+        sleep(TokioDuration::from_millis(50)).await;
+
+        assert_eq!(exposures_mock.calls_async().await, 0);
+        assert_eq!(metrics_mock.calls_async().await, 0);
     }
 }
 

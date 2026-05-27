@@ -27,7 +27,9 @@ use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
-    DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeMetadata,
+    DynamicInstrumentationConfigState, FfeEvaluationMetric as SidecarFfeEvaluationMetric,
+    FfeExposure as SidecarFfeExposure, FfeExposureBatch as SidecarFfeExposureBatch,
+    FfeTelemetryContext as SidecarFfeTelemetryContext, InstanceId, QueueId, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
@@ -35,7 +37,7 @@ use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigRea
 use libc::c_char;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
-use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice};
+use libdd_common_ffi::slice::{AsBytes, CharSlice, Slice};
 use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
 use libdd_crashtracker_ffi::Metadata;
@@ -1116,71 +1118,168 @@ pub unsafe extern "C" fn ddog_sidecar_send_debugger_datum(
     ddog_sidecar_send_debugger_data(transport, instance_id, queue_id, vec![*payload])
 }
 
-/// Forward a single FFE (Feature Flag Evaluation) exposure batch payload to
-/// the sidecar. The sidecar asynchronously POSTs it to the agent EVP proxy
-/// at `/evp_proxy/v2/api/v2/exposures`.
-///
-/// The payload is produced by `ddog_ffe_flush_exposures()` in `components-rs`.
-/// A null or zero-length slice is a no-op (the PHP side indicates "nothing to
-/// flush" by returning such a slice).
+#[repr(C)]
+pub struct FfeTelemetryContext<'a> {
+    pub service: CharSlice<'a>,
+    pub env: CharSlice<'a>,
+    pub version: CharSlice<'a>,
+}
+
+#[repr(C)]
+pub struct FfeExposure<'a> {
+    pub timestamp_ms: u64,
+    pub flag_key: CharSlice<'a>,
+    pub subject_id: CharSlice<'a>,
+    /// UTF-8 JSON object. Empty, invalid, or non-object JSON is serialized as
+    /// an empty subject attribute object.
+    pub subject_attributes_json: CharSlice<'a>,
+    pub allocation_key: CharSlice<'a>,
+    pub variant: CharSlice<'a>,
+}
+
+#[repr(C)]
+pub struct FfeEvaluationMetric<'a> {
+    pub flag_key: CharSlice<'a>,
+    pub variant: CharSlice<'a>,
+    pub reason: CharSlice<'a>,
+    pub error_type: CharSlice<'a>,
+    pub allocation_key: CharSlice<'a>,
+}
+
+/// Send structured FFE exposure events to the sidecar. The sidecar owns
+/// deduplication, JSON serialization, and Agent EVP delivery. This function is
+/// caller-driven; shared libdatadog evaluator calls do not log unless an SDK
+/// explicitly sends this action.
 ///
 /// # Safety
-/// `payload` must be a valid UTF-8 `CharSlice` (as returned by
-/// `ddog_ffe_flush_exposures`) or a default (null, 0) slice.
+/// `context` and every element in `exposures` must contain valid UTF-8
+/// `CharSlice` values. Empty `exposures` is a no-op.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposures(
+pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
-    payload: CharSlice,
+    context: &FfeTelemetryContext<'_>,
+    exposures: Slice<FfeExposure<'_>>,
 ) -> MaybeError {
-    if payload.is_empty() {
+    if exposures.is_empty() {
         return MaybeError::None;
     }
-    let payload = try_c!(char_slice_to_string(payload));
+
+    let context = try_c!(ffe_context_from_ffi(context));
+    let exposures = try_c!(exposures
+        .try_as_slice()
+        .map_err(|e| format!("Invalid exposure slice: {e}"))
+        .and_then(|exposures| exposures
+            .iter()
+            .map(ffe_exposure_from_ffi)
+            .collect::<Result<Vec<_>, _>>()));
+
+    if exposures.is_empty() {
+        return MaybeError::None;
+    }
+
     try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
         queue_id,
-        vec![SidecarAction::FfeExposures(payload)],
+        vec![SidecarAction::FfeExposureBatch(SidecarFfeExposureBatch {
+            context,
+            exposures,
+        })],
     ));
     MaybeError::None
 }
 
-/// Forward a single FFE (Feature Flag Evaluation) metrics batch payload to
-/// the sidecar. The sidecar asynchronously POSTs the OTLP/protobuf bytes to
-/// the OTLP HTTP metrics intake at the given `endpoint` URL (typically the
-/// value of `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, default
-/// `http://localhost:4318/v1/metrics`).
-///
-/// The PHP-side `OtlpMetricEncoder` produces `payload`. A null/empty payload
-/// or an empty endpoint is a no-op.
+/// Send structured FFE evaluation metric events to the sidecar. The sidecar
+/// owns aggregation, OTLP/protobuf serialization, and OTLP HTTP delivery. This
+/// function is caller-driven so SDKs with existing host-language hooks can
+/// safely coexist until they explicitly migrate.
 ///
 /// # Safety
-/// `endpoint` must be a valid UTF-8 `CharSlice`. `payload` must be a valid
-/// `ByteSlice` (as returned by the PHP encoder).
+/// `endpoint`, `context`, and every element in `metrics` must contain valid
+/// UTF-8 `CharSlice` values. Empty `endpoint` or `metrics` is a no-op.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_send_ffe_metrics(
+pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
     endpoint: CharSlice,
-    payload: ByteSlice,
+    context: &FfeTelemetryContext<'_>,
+    metrics: Slice<FfeEvaluationMetric<'_>>,
 ) -> MaybeError {
-    if endpoint.is_empty() || payload.is_empty() {
+    if endpoint.is_empty() || metrics.is_empty() {
         return MaybeError::None;
     }
+
     let endpoint = try_c!(char_slice_to_string(endpoint));
-    let payload = payload.as_slice().to_vec();
+    let context = try_c!(ffe_context_from_ffi(context));
+    let metrics = try_c!(metrics
+        .try_as_slice()
+        .map_err(|e| format!("Invalid metric slice: {e}"))
+        .and_then(|metrics| metrics
+            .iter()
+            .map(ffe_metric_from_ffi)
+            .collect::<Result<Vec<_>, _>>()));
+
+    if metrics.is_empty() {
+        return MaybeError::None;
+    }
+
     try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
         queue_id,
-        vec![SidecarAction::FfeMetrics { endpoint, payload }],
+        vec![SidecarAction::FfeEvaluationMetrics {
+            endpoint,
+            context,
+            metrics,
+        }],
     ));
     MaybeError::None
+}
+
+fn ffe_context_from_ffi(
+    context: &FfeTelemetryContext<'_>,
+) -> Result<SidecarFfeTelemetryContext, String> {
+    Ok(SidecarFfeTelemetryContext {
+        service: char_slice_to_string(context.service)?,
+        env: char_slice_to_string(context.env)?,
+        version: char_slice_to_string(context.version)?,
+    })
+}
+
+fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposure, String> {
+    Ok(SidecarFfeExposure {
+        timestamp_ms: exposure.timestamp_ms,
+        flag_key: char_slice_to_string(exposure.flag_key)?,
+        subject_id: char_slice_to_string(exposure.subject_id)?,
+        subject_attributes_json: char_slice_to_string(exposure.subject_attributes_json)?,
+        allocation_key: char_slice_to_string(exposure.allocation_key)?,
+        variant: char_slice_to_string(exposure.variant)?,
+    })
+}
+
+fn ffe_metric_from_ffi(
+    metric: &FfeEvaluationMetric<'_>,
+) -> Result<SidecarFfeEvaluationMetric, String> {
+    Ok(SidecarFfeEvaluationMetric {
+        flag_key: char_slice_to_string(metric.flag_key)?,
+        variant: char_slice_to_string(metric.variant)?,
+        reason: char_slice_to_string(metric.reason)?,
+        error_type: optional_string(metric.error_type)?,
+        allocation_key: optional_string(metric.allocation_key)?,
+    })
+}
+
+fn optional_string(slice: CharSlice) -> Result<Option<String>, String> {
+    if slice.is_empty() {
+        Ok(None)
+    } else {
+        char_slice_to_string(slice).map(Some)
+    }
 }
 
 #[no_mangle]

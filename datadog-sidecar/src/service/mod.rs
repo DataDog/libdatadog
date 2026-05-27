@@ -84,20 +84,49 @@ pub enum SidecarAction {
     Telemetry(TelemetryActions),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
-    /// FFE exposure payload (a JSON batch envelope produced by
-    /// `ddog_ffe_flush_exposures`). The sidecar forwards it to the agent's
-    /// EVP proxy at `/evp_proxy/v2/api/v2/exposures` with the
-    /// `X-Datadog-EVP-Subdomain: event-platform-intake` header.
-    FfeExposures(String),
-    /// FFE evaluation-metric payload (OTLP/protobuf encoded by the PHP-side
-    /// `OtlpMetricEncoder`). The sidecar POSTs it as `application/x-protobuf`
-    /// to the user-configured OTLP metrics endpoint (typically
-    /// `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, default
-    /// `http://localhost:4318/v1/metrics`). The endpoint travels with the
-    /// payload because OTLP collectors are not the Datadog Agent and the
-    /// sidecar has no session-level OTLP base.
-    FfeMetrics {
+    /// Structured FFE exposures. The sidecar owns JSON serialization,
+    /// cross-request deduplication, and EVP delivery.
+    FfeExposureBatch(FfeExposureBatch),
+    /// Structured FFE evaluation metrics. The sidecar owns OTLP/protobuf
+    /// aggregation, serialization, and delivery. This action must be sent only
+    /// by SDKs that explicitly opted into native FFE metric ownership.
+    FfeEvaluationMetrics {
         endpoint: String,
-        payload: Vec<u8>,
+        context: FfeTelemetryContext,
+        metrics: Vec<FfeEvaluationMetric>,
     },
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct FfeTelemetryContext {
+    pub service: String,
+    pub env: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FfeExposureBatch {
+    pub context: FfeTelemetryContext,
+    pub exposures: Vec<FfeExposure>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FfeExposure {
+    pub timestamp_ms: u64,
+    pub flag_key: String,
+    pub subject_id: String,
+    /// JSON object encoded by the tracer. Invalid or non-object JSON is treated
+    /// as an empty object during EVP payload serialization.
+    pub subject_attributes_json: String,
+    pub allocation_key: String,
+    pub variant: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FfeEvaluationMetric {
+    pub flag_key: String,
+    pub variant: String,
+    pub reason: String,
+    pub error_type: Option<String>,
+    pub allocation_key: Option<String>,
 }
