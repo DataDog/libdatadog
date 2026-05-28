@@ -13,11 +13,14 @@ use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
+use libdd_common_ffi::handle::{Handle, ToInner};
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::v04::SpanBytes;
 use std::ptr::NonNull;
+
+type TokioCancellationToken = tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -296,6 +299,53 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 }
 
 // ---------------------------------------------------------------------------
+// Cancellation token
+// ---------------------------------------------------------------------------
+
+/// Create a new cancellation token.
+///
+/// The returned handle must be freed with
+/// [`ddog_trace_exporter_cancel_token_drop`].
+#[no_mangle]
+pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Handle<TokioCancellationToken> {
+    Handle::from(TokioCancellationToken::new())
+}
+
+/// Cancel a cancellation token.
+///
+/// All clones of the same token observe the cancellation. If the token is
+/// currently passed to [`ddog_trace_exporter_send_trace_chunks`], the
+/// in-flight HTTP request will be aborted cooperatively.
+///
+/// # Safety
+///
+/// * `token` must point to a valid [`Handle`] returned by
+///   [`ddog_trace_exporter_cancel_token_new`].
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_cancel_token_cancel(
+    mut token: *mut Handle<TokioCancellationToken>,
+) {
+    if let Ok(inner) = token.to_inner_mut() {
+        inner.cancel();
+    }
+}
+
+/// Free a cancellation token handle.
+///
+/// After this call the pointer is invalid and must not be reused.
+///
+/// # Safety
+///
+/// * `token` must point to a valid [`Handle`] returned by
+///   [`ddog_trace_exporter_cancel_token_new`], or be null.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_cancel_token_drop(
+    mut token: *mut Handle<TokioCancellationToken>,
+) {
+    drop(token.take());
+}
+
+// ---------------------------------------------------------------------------
 // Send trace chunks
 // ---------------------------------------------------------------------------
 
@@ -304,6 +354,12 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 /// This calls `TraceExporter::send_trace_chunks` which processes stats,
 /// serializes in the configured output format, and sends to the agent
 /// with retry logic.
+///
+/// When `cancel` is non-null it must point to a live
+/// [`Handle<CancellationToken>`] obtained from
+/// [`ddog_trace_exporter_cancel_token_new`].  If the token is cancelled
+/// while the send is in progress the HTTP request is aborted and an
+/// error with code [`ExporterErrorCode::IoError`] is returned.
 ///
 /// On success, if `response_out` is non-null, a heap-allocated
 /// [`ExporterResponse`] is written there.  The caller owns it and must
@@ -315,11 +371,13 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 /// * `chunks` is consumed and must not be used after this call.
 /// * If `response_out` is non-null it must point to valid writable memory for a
 ///   `Box<ExporterResponse>`.
+/// * If `cancel` is non-null it must point to a valid cancellation token handle.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     exporter: Option<&TraceExporter>,
     chunks: Option<Box<TracerTraceChunks>>,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
+    mut cancel: *mut Handle<TokioCancellationToken>,
 ) -> Option<Box<ExporterError>> {
     let Some(exporter) = exporter else {
         return gen_error!(ErrorCode::InvalidArgument);
@@ -328,15 +386,47 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
         return gen_error!(ErrorCode::InvalidArgument);
     };
 
+    // Clone the cancellation token (if provided) so the caller retains
+    // ownership of the handle while we use a cheap clone inside select!.
+    let cancel_token: Option<TokioCancellationToken> = if cancel.is_null() {
+        None
+    } else {
+        cancel.to_inner_mut().ok().map(|t| t.clone())
+    };
+
     catch_panic!(
-        match exporter.send_trace_chunks(chunks.0) {
-            Ok(resp) => {
-                if let Some(out) = response_out {
-                    out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
+        {
+            let result = if let Some(ct) = cancel_token {
+                // Use select! so we can abort the in-flight request when
+                // the caller cancels.
+                let block_result = exporter.shared_runtime().block_on(async {
+                    tokio::select! {
+                        res = exporter.send_trace_chunks_async(chunks.0) => res,
+                        _ = ct.cancelled() => Err(
+                            std::io::Error::new(
+                                std::io::ErrorKind::Interrupted,
+                                "send cancelled via cancellation token",
+                            ).into()
+                        ),
+                    }
+                });
+                match block_result {
+                    Ok(inner) => inner,
+                    Err(io_err) => Err(io_err.into()),
                 }
-                None
+            } else {
+                exporter.send_trace_chunks(chunks.0)
+            };
+
+            match result {
+                Ok(resp) => {
+                    if let Some(out) = response_out {
+                        out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
+                    }
+                    None
+                }
+                Err(e) => Some(Box::new(ExporterError::from(e))),
             }
-            Err(e) => Some(Box::new(ExporterError::from(e))),
         },
         gen_error!(ErrorCode::Panic)
     )
@@ -736,7 +826,12 @@ mod tests {
     fn send_trace_chunks_null_exporter_returns_error() {
         unsafe {
             let chunks = make_chunks(0);
-            let err = ddog_trace_exporter_send_trace_chunks(None, Some(chunks), None);
+            let err = ddog_trace_exporter_send_trace_chunks(
+                None,
+                Some(chunks),
+                None,
+                std::ptr::null_mut(),
+            );
             assert!(err.is_some());
             assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
             ddog_trace_exporter_error_free(err);
@@ -770,6 +865,46 @@ mod tests {
             assert_eq!(err.as_ref().unwrap().code, ErrorCode::Panic);
             ddog_trace_exporter_error_free(err);
             ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    // -- Cancellation token -------------------------------------------------
+
+    #[test]
+    fn cancel_token_new_and_drop() {
+        unsafe {
+            let mut token = ddog_trace_exporter_cancel_token_new();
+            let ptr: *mut Handle<TokioCancellationToken> = &mut token;
+            ddog_trace_exporter_cancel_token_drop(ptr);
+        }
+    }
+
+    #[test]
+    fn cancel_token_cancel() {
+        unsafe {
+            let mut token = ddog_trace_exporter_cancel_token_new();
+            let ptr: *mut Handle<TokioCancellationToken> = &mut token;
+            ddog_trace_exporter_cancel_token_cancel(ptr);
+            ddog_trace_exporter_cancel_token_drop(ptr);
+        }
+    }
+
+    #[test]
+    fn send_trace_chunks_null_cancel_is_accepted() {
+        // Passing a null cancel pointer should behave like the old
+        // signature (no cancellation).
+        unsafe {
+            let chunks = make_chunks(0);
+            let err = ddog_trace_exporter_send_trace_chunks(
+                None,
+                Some(chunks),
+                None,
+                std::ptr::null_mut(),
+            );
+            // exporter is None, so we get InvalidArgument, but no crash
+            // from the null cancel pointer.
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
         }
     }
 

@@ -32,6 +32,7 @@ exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks"]
 "TracerSpan" = "ddog_TracerSpan"
 "TracerSpanFields" = "ddog_TracerSpanFields"
 "TracerTraceChunks" = "ddog_TracerTraceChunks"
+"Handle_TokioCancellationToken" = "ddog_TraceExporterCancelToken"
 
 [export.mangle]
 rename_types = "PascalCase"
