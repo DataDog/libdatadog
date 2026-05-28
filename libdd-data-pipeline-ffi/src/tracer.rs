@@ -632,4 +632,57 @@ mod tests {
             ddog_tracer_trace_chunks_free(chunks);
         }
     }
+
+    #[test]
+    fn span_new_null_fields_returns_error() {
+        unsafe {
+            let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            let err = ddog_tracer_span_new(out, None);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn send_trace_chunks_null_exporter_returns_error() {
+        unsafe {
+            let chunks = make_chunks(0);
+            let err = ddog_trace_exporter_send_trace_chunks(None, Some(chunks), None);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    // Capacity-overflow tests: a C caller passing `usize::MAX` would make
+    // `Vec::with_capacity` panic with "capacity overflow"; the `catch_panic!`
+    // guard must convert that into `ErrorCode::Panic` instead of aborting
+    // the process.
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
+    #[test]
+    fn trace_chunks_new_with_overflow_capacity_returns_panic_error() {
+        unsafe {
+            let mut handle = MaybeUninit::<Box<TracerTraceChunks>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            let err = ddog_tracer_trace_chunks_new(usize::MAX, out);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::Panic);
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
+    #[test]
+    fn begin_chunk_with_overflow_capacity_returns_panic_error() {
+        unsafe {
+            let mut chunks = make_chunks(0);
+            let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), usize::MAX);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::Panic);
+            ddog_trace_exporter_error_free(err);
+            ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
 }
