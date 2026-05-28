@@ -751,6 +751,33 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     MaybeError::None
 }
 
+/// Records the source of the default service name for the session so the
+/// sidecar can inject svc.user:true or svc.auto:<default_service_name> into
+/// outgoing process tag payloads. Pass an empty `default_service_name` to
+/// signal the user explicitly set DD_SERVICE; pass a non-empty value (already
+/// normalized via `ddog_normalize_process_tag_value`) to signal the tracer
+/// auto-resolved that name.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_session_set_default_service_name(
+    transport: &mut Box<SidecarTransport>,
+    default_service_name: ffi::CharSlice,
+) -> MaybeError {
+    let source = if default_service_name.is_empty() {
+        datadog_sidecar::service::ServiceNameSource::UserDefined
+    } else {
+        datadog_sidecar::service::ServiceNameSource::AutoResolved(
+            default_service_name.to_utf8_lossy().into_owned(),
+        )
+    };
+    try_c!(blocking::set_session_default_service_name(
+        transport,
+        Some(source),
+    ));
+
+    MaybeError::None
+}
+
 #[repr(C)]
 pub struct TracerHeaderTags<'a> {
     pub lang: ffi::CharSlice<'a>,

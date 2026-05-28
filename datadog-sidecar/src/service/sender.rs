@@ -35,6 +35,7 @@ use tracing::trace;
 struct SidecarOutbox {
     set_session_config: Option<SidecarInterfaceRequest>,
     set_session_process_tags: Option<SidecarInterfaceRequest>,
+    set_session_default_service_name: Option<SidecarInterfaceRequest>,
     set_universal_service_tags: Option<SidecarInterfaceRequest>,
     set_request_config: Option<SidecarInterfaceRequest>,
     clear_queue_id: Option<SidecarInterfaceRequest>,
@@ -43,10 +44,11 @@ struct SidecarOutbox {
 }
 
 impl SidecarOutbox {
-    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 7] {
+    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 8] {
         [
             &mut self.set_session_config,
             &mut self.set_session_process_tags,
+            &mut self.set_session_default_service_name,
             &mut self.set_universal_service_tags,
             &mut self.set_request_config,
             &mut self.clear_queue_id,
@@ -121,6 +123,9 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
         }
         SidecarInterfaceRequest::SetSessionProcessTags { .. } => {
             outbox.set_session_process_tags = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetSessionDefaultServiceName { .. } => {
+            outbox.set_session_default_service_name = Some(incoming);
         }
         SidecarInterfaceRequest::SetUniversalServiceTags { .. } => {
             outbox.set_universal_service_tags = Some(incoming);
@@ -232,6 +237,19 @@ impl SidecarSender {
         coalesce(
             &mut self.outbox,
             SidecarInterfaceRequest::SetSessionProcessTags { process_tags },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_session_default_service_name(
+        &mut self,
+        service_name_source: Option<crate::service::ServiceNameSource>,
+    ) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionDefaultServiceName {
+                service_name_source,
+            },
         );
         self.try_drain_outbox();
     }

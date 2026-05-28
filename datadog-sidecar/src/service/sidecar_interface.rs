@@ -69,6 +69,11 @@ pub trait SidecarInterface {
     /// * `process_tags` - The process tags.
     async fn set_session_process_tags(process_tags: Vec<Tag>);
 
+    /// Records the source of the default service name for the session.
+    async fn set_session_default_service_name(
+        service_name_source: Option<crate::service::ServiceNameSource>,
+    );
+
     /// Removes the application entry for the given queue ID from the instance.
     ///
     /// # Arguments

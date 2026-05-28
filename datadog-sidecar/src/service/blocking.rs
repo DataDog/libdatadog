@@ -271,6 +271,14 @@ pub fn set_session_process_tags(
     Ok(())
 }
 
+pub fn set_session_default_service_name(
+    transport: &mut SidecarTransport,
+    service_name_source: Option<crate::service::ServiceNameSource>,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_default_service_name(service_name_source);
+    Ok(())
+}
+
 /// Sends a trace as bytes.
 pub fn send_trace_v04_bytes(
     transport: &mut SidecarTransport,

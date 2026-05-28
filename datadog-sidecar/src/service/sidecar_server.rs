@@ -478,7 +478,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 .unwrap_or("unknown-service");
             let env = entry.get().env.as_deref().unwrap_or("none");
 
-            let process_tags = session.process_tags.lock_or_panic().clone();
+            let process_tags = session.process_tags_with_svc_source();
 
             // Pre-compute session config so both the primary and retry get_or_create calls
             // can use it without re-locking the session.
@@ -828,6 +828,20 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .unwrap_or_default();
         let session = self.server.get_session(session_id);
         *session.process_tags.lock_or_panic() = process_tags;
+    }
+
+    async fn set_session_default_service_name(
+        &self,
+        _peer: PeerCredentials,
+        service_name_source: Option<crate::service::ServiceNameSource>,
+    ) {
+        let session_id = self
+            .session_id
+            .get()
+            .map(|s| s.as_str())
+            .unwrap_or_default();
+        let session = self.server.get_session(session_id);
+        *session.service_name_source.lock_or_panic() = service_name_source;
     }
 
     async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {

@@ -18,7 +18,7 @@ use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::service::agent_info::AgentInfoGuard;
-use crate::service::{InstanceId, QueueId, RuntimeInfo};
+use crate::service::{InstanceId, QueueId, RuntimeInfo, ServiceNameSource};
 
 /// `SessionInfo` holds information about a session.
 ///
@@ -45,6 +45,7 @@ pub(crate) struct SessionInfo {
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
     pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
+    pub(crate) service_name_source: Arc<Mutex<Option<ServiceNameSource>>>,
     pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
     otlp_metrics_endpoint: Arc<Mutex<Option<Endpoint>>>,
 }
@@ -129,6 +130,20 @@ impl SessionInfo {
 
     pub(crate) fn lock_runtimes(&self) -> MutexGuard<'_, HashMap<String, RuntimeInfo>> {
         self.runtimes.lock_or_panic()
+    }
+
+    pub(crate) fn process_tags_with_svc_source(&self) -> Vec<Tag> {
+        let mut tags = self.process_tags.lock_or_panic().clone();
+        if let Some(source) = self.service_name_source.lock_or_panic().as_ref() {
+            let (key, value) = match source {
+                ServiceNameSource::UserDefined => ("svc.user", "true".to_string()),
+                ServiceNameSource::AutoResolved(name) => ("svc.auto", name.clone()),
+            };
+            if let Ok(tag) = Tag::new(key, value) {
+                tags.push(tag);
+            }
+        }
+        tags
     }
 
     pub(crate) fn get_telemetry_config(
