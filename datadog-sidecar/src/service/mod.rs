@@ -3,6 +3,8 @@
 
 // imports for structs defined in this file
 use crate::config;
+pub use datadog_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
+pub use datadog_ffe::telemetry::FfeTelemetryContext;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
@@ -86,29 +88,4 @@ pub enum SidecarAction {
     /// Structured FFE exposures. The sidecar owns JSON serialization,
     /// cross-request deduplication, and EVP delivery.
     FfeExposureBatch(FfeExposureBatch),
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub struct FfeTelemetryContext {
-    pub service: String,
-    pub env: String,
-    pub version: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct FfeExposureBatch {
-    pub context: FfeTelemetryContext,
-    pub exposures: Vec<FfeExposure>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct FfeExposure {
-    pub timestamp_ms: u64,
-    pub flag_key: String,
-    pub subject_id: String,
-    /// JSON object encoded by the tracer. Invalid or non-object JSON is treated
-    /// as an empty object during EVP payload serialization.
-    pub subject_attributes_json: String,
-    pub allocation_key: String,
-    pub variant: String,
 }

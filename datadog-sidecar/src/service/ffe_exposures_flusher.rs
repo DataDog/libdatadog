@@ -8,15 +8,13 @@
 //! dd-trace-dotnet: `POST /evp_proxy/v2/api/v2/exposures` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. No agent capability gate.
 
-use crate::service::{FfeExposure, FfeExposureBatch, FfeTelemetryContext};
+use crate::service::FfeExposureBatch;
+use datadog_ffe::telemetry::exposures::encode_exposure_batch;
+pub(crate) use datadog_ffe::telemetry::exposures::ExposureDeduplicator;
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
-use lru::LruCache;
-use serde::Serialize;
-use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -28,64 +26,6 @@ pub(crate) const EVP_SUBDOMAIN_HEADER: &str = "X-Datadog-EVP-Subdomain";
 pub(crate) const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
-const DEFAULT_CACHE_LIMIT: usize = 65_536;
-
-#[derive(Clone)]
-pub(crate) struct ExposureDeduplicator {
-    cache: Arc<Mutex<LruCache<ExposureCacheKey, ExposureCacheValue>>>,
-}
-
-impl Default for ExposureDeduplicator {
-    fn default() -> Self {
-        Self::new(DEFAULT_CACHE_LIMIT)
-    }
-}
-
-impl ExposureDeduplicator {
-    pub(crate) fn new(limit: usize) -> Self {
-        let limit = NonZeroUsize::new(limit).unwrap_or(NonZeroUsize::MIN);
-        Self {
-            cache: Arc::new(Mutex::new(LruCache::new(limit))),
-        }
-    }
-
-    fn should_send(&self, context: &FfeTelemetryContext, exposure: &FfeExposure) -> bool {
-        let key = ExposureCacheKey {
-            service: context.service.clone(),
-            env: context.env.clone(),
-            version: context.version.clone(),
-            flag_key: exposure.flag_key.clone(),
-            subject_id: exposure.subject_id.clone(),
-        };
-        let value = ExposureCacheValue {
-            allocation_key: exposure.allocation_key.clone(),
-            variant: exposure.variant.clone(),
-        };
-
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if cache.get(&key).is_some_and(|cached| cached == &value) {
-            return false;
-        }
-
-        cache.put(key, value);
-        true
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct ExposureCacheKey {
-    service: String,
-    env: String,
-    version: String,
-    flag_key: String,
-    subject_id: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ExposureCacheValue {
-    allocation_key: String,
-    variant: String,
-}
 
 /// Build the FFE exposure endpoint from a session's agent base endpoint.
 /// Overrides only the path (`/evp_proxy/v2/api/v2/exposures`), preserving
@@ -105,35 +45,6 @@ pub(crate) fn exposure_endpoint(base: &Endpoint) -> Option<Endpoint> {
     })
 }
 
-pub(crate) fn encode_batch(
-    deduplicator: &ExposureDeduplicator,
-    batch: FfeExposureBatch,
-) -> Option<String> {
-    let exposures = batch
-        .exposures
-        .into_iter()
-        .filter(is_complete)
-        .filter(|exposure| deduplicator.should_send(&batch.context, exposure))
-        .map(ExposureEvent::from)
-        .collect::<Vec<_>>();
-
-    if exposures.is_empty() {
-        return None;
-    }
-
-    let payload = ExposurePayload {
-        context: ExposurePayloadContext::from(batch.context),
-        exposures,
-    };
-    match serde_json::to_string(&payload) {
-        Ok(payload) => Some(payload),
-        Err(e) => {
-            debug!("ffe_exposures_flusher: failed to encode exposure payload: {e:?}");
-            None
-        }
-    }
-}
-
 /// POST a structured FFE exposure batch to the agent EVP proxy.
 /// Fire-and-forget: non-2xx responses are logged at `warn`, network errors at
 /// `debug`, and dropped (matches dd-trace-go behaviour).
@@ -143,8 +54,13 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     deduplicator: &ExposureDeduplicator,
     batch: FfeExposureBatch,
 ) {
-    let Some(payload) = encode_batch(deduplicator, batch) else {
-        return;
+    let payload = match encode_exposure_batch(deduplicator, batch) {
+        Ok(Some(payload)) => payload,
+        Ok(None) => return,
+        Err(e) => {
+            debug!("ffe_exposures_flusher: failed to encode exposure payload: {e:?}");
+            return;
+        }
     };
     send_payload(client, endpoint, payload).await;
 }
@@ -201,88 +117,6 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
     }
 }
 
-fn is_complete(exposure: &FfeExposure) -> bool {
-    !exposure.flag_key.is_empty()
-        && !exposure.allocation_key.is_empty()
-        && !exposure.variant.is_empty()
-}
-
-#[derive(Serialize)]
-struct ExposurePayload {
-    context: ExposurePayloadContext,
-    exposures: Vec<ExposureEvent>,
-}
-
-#[derive(Serialize)]
-struct ExposurePayloadContext {
-    #[serde(skip_serializing_if = "String::is_empty")]
-    service: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    env: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    version: String,
-}
-
-impl From<FfeTelemetryContext> for ExposurePayloadContext {
-    fn from(value: FfeTelemetryContext) -> Self {
-        Self {
-            service: value.service,
-            env: value.env,
-            version: value.version,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct ExposureEvent {
-    timestamp: u64,
-    allocation: Key,
-    flag: Key,
-    variant: Key,
-    subject: Subject,
-}
-
-impl From<FfeExposure> for ExposureEvent {
-    fn from(value: FfeExposure) -> Self {
-        Self {
-            timestamp: value.timestamp_ms,
-            allocation: Key {
-                key: value.allocation_key,
-            },
-            flag: Key {
-                key: value.flag_key,
-            },
-            variant: Key { key: value.variant },
-            subject: Subject {
-                id: value.subject_id,
-                attributes: subject_attributes(&value.subject_attributes_json),
-            },
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct Key {
-    key: String,
-}
-
-#[derive(Serialize)]
-struct Subject {
-    id: String,
-    attributes: serde_json::Map<String, serde_json::Value>,
-}
-
-fn subject_attributes(json: &str) -> serde_json::Map<String, serde_json::Value> {
-    if json.is_empty() {
-        return serde_json::Map::new();
-    }
-
-    match serde_json::from_str::<serde_json::Value>(json) {
-        Ok(serde_json::Value::Object(attrs)) => attrs,
-        Ok(_) | Err(_) => serde_json::Map::new(),
-    }
-}
-
 fn truncate(bytes: &[u8], cap: usize) -> String {
     let take = bytes.len().min(cap);
     String::from_utf8_lossy(&bytes[..take]).into_owned()
@@ -291,10 +125,10 @@ fn truncate(bytes: &[u8], cap: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::{FfeExposure, FfeTelemetryContext};
     use httpmock::MockServer;
     use libdd_capabilities::{HttpError, MaybeSend};
     use libdd_capabilities_impl::NativeCapabilities;
-    use serde_json::Value;
     use std::future;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
@@ -321,100 +155,6 @@ mod tests {
             allocation_key: allocation_key.to_owned(),
             variant: variant.to_owned(),
         }
-    }
-
-    #[test]
-    fn encodes_structured_batch_and_preserves_empty_subject() {
-        let deduplicator = ExposureDeduplicator::new(4);
-        let payload = encode_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: context(),
-                exposures: vec![exposure("", "alloc", "variant")],
-            },
-        )
-        .unwrap();
-        let payload: Value = serde_json::from_str(&payload).unwrap();
-
-        assert_eq!(payload["context"]["service"], "svc");
-        assert_eq!(payload["context"]["env"], "prod");
-        assert_eq!(payload["context"]["version"], "1");
-        assert_eq!(payload["exposures"][0]["subject"]["id"], "");
-        assert_eq!(
-            payload["exposures"][0]["subject"]["attributes"]["tier"],
-            "premium"
-        );
-    }
-
-    #[test]
-    fn deduplicates_same_assignment_and_emits_changed_assignment() {
-        let deduplicator = ExposureDeduplicator::new(4);
-        let first = encode_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: context(),
-                exposures: vec![exposure("user", "alloc-a", "a")],
-            },
-        );
-        let duplicate = encode_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: context(),
-                exposures: vec![exposure("user", "alloc-a", "a")],
-            },
-        );
-        let changed = encode_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: context(),
-                exposures: vec![exposure("user", "alloc-b", "b")],
-            },
-        );
-
-        assert!(first.is_some());
-        assert!(duplicate.is_none());
-        assert!(changed.is_some());
-    }
-
-    #[test]
-    fn cache_key_includes_service_env_and_version() {
-        let deduplicator = ExposureDeduplicator::new(4);
-        let first = encode_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: context(),
-                exposures: vec![exposure("user", "alloc", "variant")],
-            },
-        );
-        let other_service = encode_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: FfeTelemetryContext {
-                    service: "other".to_owned(),
-                    ..context()
-                },
-                exposures: vec![exposure("user", "alloc", "variant")],
-            },
-        );
-
-        assert!(first.is_some());
-        assert!(other_service.is_some());
-    }
-
-    #[test]
-    fn drops_incomplete_exposures() {
-        let deduplicator = ExposureDeduplicator::new(4);
-        let mut invalid = exposure("user", "alloc", "variant");
-        invalid.allocation_key.clear();
-
-        assert!(encode_batch(
-            &deduplicator,
-            FfeExposureBatch {
-                context: context(),
-                exposures: vec![invalid],
-            },
-        )
-        .is_none());
     }
 
     #[tokio::test]
