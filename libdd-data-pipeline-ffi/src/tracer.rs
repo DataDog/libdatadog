@@ -275,18 +275,19 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_begin_chunk(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
     handle: Option<&mut TracerTraceChunks>,
-    span: Box<TracerSpan>,
+    span: Option<Box<TracerSpan>>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
-        if let Some(chunks) = handle {
-            if let Some(chunk) = chunks.0.last_mut() {
-                chunk.push(span.0);
-                None
-            } else {
-                gen_error!(ErrorCode::InvalidArgument)
+        match (handle, span) {
+            (Some(chunks), Some(span)) => {
+                if let Some(chunk) = chunks.0.last_mut() {
+                    chunk.push(span.0);
+                    None
+                } else {
+                    gen_error!(ErrorCode::InvalidArgument)
+                }
             }
-        } else {
-            gen_error!(ErrorCode::InvalidArgument)
+            _ => gen_error!(ErrorCode::InvalidArgument),
         },
         gen_error!(ErrorCode::Panic)
     )
@@ -315,10 +316,13 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     exporter: Option<&TraceExporter>,
-    chunks: Box<TracerTraceChunks>,
+    chunks: Option<Box<TracerTraceChunks>>,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
     let Some(exporter) = exporter else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+    let Some(chunks) = chunks else {
         return gen_error!(ErrorCode::InvalidArgument);
     };
 
@@ -535,18 +539,18 @@ mod tests {
             assert!(err.is_none());
 
             let s1 = make_minimal_span();
-            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s1);
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), Some(s1));
             assert!(err.is_none());
 
             let s2 = make_minimal_span();
-            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s2);
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), Some(s2));
             assert!(err.is_none());
 
             // Chunk 2: one span
             let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 1);
             assert!(err.is_none());
             let s3 = make_minimal_span();
-            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s3);
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), Some(s3));
             assert!(err.is_none());
 
             assert_eq!(chunks.0.len(), 2);
@@ -573,11 +577,36 @@ mod tests {
 
             // No begin_chunk — push should fail
             let s = make_minimal_span();
-            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s);
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), Some(s));
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
 
             ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    #[test]
+    fn push_span_null_span_returns_error() {
+        unsafe {
+            let mut chunks = make_chunks(1);
+            let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 0);
+            assert!(err.is_none());
+
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), None);
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
+
+            ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    #[test]
+    fn push_span_null_handle_returns_error() {
+        unsafe {
+            let s = make_minimal_span();
+            let err = ddog_tracer_trace_chunks_push_span(None, Some(s));
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
         }
     }
 
