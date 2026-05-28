@@ -22,7 +22,7 @@ use crate::trace_exporter::{
 
 /// Trait for types stored in a [`TraceBuffer`] that can report their approximate byte size.
 pub trait BufferSize {
-    fn byte_size(&self) -> usize;
+    fn byte_size(&mut self) -> usize;
 }
 
 impl<T> BufferSize for libdd_trace_utils::span::v04::Span<T>
@@ -31,8 +31,10 @@ where
     T::Text: AsRef<str>,
     T::Bytes: AsRef<[u8]>,
 {
-    fn byte_size(&self) -> usize {
+    fn byte_size(&mut self) -> usize {
         use libdd_trace_utils::span::v04::AttributeAnyValue;
+
+        self.dedup();
 
         // trace_id(16) + span_id(8) + parent_id(8) + start(8) + duration(8) + error(4)
         let mut size: usize = 52;
@@ -235,7 +237,7 @@ impl<T> Batch<T> {
     /// batch. So the batch can be over the maximum size after this call.
     /// This is because we don't want to always drop traces that contain more bytes than the maximum
     /// size.
-    fn add_trace_chunk(&mut self, chunk: Vec<T>) -> Result<(), BatchFullError>
+    fn add_trace_chunk(&mut self, mut chunk: Vec<T>) -> Result<(), BatchFullError>
     where
         T: BufferSize,
     {
@@ -248,7 +250,7 @@ impl<T> Batch<T> {
             return Ok(());
         }
 
-        self.byte_count += chunk.iter().map(|s| s.byte_size()).sum::<usize>();
+        self.byte_count += chunk.iter_mut().map(|s| s.byte_size()).sum::<usize>();
         self.chunks.push(chunk);
         Ok(())
     }
@@ -788,7 +790,7 @@ mod tests {
 
     // Used for tests, 1 byte per item so size computations are easier
     impl BufferSize for () {
-        fn byte_size(&self) -> usize {
+        fn byte_size(&mut self) -> usize {
             1
         }
     }

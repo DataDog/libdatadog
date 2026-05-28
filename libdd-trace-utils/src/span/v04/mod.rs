@@ -310,6 +310,14 @@ impl<T: TraceData> From<&AttributeArrayValue<T>> for u8 {
     }
 }
 
+impl<T: TraceData> Span<T> {
+    pub fn dedup(&mut self) {
+        self.meta.dedup();
+        self.metrics.dedup();
+        self.meta_struct.dedup();
+    }
+}
+
 fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     t == &T::default()
 }

@@ -201,7 +201,6 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
     /// This is a convenience wrapper around [Self::as_deduped_map] used in the msgpack encoder,
     /// where we expect the map to be deduped, but call `as_deduped_map` as a defensive measure. If
     /// the latter had to deduplicate and allocate a new vec, we log a warning (at most once).
-    #[allow(unused)]
     pub(crate) fn defensive_dedup(&self) -> DedupedVecMap<'_, K, V> {
         if !self.is_deduped() {
             static WARNED: AtomicBool = AtomicBool::new(false);
