@@ -79,7 +79,7 @@ libc = { version = "0.2" }
 # watchdog and self telemetry
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
 
-[dependencies.windows]
+[target.'cfg(windows)'.dependencies.windows]
 features = [
     "Win32_Foundation",
     "Wdk_Storage_FileSystem",

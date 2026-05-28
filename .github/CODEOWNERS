@@ -3,6 +3,8 @@
 # More specific patterns at the bottom override general patterns above.
 
 .claude/                             @DataDog/apm-common-components-core
+AGENTS.md                            @DataDog/apm-common-components-core
+CLAUDE.md                            @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
 .pre-commit-config.yaml              @DataDog/libdatadog-core
 .codecov.yml                         @DataDog/apm-common-components-core
@@ -68,8 +70,10 @@ LICENSE*                             @DataDog/libdatadog
 license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
+nightly-toolchain.toml               @DataDog/libdatadog
 README.md                            @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
+rust-toolchain.toml                  @DataDog/libdatadog
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
 scripts/check_crypto_providers.sh    @DataDog/libdatadog-core

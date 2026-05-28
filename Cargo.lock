@@ -695,7 +695,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1382,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe-test-suite"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -1473,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2913,7 +2913,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2966,7 +2966,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2985,7 +2985,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3027,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3052,7 +3052,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3074,7 +3074,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3092,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "1.1.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3145,7 +3145,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3281,7 +3281,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3318,7 +3318,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3359,7 +3359,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3390,7 +3390,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3417,7 +3417,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5581,7 +5581,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6023,7 +6023,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "33.0.0"
+version = "34.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use anyhow::Result;
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -32,3 +33,7 @@ pub fn strip_libraries(lib_path: &str) {
 }
 
 pub fn add_additional_files(_lib_path: &str, _target_path: &OsStr) {}
+
+pub fn add_pkg_config(crate_path: &str, target_path: &str, version: &str) -> Result<()> {
+    super::generate_pkg_config(crate_path, target_path, version, NATIVE_LIBS)
+}
