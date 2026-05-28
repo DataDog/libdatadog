@@ -555,7 +555,8 @@ mod tests {
         assert!(matches!(d, DedupedVecMap::Borrowed(_)));
         assert_eq!(d.len(), 2);
 
-        let items: Vec<_> = d.iter().collect();
+        let mut items: Vec<_> = d.iter().collect();
+        items.sort_by_key(|(k, _)| **k);
         assert_eq!(items, vec![(&"a", &1), (&"b", &2)]);
     }
 
