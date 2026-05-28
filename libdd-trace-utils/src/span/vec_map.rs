@@ -194,13 +194,6 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         if self.deduped {
             DedupedVecMap::Borrowed(self)
         } else {
-            static WARNED: AtomicBool = AtomicBool::new(false);
-            if !WARNED.swap(true, Ordering::Relaxed) {
-                tracing::warn!(
-                    "VecMap not deduped before encoding. Performing defensive on-the-fly dedup"
-                );
-            }
-
             DedupedVecMap::Owned(
                 self.data
                     .iter()
