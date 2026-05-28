@@ -234,6 +234,7 @@ impl Profile {
 
     pub fn samples_are_drained(&mut self) -> anyhow::Result<bool> {
         let current = self.active_samples.load(SeqCst);
+        #[allow(unknown_lints, clippy::manual_is_multiple_of)]
         Ok(current % Self::FLAG == 0)
     }
 }
