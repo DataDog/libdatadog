@@ -4,7 +4,7 @@
 mod flag_type;
 
 pub mod rules_based;
-#[cfg(feature = "telemetry")]
+#[cfg(feature = "exposure-events")]
 pub mod telemetry;
 
 pub use flag_type::{ExpectedFlagType, FlagType};
