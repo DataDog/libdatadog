@@ -342,6 +342,91 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     )
 }
 
+// ---------------------------------------------------------------------------
+// Fork safety hooks
+// ---------------------------------------------------------------------------
+
+/// Must be called in the parent process before `fork()`.
+///
+/// Pauses all workers on the exporter's [`SharedRuntime`] so that no
+/// background threads are running during the fork.
+///
+/// # Safety
+///
+/// * `exporter` must be a valid `TraceExporter` pointer or null.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_before_fork(
+    exporter: Option<&TraceExporter>,
+) -> Option<Box<ExporterError>> {
+    let Some(exporter) = exporter else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+
+    catch_panic!(
+        {
+            exporter.shared_runtime().before_fork();
+            None
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Must be called in the parent process after `fork()`.
+///
+/// Restarts workers that were paused by
+/// [`ddog_trace_exporter_before_fork`].
+///
+/// # Safety
+///
+/// * `exporter` must be a valid `TraceExporter` pointer or null.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_after_fork_in_parent(
+    exporter: Option<&TraceExporter>,
+) -> Option<Box<ExporterError>> {
+    let Some(exporter) = exporter else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+
+    catch_panic!(
+        match exporter.shared_runtime().after_fork_parent() {
+            Ok(()) => None,
+            Err(e) => Some(Box::new(ExporterError::new(
+                ErrorCode::Internal,
+                &e.to_string(),
+            ))),
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Must be called in the child process after `fork()`.
+///
+/// Creates a fresh tokio runtime and restarts all workers on the
+/// exporter's [`SharedRuntime`].
+///
+/// # Safety
+///
+/// * `exporter` must be a valid `TraceExporter` pointer or null.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_after_fork_in_child(
+    exporter: Option<&TraceExporter>,
+) -> Option<Box<ExporterError>> {
+    let Some(exporter) = exporter else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+
+    catch_panic!(
+        match exporter.shared_runtime().after_fork_child() {
+            Ok(()) => None,
+            Err(e) => Some(Box::new(ExporterError::new(
+                ErrorCode::Internal,
+                &e.to_string(),
+            ))),
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,6 +770,35 @@ mod tests {
             assert_eq!(err.as_ref().unwrap().code, ErrorCode::Panic);
             ddog_trace_exporter_error_free(err);
             ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    // -- Fork safety hooks --------------------------------------------------
+
+    #[test]
+    fn before_fork_null_returns_error() {
+        unsafe {
+            let err = ddog_trace_exporter_before_fork(None);
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn after_fork_in_parent_null_returns_error() {
+        unsafe {
+            let err = ddog_trace_exporter_after_fork_in_parent(None);
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn after_fork_in_child_null_returns_error() {
+        unsafe {
+            let err = ddog_trace_exporter_after_fork_in_child(None);
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
         }
     }
 }

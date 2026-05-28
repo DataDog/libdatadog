@@ -209,6 +209,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         TraceExporterBuilder::default()
     }
 
+    /// Returns a reference to the underlying [`SharedRuntime`].
+    pub fn shared_runtime(&self) -> &SharedRuntime {
+        &self.shared_runtime
+    }
+
     /// Stop the background workers owned by this exporter.
     ///
     /// Only the workers spawned for this exporter are stopped. Workers from other components
