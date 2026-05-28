@@ -3,6 +3,8 @@
 
 // imports for structs defined in this file
 use crate::config;
+pub use datadog_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
+pub use datadog_ffe::telemetry::FfeTelemetryContext;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
@@ -91,20 +93,4 @@ pub enum SidecarAction {
         context: FfeTelemetryContext,
         metrics: Vec<FfeEvaluationMetric>,
     },
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub struct FfeTelemetryContext {
-    pub service: String,
-    pub env: String,
-    pub version: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct FfeEvaluationMetric {
-    pub flag_key: String,
-    pub variant: String,
-    pub reason: String,
-    pub error_type: Option<String>,
-    pub allocation_key: Option<String>,
 }
