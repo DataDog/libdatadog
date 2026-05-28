@@ -3027,7 +3027,6 @@ dependencies = [
 name = "libdd-data-pipeline-ffi"
 version = "34.0.0"
 dependencies = [
- "anyhow",
  "build_common",
  "httpmock",
  "libdd-capabilities-impl",
