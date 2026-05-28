@@ -36,7 +36,9 @@ impl From<AgentResponse> for ExporterResponse {
 pub unsafe extern "C" fn ddog_trace_exporter_response_get_body<'a>(
     response: Option<&'a ExporterResponse>,
 ) -> ByteSlice<'a> {
-    response.and_then(|r| Some(ByteSlice::from(r.body.as_deref()?))).unwrap_or_default()
+    response
+        .and_then(|r| Some(ByteSlice::from(r.body.as_deref()?)))
+        .unwrap_or_default()
 }
 
 /// Free `response` and all its contents. After being called response will not point to a valid
