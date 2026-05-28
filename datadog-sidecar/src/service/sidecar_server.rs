@@ -763,8 +763,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
             } else {
                 config.hostname.clone()
             },
-            process_tags: config
-                .process_tags
+            process_tags: session
+                .process_tags_with_svc_source()
                 .iter()
                 .map(|t| t.to_string())
                 .collect::<Vec<_>>()
@@ -828,6 +828,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .unwrap_or_default();
         let session = self.server.get_session(session_id);
         *session.process_tags.lock_or_panic() = process_tags;
+        session.refresh_stats_process_tags();
     }
 
     async fn set_session_default_service_name(
@@ -842,6 +843,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .unwrap_or_default();
         let session = self.server.get_session(session_id);
         *session.service_name_source.lock_or_panic() = service_name_source;
+        session.refresh_stats_process_tags();
     }
 
     async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {

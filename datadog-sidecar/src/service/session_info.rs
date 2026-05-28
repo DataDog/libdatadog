@@ -146,6 +146,17 @@ impl SessionInfo {
         tags
     }
 
+    pub(crate) fn refresh_stats_process_tags(&self) {
+        if let Some(stats) = self.stats_config.lock_or_panic().as_mut() {
+            stats.process_tags = self
+                .process_tags_with_svc_source()
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+        }
+    }
+
     pub(crate) fn get_telemetry_config(
         &self,
     ) -> MutexGuard<'_, Option<libdd_telemetry::config::Config>> {
