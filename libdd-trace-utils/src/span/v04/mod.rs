@@ -311,6 +311,7 @@ impl<T: TraceData> From<&AttributeArrayValue<T>> for u8 {
 }
 
 impl<T: TraceData> Span<T> {
+    /// Deduplicate the [VecMap] parts of this span. See [VecMap::dedup].
     pub fn dedup(&mut self) {
         self.meta.dedup();
         self.metrics.dedup();
