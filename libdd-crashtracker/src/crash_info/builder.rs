@@ -18,7 +18,7 @@ pub struct ErrorDataBuilder {
     pub message: Option<String>,
     pub thread_name: Option<String>,
     pub stack: Option<StackTrace>,
-    pub threads: Option<Threads>,
+    pub threads: Option<Vec<ThreadData>>,
 }
 
 impl ErrorDataBuilder {
@@ -30,7 +30,7 @@ impl ErrorDataBuilder {
         let thread_name = self.thread_name;
         let source_type = SourceType::Crashtracking;
         let stack = self.stack.unwrap_or_else(StackTrace::missing);
-        let threads = self.threads.unwrap_or_default();
+        let threads = self.threads;
         Ok((
             ErrorData {
                 is_crash,
@@ -94,8 +94,19 @@ impl ErrorDataBuilder {
         Ok(())
     }
 
-    pub fn with_threads(&mut self, threads: Threads) -> anyhow::Result<()> {
+    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
+        if threads.is_empty() {
+            return Ok(());
+        }
         self.threads = Some(threads);
+        Ok(())
+    }
+
+    pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
+        if thread.crashed {
+            return Ok(());
+        }
+        self.threads.get_or_insert_with(Vec::new).push(thread);
         Ok(())
     }
 }
@@ -360,22 +371,11 @@ impl CrashInfoBuilder {
     }
 
     pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
-        if let Some(ref mut threads) = &mut self.error.threads {
-            threads.threads.push(thread);
-            threads.count += 1;
-        } else {
-            self.error.threads = Some(Threads {
-                threads: vec![thread],
-                count: 1,
-                incomplete: false,
-            });
-        }
-        Ok(())
+        self.error.with_thread(thread)
     }
 
-    pub fn with_threads(&mut self, threads: Threads) -> anyhow::Result<()> {
-        self.error.threads = Some(threads);
-        Ok(())
+    pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
+        self.error.with_threads(threads)
     }
 
     pub fn with_timestamp(&mut self, timestamp: DateTime<Utc>) -> anyhow::Result<()> {
