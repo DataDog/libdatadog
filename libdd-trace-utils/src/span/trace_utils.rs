@@ -16,7 +16,6 @@ const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 fn set_top_level_span<T>(span: &mut Span<T>)
 where
     T: TraceData,
-    T::Text: std::borrow::Borrow<str>,
 {
     span.metrics
         .insert(T::Text::from_static_str(TOP_LEVEL_KEY), 1.0);
@@ -31,7 +30,6 @@ where
 pub fn compute_top_level_span<T>(trace: &mut [Span<T>])
 where
     T: TraceData,
-    T::Text: std::borrow::Borrow<str>,
 {
     let mut span_id_idx: HashMap<u64, usize> = HashMap::new();
     for (i, span) in trace.iter().enumerate() {
@@ -59,10 +57,7 @@ where
 }
 
 /// Return true if the span has a top level key set
-pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool
-where
-    T::Text: std::borrow::Borrow<str>,
-{
+pub fn has_top_level<T: TraceData>(span: &Span<T>) -> bool {
     span.metrics
         .get(TRACER_TOP_LEVEL_KEY)
         .is_some_and(|v| *v == 1.0)
@@ -70,10 +65,7 @@ where
 }
 
 /// Returns true if a span should be measured (i.e., it should get trace metrics calculated).
-pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool
-where
-    T::Text: std::borrow::Borrow<str>,
-{
+pub fn is_measured<T: TraceData>(span: &Span<T>) -> bool {
     span.metrics.get(MEASURED_KEY).is_some_and(|v| *v == 1.0)
 }
 
@@ -82,10 +74,7 @@ where
 /// When incomplete, a partial snapshot has a metric _dd.partial_version which is a positive
 /// integer. The metric usually increases each time a new version of the same span is sent by
 /// the tracer
-pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool
-where
-    T::Text: std::borrow::Borrow<str>,
-{
+pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
     span.metrics
         .get(PARTIAL_VERSION_KEY)
         .is_some_and(|v| *v >= 0.0)
@@ -114,7 +103,6 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
 where
     T: TraceData,
-    T::Text: std::borrow::Borrow<str>,
 {
     let mut dropped_p0_traces = 0;
     let mut dropped_p0_spans = 0;
