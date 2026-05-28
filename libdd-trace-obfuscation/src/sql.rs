@@ -274,8 +274,7 @@ impl<'a> Tokenizer<'a> {
         )
     }
 
-    #[allow(clippy::missing_const_for_fn)]
-    fn last_char(&self) -> Option<u8> {
+    const fn last_char(&self) -> Option<u8> {
         self.result.as_bytes().last().copied()
     }
 

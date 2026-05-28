@@ -27,10 +27,10 @@ use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
-    DynamicInstrumentationConfigState, FfeEvaluationMetric as SidecarFfeEvaluationMetric,
-    FfeExposure as SidecarFfeExposure, FfeExposureBatch as SidecarFfeExposureBatch,
-    FfeTelemetryContext as SidecarFfeTelemetryContext, InstanceId, QueueId, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
+    DynamicInstrumentationConfigState, FfeExposure as SidecarFfeExposure,
+    FfeExposureBatch as SidecarFfeExposureBatch, FfeTelemetryContext as SidecarFfeTelemetryContext,
+    InstanceId, QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SidecarFlushOptions,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
@@ -1137,15 +1137,6 @@ pub struct FfeExposure<'a> {
     pub variant: CharSlice<'a>,
 }
 
-#[repr(C)]
-pub struct FfeEvaluationMetric<'a> {
-    pub flag_key: CharSlice<'a>,
-    pub variant: CharSlice<'a>,
-    pub reason: CharSlice<'a>,
-    pub error_type: CharSlice<'a>,
-    pub allocation_key: CharSlice<'a>,
-}
-
 /// Send structured FFE exposure events to the sidecar. The sidecar owns
 /// deduplication, JSON serialization, and Agent EVP delivery. This function is
 /// caller-driven; shared libdatadog evaluator calls do not log unless an SDK
@@ -1192,55 +1183,6 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
     MaybeError::None
 }
 
-/// Send structured FFE evaluation metric events to the sidecar. The sidecar
-/// owns aggregation, OTLP/protobuf serialization, and OTLP HTTP delivery. This
-/// function is caller-driven so SDKs with existing host-language hooks can
-/// safely coexist until they explicitly migrate.
-///
-/// # Safety
-/// `endpoint`, `context`, and every element in `metrics` must contain valid
-/// UTF-8 `CharSlice` values. Empty `endpoint` or `metrics` is a no-op.
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
-    transport: &mut Box<SidecarTransport>,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
-    endpoint: CharSlice,
-    context: &FfeTelemetryContext<'_>,
-    metrics: Slice<FfeEvaluationMetric<'_>>,
-) -> MaybeError {
-    if endpoint.is_empty() || metrics.is_empty() {
-        return MaybeError::None;
-    }
-
-    let endpoint = try_c!(char_slice_to_string(endpoint));
-    let context = try_c!(ffe_context_from_ffi(context));
-    let metrics = try_c!(metrics
-        .try_as_slice()
-        .map_err(|e| format!("Invalid metric slice: {e}"))
-        .and_then(|metrics| metrics
-            .iter()
-            .map(ffe_metric_from_ffi)
-            .collect::<Result<Vec<_>, _>>()));
-
-    if metrics.is_empty() {
-        return MaybeError::None;
-    }
-
-    try_c!(blocking::enqueue_actions(
-        transport,
-        instance_id,
-        queue_id,
-        vec![SidecarAction::FfeEvaluationMetrics {
-            endpoint,
-            context,
-            metrics,
-        }],
-    ));
-    MaybeError::None
-}
-
 fn ffe_context_from_ffi(
     context: &FfeTelemetryContext<'_>,
 ) -> Result<SidecarFfeTelemetryContext, String> {
@@ -1260,26 +1202,6 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
         allocation_key: char_slice_to_string(exposure.allocation_key)?,
         variant: char_slice_to_string(exposure.variant)?,
     })
-}
-
-fn ffe_metric_from_ffi(
-    metric: &FfeEvaluationMetric<'_>,
-) -> Result<SidecarFfeEvaluationMetric, String> {
-    Ok(SidecarFfeEvaluationMetric {
-        flag_key: char_slice_to_string(metric.flag_key)?,
-        variant: char_slice_to_string(metric.variant)?,
-        reason: char_slice_to_string(metric.reason)?,
-        error_type: optional_string(metric.error_type)?,
-        allocation_key: optional_string(metric.allocation_key)?,
-    })
-}
-
-fn optional_string(slice: CharSlice) -> Result<Option<String>, String> {
-    if slice.is_empty() {
-        Ok(None)
-    } else {
-        char_slice_to_string(slice).map(Some)
-    }
 }
 
 #[no_mangle]
