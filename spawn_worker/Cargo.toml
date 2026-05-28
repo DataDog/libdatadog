@@ -16,7 +16,7 @@ libc = "0.2"
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
 
-[dependencies.windows]
+[target.'cfg(windows)'.dependencies.windows]
 features = [
   "Win32_Foundation",
   "Win32_Security",

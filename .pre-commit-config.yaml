@@ -14,7 +14,8 @@ repos:
       - id: cargo-fmt
         name: cargo fmt
         language: system
-        # Pinned to match CI (.github/workflows/lint.yml). Keep this in sync.
+        # Nightly version must match `nightly-toolchain.toml` at the repo root,
+        # which is the source of truth that CI reads. Keep these two in sync.
         entry: cargo +nightly-2026-02-08 fmt --all --
         types: [rust]
         pass_filenames: false

@@ -21,8 +21,7 @@ use bin_tests::{
     ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    default_max_threads, CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames,
-    StacktraceCollection,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -313,7 +312,7 @@ fn test_crash_tracking_multi_thread_collection() {
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_thread_limit() {
-    const THREAD_COUNT: usize = default_max_threads();
+    const THREAD_COUNT: usize = libdd_crashtracker::default_max_threads();
 
     let config = CrashTestConfig::new(
         BuildProfile::Release,
