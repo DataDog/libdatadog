@@ -28,6 +28,7 @@ pub mod agent_info;
 pub mod blocking;
 mod debugger_diagnostics_bookkeeper;
 pub mod exception_hash_rate_limiter;
+pub(crate) mod ffe_metrics_flusher;
 mod instance_id;
 mod queue_id;
 mod remote_configs;
@@ -82,4 +83,28 @@ pub enum SidecarAction {
     Telemetry(TelemetryActions),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
+    /// Structured FFE evaluation metrics. The sidecar owns OTLP/protobuf
+    /// aggregation, serialization, and delivery. This action must be sent only
+    /// by SDKs that explicitly opted into native FFE metric ownership.
+    FfeEvaluationMetrics {
+        endpoint: String,
+        context: FfeTelemetryContext,
+        metrics: Vec<FfeEvaluationMetric>,
+    },
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct FfeTelemetryContext {
+    pub service: String,
+    pub env: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FfeEvaluationMetric {
+    pub flag_key: String,
+    pub variant: String,
+    pub reason: String,
+    pub error_type: Option<String>,
+    pub allocation_key: Option<String>,
 }

@@ -454,6 +454,7 @@ impl TelemetryCachedClient {
                     }
                 }
                 SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
+                SidecarAction::FfeEvaluationMetrics { .. } => {} // handled in sidecar_server
             }
         }
         actions
