@@ -2,6 +2,18 @@
 
 
 
+## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.1.0..libdd-common-v4.2.0) - 2026-05-29
+
+### Added
+
+- Recognize PCF Garden container IDs ([#2025](https://github.com/datadog/libdatadog/issues/2025)) - ([be94f69](https://github.com/datadog/libdatadog/commit/be94f6964a286bcc2bec9b0a9b80422c77e06d20))
+
+### Changed
+
+- Replace use_v05_format bool and remove infallible expect ([#1946](https://github.com/datadog/libdatadog/issues/1946)) - ([54afa6f](https://github.com/datadog/libdatadog/commit/54afa6f73cb46a864a58100bbbc4027acd0b9a0b))
+
+
+
 ## [4.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.0.0..libdd-common-v4.1.0) - 2026-05-15
 
 ### Added
