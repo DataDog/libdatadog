@@ -23,6 +23,8 @@ pub struct FfeExposureBatch {
 pub struct FfeExposure {
     pub timestamp_ms: u64,
     pub flag_key: String,
+    /// Empty subject ids are preserved intentionally. SDKs may evaluate with an
+    /// empty targeting key, and a doLog=true exposure should still be emitted.
     pub subject_id: String,
     /// JSON object encoded by the tracer. Invalid or non-object JSON is treated
     /// as an empty object during EVP payload serialization.
@@ -112,6 +114,8 @@ pub fn encode_exposure_batch(
 }
 
 fn is_complete(exposure: &FfeExposure) -> bool {
+    // `subject_id` is intentionally not required here; empty targeting keys
+    // are valid evaluation inputs and must not suppress exposure logging.
     !exposure.flag_key.is_empty()
         && !exposure.allocation_key.is_empty()
         && !exposure.variant.is_empty()
