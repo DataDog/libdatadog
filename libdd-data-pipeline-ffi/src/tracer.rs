@@ -277,17 +277,19 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
     handle: Option<&mut TracerTraceChunks>,
     span: Option<Box<TracerSpan>>,
 ) -> Option<Box<ExporterError>> {
+    let Some(chunks) = handle else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+    let Some(span) = span else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+
     catch_panic!(
-        match (handle, span) {
-            (Some(chunks), Some(span)) => {
-                if let Some(chunk) = chunks.0.last_mut() {
-                    chunk.push(span.0);
-                    None
-                } else {
-                    gen_error!(ErrorCode::InvalidArgument)
-                }
-            }
-            _ => gen_error!(ErrorCode::InvalidArgument),
+        if let Some(chunk) = chunks.0.last_mut() {
+            chunk.push(span.0);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
         },
         gen_error!(ErrorCode::Panic)
     )
