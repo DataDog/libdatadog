@@ -1154,18 +1154,19 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
     context: &FfeTelemetryContext<'_>,
     exposures: Slice<FfeExposure<'_>>,
 ) -> MaybeError {
+    let context = try_c!(ffe_context_from_ffi(context));
+    let exposures = try_c!(exposures
+        .try_as_slice()
+        .map_err(|e| format!("Invalid exposure slice: {e}")));
+
     if exposures.is_empty() {
         return MaybeError::None;
     }
 
-    let context = try_c!(ffe_context_from_ffi(context));
     let exposures = try_c!(exposures
-        .try_as_slice()
-        .map_err(|e| format!("Invalid exposure slice: {e}"))
-        .and_then(|exposures| exposures
-            .iter()
-            .map(ffe_exposure_from_ffi)
-            .collect::<Result<Vec<_>, _>>()));
+        .iter()
+        .map(ffe_exposure_from_ffi)
+        .collect::<Result<Vec<_>, _>>());
 
     if exposures.is_empty() {
         return MaybeError::None;
