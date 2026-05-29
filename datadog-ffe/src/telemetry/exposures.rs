@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 
+// Keep the default aligned with existing server SDK exposure caches: large
+// enough for common per-process hot sets, but still bounded in sidecar memory.
 const DEFAULT_CACHE_LIMIT: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
