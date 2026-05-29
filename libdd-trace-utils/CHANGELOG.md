@@ -2,6 +2,19 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v5.0.0..libdd-trace-utils-v6.0.0) - 2026-05-29
+
+### Added
+
+- Introduce VecMap datastructure ([#2022](https://github.com/datadog/libdatadog/issues/2022)) - ([f7d471d](https://github.com/datadog/libdatadog/commit/f7d471dc51bb3f2131e9577adc9ea0e06ee417c7))
+- Update test agent version ([#2038](https://github.com/datadog/libdatadog/issues/2038)) - ([670a5ad](https://github.com/datadog/libdatadog/commit/670a5ad9fe540d7f4f3eee0b1f5192f532bbc06d))
+
+### Changed
+
+- Replace use_v05_format bool and remove infallible expect ([#1946](https://github.com/datadog/libdatadog/issues/1946)) - ([54afa6f](https://github.com/datadog/libdatadog/commit/54afa6f73cb46a864a58100bbbc4027acd0b9a0b))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v4.0.0..libdd-trace-utils-v5.0.0) - 2026-05-22
 
 ### Added
