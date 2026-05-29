@@ -2,7 +2,7 @@
 
 
 
-## [5.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v5.0.0..libdd-trace-utils-v5.1.0) - 2026-05-29
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v5.0.0..libdd-trace-utils-v6.0.0) - 2026-05-29
 
 ### Added
 
