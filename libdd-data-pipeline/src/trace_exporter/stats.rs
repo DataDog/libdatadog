@@ -166,27 +166,22 @@ fn create_and_start_stats_worker<
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Stops the stats exporter and disable stats computation
-///
-/// Used when client-side stats is disabled by the agent
-pub(crate) fn stop_stats_computation(
-    ctx: &StatsContext,
-    client_side_stats: &ArcSwap<StatsComputationStatus>,
-) {
+/// Transition from `Enabled` to `DisabledByAgent`, awaiting the stats worker shutdown.
+pub(crate) async fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComputationStatus>) {
+    // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
+    let snapshot = client_side_stats.load_full();
     if let StatsComputationStatus::Enabled {
         stats_concentrator,
         worker_handle,
         ..
-    } = &**client_side_stats.load()
+    } = &*snapshot
     {
         let bucket_size = stats_concentrator.lock_or_panic().get_bucket_size();
         client_side_stats.store(Arc::new(StatsComputationStatus::DisabledByAgent {
             bucket_size,
         }));
-        match ctx.shared_runtime.block_on(worker_handle.clone().stop()) {
-            Ok(Err(e)) => error!("Failed to stop stats worker: {e}"),
-            Err(e) => error!("Failed to stop stats worker: {e}"),
-            _ => {}
+        if let Err(e) = worker_handle.clone().stop().await {
+            error!("Failed to stop stats worker: {e}");
         }
     }
 }
@@ -254,9 +249,9 @@ fn update_obfuscation_config(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Handle stats computation when it's already enabled
-pub(crate) fn handle_stats_enabled(
-    ctx: &StatsContext,
+/// Reconcile stats config when computation is already enabled.
+/// Async because the disabled-by-agent branch awaits [`stop_stats_computation`].
+pub(crate) async fn handle_stats_enabled(
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     client_side_stats: &StatsComputationConfig,
@@ -268,7 +263,7 @@ pub(crate) fn handle_stats_enabled(
         #[cfg(feature = "stats-obfuscation")]
         update_obfuscation_config(agent_info, client_side_stats);
     } else {
-        stop_stats_computation(ctx, &client_side_stats.status);
+        stop_stats_computation(&client_side_stats.status).await;
         debug!("Client-side stats computation has been disabled by the agent")
     }
 }
