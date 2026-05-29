@@ -298,12 +298,8 @@ impl TraceExporterBuilder {
 
     #[allow(missing_docs)]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
-        mut self,
+        self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
-        if Self::env_requests_v1_protocol() {
-            self.output_format = TraceExporterOutputFormat::V1;
-        }
-
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -513,16 +509,6 @@ impl TraceExporterBuilder {
         })
     }
 
-    /// Returns true when the `DD_TRACE_AGENT_PROTOCOL_VERSION` environment variable opts in to
-    /// the V1 protocol. Accepts `"1"` and `"1.0"`. Other values (including unset) yield false.
-    fn env_requests_v1_protocol() -> bool {
-        Self::parse_v1_protocol_env(std::env::var("DD_TRACE_AGENT_PROTOCOL_VERSION").ok())
-    }
-
-    fn parse_v1_protocol_env(value: Option<String>) -> bool {
-        matches!(value.as_deref().map(str::trim), Some("1") | Some("1.0"))
-    }
-
     fn is_inputs_outputs_formats_compatible(
         input: TraceExporterInputFormat,
         output: TraceExporterOutputFormat,
@@ -655,29 +641,6 @@ mod tests {
             builder.output_format,
             TraceExporterOutputFormat::V1
         ));
-    }
-
-    #[test]
-    fn test_parse_v1_protocol_env() {
-        assert!(TraceExporterBuilder::parse_v1_protocol_env(Some(
-            "1".to_string()
-        )));
-        assert!(TraceExporterBuilder::parse_v1_protocol_env(Some(
-            "1.0".to_string()
-        )));
-        assert!(TraceExporterBuilder::parse_v1_protocol_env(Some(
-            "  1.0 ".to_string()
-        )));
-        assert!(!TraceExporterBuilder::parse_v1_protocol_env(Some(
-            "2".to_string()
-        )));
-        assert!(!TraceExporterBuilder::parse_v1_protocol_env(Some(
-            "v1".to_string()
-        )));
-        assert!(!TraceExporterBuilder::parse_v1_protocol_env(Some(
-            "".to_string()
-        )));
-        assert!(!TraceExporterBuilder::parse_v1_protocol_env(None));
     }
 
     #[test]

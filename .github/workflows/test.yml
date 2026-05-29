@@ -193,6 +193,42 @@ jobs:
           fi
         env:
           RUST_BACKTRACE: full
+      # TEMPORARY — added for PR #2037 to stress-test the /info wait loop in
+      # compare_v04_to_v1_trace_snapshot_test. REVERT this step before merging once
+      # we have confirmed the integration tests are not flaky on CI.
+      - name: "[TEMPORARY — PR #2037 flake check] Loop tracing integration tests 200x"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]]; then
+            TRACING_PACKAGES=""
+            for crate in $TRACING_CRATES; do
+              TRACING_PACKAGES="$TRACING_PACKAGES -p $crate"
+            done
+          else
+            TRACING_PACKAGES=""
+            for crate in $TRACING_CRATES; do
+              if echo "$PACKAGES" | grep -qw -- "-p $crate"; then
+                TRACING_PACKAGES="$TRACING_PACKAGES -p $crate"
+              fi
+            done
+          fi
+          if [[ -z "$TRACING_PACKAGES" ]]; then
+            echo "No tracing integration test crates found in PACKAGES, skipping stress loop."
+            exit 0
+          fi
+          for i in $(seq 1 200); do
+            echo "::group::iteration $i"
+            # shellcheck disable=SC2086
+            if ! cargo nextest run $TRACING_PACKAGES --profile ci --test-threads=1 --no-tests=pass -E 'test(tracing_integration_tests::)'; then
+              echo "::error::Flake detected — failed on iteration $i / 200"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+          echo "Stress loop completed: 200/200 iterations passed."
+        env:
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] RUSTFLAGS=\"-C prefer-dynamic\" cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'"
         shell: bash
         run: cargo nextest run --package test_spawn_from_lib --features prefer-dynamic -E '!test(tracing_integration_tests::)'
