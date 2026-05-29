@@ -1154,7 +1154,30 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
     context: &FfeTelemetryContext<'_>,
     exposures: Slice<FfeExposure<'_>>,
 ) -> MaybeError {
-    let context = try_c!(ffe_context_from_ffi(context));
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ddog_sidecar_send_ffe_exposure_batch_impl(
+            transport,
+            instance_id,
+            queue_id,
+            context,
+            exposures,
+        )
+    }))
+    .unwrap_or_else(|panic| {
+        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
+            panic,
+            "ddog_sidecar_send_ffe_exposure_batch",
+        ))
+    })
+}
+
+fn ddog_sidecar_send_ffe_exposure_batch_impl(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    context: &FfeTelemetryContext<'_>,
+    exposures: Slice<FfeExposure<'_>>,
+) -> MaybeError {
     let exposures = try_c!(exposures
         .try_as_slice()
         .map_err(|e| format!("Invalid exposure slice: {e}")));
@@ -1163,6 +1186,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_exposure_batch(
         return MaybeError::None;
     }
 
+    let context = try_c!(ffe_context_from_ffi(context));
     let exposures = try_c!(exposures
         .iter()
         .map(ffe_exposure_from_ffi)
