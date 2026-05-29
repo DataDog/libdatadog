@@ -189,7 +189,18 @@ fn subject_attributes(json: &str) -> serde_json::Map<String, serde_json::Value> 
 
     match serde_json::from_str::<serde_json::Value>(json) {
         Ok(serde_json::Value::Object(attrs)) => attrs,
-        Ok(_) | Err(_) => serde_json::Map::new(),
+        Ok(_) => {
+            log::debug!(
+                "ffe exposure subject attributes must be a JSON object; using empty attributes"
+            );
+            serde_json::Map::new()
+        }
+        Err(error) => {
+            log::debug!(
+                "invalid ffe exposure subject attributes JSON: {error}; using empty attributes"
+            );
+            serde_json::Map::new()
+        }
     }
 }
 
