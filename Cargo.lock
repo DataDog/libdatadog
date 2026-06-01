@@ -1359,6 +1359,7 @@ dependencies = [
  "libdd-common",
  "libdd-trace-protobuf",
  "log",
+ "lru",
  "md5",
  "prost",
  "pyo3",

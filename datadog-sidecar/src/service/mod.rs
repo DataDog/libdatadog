@@ -4,6 +4,7 @@
 // imports for structs defined in this file
 use crate::config;
 pub use datadog_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
+pub use datadog_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use datadog_ffe::telemetry::FfeTelemetryContext;
 use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_common::tag::Tag;
@@ -30,6 +31,7 @@ pub mod agent_info;
 pub mod blocking;
 mod debugger_diagnostics_bookkeeper;
 pub mod exception_hash_rate_limiter;
+pub(crate) mod ffe_exposures_flusher;
 pub(crate) mod ffe_metrics_flusher;
 mod instance_id;
 mod queue_id;
@@ -85,6 +87,9 @@ pub enum SidecarAction {
     Telemetry(TelemetryActions),
     AddTelemetryMetricPoint((String, f64, Vec<Tag>)),
     PhpComposerTelemetryFile(PathBuf),
+    /// Structured FFE exposures. The sidecar owns JSON serialization,
+    /// cross-request deduplication, and EVP delivery.
+    FfeExposureBatch(FfeExposureBatch),
     /// Structured FFE evaluation metrics. The sidecar owns OTLP/protobuf
     /// aggregation, serialization, and delivery. This action must be sent only
     /// by SDKs that explicitly opted into native FFE metric ownership.

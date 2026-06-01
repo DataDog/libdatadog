@@ -35,6 +35,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
+use crate::service::ffe_exposures_flusher;
 use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
@@ -113,6 +114,8 @@ pub struct SidecarServer {
     pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
     /// HTTP client shared by FFE fire-and-forget forwarders for connection reuse.
     pub(crate) ffe_http_client: NativeCapabilities,
+    /// Sidecar-owned exposure cache, shared across sessions/connections.
+    pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -409,16 +412,35 @@ impl SidecarInterface for ConnectionSidecarHandler {
             trace_config.tracer_version.clone(),
         );
 
-        // FFE metric actions are session-scoped, not application-scoped:
-        // dispatch them before the `applications.entry(queue_id)` check so they
-        // are not silently dropped when the PHP runtime hasn't yet registered the
-        // application via remote-config metadata. The PHP metric writer can fire
-        // as soon as evaluations begin, which is often earlier than the first RC
-        // config registration call.
         let ffe_http_client = self.server.ffe_http_client.clone();
         let actions: Vec<SidecarAction> = actions
             .into_iter()
             .filter(|a| match a {
+                SidecarAction::FfeExposureBatch(batch) => {
+                    if let Some(base) = trace_config.endpoint.as_ref() {
+                        if let Some(ep) = ffe_exposures_flusher::exposure_endpoint(base) {
+                            let batch = batch.clone();
+                            let client = ffe_http_client.clone();
+                            let deduplicator = self.server.ffe_exposure_deduplicator.clone();
+                            tokio::spawn(async move {
+                                ffe_exposures_flusher::send_batch(
+                                    &client,
+                                    &ep,
+                                    &deduplicator,
+                                    batch,
+                                )
+                                .await;
+                            });
+                        } else {
+                            debug!(
+                                "ffe_exposures_flusher: could not derive endpoint, dropping batch"
+                            );
+                        }
+                    } else {
+                        debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
+                    }
+                    false
+                }
                 SidecarAction::FfeEvaluationMetrics {
                     endpoint,
                     context,
@@ -1119,7 +1141,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::{FfeEvaluationMetric, FfeTelemetryContext};
+    use crate::service::{FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeTelemetryContext};
     use httpmock::{Method::POST, MockServer};
     use tokio::time::{sleep, Duration as TokioDuration};
 
@@ -1128,6 +1150,17 @@ mod tests {
             service: "svc".to_owned(),
             env: "prod".to_owned(),
             version: "1".to_owned(),
+        }
+    }
+
+    fn ffe_exposure(subject_id: &str) -> FfeExposure {
+        FfeExposure {
+            timestamp_ms: 123,
+            flag_key: "flag".to_owned(),
+            subject_id: subject_id.to_owned(),
+            subject_attributes_json: "{}".to_owned(),
+            allocation_key: "alloc".to_owned(),
+            variant: "variant".to_owned(),
         }
     }
 
@@ -1143,11 +1176,12 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn ffe_metric_actions_dispatch_without_registered_application() {
+    async fn ffe_exposure_actions_dispatch_without_registered_application() {
         let http_server = MockServer::start_async().await;
-        let metrics_mock = http_server
+        let exposures_mock = http_server
             .mock_async(|when, then| {
-                when.method(POST).path("/v1/metrics");
+                when.method(POST)
+                    .path(ffe_exposures_flusher::EVP_EXPOSURES_PATH);
                 then.status(202);
             })
             .await;
@@ -1166,6 +1200,54 @@ mod tests {
                 };
                 cfg.set_endpoint(endpoint).unwrap();
             });
+
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+
+        handler
+            .enqueue_actions(
+                PeerCredentials::default(),
+                instance_id.clone(),
+                queue_id,
+                vec![SidecarAction::FfeExposureBatch(FfeExposureBatch {
+                    context: ffe_context(),
+                    exposures: vec![ffe_exposure("user")],
+                })],
+            )
+            .await;
+
+        for _ in 0..100 {
+            if exposures_mock.calls_async().await == 1 {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+
+        exposures_mock.assert_async().await;
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn ffe_metric_actions_dispatch_without_registered_application() {
+        let http_server = MockServer::start_async().await;
+        let metrics_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1/metrics");
+                then.status(202);
+            })
+            .await;
+
+        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
 
         assert!(!handler
             .server
@@ -1205,6 +1287,13 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn registered_sdk_without_ffe_actions_does_not_emit_ffe_telemetry() {
         let http_server = MockServer::start_async().await;
+        let exposures_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(ffe_exposures_flusher::EVP_EXPOSURES_PATH);
+                then.status(202);
+            })
+            .await;
         let metrics_mock = http_server
             .mock_async(|when, then| {
                 when.method(POST).path("/v1/metrics");
@@ -1251,6 +1340,7 @@ mod tests {
 
         sleep(TokioDuration::from_millis(50)).await;
 
+        assert_eq!(exposures_mock.calls_async().await, 0);
         assert_eq!(metrics_mock.calls_async().await, 0);
     }
 }
