@@ -2,6 +2,14 @@
 
 
 
+## [2.0.1](https://github.com/datadog/libdatadog/compare/libdd-sampling-v2.0.0..libdd-sampling-v2.0.1) - 2026-06-01
+
+### Added
+
+- Accept Remote Config list-shape tags natively ([#2033](https://github.com/datadog/libdatadog/issues/2033)) - ([b36be02](https://github.com/datadog/libdatadog/commit/b36be023f8c4ae03732f3455ba6f84b4d24d110c))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v1.0.0..libdd-sampling-v2.0.0) - 2026-05-29
 
 ### Added
