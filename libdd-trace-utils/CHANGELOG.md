@@ -2,6 +2,14 @@
 
 
 
+## [6.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v6.0.0..libdd-trace-utils-v6.0.1) - 2026-06-01
+
+### Fixed
+
+- Propagate _dd.p.tid from chunk root to all spans ([#2014](https://github.com/datadog/libdatadog/issues/2014)) - ([42d9ab0](https://github.com/datadog/libdatadog/commit/42d9ab0438338516d2e8ef962de4f8ed158c519d))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v5.0.0..libdd-trace-utils-v6.0.0) - 2026-05-29
 
 ### Added
