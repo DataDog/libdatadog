@@ -49,7 +49,7 @@ cargo run --bin release -- --out output-folder
 
 #### Build dependencies
 
-- Rust 1.84.1 or newer with cargo. See the Cargo.toml for information about bumping this version.
+- Rust 1.87.0 or newer with cargo. The exact version is pinned in `rust-toolchain.toml` at the workspace root and rustup installs it automatically. See the comment near `rust-version` in `Cargo.toml` for the constraints to check when bumping this version.
 - `cbindgen` 0.29
 - `cmake` and `protoc`
 

@@ -2,6 +2,14 @@
 
 
 
+## [3.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v3.0.0..libdd-trace-obfuscation-v3.1.0) - 2026-05-22
+
+### Fixed
+
+- Cargo clippy fix with all lints ([#1947](https://github.com/datadog/libdatadog/issues/1947)) - ([ec55449](https://github.com/datadog/libdatadog/commit/ec55449ab4fad3fb6b224ff9d4235f42cfa3cc28))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v2.0.0..libdd-trace-obfuscation-v3.0.0) - 2026-05-18
 
 ### Added

@@ -25,9 +25,18 @@ jobs:
         with:
           scope: DataDog/libdatadog
           policy: self.write.rustfmt
-      - name: Install nightly-2026-02-08 toolchain and rustfmt
-        run: rustup install nightly-2026-02-08 && rustup default nightly-2026-02-08 && rustup component add rustfmt
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Install ${{ steps.nightly-version.outputs.version }} toolchain and rustfmt
+        run: |
+          rustup install ${{ steps.nightly-version.outputs.version }}
+          rustup component add rustfmt --toolchain ${{ steps.nightly-version.outputs.version }}
       - name: Run rustfmt and commit changes
         uses: mbrobbel/rustfmt-check@e7ac5685995bd39fb14f6c83fa6f10627e92e680 # master
+        env:
+          # Override rust-toolchain.toml so rustfmt runs on nightly (required by
+          # the unstable_features in rustfmt.toml) instead of the workspace MSRV.
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
         with:
           token: ${{ steps.octo-sts.outputs.token }}
