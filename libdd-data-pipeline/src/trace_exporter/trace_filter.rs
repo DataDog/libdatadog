@@ -6,7 +6,7 @@ use std::{borrow::Borrow as _, sync::Arc};
 
 use libdd_common::regex_engine::Regex;
 use libdd_trace_stats::span_concentrator::StatSpan;
-use libdd_trace_utils::span::trace_utils::get_root_span_index_v4;
+use libdd_trace_utils::span::trace_utils::get_root_span_index;
 use tracing::{debug, error};
 
 trait TagFilter {
@@ -190,7 +190,7 @@ impl TraceFilterer {
     ) {
         let conf = self.conf.load();
         traces.retain(|trace| {
-            let Ok(root_span_index) = get_root_span_index_v4(trace) else {
+            let Ok(root_span_index) = get_root_span_index(trace) else {
                 return true;
             };
             let root_span = &trace[root_span_index];

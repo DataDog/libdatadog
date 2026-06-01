@@ -62,8 +62,7 @@ where
     }
 }
 
-// FIXME: duplicated with super::get_root_span_index
-pub fn get_root_span_index_v4<T>(trace: &[Span<T>]) -> anyhow::Result<usize>
+pub fn get_root_span_index<T>(trace: &[Span<T>]) -> anyhow::Result<usize>
 where
     T: TraceData,
 {
