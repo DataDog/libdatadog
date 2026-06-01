@@ -214,9 +214,13 @@ impl TraceFilterer {
     ///
     /// Applies a subset of trace normalization logic from `libdd-trace-normalization` before
     /// checking.
-    // 1. Resource filtering: If the root span's resource name matches any pattern in ignore_resources, reject the trace.
-    // 2. Reject filtering: If any tag on the root span matches filters in filter_tags.reject or filter_tags_regex.reject, reject the trace.
-    // 3. Require filtering: If filter_tags.require or filter_tags_regex.require contain any filters, all of them must match tags on the root span. If any required filter doesn't match, reject the trace.
+    // 1. Resource filtering: If the root span's resource name matches any pattern in
+    //    ignore_resources, reject the trace.
+    // 2. Reject filtering: If any tag on the root span matches filters in filter_tags.reject or
+    //    filter_tags_regex.reject, reject the trace.
+    // 3. Require filtering: If filter_tags.require or filter_tags_regex.require contain any
+    //    filters, all of them must match tags on the root span. If any required filter doesn't
+    //    match, reject the trace.
     fn should_drop<T: libdd_trace_utils::span::TraceData>(
         conf: &TraceFiltererConf,
         root_span: &libdd_trace_utils::span::v04::Span<T>,
