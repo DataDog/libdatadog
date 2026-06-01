@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-sampling"
-version = "2.0.0"
+version = "2.0.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
