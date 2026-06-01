@@ -4,6 +4,7 @@
 //! ignore_resources as published by the agent's /info endpoint).
 use std::{borrow::Borrow as _, sync::Arc};
 
+use arc_swap::ArcSwap;
 use libdd_common::regex_engine::Regex;
 use libdd_trace_stats::span_concentrator::StatSpan;
 use libdd_trace_utils::span::trace_utils::get_root_span_index;
@@ -29,8 +30,8 @@ struct TagRegexFilter {
 }
 
 /// Parsed config
-#[derive(Debug)]
-struct TraceFilteredConf {
+#[derive(Debug, Default)]
+struct TraceFiltererConf {
     reject: Vec<TagStringFilter>,
     reject_regex: Vec<TagRegexFilter>,
 
@@ -42,7 +43,7 @@ struct TraceFilteredConf {
 
 #[derive(Debug)]
 pub struct TraceFilterer {
-    conf: arc_swap::ArcSwap<TraceFilteredConf>,
+    conf: ArcSwap<TraceFiltererConf>,
 }
 
 impl TagStringFilter {
@@ -87,7 +88,7 @@ impl TagFilter for TagRegexFilter {
     }
 }
 
-impl TraceFilteredConf {
+impl TraceFiltererConf {
     fn compile_regex_filters(filters: &[String]) -> Vec<TagRegexFilter> {
         let mut tag_regex_filters = Vec::new();
         for filter in filters {
@@ -152,7 +153,7 @@ impl TraceFilteredConf {
                     .ok()
             })
             .collect();
-        TraceFilteredConf {
+        TraceFiltererConf {
             reject,
             require,
             reject_regex,
@@ -163,14 +164,20 @@ impl TraceFilteredConf {
 }
 
 impl TraceFilterer {
-    pub fn new(
+    #[cfg(test)]
+    fn new(
         filter_tags: &crate::agent_info::schema::FilterTagsConfig,
         filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
         ignore_resources: &[String],
     ) -> Self {
-        let conf = TraceFilteredConf::parse(filter_tags, filter_tags_regex, ignore_resources);
+        let conf = TraceFiltererConf::parse(filter_tags, filter_tags_regex, ignore_resources);
         Self {
-            conf: arc_swap::ArcSwap::from_pointee(conf),
+            conf: ArcSwap::from_pointee(conf),
+        }
+    }
+    pub fn with_empty_conf() -> Self {
+        Self {
+            conf: ArcSwap::from_pointee(TraceFiltererConf::default()),
         }
     }
 
@@ -180,7 +187,7 @@ impl TraceFilterer {
         filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
         ignore_resources: &[String],
     ) {
-        let new_conf = TraceFilteredConf::parse(filter_tags, filter_tags_regex, ignore_resources);
+        let new_conf = TraceFiltererConf::parse(filter_tags, filter_tags_regex, ignore_resources);
         self.conf.swap(Arc::new(new_conf));
     }
 
@@ -211,7 +218,7 @@ impl TraceFilterer {
     // 2. Reject filtering: If any tag on the root span matches filters in filter_tags.reject or filter_tags_regex.reject, reject the trace.
     // 3. Require filtering: If filter_tags.require or filter_tags_regex.require contain any filters, all of them must match tags on the root span. If any required filter doesn't match, reject the trace.
     fn should_drop<T: libdd_trace_utils::span::TraceData>(
-        conf: &TraceFilteredConf,
+        conf: &TraceFiltererConf,
         root_span: &libdd_trace_utils::span::v04::Span<T>,
     ) -> bool {
         if !conf.ignore_resources.is_empty() {

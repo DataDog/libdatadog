@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::agent_info::schema::FilterTagsConfig;
 use crate::agent_info::AgentInfoFetcher;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::OtlpTraceConfig;
@@ -67,9 +66,6 @@ pub struct TraceExporterBuilder {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
-    filter_tags: FilterTagsConfig,
-    filter_tags_regex: FilterTagsConfig,
-    ignore_resources: Vec<String>,
 }
 
 impl TraceExporterBuilder {
@@ -291,24 +287,6 @@ impl TraceExporterBuilder {
         self
     }
 
-    // TODO: doc
-    pub fn set_filter_tags(&mut self, filter_tags: FilterTagsConfig) -> &mut Self {
-        self.filter_tags = filter_tags;
-        self
-    }
-
-    // TODO: doc
-    pub fn set_filter_tags_regex(&mut self, filter_tags_regex: FilterTagsConfig) -> &mut Self {
-        self.filter_tags_regex = filter_tags_regex;
-        self
-    }
-
-    // TODO: doc
-    pub fn set_ignore_resources(&mut self, ignore_resources: Vec<String>) -> &mut Self {
-        self.ignore_resources = ignore_resources;
-        self
-    }
-
     #[allow(missing_docs)]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
@@ -518,11 +496,7 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
-            trace_filterer: TraceFilterer::new(
-                &self.filter_tags,
-                &self.filter_tags_regex,
-                &self.ignore_resources,
-            ),
+            trace_filterer: TraceFilterer::with_empty_conf(),
         })
     }
 
