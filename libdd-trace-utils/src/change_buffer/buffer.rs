@@ -145,7 +145,7 @@ mod tests {
         let mut buffer = vec![0u8; 64];
         buffer[0..4].copy_from_slice(&42u32.to_le_bytes());
         buffer[8..24].copy_from_slice(&123456789u128.to_le_bytes());
-        buffer[24..32].copy_from_slice(&3.14f64.to_le_bytes());
+        buffer[24..32].copy_from_slice(&1.5f64.to_le_bytes());
 
         let buf = unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) };
 
@@ -157,7 +157,7 @@ mod tests {
         assert_eq!(123456789u128, buf.read::<u128>(&mut index)?);
 
         index = 24;
-        assert_eq!(3.14, buf.read::<f64>(&mut index)?);
+        assert_eq!(1.5, buf.read::<f64>(&mut index)?);
         Ok(())
     }
 
