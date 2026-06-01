@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
-use std::{borrow::Borrow as _, collections::HashMap, sync::Arc};
+use std::{borrow::Borrow as _, sync::Arc};
 
-use libdd_common::regex_engine;
+use libdd_common::regex_engine::Regex;
 use libdd_trace_stats::span_concentrator::StatSpan;
 use libdd_trace_utils::span::trace_utils::get_root_span_index_v4;
 use tracing::{debug, error};
@@ -12,10 +12,8 @@ use tracing::{debug, error};
 trait TagFilter {
     /// Returns true if the given tag value matches the Filterer.
     fn matches_tag_value(&self, value: &str) -> bool;
-    fn find_tag<'a, T: libdd_trace_utils::span::SpanText>(
-        &'a self,
-        meta: &'a HashMap<T, T>,
-    ) -> Option<(&'a str, &'a T)>;
+    // Getter to the key field
+    fn key(&self) -> &str;
 }
 
 #[derive(Debug)]
@@ -27,14 +25,7 @@ struct TagStringFilter {
 #[derive(Debug)]
 struct TagRegexFilter {
     key: String,
-    value: Option<regex_engine::Regex>,
-}
-
-#[derive(Debug)]
-// Slowest kind of filter where the key field is also a regex
-struct TagRegexKeyFilter {
-    key: regex_engine::Regex,
-    value: Option<regex_engine::Regex>,
+    value: Option<Regex>,
 }
 
 /// Parsed config
@@ -42,13 +33,11 @@ struct TagRegexKeyFilter {
 struct TraceFilteredConf {
     reject: Vec<TagStringFilter>,
     reject_regex: Vec<TagRegexFilter>,
-    reject_key_regex: Vec<TagRegexKeyFilter>,
 
     require: Vec<TagStringFilter>,
     require_regex: Vec<TagRegexFilter>,
-    require_key_regex: Vec<TagRegexKeyFilter>,
 
-    ignore_resources: Vec<regex_engine::Regex>,
+    ignore_resources: Vec<Regex>,
 }
 
 #[derive(Debug)]
@@ -80,11 +69,8 @@ impl TagFilter for TagStringFilter {
         }
     }
 
-    fn find_tag<'a, T: libdd_trace_utils::span::SpanText>(
-        &'a self,
-        meta: &'a HashMap<T, T>,
-    ) -> std::option::Option<(&'a str, &'a T)> {
-        Some((self.key.as_ref(), meta.get(&self.key)?))
+    fn key(&self) -> &str {
+        &self.key
     }
 }
 
@@ -96,51 +82,14 @@ impl TagFilter for TagRegexFilter {
         }
     }
 
-    fn find_tag<'a, T: libdd_trace_utils::span::SpanText>(
-        &'a self,
-        meta: &'a HashMap<T, T>,
-    ) -> std::option::Option<(&'a str, &'a T)> {
-        Some((self.key.as_ref(), meta.get(&self.key)?))
+    fn key(&self) -> &str {
+        &self.key
     }
-}
-
-impl TagFilter for TagRegexKeyFilter {
-    fn matches_tag_value(&self, value: &str) -> bool {
-        match &self.value {
-            None => true, // No value requirement => Any value is a match
-            Some(pattern) => pattern.is_match(value),
-        }
-    }
-
-    fn find_tag<'a, T: libdd_trace_utils::span::SpanText>(
-        &self,
-        meta: &'a HashMap<T, T>,
-    ) -> std::option::Option<(&'a str, &'a T)> {
-        meta.iter()
-            .find(|&(key, _)| self.key.is_match(key.borrow()))
-            .map(|(key, value)| (key.borrow(), value))
-    }
-}
-
-/// Compile a regex anchored to the full string.
-fn compile_anchored(pattern: &str) -> Result<regex_engine::Regex, regex_engine::Error> {
-    regex_engine::Regex::new(&format!("^(?:{pattern})$"))
-}
-
-/// Returns `true` when `key` contains no regex metacharacters and can be used for a direct
-/// O(1) lookup.  `.` is intentionally treated as a literal (not a wildcard) in key patterns.
-fn is_literal_key(key: &str) -> bool {
-    !key.contains([
-        '*', '+', '?', '[', ']', '(', ')', '{', '}', '^', '$', ',', '\\',
-    ])
 }
 
 impl TraceFilteredConf {
-    /// Compile all `filter_tags_regex` entries, splitting into literal-key (fast) and
-    /// regex-key (slow) lists based on whether the key portion contains metacharacters.
-    fn compile_regex_filters(filters: &[String]) -> (Vec<TagRegexFilter>, Vec<TagRegexKeyFilter>) {
+    fn compile_regex_filters(filters: &[String]) -> Vec<TagRegexFilter> {
         let mut tag_regex_filters = Vec::new();
-        let mut tag_regex_key_filters = Vec::new();
         for filter in filters {
             let (key, value) = match filter.split_once(":") {
                 Some((key, value)) => (key, Some(value)),
@@ -148,7 +97,7 @@ impl TraceFilteredConf {
             };
 
             let value = match value {
-                Some(value) => match compile_anchored(value) {
+                Some(value) => match Regex::new(value) {
                     Ok(regex) => Some(regex),
                     Err(err) => {
                         error!(
@@ -156,36 +105,19 @@ impl TraceFilteredConf {
                             ?err,
                             "Invalid regex pattern in tag filter's value, skipping it"
                         );
-                        // FIXME: dd-trace-php considers that if the value pattern is bad, we still
-                        // keep the filter by only matching on the key. I find it more intuitive to
-                        // drop the filter altogether
                         continue;
                     }
                 },
                 None => None,
             };
 
-            if is_literal_key(key) {
-                tag_regex_filters.push(TagRegexFilter {
-                    key: key.to_owned(),
-                    value,
-                });
-            } else {
-                match compile_anchored(key) {
-                    Ok(key) => tag_regex_key_filters.push(TagRegexKeyFilter { key, value }),
-                    Err(err) => {
-                        error!(
-                            ?filter,
-                            ?err,
-                            "Invalid regex pattern in tag filter's key, skipping it"
-                        );
-                        continue;
-                    }
-                }
-            }
+            tag_regex_filters.push(TagRegexFilter {
+                key: key.to_owned(),
+                value,
+            });
         }
 
-        (tag_regex_filters, tag_regex_key_filters)
+        tag_regex_filters
     }
 
     fn parse(
@@ -193,10 +125,8 @@ impl TraceFilteredConf {
         filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
         ignore_resources: &[String],
     ) -> Self {
-        let (require_regex, require_key_regex) =
-            Self::compile_regex_filters(&filter_tags_regex.require);
-        let (reject_regex, reject_key_regex) =
-            Self::compile_regex_filters(&filter_tags_regex.reject);
+        let require_regex = Self::compile_regex_filters(&filter_tags_regex.require);
+        let reject_regex = Self::compile_regex_filters(&filter_tags_regex.reject);
 
         let reject = filter_tags
             .reject
@@ -211,7 +141,7 @@ impl TraceFilteredConf {
         let ignore_resources = ignore_resources
             .iter()
             .filter_map(|regex| {
-                compile_anchored(regex)
+                Regex::new(regex)
                     .inspect_err(|err| {
                         error!(
                             ?regex,
@@ -227,8 +157,6 @@ impl TraceFilteredConf {
             require,
             reject_regex,
             require_regex,
-            reject_key_regex,
-            require_key_regex,
             ignore_resources,
         }
     }
@@ -263,8 +191,6 @@ impl TraceFilterer {
         let conf = self.conf.load();
         traces.retain(|trace| {
             let Ok(root_span_index) = get_root_span_index_v4(trace) else {
-                // FIXME: in this case it's a distributed trace ? Maybe we should remove the debug
-                // log in get_root_span_index_v4 then
                 return true;
             };
             let root_span = &trace[root_span_index];
@@ -301,14 +227,6 @@ impl TraceFilterer {
             return true;
         }
 
-        if conf
-            .reject_key_regex
-            .iter()
-            .any(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
-        {
-            return true;
-        }
-
         if !conf
             .require
             .iter()
@@ -319,14 +237,6 @@ impl TraceFilterer {
 
         if !conf
             .require_regex
-            .iter()
-            .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
-        {
-            return true;
-        }
-
-        if !conf
-            .require_key_regex
             .iter()
             .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
         {
@@ -363,11 +273,11 @@ impl TraceFilterer {
         filter: &impl TagFilter,
         root_span: &libdd_trace_utils::span::v04::Span<T>,
     ) -> bool {
-        let Some((key, value)) = filter.find_tag(&root_span.meta) else {
+        let Some(value) = root_span.meta.get(filter.key()) else {
             return false;
         };
         let value = value.borrow();
-        match key {
+        match filter.key() {
             "env" => {
                 let normalized_value =
                     libdd_trace_normalization::normalize_utils::normalize_tag_cloned(value);
@@ -493,15 +403,15 @@ mod tests {
         assert_eq!(traces.len(), 1);
     }
 
-    // ---- reject_key_regex (TagRegexKeyFilter – regex key) ----
-    // A key pattern containing `*` triggers the key-regex path.
+    // ---- reject_key_regex ----
+    // Checks that it's not implemented
 
     #[test]
     fn reject_key_regex_key_and_value_match_drops() {
-        // "err.*" contains `*` → key is compiled as a regex; matches "error".
         let mut traces = one_trace(span_with("r", &[("error", "timeout")]));
         reject_regex(&["err.*:timeout"]).filter_traces(&mut traces);
-        assert!(traces.is_empty());
+        // Regex keys are not implemented so it doesn't match
+        assert!(!traces.is_empty());
     }
 
     #[test]
@@ -557,14 +467,15 @@ mod tests {
         assert!(traces.is_empty());
     }
 
-    // ---- require_key_regex (TagRegexKeyFilter – regex key) ----
+    // ---- require_key_regex  ----
+    // (Checks that it's not implemented)
 
     #[test]
     fn require_key_regex_key_exists_keeps() {
-        // Key-only pattern → value: None → any tag value satisfies the requirement.
         let mut traces = one_trace(span_with("r", &[("error", "any")]));
         require_regex(&["err.*"]).filter_traces(&mut traces);
-        assert_eq!(traces.len(), 1);
+        // Regex keys are not implemented so it doesn't match
+        assert!(traces.is_empty());
     }
 
     #[test]
