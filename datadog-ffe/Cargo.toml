@@ -25,8 +25,11 @@ serde_with = { version = "3.11.0", default-features = false, features = ["base64
 thiserror = { version = "2.0.3", default-features = false }
 url = { version = "2.5.0", default-features = false, features = ["std"] }
 lru = { version = "0.16.3", optional = true }
+libdd-trace-protobuf = { path = "../libdd-trace-protobuf", optional = true }
+prost = { version = "0.14.1", optional = true }
 pyo3 = { version = "0.28", optional = true, default-features = false, features = ["macros"] }
 
 [features]
 exposure-events = ["dep:lru"]
+evaluation-metrics = ["dep:libdd-trace-protobuf", "dep:prost"]
 pyo3 = ["dep:pyo3"]

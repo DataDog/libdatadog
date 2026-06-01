@@ -36,6 +36,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::ffe_exposures_flusher;
+use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
     flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
@@ -411,12 +412,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
             trace_config.tracer_version.clone(),
         );
 
-        // FFE exposure actions are session-scoped, not application-scoped:
-        // dispatch them before the `applications.entry(queue_id)` check so they
-        // are not silently dropped when the PHP runtime hasn't yet registered the
-        // application via remote-config metadata. The PHP exposure writer can
-        // fire as soon as evaluations begin, which is often earlier than the
-        // first RC config registration call.
         let ffe_http_client = self.server.ffe_http_client.clone();
         let actions: Vec<SidecarAction> = actions
             .into_iter()
@@ -443,6 +438,25 @@ impl SidecarInterface for ConnectionSidecarHandler {
                         }
                     } else {
                         debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
+                    }
+                    false
+                }
+                SidecarAction::FfeEvaluationMetrics {
+                    endpoint,
+                    context,
+                    metrics,
+                } => {
+                    if let Some(ep) = ffe_metrics_flusher::otlp_metrics_endpoint(endpoint) {
+                        let client = ffe_http_client.clone();
+                        let context = context.clone();
+                        let metrics = metrics.clone();
+                        tokio::spawn(async move {
+                            ffe_metrics_flusher::send_metrics(&client, &ep, context, metrics).await;
+                        });
+                    } else {
+                        debug!(
+                            "ffe_metrics_flusher: unparseable endpoint {endpoint:?}, dropping batch"
+                        );
                     }
                     false
                 }
@@ -1127,7 +1141,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::{FfeExposure, FfeExposureBatch, FfeTelemetryContext};
+    use crate::service::{FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeTelemetryContext};
     use httpmock::{Method::POST, MockServer};
     use tokio::time::{sleep, Duration as TokioDuration};
 
@@ -1150,6 +1164,16 @@ mod tests {
         }
     }
 
+    fn ffe_metric() -> FfeEvaluationMetric {
+        FfeEvaluationMetric {
+            flag_key: "flag".to_owned(),
+            variant: "variant".to_owned(),
+            reason: "TARGETING_MATCH".to_owned(),
+            error_type: None,
+            allocation_key: Some("alloc".to_owned()),
+        }
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn ffe_exposure_actions_dispatch_without_registered_application() {
@@ -1161,6 +1185,7 @@ mod tests {
                 then.status(202);
             })
             .await;
+
         let handler = ConnectionSidecarHandler::new(SidecarServer::default());
         let instance_id = InstanceId::new("session", "runtime");
         let queue_id = QueueId::from(42);
@@ -1211,6 +1236,55 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn ffe_metric_actions_dispatch_without_registered_application() {
+        let http_server = MockServer::start_async().await;
+        let metrics_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1/metrics");
+                then.status(202);
+            })
+            .await;
+
+        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+
+        handler
+            .enqueue_actions(
+                PeerCredentials::default(),
+                instance_id.clone(),
+                queue_id,
+                vec![SidecarAction::FfeEvaluationMetrics {
+                    endpoint: http_server.url("/v1/metrics"),
+                    context: ffe_context(),
+                    metrics: vec![ffe_metric()],
+                }],
+            )
+            .await;
+
+        for _ in 0..100 {
+            if metrics_mock.calls_async().await == 1 {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+
+        metrics_mock.assert_async().await;
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn registered_sdk_without_ffe_actions_does_not_emit_ffe_telemetry() {
         let http_server = MockServer::start_async().await;
         let exposures_mock = http_server
@@ -1220,6 +1294,13 @@ mod tests {
                 then.status(202);
             })
             .await;
+        let metrics_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1/metrics");
+                then.status(202);
+            })
+            .await;
+
         let handler = ConnectionSidecarHandler::new(SidecarServer::default());
         let instance_id = InstanceId::new("session", "runtime");
         let queue_id = QueueId::from(42);
@@ -1260,6 +1341,7 @@ mod tests {
         sleep(TokioDuration::from_millis(50)).await;
 
         assert_eq!(exposures_mock.calls_async().await, 0);
+        assert_eq!(metrics_mock.calls_async().await, 0);
     }
 }
 

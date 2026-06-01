@@ -1,6 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "evaluation-metrics")]
+pub mod evaluation_metrics;
+#[cfg(feature = "exposure-events")]
 pub mod exposures;
 
 use serde::{Deserialize, Serialize};
