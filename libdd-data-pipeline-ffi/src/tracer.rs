@@ -77,10 +77,10 @@ pub struct TracerSpanFields<'a> {
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_span_new(
     out_handle: NonNull<Box<TracerSpan>>,
-    fields: &TracerSpanFields,
+    fields: Option<&TracerSpanFields>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
-        {
+        if let Some(fields) = fields {
             let inner = || -> Result<(), Box<ExporterError>> {
                 let service = charslice_to_bytesstring(fields.service)?;
                 let name = charslice_to_bytesstring(fields.name)?;
@@ -108,6 +108,8 @@ pub unsafe extern "C" fn ddog_tracer_span_new(
                 Ok(())
             };
             inner().err()
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
         },
         gen_error!(ErrorCode::Panic)
     )
@@ -273,16 +275,19 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_begin_chunk(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
     handle: Option<&mut TracerTraceChunks>,
-    span: Box<TracerSpan>,
+    span: Option<Box<TracerSpan>>,
 ) -> Option<Box<ExporterError>> {
+    let Some(chunks) = handle else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+    let Some(span) = span else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+
     catch_panic!(
-        if let Some(chunks) = handle {
-            if let Some(chunk) = chunks.0.last_mut() {
-                chunk.push(span.0);
-                None
-            } else {
-                gen_error!(ErrorCode::InvalidArgument)
-            }
+        if let Some(chunk) = chunks.0.last_mut() {
+            chunk.push(span.0);
+            None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
         },
@@ -313,10 +318,13 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     exporter: Option<&TraceExporter>,
-    chunks: Box<TracerTraceChunks>,
+    chunks: Option<Box<TracerTraceChunks>>,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
 ) -> Option<Box<ExporterError>> {
     let Some(exporter) = exporter else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+    let Some(chunks) = chunks else {
         return gen_error!(ErrorCode::InvalidArgument);
     };
 
@@ -361,7 +369,7 @@ mod tests {
                 duration: 0,
                 error: 0,
             };
-            let err = ddog_tracer_span_new(out, &fields);
+            let err = ddog_tracer_span_new(out, Some(&fields));
             assert!(err.is_none());
             handle.assume_init()
         }
@@ -386,7 +394,7 @@ mod tests {
                 duration: 25_000_000,
                 error: 0,
             };
-            let err = ddog_tracer_span_new(out, &fields);
+            let err = ddog_tracer_span_new(out, Some(&fields));
             assert!(err.is_none());
 
             let span = handle.assume_init();
@@ -500,7 +508,7 @@ mod tests {
                 duration: 0,
                 error: 0,
             };
-            let err = ddog_tracer_span_new(out, &fields);
+            let err = ddog_tracer_span_new(out, Some(&fields));
             assert!(err.is_none());
 
             let span = handle.assume_init();
@@ -533,18 +541,18 @@ mod tests {
             assert!(err.is_none());
 
             let s1 = make_minimal_span();
-            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s1);
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), Some(s1));
             assert!(err.is_none());
 
             let s2 = make_minimal_span();
-            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s2);
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), Some(s2));
             assert!(err.is_none());
 
             // Chunk 2: one span
             let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 1);
             assert!(err.is_none());
             let s3 = make_minimal_span();
-            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s3);
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), Some(s3));
             assert!(err.is_none());
 
             assert_eq!(chunks.0.len(), 2);
@@ -571,11 +579,36 @@ mod tests {
 
             // No begin_chunk — push should fail
             let s = make_minimal_span();
-            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), s);
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), Some(s));
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
 
             ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    #[test]
+    fn push_span_null_span_returns_error() {
+        unsafe {
+            let mut chunks = make_chunks(1);
+            let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), 0);
+            assert!(err.is_none());
+
+            let err = ddog_tracer_trace_chunks_push_span(Some(&mut *chunks), None);
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
+
+            ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    #[test]
+    fn push_span_null_handle_returns_error() {
+        unsafe {
+            let s = make_minimal_span();
+            let err = ddog_tracer_trace_chunks_push_span(None, Some(s));
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
         }
     }
 
@@ -598,6 +631,59 @@ mod tests {
             assert_eq!(chunks.0.len(), 1);
             assert_eq!(chunks.0[0].len(), 0);
 
+            ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    #[test]
+    fn span_new_null_fields_returns_error() {
+        unsafe {
+            let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            let err = ddog_tracer_span_new(out, None);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn send_trace_chunks_null_exporter_returns_error() {
+        unsafe {
+            let chunks = make_chunks(0);
+            let err = ddog_trace_exporter_send_trace_chunks(None, Some(chunks), None);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    // Capacity-overflow tests: a C caller passing `usize::MAX` would make
+    // `Vec::with_capacity` panic with "capacity overflow"; the `catch_panic!`
+    // guard must convert that into `ErrorCode::Panic` instead of aborting
+    // the process.
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
+    #[test]
+    fn trace_chunks_new_with_overflow_capacity_returns_panic_error() {
+        unsafe {
+            let mut handle = MaybeUninit::<Box<TracerTraceChunks>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            let err = ddog_tracer_trace_chunks_new(usize::MAX, out);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::Panic);
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[cfg(all(feature = "catch_panic", panic = "unwind"))]
+    #[test]
+    fn begin_chunk_with_overflow_capacity_returns_panic_error() {
+        unsafe {
+            let mut chunks = make_chunks(0);
+            let err = ddog_tracer_trace_chunks_begin_chunk(Some(&mut *chunks), usize::MAX);
+            assert!(err.is_some());
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::Panic);
+            ddog_trace_exporter_error_free(err);
             ddog_tracer_trace_chunks_free(chunks);
         }
     }

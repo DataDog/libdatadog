@@ -11,8 +11,8 @@ use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryBackoffType, RetryStrategy, SendWithRetryError,
 };
 
-/// Max total attempts for OTLP export (1 initial + up to 4 retries on transient failures).
-const OTLP_MAX_ATTEMPTS: u32 = 5;
+/// Max retries for OTLP export.
+const OTLP_MAX_RETRIES: u32 = 4;
 /// Initial backoff between retries (milliseconds).
 const OTLP_RETRY_DELAY_MS: u64 = 100;
 
@@ -56,7 +56,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     }
 
     let retry_strategy = RetryStrategy::new(
-        OTLP_MAX_ATTEMPTS,
+        OTLP_MAX_RETRIES,
         OTLP_RETRY_DELAY_MS,
         RetryBackoffType::Exponential,
         None,
