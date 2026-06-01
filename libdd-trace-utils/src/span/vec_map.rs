@@ -194,14 +194,7 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
         if self.deduped {
             DedupedVecMap::Borrowed(self)
         } else {
-            DedupedVecMap::Owned(
-                self.data
-                    .iter()
-                    .map(|(k, v)| (k, v))
-                    .collect::<HashMap<_, _>>()
-                    .into_iter()
-                    .collect(),
-            )
+            DedupedVecMap::Owned(self.data.iter().map(|(k, v)| (k, v)).collect())
         }
     }
 
@@ -319,7 +312,7 @@ impl<K: Serialize + Eq + Hash, V: Serialize> Serialize for VecMap<K, V> {
 
 pub enum DedupedVecMap<'a, K, V> {
     Borrowed(&'a VecMap<K, V>),
-    Owned(Vec<(&'a K, &'a V)>),
+    Owned(HashMap<&'a K, &'a V>),
 }
 
 impl<'a, K, V> DedupedVecMap<'a, K, V> {
@@ -327,7 +320,7 @@ impl<'a, K, V> DedupedVecMap<'a, K, V> {
     pub fn iter(&self) -> DedupedVecMapIter<'_, 'a, K, V> {
         match self {
             DedupedVecMap::Borrowed(vec_map) => DedupedVecMapIter::Borrowed(vec_map.iter()),
-            DedupedVecMap::Owned(vec) => DedupedVecMapIter::Owned(vec.iter()),
+            DedupedVecMap::Owned(map) => DedupedVecMapIter::Owned(map.iter()),
         }
     }
 
@@ -335,7 +328,7 @@ impl<'a, K, V> DedupedVecMap<'a, K, V> {
     pub fn len(&self) -> usize {
         match self {
             DedupedVecMap::Borrowed(vec_map) => vec_map.len(),
-            DedupedVecMap::Owned(vec) => vec.len(),
+            DedupedVecMap::Owned(map) => map.len(),
         }
     }
 
@@ -343,14 +336,14 @@ impl<'a, K, V> DedupedVecMap<'a, K, V> {
     pub fn is_empty(&self) -> bool {
         match self {
             DedupedVecMap::Borrowed(vec_map) => vec_map.is_empty(),
-            DedupedVecMap::Owned(vec) => vec.is_empty(),
+            DedupedVecMap::Owned(map) => map.is_empty(),
         }
     }
 }
 
 pub enum DedupedVecMapIter<'b, 'a: 'b, K, V> {
     Borrowed(slice::Iter<'a, (K, V)>),
-    Owned(slice::Iter<'b, (&'a K, &'a V)>),
+    Owned(std::collections::hash_map::Iter<'b, &'a K, &'a V>),
 }
 
 impl<'b, 'a: 'b, K, V> Iterator for DedupedVecMapIter<'b, 'a, K, V> {
@@ -359,7 +352,7 @@ impl<'b, 'a: 'b, K, V> Iterator for DedupedVecMapIter<'b, 'a, K, V> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             DedupedVecMapIter::Borrowed(iter) => iter.next().map(|(k, v)| (k, v)),
-            DedupedVecMapIter::Owned(iter) => iter.next().copied(),
+            DedupedVecMapIter::Owned(iter) => iter.next().map(|(&k, &v)| (k, v)),
         }
     }
 
