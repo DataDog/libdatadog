@@ -35,7 +35,7 @@ pub struct FfeExposure {
 
 #[derive(Clone)]
 pub struct ExposureDeduplicator {
-    cache: Arc<Mutex<LruCache<ExposureCacheKey, ExposureCacheValue>>>,
+    cache: Option<Arc<Mutex<LruCache<ExposureCacheKey, ExposureCacheValue>>>>,
 }
 
 impl Default for ExposureDeduplicator {
@@ -46,13 +46,16 @@ impl Default for ExposureDeduplicator {
 
 impl ExposureDeduplicator {
     pub fn new(limit: usize) -> Self {
-        let limit = NonZeroUsize::new(limit).unwrap_or(NonZeroUsize::MIN);
         Self {
-            cache: Arc::new(Mutex::new(LruCache::new(limit))),
+            cache: NonZeroUsize::new(limit).map(|limit| Arc::new(Mutex::new(LruCache::new(limit)))),
         }
     }
 
     pub fn should_send(&self, context: &FfeTelemetryContext, exposure: &FfeExposure) -> bool {
+        let Some(cache) = &self.cache else {
+            return true;
+        };
+
         let key = ExposureCacheKey {
             service: context.service.clone(),
             env: context.env.clone(),
@@ -65,7 +68,7 @@ impl ExposureDeduplicator {
             variant: exposure.variant.clone(),
         };
 
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
         if cache.get(&key).is_some_and(|cached| cached == &value) {
             return false;
         }
@@ -287,6 +290,30 @@ mod tests {
         assert!(first.is_some());
         assert!(duplicate.is_none());
         assert!(changed.is_some());
+    }
+
+    #[test]
+    fn zero_cache_limit_disables_deduplication() {
+        let deduplicator = ExposureDeduplicator::new(0);
+        let first = encode_exposure_batch(
+            &deduplicator,
+            FfeExposureBatch {
+                context: context(),
+                exposures: vec![exposure("user", "alloc", "variant")],
+            },
+        )
+        .unwrap();
+        let duplicate = encode_exposure_batch(
+            &deduplicator,
+            FfeExposureBatch {
+                context: context(),
+                exposures: vec![exposure("user", "alloc", "variant")],
+            },
+        )
+        .unwrap();
+
+        assert!(first.is_some());
+        assert!(duplicate.is_some());
     }
 
     #[test]
