@@ -249,8 +249,6 @@ fn update_obfuscation_config(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Reconcile stats config when computation is already enabled.
-/// Async because the disabled-by-agent branch awaits [`stop_stats_computation`].
 pub(crate) async fn handle_stats_enabled(
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
