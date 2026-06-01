@@ -317,9 +317,8 @@ impl TraceExporterBuilder {
 
     /// Build the [`TraceExporter`] asynchronously.
     ///
-    /// Awaits all async setup (e.g. telemetry start-up). `C::new_client()` is invoked
-    /// inside `shared_runtime`'s tokio context via a scoped `EnterGuard`, so the caller
-    /// does not have to already be on that runtime.
+    /// Awaits all async setup (e.g. telemetry start-up). Safe to drive from any async
+    /// context.
     pub async fn build_async<
         C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     >(
@@ -351,20 +350,7 @@ impl TraceExporterBuilder {
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
 
-        // Enter the runtime context so `C::new_client()` can capture `Handle::current()`.
-        // Scoped block drops the `!Send` EnterGuard before any `.await`.
-        let capabilities = {
-            #[cfg(not(target_arch = "wasm32"))]
-            let _guard = shared_runtime
-                .runtime_handle()
-                .map_err(|e| {
-                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                        e.to_string(),
-                    ))
-                })?
-                .enter();
-            C::new_client()
-        };
+        let capabilities = C::new_client();
 
         // --- Platform-specific worker setup ---
         // The blocks below spawn background workers via `SharedRuntime`. On
