@@ -682,13 +682,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         // V1 support is re-detected as soon as the agent advertises it again.
         if effective_format == TraceExporterOutputFormat::V1 {
             if let Err(TraceExporterError::Request(ref e)) = result {
-                if e.status() == http::StatusCode::NOT_FOUND {
-                    if self.v1_active.swap(false, Ordering::Relaxed) {
-                        warn!(
+                if e.status() == http::StatusCode::NOT_FOUND
+                    && self.v1_active.swap(false, Ordering::Relaxed)
+                {
+                    warn!(
                             "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
                         );
-                        self.info_response_observer.manual_trigger();
-                    }
+                    self.info_response_observer.manual_trigger();
                 }
             }
         }
