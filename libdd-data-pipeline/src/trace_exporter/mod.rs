@@ -1348,7 +1348,7 @@ mod tests {
             env!("CARGO_PKG_VERSION")
         );
         let expected_requests = format!(
-            "datadog.tracer.exporter.transport.requests:5|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.requests:6|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
 
@@ -1440,7 +1440,7 @@ mod tests {
             env!("CARGO_PKG_VERSION")
         );
         let expected_requests = format!(
-            "datadog.tracer.exporter.transport.requests:5|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.requests:6|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
 

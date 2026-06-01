@@ -695,7 +695,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1357,8 +1357,11 @@ dependencies = [
  "derive_more",
  "faststr",
  "libdd-common",
+ "libdd-trace-protobuf",
  "log",
+ "lru",
  "md5",
+ "prost",
  "pyo3",
  "semver",
  "serde",
@@ -1382,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe-test-suite"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -1473,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1523,6 +1526,7 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
+ "datadog-ffe",
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-live-debugger",
@@ -1543,7 +1547,6 @@ dependencies = [
  "libdd-dogstatsd-client",
  "libdd-telemetry",
  "libdd-tinybytes",
- "libdd-trace-protobuf",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "manual_future",
@@ -2868,7 +2871,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "4.1.0"
+version = "4.2.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2911,7 +2914,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2964,7 +2967,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3025,7 +3028,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3050,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3072,7 +3075,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3143,7 +3146,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3251,7 +3254,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "1.0.0"
+version = "2.1.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3279,7 +3282,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3316,7 +3319,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3415,7 +3418,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "5.0.0"
+version = "6.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5579,7 +5582,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6021,7 +6024,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

@@ -4,7 +4,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ## Summary
 
-This document consolidates and describes the complete evolution of the crashinfo data format from version 1.0 through 1.6. It serves as the authoritative specification for the crashtracker structured log format, replacing RFCs 0005-0009. Future minor version modifications will be included in this revisable document.
+This document consolidates and describes the complete evolution of the crashinfo data format from version 1.0 through 1.8. It serves as the authoritative specification for the crashtracker structured log format, replacing RFCs 0005-0009. Future minor version modifications will be included in this revisable document.
 
 ## Motivation
 
@@ -18,9 +18,9 @@ As a structured format, it avoids the ambiguity of standard semi-structured stac
 Due to the use of native extensions, it is possible for a single stack-trace to include frames from multiple languages (e.g. python may call C code, which calls Rust code, etc).
 Having a single structured format allows us to work across languages.
 
-## Current Format (Version 1.7)
+## Current Format (Version 1.8)
 
-This section describes the current format (version 1.7), which incorporates all features from versions 1.0 through 1.7. A natural language description of the json format is given here. An example is given in Appendix A, and the schema is given in Appendix B.
+This section describes the current format (version 1.8), which incorporates all features from versions 1.0 through 1.8. A natural language description of the json format is given here. An example is given in Appendix A, and the schema is given in Appendix B.
 
 Any field not listed as "Required" is optional. Consumers MUST accept json with elided optional fields.
 
@@ -32,7 +32,7 @@ Parsers SHOULD therefore accept unexpected fields, either by ignoring them, or b
 
 ### Version Compatibility
 
-Consumers of the crash data format SHOULD be designed to handle all versions from 1.0 to 1.7. The version is indicated by the `data_schema_version` field. Key compatibility considerations:
+Consumers of the crash data format SHOULD be designed to handle all versions from 1.0 to 1.8. The version is indicated by the `data_schema_version` field. Key compatibility considerations:
 - Version 1.0: Base format
 - Version 1.1+: Stacktraces may include an `incomplete` field
 - Version 1.2+: Root level may include an `experimental` field
@@ -40,48 +40,43 @@ Consumers of the crash data format SHOULD be designed to handle all versions fro
 - Version 1.4+: Stackframes may include a `mangled_name` field
 - Version 1.5+: Error objects may include a `thread_name` field
 - Version 1.6+: Root level may include a `ucontext` field for UNIX signal crashes
-- Version 1.7+: `error.threads` is a `Threads` object (with `threads`, `count`, and `incomplete` fields) rather than a bare array
+- Version 1.7: `error.threads` is a `Threads` wrapper object (with nested `threads`, `count`, and `incomplete` fields) rather than a bare array
+- Version 1.8+: `error.threads` is a bare array of thread objects again; the wrapper is removed. Partial collection is indicated by `counters.threads_incomplete`
 
 ### Fields
 
 - `counters`: **[optional]**
   A map of names to integer values.
   At present, this is used by the profiler to track which operations were active at the time of the crash.
+  When multi-thread collection is enabled and stops before all eligible threads are visited, collectors MAY set `threads_incomplete` to `1`.
 - `data_schema_version`: **[required]**
-  A string containing the semver ID of the crashtracker data schema. Current versions: "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7".
+  A string containing the semver ID of the crashtracker data schema. Current versions: "1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "1.8".
 - `experimental`: **[optional]** *[Added in v1.2]*
   Any valid JSON object can be used as the value here.
   Note that the object MUST be valid JSON.
   Consumers of the format SHOULD pass this field along unmodified as the report is processed.
   This field allows developers to collect experimental data without requiring schema changes.
 - `error`: **[required]**
-  - `threads`: **[optional]** *[Shape changed in v1.7]*
-    A `Threads` object describing the non-crashing threads collected at crash time.
-    In a multi-threaded program, the collector SHOULD collect the stacktraces of all active threads and report them here, if configured to do so.
-    The `Threads` object has the following fields:
-    - `threads`: **[optional]**
-      An array of `ThreadData` objects, one per collected thread.
-      May be absent or empty if no threads were collected.
-      Each `ThreadData` object has the following fields:
-      - `crashed`: **[required]**
-        A boolean which tells if the thread crashed.
-        Threads in this array represent non-crashing threads; the crashing thread's stack is in `error.stack`.
-      - `name`: **[required]**
-        Name of the thread (e.g. `'worker-0'`).
-      - `stack`: **[required]**
-        The `StackTrace` of the thread.
-        See below for more details on how stacktraces are formatted.
-      - `state`: **[optional]**
-        Platform-specific state of the thread when its state was captured.
-        Currently, this is the single-character state letter from `/proc/<pid>/task/<tid>/stat`
-        (e.g. `"R"` for running, `"S"` for sleeping, `"D"` for uninterruptible wait).
-    - `count`: **[required]**
-      The number of threads present in the `threads` array.
-      Consumers SHOULD treat this as authoritative; it equals `threads.length` when collection completed normally.
-    - `incomplete`: **[required]**
-      `true` if thread collection was cut short before all eligible threads were visited
-      (e.g. the receiver timeout expired or the `max_threads` cap was reached), `false` otherwise.
-      When `true`, consumers SHOULD note that additional threads may exist that are not represented in `threads`.
+  - `threads`: **[optional]** *[Shape changed in v1.7, simplified in v1.8]*
+    An array of thread objects describing non-crashing threads collected at crash time.
+    In a multi-threaded program, when `collect_all_threads` is enabled, the collector SHOULD collect the stacktraces of all active background threads and report them here.
+    The crashing thread's stack is in `error.stack`, not in this array.
+    The field MUST be omitted when multi-thread collection is disabled or when no background thread stacks were collected.
+    Each thread object has the following fields:
+    - `crashed`: **[required]**
+      A boolean which tells if the thread crashed.
+      Entries in this array represent non-crashing threads and MUST have `crashed` set to `false`.
+    - `name`: **[required]**
+      Name of the thread (e.g. `'ct_worker_0'`).
+      On Linux, this is typically the `comm` field from `/proc/<pid>/task/<tid>/stat`.
+    - `stack`: **[required]**
+      The `StackTrace` of the thread.
+      See below for more details on how stacktraces are formatted.
+    - `state`: **[optional]**
+      Platform-specific state of the thread when its state was captured (CPU registers dump for iOS, thread state enum for Android, etc.).
+      Currently on Linux this is the single-character state letter from `/proc/<pid>/task/<tid>/stat`
+      (e.g. `"R"` for running, `"S"` for sleeping, `"D"` for uninterruptible wait).
+    When collection was cut short (receiver timeout or `max_threads` cap), consumers SHOULD check `counters.threads_incomplete`.
   - `is_crash`: **[required]**
     Boolean true if the error was a crash, false otherwise.
   - `kind`: **[required]**
@@ -256,7 +251,7 @@ A stacktrace consists of
 
 ## Version History
 
-This section documents the evolution of the crashtracker structured log format across versions 1.0 through 1.7. The current specification above reflects version 1.7, which includes all features from previous versions.
+This section documents the evolution of the crashtracker structured log format across versions 1.0 through 1.8. The current specification above reflects version 1.8, which includes all features from previous versions.
 
 ### Version 1.0 (RFC 0005)
 *Initial version*
@@ -333,15 +328,27 @@ This section documents the evolution of the crashtracker structured log format a
 
 **Motivation:** Thread collection in the receiver is time-bounded (the overall receiver timeout is shared between stdin reading and ptrace-based collection). When the budget runs out, collection stops early and the resulting thread list is partial. Without an explicit `incomplete` flag there is no way for consumers to distinguish "no other threads existed" from "collection was cut short". The `count` field avoids an extra array-length computation and keeps the shape consistent with other counted collections in the schema.
 
+### Version 1.8
+*Flat thread array for downstream compatibility*
+
+**Changes from v1.7:**
+- `error.threads` is again a bare array of thread objects (each with `crashed`, `name`, `stack`, and optional `state`), not a `Threads` wrapper
+- The `Threads` wrapper fields (`threads`, `count`, `incomplete`) are removed from `error.threads`
+- `error.threads` is omitted entirely when multi-thread collection is disabled or when no background threads were collected
+- Partial thread collection is reported via `counters.threads_incomplete` set to `1` when collection was cut short
+- Updated `data_schema_version` to "1.8"
+
+**Motivation:** The v1.7 nested `Threads` object broke downstream pipelines that expect `error.threads` to be a flat array of thread records. Restoring the array shape while moving completeness metadata to `counters` keeps the report compatible with existing consumers and still allows distinguishing partial collection from "collection disabled or empty".
+
 ## Appendix A: Example output
 
 An example crash report in version 1.0 format is [available here](artifacts/0005-crashtracker-example.json).
 
-Note: This example uses version 1.0 format. Version 1.1+ may include additional fields such as `incomplete` in stacktraces, `experimental` at the root level, `comments` in stackframes, `mangled_name` in stackframes, `thread_name` in error objects, `ucontext` at the root level for UNIX signal crashes, and (v1.7+) `error.threads` as a `Threads` object with `threads`, `count`, and `incomplete` fields.
+Note: This example uses version 1.0 format. Version 1.1+ may include additional fields such as `incomplete` in stacktraces, `experimental` at the root level, `comments` in stackframes, `mangled_name` in stackframes, `thread_name` in error objects, `ucontext` at the root level for UNIX signal crashes, (v1.7) `error.threads` as a `Threads` wrapper object, and (v1.8+) `error.threads` as a flat array of thread objects with `counters.threads_incomplete` for partial collection.
 
 ## Appendix B: Json Schema
 
-The current JSON schema (version 1.7) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_7.json).
+The current JSON schema (version 1.8) is [available here](artifacts/crashtracker-unified-runtime-stack-schema-v1_8.json).
 
 Historical schemas are also available:
 - [Version 1.0 schema](artifacts/0005-crashtracker-schema.json)
@@ -351,3 +358,4 @@ Historical schemas are also available:
 - [Version 1.4 schema](artifacts/0009-crashtracker-schema.json)
 - [Version 1.5 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_5.json)
 - [Version 1.6 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_6.json)
+- [Version 1.7 schema](artifacts/crashtracker-unified-runtime-stack-schema-v1_7.json)
