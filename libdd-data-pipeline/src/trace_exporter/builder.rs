@@ -476,6 +476,7 @@ impl TraceExporterBuilder {
             input_format: self.input_format,
             output_format: self.output_format,
             v1_active: std::sync::atomic::AtomicBool::new(false),
+            v1_unavailable_logged: std::sync::Once::new(),
             serializer: TraceSerializer::new(),
             client_computed_top_level: self.client_computed_top_level,
             shared_runtime,

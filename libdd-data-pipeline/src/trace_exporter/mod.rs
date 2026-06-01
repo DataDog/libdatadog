@@ -48,7 +48,7 @@ use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
 use tokio::task::JoinSet;
@@ -189,6 +189,10 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     /// Set to true while the agent advertises `/v1.0/traces` in `/info`; false otherwise.
     /// Only consulted when `output_format` is V1.
     v1_active: AtomicBool,
+    /// Used to emit a one-shot warning when V1 is requested by the SDK but the agent never
+    /// advertises `/v1.0/traces`. Without it we'd either spam the warning on every `/info`
+    /// poll or stay silent and leave SDK authors without a signal.
+    v1_unavailable_logged: Once,
     serializer: TraceSerializer,
     shared_runtime: Arc<SharedRuntime>,
     /// None if dogstatsd is disabled
@@ -418,7 +422,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             (true, false) => {
                 warn!("V1 trace protocol no longer advertised by agent; falling back to v0.4")
             }
-            _ => {}
+            (false, false) => {
+                self.v1_unavailable_logged.call_once(|| {
+                    warn!(
+                        "V1 trace protocol requested by SDK but agent does not advertise {V1_TRACES_ENDPOINT}; continuing on v0.4"
+                    );
+                });
+            }
+            (true, true) => {}
         }
     }
 
@@ -676,8 +687,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                         warn!(
                             "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
                         );
+                        self.info_response_observer.manual_trigger();
                     }
-                    self.info_response_observer.manual_trigger();
                 }
             }
         }
