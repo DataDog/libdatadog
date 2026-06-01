@@ -207,10 +207,36 @@ impl TraceFilterer {
     ///
     /// Applies a subset of trace normalization logic from `libdd-trace-normalization` before
     /// checking.
+    // 1. Resource filtering: If the root span's resource name matches any pattern in ignore_resources, reject the trace.
+    // 2. Reject filtering: If any tag on the root span matches filters in filter_tags.reject or filter_tags_regex.reject, reject the trace.
+    // 3. Require filtering: If filter_tags.require or filter_tags_regex.require contain any filters, all of them must match tags on the root span. If any required filter doesn't match, reject the trace.
     fn should_drop<T: libdd_trace_utils::span::TraceData>(
         conf: &TraceFilteredConf,
         root_span: &libdd_trace_utils::span::v04::Span<T>,
     ) -> bool {
+        if !conf.ignore_resources.is_empty() {
+            let span_resource = root_span.resource();
+            // Normalization
+            let span_resource = if span_resource.is_empty() {
+                let span_name = root_span.name();
+                debug!(
+                    ?span_name,
+                    "Trace filter fixing malformed trace. Resource is empty so using name instead"
+                );
+                span_name
+            } else {
+                span_resource
+            };
+
+            if conf
+                .ignore_resources
+                .iter()
+                .any(|resource_pattern| resource_pattern.is_match(span_resource))
+            {
+                return true;
+            }
+        }
+
         if conf
             .reject
             .iter()
@@ -241,29 +267,6 @@ impl TraceFilterer {
             .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
         {
             return true;
-        }
-
-        if !conf.ignore_resources.is_empty() {
-            let span_resource = root_span.resource();
-            // Normalization
-            let span_resource = if span_resource.is_empty() {
-                let span_name = root_span.name();
-                debug!(
-                    ?span_name,
-                    "Trace filter fixing malformed trace. Resource is empty so using name instead"
-                );
-                span_name
-            } else {
-                span_resource
-            };
-
-            if conf
-                .ignore_resources
-                .iter()
-                .any(|resource_pattern| resource_pattern.is_match(span_resource))
-            {
-                return true;
-            }
         }
 
         false
