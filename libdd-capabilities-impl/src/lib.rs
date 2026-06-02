@@ -15,7 +15,7 @@ use std::time::Duration;
 
 pub use http::NativeHttpClient;
 use libdd_capabilities::{http::HttpError, MaybeSend};
-pub use libdd_capabilities::{HttpClientCapability, SleepCapability};
+pub use libdd_capabilities::{HttpClientCapability, LogWriterCapability, SleepCapability};
 pub use sleep::NativeSleepCapability;
 
 /// Bundle struct for native platform capabilities.
@@ -61,6 +61,18 @@ impl HttpClientCapability for NativeCapabilities {
         req: ::http::Request<bytes::Bytes>,
     ) -> impl Future<Output = Result<::http::Response<bytes::Bytes>, HttpError>> + MaybeSend {
         self.http.request(req)
+    }
+}
+
+impl LogWriterCapability for NativeCapabilities {
+    fn write_log_output(&self, bytes: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        // `Stdout` is internally synchronized; lock once so the whole buffer
+        // (one or more newline-terminated JSON lines) is written without
+        // interleaving, then flush.
+        let mut out = std::io::stdout().lock();
+        out.write_all(bytes)?;
+        out.flush()
     }
 }
 

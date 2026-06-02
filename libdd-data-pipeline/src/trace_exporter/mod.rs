@@ -3,6 +3,7 @@
 pub mod agent_response;
 pub mod builder;
 pub mod error;
+mod log_writer;
 pub mod metrics;
 pub mod stats;
 mod trace_serializer;
@@ -12,6 +13,7 @@ pub use builder::TraceExporterBuilder;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 
 use self::agent_response::AgentResponse;
+use self::log_writer::write_log_traces;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
@@ -36,7 +38,7 @@ use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
@@ -143,7 +145,8 @@ pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
-    info_fetcher: WorkerHandle,
+    /// `None` in log-export mode, where no agent `/info` polling is performed.
+    info_fetcher: Option<WorkerHandle>,
     #[cfg(feature = "telemetry")]
     telemetry: Option<WorkerHandle>,
 }
@@ -188,7 +191,7 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
 /// [`libdd_shared_runtime::SharedRuntime`] for guidance on choosing an implementation.
 #[derive(Debug)]
 pub struct TraceExporter<
-    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 > {
     endpoint: Endpoint,
@@ -227,10 +230,17 @@ pub struct TraceExporter<
     /// skipped.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     otlp_stats_enabled: bool,
+    /// When `Some(max_line_size)`, traces are written as newline-delimited JSON
+    /// through the [`LogWriterCapability`] (the Datadog Forwarder "log exporter"
+    /// path) instead of being sent to an agent. Used in serverless environments
+    /// where no agent is reachable.
+    log_output: Option<usize>,
 }
 
-impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: SharedRuntime>
-    TraceExporter<C, R>
+impl<
+        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+        R: SharedRuntime,
+    > TraceExporter<C, R>
 {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
@@ -287,8 +297,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
                 join_set.spawn(async move { handle.stop().await });
             }
 
-            let info_fetcher = self.workers.info_fetcher;
-            join_set.spawn(async move { info_fetcher.stop().await });
+            if let Some(info_fetcher) = self.workers.info_fetcher {
+                join_set.spawn(async move { info_fetcher.stop().await });
+            }
 
             #[cfg(feature = "telemetry")]
             if let Some(telemetry) = self.workers.telemetry {
@@ -325,7 +336,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
     /// `data` must be encoded per the `input_format` given to the builder.
     /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info().await;
+        // In log-export mode there is no agent to negotiate with; skip the poll.
+        if self.log_output.is_none() {
+            self.check_agent_info().await;
+        }
 
         let format: DeserInputFormat = self.input_format.into();
 
@@ -563,7 +577,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info().await;
+        // In log-export mode there is no agent to negotiate with; skip the poll.
+        if self.log_output.is_none() {
+            self.check_agent_info().await;
+        }
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
@@ -659,6 +676,25 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // Log-export path: write traces as newline-delimited JSON through the
+        // log-output capability (stdout on native; host/JS on wasm) for the Datadog
+        // Forwarder. No agent, stats, OTLP, or telemetry involved.
+        //
+        // We emit all spans as-is and do NOT drop unsampled (p0) chunks here
+        // (unlike the OTLP path): the reference log exporters (JS/Go/Py/Java) write
+        // every span they are handed and defer sampling to the trace intake behind
+        // the Datadog Forwarder.
+        if let Some(max_line_size) = self.log_output {
+            let stats = write_log_traces(&self.capabilities, &traces, max_line_size)
+                .map_err(TraceExporterError::Io)?;
+            debug!(
+                spans_written = stats.spans_written,
+                spans_dropped = stats.spans_dropped,
+                "Wrote traces to log exporter"
+            );
+            return Ok(AgentResponse::Unchanged);
+        }
+
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
         // Process stats computation and drop non-sampled (p0) chunks.
@@ -1220,6 +1256,121 @@ mod tests {
         }
 
         builder.build::<NativeCapabilities>().unwrap()
+    }
+
+    // Capturing capabilities: delegate HTTP/sleep to the native impls, but capture
+    // log output into a thread-local buffer so log-mode tests can assert the emitted
+    // bytes without writing to real stdout. `build` constructs `C` via
+    // `C::new_client`, so the buffer is shared through a thread-local rather than an
+    // instance field; `new_client` clears it so each build starts fresh.
+    thread_local! {
+        static LOG_CAPTURE: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    #[derive(Clone, Debug)]
+    struct CapturingCapabilities(NativeCapabilities);
+
+    impl HttpClientCapability for CapturingCapabilities {
+        fn new_client() -> Self {
+            LOG_CAPTURE.with(|c| c.borrow_mut().clear());
+            Self(NativeCapabilities::new_client())
+        }
+        fn request(
+            &self,
+            req: http::Request<bytes::Bytes>,
+        ) -> impl std::future::Future<
+            Output = Result<http::Response<bytes::Bytes>, libdd_capabilities::http::HttpError>,
+        > + MaybeSend {
+            self.0.request(req)
+        }
+    }
+
+    impl SleepCapability for CapturingCapabilities {
+        fn new() -> Self {
+            Self(NativeCapabilities::new())
+        }
+        fn sleep(&self, duration: Duration) -> impl std::future::Future<Output = ()> + MaybeSend {
+            self.0.sleep(duration)
+        }
+    }
+
+    impl LogWriterCapability for CapturingCapabilities {
+        fn write_log_output(&self, bytes: &[u8]) -> std::io::Result<()> {
+            LOG_CAPTURE.with(|c| c.borrow_mut().extend_from_slice(bytes));
+            Ok(())
+        }
+    }
+
+    fn captured_log() -> Vec<u8> {
+        LOG_CAPTURE.with(|c| c.borrow().clone())
+    }
+
+    // The real `send` entry point decodes msgpack, hits the log branch, and writes
+    // Forwarder-format JSON bytes through the log-output capability.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_log_mode_send_writes_forwarder_json() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("test")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_to_log(None);
+        let exporter = builder.build::<CapturingCapabilities>().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"aws.lambda").unwrap(),
+            trace_id: 1,
+            span_id: 2,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+
+        let resp = exporter.send(data.as_ref()).unwrap();
+        assert!(matches!(resp, AgentResponse::Unchanged));
+
+        let text = String::from_utf8(captured_log()).unwrap();
+        assert!(text.ends_with('\n'), "line must be newline-terminated");
+        let line = text.trim_end();
+        let v: serde_json::Value = serde_json::from_str(line).expect("valid json line");
+        // Forwarder is_trace contract + the span actually round-tripped through
+        // msgpack decode -> log encode with hex ids.
+        assert!(v["traces"][0][0]["trace_id"].is_string());
+        assert_eq!(v["traces"][0][0]["span_id"], "0000000000000002");
+        assert_eq!(v["traces"][0][0]["name"], "aws.lambda");
+    }
+
+    // Log mode must make zero agent HTTP calls — also guards the worker-gating fix
+    // (info-fetcher is not spawned in log mode).
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_log_mode_makes_no_agent_requests() {
+        let fake_agent = MockServer::start();
+        // No `when` constraints => matches any request to any path.
+        let any = fake_agent.mock(|_when, then| {
+            then.status(200).body("{}");
+        });
+
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url(&fake_agent.url("/"))
+            .set_service("test")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_to_log(None);
+        let exporter = builder.build::<CapturingCapabilities>().unwrap();
+        // Structural guarantee: no agent-info worker is spawned in log mode.
+        assert!(exporter.workers.info_fetcher.is_none());
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"test").unwrap(),
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        // `send` is synchronous and, in log mode, returns after writing through the
+        // capability without initiating any HTTP; combined with the structural assert
+        // above this is deterministic (no background worker can race the mock).
+        exporter.send(data.as_ref()).unwrap();
+
+        assert_eq!(any.calls(), 0, "log mode must not contact the agent");
     }
 
     #[test]
