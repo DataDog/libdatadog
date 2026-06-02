@@ -236,15 +236,17 @@ pub fn exception_event_callback(
                 .context("Failed to add crashed thread info")?;
         }
 
-        let thread_data = ThreadData {
-            crashed: thread == crash_tid,
-            name: thread.to_string(),
-            stack,
-            state: None,
-        };
+        if thread == crash_tid {
+            continue;
+        }
 
         builder
-            .with_thread(thread_data)
+            .with_thread(ThreadData {
+                crashed: false,
+                name: thread.to_string(),
+                stack,
+                state: None,
+            })
             .context("Failed to add thread info")?;
     }
     builder

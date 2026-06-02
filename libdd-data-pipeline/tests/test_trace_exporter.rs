@@ -314,6 +314,17 @@ mod tracing_integration_tests {
 
             let data = get_v04_to_v1_trace_snapshot_test_payload("test_exporter_v04_v1_snapshot");
 
+            // V1 is gated by /info negotiation (fail-closed). Wait until the background
+            // fetcher has populated agent_info so the first send promotes v1_active=true
+            // and the payload is encoded as V1.
+            let start = std::time::Instant::now();
+            while libdd_data_pipeline::agent_info::get_agent_info().is_none() {
+                if start.elapsed() > std::time::Duration::from_secs(5) {
+                    panic!("timeout waiting for /info");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+
             let response = trace_exporter.send(data.as_ref());
             assert!(response.is_ok(), "send failed: {:?}", response.err());
         })

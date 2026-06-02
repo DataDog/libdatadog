@@ -876,7 +876,7 @@ mod tests {
 
         let res = data.send(&NativeCapabilities::new_client()).await;
 
-        mock.assert_calls_async(5).await;
+        mock.assert_calls_async(6).await;
 
         assert!(res.last_result.is_ok());
         assert_eq!(
@@ -886,7 +886,7 @@ mod tests {
         assert_eq!(res.errors_timeout, 0);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 1);
-        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.requests_count, 6);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(*res.responses_count_per_code.get(&500).unwrap(), 1_u64);
@@ -926,7 +926,7 @@ mod tests {
             }
         }
         assert_eq!(res.errors_status_code, 0);
-        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.requests_count, 6);
         assert_eq!(res.errors_status_code, 0);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
@@ -978,12 +978,12 @@ mod tests {
 
         let res = data.send(&NativeCapabilities::new_client()).await;
 
-        mock.assert_calls_async(5).await;
+        mock.assert_calls_async(6).await;
 
         assert_eq!(res.errors_timeout, 1);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
-        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.requests_count, 6);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);
@@ -1020,12 +1020,12 @@ mod tests {
 
         let res = data.send(&NativeCapabilities::new_client()).await;
 
-        mock.assert_calls_async(10).await;
+        mock.assert_calls_async(12).await;
 
         assert_eq!(res.errors_timeout, 1);
         assert_eq!(res.errors_network, 0);
         assert_eq!(res.errors_status_code, 0);
-        assert_eq!(res.requests_count, 5);
+        assert_eq!(res.requests_count, 6);
         assert_eq!(res.chunks_sent, 0);
         assert_eq!(res.bytes_sent, 0);
         assert_eq!(res.responses_count_per_code.len(), 0);

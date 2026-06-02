@@ -2,6 +2,24 @@
 
 
 
+## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v1.1.0..libdd-library-config-v2.0.0) - 2026-05-26
+
+### Added
+
+- Thread-level ctx publication ([#1791](https://github.com/datadog/libdatadog/issues/1791)) - ([660b8a8](https://github.com/datadog/libdatadog/commit/660b8a8ae71eb5bc2cdd286a206870fbcb04a62a))
+- Add Hash trait to TracerMetadata ([#1931](https://github.com/datadog/libdatadog/issues/1931)) - ([d7eef80](https://github.com/datadog/libdatadog/commit/d7eef8031192d0ee79ba64cd824804c5a57abacf))
+- Add PartialEq and Eq traits to TracerMetadata ([#1922](https://github.com/datadog/libdatadog/issues/1922)) - ([971c407](https://github.com/datadog/libdatadog/commit/971c407d856db58baf1078bd7802abe13bac4f9f))
+- Root_span_id handling in otel thread ctx ([#1834](https://github.com/datadog/libdatadog/issues/1834)) - ([4be1fcc](https://github.com/datadog/libdatadog/commit/4be1fccc01264b1f48f4423460c64f6140580153))
+- Extend tracer metadata with thread ctx attrbutes ([#1831](https://github.com/datadog/libdatadog/issues/1831)) - ([a1d45fc](https://github.com/datadog/libdatadog/commit/a1d45fc69308e330d04420be626f7c165f269ead))
+
+### Changed
+
+- Migrate from rustix to libc ([#1859](https://github.com/datadog/libdatadog/issues/1859)) - ([68822c5](https://github.com/datadog/libdatadog/commit/68822c55446efe8d6654d2449d696f5ff2f28d31))
+- Move otel thread ctx in dedicated crate ([#1855](https://github.com/datadog/libdatadog/issues/1855)) - ([252c693](https://github.com/datadog/libdatadog/commit/252c693e68df9fa598119dd8cff26a2881bd8140))
+- Gate behind feature ([#1843](https://github.com/datadog/libdatadog/issues/1843)) - ([11d4111](https://github.com/datadog/libdatadog/commit/11d4111c934d9af49d8124b8266dbbdda5857cb4))
+
+
+
 ## [1.1.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v1.0.0..libdd-library-config-v1.1.0) - 2026-03-13
 
 ### Added
