@@ -214,9 +214,7 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
 
         self.as_deduped_map()
     }
-}
 
-impl<K: Hash + Eq + Clone, V> VecMap<K, V> {
     /// Remove entries with a duplicate key, only keeping the last one. After this, a flag is set
     /// internally, such that as long as the map isn't extended or mutably iterated, the next
     /// [Self::dedup] doesn't perform the work again.
@@ -225,12 +223,37 @@ impl<K: Hash + Eq + Clone, V> VecMap<K, V> {
             return;
         }
 
-        // Since we're going to shuffle elements around, it's not easy to keep references to keys in
-        // the deduping set. The simplest is to clone them.
-        let mut seen = HashSet::with_capacity(self.len());
-
         self.data.reverse();
-        self.data.retain(|(k, _)| seen.insert(k.clone()));
+
+        // Since we're going to shuffle elements around, it's not easy to keep references to keys in
+        // the deduping set while deleting some of them, since deletion in a vec shifts all other
+        // elements after it, invalidating references. When we finally call `retain`, we must not
+        // hold any reference to vecmap elements anymore.
+        //
+        // The following approaches are possible:
+        //
+        // - clone the keys in the hashset. Alas, we don't want a `Clone` bound on `SpanText` (which
+        //   is the type of keys in practice), as some representations can be expensive to clone,
+        //   e.g. requiring to lock the GIL in Python (python-native, reference counted strings)
+        // - a two-pass approach. In a first pass we store seen key references in a HashSet and
+        //   build a bitmap of indices to keep. Once built, we can release the set and call
+        //   `Vec::retain` without borrowing issues. It's safe but requires an additional pass over
+        //   the vecmap and an auxiliary `Vec<bool>`, in addition to the hashset.
+        // - an unsafe, one-pass approach: if we re-implement a custom `retain`, we can store key
+        //   references in an auxiliary HashSet that are guaranteed to remain valid as we move
+        //   elements: we first move an element to keep at their final location, and only then
+        //   insert a pointer to the key in the `seen` hashmap, which will remain valid.
+        //
+        // We choose the two-pass approach, which is simpler, safe and reasonably fast. If needed in
+        // the future, the unsafe one-pass approach can be implemented.
+        let keep: Vec<bool> = {
+            let mut seen = HashSet::with_capacity(self.len());
+            self.data.iter().map(|(k, _)| seen.insert(k)).collect()
+        };
+
+        let mut keep = keep.into_iter();
+        self.data.retain(|_| keep.next().unwrap_or(false));
+
         self.deduped = true;
     }
 }
@@ -590,6 +613,21 @@ mod tests {
         let d = DedupedVecMap::Borrowed(&m);
         assert_eq!(d.len(), 0);
         assert_eq!(d.iter().count(), 0);
+    }
+
+    #[test]
+    fn dedup_does_not_require_clone() {
+        #[derive(Debug, PartialEq, Eq, Hash)]
+        struct NonCloneKey(u32);
+
+        let mut m = VecMap::new();
+        m.insert(NonCloneKey(1), "a");
+        m.insert(NonCloneKey(2), "b");
+        m.insert(NonCloneKey(1), "c");
+        m.dedup();
+        assert_eq!(m.len(), 2);
+        assert_eq!(m.get(&NonCloneKey(1)), Some(&"c"));
+        assert_eq!(m.get(&NonCloneKey(2)), Some(&"b"));
     }
 
     #[test]
