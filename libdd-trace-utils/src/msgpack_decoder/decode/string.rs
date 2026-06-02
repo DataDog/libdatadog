@@ -25,14 +25,15 @@ pub fn read_nullable_string<T: DeserializableTraceData>(
     }
 }
 
-/// Read a vec of (string, string) pairs from the slices `buf`.
+/// Read a [VecMap] of `(String, String)` pairs from the slices `buf`.
 ///
 /// # Errors
-/// Fails if the buffer does not contain a valid map length prefix,
-/// or if any key or value is not a valid utf8 msgpack string.
-/// Null values are skipped (key not inserted into vec).
+///
+/// Fails if the buffer does not contain a valid map length prefix, or if any key or value is not a
+/// valid utf8 msgpack string.
+/// Null values are skipped.
 #[inline]
-pub fn read_str_map_to_strings<T: DeserializableTraceData>(
+pub fn read_str_map_to_vecmap<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
 ) -> Result<VecMap<T::Text, T::Text>, DecodeError> {
     let len = decode::read_map_len(buf.as_mut_slice())
@@ -64,7 +65,7 @@ pub fn read_nullable_str_map_to_strings<T: DeserializableTraceData>(
         return Ok(VecMap::new());
     }
 
-    read_str_map_to_strings(buf)
+    read_str_map_to_vecmap(buf)
 }
 
 /// Read a hashmap of (string, string) from the slices `buf`.
