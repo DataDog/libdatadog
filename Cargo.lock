@@ -3157,6 +3157,7 @@ dependencies = [
 name = "libdd-otel-thread-ctx"
 version = "1.0.0"
 dependencies = [
+ "build_common",
  "cc",
 ]
 
