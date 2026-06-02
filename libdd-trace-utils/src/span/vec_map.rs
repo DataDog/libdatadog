@@ -168,21 +168,86 @@ impl<K, V> VecMap<K, V> {
     }
 }
 
-impl<K: Hash + Eq + Clone, V> VecMap<K, V> {
+impl<K: Hash + Eq, V> VecMap<K, V> {
     /// Remove entries with a duplicate key, only keeping the last one. After this, a flag is set
     /// internally, such that as long as the map isn't extended or mutably iterated, the next
     /// [Self::dedup] doesn't perform the work again.
+    ///
+    /// This uses an unsafe one-pass approach modeled after `Vec::retain_mut`: read/write cursors
+    /// walk the vec, and a `HashSet` of raw pointers to already-placed keys tracks duplicates.
+    /// Kept elements at positions `0..write` are in their final location (the write cursor only
+    /// advances), so the stored pointers remain valid throughout.
+    ///
+    /// # Panic safety
+    ///
+    /// If `Hash` or `Eq` on `K` panics, elements past the current read position are leaked (not
+    /// double-dropped). A production hardening would add a `PanicGuard` similar to
+    /// `Vec::retain_mut`'s `BackshiftOnDrop`.
     pub fn dedup(&mut self) {
         if self.deduped {
             return;
         }
 
-        // Since we're going to shuffle elements around, it's not easy to keep references to keys in
-        // the deduping set. The simplest is to clone them.
-        let mut seen = HashSet::with_capacity(self.len());
-
         self.data.reverse();
-        self.data.retain(|(k, _)| seen.insert(k.clone()));
+
+        let original_len = self.data.len();
+        if original_len == 0 {
+            self.deduped = true;
+            return;
+        }
+
+        // Newtype around a raw pointer to K that hashes/compares by dereferencing.
+        // SAFETY contract: the pointed-to K must be valid for the lifetime of the HashSet.
+        struct KeyRef<K>(*const K);
+
+        impl<K: Hash> Hash for KeyRef<K> {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                // SAFETY: caller guarantees the pointer is valid.
+                unsafe { (*self.0).hash(state) }
+            }
+        }
+
+        impl<K: PartialEq> PartialEq for KeyRef<K> {
+            fn eq(&self, other: &Self) -> bool {
+                // SAFETY: caller guarantees both pointers are valid.
+                unsafe { *self.0 == *other.0 }
+            }
+        }
+
+        impl<K: Eq> Eq for KeyRef<K> {}
+
+        // SAFETY: set len to 0 so Vec's destructor is a no-op if we panic. Elements in
+        // the buffer are managed manually below.
+        unsafe { self.data.set_len(0) };
+        let ptr = self.data.as_mut_ptr();
+
+        let mut seen: HashSet<KeyRef<K>> = HashSet::with_capacity(original_len);
+        let mut write = 0usize;
+
+        for read in 0..original_len {
+            // SAFETY: `read < original_len`, so `ptr.add(read)` is a valid `(K, V)`.
+            let key_ptr: *const K = unsafe { &raw const (*ptr.add(read)).0 };
+
+            if seen.contains(&KeyRef(key_ptr)) {
+                // SAFETY: element at `read` is valid and won't be accessed again.
+                unsafe { std::ptr::drop_in_place(ptr.add(read)) };
+            } else {
+                if read != write {
+                    // SAFETY: `read > write`, both in bounds, slots don't overlap.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(ptr.add(read), ptr.add(write), 1);
+                    }
+                }
+                // SAFETY: element is now at `write`, which is its final position — `write`
+                // only increases, and we never modify positions `< write`.
+                let final_key_ptr: *const K = unsafe { &raw const (*ptr.add(write)).0 };
+                seen.insert(KeyRef(final_key_ptr));
+                write += 1;
+            }
+        }
+
+        // SAFETY: positions `0..write` hold valid, deduplicated `(K, V)` entries.
+        unsafe { self.data.set_len(write) };
         self.deduped = true;
     }
 }
