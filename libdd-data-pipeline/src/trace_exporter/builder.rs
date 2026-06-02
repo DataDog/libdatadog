@@ -296,8 +296,32 @@ impl TraceExporterBuilder {
         self
     }
 
-    #[allow(missing_docs)]
+    /// Build the [`TraceExporter`] synchronously.
+    ///
+    /// Sync facade over [`Self::build_async`]; panics inside an existing tokio context.
+    /// Not available on wasm — use [`Self::build_async`] there.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        mut self,
+    ) -> Result<TraceExporter<C>, TraceExporterError> {
+        let shared_runtime = match self.shared_runtime.as_ref() {
+            Some(rt) => rt.clone(),
+            None => {
+                let rt = Self::new_shared_runtime()?;
+                self.shared_runtime = Some(rt.clone());
+                rt
+            }
+        };
+        shared_runtime.block_on(self.build_async::<C>())?
+    }
+
+    /// Build the [`TraceExporter`] asynchronously.
+    ///
+    /// Awaits all async setup (e.g. telemetry start-up). Safe to drive from any async
+    /// context.
+    pub async fn build_async<
+        C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    >(
         self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -310,9 +334,7 @@ impl TraceExporterBuilder {
 
         let shared_runtime = match self.shared_runtime {
             Some(rt) => rt,
-            None => Arc::new(SharedRuntime::new().map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?),
+            None => Self::new_shared_runtime()?,
         };
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
@@ -328,17 +350,6 @@ impl TraceExporterBuilder {
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
 
-        // On native, `C::new_client()` may capture `tokio::runtime::Handle::current()`
-        // internally (e.g. `NativeCapabilities`). Enter the SharedRuntime's tokio context
-        // so that handle is available. On wasm this is a no-op — the JS event loop is
-        // always the implicit executor.
-        #[cfg(not(target_arch = "wasm32"))]
-        let _guard = shared_runtime
-            .runtime_handle()
-            .map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?
-            .enter();
         let capabilities = C::new_client();
 
         // --- Platform-specific worker setup ---
@@ -410,11 +421,7 @@ impl TraceExporterBuilder {
                             e.to_string(),
                         ))
                     })?;
-                    shared_runtime.block_on(client_tel.start()).map_err(|e| {
-                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                            e.to_string(),
-                        ))
-                    })?;
+                    client_tel.start().await;
                     (Some(client_tel), Some(handle))
                 }
                 Some(Err(e)) => return Err(e),
@@ -507,6 +514,12 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
+        })
+    }
+
+    fn new_shared_runtime() -> Result<Arc<SharedRuntime>, TraceExporterError> {
+        SharedRuntime::new().map(Arc::new).map_err(|e| {
+            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })
     }
 
