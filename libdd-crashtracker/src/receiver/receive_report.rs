@@ -4,7 +4,7 @@
 use crate::{
     crash_info::{
         CrashInfo, CrashInfoBuilder, ErrorKind, SigInfo, Span, StackFrame, TelemetryCrashUploader,
-        Threads, Ucontext,
+        Ucontext,
     },
     runtime_callback::RuntimeStack,
     shared::constants::*,
@@ -560,7 +560,7 @@ fn collect_and_add_thread_contexts(
     crashing_tid: Option<u32>,
     budget: Duration,
 ) -> anyhow::Result<()> {
-    use crate::crash_info::ThreadData;
+    use crate::crash_info::{StackTrace, ThreadData};
     use crate::receiver::ptrace_collector::stream_thread_contexts;
 
     let crashing_tid = crashing_tid.unwrap_or(0) as i32;
@@ -585,7 +585,7 @@ fn collect_and_add_thread_contexts(
 
             let stack = match captured_context {
                 Some(ctx) => ctx.stack_trace.clone(),
-                None => crate::crash_info::StackTrace::empty(),
+                None => StackTrace::empty(),
             };
 
             collected_threads.push(ThreadData {
@@ -597,14 +597,11 @@ fn collect_and_add_thread_contexts(
         },
     )?;
 
-    if !collected_threads.is_empty() {
-        let count = collected_threads.len();
-        let _ = builder.with_threads(Threads {
-            threads: collected_threads,
-            count,
-            incomplete,
-        });
+    if incomplete {
+        let _ = builder.with_counter("threads_incomplete".to_string(), 1);
     }
+
+    let _ = builder.with_threads(collected_threads);
 
     Ok(())
 }
