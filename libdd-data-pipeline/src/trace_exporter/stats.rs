@@ -29,6 +29,7 @@ use tracing::{debug, error};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::add_path;
+use super::trace_filter::TraceFilterer;
 use super::TracerMetadata;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -297,12 +298,19 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
+    trace_filterer: &TraceFilterer,
 ) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
     } = &**status
     {
+        // FIXME: when client_computed_top_level is true, looking twice for the root span here and
+        // just below in compute_top_level_span is inefficient
+        //
+        // FIXME: add dropped trace count to dropped_p0_stats ?
+        trace_filterer.filter_traces(traces);
+
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
                 libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
