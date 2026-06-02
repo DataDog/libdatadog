@@ -351,6 +351,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn check_agent_info(&self) {
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
