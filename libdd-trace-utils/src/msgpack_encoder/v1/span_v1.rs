@@ -1,10 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! V1 msgpack encoder that consumes the [`crate::span::v1`] data model.
-//!
-//! The byte layout matches [`super::span_v04`] so equivalent inputs produce byte-identical output.
-
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
 use rmp::encode::{
@@ -16,7 +12,22 @@ use std::borrow::Borrow;
 use super::span_v04::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey};
 use super::StringTable;
 
-/// Encodes a typed [`AttributeValue`] as `[type_uint8, value]`.
+/// Encodes a typed `AttributeValue` as `[type_uint8, value]`.
+///
+/// # Arguments
+///
+/// * `writer` - A RmpWriter compatible with rmp writing functions.
+/// * `value` - The attribute value to encode.
+/// * `table` - The streaming string intern table used for interning string values.
+///
+/// # Returns
+///
+/// * `Ok(())` - Nothing if successful.
+/// * `Err(ValueWriteError)` - An error if the writing fails.
+///
+/// # Errors
+///
+/// This function will return any error emitted by the writer.
 pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     value: &AttributeValue<T>,
@@ -62,7 +73,22 @@ pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a flat triplet attributes array: `[key, type_uint8, value, ...]`.
+/// Encodes a map of attributes as a flat triplet array: `[key, type_uint8, value, ...]`.
+///
+/// # Arguments
+///
+/// * `writer` - A RmpWriter compatible with rmp writing functions.
+/// * `map` - The attribute map to encode.
+/// * `table` - The streaming string intern table used for interning keys and string values.
+///
+/// # Returns
+///
+/// * `Ok(())` - Nothing if successful.
+/// * `Err(ValueWriteError)` - An error if the writing fails.
+///
+/// # Errors
+///
+/// This function will return any error emitted by the writer.
 pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     map: &std::collections::HashMap<T::Text, AttributeValue<T>>,
@@ -76,7 +102,22 @@ pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes span links from the V1 data model.
+/// Encodes a `SpanLink` object into a slice of bytes.
+///
+/// # Arguments
+///
+/// * `writer` - A RmpWriter compatible with rmp writing functions.
+/// * `span_links` - The span links to encode.
+/// * `table` - The streaming string intern table.
+///
+/// # Returns
+///
+/// * `Ok(())` - Nothing if successful.
+/// * `Err(ValueWriteError)` - An error if the writing fails.
+///
+/// # Errors
+///
+/// This function will return any error emitted by the writer.
 pub(super) fn encode_span_links<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_links: &[SpanLink<T>],
@@ -121,7 +162,22 @@ pub(super) fn encode_span_links<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes span events from the V1 data model.
+/// Encodes a `SpanEvent` object into a slice of bytes.
+///
+/// # Arguments
+///
+/// * `writer` - A RmpWriter compatible with rmp writing functions.
+/// * `span_events` - The span events to encode.
+/// * `table` - The streaming string intern table.
+///
+/// # Returns
+///
+/// * `Ok(())` - Nothing if successful.
+/// * `Err(ValueWriteError)` - An error if the writing fails.
+///
+/// # Errors
+///
+/// This function will return any error emitted by the writer.
 pub(super) fn encode_span_events<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_events: &[SpanEvent<T>],
@@ -151,7 +207,22 @@ pub(super) fn encode_span_events<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a [`Span`] (V1 data model) into V1 msgpack.
+/// Encodes a `Span` object into a slice of bytes.
+///
+/// # Arguments
+///
+/// * `writer` - A RmpWriter compatible with rmp writing functions.
+/// * `span` - The span to encode.
+/// * `table` - The streaming string intern table.
+///
+/// # Returns
+///
+/// * `Ok(())` - Nothing if successful.
+/// * `Err(ValueWriteError)` - An error if the writing fails.
+///
+/// # Errors
+///
+/// This function will return any error emitted by the writer.
 pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span: &Span<T>,

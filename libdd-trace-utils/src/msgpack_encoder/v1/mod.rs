@@ -34,7 +34,9 @@ mod trace_key {
 mod chunk_key {
     pub const PRIORITY: u8 = 1;
     pub const ORIGIN: u8 = 2;
+    pub const ATTRIBUTES: u8 = 3;
     pub const SPANS: u8 = 4;
+    pub const DROPPED_TRACE: u8 = 5;
     pub const TRACE_ID: u8 = 6;
     /// Sampling mechanism (previously the `_dd.p.dm` span tag).
     pub const SAMPLING_MECHANISM: u8 = 7;
@@ -503,11 +505,15 @@ fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
         .origin
         .as_ref()
         .is_some_and(|o| !<T::Text as Borrow<str>>::borrow(o).is_empty());
+    let has_attributes = !chunk.attributes.is_empty();
+    let has_dropped = chunk.dropped_trace;
 
     let fields = 2u32 // trace_id + spans
         + has_origin as u32
         + chunk.priority.is_some() as u32
-        + chunk.sampling_mechanism.is_some() as u32;
+        + chunk.sampling_mechanism.is_some() as u32
+        + has_attributes as u32
+        + has_dropped as u32;
 
     write_map_len(writer, fields)?;
 
@@ -533,6 +539,16 @@ fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
         write_uint(writer, mechanism as u64)?;
     }
 
+    if has_attributes {
+        write_uint8(writer, chunk_key::ATTRIBUTES)?;
+        span_v1::encode_attributes_map(writer, &chunk.attributes, table)?;
+    }
+
+    if has_dropped {
+        write_uint8(writer, chunk_key::DROPPED_TRACE)?;
+        rmp::encode::write_bool(writer, true).map_err(ValueWriteError::InvalidDataWrite)?;
+    }
+
     write_uint8(writer, chunk_key::SPANS)?;
     write_array_len(writer, chunk.spans.len() as u32)?;
     for span in &chunk.spans {
@@ -542,12 +558,59 @@ fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Serializes a [`TracerPayload`] into a `Vec<u8>` using the V1 msgpack format.
+/// Serializes a `TracerPayload` into a vector of bytes with a default capacity of 0.
+///
+/// # Arguments
+///
+/// * `payload` - A reference to a `TracerPayload`.
+///
+/// # Returns
+///
+/// * `Vec<u8>` - A vector containing the encoded payload.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_payload;
+/// use libdd_trace_utils::span::v1::TracerPayloadSlice;
+///
+/// let payload = TracerPayloadSlice {
+///     language_name: "rust".into(),
+///     ..Default::default()
+/// };
+/// let encoded = to_vec_from_payload(&payload);
+///
+/// assert!(!encoded.is_empty());
+/// ```
 pub fn to_vec_from_payload<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
     to_vec_from_payload_with_capacity(payload, 0)
 }
 
-/// Serializes a [`TracerPayload`] into a `Vec<u8>` with a pre-allocated capacity.
+/// Serializes a `TracerPayload` into a vector of bytes with specified capacity.
+///
+/// # Arguments
+///
+/// * `payload` - A reference to a `TracerPayload`.
+/// * `capacity` - Desired initial capacity of the resulting vector.
+///
+/// # Returns
+///
+/// * `Vec<u8>` - A vector containing the encoded payload.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_payload_with_capacity;
+/// use libdd_trace_utils::span::v1::TracerPayloadSlice;
+///
+/// let payload = TracerPayloadSlice {
+///     language_name: "rust".into(),
+///     ..Default::default()
+/// };
+/// let encoded = to_vec_from_payload_with_capacity(&payload, 1024);
+///
+/// assert!(encoded.capacity() >= 1024);
+/// ```
 pub fn to_vec_from_payload_with_capacity<T: TraceData>(
     payload: &TracerPayload<T>,
     capacity: u32,
@@ -559,10 +622,36 @@ pub fn to_vec_from_payload_with_capacity<T: TraceData>(
     buf.into_vec()
 }
 
-/// Serializes a [`TracerPayload`] into a caller-provided slice.
+/// Encodes a `TracerPayload` into a slice of bytes.
+///
+/// # Arguments
+///
+/// * `slice` - A mutable reference to a byte slice.
+/// * `payload` - A reference to a `TracerPayload`.
+///
+/// # Returns
+///
+/// * `Ok(())` - If encoding succeeds.
+/// * `Err(ValueWriteError)` - If encoding fails.
 ///
 /// # Errors
-/// Returns a `ValueWriteError` if the underlying writer fails.
+///
+/// This function will return an error if the underlying writer fails (e.g. buffer too small).
+///
+/// # Examples
+///
+/// ```
+/// use libdd_trace_utils::msgpack_encoder::v1::write_payload_to_slice;
+/// use libdd_trace_utils::span::v1::TracerPayloadSlice;
+///
+/// let mut buffer = vec![0u8; 1024];
+/// let payload = TracerPayloadSlice {
+///     language_name: "rust".into(),
+///     ..Default::default()
+/// };
+///
+/// write_payload_to_slice(&mut &mut buffer[..], &payload).expect("Encoding failed");
+/// ```
 pub fn write_payload_to_slice<T: TraceData>(
     slice: &mut &mut [u8],
     payload: &TracerPayload<T>,
@@ -570,7 +659,33 @@ pub fn write_payload_to_slice<T: TraceData>(
     encode_payload_v1(slice, payload)
 }
 
-/// Returns the number of bytes `payload` would occupy when encoded.
+/// Computes the number of bytes required to encode the given `TracerPayload`.
+///
+/// This does not allocate any actual buffer, but simulates writing in order to measure
+/// the encoded size of the payload.
+///
+/// # Arguments
+///
+/// * `payload` - A reference to a `TracerPayload`.
+///
+/// # Returns
+///
+/// * `u32` - The number of bytes that would be written by the encoder.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_trace_utils::msgpack_encoder::v1::to_encoded_byte_len_from_payload;
+/// use libdd_trace_utils::span::v1::TracerPayloadSlice;
+///
+/// let payload = TracerPayloadSlice {
+///     language_name: "rust".into(),
+///     ..Default::default()
+/// };
+/// let encoded_len = to_encoded_byte_len_from_payload(&payload);
+///
+/// assert!(encoded_len > 0);
+/// ```
 pub fn to_encoded_byte_len_from_payload<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
     let mut counter = super::CountLength(0);
     let _ = encode_payload_v1(&mut counter, payload);
@@ -1246,6 +1361,75 @@ mod v1_payload_tests {
         // sampling_mechanism=4 → SAMPLING_MECHANISM (0x07) + positive fixint 0x04
         let want = [chunk_key::SAMPLING_MECHANISM, 0x04];
         assert!(encoded.windows(2).any(|w| w == want));
+    }
+
+    #[test]
+    fn chunk_dropped_trace_emitted_when_true() {
+        let chunk = TraceChunkBytes {
+            trace_id: [0u8; 16],
+            dropped_trace: true,
+            spans: vec![make_span("svc", "op", 1)],
+            ..Default::default()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        // DROPPED_TRACE (0x05) + msgpack true marker (0xc3)
+        let want = [chunk_key::DROPPED_TRACE, 0xc3];
+        assert!(
+            encoded.windows(2).any(|w| w == want),
+            "DROPPED_TRACE marker + true should appear in payload"
+        );
+    }
+
+    #[test]
+    fn chunk_dropped_trace_skipped_when_false() {
+        let chunk = TraceChunkBytes {
+            trace_id: [0u8; 16],
+            dropped_trace: false,
+            spans: vec![make_span("svc", "op", 1)],
+            ..Default::default()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        assert!(
+            !encoded.contains(&chunk_key::DROPPED_TRACE),
+            "DROPPED_TRACE key should not be emitted when false"
+        );
+    }
+
+    #[test]
+    fn chunk_attributes_emitted_when_set() {
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert(bs("region"), AttributeValue::String(bs("us-east-1")));
+        let chunk = TraceChunkBytes {
+            trace_id: [0u8; 16],
+            attributes: attrs,
+            spans: vec![make_span("svc", "op", 1)],
+            ..Default::default()
+        };
+        let payload = TracerPayloadBytes {
+            chunks: vec![chunk],
+            ..Default::default()
+        };
+        let encoded = to_vec_from_payload(&payload);
+        // ATTRIBUTES (0x03) + msgpack fixarray header for 3 elements (0x93)
+        let want = [chunk_key::ATTRIBUTES, 0x93];
+        assert!(
+            encoded.windows(2).any(|w| w == want),
+            "ATTRIBUTES key + flat-triplet array header should appear"
+        );
+        assert!(
+            encoded
+                .windows(b"us-east-1".len())
+                .any(|w| w == b"us-east-1"),
+            "chunk attribute value should be in the payload"
+        );
     }
 
     #[test]
