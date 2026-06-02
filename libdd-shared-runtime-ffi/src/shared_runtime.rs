@@ -26,6 +26,8 @@ pub enum SharedRuntimeErrorCode {
     /// An unexpected panic occurred inside the FFI call.
     #[cfg(feature = "catch_panic")]
     Panic,
+    /// Operation rejected because the runtime has already been shut down.
+    AlreadyShutdown,
 }
 
 /// Error returned by SharedRuntime FFI functions.
@@ -50,6 +52,7 @@ impl From<SharedRuntimeError> for SharedRuntimeFFIError {
     fn from(err: SharedRuntimeError) -> Self {
         let code = match &err {
             SharedRuntimeError::RuntimeUnavailable => SharedRuntimeErrorCode::RuntimeUnavailable,
+            SharedRuntimeError::AlreadyShutdown => SharedRuntimeErrorCode::AlreadyShutdown,
             SharedRuntimeError::LockFailed(_) => SharedRuntimeErrorCode::LockFailed,
             SharedRuntimeError::WorkerError(_) => SharedRuntimeErrorCode::WorkerError,
             SharedRuntimeError::RuntimeCreation(_) => SharedRuntimeErrorCode::RuntimeCreation,
