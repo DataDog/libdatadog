@@ -144,7 +144,10 @@ impl ActiveApplication {
             .expect("Expecting remote config invariants to be set early")
             .clone();
 
-        let process_tags = session.process_tags_with_svc_source();
+        // Target is hashed on the sidecar side and on the PHP read side
+        // (sidecar.c:ddog_remote_configs_service_env_change). PHP passes the
+        // bare process_tags Vec, so we must too — otherwise SHM lookups miss.
+        let process_tags = session.process_tags.lock_or_panic().clone();
 
         if *session.remote_config_enabled.lock_or_panic() {
             self.remote_config_guard = Some(
