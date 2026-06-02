@@ -1,10 +1,10 @@
 //! Change buffer.
 //!
 //! A change buffer is a contiguous shared memory area between libdatadog and an external runtime.
-//! In order to amortize the cost of crossing the FFI when using native spans, the runtime write
-//! events in the change buffer instead many times and only flush it by batch, where the call to
-//! libdatadog happens. Libdatadog processes the change buffer and reconstruct the corresponding
-//! spans.
+//! In order to amortize the cost of crossing the FFI when using native spans, the runtime writes
+//! events into the change buffer instead of calling libdatadog many times, and only flushes by
+//! batch — that flush is where the call to libdatadog happens. Libdatadog then processes the change
+//! buffer and reconstructs the corresponding spans.
 //!
 //! The change buffer is currently designed and used for dd-trace-js, but the idea could be extended
 //! to other runtime where the FFI cost is high.
