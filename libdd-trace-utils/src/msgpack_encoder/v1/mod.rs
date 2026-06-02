@@ -42,6 +42,58 @@ mod chunk_key {
     pub const SAMPLING_MECHANISM: u8 = 7;
 }
 
+/// Integer keys for V1 span fields.
+#[repr(u8)]
+pub(super) enum SpanKey {
+    Service = 1,
+    Name = 2,
+    Resource = 3,
+    SpanId = 4,
+    ParentId = 5,
+    Start = 6,
+    Duration = 7,
+    Error = 8,
+    Attributes = 9,
+    Type = 10,
+    SpanLinks = 11,
+    SpanEvents = 12,
+    Env = 13,
+    Version = 14,
+    Component = 15,
+    Kind = 16,
+}
+
+/// Integer keys for V1 span link fields.
+#[repr(u8)]
+pub(super) enum SpanLinkKey {
+    TraceId = 1,
+    SpanId = 2,
+    Attributes = 3,
+    TraceState = 4,
+    Flags = 5,
+}
+
+/// Integer keys for V1 span event fields.
+#[repr(u8)]
+pub(super) enum SpanEventKey {
+    Time = 1,
+    Name = 2,
+    Attributes = 3,
+}
+
+/// Type discriminants for attribute values.
+/// An attribute value is encoded as [type_uint8][actual_value].
+#[repr(u8)]
+pub(super) enum AnyValueKey {
+    String = 1,
+    Bool = 2,
+    Double = 3,
+    Int64 = 4,
+    Bytes = 5,
+    Array = 6,
+    KeyValueList = 7,
+}
+
 /// Streaming string intern table.
 ///
 /// The first time a string is written, it is emitted as a msgpack `str` and assigned an
@@ -305,12 +357,12 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
         write_array_len(writer, attr_count * 3)?;
         if let Some(v) = payload_attrs.apm_mode {
             table.write_interned(writer, "_dd.apm_mode")?;
-            write_uint8(writer, span_v04::AnyValueKey::String as u8)?;
+            write_uint8(writer, AnyValueKey::String as u8)?;
             table.write_interned(writer, v)?;
         }
         if let Some(v) = payload_attrs.git_commit_sha {
             table.write_interned(writer, "_dd.git.commit.sha")?;
-            write_uint8(writer, span_v04::AnyValueKey::String as u8)?;
+            write_uint8(writer, AnyValueKey::String as u8)?;
             table.write_interned(writer, v)?;
         }
     }

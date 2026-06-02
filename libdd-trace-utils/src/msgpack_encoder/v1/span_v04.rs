@@ -10,59 +10,7 @@ use rmp::encode::{
 use std::borrow::Borrow;
 use std::time;
 
-use super::StringTable;
-
-/// Integer keys for V1 span fields.
-#[repr(u8)]
-pub(super) enum SpanKey {
-    Service = 1,
-    Name = 2,
-    Resource = 3,
-    SpanId = 4,
-    ParentId = 5,
-    Start = 6,
-    Duration = 7,
-    Error = 8,
-    Attributes = 9,
-    Type = 10,
-    SpanLinks = 11,
-    SpanEvents = 12,
-    Env = 13,
-    Version = 14,
-    Component = 15,
-    Kind = 16,
-}
-
-/// Integer keys for V1 span link fields.
-#[repr(u8)]
-pub(super) enum SpanLinkKey {
-    TraceId = 1,
-    SpanId = 2,
-    Attributes = 3,
-    TraceState = 4,
-    Flags = 5,
-}
-
-/// Integer keys for V1 span event fields.
-#[repr(u8)]
-pub(super) enum SpanEventKey {
-    Time = 1,
-    Name = 2,
-    Attributes = 3,
-}
-
-/// Type discriminants for attribute values.
-/// An attribute value is encoded as [type_uint8][actual_value].
-#[repr(u8)]
-pub(super) enum AnyValueKey {
-    String = 1,
-    Bool = 2,
-    Double = 3,
-    Int64 = 4,
-    Bytes = 5,
-    Array = 6,
-    KeyValueList = 7,
-}
+use super::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
 
 /// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
 ///

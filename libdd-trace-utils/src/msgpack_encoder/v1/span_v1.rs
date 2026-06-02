@@ -9,8 +9,7 @@ use rmp::encode::{
 };
 use std::borrow::Borrow;
 
-use super::span_v04::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey};
-use super::StringTable;
+use super::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
 
 /// Encodes a typed `AttributeValue` as `[type_uint8, value]`.
 ///
