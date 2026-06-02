@@ -38,18 +38,25 @@ impl ChangeBuffer {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 
+    /// Read a value of type `T` starting at offset `index`.
     pub fn read<T: Copy + FromBytes>(&self, index: &mut usize) -> Result<T> {
         let size = std::mem::size_of::<T>();
-        // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
-        // construction time. We do not materialize other references during the lifetime of `slice`.
+        // Safety: the allocation of `self.ptr` is required to be valid for read and writes at
+        // construction time, and to remain alive for the lifetime of `self`. We do not materialize
+        // other references during the lifetime of `slice`.
         let slice = unsafe { self.as_slice() };
+        let out_of_bounds_err = || ChangeBufferError::ReadOutOfBounds {
+            offset: *index,
+            value_len: size,
+            buffer_len: self.len,
+        };
+        let Some(end) = index.checked_add(size) else {
+            return Err(out_of_bounds_err());
+        };
+
         let bytes = slice
             .get(*index..*index + size)
-            .ok_or(ChangeBufferError::ReadOutOfBounds {
-                offset: *index,
-                value_len: size,
-                buffer_len: self.len,
-            })?;
+            .ok_or_else(out_of_bounds_err)?;
         *index += size;
         Ok(T::from_bytes(bytes))
     }
@@ -58,9 +65,10 @@ impl ChangeBuffer {
     ///
     /// # Safety
     ///
-    /// Caller must ensure `*index + size_of::<T>() <= self.len`.
+    /// Caller must ensure `*index + size_of::<T>() <= self.len` and that `index + size_of<T>::() <
+    /// usize::MAX`.
     #[inline(always)]
-    pub unsafe fn read_unchecked<T: Copy + FromBytes>(&self, index: &mut usize) -> T {
+    unsafe fn read_unchecked<T: Copy + FromBytes>(&self, index: &mut usize) -> T {
         let size = std::mem::size_of::<T>();
         // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
         // construction time. We do not materialize other references during the lifetime of `slice`.
@@ -76,14 +84,16 @@ impl ChangeBuffer {
         // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
         // construction time. We do not materialize other references during the lifetime of `slice`.
         let slice = unsafe { self.as_mut_slice() };
-        let target =
-            slice
-                .get_mut(offset..offset + 4)
-                .ok_or(ChangeBufferError::WriteOutOfBounds {
-                    offset,
-                    value_len: offset + 4,
-                    buffer_len: len,
-                })?;
+        let out_of_bounds_err = || ChangeBufferError::WriteOutOfBounds {
+            offset,
+            value_len: offset + 4,
+            buffer_len: len,
+        };
+        let Some(end) = offset.checked_add(4) else {
+            return Err(out_of_bounds_err());
+        };
+
+        let target = slice.get_mut(offset..end).ok_or_else(out_of_bounds_err)?;
         let bytes = value.to_le_bytes();
         target.copy_from_slice(&bytes);
         Ok(())
