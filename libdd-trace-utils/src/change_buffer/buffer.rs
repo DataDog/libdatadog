@@ -47,7 +47,8 @@ impl ChangeBuffer {
             .get(*index..*index + size)
             .ok_or(ChangeBufferError::ReadOutOfBounds {
                 offset: *index,
-                len: self.len,
+                value_len: size,
+                buffer_len: self.len,
             })?;
         *index += size;
         Ok(T::from_bytes(bytes))
@@ -75,9 +76,14 @@ impl ChangeBuffer {
         // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
         // construction time. We do not materialize other references during the lifetime of `slice`.
         let slice = unsafe { self.as_mut_slice() };
-        let target = slice
-            .get_mut(offset..offset + 4)
-            .ok_or(ChangeBufferError::WriteOutOfBounds { offset, len })?;
+        let target =
+            slice
+                .get_mut(offset..offset + 4)
+                .ok_or(ChangeBufferError::WriteOutOfBounds {
+                    offset,
+                    value_len: offset + 4,
+                    buffer_len: len,
+                })?;
         let bytes = value.to_le_bytes();
         target.copy_from_slice(&bytes);
         Ok(())

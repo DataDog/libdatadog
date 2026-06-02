@@ -19,13 +19,23 @@ pub enum ChangeBufferError {
     StringNotFound(u32),
     /// A read is out of bounds.
     ReadOutOfBounds {
+        /// The starting offset of the read.
         offset: usize,
-        len: usize,
+        /// The size in bytes of the value attempted to be read starting at `offset`.
+        /// We have `offset + value_len > buffer_len`.
+        value_len: usize,
+        /// The total size of the buffer.
+        buffer_len: usize,
     },
     /// A is write is out of bounds.
     WriteOutOfBounds {
+        /// The starting offset of the write.
         offset: usize,
-        len: usize,
+        /// The size in bytes of the value attempted to be written starting at `offset`.
+        /// We have `offset + value_len > buffer_len`.
+        value_len: usize,
+        /// The total size of the buffer.
+        buffer_len: usize,
     },
     /// Unknown opcode.
     UnknownOpcode(u32),
@@ -38,11 +48,19 @@ impl std::fmt::Display for ChangeBufferError {
             ChangeBufferError::StringNotFound(id) => {
                 write!(f, "string not found internally: {id}")
             }
-            ChangeBufferError::ReadOutOfBounds { offset, len } => {
-                write!(f, "read out of bounds: offset={offset}, len={len}")
+            ChangeBufferError::ReadOutOfBounds {
+                offset,
+                value_len,
+                buffer_len,
+            } => {
+                write!(f, "read out of bounds: offset={offset}, value_len={value_len}, buffer_len={buffer_len}")
             }
-            ChangeBufferError::WriteOutOfBounds { offset, len } => {
-                write!(f, "write out of bounds: offset={offset}, len={len}")
+            ChangeBufferError::WriteOutOfBounds {
+                offset,
+                value_len,
+                buffer_len,
+            } => {
+                write!(f, "write out of bounds: offset={offset}, value_len={value_len}, buffer_len={buffer_len}")
             }
             ChangeBufferError::UnknownOpcode(val) => write!(f, "unknown opcode: {val}"),
         }
