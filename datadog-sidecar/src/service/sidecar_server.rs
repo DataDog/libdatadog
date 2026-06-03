@@ -441,17 +441,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     }
                     false
                 }
-                SidecarAction::FfeEvaluationMetrics {
-                    endpoint,
-                    context,
-                    metrics,
-                } => {
-                    if let Some(mut ep) = ffe_metrics_flusher::otlp_metrics_endpoint(endpoint) {
-                        if ep.test_token.is_none() {
-                            if let Some(base) = trace_config.endpoint.as_ref() {
-                                ep.test_token = base.test_token.clone();
-                            }
-                        }
+                SidecarAction::FfeEvaluationMetrics { context, metrics } => {
+                    if let Some(ep) = session.get_otlp_metrics_endpoint().clone() {
                         let client = ffe_http_client.clone();
                         let context = context.clone();
                         let metrics = metrics.clone();
@@ -459,9 +450,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                             ffe_metrics_flusher::send_metrics(&client, &ep, context, metrics).await;
                         });
                     } else {
-                        debug!(
-                            "ffe_metrics_flusher: unparseable endpoint {endpoint:?}, dropping batch"
-                        );
+                        debug!("ffe_metrics_flusher: no configured endpoint, dropping batch");
                     }
                     false
                 }
@@ -732,6 +721,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
             cfg.language.clone_from(&config.language);
             cfg.language_version.clone_from(&config.language_version);
             cfg.tracer_version.clone_from(&config.tracer_version);
+        });
+        session.modify_otlp_metrics_endpoint(|endpoint| {
+            *endpoint = config.otlp_metrics_endpoint.clone();
         });
         session.configure_dogstatsd(|dogstatsd| {
             let d = new(config.dogstatsd_endpoint.clone()).ok();
@@ -1120,6 +1112,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session.modify_trace_config(|trace_cfg| {
             trace_cfg.set_endpoint_test_token(token.clone());
         });
+        session.modify_otlp_metrics_endpoint(|endpoint| {
+            if let Some(endpoint) = endpoint {
+                endpoint.test_token = token.clone();
+            }
+        });
         // Update the stats config so newly created concentrators carry the test token.
         session.modify_stats_config(|cfg| {
             cfg.endpoint.test_token = token.clone();
@@ -1260,13 +1257,12 @@ mod tests {
         handler
             .server
             .get_session(&instance_id.session_id)
-            .modify_trace_config(|cfg| {
-                let endpoint = Endpoint {
-                    url: http_server.url("/").parse().unwrap(),
+            .modify_otlp_metrics_endpoint(|endpoint| {
+                *endpoint = Some(Endpoint {
+                    url: http_server.url("/v1/metrics").parse().unwrap(),
+                    test_token: Some(test_session_token.into()),
                     ..Endpoint::default()
-                };
-                cfg.set_endpoint(endpoint).unwrap();
-                cfg.set_endpoint_test_token(Some(test_session_token));
+                });
             });
 
         assert!(!handler
@@ -1281,7 +1277,6 @@ mod tests {
                 instance_id.clone(),
                 queue_id,
                 vec![SidecarAction::FfeEvaluationMetrics {
-                    endpoint: http_server.url("/v1/metrics"),
                     context: ffe_context(),
                     metrics: vec![ffe_metric()],
                 }],

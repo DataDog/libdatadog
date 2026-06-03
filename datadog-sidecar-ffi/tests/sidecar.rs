@@ -92,6 +92,7 @@ fn test_ddog_sidecar_register_app() {
                 ..Default::default()
             },
             &Endpoint::default(),
+            null(),
             "".into(),
             "".into(),
             "".into(),
@@ -148,6 +149,7 @@ fn test_ddog_sidecar_register_app() {
                 ..Default::default()
             },
             &Endpoint::default(),
+            null(),
             "".into(),
             "".into(),
             "".into(),

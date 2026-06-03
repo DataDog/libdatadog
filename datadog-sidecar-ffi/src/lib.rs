@@ -613,6 +613,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     session_id: ffi::CharSlice,
     agent_endpoint: &Endpoint,
     dogstatsd_endpoint: &Endpoint,
+    otlp_metrics_endpoint: *const Endpoint,
     language: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
@@ -638,9 +639,16 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     parent_session_id: ffi::CharSlice,
 ) -> MaybeError {
     let session_id_str: String = session_id.to_utf8_lossy().into();
+    let mut otlp_metrics_endpoint = unsafe { otlp_metrics_endpoint.as_ref().cloned() };
+    if let Some(endpoint) = &mut otlp_metrics_endpoint {
+        if endpoint.test_token.is_none() {
+            endpoint.test_token = agent_endpoint.test_token.clone();
+        }
+    }
     let session_config = SessionConfig {
         endpoint: agent_endpoint.clone(),
         dogstatsd_endpoint: dogstatsd_endpoint.clone(),
+        otlp_metrics_endpoint,
         language: language.to_utf8_lossy().into(),
         language_version: language_version.to_utf8_lossy().into(),
         tracer_version: tracer_version.to_utf8_lossy().into(),
@@ -1223,23 +1231,21 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// safely coexist until they explicitly migrate.
 ///
 /// # Safety
-/// `endpoint`, `context`, and every element in `metrics` must contain valid
-/// UTF-8 `CharSlice` values. Empty `endpoint` or `metrics` is a no-op.
+/// `context` and every element in `metrics` must contain valid UTF-8
+/// `CharSlice` values. Empty `metrics` is a no-op.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
-    endpoint: CharSlice,
     context: &FfeTelemetryContext<'_>,
     metrics: Slice<FfeEvaluationMetric<'_>>,
 ) -> MaybeError {
-    if endpoint.is_empty() || metrics.is_empty() {
+    if metrics.is_empty() {
         return MaybeError::None;
     }
 
-    let endpoint = try_c!(char_slice_to_string(endpoint));
     let context = try_c!(ffe_context_from_ffi(context));
     let metrics = try_c!(metrics
         .try_as_slice()
@@ -1257,11 +1263,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
         transport,
         instance_id,
         queue_id,
-        vec![SidecarAction::FfeEvaluationMetrics {
-            endpoint,
-            context,
-            metrics,
-        }],
+        vec![SidecarAction::FfeEvaluationMetrics { context, metrics }],
     ));
     MaybeError::None
 }
