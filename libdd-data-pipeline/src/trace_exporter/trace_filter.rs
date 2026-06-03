@@ -18,7 +18,7 @@ trait TagFilter {
 }
 
 #[derive(Debug)]
-struct TagStringFilter {
+struct TagLiteralFilter {
     key: String,
     value: Option<String>,
 }
@@ -32,10 +32,10 @@ struct TagRegexFilter {
 /// Parsed config
 #[derive(Debug, Default)]
 struct TraceFiltererConf {
-    reject: Vec<TagStringFilter>,
+    reject: Vec<TagLiteralFilter>,
     reject_regex: Vec<TagRegexFilter>,
 
-    require: Vec<TagStringFilter>,
+    require: Vec<TagLiteralFilter>,
     require_regex: Vec<TagRegexFilter>,
 
     ignore_resources: Vec<Regex>,
@@ -46,23 +46,7 @@ pub struct TraceFilterer {
     conf: ArcSwap<TraceFiltererConf>,
 }
 
-impl TagStringFilter {
-    fn from_str(tag: &str) -> Self {
-        if let Some((key, value)) = tag.split_once(":") {
-            TagStringFilter {
-                key: key.to_owned(),
-                value: Some(value.to_owned()),
-            }
-        } else {
-            TagStringFilter {
-                key: tag.to_owned(),
-                value: None,
-            }
-        }
-    }
-}
-
-impl TagFilter for TagStringFilter {
+impl TagFilter for TagLiteralFilter {
     fn matches_tag_value(&self, value: &str) -> bool {
         match &self.value {
             None => true, // No value requirement => Any value is a match
@@ -89,13 +73,46 @@ impl TagFilter for TagRegexFilter {
 }
 
 impl TraceFiltererConf {
+    fn compile_literal_filters(filters: &[String]) -> Vec<TagLiteralFilter> {
+        let mut tag_regex_filters = Vec::new();
+        for filter in filters {
+            let (key, value) = match filter.split_once(":") {
+                Some((key, value)) if !value.trim().is_empty() => {
+                    (key.trim(), Some(value.trim().to_owned()))
+                }
+                _ => (filter.trim(), None),
+            };
+            if key.is_empty() {
+                error!(
+                    ?filter,
+                    "Invalid tag filter with empty key value, skipping it"
+                );
+                continue;
+            }
+
+            tag_regex_filters.push(TagLiteralFilter {
+                key: key.to_owned(),
+                value,
+            });
+        }
+
+        tag_regex_filters
+    }
+
     fn compile_regex_filters(filters: &[String]) -> Vec<TagRegexFilter> {
         let mut tag_regex_filters = Vec::new();
         for filter in filters {
             let (key, value) = match filter.split_once(":") {
-                Some((key, value)) => (key, Some(value)),
-                None => (filter.as_ref(), None),
+                Some((key, value)) if !value.trim().is_empty() => (key.trim(), Some(value.trim())),
+                _ => (filter.trim(), None),
             };
+            if key.is_empty() {
+                error!(
+                    ?filter,
+                    "Invalid tag filter with empty key value, skipping it"
+                );
+                continue;
+            }
 
             let value = match value {
                 Some(value) => match Regex::new(value) {
@@ -121,25 +138,8 @@ impl TraceFiltererConf {
         tag_regex_filters
     }
 
-    fn parse(
-        filter_tags: &crate::agent_info::schema::FilterTagsConfig,
-        filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
-        ignore_resources: &[String],
-    ) -> Self {
-        let require_regex = Self::compile_regex_filters(&filter_tags_regex.require);
-        let reject_regex = Self::compile_regex_filters(&filter_tags_regex.reject);
-
-        let reject = filter_tags
-            .reject
-            .iter()
-            .map(|tag| TagStringFilter::from_str(tag))
-            .collect();
-        let require = filter_tags
-            .require
-            .iter()
-            .map(|tag| TagStringFilter::from_str(tag))
-            .collect();
-        let ignore_resources = ignore_resources
+    fn compile_resource_filters(ignore_resources: &[String]) -> Vec<Regex> {
+        ignore_resources
             .iter()
             .filter_map(|regex| {
                 Regex::new(regex)
@@ -152,7 +152,20 @@ impl TraceFiltererConf {
                     })
                     .ok()
             })
-            .collect();
+            .collect()
+    }
+
+    fn parse(
+        filter_tags: &crate::agent_info::schema::FilterTagsConfig,
+        filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
+        ignore_resources: &[String],
+    ) -> Self {
+        let require_regex = Self::compile_regex_filters(&filter_tags_regex.require);
+        let reject_regex = Self::compile_regex_filters(&filter_tags_regex.reject);
+        let require = Self::compile_literal_filters(&filter_tags.require);
+        let reject = Self::compile_literal_filters(&filter_tags.reject);
+        let ignore_resources = Self::compile_resource_filters(ignore_resources);
+
         TraceFiltererConf {
             reject,
             require,
@@ -619,6 +632,70 @@ mod tests {
         let f = reject_regex(&["env:[invalid"]);
         let mut traces = one_trace(span_with("r", &[("env", "anything")]));
         f.filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    // ---- key/value trimming ----
+
+    #[test]
+    fn literal_reject_spaces_around_colon_drops() {
+        // " env : prod " → key="env", value="prod"
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        reject_str(&[" env : prod "]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn literal_require_spaces_around_colon_keeps() {
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        require_str(&[" env : prod "]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn literal_reject_key_only_with_spaces_drops_any_value() {
+        // " env " (no colon) → key="env", no value requirement
+        let mut traces = one_trace(span_with("r", &[("env", "anything")]));
+        reject_str(&[" env "]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn literal_reject_empty_key_is_skipped_keeps() {
+        // ":prod" → key="" → filter skipped → trace kept
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        reject_str(&[":prod"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn literal_require_empty_key_is_skipped_keeps() {
+        // ":prod" → filter skipped → require list empty → vacuous all() → trace kept
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        require_str(&[":prod"]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn regex_reject_spaces_around_colon_drops() {
+        // " env : prod.* " → key="env", regex="prod.*"
+        let mut traces = one_trace(span_with("r", &[("env", "production")]));
+        reject_regex(&[" env : prod.* "]).filter_traces(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn regex_require_spaces_around_colon_keeps() {
+        let mut traces = one_trace(span_with("r", &[("env", "production")]));
+        require_regex(&[" env : prod.* "]).filter_traces(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn regex_reject_empty_key_is_skipped_keeps() {
+        // ":prod.*" → key="" → filter skipped → trace kept
+        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
+        reject_regex(&[":prod.*"]).filter_traces(&mut traces);
         assert_eq!(traces.len(), 1);
     }
 }
