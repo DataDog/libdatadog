@@ -292,7 +292,7 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
     trace_filterer: &TraceFilterer,
-) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+) -> libdd_trace_utils::span::trace_utils::DroppedStats {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
@@ -300,9 +300,7 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     {
         // FIXME: when client_computed_top_level is true, looking twice for the root span here and
         // just below in compute_top_level_span is inefficient
-        //
-        // FIXME: add dropped trace count to dropped_p0_stats ?
-        trace_filterer.filter_traces(traces);
+        let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
 
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
@@ -312,20 +310,22 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         add_spans_to_stats(stats_concentrator, traces);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
-        let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
+        let mut dropped_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
+        dropped_stats.dropped_by_trace_filter = dropped_by_trace_filter;
 
         // Update the headers to indicate that stats have been computed and forward dropped
         // traces counts
         header_tags.client_computed_top_level = true;
         header_tags.client_computed_stats = true;
-        header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
-        header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+        header_tags.dropped_p0_traces = dropped_stats.dropped_p0_traces;
+        header_tags.dropped_p0_spans = dropped_stats.dropped_p0_spans;
 
-        dropped_p0_stats
+        dropped_stats
     } else {
-        libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+        libdd_trace_utils::span::trace_utils::DroppedStats {
             dropped_p0_traces: 0,
             dropped_p0_spans: 0,
+            dropped_by_trace_filter: 0,
         }
     }
 }

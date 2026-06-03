@@ -165,6 +165,7 @@ pub struct SendPayloadTelemetry {
     bytes_sent: u64,
     chunks_sent: u64,
     chunks_dropped_p0: u64,
+    chunks_dropped_by_trace_filter: u64,
     chunks_dropped_serialization_error: u64,
     chunks_dropped_send_failure: u64,
     responses_count_per_code: HashMap<u16, u64>,
@@ -287,6 +288,13 @@ impl TelemetryClient {
             let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
             self.worker
                 .add_point(data.chunks_dropped_p0 as f64, key, vec![])?;
+        }
+        if data.chunks_dropped_by_trace_filter > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::ChunksDroppedByTraceFilter);
+            self.worker
+                .add_point(data.chunks_dropped_by_trace_filter as f64, key, vec![])?;
         }
         if data.chunks_dropped_serialization_error > 0 {
             let key = self

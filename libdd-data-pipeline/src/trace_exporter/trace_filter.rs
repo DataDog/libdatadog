@@ -207,8 +207,9 @@ impl TraceFilterer {
     pub fn filter_traces<T: libdd_trace_utils::span::TraceData>(
         &self,
         traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
-    ) {
+    ) -> usize {
         let conf = self.conf.load();
+        let traces_count_before = traces.len();
         traces.retain(|trace| {
             let Ok(root_span_index) = get_root_span_index(trace) else {
                 return true;
@@ -220,6 +221,9 @@ impl TraceFilterer {
             }
             !should_drop
         });
+        let traces_count_after = traces.len();
+        let dropped_by_trace_filter = traces_count_before - traces_count_after;
+        dropped_by_trace_filter
     }
 
     /// Checks if the trace with root span `root_span` should be dropped based on filter
