@@ -26,10 +26,24 @@ impl<T: RemoteConfigContent> RemoteConfigParsedData for T {
     }
 }
 
+/// Error returned by [`RemoteConfigContent::parse`].
+///
+/// JSON failures convert via `?`; product-specific failures with their own
+/// error types should box through [`ParseError::Custom`] rather than
+/// collapsing to a string, so callers can downcast if they need to.
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("invalid JSON: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error(transparent)]
+    Custom(Box<dyn std::error::Error + Send + Sync>),
+}
+
 /// Typed contract a product crate provides so the registry can build a parser for [`Self`].
 pub trait RemoteConfigContent: Any + Debug + Send + Sync + 'static {
     const PRODUCT: RemoteConfigProduct;
-    fn parse(data: &[u8]) -> anyhow::Result<Self>
+    fn parse(data: &[u8]) -> std::result::Result<Self, ParseError>
     where
         Self: Sized;
 }
@@ -120,7 +134,7 @@ impl Default for ParserRegistry {
 impl RemoteConfigContent for AgentConfigFile {
     const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::AgentConfig;
 
-    fn parse(data: &[u8]) -> anyhow::Result<Self> {
+    fn parse(data: &[u8]) -> std::result::Result<Self, ParseError> {
         Ok(agent_config::parse_json(data)?)
     }
 }
@@ -128,7 +142,7 @@ impl RemoteConfigContent for AgentConfigFile {
 impl RemoteConfigContent for AgentTaskFile {
     const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::AgentTask;
 
-    fn parse(data: &[u8]) -> anyhow::Result<Self> {
+    fn parse(data: &[u8]) -> std::result::Result<Self, ParseError> {
         Ok(agent_task::parse_json(data)?)
     }
 }
@@ -136,7 +150,7 @@ impl RemoteConfigContent for AgentTaskFile {
 impl RemoteConfigContent for DynamicConfigFile {
     const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::ApmTracing;
 
-    fn parse(data: &[u8]) -> anyhow::Result<Self> {
+    fn parse(data: &[u8]) -> std::result::Result<Self, ParseError> {
         Ok(dynamic::parse_json(data)?)
     }
 }

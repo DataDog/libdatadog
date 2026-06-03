@@ -1508,6 +1508,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sha2",
+ "thiserror 2.0.17",
  "time",
  "tokio",
  "tokio-util",
