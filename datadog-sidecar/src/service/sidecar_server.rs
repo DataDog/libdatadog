@@ -1243,11 +1243,12 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     async fn ffe_metric_actions_dispatch_without_registered_application() {
         let http_server = MockServer::start_async().await;
+        let test_session_token = "ffe/evaluation_metrics_sidecar";
         let metrics_mock = http_server
             .mock_async(|when, then| {
                 when.method(POST)
                     .path("/v1/metrics")
-                    .header("x-datadog-test-session-token", "ffe-metrics-token");
+                    .header("x-datadog-test-session-token", test_session_token);
                 then.status(202);
             })
             .await;
@@ -1265,7 +1266,7 @@ mod tests {
                     ..Endpoint::default()
                 };
                 cfg.set_endpoint(endpoint).unwrap();
-                cfg.set_endpoint_test_token(Some("ffe-metrics-token"));
+                cfg.set_endpoint_test_token(Some(test_session_token));
             });
 
         assert!(!handler
