@@ -175,7 +175,21 @@ impl AgentInfoFetcher {
                 if let Some(complete_fut) = complete_fut.take() {
                     complete_fut.await;
                 }
-                sleep(Duration::from_secs(60)).await;
+                // In test contexts (`Endpoint.test_token` is set by PHPT
+                // tests that PUT `/set-agent-info` under a session token
+                // and then expect the next `/info` poll to observe it),
+                // a 60s gap between polls is too long: the very first
+                // poll often races SKIPIF's PUT, lands on an empty body,
+                // and the test's `await_agent_info` window has expired
+                // long before the next refresh. Poll once a second in
+                // that case. Production is unchanged: `test_token` is
+                // only ever set in CI, so the 60s cadence is preserved.
+                let interval = if fetch_endpoint.test_token.is_some() {
+                    Duration::from_secs(1)
+                } else {
+                    Duration::from_secs(60)
+                };
+                sleep(interval).await;
             }
             agent_infos.0.lock().unwrap().remove(&endpoint);
         });
