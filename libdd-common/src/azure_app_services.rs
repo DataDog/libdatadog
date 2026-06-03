@@ -18,9 +18,12 @@ const FUNCTIONS_WORKER_RUNTIME: &str = "FUNCTIONS_WORKER_RUNTIME";
 const FUNCTIONS_WORKER_RUNTIME_VERSION: &str = "FUNCTIONS_WORKER_RUNTIME_VERSION";
 const FUNCTIONS_EXTENSION_VERSION: &str = "FUNCTIONS_EXTENSION_VERSION";
 const DD_AZURE_RESOURCE_GROUP: &str = "DD_AZURE_RESOURCE_GROUP";
-const WEBSITE_SKU: &str = "WEBSITE_SKU";
+pub const WEBSITE_SKU: &str = "WEBSITE_SKU";
+pub const REGION_NAME: &str = "REGION_NAME";
+const CONTAINER_NAME: &str = "CONTAINER_NAME";
+const WEBSITE_POD_NAME: &str = "WEBSITE_POD_NAME";
 
-const UNKNOWN_VALUE: &str = "unknown";
+pub const UNKNOWN_VALUE: &str = "unknown";
 
 enum AzureContext {
     AzureFunctions,
@@ -71,6 +74,8 @@ const AAS_VAR_NAMES: &[&str] = &[
     FUNCTIONS_EXTENSION_VERSION,
     DD_AZURE_RESOURCE_GROUP,
     WEBSITE_SKU,
+    CONTAINER_NAME,
+    WEBSITE_POD_NAME,
 ];
 
 #[cfg(target_os = "linux")]
@@ -223,12 +228,14 @@ impl AzureMetadata {
             _ => ("app".to_owned(), "app".to_owned()),
         };
 
+        let website_sku = query.get_var(WEBSITE_SKU);
+
         let resource_group = query
             .get_var(DD_AZURE_RESOURCE_GROUP)
             .or_else(|| query.get_var(WEBSITE_RESOURCE_GROUP))
             .or_else(|| {
                 // Check if we're in flex consumption plan first
-                match query.get_var(WEBSITE_SKU).as_deref() {
+                match website_sku.as_deref() {
                     Some("FlexConsumption") => None,
                     /* Flex Consumption plans need the `DD_AZURE_RESOURCE_GROUP` env var. If this
                      * logic ever changes, update the logic in
@@ -247,7 +254,17 @@ impl AzureMetadata {
         let operating_system = query
             .get_var(WEBSITE_OS)
             .unwrap_or(std::env::consts::OS.to_string());
-        let instance_name = query.get_var(INSTANCE_NAME);
+
+        let container_name = query.get_var(CONTAINER_NAME);
+        let pod_name = query.get_var(WEBSITE_POD_NAME);
+        let computer_name = query.get_var(INSTANCE_NAME);
+        let instance_name = resolve_instance_name(
+            website_sku.as_deref(),
+            container_name.as_deref(),
+            pod_name.as_deref(),
+            computer_name.as_deref(),
+        );
+
         let instance_id = query.get_var(INSTANCE_ID);
 
         let runtime = query.get_var(FUNCTIONS_WORKER_RUNTIME);
@@ -392,6 +409,34 @@ impl AzureMetadata {
         ]
         .into_iter()
     }
+}
+
+/// Resolves the instance name using the env var that provides an instance value
+/// that matches the Azure integration metric's `instance` tag for the current hosting plan
+/// with fallback logic if the preferred source is empty.
+fn resolve_instance_name(
+    website_sku: Option<&str>,
+    container_name: Option<&str>,
+    pod_name: Option<&str>,
+    computer_name: Option<&str>,
+) -> Option<String> {
+    fn non_empty(s: Option<&str>) -> Option<&str> {
+        s.filter(|v| !v.trim().is_empty())
+    }
+
+    let sku_preferred = match website_sku {
+        Some("FlexConsumption") | Some("Dynamic") => {
+            non_empty(container_name).or_else(|| non_empty(pod_name))
+        }
+        Some(_) => non_empty(computer_name),
+        None => None,
+    };
+
+    sku_preferred
+        .or_else(|| non_empty(container_name))
+        .or_else(|| non_empty(pod_name))
+        .or_else(|| non_empty(computer_name))
+        .map(|s| s.to_lowercase())
 }
 
 pub static AAS_METADATA: LazyLock<Option<AzureMetadata>> =
@@ -1001,5 +1046,123 @@ mod tests {
             get_trimmed_env_var!("__LIBDD_AAS_DEFINITELY_NOT_SET__"),
             None
         );
+    }
+
+    #[test]
+    fn test_public_consts_are_accessible() {
+        assert_eq!(super::WEBSITE_SKU, "WEBSITE_SKU");
+        assert_eq!(super::UNKNOWN_VALUE, "unknown");
+        assert_eq!(super::REGION_NAME, "REGION_NAME");
+    }
+
+    #[test]
+    fn test_instance_name_flex_consumption_uses_container_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "FlexConsumption"),
+            ("CONTAINER_NAME", "0--abc-DEF"),
+            ("WEBSITE_POD_NAME", "0--abc-test"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "0--abc-def");
+    }
+
+    #[test]
+    fn test_instance_name_flex_consumption_falls_back_to_pod_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "FlexConsumption"),
+            ("WEBSITE_POD_NAME", "0--abc-def"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "0--abc-def");
+    }
+
+    #[test]
+    fn test_instance_name_dynamic_uses_container_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "Dynamic"),
+            ("CONTAINER_NAME", "ABCD1234-111122223333444455"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "abcd1234-111122223333444455");
+    }
+
+    #[test]
+    fn test_instance_name_elastic_premium_uses_computer_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "ElasticPremium"),
+            (INSTANCE_NAME, "ep0fakewk0000A1"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "ep0fakewk0000a1");
+    }
+
+    #[test]
+    fn test_instance_name_dedicated_uses_computer_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "PremiumV3"),
+            (INSTANCE_NAME, "p3fakewk0000B2"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "p3fakewk0000b2");
+    }
+
+    #[test]
+    fn test_instance_name_empty_string_treated_as_missing() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "ElasticPremium"),
+            ("CONTAINER_NAME", ""),
+            ("WEBSITE_POD_NAME", ""),
+            (INSTANCE_NAME, "worker-1"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "worker-1");
+    }
+
+    #[test]
+    fn test_instance_name_whitespace_only_treated_as_missing() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "ElasticPremium"),
+            ("CONTAINER_NAME", "   "),
+            ("WEBSITE_POD_NAME", "   "),
+            (INSTANCE_NAME, "worker-2"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "worker-2");
+    }
+
+    #[test]
+    fn test_instance_name_unknown_sku_falls_back_to_container_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "PremiumV4"),
+            ("CONTAINER_NAME", "container-1"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "container-1");
+    }
+
+    #[test]
+    fn test_instance_name_windows_consumption_falls_through_to_computer_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            (WEBSITE_SKU, "Dynamic"),
+            (INSTANCE_NAME, "10-20-30-40"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "10-20-30-40");
+    }
+
+    #[test]
+    fn test_instance_name_no_instance_vars_is_unknown() {
+        let mocked_env = MockEnv::new(&[(FUNCTIONS_WORKER_RUNTIME, "node")]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), UNKNOWN_VALUE);
     }
 }
