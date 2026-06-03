@@ -1,0 +1,52 @@
+[[
+  {
+    "name": "test_exporter_v04_v1_snapshot_root",
+    "service": "test-service",
+    "resource": "test-resource",
+    "trace_id": 0,
+    "span_id": 1,
+    "parent_id": 0,
+    "type": "web",
+    "meta": {
+      "_dd.hostname": "my-host",
+      "_dd.origin": "lambda",
+      "_dd.p.dm": "-4",
+      "_dd.p.tid": "0x0",
+      "component": "http",
+      "env": "test-env",
+      "runtime-id": "test-runtime-id-value",
+      "service": "test-service",
+      "span.kind": "server",
+      "version": "1.0.0"
+    },
+    "metrics": {
+      "_dd.top_level": 1.0,
+      "_sampling_priority_v1": 1
+    },
+    "duration": 5,
+    "start": 0
+  },
+     {
+       "name": "test_exporter_v04_v1_snapshot_child",
+       "service": "test-service",
+       "resource": "test-resource",
+       "trace_id": 0,
+       "span_id": 2,
+       "parent_id": 1,
+       "meta": {
+         "_dd.origin": "lambda",
+         "_dd.p.dm": "-4",
+         "_dd.p.tid": "0x0",
+         "env": "test-env",
+         "runtime-id": "test-runtime-id-value",
+         "service": "test-service",
+         "span.kind": "internal"
+       },
+       "metrics": {
+         "_dd_metric1": 1.0,
+         "_dd_metric2": 2.0,
+         "_sampling_priority_v1": 1
+       },
+       "duration": 5,
+       "start": 1
+     }]]

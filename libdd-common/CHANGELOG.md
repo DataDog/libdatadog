@@ -2,6 +2,34 @@
 
 
 
+## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.1.0..libdd-common-v4.2.0) - 2026-05-29
+
+### Added
+
+- Recognize PCF Garden container IDs ([#2025](https://github.com/datadog/libdatadog/issues/2025)) - ([be94f69](https://github.com/datadog/libdatadog/commit/be94f6964a286bcc2bec9b0a9b80422c77e06d20))
+
+### Changed
+
+- Replace use_v05_format bool and remove infallible expect ([#1946](https://github.com/datadog/libdatadog/issues/1946)) - ([54afa6f](https://github.com/datadog/libdatadog/commit/54afa6f73cb46a864a58100bbbc4027acd0b9a0b))
+
+
+
+## [4.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.0.0..libdd-common-v4.1.0) - 2026-05-15
+
+### Added
+
+- Added regex-lite feature ([#1939](https://github.com/datadog/libdatadog/issues/1939)) - ([58b86d5](https://github.com/datadog/libdatadog/commit/58b86d5a1b2dc43be98eb9568ec734c259a430a7))
+
+### Changed
+
+- Move the sampling logic from dd-trace-rs [APMSP-2946] ([#1927](https://github.com/datadog/libdatadog/issues/1927)) - ([040260c](https://github.com/datadog/libdatadog/commit/040260c5d72ec011a36934cb77d203688990609e))
+
+### Fixed
+
+- Crashes caused by `getenv` while retrieving AAS env vars ([#1930](https://github.com/datadog/libdatadog/issues/1930)) - ([43c0973](https://github.com/datadog/libdatadog/commit/43c0973da14911168b7283283be901e4ed41ab31))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.2..libdd-common-v4.0.0) - 2026-04-27
 
 ### Added

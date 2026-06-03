@@ -4,13 +4,14 @@
 pub mod trace_utils;
 pub mod v04;
 pub mod v05;
+pub mod vec_map;
 
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
 use crate::msgpack_decoder::decode::error::DecodeError;
 use crate::span::v05::dict::SharedDict;
 use libdd_tinybytes::{Bytes, BytesString};
 use serde::Serialize;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -20,13 +21,13 @@ use std::{fmt, ptr};
 /// Trait representing the requirements for a type to be used as a Span "string" type.
 /// Note: Borrow<str> is not required by the derived traits, but allows to access HashMap elements
 /// from a static str and check if the string is empty.
-pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
+pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default + From<String> {
     fn from_static_str(value: &'static str) -> Self;
 }
 
-impl SpanText for &str {
+impl SpanText for Cow<'_, str> {
     fn from_static_str(value: &'static str) -> Self {
-        value
+        Cow::Borrowed(value)
     }
 }
 
@@ -117,11 +118,11 @@ impl DeserializableTraceData for BytesData {
     }
 }
 
-/// TraceData implementation using `&str` and `&[u8]`.
+/// TraceData implementation using `Cow<'a, str>` and `&[u8]`.
 #[derive(Clone, Default, Debug, PartialEq, Serialize)]
 pub struct SliceData<'a>(PhantomData<&'a u8>);
 impl<'a> TraceData for SliceData<'a> {
-    type Text = &'a str;
+    type Text = Cow<'a, str>;
     type Bytes = &'a [u8];
 }
 
@@ -139,10 +140,10 @@ impl<'a> DeserializableTraceData for SliceData<'a> {
     }
 
     #[inline]
-    fn read_string(buf: &mut &'a [u8]) -> Result<&'a str, DecodeError> {
+    fn read_string(buf: &mut &'a [u8]) -> Result<Cow<'a, str>, DecodeError> {
         read_string_ref_nomut(buf).map(|(str, newbuf)| {
             *buf = newbuf;
-            str
+            Cow::Borrowed(str)
         })
     }
 }

@@ -21,8 +21,7 @@ use bin_tests::{
     ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    default_max_threads, CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames,
-    StacktraceCollection,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -200,10 +199,9 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 /// alive until the receiver completes, guaranteeing threads are valid ptrace targets.
 ///
 /// We verify:
-///   - `error.threads` is non-empty.
+///   - `error.threads` is a non-empty array of thread objects.
 ///   - Each thread entry is well-formed: `crashed=false`, `name`, and `stack` present.
-///   - None of the additional threads are marked as crashed (the crashing thread is in
-///     `error.stack`, not `error.threads`).
+///   - The crashing thread stack is in `error.stack`, not `error.threads`.
 ///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
 ///   - Each worker has their work frame in the stack trace.
 #[test]
@@ -219,28 +217,21 @@ fn test_crash_tracking_multi_thread_collection() {
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, _fixtures| {
-        let error = &payload["error"];
-        let threads = &error["threads"];
-
-        let thread_count = threads["count"]
-            .as_u64()
-            .expect("threads.count should be a number");
-        let all_threads = threads["threads"]
+        let all_threads = payload["error"]["threads"]
             .as_array()
-            .expect("threads.threads should be a JSON array");
+            .expect("error.threads should be a JSON array of thread objects");
+
+        assert!(
+            all_threads.len() >= 2,
+            "error.threads should be non-empty when collect_all_threads is enabled; got payload: {}",
+            serde_json::to_string_pretty(payload).unwrap_or_default()
+        );
 
         let thread_names: Vec<&str> = all_threads
             .iter()
             .map(|t| t["name"].as_str().unwrap_or("<none>"))
             .collect();
 
-        assert!(
-            !all_threads.is_empty(),
-            "error.threads should be non-empty when collect_all_threads is enabled; got payload: {}",
-            serde_json::to_string_pretty(payload).unwrap_or_default()
-        );
-
-        // Every thread entry must be structurally valid and non-crashing
         for thread in all_threads {
             assert!(
                 thread["name"].is_string(),
@@ -260,12 +251,10 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
-        // Both named workers must be present; the behavior spawns exactly two
         for expected in ["ct_worker_0", "ct_worker_1"] {
             assert!(
                 thread_names.contains(&expected),
-                "Expected worker thread '{expected}' in error.threads; \
-                 got: {thread_names:?}"
+                "Expected worker thread '{expected}' in error.threads; got: {thread_names:?}"
             );
         }
 
@@ -296,12 +285,6 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
-        assert!(
-            thread_count == 2,
-            "expected 2 threads, got {}",
-            thread_count
-        );
-
         Ok(())
     });
 
@@ -313,7 +296,7 @@ fn test_crash_tracking_multi_thread_collection() {
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_thread_limit() {
-    const THREAD_COUNT: usize = default_max_threads();
+    const THREAD_COUNT: usize = libdd_crashtracker::default_max_threads();
 
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -324,31 +307,29 @@ fn test_crash_tracking_thread_limit() {
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
-        let threads = &payload["error"]["threads"];
-
-        let thread_array = threads["threads"]
+        let thread_array = payload["error"]["threads"]
             .as_array()
-            .expect("error.threads.threads should be a JSON array");
-        let count = threads["count"]
-            .as_u64()
-            .expect("error.threads.count should be a number") as usize;
+            .expect("error.threads should be a JSON array of thread objects");
 
         assert!(
             thread_array.len() >= THREAD_COUNT,
-            "expected at least {THREAD_COUNT} thread entries, got {} \
-             (count field: {})",
-            thread_array.len(),
-            count,
-        );
-        assert_eq!(
-            count,
-            thread_array.len(),
-            "threads.count ({count}) should equal the number of thread entries ({})",
+            "expected at least {THREAD_COUNT} thread entries, got {}",
             thread_array.len(),
         );
 
-        // All entries must be non-crashing
         for thread in thread_array {
+            assert!(
+                thread["name"].is_string(),
+                "thread entry missing 'name': {thread:?}"
+            );
+            assert!(
+                thread["crashed"].is_boolean(),
+                "thread entry missing 'crashed': {thread:?}"
+            );
+            assert!(
+                thread["stack"].is_object(),
+                "thread entry missing 'stack': {thread:?}"
+            );
             assert!(
                 !thread["crashed"].as_bool().unwrap_or(true),
                 "threads in error.threads must have crashed=false: {thread:?}"

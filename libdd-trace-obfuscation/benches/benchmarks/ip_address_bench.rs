@@ -25,7 +25,7 @@ fn quantize_peer_ip_address_benchmark(c: &mut Criterion) {
                 }
             },
             criterion::BatchSize::LargeInput,
-        )
+        );
     });
 }
 

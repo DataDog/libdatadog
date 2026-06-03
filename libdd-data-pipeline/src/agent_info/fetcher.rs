@@ -408,23 +408,43 @@ mod single_threaded_tests {
                         },
                         "remove_stack_traces": false,
                         "redis": {
-                                "enabled": true,
-                                "remove_all_args": false
+                                "Enabled": true,
+                                "RemoveAllArgs": false
                         },
                         "memcached": {
-                                "enabled": true,
-                                "keep_command": false
+                                "Enabled": true,
+                                "KeepCommand": false
                         }
                 }
         },
-        "peer_tags": ["db.hostname","http.host","aws.s3.bucket"]
+        "peer_tags": ["db.hostname","http.host","aws.s3.bucket"],
+        "obfuscation_version": 1,
+        "filter_tags": {
+            "reject": [
+              "appsec.events.system_tests_appsec_event.value:tf-reject-exact"
+            ],
+            "require": [
+              "appsec.events.system_tests_appsec_event.value:tf-require-exact"
+            ]
+        },
+        "filter_tags_regex": {
+            "reject": [
+              "appsec.events.system_tests_appsec_event.value:tf-reject-regex-.*"
+            ],
+            "require": [
+              "appsec.events.system_tests_appsec_event.value:tf-require-regex-.*"
+            ]
+        },
+        "ignore_resources": [
+            ".*(stats-unique|StatsUniqueHandler).*"
+        ]
     }"#;
 
     fn calculate_hash(json: &str) -> String {
         format!("{:x}", Sha256::digest(json.as_bytes()))
     }
 
-    const TEST_INFO_HASH: &str = "cce54bf6e7d1bf38088a3ec809bfeec160bc52d37f70bd6b581ce3c2f7be5a65";
+    const TEST_INFO_HASH: &str = "d0f6dde2c1ef3b7b776a58162d42574346e23f4677c3fafb440f5c7ca83a8a28";
 
     #[cfg_attr(miri, ignore)]
     #[tokio::test]

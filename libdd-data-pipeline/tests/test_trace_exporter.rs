@@ -250,6 +250,91 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
+    fn get_v04_to_v1_trace_snapshot_test_payload(name_prefix: &str) -> Vec<u8> {
+        // Root span: exercises chunk-level attrs (sampling priority, origin, mechanism)
+        // and span-level promoted fields (env, version, component, span.kind).
+        let mut root_span = create_test_json_span(1234, 12341, 0, 0, true);
+        root_span["name"] = json!(format!("{name_prefix}_root"));
+        root_span["type"] = json!("web");
+        root_span["meta"] = json!({
+            "env": "test-env",
+            "version": "1.0.0",
+            "component": "http",
+            "span.kind": "server",
+            "_dd.hostname": "my-host",
+            "_dd.origin": "lambda",
+            "_dd.p.dm": "-4",
+            "runtime-id": "test-runtime-id-value",
+            "service": "test-service",
+        });
+        root_span["metrics"] = json!({
+            "_sampling_priority_v1": 1.0,
+            "_dd.top_level": 1.0,
+        });
+
+        // Child span: exercises metrics and meta attributes without promoted fields.
+        let mut child_span = create_test_json_span(1234, 12342, 12341, 1, false);
+        child_span["name"] = json!(format!("{name_prefix}_child"));
+        child_span["metrics"] = json!({
+            "_dd_metric1": 1.0,
+            "_dd_metric2": 2.0,
+        });
+
+        rmp_serde::to_vec_named(&vec![vec![root_span, child_span]]).unwrap()
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn compare_v04_to_v1_trace_snapshot_test() {
+        let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
+        let snapshot_name = "compare_exporter_v04_to_v1_trace_snapshot_test";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
+        let url = test_agent.get_base_uri().await;
+
+        test_agent.start_session(snapshot_name, None).await;
+
+        let task_result = task::spawn_blocking(move || {
+            let mut builder = TraceExporter::<NativeCapabilities>::builder();
+            builder
+                .set_url(url.to_string().as_ref())
+                .set_language("test-lang")
+                .set_language_version("2.0")
+                .set_language_interpreter_vendor("vendor")
+                .set_language_interpreter("interpreter")
+                .set_tracer_version("1.0")
+                .set_env("test_env")
+                .set_service("test")
+                .set_test_session_token(snapshot_name)
+                .set_input_format(TraceExporterInputFormat::V04)
+                .set_output_format(TraceExporterOutputFormat::V1);
+
+            let trace_exporter = builder
+                .build::<NativeCapabilities>()
+                .expect("Unable to build TraceExporter");
+
+            let data = get_v04_to_v1_trace_snapshot_test_payload("test_exporter_v04_v1_snapshot");
+
+            // V1 is gated by /info negotiation (fail-closed). Wait until the background
+            // fetcher has populated agent_info so the first send promotes v1_active=true
+            // and the payload is encoded as V1.
+            let start = std::time::Instant::now();
+            while libdd_data_pipeline::agent_info::get_agent_info().is_none() {
+                if start.elapsed() > std::time::Duration::from_secs(5) {
+                    panic!("timeout waiting for /info");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+
+            let response = trace_exporter.send(data.as_ref());
+            assert!(response.is_ok(), "send failed: {:?}", response.err());
+        })
+        .await;
+
+        assert!(task_result.is_ok());
+
+        test_agent.assert_snapshot(snapshot_name).await;
+    }
+
     #[cfg_attr(miri, ignore)]
     #[cfg(target_os = "linux")]
     #[tokio::test]
