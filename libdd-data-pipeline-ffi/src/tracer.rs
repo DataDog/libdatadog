@@ -312,9 +312,17 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Box<TokioCancellatio
 
 /// Cancel a cancellation token.
 ///
-/// All clones of the same token observe the cancellation. If the token is
-/// currently passed to [`ddog_trace_exporter_send_trace_chunks`], the
-/// in-flight HTTP request will be aborted cooperatively.
+/// All clones of the same token observe the cancellation. If a
+/// [`ddog_trace_exporter_send_trace_chunks`] call is using this token at the
+/// time of cancellation, that send stops waiting for the agent at its next
+/// await point and returns an error; the trace chunks it was sending may be
+/// lost.
+///
+/// Cancellation only affects a send that is in progress. If no send is using
+/// the token, cancelling it has no immediate effect: a send started afterwards
+/// with an already-cancelled token returns an error without contacting the
+/// agent, and a token cancelled after its send has already finished does
+/// nothing.
 #[no_mangle]
 pub extern "C" fn ddog_trace_exporter_cancel_token_cancel(token: Option<&TokioCancellationToken>) {
     if let Some(token) = token {
@@ -342,11 +350,15 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
 /// serializes in the configured output format, and sends to the agent
 /// with retry logic.
 ///
-/// When `cancel` is non-null it must point to a live
-/// [`Handle<CancellationToken>`] obtained from
-/// [`ddog_trace_exporter_cancel_token_new`].  If the token is cancelled
-/// while the send is in progress the HTTP request is aborted and an
-/// error with code [`ExporterErrorCode::IoError`] is returned.
+/// When `cancel` is non-null, cancelling that token (via
+/// [`ddog_trace_exporter_cancel_token_cancel`]) while the send is in progress
+/// aborts the in-flight request and returns an error with code
+/// [`ExporterErrorCode::IoError`]. Cancellation is cooperative: it only takes
+/// effect while a request is actually in flight. A token that is already
+/// cancelled when the send starts makes this function return that error
+/// immediately, and cancelling after the send has finished has no effect.
+/// Cancelling an in-flight send may cause the trace chunks being sent to be
+/// lost.
 ///
 /// On success, if `response_out` is non-null, a heap-allocated
 /// [`ExporterResponse`] is written there.  The caller owns it and must
@@ -354,11 +366,9 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
 ///
 /// # Safety
 ///
-/// * `exporter` must be a valid `TraceExporter` pointer.
 /// * `chunks` is consumed and must not be used after this call.
 /// * If `response_out` is non-null it must point to valid writable memory for a
 ///   `Box<ExporterResponse>`.
-/// * If `cancel` is non-null it must point to a valid cancellation token handle.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     exporter: Option<&TraceExporter>,
