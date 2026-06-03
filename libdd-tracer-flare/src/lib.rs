@@ -204,13 +204,13 @@ impl TracerFlareManager {
         Ok(tracer_flare)
     }
 
-    /// Handle the `RemoteConfigData` and return the action the tracer flare
+    /// Handle the `RemoteConfigParsedData` and return the action the tracer flare
     /// needs to perform. This function also updates the `TracerFlareManager`
     /// state based on the received configuration.
     ///
     /// # Arguments
     ///
-    /// * `data` - RemoteConfigData.
+    /// * `data` - RemoteConfigParsedData.
     /// * `tracer_flare` - TracerFlareManager object to update with the received configuration.
     ///
     /// # Returns
