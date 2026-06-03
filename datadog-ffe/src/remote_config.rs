@@ -7,7 +7,7 @@ use datadog_remote_config::{RemoteConfigContent, RemoteConfigProduct};
 impl RemoteConfigContent for UniversalFlagConfig {
     const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::FfeFlags;
 
-    fn parse(data: &[u8]) -> anyhow::Result<Self> {
+    fn parse(data: &[u8]) -> datadog_remote_config::anyhow::Result<Self> {
         Ok(UniversalFlagConfig::from_json(data.to_vec())?)
     }
 }

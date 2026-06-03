@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+pub use anyhow;
 pub mod config;
 #[cfg(feature = "client")]
 pub mod fetch;
