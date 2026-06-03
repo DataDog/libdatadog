@@ -13,12 +13,13 @@ after_includes = """
 typedef struct ddog_TraceExporter ddog_TraceExporter;
 typedef struct ddog_TracerSpan ddog_TracerSpan;
 typedef struct ddog_TracerTraceChunks ddog_TracerTraceChunks;
+typedef struct ddog_TraceExporterCancelToken ddog_TraceExporterCancelToken;
 """
 
 [export]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
-exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks"]
+exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks", "TokioCancellationToken"]
 
 [export.rename]
 "ByteSlice" = "ddog_ByteSlice"
@@ -32,7 +33,7 @@ exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks"]
 "TracerSpan" = "ddog_TracerSpan"
 "TracerSpanFields" = "ddog_TracerSpanFields"
 "TracerTraceChunks" = "ddog_TracerTraceChunks"
-"Handle_TokioCancellationToken" = "ddog_TraceExporterCancelToken"
+"TokioCancellationToken" = "ddog_TraceExporterCancelToken"
 
 [export.mangle]
 rename_types = "PascalCase"

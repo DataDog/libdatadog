@@ -13,7 +13,6 @@ use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::handle::{Handle, ToInner};
 use libdd_common_ffi::slice::AsBytes;
 use libdd_common_ffi::CharSlice;
 use libdd_tinybytes::BytesString;
@@ -304,11 +303,11 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 
 /// Create a new cancellation token.
 ///
-/// The returned handle must be freed with
+/// The returned token must be freed with
 /// [`ddog_trace_exporter_cancel_token_drop`].
 #[no_mangle]
-pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Handle<TokioCancellationToken> {
-    Handle::from(TokioCancellationToken::new())
+pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Box<TokioCancellationToken> {
+    Box::new(TokioCancellationToken::new())
 }
 
 /// Cancel a cancellation token.
@@ -316,33 +315,21 @@ pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Handle<TokioCancella
 /// All clones of the same token observe the cancellation. If the token is
 /// currently passed to [`ddog_trace_exporter_send_trace_chunks`], the
 /// in-flight HTTP request will be aborted cooperatively.
-///
-/// # Safety
-///
-/// * `token` must point to a valid [`Handle`] returned by
-///   [`ddog_trace_exporter_cancel_token_new`].
 #[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_cancel_token_cancel(
-    mut token: *mut Handle<TokioCancellationToken>,
-) {
-    if let Ok(inner) = token.to_inner_mut() {
-        inner.cancel();
+pub extern "C" fn ddog_trace_exporter_cancel_token_cancel(token: Option<&TokioCancellationToken>) {
+    if let Some(token) = token {
+        token.cancel();
     }
 }
 
-/// Free a cancellation token handle.
+/// Free a cancellation token.
 ///
-/// After this call the pointer is invalid and must not be reused.
-///
-/// # Safety
-///
-/// * `token` must point to a valid [`Handle`] returned by
-///   [`ddog_trace_exporter_cancel_token_new`], or be null.
+/// After this call the token is invalid and must not be reused.
 #[no_mangle]
-pub unsafe extern "C" fn ddog_trace_exporter_cancel_token_drop(
-    mut token: *mut Handle<TokioCancellationToken>,
+pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
+    token: Option<Box<TokioCancellationToken>>,
 ) {
-    drop(token.take());
+    drop(token);
 }
 
 // ---------------------------------------------------------------------------
@@ -377,7 +364,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     exporter: Option<&TraceExporter>,
     chunks: Option<Box<TracerTraceChunks>>,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
-    mut cancel: *mut Handle<TokioCancellationToken>,
+    cancel: Option<&TokioCancellationToken>,
 ) -> Option<Box<ExporterError>> {
     let Some(exporter) = exporter else {
         return gen_error!(ErrorCode::InvalidArgument);
@@ -386,16 +373,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
         return gen_error!(ErrorCode::InvalidArgument);
     };
 
-    // Clone the cancellation token (if provided) so the caller retains
-    // ownership of the handle while we pass a cheap clone to the exporter.
-    let cancel_token: Option<TokioCancellationToken> = if cancel.is_null() {
-        None
-    } else {
-        cancel.to_inner_mut().ok().map(|t| t.clone())
-    };
-
     catch_panic!(
-        match exporter.send_trace_chunks(chunks.0, cancel_token.as_ref()) {
+        match exporter.send_trace_chunks(chunks.0, cancel) {
             Ok(resp) => {
                 if let Some(out) = response_out {
                     out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
@@ -802,12 +781,7 @@ mod tests {
     fn send_trace_chunks_null_exporter_returns_error() {
         unsafe {
             let chunks = make_chunks(0);
-            let err = ddog_trace_exporter_send_trace_chunks(
-                None,
-                Some(chunks),
-                None,
-                std::ptr::null_mut(),
-            );
+            let err = ddog_trace_exporter_send_trace_chunks(None, Some(chunks), None, None);
             assert!(err.is_some());
             assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
             ddog_trace_exporter_error_free(err);
@@ -848,37 +822,25 @@ mod tests {
 
     #[test]
     fn cancel_token_new_and_drop() {
-        unsafe {
-            let mut token = ddog_trace_exporter_cancel_token_new();
-            let ptr: *mut Handle<TokioCancellationToken> = &mut token;
-            ddog_trace_exporter_cancel_token_drop(ptr);
-        }
+        let token = ddog_trace_exporter_cancel_token_new();
+        ddog_trace_exporter_cancel_token_drop(Some(token));
     }
 
     #[test]
     fn cancel_token_cancel() {
-        unsafe {
-            let mut token = ddog_trace_exporter_cancel_token_new();
-            let ptr: *mut Handle<TokioCancellationToken> = &mut token;
-            ddog_trace_exporter_cancel_token_cancel(ptr);
-            ddog_trace_exporter_cancel_token_drop(ptr);
-        }
+        let token = ddog_trace_exporter_cancel_token_new();
+        ddog_trace_exporter_cancel_token_cancel(Some(&token));
+        ddog_trace_exporter_cancel_token_drop(Some(token));
     }
 
     #[test]
     fn send_trace_chunks_null_cancel_is_accepted() {
-        // Passing a null cancel pointer should behave like the old
-        // signature (no cancellation).
+        // Passing a null (None) cancel argument behaves like no cancellation.
         unsafe {
             let chunks = make_chunks(0);
-            let err = ddog_trace_exporter_send_trace_chunks(
-                None,
-                Some(chunks),
-                None,
-                std::ptr::null_mut(),
-            );
+            let err = ddog_trace_exporter_send_trace_chunks(None, Some(chunks), None, None);
             // exporter is None, so we get InvalidArgument, but no crash
-            // from the null cancel pointer.
+            // from the absent cancel argument.
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
         }
