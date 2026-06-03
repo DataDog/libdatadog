@@ -3234,6 +3234,7 @@ dependencies = [
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "libdd-profiling",
+ "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
  "serde_json",
  "symbolizer-ffi",
