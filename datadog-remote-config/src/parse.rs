@@ -95,18 +95,17 @@ impl ParserRegistry {
     }
 
     /// Builder-style registration of a typed [`RemoteConfigContent`] implementor.
-    /// Panics if `T::PRODUCT` is already registered — intended for one-shot setup at the start of
-    /// a process where a collision is a programmer error worth surfacing immediately.
-    #[must_use]
-    pub fn with<T: RemoteConfigContent>(mut self) -> Self {
+    /// Returns `Err(AlreadyRegistered)` if `T::PRODUCT` is already registered, so chains can
+    /// propagate the collision instead of panicking.
+    pub fn with<T: RemoteConfigContent>(
+        mut self,
+    ) -> std::result::Result<Self, AlreadyRegistered> {
         let parser: ProductParser = Box::new(|data: &[u8]| {
             let parsed = T::parse(data)?;
             Ok(Box::new(parsed) as Box<dyn RemoteConfigParsedData>)
         });
-        #[allow(clippy::expect_used)]
-        self.register(T::PRODUCT, parser)
-            .expect("ParserRegistry::with: parser already registered");
-        self
+        self.register(T::PRODUCT, parser)?;
+        Ok(self)
     }
 
     /// Parse `data` for `product`. Returns `Ok(None)` (not an error) when no parser is
@@ -160,10 +159,14 @@ impl RemoteConfigContent for DynamicConfigFile {
 /// Consumers that need additional product parsers (live-debugger, FFE, …) should chain
 /// [`ParserRegistry::with`] on the returned registry.
 pub fn default_registry() -> ParserRegistry {
-    ParserRegistry::new()
-        .with::<AgentConfigFile>()
-        .with::<AgentTaskFile>()
-        .with::<DynamicConfigFile>()
+    fn build() -> std::result::Result<ParserRegistry, AlreadyRegistered> {
+        ParserRegistry::new()
+            .with::<AgentConfigFile>()?
+            .with::<AgentTaskFile>()?
+            .with::<DynamicConfigFile>()
+    }
+    #[allow(clippy::expect_used)]
+    build().expect("default_registry: internal products are distinct by construction")
 }
 
 // ── RemoteConfigValue ─────────────────────────────────────────────────────────

@@ -581,7 +581,10 @@ pub enum RemoteConfigUpdate {
 
 impl RemoteConfigManager {
     pub fn new(invariants: ConfigInvariants) -> RemoteConfigManager {
-        let registry = default_registry().with::<LiveDebuggingData>();
+        #[allow(clippy::expect_used)]
+        let registry = default_registry()
+            .with::<LiveDebuggingData>()
+            .expect("RemoteConfigManager::new: LiveDebugger is distinct from default products");
         Self::new_with_registry(invariants, Arc::new(registry))
     }
 
