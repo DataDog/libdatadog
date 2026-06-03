@@ -446,7 +446,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     context,
                     metrics,
                 } => {
-                    if let Some(ep) = ffe_metrics_flusher::otlp_metrics_endpoint(endpoint) {
+                    if let Some(mut ep) = ffe_metrics_flusher::otlp_metrics_endpoint(endpoint) {
+                        if ep.test_token.is_none() {
+                            if let Some(base) = trace_config.endpoint.as_ref() {
+                                ep.test_token = base.test_token.clone();
+                            }
+                        }
                         let client = ffe_http_client.clone();
                         let context = context.clone();
                         let metrics = metrics.clone();
@@ -1240,7 +1245,9 @@ mod tests {
         let http_server = MockServer::start_async().await;
         let metrics_mock = http_server
             .mock_async(|when, then| {
-                when.method(POST).path("/v1/metrics");
+                when.method(POST)
+                    .path("/v1/metrics")
+                    .header("x-datadog-test-session-token", "ffe-metrics-token");
                 then.status(202);
             })
             .await;
@@ -1248,6 +1255,18 @@ mod tests {
         let handler = ConnectionSidecarHandler::new(SidecarServer::default());
         let instance_id = InstanceId::new("session", "runtime");
         let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+                cfg.set_endpoint_test_token(Some("ffe-metrics-token"));
+            });
 
         assert!(!handler
             .server
