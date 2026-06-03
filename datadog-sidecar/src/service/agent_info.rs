@@ -102,9 +102,33 @@ impl AgentInfoFetcher {
             parts.path_and_query = Some(PathAndQuery::from_static("/info"));
             fetch_endpoint.url = http::Uri::from_parts(parts).unwrap();
             loop {
+                let start = Instant::now();
                 let fetched =
                     fetch_info_with_state::<NativeCapabilities>(&fetch_endpoint, state.as_deref())
                         .await;
+                let elapsed_ms = start.elapsed().as_millis();
+                // Diagnostic: when an X-Datadog-Test-Session-Token is set on the
+                // endpoint we are in a PHPT/test context. Emit one warn line per
+                // poll so CI sidecar.log captures the /info timing per token
+                // (correlating to per-test failures). Silent in production.
+                if fetch_endpoint.test_token.is_some() {
+                    let result_summary = match &fetched {
+                        Ok(FetchInfoStatus::SameState) => "SameState".to_string(),
+                        Ok(FetchInfoStatus::NewState(info)) => {
+                            let hash_prefix: String =
+                                info.state_hash.chars().take(16).collect();
+                            format!("NewState hash_prefix={}", hash_prefix)
+                        }
+                        Err(e) => format!("Err({})", e),
+                    };
+                    warn!(
+                        "agent_info poll url={} token={:?} elapsed_ms={} result={}",
+                        fetch_endpoint.url,
+                        fetch_endpoint.test_token.as_deref(),
+                        elapsed_ms,
+                        result_summary,
+                    );
+                }
                 let mut complete_fut = None;
                 {
                     let mut infos_guard = agent_infos.0.lock_or_panic();
