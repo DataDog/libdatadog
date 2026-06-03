@@ -3036,6 +3036,7 @@ dependencies = [
  "libdd-tinybytes",
  "libdd-trace-utils",
  "rmp-serde",
+ "tokio-util",
  "tracing",
 ]
 
