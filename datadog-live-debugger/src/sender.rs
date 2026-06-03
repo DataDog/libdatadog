@@ -471,12 +471,18 @@ async fn send_symdb_to_endpoint(
     endpoint: &Endpoint,
     tags: &str,
 ) -> anyhow::Result<()> {
-    let req = endpoint
+    let mut req = endpoint
         .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
         .method(Method::POST)
-        .header("DD-EVP-ORIGIN", "agent-symdb")
         .header("X-Datadog-Additional-Tags", tags)
         .header("Content-type", content_type);
+
+    // The EVP origin only matters on the direct intake (agentless). In agent
+    // mode the agent sets it when proxying, so gate it on the API key to match
+    // the debugger tracks.
+    if endpoint.api_key.is_some() {
+        req = req.header("DD-EVP-ORIGIN", "agent-symdb");
+    }
 
     let body = http_common::Body::from(payload.to_vec());
     let response = http_common::into_response(
