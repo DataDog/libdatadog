@@ -22,8 +22,8 @@ pub struct ErrorData {
     pub thread_name: Option<String>,
     pub source_type: SourceType,
     pub stack: StackTrace,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub threads: Vec<ThreadData>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threads: Option<Vec<ThreadData>>,
 }
 
 #[cfg(unix)]
@@ -98,11 +98,13 @@ impl ErrorData {
             .normalize_ips(normalizer, pid, elf_resolvers)
             .unwrap_or_else(|_| errors += 1);
 
-        for thread in &mut self.threads {
-            thread
-                .stack
-                .normalize_ips(normalizer, pid, elf_resolvers)
-                .unwrap_or_else(|_| errors += 1);
+        if let Some(threads) = &mut self.threads {
+            for thread in threads {
+                thread
+                    .stack
+                    .normalize_ips(normalizer, pid, elf_resolvers)
+                    .unwrap_or_else(|_| errors += 1);
+            }
         }
         anyhow::ensure!(
             errors == 0,
@@ -144,11 +146,13 @@ impl ErrorData {
             .resolve_names(src, symbolizer)
             .unwrap_or_else(|_| errors += 1);
 
-        for thread in &mut self.threads {
-            thread
-                .stack
-                .resolve_names(src, symbolizer)
-                .unwrap_or_else(|_| errors += 1);
+        if let Some(threads) = &mut self.threads {
+            for thread in threads {
+                thread
+                    .stack
+                    .resolve_names(src, symbolizer)
+                    .unwrap_or_else(|_| errors += 1);
+            }
         }
         anyhow::ensure!(
             errors == 0,
@@ -162,11 +166,13 @@ impl ErrorData {
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
         let mut errors = 0;
         self.stack.demangle_names().unwrap_or_else(|_| errors += 1);
-        for thread in &mut self.threads {
-            thread
-                .stack
-                .demangle_names()
-                .unwrap_or_else(|_| errors += 1);
+        if let Some(threads) = &mut self.threads {
+            for thread in threads {
+                thread
+                    .stack
+                    .demangle_names()
+                    .unwrap_or_else(|_| errors += 1);
+            }
         }
         anyhow::ensure!(
             errors == 0,
@@ -208,7 +214,54 @@ impl super::test_utils::TestInstance for ErrorData {
             thread_name: Some(format!("test-thread-{seed}")),
             source_type: SourceType::Crashtracking,
             stack: StackTrace::test_instance(seed),
-            threads: vec![],
+            threads: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crash_info::test_utils::TestInstance;
+
+    #[test]
+    fn error_data_without_threads_omits_threads_field() {
+        let error = ErrorData {
+            is_crash: true,
+            kind: ErrorKind::UnixSignal,
+            message: None,
+            thread_name: None,
+            source_type: SourceType::Crashtracking,
+            stack: StackTrace::missing(),
+            threads: None,
+        };
+        let json = serde_json::to_value(&error).unwrap();
+        assert!(json.get("threads").is_none());
+    }
+
+    #[test]
+    fn error_data_threads_serializes_as_thread_array() {
+        let thread = ThreadData {
+            crashed: false,
+            name: "worker".to_string(),
+            stack: StackTrace::test_instance(1),
+            state: Some("S".to_string()),
+        };
+        let error = ErrorData {
+            is_crash: true,
+            kind: ErrorKind::UnixSignal,
+            message: None,
+            thread_name: None,
+            source_type: SourceType::Crashtracking,
+            stack: StackTrace::missing(),
+            threads: Some(vec![thread.clone()]),
+        };
+        let json = serde_json::to_value(&error).unwrap();
+        let threads = json["threads"].as_array().unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0]["crashed"], false);
+        assert_eq!(threads[0]["name"], "worker");
+        assert_eq!(threads[0]["state"], "S");
+        assert!(threads[0]["stack"].is_object());
     }
 }

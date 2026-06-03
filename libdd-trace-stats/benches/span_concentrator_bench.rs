@@ -20,7 +20,7 @@ fn get_span(now: SystemTime, trace_id: u64, span_id: u64) -> SpanBytes {
         metrics.insert("_dd.top_level".into(), 1.0);
     }
     let mut meta = HashMap::from([("db_name".into(), "postgres".into())]);
-    if span_id % 3 == 0 {
+    if span_id.is_multiple_of(3) {
         meta.insert("bucket_s3".into(), "aws_bucket".into());
     }
     SpanBytes {
@@ -47,6 +47,8 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         now,
         vec![],
         vec!["db_name".into(), "bucket_s3".into()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     let mut spans = vec![];
     for trace_id in 1..100 {

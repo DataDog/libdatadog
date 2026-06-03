@@ -17,4 +17,5 @@ crate-type = ["lib"]
 bench = false
 
 [build-dependencies]
+build_common = { path = "../build-common" }
 cc = "1.1.31"

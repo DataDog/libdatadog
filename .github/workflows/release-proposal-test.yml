@@ -65,7 +65,10 @@ jobs:
             echo "Skipping cargo package: no crates had a version bump vs the base ref (PKG_ARGS is empty)."
             exit 0
           fi
-          cargo package "${PKG_ARGS[@]}" --all-features
+          # cargo 1.92+ required: earlier versions (incl. the workspace MSRV 1.87) fail to
+          # resolve sibling crates by version requirement when those versions are not yet on
+          # crates.io
+          cargo +1.92.0 package "${PKG_ARGS[@]}" --all-features
           echo "upload_artifact=true" >> "$GITHUB_OUTPUT"
 
       - name: Upload crates
@@ -85,7 +88,7 @@ jobs:
     if: needs.package-and-upload-crates.outputs.upload_artifact == 'true'
     strategy:
       matrix:
-        version: ["datadog-opentelemetry-v0.3.2", "datadog-opentelemetry-v0.3.1"]
+        version: ["datadog-opentelemetry-v0.3.3", "datadog-opentelemetry-v0.3.2", "datadog-opentelemetry-v0.3.1"]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:

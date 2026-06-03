@@ -47,16 +47,20 @@ jobs:
         # Get the list of changed crates
         CRATES='${{ needs.changed-crates.outputs.crates }}'
         
+        WORKSPACE_ROOT=$(cargo metadata --format-version=1 --no-deps | jq -r '.workspace_root')
+
         FAILED=0
         while read -r crate; do
           NAME=$(echo "$crate" | jq -r '.name')
           CURRENT_VERSION=$(echo "$crate" | jq -r '.version')
-          MANIFEST=$(echo "$crate" | jq -r '.manifest')
+          MANIFEST_REL=$(echo "$crate" | jq -r --arg root "$WORKSPACE_ROOT" '
+            .manifest | sub($root + "/"; "")
+          ')
           
           echo "Checking $NAME version is not changed in the PR..."
           
           # Get base version from Cargo.toml at base ref
-          BASE_VERSION=$(git show "$BASE_REF:$MANIFEST" 2>/dev/null | grep -E '^\s*version\s*=' | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/' || echo "")
+          BASE_VERSION=$(git show "origin/$BASE_REF:$MANIFEST_REL" 2>/dev/null | grep -E '^\s*version\s*=' | head -1 | sed -E 's/.*=\s*"([^"]+)".*/\1/' || echo "")
           
           if [[ -z "$BASE_VERSION" ]]; then
             echo "  ✓ $NAME is a new crate (no base version found)"
@@ -278,6 +282,8 @@ jobs:
     - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
       with:
         tool: cargo-deny
+      env:
+        RUSTUP_TOOLCHAIN: stable
     - name: Run cargo-deny on changed crates
       id: cargo-deny
       run: |

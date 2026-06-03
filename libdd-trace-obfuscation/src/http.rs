@@ -11,7 +11,7 @@ use std::fmt::Write;
 
 /// Returns true for Go net/url's "category 1" characters:
 /// ASCII bytes that always trigger escaping in URLs (plus space and quote).
-fn is_go_url_escape_cat1(c: char) -> bool {
+const fn is_go_url_escape_cat1(c: char) -> bool {
     matches!(
         c,
         '\\' | '^' | '{' | '}' | '|' | '<' | '>' | '`' | ' ' | '"'
@@ -20,17 +20,17 @@ fn is_go_url_escape_cat1(c: char) -> bool {
 
 /// Returns true for Go net/url's "category 2" characters for PATH contexts:
 /// characters Go may escape in paths when Cat1 is present or non-ASCII exists.
-fn is_go_url_escape_cat2_path(c: char) -> bool {
+const fn is_go_url_escape_cat2_path(c: char) -> bool {
     matches!(c, '!' | '\'' | '(' | ')' | '*' | '[' | ']')
 }
 
 /// Returns true for Go net/url's "category 2" characters for FRAGMENT contexts:
 /// characters Go may escape in fragments when non-ASCII exists.
-fn is_go_url_escape_cat2_fragment(c: char) -> bool {
+const fn is_go_url_escape_cat2_fragment(c: char) -> bool {
     matches!(c, '\'' | '[' | ']')
 }
 
-fn hex_val(b: u8) -> u8 {
+const fn hex_val(b: u8) -> u8 {
     match b {
         b'0'..=b'9' => b - b'0',
         b'a'..=b'f' => b - b'a' + 10,
@@ -147,25 +147,22 @@ pub fn obfuscate_url_string(
         }
     }
 
-    let uri = match UriRef::parse(pre.as_str()) {
-        Ok(u) => u,
-        Err(_) => {
-            return if remove_query_string || remove_path_digits {
-                "?".to_string()
-            } else {
-                url.to_string()
-            };
-        }
+    let Ok(parsed) = UriRef::parse(pre.as_str()) else {
+        return if remove_query_string || remove_path_digits {
+            "?".to_string()
+        } else {
+            url.to_string()
+        };
     };
 
     let mut out = String::new();
 
-    if let Some(scheme) = uri.scheme() {
+    if let Some(scheme) = parsed.scheme() {
         out.push_str(&scheme.as_str().to_lowercase());
         out.push(':');
     }
 
-    if let Some(auth) = uri.authority() {
+    if let Some(auth) = parsed.authority() {
         out.push_str("//");
         // Strip userinfo — emit only host[:port]
         out.push_str(auth.host());
@@ -173,13 +170,13 @@ pub fn obfuscate_url_string(
             out.push(':');
             out.push_str(port.as_str());
         }
-        let path_str = normalize_pct_encoded_unreserved(uri.path().as_str());
+        let path_str = normalize_pct_encoded_unreserved(parsed.path().as_str());
         if remove_path_digits {
             out.push_str(&redact_path_digits(&path_str));
         } else {
             out.push_str(&path_str);
         }
-    } else if let Some(scheme) = uri.scheme() {
+    } else if let Some(scheme) = parsed.scheme() {
         // This is a really weird case because there is a scheme but no authority.
         // For example: http:#
         // Length of "http:"
@@ -188,7 +185,7 @@ pub fn obfuscate_url_string(
         out.push_str(&url[scheme_end..path_end]);
     } else {
         // Relative reference: use pre-encoded path
-        let path_str = normalize_pct_encoded_unreserved(uri.path().as_str());
+        let path_str = normalize_pct_encoded_unreserved(parsed.path().as_str());
         if remove_path_digits {
             out.push_str(&redact_path_digits(&path_str));
         } else {
@@ -207,7 +204,7 @@ pub fn obfuscate_url_string(
         out.push_str(&url[path_end..path_query_end]);
     }
 
-    if let Some(frag) = uri.fragment() {
+    if let Some(frag) = parsed.fragment() {
         if !frag.as_str().is_empty() {
             out.push('#');
             out.push_str(frag.as_str());

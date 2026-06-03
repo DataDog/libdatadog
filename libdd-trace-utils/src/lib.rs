@@ -18,6 +18,7 @@ pub mod stats_utils;
 pub mod test_utils;
 pub mod trace_utils;
 pub mod tracer_header_tags;
+pub mod tracer_metadata;
 pub mod tracer_payload;
 
 pub mod span;

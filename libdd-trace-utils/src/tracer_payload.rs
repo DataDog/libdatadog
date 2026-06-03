@@ -12,7 +12,7 @@ use std::iter::Iterator;
 pub type TracerPayloadV04 = Vec<v04::SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 /// Enumerates the different encoding types.
 pub enum TraceEncoding {
     /// v0.4 encoding (TracerPayloadV04).
@@ -27,6 +27,8 @@ pub enum TraceChunks<T: TraceData> {
     V04(Vec<Vec<v04::Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
     V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
+    /// Collection of v0.4 spans to be serialized as a V1 msgpack payload.
+    V1(Vec<Vec<v04::Span<T>>>),
 }
 
 impl TraceChunks<BytesData> {
@@ -34,6 +36,8 @@ impl TraceChunks<BytesData> {
         match self {
             TraceChunks::V04(traces) => TracerPayloadCollection::V04(traces),
             TraceChunks::V05(traces) => TracerPayloadCollection::V05(traces),
+            // V1 uses the same underlying span structure as V04.
+            TraceChunks::V1(traces) => TracerPayloadCollection::V04(traces),
         }
     }
 }
@@ -44,6 +48,7 @@ impl<T: TraceData> TraceChunks<T> {
         match self {
             TraceChunks::V04(traces) => traces.len(),
             TraceChunks::V05((_, traces)) => traces.len(),
+            TraceChunks::V1(traces) => traces.len(),
         }
     }
 }
@@ -229,10 +234,7 @@ pub fn decode_to_trace_chunks(
     }
     .map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
 
-    Ok((
-        collect_trace_chunks(data, matches!(encoding_type, TraceEncoding::V05))?,
-        size,
-    ))
+    Ok((collect_trace_chunks(data, encoding_type)?, size))
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use anyhow::Context;
 use http::uri;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
@@ -88,6 +88,85 @@ impl<T> MutexExt<T> for Mutex<T> {
         #[allow(clippy::unwrap_used)]
         self.lock().unwrap()
     }
+}
+
+/// Extension trait for `RwLock` to provide methods that acquire read/write locks, panicking if
+/// the lock is poisoned.
+///
+/// Mirrors [`MutexExt`] for `RwLock` so callers avoid `#[allow(clippy::unwrap_used)]` at each
+/// lock site.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::RwLockExt;
+/// use std::sync::{Arc, RwLock};
+///
+/// let data = Arc::new(RwLock::new(5));
+/// let data_clone = Arc::clone(&data);
+///
+/// std::thread::spawn(move || {
+///     let mut num = data_clone.write_or_panic();
+///     *num += 1;
+/// })
+/// .join()
+/// .expect("Thread panicked");
+///
+/// assert_eq!(*data.read_or_panic(), 6);
+/// ```
+pub trait RwLockExt<T> {
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T>;
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T>;
+}
+
+impl<T> RwLockExt<T> for RwLock<T> {
+    #[inline(always)]
+    #[track_caller]
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.read().unwrap()
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.write().unwrap()
+    }
+}
+
+/// Extension trait that extracts the value from a `Result` whose error type is uninhabited.
+///
+/// The signature constrains callers at compile time: the method is only available when the
+/// error type is [`core::convert::Infallible`]. No panics — the compiler proves the `Err`
+/// arm unreachable from the type.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::ResultInfallibleExt;
+/// use std::convert::Infallible;
+///
+/// let result: Result<i32, Infallible> = Ok(42);
+/// assert_eq!(result.unwrap_infallible(), 42);
+/// ```
+pub trait ResultInfallibleExt<T>: sealed::Sealed {
+    fn unwrap_infallible(self) -> T;
+}
+
+impl<T> ResultInfallibleExt<T> for Result<T, core::convert::Infallible> {
+    #[inline(always)]
+    fn unwrap_infallible(self) -> T {
+        match self {
+            Ok(value) => value,
+            Err(never) => match never {},
+        }
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl<T> Sealed for Result<T, core::convert::Infallible> {}
 }
 
 pub mod header {

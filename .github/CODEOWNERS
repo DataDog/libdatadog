@@ -3,7 +3,10 @@
 # More specific patterns at the bottom override general patterns above.
 
 .claude/                             @DataDog/apm-common-components-core
+AGENTS.md                            @DataDog/apm-common-components-core
+CLAUDE.md                            @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
+.pre-commit-config.yaml              @DataDog/libdatadog-core
 .codecov.yml                         @DataDog/apm-common-components-core
 .cargo/*                             @DataDog/libdatadog-core
 .config/nextest.toml                 @DataDog/apm-common-components-core
@@ -12,6 +15,7 @@
 .dockerignore                        @DataDog/libdatadog-core
 .github/                             @DataDog/apm-common-components-core
 .gitignore                           @DataDog/libdatadog
+.gitmodules                          @DataDog/libdatadog
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
 .gitlab/fuzz.yml                     @DataDog/chaos-platform
@@ -21,10 +25,12 @@ build-common/                        @DataDog/apm-common-components-core
 builder                              @DataDog/apm-common-components-core
 Cargo.*                              @DataDog/libdatadog
 cliff.toml                           @DataDog/libdatadog-core
+clippy.toml                          @DataDog/libdatadog
 cmake/                               @DataDog/apm-common-components-core
 CONTRIBUTING.md                      @DataDog/libdatadog-core
 Cross.toml                           @DataDog/apm-common-components-core
 datadog-ffe                          @DataDog/feature-flagging-and-experimentation-sdk
+datadog-ffe-test-suite               @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ffe-ffi                      @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ipc*/                        @DataDog/libdatadog-php
 datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
@@ -48,7 +54,9 @@ libdd-http-client                    @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
+libdd-otel-thread-ctx-ffi/           @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
+libdd-sampling/                      @DataDog/apm-common-components-core
 libdd-shared-runtime*/               @DataDog/apm-common-components-core
 libdd-telemetry*/                    @DataDog/apm-common-components-core
 libdd-tinybytes                      @DataDog/apm-common-components-core
@@ -62,8 +70,10 @@ LICENSE*                             @DataDog/libdatadog
 license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
+nightly-toolchain.toml               @DataDog/libdatadog
 README.md                            @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
+rust-toolchain.toml                  @DataDog/libdatadog
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
 scripts/check_crypto_providers.sh    @DataDog/libdatadog-core
@@ -93,3 +103,5 @@ tools/sidecar_mockgen/               @DataDog/libdatadog-php
 libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities-rust
 libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities-rust
 libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities-rust
+datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
+datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk

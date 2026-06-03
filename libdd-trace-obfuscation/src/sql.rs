@@ -35,12 +35,13 @@ impl TryFrom<&str> for DbmsKind {
 }
 
 #[allow(deprecated)]
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SqlObfuscationMode {
     #[default]
     #[deprecated = "kept for compatibility with agent's obfuscator but has unintuitive behavior"]
+    #[serde(alias = "")]
     Unspecified,
     NormalizeOnly,
     ObfuscateOnly,
@@ -49,6 +50,10 @@ pub enum SqlObfuscationMode {
 
 /// Configuration for SQL obfuscation
 #[derive(Debug, Default, Clone, Deserialize)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "public config schema, should not be refactored"
+)]
 pub struct SqlObfuscateConfig {
     pub replace_digits: bool,
     pub keep_sql_alias: bool,
@@ -64,15 +69,15 @@ pub struct SqlObfuscateConfig {
     pub obfuscation_mode: SqlObfuscationMode,
 }
 
-fn is_whitespace(b: u8) -> bool {
+const fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
 }
 
-fn is_ident_start(b: u8) -> bool {
+const fn is_ident_start(b: u8) -> bool {
     b.is_ascii_alphabetic() || b == b'_' || b > 127
 }
 
-fn is_ident_char(b: u8) -> bool {
+const fn is_ident_char(b: u8) -> bool {
     // Go's scanIdentifier includes '.*$' as continuation chars in addition to alnum/_.
     // '@' is in Go's isLetter (isLeadingLetter) so it continues identifiers too.
     // '.' is handled separately (qualifier), but '*', '$', '@' are included here.
@@ -86,7 +91,7 @@ fn is_ident_char(b: u8) -> bool {
 }
 
 /// Replace trailing digit sequences in identifier with `?`
-/// e.g., sales_2019_07_01 → sales_?_?_?
+/// e.g., `sales_2019_07_01` → sales_?_?_?
 ///       item1001 → item?
 ///       ddh19 → ddh?
 fn apply_replace_digits(ident: &str) -> String {
@@ -169,7 +174,7 @@ fn find_quoted_string_end(bytes: &[u8], start: usize) -> Option<usize> {
 }
 
 /// Find the end of a dollar-quoted string $tag$...$tag$
-/// Returns (inner_start, inner_end, outer_end) or None if not a valid dollar quote
+/// Returns (`inner_start`, `inner_end`, `outer_end`) or None if not a valid dollar quote
 fn find_dollar_quote_end(bytes: &[u8], start: usize) -> Option<(usize, usize, usize)> {
     let n = bytes.len();
     if start >= n || bytes[start] != b'$' {
@@ -243,18 +248,18 @@ impl<'a> Tokenizer<'a> {
         self.bytes.get(self.pos + offset).copied()
     }
 
-    fn at_end(&self) -> bool {
+    const fn at_end(&self) -> bool {
         self.pos >= self.bytes.len()
     }
 
-    fn is_normalize_only(&self) -> bool {
+    const fn is_normalize_only(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::NormalizeOnly
         )
     }
 
-    fn is_obfuscate_only(&self) -> bool {
+    const fn is_obfuscate_only(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::ObfuscateOnly
@@ -262,14 +267,14 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[allow(deprecated)]
-    fn is_unspecified_obfuscate_mode(&self) -> bool {
+    const fn is_unspecified_obfuscate_mode(&self) -> bool {
         matches!(
             self.config.obfuscation_mode,
             SqlObfuscationMode::Unspecified
         )
     }
 
-    fn last_char(&self) -> Option<u8> {
+    const fn last_char(&self) -> Option<u8> {
         self.result.as_bytes().last().copied()
     }
 
@@ -284,8 +289,8 @@ impl<'a> Tokenizer<'a> {
 
     /// Push a space if result doesn't already end with one (and result is non-empty).
     /// Does NOT add space after `.` (qualifier separator).
-    /// When actually pushing a space, resets last_was_placeholder — equivalent to Go's
-    /// groupingFilter.Reset() on any non-comma, non-paren, non-FilteredGroupable token.
+    /// When actually pushing a space, resets `last_was_placeholder` — equivalent to Go's
+    /// `groupingFilter.Reset()` on any non-comma, non-paren, non-FilteredGroupable token.
     fn space(&mut self) {
         if !self.result.is_empty()
             && self.last_char() != Some(b' ')
@@ -318,7 +323,7 @@ impl<'a> Tokenizer<'a> {
             }
             self.result.push(' ');
         } else if self.last_char() == Some(b' ')
-            && !matches!(self.last_nonspace_char(), Some(b'?') | Some(b'('))
+            && !matches!(self.last_nonspace_char(), Some(b'?' | b'('))
         {
             // Result already ends in space (e.g. after an operator like '!') and we still need
             // to reset placeholder state. Do NOT reset after '(' — Go's groupingFilter lets
@@ -344,8 +349,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// Emit a literal-replacement '?' with consecutive-duplicate suppression.
-    /// In legacy mode, Go's groupingFilter suppresses consecutive FilteredGroupable tokens
-    /// (groupFilter > 1). If last_was_placeholder is already true, suppress this one.
+    /// In legacy mode, Go's groupingFilter suppresses consecutive `FilteredGroupable` tokens
+    /// (groupFilter > 1). If `last_was_placeholder` is already true, suppress this one.
     fn emit_placeholder(&mut self) {
         if self.is_unspecified_obfuscate_mode() && self.last_was_placeholder {
             // Suppress consecutive placeholder (Go groupFilter > 1 rule)
@@ -556,7 +561,7 @@ impl<'a> Tokenizer<'a> {
                 return;
             }
             match next {
-                Some(b'`') | Some(b'"') | Some(b'[') => {
+                Some(b'`' | b'"' | b'[') => {
                     self.result.push_str(" . ");
                     self.pos += 1; // skip '.'
                 }
@@ -582,11 +587,10 @@ impl<'a> Tokenizer<'a> {
             let next = self.bytes.get(self.pos + 1).copied();
             if next == Some(b'[') {
                 self.result.push_str(" . ");
-                self.pos += 1; // skip '.'
             } else {
                 self.result.push('.');
-                self.pos += 1;
             }
+            self.pos += 1;
         }
     }
 
@@ -628,6 +632,7 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_lines, reason = "FIXME: split this function")]
     fn process(&mut self) {
         while !self.at_end() {
             let b = self.bytes[self.pos];
@@ -778,7 +783,7 @@ impl<'a> Tokenizer<'a> {
                     };
                     if add_close_space {
                         // Add space before ) if needed (not after '(' or already spaced)
-                        if !matches!(self.last_char(), Some(b'(') | Some(b' ') | None) {
+                        if !matches!(self.last_char(), Some(b'(' | b' ') | None) {
                             self.result.push(' ');
                         }
                     }
@@ -888,7 +893,7 @@ impl<'a> Tokenizer<'a> {
                     let is_string_value = self.last_was_assign;
                     // If pending SAVEPOINT or empty/whitespace content, treat as literal → ?
                     if self.pending_savepoint
-                        || (!ident.is_empty() && ident.chars().all(|c| c.is_whitespace()))
+                        || (!ident.is_empty() && ident.chars().all(char::is_whitespace))
                         || (!self.is_normalize_only() && is_string_value)
                     {
                         self.pending_savepoint = false;
@@ -980,7 +985,7 @@ impl<'a> Tokenizer<'a> {
                     if self.maybe_consume_alias_next() {
                         continue;
                     }
-                    if !matches!(self.last_char(), Some(b'[') | Some(b' ') | None) {
+                    if !matches!(self.last_char(), Some(b'[' | b' ') | None) {
                         self.space();
                     }
                     self.result.push(']');
@@ -1118,7 +1123,7 @@ impl<'a> Tokenizer<'a> {
                 }
 
                 // Hex literal: 0x...
-                b'0' if matches!(self.peek(1), Some(b'x') | Some(b'X')) => {
+                b'0' if matches!(self.peek(1), Some(b'x' | b'X')) => {
                     self.pos += 2; // skip '0x'
                     while !self.at_end() && self.bytes[self.pos].is_ascii_hexdigit() {
                         self.pos += 1;
@@ -1655,10 +1660,8 @@ impl<'a> Tokenizer<'a> {
                             // Handle the off-leak: the char at pos was advanced past by Go's peek.
                             // It becomes the first byte of the next token in Go's model.
                             if !self.at_end() {
-                                let c_len = self.s[self.pos..]
-                                    .chars()
-                                    .next()
-                                    .map_or(1, |c| c.len_utf8());
+                                let c_len =
+                                    self.s[self.pos..].chars().next().map_or(1, char::len_utf8);
                                 let after_c = self.pos + c_len;
                                 if after_c < self.bytes.len()
                                     && self.bytes[after_c].is_ascii_digit()
@@ -1776,33 +1779,29 @@ impl<'a> Tokenizer<'a> {
                             if matches!(self.dbms, DbmsKind::Postgresql) || !next2_is_ident {
                                 self.emit("<@");
                                 self.pos += 2;
-                                self.result.push(' ');
                             } else {
                                 // Non-PG dbms with <@name → emit < then @name handled separately
                                 self.space();
                                 self.result.push('<');
                                 self.pos += 1;
-                                self.result.push(' ');
                             }
                         }
                         Some(b'>') => {
                             self.emit("<>");
                             self.pos += 2;
-                            self.result.push(' ');
                         }
                         Some(b'=') => {
                             self.emit("<=");
                             self.pos += 2;
-                            self.result.push(' ');
                         }
                         _ => {
                             self.space();
                             self.result.push('<');
                             self.pos += 1;
                             self.last_was_placeholder = false;
-                            self.result.push(' ');
                         }
                     }
+                    self.result.push(' ');
                 }
 
                 // > and >= operators
@@ -1833,7 +1832,6 @@ impl<'a> Tokenizer<'a> {
                     self.last_was_placeholder = false;
                     self.result.push(' ');
                     self.last_was_assign = true;
-                    continue; // skip emit() clearing last_was_assign
                 }
 
                 // ! and !=, !~, !~*
@@ -1844,7 +1842,6 @@ impl<'a> Tokenizer<'a> {
                     if self.peek(1) == Some(b'=') {
                         self.emit("!=");
                         self.pos += 2;
-                        self.result.push(' ');
                     } else if self.peek(1) == Some(b'~') {
                         if self.peek(2) == Some(b'*') {
                             self.emit("!~*");
@@ -1853,14 +1850,13 @@ impl<'a> Tokenizer<'a> {
                             self.emit("!~");
                             self.pos += 2;
                         }
-                        self.result.push(' ');
                     } else {
                         self.space();
                         self.result.push('!');
                         self.pos += 1;
                         self.last_was_placeholder = false;
-                        self.result.push(' ');
                     }
+                    self.result.push(' ');
                 }
 
                 // | and ||
@@ -1944,7 +1940,7 @@ impl<'a> Tokenizer<'a> {
                     && self.s[self.pos..]
                         .chars()
                         .next()
-                        .is_some_and(|c| c.is_whitespace()) =>
+                        .is_some_and(char::is_whitespace) =>
                 {
                     let c = self.s[self.pos..].chars().next().unwrap_or(' ');
                     self.pos += c.len_utf8();
@@ -1964,10 +1960,10 @@ impl<'a> Tokenizer<'a> {
                             // Non-ASCII: check if this char is Unicode whitespace — if so, stop.
                             // Go's scanIdentifier stops at unicode.IsSpace chars.
                             let c = self.s[self.pos..].chars().next();
-                            if c.is_some_and(|c| c.is_whitespace()) {
+                            if c.is_some_and(char::is_whitespace) {
                                 break;
                             }
-                            self.pos += c.map_or(1, |c| c.len_utf8());
+                            self.pos += c.map_or(1, char::len_utf8);
                         } else if is_ident_char(b) || b == b'.' {
                             self.pos += 1;
                         } else {
@@ -2008,7 +2004,7 @@ impl<'a> Tokenizer<'a> {
 
 /// Try to match a `( ?, ?, ..., ? )` or `[ ?, ?, ..., ? ]` pattern starting at `i`.
 /// Returns Some(k) where k is the index after the closing bracket if matched, else None.
-fn try_match_pure_group(bytes: &[u8], open: u8, close: u8, i: usize) -> Option<usize> {
+const fn try_match_pure_group(bytes: &[u8], open: u8, close: u8, i: usize) -> Option<usize> {
     let n = bytes.len();
     if i >= n || bytes[i] != open {
         return None;
@@ -2118,8 +2114,8 @@ fn collapse_multi_values(s: &str) -> String {
 
         if matches_values_pattern {
             // Preceding context: must be start or space/'(' or '\n'
-            let prev_ok = result.is_empty()
-                || matches!(result.chars().last(), Some(' ') | Some('(') | Some('\n'));
+            let prev_ok =
+                result.is_empty() || matches!(result.chars().last(), Some(' ' | '(' | '\n'));
 
             if prev_ok {
                 // Keep the original casing as it appeared in `remaining`
@@ -2150,6 +2146,8 @@ fn collapse_multi_values(s: &str) -> String {
 
 /// Collapse `LIMIT ?, ?` → `LIMIT ?`
 fn collapse_limit_two_args(s: &str) -> String {
+    const PREFIX: &[u8] = b"LIMIT ?";
+
     // Scan for "LIMIT ?, ?" pattern (all ASCII keywords, UTF-8 safe via char iteration)
     let mut result = String::with_capacity(s.len());
     let mut remaining = s;
@@ -2158,7 +2156,6 @@ fn collapse_limit_two_args(s: &str) -> String {
         // Check for LIMIT (case-insensitive) + " ?, ?" or " ? ?"
         if remaining.len() >= 9 {
             let rb = remaining.as_bytes();
-            const PREFIX: &[u8] = b"LIMIT ?";
             if rb[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
                 // Check " ?, ?" or " ? ?"
                 let skip =
@@ -2172,10 +2169,7 @@ fn collapse_limit_two_args(s: &str) -> String {
                 if let Some(skip_len) = skip {
                     // Word boundary: previous char in result should be space or start
                     let prev_ok = result.is_empty()
-                        || matches!(
-                            result.as_bytes().last(),
-                            Some(b' ') | Some(b'(') | Some(b'\n')
-                        );
+                        || matches!(result.as_bytes().last(), Some(b' ' | b'(' | b'\n'));
                     if prev_ok {
                         result.push_str(&remaining[..7]); // "LIMIT ?"
                         remaining = &remaining[skip_len..];
@@ -2192,6 +2186,7 @@ fn collapse_limit_two_args(s: &str) -> String {
 }
 
 /// Obfuscates a SQL string using a proper tokenizer.
+#[must_use]
 pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> String {
     if s.is_empty() {
         return String::new();
@@ -2214,14 +2209,16 @@ pub fn obfuscate_sql(s: &str, config: &SqlObfuscateConfig, dbms: DbmsKind) -> St
 }
 
 /// Obfuscates a SQL string with default configuration.
+#[must_use]
 pub fn obfuscate_sql_string(s: &str) -> String {
     obfuscate_sql(s, &SqlObfuscateConfig::default(), DbmsKind::Generic)
 }
 
 /// SQL obfuscation with Go-compatible whitespace normalization for use in JSON plan obfuscation.
-/// Applies obfuscate_sql_string then additional normalizations for JSON plan SQL.
+/// Applies `obfuscate_sql_string` then additional normalizations for JSON plan SQL.
 // FIXME: remove these tiny wrappers they provide no value, keep the public api 1 function which
 // takes a config
+#[must_use]
 pub fn obfuscate_sql_string_normalized(s: &str) -> String {
     let obfuscated = obfuscate_sql_string(s);
     normalize_plan_sql(&obfuscated)
@@ -2279,6 +2276,7 @@ fn normalize_plan_sql(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
+    use std::fmt::Write;
 
     #[test]
     fn test_sql_obfuscation() {
@@ -2304,7 +2302,7 @@ mod tests {
             if panic.is_none() {
                 panic!("{err}")
             } else {
-                eprintln!("{err}")
+                eprintln!("{err}");
             }
         }
         if let Some(p) = panic {
@@ -2345,7 +2343,7 @@ mod tests {
             if panic.is_none() {
                 panic!("{err}")
             } else {
-                eprintln!("{err}")
+                eprintln!("{err}");
             }
         }
         if let Some(p) = panic {
@@ -2860,7 +2858,7 @@ mod tests {
             // Table identifier (after FROM) — keep
             (
                 r#"SELECT * FROM "users" WHERE id = 1"#,
-                r#"SELECT * FROM users WHERE id = ?"#,
+                r"SELECT * FROM users WHERE id = ?",
             ),
         ];
         for (input, expected) in cases {
@@ -3310,14 +3308,13 @@ mod tests {
         for (i, (input, expected)) in SUITE_CASES.iter().enumerate() {
             let got = super::obfuscate_sql_string(input);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True}
@@ -3339,14 +3336,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dollar_quoted_func': True}
@@ -3368,14 +3364,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True}
@@ -3395,14 +3390,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'replace_digits': True}
@@ -3489,14 +3483,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'keep_sql_alias': True, 'dollar_quoted_func': True, 'keep_null': True, 'keep_boolean': True,
@@ -3544,14 +3537,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dbms': 'mssql'}
@@ -3573,14 +3565,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Mssql);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'dbms': 'postgresql'}
@@ -3644,14 +3635,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Postgresql);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only'}
@@ -3679,14 +3669,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_sql_alias': True}
@@ -3705,14 +3694,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'remove_space_between_parentheses': True}
@@ -3734,14 +3722,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_trailing_semicolon': True}
@@ -3763,14 +3750,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'normalize_only', 'keep_identifier_quotation': True}
@@ -3792,14 +3778,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize'}
@@ -3835,14 +3820,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_digits': True}
@@ -3864,14 +3848,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_sql_alias': True}
@@ -3890,14 +3873,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True}
@@ -3919,14 +3901,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'dollar_quoted_func': True, 'replace_digits': True}
@@ -3949,14 +3930,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'remove_space_between_parentheses': True}
@@ -3978,14 +3958,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_null': True}
@@ -4007,14 +3986,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_boolean': True}
@@ -4036,14 +4014,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_positional_parameter': True}
@@ -4065,14 +4042,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_trailing_semicolon': True}
@@ -4094,14 +4070,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_identifier_quotation': True}
@@ -4123,14 +4098,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'replace_bind_parameter': True}
@@ -4152,14 +4126,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_and_normalize', 'keep_json_path': True}
@@ -4186,14 +4159,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only'}
@@ -4217,14 +4189,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'replace_digits': True}
@@ -4246,14 +4217,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True}
@@ -4275,14 +4245,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // {'mode': 'obfuscate_only', 'dollar_quoted_func': True, 'replace_digits': True}
@@ -4305,14 +4274,13 @@ mod tests {
         for (i, (input, expected)) in cases.iter().enumerate() {
             let got = super::obfuscate_sql(input, &config, DbmsKind::Generic);
             if got != *expected {
-                errors.push_str(&format!(
+                let _ = write!(
+                    errors,
                     "case {i} ({input:?}):\n  expected {expected:?}\n  got      {got:?}\n"
-                ));
+                );
             }
         }
-        if !errors.is_empty() {
-            panic!("{errors}");
-        }
+        assert!(errors.is_empty(), "{errors}");
     }
 
     // Test that collapse_limit_two_args handles LIMIT case-insensitively.

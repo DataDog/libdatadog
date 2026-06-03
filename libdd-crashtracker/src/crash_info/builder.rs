@@ -30,7 +30,7 @@ impl ErrorDataBuilder {
         let thread_name = self.thread_name;
         let source_type = SourceType::Crashtracking;
         let stack = self.stack.unwrap_or_else(StackTrace::missing);
-        let threads = self.threads.unwrap_or_default();
+        let threads = self.threads;
         Ok((
             ErrorData {
                 is_crash,
@@ -95,7 +95,18 @@ impl ErrorDataBuilder {
     }
 
     pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
+        if threads.is_empty() {
+            return Ok(());
+        }
         self.threads = Some(threads);
+        Ok(())
+    }
+
+    pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
+        if thread.crashed {
+            return Ok(());
+        }
+        self.threads.get_or_insert_with(Vec::new).push(thread);
         Ok(())
     }
 }
@@ -360,12 +371,7 @@ impl CrashInfoBuilder {
     }
 
     pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
-        if let Some(ref mut threads) = &mut self.error.threads {
-            threads.push(thread);
-        } else {
-            self.error.threads = Some(vec![thread]);
-        }
-        Ok(())
+        self.error.with_thread(thread)
     }
 
     pub fn with_threads(&mut self, threads: Vec<ThreadData>) -> anyhow::Result<()> {
