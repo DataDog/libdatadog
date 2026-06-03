@@ -42,6 +42,29 @@ log_verbose() {
     fi
 }
 
+# Echo the higher of two semver levels. Order: major > minor > patch > none.
+max_level() {
+    local a=$1 b=$2
+    local ra rb
+    case "$a" in
+        major) ra=3 ;;
+        minor) ra=2 ;;
+        patch) ra=1 ;;
+        *)     ra=0 ;;
+    esac
+    case "$b" in
+        major) rb=3 ;;
+        minor) rb=2 ;;
+        patch) rb=1 ;;
+        *)     rb=0 ;;
+    esac
+    if (( ra >= rb )); then
+        echo "$a"
+    else
+        echo "$b"
+    fi
+}
+
 compute_semver_results() {
     local crate=$1
     local baseline=$2
@@ -60,43 +83,42 @@ compute_semver_results() {
         baseline="origin/$baseline"
     fi
 
-    log_verbose "========================================" >&2
-    log_verbose "Checking semver for: $crate" >&2
-    log_verbose "Using baseline ref: $baseline" >&2
-    log_verbose "========================================" >&2
+    log_verbose "========================================"
+    log_verbose "Checking semver for: $crate"
+    log_verbose "Using baseline ref: $baseline"
+    log_verbose "========================================"
 
-    LEVEL="none"
-    DETAILS=""
-    REASON=""
+    # ----------------------------------------------------------------
+    # 1) cargo-semver-checks (type-signature lints)
+    # ----------------------------------------------------------------
+    local semver_level="none"
+    local semver_reason=""
+    local semver_details=""
+    local crate_is_new=false
 
     SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
     SEMVER_EXIT_CODE=$?
 
     if [[ $SEMVER_EXIT_CODE -eq 0 ]]; then
-        log_verbose "No semver violations detected" >&2
-        LEVEL="none"
+        log_verbose "cargo-semver-checks: no violations"
+        semver_level="none"
     elif [[ $SEMVER_EXIT_CODE -eq 1 ]]; then
-        # Check if it's an error or actual semver violation
         if echo "$SEMVER_OUTPUT" | grep -qE "Summary semver requires new major version"; then
-            # It's a semver violation - this is a major change
-            LEVEL="major"
-            REASON="cargo-semver-checks detected breaking changes"
-            # Extract the relevant violation details (skip the header/summary lines)
-            DETAILS=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
-            log_verbose "Detected semver violations (major change)" >&2
-            log_verbose "$SEMVER_OUTPUT" >&2
+            semver_level="major"
+            semver_reason="cargo-semver-checks detected breaking changes"
+            semver_details=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
+            log_verbose "cargo-semver-checks: major"
         elif echo "$SEMVER_OUTPUT" | grep -qF "package \`$crate\` not found"; then
             # The crate doesn't exist in the baseline — it's a new crate being added
-            LEVEL="minor"
-            REASON="New crate (not present in baseline)"
-            log_verbose "New crate '$crate' not found in baseline, treating as minor change" >&2
+            semver_level="minor"
+            semver_reason="New crate (not present in baseline)"
+            crate_is_new=true
+            log_verbose "cargo-semver-checks: new crate, treat as minor"
         elif echo "$SEMVER_OUTPUT" | grep -qE "Summary semver requires new minor version"; then
-            LEVEL="minor"
-            REASON="cargo-semver-checks detected minor breaking changes"
-            # Extract the relevant violation details (skip the header/summary lines)
-            DETAILS=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
-            log_verbose "Detected semver violations (minor change)" >&2
-            log_verbose "$SEMVER_OUTPUT" >&2
+            semver_level="minor"
+            semver_reason="cargo-semver-checks detected minor breaking changes"
+            semver_details=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
+            log_verbose "cargo-semver-checks: minor"
         else
             echo "Error running cargo-semver-checks: $SEMVER_OUTPUT" >&2
             exit $SEMVER_EXIT_CODE
@@ -107,54 +129,74 @@ compute_semver_results() {
         exit $SEMVER_EXIT_CODE
     fi
 
+    # ----------------------------------------------------------------
+    # 2) cargo-public-api diff
+    #
+    # cargo-semver-checks has known false-negatives at signature level — most
+    # notably, parameter type changes on non-generic functions are not detected
+    # (the function_parameter_type_changed lint is not implemented). cargo-public-api
+    # shows the change as Removed (old signature) + Added (new signature), so
+    # we run it unconditionally and combine with semver-checks via max_level.
+    # Skip only when there is no baseline (new crate) or when semver-checks
+    # already flagged major (cannot go higher).
+    # ----------------------------------------------------------------
+    local public_api_level="none"
+    local public_api_reason=""
+    local public_api_details=""
 
-    if [[ "$LEVEL" == "none" ]]; then
-        # Try to run cargo-public-api diff against base branch
+    if $crate_is_new; then
+        log_verbose "Skipping cargo-public-api: new crate (no baseline)"
+    elif [[ "$semver_level" == "major" ]]; then
+        log_verbose "Skipping cargo-public-api: cargo-semver-checks already at major"
+    else
         PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --color=never diff "$baseline..$current" 2>&1)
         EXIT_CODE=$?
 
         if [[ $EXIT_CODE -ne 0 ]]; then
-          echo "Unexpected error for $crate (exit code: $EXIT_CODE)" >&2
+          echo "Unexpected error from cargo-public-api for $crate (exit code: $EXIT_CODE)" >&2
           echo "$PUBLIC_API_OUTPUT" >&2
           exit $EXIT_CODE
         fi
 
         log_verbose "$PUBLIC_API_OUTPUT"
 
-        # Check for removed items (major change)
-        if echo "$PUBLIC_API_OUTPUT" | grep -q "Removed items from the public API$"; then
-          if ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Removed items from the public API$" | grep -q "^(none)$"; then
-            LEVEL="major"
-            REASON="cargo-public-api detected removed public API items"
-            # Extract removed items section
-            DETAILS=$(echo "$PUBLIC_API_OUTPUT" | grep -A 50 "^Removed items from the public API$" | head -50)
-            log_verbose "Detected removed items (major change)" >&2
-          fi
+        # Removed public items → major.
+        if echo "$PUBLIC_API_OUTPUT" | grep -q "Removed items from the public API$" \
+           && ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Removed items from the public API$" | grep -q "^(none)$"; then
+            public_api_level="major"
+            public_api_reason="cargo-public-api detected removed public API items"
+            public_api_details=$(echo "$PUBLIC_API_OUTPUT" | grep -A 50 "^Removed items from the public API$" | head -50)
+            log_verbose "cargo-public-api: major (removed items)"
+        # Added public items → minor (only when not major).
+        elif echo "$PUBLIC_API_OUTPUT" | grep -q "Added items to the public API$" \
+             && ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Added items to the public API$" | grep -q "^(none)"; then
+            public_api_level="minor"
+            public_api_reason="cargo-public-api detected new public API items"
+            public_api_details=$(echo "$PUBLIC_API_OUTPUT" | grep -A 50 "^Added items to the public API$" | head -50)
+            log_verbose "cargo-public-api: minor (added items)"
         fi
 
         # TODO: Improve parsing changed items with an allowlist. Right now is not working because there is some occasions
         # in which changed items are not a breaking change. Examples:
         # - Adding #[repr(c)] is not a breaking change (https://doc.rust-lang.org/cargo/reference/semver.html#repr-c-add).
         # - Removing #[repr(c)] is a breaking change.
+    fi
 
-        # Check for added items (minor change) - only if not already major
-        if [[ "$LEVEL" != "major" ]]; then
-          if echo "$PUBLIC_API_OUTPUT" | grep -q "Added items to the public API$"; then
-            if ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Added items to the public API$" | grep -q "^(none)"; then
-              LEVEL="minor"
-              REASON="cargo-public-api detected new public API items"
-              # Extract added items section
-              DETAILS=$(echo "$PUBLIC_API_OUTPUT" | grep -A 50 "^Added items to the public API$" | head -50)
-              log_verbose "Detected added items (minor change)" >&2
-            fi
-          fi
-        fi
+    # ----------------------------------------------------------------
+    # 3) Combine signals: take the higher of cargo-semver-checks and cargo-public-api.
+    # ----------------------------------------------------------------
+    LEVEL=$(max_level "$semver_level" "$public_api_level")
+    if [[ "$LEVEL" == "$public_api_level" && "$public_api_level" != "$semver_level" ]]; then
+        REASON="$public_api_reason"
+        DETAILS="$public_api_details"
+    else
+        REASON="$semver_reason"
+        DETAILS="$semver_details"
     fi
 
     if [[ "$LEVEL" == "none" ]]; then
-      # No API changes detected, assume patch level
-      LEVEL="patch"
-      REASON="No public API changes detected"
+        LEVEL="patch"
+        REASON="No public API changes detected"
     fi
 
     echo "$(jq -n \
