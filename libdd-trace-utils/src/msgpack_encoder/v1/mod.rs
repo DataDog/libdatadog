@@ -1190,7 +1190,7 @@ mod tests {
 
 #[cfg(test)]
 mod v1_payload_tests {
-    //! Unit tests for the M3 encoder (`encode_payload_v1`).
+    //! Unit tests for the v1::Span encoder (`encode_payload_v1`).
     //!
     //! Verifies the encoder produces a valid V1 payload from the canonical
     //! [`crate::span::v1::TracerPayload`] data model and that core invariants (interning, byte
@@ -1204,7 +1204,7 @@ mod v1_payload_tests {
     use libdd_tinybytes::BytesString;
 
     fn bs(s: &str) -> BytesString {
-        BytesString::from_slice(s.as_bytes()).unwrap_or_default()
+        BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
     }
 
     fn make_span(service: &str, name: &str, span_id: u64) -> V1SpanBytes {
@@ -1519,7 +1519,9 @@ mod v1_payload_tests {
     #[test]
     fn string_interning_works_across_chunks() {
         // The string "shared" appears in two chunks. The second occurrence must be a uint ID,
-        // not a fresh str. Compare against a baseline with a single occurrence to verify.
+        // not a fresh str. Verify by (a) scanning the encoded bytes for the literal "shared"
+        // — it must appear exactly once — and (b) confirming the two-chunk payload is smaller
+        // than two independent single-chunk payloads.
         let chunk_with_two = TracerPayloadBytes {
             chunks: vec![
                 make_chunk(vec![make_span("shared", "op1", 1)], [0u8; 16]),
@@ -1533,6 +1535,15 @@ mod v1_payload_tests {
         };
         let two = to_vec_from_payload(&chunk_with_two);
         let one = to_vec_from_payload(&single);
+        let shared_occurrences = two
+            .windows(b"shared".len())
+            .filter(|w| *w == b"shared")
+            .count();
+        assert_eq!(
+            shared_occurrences, 1,
+            "the literal bytes \"shared\" must appear exactly once; subsequent uses must be \
+             encoded as interning IDs"
+        );
         assert!(
             two.len() < 2 * one.len(),
             "interning should reduce repeated payload size"
@@ -1542,8 +1553,8 @@ mod v1_payload_tests {
 
 #[cfg(test)]
 mod cross_validation_tests {
-    //! Cross-validates that the M1 encoder (v0.4 spans → V1 payload) and the M3 encoder
-    //! (v1::Span → V1 payload) produce **byte-identical** output for equivalent inputs.
+    //! Cross-validates that the v0.4→V1 encoder and the v1::Span encoder produce
+    //! **byte-identical** output for equivalent inputs.
     //!
     //! All tests are limited to deterministic content (at most one attribute key per map) so the
     //! `HashMap` iteration order cannot diverge between the two inputs.
@@ -1556,7 +1567,7 @@ mod cross_validation_tests {
     use libdd_tinybytes::BytesString;
 
     fn bs(s: &str) -> BytesString {
-        BytesString::from_slice(s.as_bytes()).unwrap_or_default()
+        BytesString::from_slice(s.as_bytes()).expect("test string must fit in BytesString")
     }
 
     /// Builds a 128-bit big-endian trace_id from `(high, low)` 64-bit halves.
@@ -1567,23 +1578,24 @@ mod cross_validation_tests {
         out
     }
 
-    /// Asserts that encoding `v04` (with `metadata`) via M1 produces the same bytes as
-    /// encoding `v1` via M3. Includes a hex-diff message on mismatch.
+    /// Asserts that encoding `v04` (with `metadata`) via the v0.4→V1 encoder produces the
+    /// same bytes as encoding `v1` via the v1::Span encoder. Includes a hex-diff message on
+    /// mismatch.
     #[track_caller]
     fn assert_byte_equal(
         v04_traces: &[Vec<V04Span>],
         metadata: &TracerMetadata,
         v1_payload: &TracerPayloadBytes,
     ) {
-        let m1 = to_vec(v04_traces, metadata);
-        let m3 = to_vec_from_payload(v1_payload);
-        if m1 != m3 {
+        let v04_encoded = to_vec(v04_traces, metadata);
+        let v1_encoded = to_vec_from_payload(v1_payload);
+        if v04_encoded != v1_encoded {
             panic!(
-                "M1 and M3 encoders diverged:\n  M1 ({:3} bytes): {}\n  M3 ({:3} bytes): {}",
-                m1.len(),
-                hex_dump(&m1),
-                m3.len(),
-                hex_dump(&m3)
+                "v0.4→V1 and v1::Span encoders diverged:\n  v0.4→V1 ({:3} bytes): {}\n  v1::Span ({:3} bytes): {}",
+                v04_encoded.len(),
+                hex_dump(&v04_encoded),
+                v1_encoded.len(),
+                hex_dump(&v1_encoded)
             );
         }
     }
@@ -1671,8 +1683,9 @@ mod cross_validation_tests {
 
     #[test]
     fn promoted_fields_byte_identical() {
-        // M1 reads env/version/component/span.kind from v04 meta and promotes them; M3 takes
-        // them directly from the v1::Span fields. Both must produce the same bytes.
+        // The v0.4→V1 encoder reads env/version/component/span.kind from v04 meta and promotes
+        // them; the v1::Span encoder takes them directly from the v1::Span fields. Both must
+        // produce the same bytes.
         let mut meta = HashMap::new();
         meta.insert(bs("env"), bs("prod"));
         meta.insert(bs("version"), bs("1.2.3"));
@@ -1691,7 +1704,8 @@ mod cross_validation_tests {
             ..Default::default()
         }]];
 
-        // metadata.env populated → M1 picks env from metadata first (it's set on the builder).
+        // metadata.env populated → the v0.4→V1 encoder picks env from metadata first (it's set
+        // on the builder).
         let metadata = TracerMetadata {
             env: "prod".to_string(),
             app_version: "1.2.3".to_string(),
@@ -1857,9 +1871,10 @@ mod cross_validation_tests {
 
     #[test]
     fn chunk_origin_only_byte_identical() {
-        // The M1 encoder's `is_promoted` filter only strips env/version/component/span.kind/
-        // _dd.p.tid — it intentionally keeps `_dd.origin` in span attributes even though it's
-        // also lifted to the chunk. M3 must reproduce that duplication for byte equality.
+        // The v0.4→V1 encoder's `is_promoted` filter only strips env/version/component/
+        // span.kind/_dd.p.tid — it intentionally keeps `_dd.origin` in span attributes even
+        // though it's also lifted to the chunk. The v1::Span encoder must reproduce that
+        // duplication for byte equality.
         let mut meta = HashMap::new();
         meta.insert(bs("_dd.origin"), bs("lambda"));
 
