@@ -387,7 +387,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     };
 
     // Clone the cancellation token (if provided) so the caller retains
-    // ownership of the handle while we use a cheap clone inside select!.
+    // ownership of the handle while we pass a cheap clone to the exporter.
     let cancel_token: Option<TokioCancellationToken> = if cancel.is_null() {
         None
     } else {
@@ -395,38 +395,14 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     };
 
     catch_panic!(
-        {
-            let result = if let Some(ct) = cancel_token {
-                // Use select! so we can abort the in-flight request when
-                // the caller cancels.
-                let block_result = exporter.shared_runtime().block_on(async {
-                    tokio::select! {
-                        res = exporter.send_trace_chunks_async(chunks.0) => res,
-                        _ = ct.cancelled() => Err(
-                            std::io::Error::new(
-                                std::io::ErrorKind::Interrupted,
-                                "send cancelled via cancellation token",
-                            ).into()
-                        ),
-                    }
-                });
-                match block_result {
-                    Ok(inner) => inner,
-                    Err(io_err) => Err(io_err.into()),
+        match exporter.send_trace_chunks(chunks.0, cancel_token.as_ref()) {
+            Ok(resp) => {
+                if let Some(out) = response_out {
+                    out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
                 }
-            } else {
-                exporter.send_trace_chunks(chunks.0)
-            };
-
-            match result {
-                Ok(resp) => {
-                    if let Some(out) = response_out {
-                        out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
-                    }
-                    None
-                }
-                Err(e) => Some(Box::new(ExporterError::from(e))),
+                None
             }
+            Err(e) => Some(Box::new(ExporterError::from(e))),
         },
         gen_error!(ErrorCode::Panic)
     )
