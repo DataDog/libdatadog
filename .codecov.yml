@@ -11,6 +11,10 @@ component_management:
       name: libdd-crashtracker-ffi  # this is a display name, and can be changed freely
       paths:
         - libdd-crashtracker-ffi
+    - component_id: agent-client  # this is an identifier that should not be changed
+      name: libdd-agent-client  # this is a display name, and can be changed freely
+      paths:
+        - libdd-agent-client
     - component_id: datadog-alloc  # this is an identifier that should not be changed
       name: libdd-alloc  # this is a display name, and can be changed freely
       paths:
