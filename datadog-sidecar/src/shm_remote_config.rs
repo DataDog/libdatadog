@@ -5,7 +5,7 @@ use crate::one_way_shared_memory::{
     open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
 };
 use crate::primary_sidecar_identifier;
-use crate::service::DynamicInstrumentationConfigState;
+use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -136,6 +136,10 @@ impl RemoteConfigWriter {
 
     pub fn write(&self, contents: &[u8]) {
         self.writer.write(contents)
+    }
+
+    pub fn current_generation(&self) -> u64 {
+        self.writer.current_generation()
     }
 }
 
@@ -364,6 +368,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStora
 pub struct ShmRemoteConfigsGuard<N: NotifyTarget + 'static> {
     target: Arc<Target>,
     runtime_id: String,
+    session_id: String,
     remote_configs: ShmRemoteConfigs<N>,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
 }
@@ -371,7 +376,7 @@ pub struct ShmRemoteConfigsGuard<N: NotifyTarget + 'static> {
 impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
     fn drop(&mut self) {
         let fetcher = &self.remote_configs.0;
-        fetcher.delete_runtime(&self.runtime_id, &self.target);
+        fetcher.delete_runtime(&self.runtime_id, &self.session_id, &self.target);
         if fetcher.invariants().endpoint.test_token.is_some() && fetcher.active_runtimes() == 0 {
             self.remote_configs.shutdown()
         }
@@ -460,7 +465,8 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
     #[allow(clippy::too_many_arguments)]
     pub fn add_runtime(
         &self,
-        runtime_id: String,
+        instance_id: InstanceId,
+        remote_config_generation: u64,
         notify_target: N,
         env: String,
         service: String,
@@ -478,13 +484,19 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             process_tags,
         });
         self.0.add_runtime(
-            runtime_id.clone(),
-            notify_target,
+            instance_id.session_id.clone(),
+            instance_id.runtime_id.clone(),
+            notify_target.clone(),
             &target,
             product_capabilities,
         );
 
         let writers = self.0.storage.storage.writers.lock_or_panic();
+        if let Some(writer) = writers.get(&target) {
+            if writer.current_generation() > remote_config_generation {
+                notify_target.notify();
+            }
+        }
         if dynamic_instrumentation_state != DynamicInstrumentationConfigState::Disabled {
             let mut targets = self.0.storage.storage.targets.lock_or_panic();
             let info = targets
@@ -515,7 +527,8 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
 
         ShmRemoteConfigsGuard {
             target,
-            runtime_id,
+            runtime_id: instance_id.runtime_id,
+            session_id: instance_id.session_id,
             remote_configs: self.clone(),
             dynamic_instrumentation_state,
         }
@@ -604,6 +617,14 @@ impl RemoteConfigManager {
             check_configs: vec![],
             current_runtime_id: "".to_string(),
         }
+    }
+
+    /// Returns the generation last read by this client, or 0 if nothing has been read yet.
+    pub fn current_remote_config_generation(&self) -> u64 {
+        self.active_reader
+            .as_ref()
+            .map(|r| r.0.last_read_generation())
+            .unwrap_or(0)
     }
 
     /// Polls one configuration change.
@@ -874,7 +895,11 @@ mod tests {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
 
         let shm_guard = shm.add_runtime(
-            "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            InstanceId {
+                session_id: "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+                runtime_id: "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            },
+            0,
             NotifyDummy(Arc::new(sender)),
             DUMMY_TARGET.env.to_string(),
             DUMMY_TARGET.service.to_string(),
@@ -1059,7 +1084,11 @@ mod tests {
 
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
         let _shm_guard = shm.add_runtime(
-            "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            InstanceId {
+                session_id: "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+                runtime_id: "3b43524b-a70c-45dc-921d-34504e50c5eb".to_string(),
+            },
+            0,
             NotifyDummy(Arc::new(sender)),
             DUMMY_TARGET.env.to_string(),
             DUMMY_TARGET.service.to_string(),

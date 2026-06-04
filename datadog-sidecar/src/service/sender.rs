@@ -246,6 +246,7 @@ impl SidecarSender {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        remote_config_generation: u64,
     ) {
         coalesce(
             &mut self.outbox,
@@ -257,6 +258,7 @@ impl SidecarSender {
                 app_version,
                 global_tags,
                 dynamic_instrumentation_state,
+                remote_config_generation,
             },
         );
         self.try_drain_outbox();
