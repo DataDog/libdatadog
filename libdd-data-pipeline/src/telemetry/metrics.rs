@@ -27,7 +27,7 @@ pub enum MetricKind {
     ChunksSent,
     /// trace_chunks_dropped metric (reason: p0_drop)
     ChunksDroppedP0,
-    /// trace_chunks_dropped metric (reason: trace_filter)
+    /// trace_chunks_dropped metric (reason: trace_filters)
     ChunksDroppedByTraceFilter,
     /// trace_chunks_dropped metric (reason: serialization_error)
     ChunksDroppedSerializationError,
