@@ -33,8 +33,6 @@ datadog-library-config-ffi = ["dep:libdd-library-config-ffi"]
 ddcommon-ffi = ["dep:libdd-common-ffi"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
-# Ships the generic shared-runtime fork-lifecycle FFI inside this single aggregate
-# library so there is exactly one copy of the `libdd-shared-runtime` crate at runtime.
 shared-runtime = ["dep:libdd-shared-runtime-ffi", "libdd-shared-runtime-ffi/catch_panic"]
 regex-lite = ["libdd-common/regex-lite"]
 
