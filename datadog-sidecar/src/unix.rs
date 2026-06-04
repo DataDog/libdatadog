@@ -286,7 +286,7 @@ fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> an
         "severity:crash".to_string(),
         format!("library_version:{}", crate::sidecar_version!()),
         "library:sidecar".to_string(),
-        "language:native".to_string(),
+        "language:php".to_string(),
     ];
 
     libdd_crashtracker::init(
