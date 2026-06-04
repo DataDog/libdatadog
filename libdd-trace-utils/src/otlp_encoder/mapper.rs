@@ -370,10 +370,10 @@ fn map_attributes<T: TraceData>(
             value: AnyValue::BytesValue(v.borrow().to_vec()),
         });
     }
-    let total = (if has_per_span_service { 1 } else { 0 })
-        + (if has_operation_name { 1 } else { 0 })
-        + (if has_span_type { 1 } else { 0 })
-        + (if has_resource_name { 1 } else { 0 })
+    let total = (if has_per_span_service && !enable_otel_trace_compatibility { 1 } else { 0 })
+        + (if has_operation_name && !enable_otel_trace_compatibility { 1 } else { 0 })
+        + (if has_span_type && !enable_otel_trace_compatibility { 1 } else { 0 })
+        + (if has_resource_name && !enable_otel_trace_compatibility { 1 } else { 0 })
         + span.meta.len()
         + span.metrics.len()
         + span.meta_struct.len();
