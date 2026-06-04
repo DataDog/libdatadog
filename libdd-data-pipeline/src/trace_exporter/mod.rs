@@ -483,10 +483,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// # Arguments
     /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
     /// * cancellation_token: When provided, cancelling the token aborts the send while it is in
-    ///   progress. The send only observes a token that is cancelled while the request is
-    ///   in-flight; a token cancelled before this call returns immediately, and a token cancelled
-    ///   after the send has already finished has no effect. Cancelling an in-flight send may cause
-    ///   the trace chunks being sent to be lost.
+    ///   progress. The send only observes a token that is cancelled while the request is in-flight;
+    ///   a token cancelled before this call returns immediately, and a token cancelled after the
+    ///   send has already finished has no effect. Cancelling an in-flight send may cause the trace
+    ///   chunks being sent to be lost.
     ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
