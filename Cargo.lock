@@ -1354,6 +1354,7 @@ name = "datadog-ffe"
 version = "1.0.0"
 dependencies = [
  "chrono",
+ "datadog-remote-config",
  "derive_more",
  "faststr",
  "libdd-common",
@@ -1445,6 +1446,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "constcat",
+ "datadog-remote-config",
  "http",
  "http-body-util",
  "libdd-common",
@@ -1492,8 +1494,6 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "datadog-ffe",
- "datadog-live-debugger",
  "datadog-remote-config",
  "futures",
  "futures-util",
@@ -1508,6 +1508,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sha2",
+ "thiserror 2.0.17",
  "time",
  "tokio",
  "tokio-util",

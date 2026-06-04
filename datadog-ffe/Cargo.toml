@@ -11,6 +11,7 @@ publish = false
 bench = false
 
 [dependencies]
+datadog-remote-config = { path = "../datadog-remote-config", default-features = false, optional = true }
 faststr = { version = "0.2.23", default-features = false, features = ["serde"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "rc"] }
 serde_json = { version = "1.0", default-features = false, features = ["std", "raw_value"] }
@@ -30,6 +31,8 @@ prost = { version = "0.14.1", optional = true }
 pyo3 = { version = "0.28", optional = true, default-features = false, features = ["macros"] }
 
 [features]
+default = ["remote-config"]
 exposure-events = ["dep:lru"]
 evaluation-metrics = ["dep:libdd-trace-protobuf", "dep:prost"]
 pyo3 = ["dep:pyo3"]
+remote-config = ["dep:datadog-remote-config"]
