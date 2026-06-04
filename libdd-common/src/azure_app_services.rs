@@ -433,10 +433,10 @@ fn resolve_instance_name(
     };
 
     sku_preferred
+        .or_else(|| non_empty(computer_name))
         .or_else(|| non_empty(container_name))
         .or_else(|| non_empty(pod_name))
-        .or_else(|| non_empty(computer_name))
-        .map(|s| s.to_lowercase())
+        .map(|s| s.to_string())
 }
 
 pub static AAS_METADATA: LazyLock<Option<AzureMetadata>> =
@@ -1064,7 +1064,7 @@ mod tests {
             ("WEBSITE_POD_NAME", "0--abc-test"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "0--abc-def");
+        assert_eq!(metadata.get_instance_name(), "0--abc-DEF");
     }
 
     #[test]
@@ -1086,7 +1086,7 @@ mod tests {
             ("CONTAINER_NAME", "ABCD1234-111122223333444455"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "abcd1234-111122223333444455");
+        assert_eq!(metadata.get_instance_name(), "ABCD1234-111122223333444455");
     }
 
     #[test]
@@ -1097,7 +1097,7 @@ mod tests {
             (INSTANCE_NAME, "ep0fakewk0000A1"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "ep0fakewk0000a1");
+        assert_eq!(metadata.get_instance_name(), "ep0fakewk0000A1");
     }
 
     #[test]
@@ -1108,7 +1108,7 @@ mod tests {
             (INSTANCE_NAME, "p3fakewk0000B2"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "p3fakewk0000b2");
+        assert_eq!(metadata.get_instance_name(), "p3fakewk0000B2");
     }
 
     #[test]
@@ -1157,6 +1157,27 @@ mod tests {
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
         assert_eq!(metadata.get_instance_name(), "10-20-30-40");
+    }
+
+    #[test]
+    fn test_instance_name_no_sku_prefers_computer_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            ("CONTAINER_NAME", "container-1"),
+            (INSTANCE_NAME, "worker-1"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "worker-1");
+    }
+
+    #[test]
+    fn test_instance_name_no_sku_falls_back_to_container_name() {
+        let mocked_env = MockEnv::new(&[
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
+            ("CONTAINER_NAME", "container-1"),
+        ]);
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
+        assert_eq!(metadata.get_instance_name(), "container-1");
     }
 
     #[test]
