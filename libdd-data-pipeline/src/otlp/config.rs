@@ -35,4 +35,7 @@ pub struct OtlpTraceConfig {
     /// Protocol (for future use; currently only HttpJson is supported).
     #[allow(dead_code)]
     pub(crate) protocol: OtlpProtocol,
+    /// When `true`, omit DD-specific per-span attributes (`service.name`, `operation.name`,
+    /// `resource.name`, `span.type`) from the OTLP payload.
+    pub enable_otel_trace_compatibility: bool,
 }

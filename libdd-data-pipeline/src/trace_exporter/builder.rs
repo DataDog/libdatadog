@@ -65,6 +65,7 @@ pub struct TraceExporterBuilder {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    enable_otel_trace_compatibility: bool,
 }
 
 impl TraceExporterBuilder {
@@ -296,6 +297,16 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enable OTel trace compatibility mode: omit DD-specific per-span attributes
+    /// (`service.name`, `operation.name`, `resource.name`, `span.type`) from the OTLP payload.
+    ///
+    /// Use this when exporting to a native OTel backend that does not expect Datadog semantics,
+    /// for example when `DD_TRACE_OTEL_COMPATIBILITY_ENABLED=true`.
+    pub fn enable_otel_trace_compatibility(&mut self) -> &mut Self {
+        self.enable_otel_trace_compatibility = true;
+        self
+    }
+
     /// Build the [`TraceExporter`] synchronously.
     ///
     /// Sync facade over [`Self::build_async`]; panics inside an existing tokio context.
@@ -452,6 +463,7 @@ impl TraceExporterBuilder {
                     .map(Duration::from_millis)
                     .unwrap_or(DEFAULT_OTLP_TIMEOUT),
                 protocol: OtlpProtocol::HttpJson,
+                enable_otel_trace_compatibility: self.enable_otel_trace_compatibility,
             }
         });
 
