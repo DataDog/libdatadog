@@ -3058,6 +3058,7 @@ dependencies = [
  "libdd-tinybytes",
  "libdd-trace-utils",
  "rmp-serde",
+ "tokio-util",
  "tracing",
 ]
 
@@ -3256,6 +3257,7 @@ dependencies = [
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "libdd-profiling",
+ "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
  "serde_json",
  "symbolizer-ffi",

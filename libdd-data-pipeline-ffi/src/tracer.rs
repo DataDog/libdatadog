@@ -19,6 +19,8 @@ use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::v04::SpanBytes;
 use std::ptr::NonNull;
 
+type TokioCancellationToken = tokio_util::sync::CancellationToken;
+
 // ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
@@ -296,6 +298,49 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 }
 
 // ---------------------------------------------------------------------------
+// Cancellation token
+// ---------------------------------------------------------------------------
+
+/// Create a new cancellation token.
+///
+/// The returned token must be freed with
+/// [`ddog_trace_exporter_cancel_token_drop`].
+#[no_mangle]
+pub extern "C" fn ddog_trace_exporter_cancel_token_new() -> Box<TokioCancellationToken> {
+    Box::new(TokioCancellationToken::new())
+}
+
+/// Cancel a cancellation token.
+///
+/// All clones of the same token observe the cancellation. If a
+/// [`ddog_trace_exporter_send_trace_chunks`] call is using this token at the
+/// time of cancellation, that send stops waiting for the agent at its next
+/// await point and returns an error; the trace chunks it was sending may be
+/// lost.
+///
+/// Cancellation only affects a send that is in progress. If no send is using
+/// the token, cancelling it has no immediate effect: a send started afterwards
+/// with an already-cancelled token returns an error without contacting the
+/// agent, and a token cancelled after its send has already finished does
+/// nothing.
+#[no_mangle]
+pub extern "C" fn ddog_trace_exporter_cancel_token_cancel(token: Option<&TokioCancellationToken>) {
+    if let Some(token) = token {
+        token.cancel();
+    }
+}
+
+/// Free a cancellation token.
+///
+/// After this call the token is invalid and must not be reused.
+#[no_mangle]
+pub extern "C" fn ddog_trace_exporter_cancel_token_drop(
+    token: Option<Box<TokioCancellationToken>>,
+) {
+    drop(token);
+}
+
+// ---------------------------------------------------------------------------
 // Send trace chunks
 // ---------------------------------------------------------------------------
 
@@ -305,13 +350,22 @@ pub unsafe extern "C" fn ddog_tracer_trace_chunks_push_span(
 /// serializes in the configured output format, and sends to the agent
 /// with retry logic.
 ///
+/// When `cancel` is non-null, cancelling that token (via
+/// [`ddog_trace_exporter_cancel_token_cancel`]) while the send is in progress
+/// aborts the in-flight request and returns an error with code
+/// [`ExporterErrorCode::IoError`]. Cancellation is cooperative: it only takes
+/// effect while a request is actually in flight. A token that is already
+/// cancelled when the send starts makes this function return that error
+/// immediately, and cancelling after the send has finished has no effect.
+/// Cancelling an in-flight send may cause the trace chunks being sent to be
+/// lost.
+///
 /// On success, if `response_out` is non-null, a heap-allocated
 /// [`ExporterResponse`] is written there.  The caller owns it and must
 /// free it with `ddog_trace_exporter_response_free`.
 ///
 /// # Safety
 ///
-/// * `exporter` must be a valid `TraceExporter` pointer.
 /// * `chunks` is consumed and must not be used after this call.
 /// * If `response_out` is non-null it must point to valid writable memory for a
 ///   `Box<ExporterResponse>`.
@@ -320,6 +374,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     exporter: Option<&TraceExporter>,
     chunks: Option<Box<TracerTraceChunks>>,
     response_out: Option<NonNull<Box<ExporterResponse>>>,
+    cancel: Option<&TokioCancellationToken>,
 ) -> Option<Box<ExporterError>> {
     let Some(exporter) = exporter else {
         return gen_error!(ErrorCode::InvalidArgument);
@@ -329,7 +384,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_send_trace_chunks(
     };
 
     catch_panic!(
-        match exporter.send_trace_chunks(chunks.0) {
+        match exporter.send_trace_chunks(chunks.0, cancel) {
             Ok(resp) => {
                 if let Some(out) = response_out {
                     out.as_ptr().write(Box::new(ExporterResponse::from(resp)));
@@ -651,7 +706,7 @@ mod tests {
     fn send_trace_chunks_null_exporter_returns_error() {
         unsafe {
             let chunks = make_chunks(0);
-            let err = ddog_trace_exporter_send_trace_chunks(None, Some(chunks), None);
+            let err = ddog_trace_exporter_send_trace_chunks(None, Some(chunks), None, None);
             assert!(err.is_some());
             assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidArgument);
             ddog_trace_exporter_error_free(err);
@@ -685,6 +740,34 @@ mod tests {
             assert_eq!(err.as_ref().unwrap().code, ErrorCode::Panic);
             ddog_trace_exporter_error_free(err);
             ddog_tracer_trace_chunks_free(chunks);
+        }
+    }
+
+    // -- Cancellation token -------------------------------------------------
+
+    #[test]
+    fn cancel_token_new_and_drop() {
+        let token = ddog_trace_exporter_cancel_token_new();
+        ddog_trace_exporter_cancel_token_drop(Some(token));
+    }
+
+    #[test]
+    fn cancel_token_cancel() {
+        let token = ddog_trace_exporter_cancel_token_new();
+        ddog_trace_exporter_cancel_token_cancel(Some(&token));
+        ddog_trace_exporter_cancel_token_drop(Some(token));
+    }
+
+    #[test]
+    fn send_trace_chunks_null_cancel_is_accepted() {
+        // Passing a null (None) cancel argument behaves like no cancellation.
+        unsafe {
+            let chunks = make_chunks(0);
+            let err = ddog_trace_exporter_send_trace_chunks(None, Some(chunks), None, None);
+            // exporter is None, so we get InvalidArgument, but no crash
+            // from the absent cancel argument.
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
         }
     }
 }

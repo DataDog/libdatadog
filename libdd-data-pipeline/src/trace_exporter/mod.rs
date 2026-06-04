@@ -52,6 +52,7 @@ use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
@@ -477,14 +478,39 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Send a list of trace chunks to the agent (or OTLP endpoint when configured).
     ///
     /// Sync facade over [`Self::send_trace_chunks_async`]; panics inside an existing
-    /// tokio context. Returns the agent response (or `Unchanged` for OTLP).
+    /// tokio context.
+    ///
+    /// # Arguments
+    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    /// * cancellation_token: When provided, cancelling the token aborts the send while it is in
+    ///   progress. The send only observes a token that is cancelled while the request is in-flight;
+    ///   a token cancelled before this call returns immediately, and a token cancelled after the
+    ///   send has already finished has no effect. Cancelling an in-flight send may cause the trace
+    ///   chunks being sent to be lost.
+    ///
+    /// # Returns
+    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
+        cancellation_token: Option<&CancellationToken>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        self.shared_runtime
-            .block_on(self.send_trace_chunks_async(trace_chunks))?
+        self.shared_runtime.block_on(async {
+            match cancellation_token {
+                Some(token) => {
+                    tokio::select! {
+                        res = self.send_trace_chunks_async(trace_chunks) => res,
+                        _ = token.cancelled() => Err(TraceExporterError::Io(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "send cancelled via cancellation token",
+                        ))),
+                    }
+                }
+                None => self.send_trace_chunks_async(trace_chunks).await,
+            }
+        })?
     }
 
     /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
