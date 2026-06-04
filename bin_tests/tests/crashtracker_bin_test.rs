@@ -342,6 +342,43 @@ fn test_crash_tracking_thread_limit() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Poll for a Unix socket file to appear on disk, indicating the receiver has bound it.
+/// Returns true if the socket appeared within the deadline, false on timeout.
+#[cfg(target_os = "linux")]
+fn wait_for_socket(path: &str, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if Path::new(path).exists() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    false
+}
+
+/// Wait for a child process to exit within a timeout. If it doesn't exit in time,
+/// kill it and return the exit status.
+#[cfg(target_os = "linux")]
+fn wait_or_kill(child: &mut process::Child, timeout: std::time::Duration) -> process::ExitStatus {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return child.wait().unwrap();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return child.wait().unwrap();
+            }
+        }
+    }
+}
+
 /// Tests that a basic crash report is generated correctly when using a sidecar-style
 /// Unix socket receiver. The receiver is a separate long-lived process that the
 /// crash handler connects to through a Unix socket.
@@ -350,6 +387,7 @@ fn test_crash_tracking_thread_limit() {
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_sidecar_basic() {
     const RECEIVER_TIMEOUT_MS: &str = "15000";
+    const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     let profile = BuildProfile::Release;
     let socket_receiver = artifacts::crashtracker_unix_socket_receiver(profile);
@@ -372,8 +410,11 @@ fn test_crash_tracking_sidecar_basic() {
         .spawn()
         .unwrap();
 
-    // Give the receiver time to bind the socket
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Wait for the receiver to bind the socket before launching the crash app
+    assert!(
+        wait_for_socket(socket_path_str, std::time::Duration::from_secs(5)),
+        "Sidecar receiver did not bind socket within timeout"
+    );
 
     let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
     cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
@@ -392,8 +433,8 @@ fn test_crash_tracking_sidecar_basic() {
         "Expected crash test to exit with failure (signal), got: {exit_status:?}"
     );
 
-    // Wait for the receiver to finish processing
-    let receiver_status = receiver_proc.wait().unwrap();
+    // Wait for the receiver with a timeout to avoid hanging if it never got a connection
+    let receiver_status = wait_or_kill(&mut receiver_proc, RECEIVER_WAIT_TIMEOUT);
     assert!(
         receiver_status.success(),
         "Sidecar receiver exited with error: {receiver_status:?}"
@@ -421,6 +462,7 @@ fn test_crash_tracking_sidecar_basic() {
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_sidecar_multi_thread_collection() {
     const RECEIVER_TIMEOUT_MS: &str = "15000";
+    const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
     let profile = BuildProfile::Release;
     let socket_receiver = artifacts::crashtracker_unix_socket_receiver(profile);
@@ -443,8 +485,11 @@ fn test_crash_tracking_sidecar_multi_thread_collection() {
         .spawn()
         .unwrap();
 
-    // Give the receiver time to bind the socket
-    std::thread::sleep(std::time::Duration::from_millis(200));
+    // Wait for the receiver to bind the socket before launching the crash app
+    assert!(
+        wait_for_socket(socket_path_str, std::time::Duration::from_secs(5)),
+        "Sidecar receiver did not bind socket within timeout"
+    );
 
     let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
     cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
@@ -463,8 +508,8 @@ fn test_crash_tracking_sidecar_multi_thread_collection() {
         "Expected crash test to exit with failure (signal), got: {exit_status:?}"
     );
 
-    // Wait for the receiver to finish processing
-    let receiver_status = receiver_proc.wait().unwrap();
+    // Wait for the receiver with a timeout to avoid hanging if it never got a connection
+    let receiver_status = wait_or_kill(&mut receiver_proc, RECEIVER_WAIT_TIMEOUT);
     assert!(
         receiver_status.success(),
         "Sidecar receiver exited with error: {receiver_status:?}"
