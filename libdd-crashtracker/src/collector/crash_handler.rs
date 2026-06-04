@@ -312,6 +312,7 @@ fn handle_posix_signal_impl(
             None => {
                 let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
                 let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+                // SAFETY: getsockopt is async-signal-safe and we're just reading from the socket
                 let ret = unsafe {
                     libc::getsockopt(
                         receiver.handle.uds_fd,
