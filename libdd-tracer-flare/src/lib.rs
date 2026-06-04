@@ -29,10 +29,11 @@ use {
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
         file_change_tracker::Change,
         file_storage::{ParsedFileStorage, RawFile},
-        RemoteConfigProduct, Target,
+        RemoteConfigParsed,RemoteConfigProduct, Target,
     },
     libdd_common::Endpoint,
     std::str::FromStr,
+    std::ops::Deref,
 };
 
 /// Manager for tracer flare functionality with optional remote configuration support.
@@ -253,7 +254,7 @@ impl TracerFlareManager {
         file: RemoteConfigFile,
     ) -> Result<FlareAction, FlareError> {
         match file.contents().as_ref() {
-            Ok(Some(data)) => self.handle_remote_config_data(data.as_ref()),
+            Ok(Some(data)) => self.handle_remote_config_data(data.deref()),
             Ok(None) => Ok(FlareAction::None),
             Err(e) => {
                 // If encounter an error we need to stop collecting
@@ -365,7 +366,7 @@ impl TryFrom<&str> for LogLevel {
 
 #[cfg(feature = "listener")]
 pub type RemoteConfigFile =
-    std::sync::Arc<RawFile<anyhow::Result<Option<Box<dyn RemoteConfigParsedData>>>>>;
+    std::sync::Arc<RawFile<anyhow::Result<Option<RemoteConfigParsed>>>>;
 #[cfg(feature = "listener")]
 pub type Listener = SingleChangesFetcher<ParsedFileStorage>;
 
@@ -386,7 +387,7 @@ impl TryFrom<RemoteConfigFile> for FlareAction {
     /// * `FlareError(msg)` - If something fail.
     fn try_from(file: RemoteConfigFile) -> Result<Self, Self::Error> {
         match file.contents().as_ref() {
-            Ok(Some(data)) => data.as_ref().try_into(),
+            Ok(Some(data)) => data.deref().try_into(),
             Ok(None) => Ok(FlareAction::None),
             Err(e) => Err(FlareError::ParsingError(e.to_string())),
         }
@@ -486,7 +487,7 @@ pub async fn run_remote_config_listener(
                 } else if let Change::Remove(file) = change {
                     match file.contents().as_ref() {
                         Ok(Some(data)) => {
-                            if data.as_any().downcast_ref::<AgentConfigFile>().is_some()
+                            if data.downcast::<AgentConfigFile>().is_some()
                                 && state == FlareAction::None
                             {
                                 state = FlareAction::Unset;

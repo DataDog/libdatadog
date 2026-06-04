@@ -894,8 +894,8 @@ mod tests {
             assert_eq!(value.config_id, PATH_FIRST.config_id);
             assert_eq!(value.source, PATH_FIRST.source);
             assert_eq!(value.name, PATH_FIRST.name);
-            let parsed = value.data.as_deref().expect("dynamic config must parse");
-            if let Some(cfg) = parsed.as_any().downcast_ref::<DynamicConfigFile>() {
+            let parsed = value.data.as_ref().expect("dynamic config must parse");
+            if let Some(cfg) = parsed.downcast::<DynamicConfigFile>() {
                 assert!(matches!(
                     <Vec<Configs>>::from(cfg.lib_config.clone())[0],
                     Configs::TracingEnabled(true)
@@ -1082,10 +1082,9 @@ mod tests {
                 RemoteConfigProduct::LiveDebugger,
                 "must be parsed as LiveDebugger, not skipped"
             );
-            let data = value.data.as_deref().expect("LiveDebugger must parse");
+            let data = value.data.as_ref().expect("LiveDebugger must parse");
             let parsed = data
-                .as_any()
-                .downcast_ref::<LiveDebuggingData>()
+                .downcast::<LiveDebuggingData>()
                 .expect("downcast to LiveDebuggingData should succeed");
             match parsed {
                 LiveDebuggingData::ServiceConfiguration(sc) => assert_eq!(sc.id, "ld-1"),

@@ -3,8 +3,8 @@
 
 use crate::fetch::FileStorage;
 use crate::file_change_tracker::{FilePath, UpdatedFiles};
-use crate::parse::{default_registry, ParserRegistry, RemoteConfigParsedData};
-use crate::RemoteConfigPath;
+use crate::parse::{default_registry, ParserRegistry};
+use crate::{RemoteConfigParsed, RemoteConfigPath};
 use libdd_common::MutexExt;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -141,7 +141,7 @@ pub type SimpleFileStorage = RawFileStorage<RawBytesParser>;
 pub struct RegistryParser(pub Arc<ParserRegistry>);
 
 impl ParseFile for RegistryParser {
-    type Parsed = anyhow::Result<Option<Box<dyn RemoteConfigParsedData>>>;
+    type Parsed = anyhow::Result<Option<RemoteConfigParsed>>;
 
     fn parse(&self, path: &RemoteConfigPath, contents: Vec<u8>) -> Self::Parsed {
         self.0.parse(path.product, &contents)

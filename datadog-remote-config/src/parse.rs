@@ -9,7 +9,7 @@ use crate::{
     },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
-use std::any::Any;
+use std::{any::Any, ops::Deref};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result};
 
@@ -23,6 +23,22 @@ pub trait RemoteConfigParsedData: Any + Debug + Send + Sync + 'static {
 impl<T: RemoteConfigContent> RemoteConfigParsedData for T {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[derive(Debug)]
+pub struct RemoteConfigParsed(Box<dyn RemoteConfigParsedData>);
+
+impl RemoteConfigParsed {
+    pub fn downcast<T: Any>(&self) -> Option<&T> {
+        self.0.as_any().downcast_ref::<T>()
+    }
+}
+
+impl Deref for RemoteConfigParsed {
+    type Target = dyn RemoteConfigParsedData;
+    fn deref(&self) -> &Self::Target {
+        &*self.0
     }
 }
 
@@ -50,7 +66,7 @@ pub trait RemoteConfigContent: Any + Debug + Send + Sync + 'static {
 
 /// A product-specific parser: converts raw bytes into a parsed payload.
 pub type ProductParser =
-    Box<dyn Fn(&[u8]) -> anyhow::Result<Box<dyn RemoteConfigParsedData>> + Send + Sync>;
+    Box<dyn Fn(&[u8]) -> anyhow::Result<RemoteConfigParsed> + Send + Sync>;
 
 /// Returned by [`ParserRegistry::register`] when a parser is already registered for a product.
 #[derive(Debug)]
@@ -102,7 +118,7 @@ impl ParserRegistry {
     ) -> std::result::Result<Self, AlreadyRegistered> {
         let parser: ProductParser = Box::new(|data: &[u8]| {
             let parsed = T::parse(data)?;
-            Ok(Box::new(parsed) as Box<dyn RemoteConfigParsedData>)
+            Ok(RemoteConfigParsed(Box::new(parsed)))
         });
         self.register(T::PRODUCT, parser)?;
         Ok(self)
@@ -114,7 +130,7 @@ impl ParserRegistry {
         &self,
         product: RemoteConfigProduct,
         data: &[u8],
-    ) -> anyhow::Result<Option<Box<dyn RemoteConfigParsedData>>> {
+    ) -> anyhow::Result<Option<RemoteConfigParsed>> {
         match self.parsers.get(&product) {
             Some(parser) => parser(data).map(Some),
             None => Ok(None),
@@ -174,7 +190,7 @@ pub fn default_registry() -> ParserRegistry {
 pub struct RemoteConfigValue {
     pub source: RemoteConfigSource,
     pub product: RemoteConfigProduct,
-    pub data: Option<Box<dyn RemoteConfigParsedData>>,
+    pub data: Option<RemoteConfigParsed>,
     pub config_id: String,
     pub name: String,
 }
