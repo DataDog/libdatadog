@@ -174,6 +174,7 @@ pub trait MultiTargetHandlers<
 
 struct RuntimeInfo<N: NotifyTarget> {
     notify_target: N,
+    session_id: String,
     targets: HashMap<Arc<Target>, u32>,
 }
 
@@ -212,7 +213,8 @@ where
 
     fn remove_target(
         self: &Arc<Self>,
-        runtime_id: &str,
+        instance_runtime_id: &str,
+        session_id: &str,
         target: &Arc<Target>,
         runtimes: MutexGuard<HashMap<String, RuntimeInfo<N>>>,
     ) {
@@ -229,13 +231,19 @@ where
                             match *status {
                                 KnownTargetStatus::Removing(ref future) => {
                                     let future = future.clone();
-                                    let runtime_id = runtime_id.to_string();
+                                    let instance_runtime_id = instance_runtime_id.to_string();
+                                    let session_id = session_id.to_string();
                                     let this = self.clone();
                                     let target = target.clone();
                                     tokio::spawn(async move {
                                         future.await;
                                         let runtimes = this.runtimes.lock_or_panic();
-                                        this.remove_target(runtime_id.as_str(), &target, runtimes);
+                                        this.remove_target(
+                                            instance_runtime_id.as_str(),
+                                            session_id.as_str(),
+                                            &target,
+                                            runtimes,
+                                        );
                                     });
                                     return;
                                 }
@@ -246,7 +254,7 @@ where
                             }
                         }
                         1 => {
-                            known_service.runtimes.remove(runtime_id);
+                            known_service.runtimes.remove(instance_runtime_id);
                             let mut status = known_service.status.lock_or_panic();
                             *status = match *status {
                                 KnownTargetStatus::Pending => KnownTargetStatus::Alive, /* not really */
@@ -265,7 +273,9 @@ where
                             0
                         }
                         _ => {
-                            if let Some(product_data) = known_service.runtimes.remove(runtime_id) {
+                            if let Some(product_data) =
+                                known_service.runtimes.remove(instance_runtime_id)
+                            {
                                 let mut update_product_data = false;
                                 for product in product_data.products {
                                     update_product_data =
@@ -285,15 +295,15 @@ where
                                 return;
                             }
                             if known_service.fetcher.runtime_id.lock_or_panic().as_str()
-                                == runtime_id
+                                == session_id
                             {
                                 'changed_rt_id: {
-                                    for (id, runtime) in runtimes.iter() {
+                                    for (_, runtime) in runtimes.iter() {
                                         if runtime.targets.len() == 1
                                             && runtime.targets.contains_key(target)
                                         {
                                             *known_service.fetcher.runtime_id.lock_or_panic() =
-                                                Arc::new(id.to_string());
+                                                Arc::new(runtime.session_id.clone());
                                             break 'changed_rt_id;
                                         }
                                     }
@@ -317,6 +327,7 @@ where
         self: &Arc<Self>,
         synthetic_id: bool,
         runtime_id: &str,
+        session_id: &str,
         target: Arc<Target>,
         product_capabilities: ProductCapabilities,
     ) {
@@ -351,12 +362,14 @@ where
                             // Avoid deadlocking between known_target.status and self.services
                             self.pending_async_insertions.fetch_add(1, Ordering::AcqRel);
                             let runtime_id = runtime_id.to_string();
+                            let session_id = session_id.to_string();
                             let this = self.clone();
                             tokio::spawn(async move {
                                 future.await;
                                 this.add_target(
                                     synthetic_id,
                                     runtime_id.as_str(),
+                                    session_id.as_str(),
                                     target,
                                     product_capabilities,
                                 );
@@ -398,7 +411,7 @@ where
                     .insert(runtime_id.to_string(), product_capabilities);
                 if !synthetic_id && known_target.synthetic_id {
                     known_target.synthetic_id = false;
-                    *known_target.fetcher.runtime_id.lock_or_panic() = Arc::new(runtime_id.into());
+                    *known_target.fetcher.runtime_id.lock_or_panic() = Arc::new(session_id.into());
                 }
             }
             Entry::Vacant(e) => {
@@ -433,7 +446,7 @@ where
                             if synthetic_id {
                                 Self::generate_synthetic_id()
                             } else {
-                                runtime_id.into()
+                                session_id.into()
                             },
                             ConfigProductCapabilities::new(
                                 product_capabilities.products,
@@ -448,6 +461,7 @@ where
 
     pub fn add_runtime(
         self: &Arc<Self>,
+        session_id: String,
         runtime_id: String,
         notify_target: N,
         target: &Arc<Target>,
@@ -480,6 +494,7 @@ where
                         self.add_target(
                             true,
                             runtime_entry.key(),
+                            session_id.as_str(),
                             target.clone(),
                             product_capabilities,
                         );
@@ -498,16 +513,28 @@ where
                 {
                     let info = RuntimeInfo {
                         notify_target,
+                        session_id: session_id.clone(),
                         targets: HashMap::from([(target.clone(), 1)]),
                     };
-                    self.add_target(false, e.key(), target.clone(), product_capabilities);
+                    self.add_target(
+                        false,
+                        e.key(),
+                        session_id.as_str(),
+                        target.clone(),
+                        product_capabilities,
+                    );
                     e.insert(info);
                 }
             }
         }
     }
 
-    pub fn delete_runtime(self: &Arc<Self>, runtime_id: &str, target: &Arc<Target>) {
+    pub fn delete_runtime(
+        self: &Arc<Self>,
+        runtime_id: &str,
+        session_id: &str,
+        target: &Arc<Target>,
+    ) {
         trace!("Removing remote config runtime: {target:?} with runtime id {runtime_id}");
         let mut runtimes = self.runtimes.lock_or_panic();
         let last_removed = {
@@ -531,7 +558,7 @@ where
         if last_removed {
             runtimes.remove(runtime_id);
         }
-        Self::remove_target(self, runtime_id, target, runtimes);
+        Self::remove_target(self, runtime_id, session_id, target, runtimes);
     }
 
     /// Sets the apply state on a stored file.
@@ -936,6 +963,7 @@ mod tests {
 
         fetcher.add_runtime(
             RT_ID_1.to_string(),
+            RT_ID_1.to_string(),
             Notifier {
                 id: 1,
                 state: state.clone(),
@@ -963,6 +991,7 @@ mod tests {
 
         fetcher.add_runtime(
             RT_ID_1.to_string(),
+            RT_ID_1.to_string(),
             Notifier {
                 id: 1,
                 state: state.clone(),
@@ -974,6 +1003,7 @@ mod tests {
             },
         );
         fetcher.add_runtime(
+            RT_ID_2.to_string(),
             RT_ID_2.to_string(),
             Notifier {
                 id: 2,
@@ -1019,6 +1049,7 @@ mod tests {
         assert_eq!(fetcher.services.lock().unwrap().len(), 2); // two fetchers
 
         fetcher.add_runtime(
+            RT_ID_3.to_string(),
             RT_ID_3.to_string(),
             Notifier {
                 id: 3,
@@ -1080,10 +1111,10 @@ mod tests {
             );
         }
 
-        fetcher.delete_runtime(RT_ID_1, &OTHER_TARGET);
-        fetcher.delete_runtime(RT_ID_1, &DUMMY_TARGET);
-        fetcher.delete_runtime(RT_ID_2, &DUMMY_TARGET);
-        fetcher.delete_runtime(RT_ID_3, &OTHER_TARGET);
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &OTHER_TARGET);
+        fetcher.delete_runtime(RT_ID_1, RT_ID_1, &DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_2, RT_ID_2, &DUMMY_TARGET);
+        fetcher.delete_runtime(RT_ID_3, RT_ID_3, &OTHER_TARGET);
 
         fetcher.shutdown();
         storage.expect_expiration(&DUMMY_TARGET);

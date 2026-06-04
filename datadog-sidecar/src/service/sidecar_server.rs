@@ -970,6 +970,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        remote_config_generation: u64,
     ) {
         self.track_instance(&instance_id);
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
@@ -985,6 +986,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         app.update_remote_config(
             &self.server.remote_configs,
             &session,
+            instance_id,
+            remote_config_generation,
             notify_target,
             dynamic_instrumentation_state,
         );
@@ -1008,6 +1011,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         app.update_remote_config(
             &self.server.remote_configs,
             &session,
+            instance_id,
+            0u64,
             notify_target,
             dynamic_instrumentation_state,
         );

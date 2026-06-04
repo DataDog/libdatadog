@@ -1350,6 +1350,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
     app_version: ffi::CharSlice,
     global_tags: &libdd_common_ffi::Vec<Tag>,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    remote_config_generation: u64,
 ) -> MaybeError {
     try_c!(blocking::set_universal_service_tags(
         transport,
@@ -1360,6 +1361,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
         app_version.to_utf8_lossy().into(),
         global_tags.to_vec(),
         dynamic_instrumentation_state,
+        remote_config_generation,
     ));
 
     MaybeError::None

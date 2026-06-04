@@ -82,6 +82,17 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
             extra,
         }
     }
+
+    /// Returns the generation of the last successfully read data, or 0 if nothing has been read.
+    pub fn last_read_generation(&self) -> u64 {
+        self.current_data
+            .as_ref()
+            .map(|d| {
+                let source_data: &RawData = d.as_slice().into();
+                source_data.meta.generation.load(Ordering::Acquire)
+            })
+            .unwrap_or(0)
+    }
 }
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
@@ -224,5 +235,11 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
 
     pub fn size(&self) -> usize {
         self.handle.lock_or_panic().as_slice().len()
+    }
+
+    pub fn current_generation(&self) -> u64 {
+        let mapped = self.handle.lock_or_panic();
+        let data = unsafe { &*(mapped.as_slice() as *const [u8] as *const RawData) };
+        data.meta.generation.load(Ordering::Acquire)
     }
 }
