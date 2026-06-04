@@ -126,7 +126,11 @@ pub enum Method {
     Options = 6,
     Trace = 7,
     Connect = 8,
-    Other = 9, //This is specified as "*" in the OpenAPI spec
+    // The OpenAPI spec uses "*" for this variant. Whether "Other" accurately
+    // describes the "*" concept (any method) or whether it should be a
+    // catch-all for unknown methods is unclear.
+    #[serde(rename = "*")]
+    Other = 9,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
