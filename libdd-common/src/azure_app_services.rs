@@ -421,7 +421,7 @@ fn resolve_instance_name(
     computer_name: Option<&str>,
 ) -> Option<String> {
     fn non_empty(s: Option<&str>) -> Option<&str> {
-        s.filter(|v| !v.trim().is_empty())
+        s.map(|v| v.trim()).filter(|v| !v.is_empty())
     }
 
     let sku_preferred = match website_sku {
