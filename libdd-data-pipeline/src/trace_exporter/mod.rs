@@ -15,6 +15,7 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
+use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -54,6 +55,49 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
+
+/// Build the HTTP headers required by the agentless intake.
+///
+/// Includes the API key, content-type, trace count, `Datadog-Meta-*` tracer headers,
+/// and entity headers (container-id / entity-id / external-env) when available.
+fn build_agentless_headers(
+    metadata: &TracerMetadata,
+    api_key: &str,
+    trace_count: usize,
+) -> Result<HeaderMap, TraceExporterError> {
+    let mut headers: HeaderMap = {
+        let tags: TracerHeaderTags = metadata.into();
+        tags.into()
+    };
+
+    let api_key_val = http::HeaderValue::from_str(api_key).map_err(|_| {
+        TraceExporterError::Internal(error::InternalErrorKind::InvalidWorkerState(
+            "Invalid Datadog API key value for dd-api-key header".to_string(),
+        ))
+    })?;
+    headers.insert(http::HeaderName::from_static("dd-api-key"), api_key_val);
+
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        libdd_common::header::APPLICATION_JSON,
+    );
+
+    headers.insert(
+        http::HeaderName::from_static("x-datadog-trace-count"),
+        http::HeaderValue::from(trace_count),
+    );
+
+    for (name, value) in libdd_common::entity_id::get_entity_headers() {
+        if let (Ok(name), Ok(value)) = (
+            http::HeaderName::from_bytes(name.as_bytes()),
+            http::HeaderValue::from_str(value),
+        ) {
+            headers.insert(name, value);
+        }
+    }
+
+    Ok(headers)
+}
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
 #[derive(Debug, Default, Clone)]
@@ -201,6 +245,9 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
+    /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
+    /// instead of via the Datadog Agent
+    agentless_config: Option<AgentlessTraceConfig>,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
@@ -469,6 +516,28 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
+    /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
+    async fn send_agentless_traces_inner<T: TraceData>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+        config: &AgentlessTraceConfig,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let trace_count = traces.len();
+        let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
+            &traces,
+            &self.metadata,
+        )
+        .map_err(|e| {
+            error!("Agentless JSON serialization error: {e}");
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+        })?;
+
+        let headers = build_agentless_headers(&self.metadata, &config.api_key, trace_count)?;
+
+        send_agentless_traces_http(&self.capabilities, config, headers, json_body).await?;
+        Ok(AgentResponse::Unchanged)
+    }
+
     /// Sends trace chunks via OTLP HTTP/JSON when OTLP config is enabled.
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
@@ -574,6 +643,18 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+
+        if let Some(ref config) = self.agentless_config {
+            // For agentless we want to tag top level spans, but not perform
+            // stats aggregation or span drops
+            if !self.client_computed_top_level {
+                for chunk in traces.iter_mut() {
+                    libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
+                }
+            }
+
+            return self.send_agentless_traces_inner(traces, config).await;
+        }
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
@@ -1849,6 +1930,156 @@ mod tests {
             result.err()
         );
         mock_otlp.assert();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_export_via_builder() {
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/input")
+                .header("Content-Type", "application/json")
+                .header("dd-api-key", "test-api-key")
+                .header("X-Datadog-Trace-Count", "1")
+                .header("datadog-meta-lang", "nodejs")
+                .header("datadog-meta-tracer-version", "1.0");
+            then.status(200).body("");
+        });
+
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://127.0.0.1:8126")
+            .set_service("svc")
+            .set_env("env")
+            .set_tracer_version("1.0")
+            .set_language("nodejs")
+            .set_language_version("v20.11.0")
+            .set_language_interpreter("v8")
+            .set_agentless_endpoint(&intake_url, "test-api-key")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            resource: BytesString::from_static("res"),
+            trace_id: 0xdeadbeef,
+            span_id: 2,
+            parent_id: 0,
+            start: 2_500_000_000,
+            duration: 1_000_000,
+            error: 0,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "Agentless send should succeed: {:?}",
+            result.err()
+        );
+        mock_intake.assert();
+
+        assert_eq!(mock_intake.calls(), 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_export_body_shape() {
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/input")
+                .body_includes("\"traces\":")
+                .body_includes("\"spans\":")
+                .body_includes("\"hostname\":\"h-1\"")
+                .body_includes("\"languageName\":\"nodejs\"")
+                .body_includes("\"_dd.compute_stats\":\"1\"")
+                .body_includes("\"_top_level\":1")
+                .body_includes("\"_trace_root\":1")
+                .body_includes("\"parent_id\":\"0000000000000000\"");
+            then.status(200).body("");
+        });
+
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://127.0.0.1:8126")
+            .set_hostname("h-1")
+            .set_service("svc")
+            .set_env("env")
+            .set_tracer_version("1.0")
+            .set_language("nodejs")
+            .set_language_version("v20.11.0")
+            .set_language_interpreter("v8")
+            .set_agentless_endpoint(&intake_url, "k")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            resource: BytesString::from_static("res"),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 0,
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        exporter.send(data.as_ref()).unwrap();
+        mock_intake.assert();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_and_otlp_both_set_otlp_wins() {
+        // OTLP intake.
+        let server = MockServer::start();
+        let mock_otlp = server.mock(|when, then| {
+            when.method(POST).path("/v1/traces");
+            then.status(200).body("");
+        });
+        let mock_agentless = server.mock(|when, then| {
+            when.method(POST).path("/v1/input");
+            then.status(200).body("");
+        });
+
+        let otlp_endpoint = format!("{}/v1/traces", server.url("/").trim_end_matches('/'));
+        let agentless_endpoint = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://127.0.0.1:8126")
+            .set_service("svc")
+            .set_tracer_version("1.0")
+            .set_language("nodejs")
+            .set_language_version("v20")
+            .set_language_interpreter("v8")
+            .set_otlp_endpoint(&otlp_endpoint)
+            .set_agentless_endpoint(&agentless_endpoint, "k")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            trace_id: 1,
+            span_id: 1,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        exporter.send(data.as_ref()).unwrap();
+
+        mock_otlp.assert();
+        // Agentless mock must NOT have been hit.
+        assert_eq!(mock_agentless.calls(), 0);
     }
 }
 

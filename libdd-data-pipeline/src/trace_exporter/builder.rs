@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agent_info::AgentInfoFetcher;
+use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::OtlpTraceConfig;
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
@@ -65,6 +66,9 @@ pub struct TraceExporterBuilder {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    agentless_endpoint: Option<String>,
+    agentless_api_key: Option<String>,
+    agentless_timeout: Option<Duration>,
 }
 
 impl TraceExporterBuilder {
@@ -286,6 +290,32 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enables agentless APM trace export and sets the intake URL and API key.
+    ///
+    /// When set, APM trace spans are sent directly to the Datadog HTTP intake in JSON format
+    /// (`POST /v1/input`) instead of through the Datadog Agent. The host language is responsible
+    /// for resolving the endpoint URL (default
+    /// `https://public-trace-http-intake.logs.{DD_SITE}` or a custom override) and the API key
+    /// from its configuration. This crate does not read environment variables.
+    ///
+    /// If OTLP is also configured via [`Self::set_otlp_endpoint`], OTLP takes precedence and a
+    /// warning is logged at build time; the agentless configuration is dropped.
+    ///
+    /// Example: `set_agentless_endpoint("https://public-trace-http-intake.logs.datadoghq.com/v1/input", "<api-key>")`
+    pub fn set_agentless_endpoint(&mut self, url: &str, api_key: &str) -> &mut Self {
+        self.agentless_endpoint = Some(url.to_owned());
+        self.agentless_api_key = Some(api_key.to_owned());
+        self
+    }
+
+    /// Sets the request timeout used by the agentless intake transport.
+    ///
+    /// Defaults to 15 seconds when not set.
+    pub fn set_agentless_timeout(&mut self, timeout: Duration) -> &mut Self {
+        self.agentless_timeout = Some(timeout);
+        self
+    }
+
     #[allow(missing_docs)]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
@@ -412,7 +442,35 @@ impl TraceExporterBuilder {
             }
         };
 
-        let otlp_config = self.otlp_endpoint.map(|url| {
+        // Resolve transport selection: OTLP takes precedence over agentless when both are set.
+        let (otlp_endpoint, agentless_endpoint, agentless_api_key) = match (
+            self.otlp_endpoint.as_ref(),
+            self.agentless_endpoint.as_ref(),
+        ) {
+            (Some(_), Some(_)) => {
+                tracing::warn!(
+                    "Both OTLP and agentless trace export are configured; OTLP takes \
+                     precedence and the agentless configuration will be ignored."
+                );
+                (self.otlp_endpoint, None, None)
+            }
+            _ => (
+                self.otlp_endpoint,
+                self.agentless_endpoint,
+                self.agentless_api_key,
+            ),
+        };
+
+        let agentless_config = match (agentless_endpoint, agentless_api_key) {
+            (Some(url), Some(api_key)) => Some(AgentlessTraceConfig {
+                endpoint_url: url,
+                api_key,
+                timeout: self.agentless_timeout.unwrap_or(DEFAULT_AGENTLESS_TIMEOUT),
+            }),
+            _ => None,
+        };
+
+        let otlp_config = otlp_endpoint.map(|url| {
             let mut headers = http::HeaderMap::new();
             for (key, value) in self.otlp_headers {
                 match (
@@ -495,6 +553,7 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
+            agentless_config,
         })
     }
 
