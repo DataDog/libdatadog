@@ -9,9 +9,9 @@ use crate::{
     },
     RemoteConfigPath, RemoteConfigProduct, RemoteConfigSource,
 };
-use std::{any::Any, ops::Deref};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter, Result};
+use std::{any::Any, ops::Deref};
 
 /// Opaque parsed payload of a remote config product. Implemented by every type that impls
 /// [`RemoteConfigContent`]; product crates do not implement this trait directly.
@@ -65,8 +65,7 @@ pub trait RemoteConfigContent: Any + Debug + Send + Sync + 'static {
 }
 
 /// A product-specific parser: converts raw bytes into a parsed payload.
-pub type ProductParser =
-    Box<dyn Fn(&[u8]) -> anyhow::Result<RemoteConfigParsed> + Send + Sync>;
+pub type ProductParser = Box<dyn Fn(&[u8]) -> anyhow::Result<RemoteConfigParsed> + Send + Sync>;
 
 /// Returned by [`ParserRegistry::register`] when a parser is already registered for a product.
 #[derive(Debug)]
@@ -113,9 +112,7 @@ impl ParserRegistry {
     /// Builder-style registration of a typed [`RemoteConfigContent`] implementor.
     /// Returns `Err(AlreadyRegistered)` if `T::PRODUCT` is already registered, so chains can
     /// propagate the collision instead of panicking.
-    pub fn with<T: RemoteConfigContent>(
-        mut self,
-    ) -> std::result::Result<Self, AlreadyRegistered> {
+    pub fn with<T: RemoteConfigContent>(mut self) -> std::result::Result<Self, AlreadyRegistered> {
         let parser: ProductParser = Box::new(|data: &[u8]| {
             let parsed = T::parse(data)?;
             Ok(RemoteConfigParsed(Box::new(parsed)))

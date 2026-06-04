@@ -29,11 +29,11 @@ use {
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
         file_change_tracker::Change,
         file_storage::{ParsedFileStorage, RawFile},
-        RemoteConfigParsed,RemoteConfigProduct, Target,
+        RemoteConfigParsed, RemoteConfigProduct, Target,
     },
     libdd_common::Endpoint,
-    std::str::FromStr,
     std::ops::Deref,
+    std::str::FromStr,
 };
 
 /// Manager for tracer flare functionality with optional remote configuration support.
@@ -365,8 +365,7 @@ impl TryFrom<&str> for LogLevel {
 }
 
 #[cfg(feature = "listener")]
-pub type RemoteConfigFile =
-    std::sync::Arc<RawFile<anyhow::Result<Option<RemoteConfigParsed>>>>;
+pub type RemoteConfigFile = std::sync::Arc<RawFile<anyhow::Result<Option<RemoteConfigParsed>>>>;
 #[cfg(feature = "listener")]
 pub type Listener = SingleChangesFetcher<ParsedFileStorage>;
 
