@@ -50,6 +50,16 @@ enum SendData {
     },
 }
 
+/// Returns a static name for a debugger track, used for logging without
+/// allocating a string on every send.
+fn debugger_type_name(debugger_type: DebuggerType) -> &'static str {
+    match debugger_type {
+        DebuggerType::Diagnostics => "Diagnostics",
+        DebuggerType::Snapshots => "Snapshots",
+        DebuggerType::Logs => "Logs",
+    }
+}
+
 async fn sender_routine(config: Arc<Config>, tags: String, mut receiver: mpsc::Receiver<SendData>) {
     let tags = Arc::new(tags);
     let tracker = TaskTracker::new();
@@ -64,14 +74,14 @@ async fn sender_routine(config: Arc<Config>, tags: String, mut receiver: mpsc::R
         tracker.spawn(async move {
             let (kind, len, result) = match data {
                 SendData::Raw(ref vec, r#type) => (
-                    format!("{type:?}"),
+                    debugger_type_name(r#type),
                     vec.len(),
                     sender::send(vec.as_slice(), &config, r#type, &tags).await,
                 ),
                 SendData::Wrapped(ref wrapped, r#type) => {
                     let bytes = wrapped.slice.as_bytes();
                     (
-                        format!("{type:?}"),
+                        debugger_type_name(r#type),
                         bytes.len(),
                         sender::send(bytes, &config, r#type, &tags).await,
                     )
@@ -82,7 +92,7 @@ async fn sender_routine(config: Arc<Config>, tags: String, mut receiver: mpsc::R
                 } => {
                     let bytes = data.slice.as_bytes();
                     (
-                        "SymDB".to_string(),
+                        "SymDB",
                         bytes.len(),
                         sender::send_symdb(bytes, content_type, &config, &tags).await,
                     )

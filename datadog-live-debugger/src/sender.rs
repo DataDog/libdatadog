@@ -423,13 +423,17 @@ pub async fn send(
         .split_first()
         .ok_or_else(|| anyhow::anyhow!("no endpoint configured for {debugger_type:?}"))?;
 
+    // Send the primary first so a slow or stalled additional endpoint cannot
+    // delay the intake whose result the caller actually depends on.
+    let result = send_to_endpoint(payload, primary, debugger_type, percent_encoded_tags).await;
+
     // Best-effort dual-shipping to any additional endpoints, mirroring the
     // agent's `*_additional_endpoints` fan-out where non-primary responses are
     // discarded. Only the primary endpoint's result is returned to the caller.
     for &endpoint in additional {
         let _ = send_to_endpoint(payload, endpoint, debugger_type, percent_encoded_tags).await;
     }
-    send_to_endpoint(payload, primary, debugger_type, percent_encoded_tags).await
+    result
 }
 
 async fn send_to_endpoint(
@@ -459,10 +463,14 @@ pub async fn send_symdb(
         .split_first()
         .ok_or_else(|| anyhow::anyhow!("no symdb endpoint configured"))?;
 
+    // Send the primary first so a slow or stalled additional endpoint cannot
+    // delay the intake whose result the caller actually depends on.
+    let result = send_symdb_to_endpoint(payload, content_type, primary, tags).await;
+
     for &endpoint in additional {
         let _ = send_symdb_to_endpoint(payload, content_type, endpoint, tags).await;
     }
-    send_symdb_to_endpoint(payload, content_type, primary, tags).await
+    result
 }
 
 async fn send_symdb_to_endpoint(
