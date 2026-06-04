@@ -281,18 +281,13 @@ fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> an
             config_builder = config_builder.endpoint_test_token(test_token);
         }
     }
-    let mut tags = vec![
+    let tags = vec![
         "is_crash:true".to_string(),
         "severity:crash".to_string(),
         format!("library_version:{}", crate::sidecar_version!()),
         "library:sidecar".to_string(),
         "language:native".to_string(),
     ];
-    if let Ok(env) = std::env::var("DD_ENV") {
-        if !env.is_empty() {
-            tags.push(format!("env:{env}"));
-        }
-    }
 
     libdd_crashtracker::init(
         config_builder.build()?,
