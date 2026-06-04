@@ -13,6 +13,7 @@ use libdd_telemetry::worker::{
 };
 use libdd_trace_utils::{
     send_with_retry::{SendWithRetryError, SendWithRetryResult},
+    span::trace_utils::DroppedStats,
     trace_utils::SendDataResult,
 };
 use std::{collections::HashMap, time::Duration};
@@ -194,15 +195,16 @@ impl SendPayloadTelemetry {
     /// * `value` - The result of sending traces with retry
     /// * `bytes_sent` - The number of bytes in the payload
     /// * `chunks` - The number of trace chunks in the payload
-    /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
+    /// * `dropped_stats` - Trace dropped stats from `stats::process_traces_for_stats`
     pub fn from_retry_result(
         value: &SendWithRetryResult,
         bytes_sent: u64,
         chunks: u64,
-        chunks_dropped_p0: u64,
+        dropped_stats: DroppedStats,
     ) -> Self {
         let mut telemetry = Self {
-            chunks_dropped_p0,
+            chunks_dropped_p0: dropped_stats.dropped_p0_traces as u64,
+            chunks_dropped_by_trace_filter: dropped_stats.dropped_by_trace_filter as u64,
             ..Default::default()
         };
         match value {
@@ -712,7 +714,16 @@ mod tests {
                 .unwrap(),
             3,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(
+            &result,
+            4,
+            5,
+            DroppedStats {
+                dropped_p0_traces: 0,
+                dropped_p0_spans: 0,
+                dropped_by_trace_filter: 0,
+            },
+        );
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -734,7 +745,16 @@ mod tests {
                 .unwrap(),
             3,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 10);
+        let telemetry = SendPayloadTelemetry::from_retry_result(
+            &result,
+            4,
+            5,
+            DroppedStats {
+                dropped_p0_traces: 10,
+                dropped_p0_spans: 0,
+                dropped_by_trace_filter: 0,
+            },
+        );
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -755,7 +775,16 @@ mod tests {
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(
+            &result,
+            1,
+            2,
+            DroppedStats {
+                dropped_p0_traces: 0,
+                dropped_p0_spans: 0,
+                dropped_by_trace_filter: 0,
+            },
+        );
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -774,7 +803,16 @@ mod tests {
             HttpError::Network(anyhow::anyhow!("connection refused")),
             5,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(
+            &result,
+            1,
+            2,
+            DroppedStats {
+                dropped_p0_traces: 0,
+                dropped_p0_spans: 0,
+                dropped_by_trace_filter: 0,
+            },
+        );
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -789,7 +827,16 @@ mod tests {
     #[test]
     fn telemetry_from_timeout_error_test() {
         let result = Err(SendWithRetryError::Timeout(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(
+            &result,
+            1,
+            2,
+            DroppedStats {
+                dropped_p0_traces: 0,
+                dropped_p0_spans: 0,
+                dropped_by_trace_filter: 0,
+            },
+        );
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -805,7 +852,16 @@ mod tests {
     #[test]
     fn telemetry_from_build_error_test() {
         let result = Err(SendWithRetryError::Build(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(
+            &result,
+            1,
+            2,
+            DroppedStats {
+                dropped_p0_traces: 0,
+                dropped_p0_spans: 0,
+                dropped_by_trace_filter: 0,
+            },
+        );
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {

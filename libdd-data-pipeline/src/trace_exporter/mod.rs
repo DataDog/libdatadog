@@ -10,6 +10,7 @@ mod trace_serializer;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
+use libdd_trace_utils::span::trace_utils::DroppedStats;
 
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
@@ -549,7 +550,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         mp_payload: Vec<u8>,
         headers: HeaderMap,
         chunks: usize,
-        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))] chunks_dropped_p0: usize,
+        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+        dropped_stats: DroppedStats,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
@@ -570,7 +572,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 &result,
                 payload_len as u64,
                 chunks as u64,
-                chunks_dropped_p0 as u64,
+                dropped_stats,
             )) {
                 error!(?e, "Error sending telemetry");
             }
@@ -587,7 +589,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
-        let dropped_p0_stats = stats::process_traces_for_stats(
+        let dropped_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
@@ -639,7 +641,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 prepared.data,
                 prepared.headers,
                 prepared.chunk_count,
-                dropped_p0_stats.dropped_p0_traces,
+                dropped_stats,
             )
             .await;
 
