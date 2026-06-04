@@ -681,10 +681,10 @@ mod tests {
                 "00000000-0000-0000-0000-000000000000+flex-EastUSwebspace-Linux",
             ),
             (WEBSITE_SKU, "FlexConsumption"),
-            (SERVICE_CONTEXT, "1"),
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env).unwrap();
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
 
         assert_eq!(metadata.get_resource_group(), UNKNOWN_VALUE);
     }
@@ -698,10 +698,10 @@ mod tests {
             ),
             (DD_AZURE_RESOURCE_GROUP, "test-flex-rg"),
             (WEBSITE_SKU, "FlexConsumption"),
-            (SERVICE_CONTEXT, "1"),
+            (FUNCTIONS_WORKER_RUNTIME, "node"),
         ]);
 
-        let metadata = AzureMetadata::new(mocked_env).unwrap();
+        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
 
         // Should use the DD_AZURE_RESOURCE_GROUP value instead of extracting from
         // WEBSITE_OWNER_NAME
