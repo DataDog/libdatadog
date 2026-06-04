@@ -222,8 +222,8 @@ impl TraceFilterer {
             !should_drop
         });
         let traces_count_after = traces.len();
-        let dropped_by_trace_filter = traces_count_before - traces_count_after;
-        dropped_by_trace_filter
+
+        traces_count_before - traces_count_after
     }
 
     /// Checks if the trace with root span `root_span` should be dropped based on filter
