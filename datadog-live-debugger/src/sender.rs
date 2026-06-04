@@ -4,6 +4,7 @@
 use crate::debugger_defs::{DebuggerData, DebuggerPayload};
 use bytes::Bytes;
 use constcat::concat;
+use futures::future;
 use http::uri::PathAndQuery;
 use http::{Method, Uri};
 use http_body_util::BodyExt;
@@ -13,6 +14,7 @@ use libdd_common::Endpoint;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use percent_encoding::{percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::hash::Hash;
@@ -26,10 +28,13 @@ const DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH: &str = "/api/v2/debugger";
 const AGENT_DEBUGGER_SNAPSHOTS_URL_PATH: &str = "/debugger/v2/input";
 const AGENT_DEBUGGER_DIAGNOSTICS_URL_PATH: &str = "/debugger/v1/diagnostics";
 
-// The symbol database (SymDB) intake shares the debugger-intake host. Direct
-// (agentless) uploads target /api/v2/debugger, while the agent exposes the
-// /symdb/v1/input proxy route.
-const DIRECT_SYMDB_URL_PATH: &str = "/api/v2/debugger";
+// The symbol database (SymDB) intake shares the debugger-intake host. For
+// agentless uploads SymDB intentionally reuses the same `/api/v2/debugger`
+// route as the diagnostics track (the intake demultiplexes by payload, not
+// path) - this equality is deliberate, not a copy-paste, so it is derived from
+// the diagnostics constant to keep the two in lockstep. The agent, by contrast,
+// exposes a distinct `/symdb/v1/input` proxy route.
+const DIRECT_SYMDB_URL_PATH: &str = DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH;
 const AGENT_SYMDB_URL_PATH: &str = "/symdb/v1/input";
 
 /// Creates an [`Endpoint`] for sending debugger and SymDB payloads directly to
@@ -170,8 +175,9 @@ impl Config {
     }
 
     /// Returns the endpoints for a debugger track: the primary endpoint first,
-    /// followed by any additional dual-ship endpoints.
-    fn debugger_endpoints_for(&self, debugger_type: DebuggerType) -> Vec<&Endpoint> {
+    /// followed by any additional dual-ship endpoints. Inlined for the common
+    /// single-endpoint case so the hot send path does not allocate.
+    fn debugger_endpoints_for(&self, debugger_type: DebuggerType) -> SmallVec<[&Endpoint; 1]> {
         let (primary, additional) = match debugger_type {
             DebuggerType::Diagnostics => (
                 &self.diagnostics_endpoint,
@@ -183,16 +189,17 @@ impl Config {
             ),
             DebuggerType::Logs => (&self.logs_endpoint, &self.additional_logs_endpoints),
         };
-        let mut endpoints = Vec::with_capacity(1 + additional.len());
+        let mut endpoints = SmallVec::new();
         endpoints.extend(primary.as_ref());
         endpoints.extend(additional.iter());
         endpoints
     }
 
     /// Returns the SymDB endpoints: the primary endpoint first, followed by any
-    /// additional dual-ship endpoints.
-    fn symdb_endpoints(&self) -> Vec<&Endpoint> {
-        let mut endpoints = Vec::with_capacity(1 + self.additional_symdb_endpoints.len());
+    /// additional dual-ship endpoints. Inlined for the common single-endpoint
+    /// case so the hot send path does not allocate.
+    fn symdb_endpoints(&self) -> SmallVec<[&Endpoint; 1]> {
+        let mut endpoints = SmallVec::new();
         endpoints.extend(self.symdb_endpoint.as_ref());
         endpoints.extend(self.additional_symdb_endpoints.iter());
         endpoints
@@ -423,16 +430,17 @@ pub async fn send(
         .split_first()
         .ok_or_else(|| anyhow::anyhow!("no endpoint configured for {debugger_type:?}"))?;
 
-    // Send the primary first so a slow or stalled additional endpoint cannot
-    // delay the intake whose result the caller actually depends on.
-    let result = send_to_endpoint(payload, primary, debugger_type, percent_encoded_tags).await;
-
-    // Best-effort dual-shipping to any additional endpoints, mirroring the
-    // agent's `*_additional_endpoints` fan-out where non-primary responses are
-    // discarded. Only the primary endpoint's result is returned to the caller.
-    for &endpoint in additional {
-        let _ = send_to_endpoint(payload, endpoint, debugger_type, percent_encoded_tags).await;
-    }
+    // Send the primary and any additional dual-ship endpoints concurrently,
+    // mirroring the agent's `*_additional_endpoints` fan-out. Additional
+    // responses are best-effort and discarded; only the primary endpoint's
+    // result is returned to the caller. Running concurrently keeps a slow or
+    // stalled additional endpoint from delaying the primary.
+    let primary_send = send_to_endpoint(payload, primary, debugger_type, percent_encoded_tags);
+    let additional_sends =
+        future::join_all(additional.iter().map(|&endpoint| {
+            send_to_endpoint(payload, endpoint, debugger_type, percent_encoded_tags)
+        }));
+    let (result, _) = future::join(primary_send, additional_sends).await;
     result
 }
 
@@ -463,13 +471,15 @@ pub async fn send_symdb(
         .split_first()
         .ok_or_else(|| anyhow::anyhow!("no symdb endpoint configured"))?;
 
-    // Send the primary first so a slow or stalled additional endpoint cannot
-    // delay the intake whose result the caller actually depends on.
-    let result = send_symdb_to_endpoint(payload, content_type, primary, tags).await;
-
-    for &endpoint in additional {
-        let _ = send_symdb_to_endpoint(payload, content_type, endpoint, tags).await;
-    }
+    // Send the primary and any additional dual-ship endpoints concurrently;
+    // additional responses are best-effort and discarded.
+    let primary_send = send_symdb_to_endpoint(payload, content_type, primary, tags);
+    let additional_sends = future::join_all(
+        additional
+            .iter()
+            .map(|&endpoint| send_symdb_to_endpoint(payload, content_type, endpoint, tags)),
+    );
+    let (result, _) = future::join(primary_send, additional_sends).await;
     result
 }
 
