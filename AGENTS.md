@@ -56,6 +56,9 @@ Iterate fastest with `cargo check -p <crate>` while editing; the full validation
   ```
 - **test_spawn_from_lib**: `cargo nextest run --package test_spawn_from_lib --features prefer-dynamic`.
 
+### Code exploration
+
+When searching for code with `grep` or `find`, always exclude the `./target` directory. Only search in it if specifically looking for build artifacts
 
 ## Key Conventions
 

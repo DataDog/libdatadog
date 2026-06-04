@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfigTarget {
     #[serde(default)]
@@ -13,7 +13,7 @@ pub struct DynamicConfigTarget {
     pub env: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
 pub struct DynamicConfigFile {
     pub action: String,
@@ -76,7 +76,7 @@ pub struct TracingSamplingRule {
     pub sample_rate: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfig {
     pub(crate) tracing_header_tags: Option<Vec<TracingHeaderTag>>,

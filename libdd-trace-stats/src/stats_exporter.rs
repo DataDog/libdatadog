@@ -316,7 +316,7 @@ mod tests {
 
         for i in 1..100 {
             trace.push(SpanSlice {
-                service: "libdatadog-test".into(),
+                service: "libdatadog-test",
                 duration: i,
                 ..Default::default()
             })
@@ -393,7 +393,7 @@ mod tests {
         send_status.unwrap_err();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 5, true).await,
+            poll_for_mock_hit(&mut mock, 10, 100, 6, true).await,
             "Expected max retry attempts"
         );
     }

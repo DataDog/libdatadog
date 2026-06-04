@@ -340,50 +340,42 @@ mod tests {
     #[test]
     fn serialize_deserialize_test() {
         let span: Span<SliceData<'_>> = Span {
-            name: "tracing.operation".into(),
-            resource: "MyEndpoint".into(),
+            name: "tracing.operation",
+            resource: "MyEndpoint",
             span_links: vec![SpanLink {
                 trace_id: 42,
-                attributes: HashMap::from([("span".into(), "link".into())]),
-                tracestate: "running".into(),
+                attributes: HashMap::from([("span", "link")]),
+                tracestate: "running",
                 ..Default::default()
             }],
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
-                name: "exception".into(),
+                name: "exception",
                 attributes: HashMap::from([
                     (
-                        "exception.message".into(),
+                        "exception.message",
                         AttributeAnyValue::SingleValue(AttributeArrayValue::String(
-                            "Cannot divide by zero".into(),
+                            "Cannot divide by zero",
                         )),
                     ),
                     (
-                        "exception.type".into(),
-                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(
-                            "RuntimeError".into(),
-                        )),
+                        "exception.type",
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String("RuntimeError")),
                     ),
                     (
-                        "exception.escaped".into(),
+                        "exception.escaped",
                         AttributeAnyValue::SingleValue(AttributeArrayValue::Boolean(false)),
                     ),
                     (
-                        "exception.count".into(),
+                        "exception.count",
                         AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(1)),
                     ),
                     (
-                        "exception.lines".into(),
+                        "exception.lines",
                         AttributeAnyValue::Array(vec![
-                            AttributeArrayValue::String(
-                                "  File \"<string>\", line 1, in <module>".into(),
-                            ),
-                            AttributeArrayValue::String(
-                                "  File \"<string>\", line 1, in divide".into(),
-                            ),
-                            AttributeArrayValue::String(
-                                "RuntimeError: Cannot divide by zero".into(),
-                            ),
+                            AttributeArrayValue::String("  File \"<string>\", line 1, in <module>"),
+                            AttributeArrayValue::String("  File \"<string>\", line 1, in divide"),
+                            AttributeArrayValue::String("RuntimeError: Cannot divide by zero"),
                         ]),
                     ),
                 ]),
@@ -424,9 +416,9 @@ mod tests {
         let span: Span<SliceData<'_>> = Span {
             span_events: vec![SpanEvent {
                 time_unix_nano: 1727211691770716000,
-                name: "test".into(),
+                name: "test",
                 attributes: HashMap::from([(
-                    "test.event".into(),
+                    "test.event",
                     AttributeAnyValue::SingleValue(AttributeArrayValue::Double(4.2)),
                 )]),
             }],
