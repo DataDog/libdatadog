@@ -1127,8 +1127,8 @@ mod tests {
             span_id,
             trace_id,
             parent_id,
-            meta: Vec::with_capacity(8),
-            metrics: Vec::with_capacity(4),
+            meta: VecMap::with_capacity(8),
+            metrics: VecMap::with_capacity(4),
             ..Default::default()
         };
         let idx = slot as usize;
@@ -1136,8 +1136,8 @@ mod tests {
             state.spans.resize_with(idx + 1, || None);
         }
         if idx >= state.deferred_meta.len() {
-            state.deferred_meta.resize_with(idx + 1, Vec::new);
-            state.deferred_metrics.resize_with(idx + 1, Vec::new);
+            state.deferred_meta.resize_with(idx + 1, VecMap::new);
+            state.deferred_metrics.resize_with(idx + 1, VecMap::new);
         }
         state.spans[idx] = Some(span);
         state.deferred_meta[idx].clear();
@@ -1247,7 +1247,7 @@ mod tests {
         // Meta is deferred — materialize before reading
         state.materialize_slot(0);
         let span = state.get_span(0)?;
-        assert_eq!(vec_get(&span.meta, &Cow::from("http.method")), Some(&Cow::from("GET")));
+        assert_eq!(span.meta.get(&Cow::from("http.method")), Some(&Cow::from("GET")));
         Ok(())
     }
 
@@ -1268,7 +1268,7 @@ mod tests {
         // Metrics are deferred — materialize before reading
         state.materialize_slot(0);
         let span = state.get_span(0)?;
-        assert_eq!(vec_get(&span.metrics, &Cow::from("my.metric")), Some(&99.5));
+        assert_eq!(span.metrics.get(&Cow::from("my.metric")), Some(&99.5));
         Ok(())
     }
 
@@ -1377,7 +1377,7 @@ mod tests {
         state.flush_change_buffer()?;
 
         let trace = state.get_trace(&100).unwrap();
-        assert_eq!(vec_get(&trace.meta, &Cow::from("env")), Some(&Cow::from("production")));
+        assert_eq!(trace.meta.get(&Cow::from("env")), Some(&Cow::from("production")));
         Ok(())
     }
 
@@ -1397,7 +1397,7 @@ mod tests {
 
         let trace = state.get_trace(&100).unwrap();
         assert_eq!(
-            vec_get(&trace.metrics, &Cow::from("_sampling_priority_v1")),
+            trace.metrics.get(&Cow::from("_sampling_priority_v1")),
             Some(&0.75)
         );
         Ok(())
@@ -1497,9 +1497,9 @@ mod tests {
         let spans = state.flush_chunk(vec![0, 1], true)?;
 
         // First span (local root) gets _dd.top_level
-        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.top_level")), Some(&1.0));
+        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.top_level")), Some(&1.0));
         // Second span does not
-        assert_eq!(vec_get(&spans[1].metrics, &Cow::from("_dd.top_level")), None);
+        assert_eq!(spans[1].metrics.get(&Cow::from("_dd.top_level")), None);
         Ok(())
     }
 
@@ -1519,9 +1519,9 @@ mod tests {
 
         let spans = state.flush_chunk(vec![0], true)?;
 
-        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.rule_psr")), Some(&0.5));
-        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.limit_psr")), Some(&0.8));
-        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.agent_psr")), Some(&1.0));
+        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.rule_psr")), Some(&0.5));
+        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.limit_psr")), Some(&0.8));
+        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.agent_psr")), Some(&1.0));
         Ok(())
     }
 
@@ -1536,21 +1536,21 @@ mod tests {
 
         // Set trace-level meta and metrics
         let trace = state.traces.get_mut(&100).unwrap();
-        vec_insert(&mut trace.meta, "env".into(), "staging".into());
-        vec_insert(&mut trace.metrics, "_sampling_priority_v1".into(), 2.0);
+        trace.meta.insert("env".into(), "staging".into());
+        trace.metrics.insert("_sampling_priority_v1".into(), 2.0);
 
         let spans = state.flush_chunk(vec![0, 1], false)?;
 
         // First span (chunk root) gets trace tags
-        assert_eq!(vec_get(&spans[0].meta, &Cow::from("env")), Some(&Cow::from("staging")));
+        assert_eq!(spans[0].meta.get(&Cow::from("env")), Some(&Cow::from("staging")));
         assert_eq!(
-            vec_get(&spans[0].metrics, &Cow::from("_sampling_priority_v1")),
+            spans[0].metrics.get(&Cow::from("_sampling_priority_v1")),
             Some(&2.0)
         );
         // Second span does not get trace-level tags
-        assert_eq!(vec_get(&spans[1].meta, &Cow::from("env")), None);
+        assert_eq!(spans[1].meta.get(&Cow::from("env")), None);
         assert_eq!(
-            vec_get(&spans[1].metrics, &Cow::from("_sampling_priority_v1")),
+            spans[1].metrics.get(&Cow::from("_sampling_priority_v1")),
             None
         );
         Ok(())
@@ -1567,8 +1567,8 @@ mod tests {
         create_span_directly(&mut state, 0, 1, 100, 0);
 
         let spans = state.flush_chunk(vec![0], false)?;
-        assert_eq!(vec_get(&spans[0].meta, &Cow::from("language")), Some(&Cow::from("rust")));
-        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("process_id")), Some(&1234.0));
+        assert_eq!(spans[0].meta.get(&Cow::from("language")), Some(&Cow::from("rust")));
+        assert_eq!(spans[0].metrics.get(&Cow::from("process_id")), Some(&1234.0));
         Ok(())
     }
 
@@ -1583,7 +1583,7 @@ mod tests {
 
         let spans = state.flush_chunk(vec![0], false)?;
         assert_eq!(
-            vec_get(&spans[0].meta, &Cow::from("_dd.origin")),
+            spans[0].meta.get(&Cow::from("_dd.origin")),
             Some(&Cow::from("synthetics"))
         );
         Ok(())
@@ -1596,14 +1596,13 @@ mod tests {
         let mut state = make_state(buf);
 
         create_span_directly(&mut state, 0, 1, 100, 0);
-        vec_insert(
-            &mut state.spans[0].as_mut().unwrap().meta,
+        state.spans[0].as_mut().unwrap().meta.insert(
             "kind".into(),
             "client".into(),
         );
 
         let spans = state.flush_chunk(vec![0], false)?;
-        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.measured")), Some(&1.0));
+        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.measured")), Some(&1.0));
         Ok(())
     }
 
@@ -1614,14 +1613,13 @@ mod tests {
         let mut state = make_state(buf);
 
         create_span_directly(&mut state, 0, 1, 100, 0);
-        vec_insert(
-            &mut state.spans[0].as_mut().unwrap().meta,
+        state.spans[0].as_mut().unwrap().meta.insert(
             "kind".into(),
             "internal".into(),
         );
 
         let spans = state.flush_chunk(vec![0], false)?;
-        assert_eq!(vec_get(&spans[0].metrics, &Cow::from("_dd.measured")), None);
+        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.measured")), None);
         Ok(())
     }
 
@@ -1636,7 +1634,7 @@ mod tests {
 
         let spans = state.flush_chunk(vec![0], false)?;
         assert_eq!(
-            vec_get(&spans[0].meta, &Cow::from("_dd.base_service")),
+            spans[0].meta.get(&Cow::from("_dd.base_service")),
             Some(&Cow::from("my-service"))
         );
         Ok(())
@@ -1652,7 +1650,7 @@ mod tests {
         state.spans[0].as_mut().unwrap().service = "my-service".into();
 
         let spans = state.flush_chunk(vec![0], false)?;
-        assert_eq!(vec_get(&spans[0].meta, &Cow::from("_dd.base_service")), None);
+        assert_eq!(spans[0].meta.get(&Cow::from("_dd.base_service")), None);
         Ok(())
     }
 
