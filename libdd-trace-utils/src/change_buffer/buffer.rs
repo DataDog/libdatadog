@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::change_buffer::utils::*;
 use crate::change_buffer::{ChangeBufferError, Result};
 

@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 //! Change buffer operations.
 //!
 //! Operations are encoded in the change buffer, and provides an API on spans and their parts.

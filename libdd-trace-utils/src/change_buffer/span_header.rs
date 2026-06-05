@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 /// Fixed-layout span header for direct JS DataView access.
 ///
 /// JS creates a DataView over each span's header in WASM linear memory and writes fields directly.

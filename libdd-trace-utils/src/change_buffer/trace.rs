@@ -1,3 +1,6 @@
+// Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
 #[derive(Default)]
 pub struct Trace<T> {
     pub meta: Vec<(T, T)>,
