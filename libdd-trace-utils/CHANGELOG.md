@@ -2,6 +2,14 @@
 
 
 
+## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v7.0.0..libdd-trace-utils-v8.0.0) - 2026-06-05
+
+### Changed
+
+- Avoid Clone bound from dedup ([#2069](https://github.com/datadog/libdatadog/issues/2069)) - ([93e9723](https://github.com/datadog/libdatadog/commit/93e97238020b5cf1165b2583ec555d58307af3c1))
+
+
+
 ## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v6.0.1..libdd-trace-utils-v7.0.0) - 2026-06-05
 
 ### Added
