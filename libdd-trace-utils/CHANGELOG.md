@@ -2,6 +2,23 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v6.0.1..libdd-trace-utils-v7.0.0) - 2026-06-05
+
+### Added
+
+- Add dedup convenience to VecMap ([#2049](https://github.com/datadog/libdatadog/issues/2049)) - ([331b904](https://github.com/datadog/libdatadog/commit/331b90444aff0db70d37bc2d507056f19881633b))
+
+### Changed
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) ([#2073](https://github.com/datadog/libdatadog/issues/2073)) - ([a21e9d5](https://github.com/datadog/libdatadog/commit/a21e9d5eeeff0be4a1b9de8104a2cf2eae2be6a3))
+
+### Fixed
+
+- Follow max retries of the strategy ([#2047](https://github.com/datadog/libdatadog/issues/2047)) - ([0172960](https://github.com/datadog/libdatadog/commit/01729601279185fa921147959f4b5c401340b838))
+- Match the Go trace agent when parsing `datadog-client-computed-*` bool headers ([#2071](https://github.com/datadog/libdatadog/issues/2071)) - ([48da0d8](https://github.com/datadog/libdatadog/commit/48da0d82cb32b43d4cdece35b794c9bcbc275a03))
+
+
+
 ## [6.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v6.0.0..libdd-trace-utils-v6.0.1) - 2026-06-01
 
 ### Fixed
