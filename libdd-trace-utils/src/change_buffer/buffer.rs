@@ -108,10 +108,15 @@ mod tests {
 
     #[test]
     fn buffer_creation_and_slices() {
+        let raw_buf: *mut [u8; 256] = unsafe { Box::into_raw(Box::new(std::mem::zeroed())) };
+
         let mut buf = unsafe {
-            let mut buf: [u8; 256] = std::mem::zeroed();
-            ChangeBuffer::from_raw_parts(NonNull::new(buf.as_mut_ptr()).unwrap(), 256)
+            ChangeBuffer::from_raw_parts(
+                NonNull::new(raw_buf.as_mut().unwrap().as_mut_ptr()).unwrap(),
+                256,
+            )
         };
+
         {
             // Safety: slice is the only reference to the buffer in its scope.
             let slice = unsafe { buf.as_mut_slice() };
@@ -122,6 +127,8 @@ mod tests {
         let slice = unsafe { buf.as_slice() };
         assert_eq!(256, slice.len());
         assert_eq!(42, slice[1]);
+
+        let _ = unsafe { Box::from_raw(raw_buf) };
     }
 
     #[test]
