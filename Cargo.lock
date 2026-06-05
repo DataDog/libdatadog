@@ -3276,7 +3276,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "2.1.0"
+version = "3.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3440,7 +3440,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "6.0.1"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
