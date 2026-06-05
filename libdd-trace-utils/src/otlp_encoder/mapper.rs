@@ -21,7 +21,7 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 /// runtime-id). InstrumentationScope: present but empty (DD SDKs don't have a scope concept).
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
-/// meta["error.msg"].
+/// meta["error.msg"] or meta["error.message"].
 ///
 /// The high 64 bits of a 128-bit trace ID are carried in the trace_id field itself or (if not
 /// present) as the `_dd.p.tid` meta tag, which per RFC #85 is set on the chunk root only.
@@ -148,7 +148,13 @@ fn map_span<T: TraceData>(
         .unwrap_or_else(|| dd_type_to_otlp_kind(span.r#type.borrow()));
     let (attributes, dropped_attributes_count) =
         map_attributes(span, resource_service, enable_otel_trace_compatibility);
-    let error_msg = span.meta.get("error.msg").map(|v| v.borrow().to_string());
+    // DD tracers use either "error.msg" or "error.message".
+    // A span should only carry one of these, so the order of preference is arbitrary.
+    let error_msg = span
+        .meta
+        .get("error.msg")
+        .or_else(|| span.meta.get("error.message"))
+        .map(|v| v.borrow().to_string());
     let status = if span.error != 0 {
         Status {
             message: error_msg,
@@ -342,8 +348,12 @@ fn map_attributes<T: TraceData>(
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
         }
+        let key = k.borrow();
+        if enable_otel_trace_compatibility && (key == "error.msg" || key == "error.message") {
+            continue;
+        }
         attrs.push(KeyValue {
-            key: k.borrow().to_string(),
+            key: key.to_string(),
             value: AnyValue::StringValue(v.borrow().to_string()),
         });
     }
@@ -370,11 +380,18 @@ fn map_attributes<T: TraceData>(
             value: AnyValue::BytesValue(v.borrow().to_vec()),
         });
     }
+    let excluded_error_tags = if enable_otel_trace_compatibility {
+        span.meta.contains_key("error.msg") as usize
+            + span.meta.contains_key("error.message") as usize
+    } else {
+        0
+    };
     let total = (if has_per_span_service && !enable_otel_trace_compatibility { 1 } else { 0 })
         + (if has_operation_name && !enable_otel_trace_compatibility { 1 } else { 0 })
         + (if has_span_type && !enable_otel_trace_compatibility { 1 } else { 0 })
         + (if has_resource_name && !enable_otel_trace_compatibility { 1 } else { 0 })
         + span.meta.len()
+        - excluded_error_tags
         + span.metrics.len()
         + span.meta_struct.len();
     let dropped = total.saturating_sub(attrs.len());
@@ -419,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn test_status_error_message_from_meta() {
+    fn test_status_error_msg_from_meta() {
         let resource_info = OtlpResourceInfo::default();
         let mut span: Span<BytesData> = Span {
             trace_id: 1,
@@ -439,6 +456,37 @@ mod tests {
         let status = &otlp_span.status;
         assert_eq!(status.code, json_types::status_code::ERROR);
         assert_eq!(status.message.as_deref(), Some("something broke"));
+        assert!(
+            otlp_span.attributes.iter().any(|kv| kv.key == "error.msg"),
+            "error.msg should still appear in attributes when otel compat mode is disabled"
+        );
+    }
+
+    #[test]
+    fn test_status_error_message_from_meta() {
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("err_span"),
+            start: 0,
+            duration: 1,
+            error: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("error.message"),
+            libdd_tinybytes::BytesString::from_static("something broke"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        let status = &otlp_span.status;
+        assert_eq!(status.code, json_types::status_code::ERROR);
+        assert_eq!(status.message.as_deref(), Some("something broke"));
+        assert!(
+            otlp_span.attributes.iter().any(|kv| kv.key == "error.message"),
+            "error.message should still appear in attributes when otel compat mode is disabled"
+        );
     }
 
     #[test]
@@ -920,10 +968,15 @@ mod tests {
         };
         let req = map_traces_to_otlp(vec![vec![span]], &resource_info, true);
         let json = serde_json::to_value(&req).unwrap();
-        let attrs = json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+        let attrs_val = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"];
+        let keys: Vec<&str> = attrs_val
             .as_array()
-            .unwrap();
-        let keys: Vec<&str> = attrs.iter().map(|a| a["key"].as_str().unwrap()).collect();
+            .map(|arr| {
+                arr.iter()
+                    .map(|a| a["key"].as_str().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default();
         assert!(
             !keys.contains(&"service.name"),
             "attributes should not contain service.name"
@@ -939,6 +992,58 @@ mod tests {
         assert!(
             !keys.contains(&"span.type"),
             "attributes should not contain span.type"
+        );
+    }
+
+    #[test]
+    fn test_otel_compat_error_msg_excluded_from_attributes() {
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("err_span"),
+            start: 0,
+            duration: 1,
+            error: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("error.msg"),
+            libdd_tinybytes::BytesString::from_static("something broke"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, true);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(otlp_span.status.code, json_types::status_code::ERROR);
+        assert_eq!(otlp_span.status.message.as_deref(), Some("something broke"));
+        assert!(
+            !otlp_span.attributes.iter().any(|kv| kv.key == "error.msg"),
+            "error.msg should not appear in attributes when otel compat mode is enabled"
+        );
+    }
+
+    #[test]
+    fn test_otel_compat_error_message_excluded_from_attributes() {
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("err_span"),
+            start: 0,
+            duration: 1,
+            error: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("error.message"),
+            libdd_tinybytes::BytesString::from_static("something broke"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, true);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(otlp_span.status.code, json_types::status_code::ERROR);
+        assert_eq!(otlp_span.status.message.as_deref(), Some("something broke"));
+        assert!(
+            !otlp_span.attributes.iter().any(|kv| kv.key == "error.message"),
+            "error.message should not appear in attributes when otel compat mode is enabled"
         );
     }
 
