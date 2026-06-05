@@ -298,8 +298,6 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         stats_concentrator, ..
     } = &**status
     {
-        // FIXME: when client_computed_top_level is true, looking twice for the root span here and
-        // just below in compute_top_level_span is inefficient
         let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
 
         if !client_computed_top_level {
