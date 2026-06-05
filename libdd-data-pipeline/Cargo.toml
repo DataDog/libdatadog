@@ -38,7 +38,7 @@ libdd-telemetry = { version = "5.0.1", path = "../libdd-telemetry", default-feat
 libdd-trace-protobuf = { version = "3.0.2", path = "../libdd-trace-protobuf" }
 libdd-trace-stats = { version = "4.0.1", path = "../libdd-trace-stats", default-features = false }
 libdd-trace-utils = { version = "8.0.0", path = "../libdd-trace-utils", default-features = false }
-libdd-trace-obfuscation = { version = "3.1.1", path = "../libdd-trace-obfuscation", default-features = false, optional = true }
+libdd-trace-obfuscation = { version = "4.0.0", path = "../libdd-trace-obfuscation", default-features = false, optional = true }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-dogstatsd-client = { version = "3.0.0", path = "../libdd-dogstatsd-client", default-features = false }
 libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
