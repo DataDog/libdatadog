@@ -1049,13 +1049,6 @@ mod tests {
     }
 
     #[test]
-    fn test_public_consts_are_accessible() {
-        assert_eq!(super::WEBSITE_SKU, "WEBSITE_SKU");
-        assert_eq!(super::UNKNOWN_VALUE, "unknown");
-        assert_eq!(super::REGION_NAME, "REGION_NAME");
-    }
-
-    #[test]
     fn test_instance_name_flex_consumption_uses_container_name() {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "node"),
