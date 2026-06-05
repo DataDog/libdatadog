@@ -80,9 +80,7 @@ where
     let len = decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
-    #[allow(clippy::expect_used)]
-    let capacity: usize = len.try_into().expect("Unable to cast map len to usize");
-    let mut map = std::collections::HashMap::with_capacity(capacity);
+    let mut map = std::collections::HashMap::with_capacity(len.try_into().unwrap_or_default());
     for _ in 0..len {
         let key = buf.read_string()?;
         if !handle_null_marker(buf) {
