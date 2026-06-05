@@ -2,6 +2,26 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v5.0.0..libdd-data-pipeline-v6.0.0) - 2026-06-05
+
+### Added
+
+- Add fork safety hooks and cancellation token for trace exporter FFI ([#2051](https://github.com/datadog/libdatadog/issues/2051)) - ([2a6c295](https://github.com/datadog/libdatadog/commit/2a6c295615eee10150f668f013ef34aba05f4d9e))
+- Move the async boundary up ([#2064](https://github.com/datadog/libdatadog/issues/2064)) - ([43a5c6b](https://github.com/datadog/libdatadog/commit/43a5c6b87ea4f384f56608656a08b2ba3d59604e))
+- Add fail-closed fallback to v04 ([#2037](https://github.com/datadog/libdatadog/issues/2037)) - ([a84923e](https://github.com/datadog/libdatadog/commit/a84923e5ec124efb59e413adac98afb9546a490b))
+
+### Changed
+
+- Replace use_v05_format bool and remove infallible expect ([#1946](https://github.com/datadog/libdatadog/issues/1946)) - ([54afa6f](https://github.com/datadog/libdatadog/commit/54afa6f73cb46a864a58100bbbc4027acd0b9a0b))
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) ([#2073](https://github.com/datadog/libdatadog/issues/2073)) - ([a21e9d5](https://github.com/datadog/libdatadog/commit/a21e9d5eeeff0be4a1b9de8104a2cf2eae2be6a3))
+- Bump msrv to 1.87.0 ([#2017](https://github.com/datadog/libdatadog/issues/2017)) - ([276039d](https://github.com/datadog/libdatadog/commit/276039da8897a8e9e83ed3162912792f2241c5d7))
+
+### Fixed
+
+- Follow max retries of the strategy ([#2047](https://github.com/datadog/libdatadog/issues/2047)) - ([0172960](https://github.com/datadog/libdatadog/commit/01729601279185fa921147959f4b5c401340b838))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v4.0.0..libdd-data-pipeline-v5.0.0) - 2026-05-22
 
 ### Added
