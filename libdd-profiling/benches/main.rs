@@ -5,5 +5,10 @@ use criterion::criterion_main;
 
 mod add_samples;
 mod interning_strings;
+mod profiles_dictionary;
 
-criterion_main!(interning_strings::benches, add_samples::benches);
+criterion_main!(
+    interning_strings::benches,
+    add_samples::benches,
+    profiles_dictionary::benches
+);
