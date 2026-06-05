@@ -2,6 +2,18 @@
 
 
 
+## [2.1.1](https://github.com/datadog/libdatadog/compare/libdd-sampling-v2.1.0..libdd-sampling-v2.1.1) - 2026-06-05
+
+### Changed
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) ([#2073](https://github.com/datadog/libdatadog/issues/2073)) - ([a21e9d5](https://github.com/datadog/libdatadog/commit/a21e9d5eeeff0be4a1b9de8104a2cf2eae2be6a3))
+
+### Fixed
+
+- Format _dd.p.ksr to 6 decimal places, not 6 significant digits ([#2086](https://github.com/datadog/libdatadog/issues/2086)) - ([37891f1](https://github.com/datadog/libdatadog/commit/37891f1536f344cc339f2d97184038fc75a92c6b))
+
+
+
 ## [2.1.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v2.0.0..libdd-sampling-v2.1.0) - 2026-06-01
 
 ### Added
