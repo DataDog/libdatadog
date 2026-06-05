@@ -21,7 +21,7 @@ use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::{OwnedSharedRuntime, SharedRuntime};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -58,7 +58,7 @@ pub struct TraceExporterBuilder {
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
-    shared_runtime: Option<Arc<SharedRuntime>>,
+    shared_runtime: Option<Arc<OwnedSharedRuntime>>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
@@ -251,7 +251,7 @@ impl TraceExporterBuilder {
     }
 
     /// Set a shared runtime used by the exporter for background workers.
-    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<SharedRuntime>) -> &mut Self {
+    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<OwnedSharedRuntime>) -> &mut Self {
         self.shared_runtime = Some(shared_runtime);
         self
     }
@@ -517,8 +517,8 @@ impl TraceExporterBuilder {
         })
     }
 
-    fn new_shared_runtime() -> Result<Arc<SharedRuntime>, TraceExporterError> {
-        SharedRuntime::new().map(Arc::new).map_err(|e| {
+    fn new_shared_runtime() -> Result<Arc<OwnedSharedRuntime>, TraceExporterError> {
+        OwnedSharedRuntime::new().map(Arc::new).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })
     }
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn test_set_shared_runtime() {
         let mut builder = TraceExporterBuilder::default();
-        let shared_runtime = Arc::new(SharedRuntime::new().unwrap());
+        let shared_runtime = Arc::new(OwnedSharedRuntime::new().unwrap());
         builder.set_shared_runtime(shared_runtime.clone());
 
         let exporter = builder.build::<NativeCapabilities>().unwrap();

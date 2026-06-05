@@ -11,7 +11,7 @@ use libdd_data_pipeline::trace_buffer::{Export, TraceBuffer, TraceBufferConfig, 
 use libdd_data_pipeline::trace_exporter::{
     agent_response::AgentResponse, error::TraceExporterError,
 };
-use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::{OwnedSharedRuntime, SharedRuntime};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::v04::SpanBytes;
 
@@ -71,8 +71,8 @@ impl Export<SpanBytes> for SleepExport {
     }
 }
 
-fn setup_buffer() -> (Arc<SharedRuntime>, Arc<TraceBuffer<SpanBytes>>) {
-    let rt = Arc::new(SharedRuntime::new().expect("SharedRuntime::new"));
+fn setup_buffer() -> (Arc<OwnedSharedRuntime>, Arc<TraceBuffer<SpanBytes>>) {
+    let rt = Arc::new(OwnedSharedRuntime::new().expect("OwnedSharedRuntime::new"));
     let cfg = TraceBufferConfig::new()
         .max_buffered_bytes(1_000_000)
         .flush_threshold_bytes(100_000)
