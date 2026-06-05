@@ -1247,7 +1247,10 @@ mod tests {
         // Meta is deferred — materialize before reading
         state.materialize_slot(0);
         let span = state.get_span(0)?;
-        assert_eq!(span.meta.get(&Cow::from("http.method")), Some(&Cow::from("GET")));
+        assert_eq!(
+            span.meta.get(&Cow::from("http.method")),
+            Some(&Cow::from("GET"))
+        );
         Ok(())
     }
 
@@ -1377,7 +1380,10 @@ mod tests {
         state.flush_change_buffer()?;
 
         let trace = state.get_trace(&100).unwrap();
-        assert_eq!(trace.meta.get(&Cow::from("env")), Some(&Cow::from("production")));
+        assert_eq!(
+            trace.meta.get(&Cow::from("env")),
+            Some(&Cow::from("production"))
+        );
         Ok(())
     }
 
@@ -1497,7 +1503,10 @@ mod tests {
         let spans = state.flush_chunk(vec![0, 1], true)?;
 
         // First span (local root) gets _dd.top_level
-        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.top_level")), Some(&1.0));
+        assert_eq!(
+            spans[0].metrics.get(&Cow::from("_dd.top_level")),
+            Some(&1.0)
+        );
         // Second span does not
         assert_eq!(spans[1].metrics.get(&Cow::from("_dd.top_level")), None);
         Ok(())
@@ -1520,8 +1529,14 @@ mod tests {
         let spans = state.flush_chunk(vec![0], true)?;
 
         assert_eq!(spans[0].metrics.get(&Cow::from("_dd.rule_psr")), Some(&0.5));
-        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.limit_psr")), Some(&0.8));
-        assert_eq!(spans[0].metrics.get(&Cow::from("_dd.agent_psr")), Some(&1.0));
+        assert_eq!(
+            spans[0].metrics.get(&Cow::from("_dd.limit_psr")),
+            Some(&0.8)
+        );
+        assert_eq!(
+            spans[0].metrics.get(&Cow::from("_dd.agent_psr")),
+            Some(&1.0)
+        );
         Ok(())
     }
 
@@ -1542,7 +1557,10 @@ mod tests {
         let spans = state.flush_chunk(vec![0, 1], false)?;
 
         // First span (chunk root) gets trace tags
-        assert_eq!(spans[0].meta.get(&Cow::from("env")), Some(&Cow::from("staging")));
+        assert_eq!(
+            spans[0].meta.get(&Cow::from("env")),
+            Some(&Cow::from("staging"))
+        );
         assert_eq!(
             spans[0].metrics.get(&Cow::from("_sampling_priority_v1")),
             Some(&2.0)
@@ -1567,8 +1585,14 @@ mod tests {
         create_span_directly(&mut state, 0, 1, 100, 0);
 
         let spans = state.flush_chunk(vec![0], false)?;
-        assert_eq!(spans[0].meta.get(&Cow::from("language")), Some(&Cow::from("rust")));
-        assert_eq!(spans[0].metrics.get(&Cow::from("process_id")), Some(&1234.0));
+        assert_eq!(
+            spans[0].meta.get(&Cow::from("language")),
+            Some(&Cow::from("rust"))
+        );
+        assert_eq!(
+            spans[0].metrics.get(&Cow::from("process_id")),
+            Some(&1234.0)
+        );
         Ok(())
     }
 
@@ -1596,10 +1620,11 @@ mod tests {
         let mut state = make_state(buf);
 
         create_span_directly(&mut state, 0, 1, 100, 0);
-        state.spans[0].as_mut().unwrap().meta.insert(
-            "kind".into(),
-            "client".into(),
-        );
+        state.spans[0]
+            .as_mut()
+            .unwrap()
+            .meta
+            .insert("kind".into(), "client".into());
 
         let spans = state.flush_chunk(vec![0], false)?;
         assert_eq!(spans[0].metrics.get(&Cow::from("_dd.measured")), Some(&1.0));
@@ -1613,10 +1638,11 @@ mod tests {
         let mut state = make_state(buf);
 
         create_span_directly(&mut state, 0, 1, 100, 0);
-        state.spans[0].as_mut().unwrap().meta.insert(
-            "kind".into(),
-            "internal".into(),
-        );
+        state.spans[0]
+            .as_mut()
+            .unwrap()
+            .meta
+            .insert("kind".into(), "internal".into());
 
         let spans = state.flush_chunk(vec![0], false)?;
         assert_eq!(spans[0].metrics.get(&Cow::from("_dd.measured")), None);
