@@ -14,9 +14,9 @@ use libdd_ipc::platform::locks::FLock;
 use libdd_ipc::{SeqpacketConn, SeqpacketListener};
 
 #[cfg(feature = "logging")]
-use log::{trace, warn};
+use log::trace;
 #[cfg(not(feature = "logging"))]
-use tracing::{trace, warn};
+use tracing::trace;
 
 pub type IpcClient = SeqpacketConn;
 pub type IpcServer = SeqpacketListener;
@@ -51,10 +51,16 @@ impl Liaison for SharedDirLiaison {
 
         let _g = match FLock::try_rw_lock(&self.lock_path) {
             Ok(lock) => lock,
-            // failing to acquire lock
-            // means that another process is creating the socket
+            // Failing to acquire the lock means another process is currently creating
+            // the socket; the caller then connects to it via connect_to_server(). This
+            // is normal under concurrent process startup.
+            // trace, not warn: a warn here fires on every lock race and pollutes test
+            // diffs that capture log output (cf. the "already listening" case below).
             Err(err) => {
-                warn!("failed_locking");
+                #[cfg(not(feature = "logging"))]
+                tracing::trace!("another process is creating the sidecar socket");
+                #[cfg(feature = "logging")]
+                log::trace!("another process is creating the sidecar socket");
                 return Err(err);
             }
         };
