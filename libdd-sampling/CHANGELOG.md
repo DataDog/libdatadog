@@ -2,7 +2,7 @@
 
 
 
-## [2.1.1](https://github.com/datadog/libdatadog/compare/libdd-sampling-v2.1.0..libdd-sampling-v2.1.1) - 2026-06-05
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v2.1.0..libdd-sampling-v3.0.0) - 2026-06-05
 
 ### Changed
 
