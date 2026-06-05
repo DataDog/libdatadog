@@ -625,7 +625,7 @@ pub mod tests {
             app_version: "1.3.5".to_string(),
             tags: vec![],
             process_tags: vec![
-                libdd_common::tag!("entrypoint.workdir", "datadog-remote-config"),
+                libdd_common::tag!("entrypoint.workdir", "libdd-remote-config"),
                 libdd_common::tag!("entrypoint.type", "script"),
             ],
         })
@@ -1059,7 +1059,7 @@ pub mod tests {
         assert_eq!(
             tracer.process_tags,
             &[
-                "entrypoint.workdir:datadog-remote-config",
+                "entrypoint.workdir:libdd-remote-config",
                 "entrypoint.type:script"
             ]
         );

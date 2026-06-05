@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::rules_based::UniversalFlagConfig;
-use datadog_remote_config::{ParseError, RemoteConfigContent, RemoteConfigProduct};
+use libdd_remote_config::{ParseError, RemoteConfigContent, RemoteConfigProduct};
 
 impl RemoteConfigContent for UniversalFlagConfig {
     const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::FfeFlags;
