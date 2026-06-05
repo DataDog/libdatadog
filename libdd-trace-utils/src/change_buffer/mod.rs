@@ -347,8 +347,14 @@ where
         let mut count = self.change_buffer.read::<u64>(&mut index)? as u32;
 
         let mut cached_slot: u32 = u32::MAX;
-        // We keep a bunch of cached internal pointers. They are safe to use as long as we don't
-        // modify their parent vector and keep a unique borrow to `self` overall.
+        // Cached elements for the current span.
+        //
+        // When applying span operations, we cache the last span index (cached_slot) and the
+        // corresponding elements in `deffered_meta`, `deferred_metrics`, and `span`. We use direct
+        // pointers to save intermediate dereferences.
+        //
+        // They are safe to use as long as we don't modify their parent vector and keep a unique
+        // borrow to `self` overall.
         //
         // Using mutable references instead would be better, but is not possible (or very hard)
         // given we iterate and nest calls to different submethods taking a `&mut self`.
@@ -368,14 +374,19 @@ where
                     self.interpret_operation(&mut index, &op)?;
                 }
                 _ => {
-                    self.interpret_operation_cached(
-                        &mut index,
-                        &op,
-                        &mut cached_slot,
-                        &mut cached_span_ptr,
-                        &mut cached_deferred_meta,
-                        &mut cached_deferred_metrics,
-                    )?;
+                    // SAFETY: at the first iteration of the loop, all pointers are null and
+                    // `*cached_slot` is `u32::MAX`. In subsequent iterations,
+                    // `interpret_operation_cached` maintains its own safety invariant.
+                    unsafe {
+                      self.interpret_operation_cached(
+                          &mut index,
+                          &op,
+                          &mut cached_slot,
+                          &mut cached_span_ptr,
+                          &mut cached_deferred_meta,
+                          &mut cached_deferred_metrics,
+                      )?;
+                    }
                 }
             }
             count -= 1;
@@ -387,7 +398,15 @@ where
         Ok(())
     }
 
-    fn interpret_operation_cached(
+    /// # Safety
+    ///
+    /// The pointer arguments provided to this function: `*cached_slot`, `*cached_span_ptr`,
+    /// `*cached_deferred_meta` and `*cached_deferred_metrics` must either:
+    ///
+    /// - be all `null` if `*cached_slot` is `u32::MAX`
+    /// - point to `self.spans[*cached_slot]`, `self.deferred_meta[*cached_slot]` and
+    ///   `self.deferred_metrics[*cached_slot]` respectively otherwise.
+    unsafe fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
         op: &BufferedOperation,
@@ -418,13 +437,9 @@ where
         // modified during this function (no inserts/removes).
         let span = unsafe { &mut *span_ptr };
 
-        // SAFETY:
-        //
-        // - `cached_deferred_xxx`: they point to writable memory (derived from self), and we don't
-        //   modify, move nor drop the parent `deferred_xxx` vec, so the pointer should remain
-        //   valid.
-        // - `xxx_unchecked`: we rely on the encoder side to write the correct arguments to an
-        //   opcode.
+        // SAFETY: `cached_deferred_xxx`: they point to writable memory, and we don't shrink, move
+        // nor drop the parent `deferred_xxx` vec, so the pointers remain valid. We keep a mutable
+        // borrow on `self`, which ensures ownership/uniqueness.
         match op.opcode {
             OpCode::SetMetaAttr => {
                 let key_id: u32 = self.get_num_arg(index)?;
@@ -439,25 +454,25 @@ where
                 dm.insert(key_id, val);
             }
             OpCode::SetServiceName => {
-                span.service = unsafe { self.get_string_arg_unchecked(index) };
+                span.service = self.get_string_arg(index)?;
             }
             OpCode::SetResourceName => {
-                span.resource = unsafe { self.get_string_arg_unchecked(index) };
+                span.resource = self.get_string_arg(index)?;
             }
             OpCode::SetError => {
-                span.error = unsafe { self.get_num_arg_unchecked(index) };
+                span.error = self.get_num_arg(index)?;
             }
             OpCode::SetStart => {
-                span.start = unsafe { self.get_num_arg_unchecked(index) };
+                span.start = self.get_num_arg(index)?;
             }
             OpCode::SetDuration => {
-                span.duration = unsafe { self.get_num_arg_unchecked(index) };
+                span.duration = self.get_num_arg(index)?;
             }
             OpCode::SetType => {
-                span.r#type = unsafe { self.get_string_arg_unchecked(index) };
+                span.r#type = self.get_string_arg(index)?;
             }
             OpCode::SetName => {
-                span.name = unsafe { self.get_string_arg_unchecked(index) };
+                span.name = self.get_string_arg(index)?;
             }
             OpCode::SetTraceMetaAttr => {
                 let name = self.get_string_arg(index)?;
@@ -514,29 +529,8 @@ where
             .ok_or(ChangeBufferError::StringNotFound(num))
     }
 
-    /// # Safety
-    ///
-    /// Caller must ensure `*index + size_of::<T::Tex>() <= self.change_buffer.len`.
-    #[inline(always)]
-    unsafe fn get_string_arg_unchecked(&self, index: &mut usize) -> T::Text {
-        let num: u32 = self.change_buffer.read_unchecked(index);
-        self.string_table
-            .get_unchecked(num as usize)
-            .clone()
-            .unwrap_unchecked()
-    }
-
     fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> Result<U> {
         self.change_buffer.read(index)
-    }
-
-    /// # Safety
-    ///
-    /// Caller must ensure `*index + size_of::<U>() <= self.change_buffer.len`.
-    #[inline(always)]
-    unsafe fn get_num_arg_unchecked<U: Copy + FromBytes>(&self, index: &mut usize) -> U {
-        // Safety: this function's pre-condition
-        unsafe { self.change_buffer.read_unchecked(index) }
     }
 
     fn get_span_mut(&mut self, slot: u32) -> Result<&mut Span<T>> {
