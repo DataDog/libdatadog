@@ -3413,7 +3413,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "anyhow",
  "arc-swap",
