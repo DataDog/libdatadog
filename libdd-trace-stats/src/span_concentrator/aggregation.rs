@@ -516,8 +516,8 @@ mod tests {
                     span_id: 1,
                     parent_id: 0,
                     meta: vec![
-                        ("span.kind", "client"),
-                        ("aws.s3.bucket", "bucket-a"),
+                        ("span.kind".into(), "client".into()),
+                        ("aws.s3.bucket".into(), "bucket-a".into()),
                     ]
                     .into(),
                     ..Default::default()
@@ -885,11 +885,7 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: vec![
-                        ("span.kind".into(), "client".into()),
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                    ]
-                    .into(),
+                    meta: vec![("span.kind", "client"), ("aws.s3.bucket", "bucket-a")].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -1027,10 +1023,7 @@ mod tests {
             parent_id: 0,
             meta: vec![
                 ("span.kind", "client"),
-                (
-                    "peer.hostname",
-                    "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF",
-                ),
+                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
             ]
             .into(),
             ..Default::default()
@@ -1053,11 +1046,7 @@ mod tests {
             resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: vec![
-                ("span.kind", "client"),
-                ("db.instance", "dynamo.test.us1"),
-            ]
-            .into(),
+            meta: vec![("span.kind", "client"), ("db.instance", "dynamo.test.us1")].into(),
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];
