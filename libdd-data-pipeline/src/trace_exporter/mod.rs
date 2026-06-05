@@ -2428,6 +2428,7 @@ mod single_threaded_tests {
         while agent_info::get_agent_info().is_none() {
             std::thread::sleep(Duration::from_millis(100));
         }
+        assert!(exporter.is_stats_worker_active());
 
         let result = exporter.send(
             msgpack_encoder::v04::to_vec(&[
@@ -2492,16 +2493,6 @@ mod single_threaded_tests {
             .as_ref(),
         );
         assert!(result.is_err());
-
-        // Wait for the stats worker to be active before shutting down to avoid potential flaky
-        // tests on CI where we shutdown before the stats worker had time to start
-        let start_time = std::time::Instant::now();
-        while !exporter.is_stats_worker_active() {
-            if start_time.elapsed() > Duration::from_secs(10) {
-                panic!("Timeout waiting for stats worker to become active");
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
 
         runtime.shutdown(None).unwrap();
 
