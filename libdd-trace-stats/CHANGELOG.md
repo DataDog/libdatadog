@@ -2,6 +2,19 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v4.0.0..libdd-trace-stats-v5.0.0) - 2026-06-05
+
+### Changed
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) ([#2073](https://github.com/datadog/libdatadog/issues/2073)) - ([a21e9d5](https://github.com/datadog/libdatadog/commit/a21e9d5eeeff0be4a1b9de8104a2cf2eae2be6a3))
+- Bump msrv to 1.87.0 ([#2017](https://github.com/datadog/libdatadog/issues/2017)) - ([276039d](https://github.com/datadog/libdatadog/commit/276039da8897a8e9e83ed3162912792f2241c5d7))
+
+### Fixed
+
+- Follow max retries of the strategy ([#2047](https://github.com/datadog/libdatadog/issues/2047)) - ([0172960](https://github.com/datadog/libdatadog/commit/01729601279185fa921147959f4b5c401340b838))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v3.0.0..libdd-trace-stats-v4.0.0) - 2026-05-22
 
 ### Added
