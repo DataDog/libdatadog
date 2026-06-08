@@ -5,8 +5,9 @@
 //! discoverable by an out-of-process reader as required by the OTel thread-level context sharing
 //! specification.
 //!
-//! Call [`check_tls_slot_present`] from within a shared object or a statically linked executables
-//! to verify that the binary was linked with the correct option:
+//! Call [`sanity_check`] from within a shared object or a statically linked executables to verify
+//! that the binary was linked with the correct option:
+//!
 //! - `otel_thread_ctx_v1` is exported as TLS GLOBAL in the dynamic symbol table.
 //! - `otel_thread_ctx_v1` is NOT accessed via General Dynamic or Local Dynamic TLS relocations
 //!   (DTPMOD/DTPOFF) in `.rela.dyn`. The linker may pick TLSDESC or Local Exec depending on
