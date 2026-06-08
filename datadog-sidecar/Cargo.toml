@@ -10,7 +10,7 @@ bench = false
 
 [features]
 default = ["tracing"]
-tracing = ["tracing/std", "tracing-log", "tracing-subscriber"]
+tracing = ["tracing/std", "tracing-log", "tracing-subscriber", "arc-swap"]
 tokio-console = ["tokio/full", "tokio/tracing", "console-subscriber"]
 stats-obfuscation = ["libdd-trace-stats/stats-obfuscation", "libdd-data-pipeline/stats-obfuscation", "arc-swap"]
 
