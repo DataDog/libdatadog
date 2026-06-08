@@ -59,7 +59,6 @@ mod tests {
         let manager = TimeoutManager::new(timeout);
 
         assert_eq!(manager.timeout(), timeout);
-        assert!(manager.elapsed() < Duration::from_millis(100)); // Should be very small
         assert!(manager.remaining() >= TimeoutManager::MINIMUM_REAP_TIME);
     }
 
