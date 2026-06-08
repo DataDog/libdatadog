@@ -3,10 +3,12 @@
 
 //! Runtime ELF self-inspection for shared-library linking correctness.
 //!
-//! Call [`check_linking`] from within a cdylib context to verify that this
-//! shared object was linked with the required TLS properties:
+//! Call [`check_tls_slot_present`] from within a cdylib context to verify that
+//! this shared object was linked with the required TLS properties:
 //! - `otel_thread_ctx_v1` is exported as TLS GLOBAL in the dynamic symbol table.
-//! - `otel_thread_ctx_v1` is accessed via a TLSDESC relocation in `.rela.dyn`.
+//! - `otel_thread_ctx_v1` is NOT accessed via General Dynamic or Local Dynamic
+//!   TLS relocations (DTPMOD/DTPOFF) in `.rela.dyn`. The linker may resolve to
+//!   TLSDESC or Local Exec depending on optimization; both are acceptable.
 //!
 //! This module is only available on Linux (the only platform that supports the
 //! TLSDESC dialect used by this crate) and only when the `autocheck` feature
@@ -22,24 +24,24 @@ const SYMBOL: &str = "otel_thread_ctx_v1";
 ///
 /// Locates the ELF file that contains this function (via `/proc/self/maps`)
 /// and asserts that `otel_thread_ctx_v1` is exported as a TLS GLOBAL symbol
-/// accessed through a TLSDESC relocation.
+/// with no General Dynamic or Local Dynamic TLS relocations.
 ///
 /// Returns `Ok(())` on success, or an `Err` with a diagnostic message on
 /// failure (does not panic).
-pub fn check_tlsdesc_slot_present() -> Result<(), String> {
+pub fn check_tls_slot_present() -> Result<(), String> {
     let path = own_so_path()?;
     let data =
         std::fs::read(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let elf = ElfBytes::<AnyEndian>::minimal_parse(&data)
         .map_err(|e| format!("failed to parse ELF at {}: {e}", path.display()))?;
     check_dynsym(&elf)?;
-    check_tlsdesc_reloc(&elf)?;
+    check_no_gd_ld_reloc(&elf)?;
     Ok(())
 }
 
 /// Locate this shared object via `/proc/self/maps` using `check_linking`'s address.
 fn own_so_path() -> Result<PathBuf, String> {
-    let addr = check_tlsdesc_slot_present as *const () as usize;
+    let addr = check_tls_slot_present as *const () as usize;
     let maps = std::fs::read_to_string("/proc/self/maps")
         .map_err(|e| format!("failed to read /proc/self/maps: {e}"))?;
     for line in maps.lines() {
@@ -86,13 +88,18 @@ fn check_dynsym(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
     Ok(())
 }
 
-fn check_tlsdesc_reloc(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
+fn check_no_gd_ld_reloc(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
     #[cfg(target_arch = "x86_64")]
-    const R_TLSDESC: u32 = 36; // R_X86_64_TLSDESC
+    const FORBIDDEN_RELOCS: &[(u32, &str)] = &[
+        (16, "R_X86_64_DTPMOD64"),
+        (17, "R_X86_64_DTPOFF64"),
+    ];
     #[cfg(target_arch = "aarch64")]
-    const R_TLSDESC: u32 = 1031; // R_AARCH64_TLSDESC
+    const FORBIDDEN_RELOCS: &[(u32, &str)] = &[
+        (1028, "R_AARCH64_TLS_DTPMOD"),
+        (1029, "R_AARCH64_TLS_DTPREL"),
+    ];
 
-    // Find the .dynsym index of the target symbol.
     let (symtab, strtab) = elf
         .dynamic_symbol_table()
         .map_err(|e| format!("failed to read .dynsym: {e}"))?
@@ -111,14 +118,28 @@ fn check_tlsdesc_reloc(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
 
     let rela_shdr = elf
         .section_header_by_name(".rela.dyn")
-        .map_err(|e| format!("failed to read section headers: {e}"))?
-        .ok_or_else(|| ".rela.dyn section not found".to_string())?;
-    let found = elf
-        .section_data_as_relas(&rela_shdr)
-        .map_err(|e| format!("failed to read .rela.dyn: {e}"))?
-        .any(|r| r.r_type == R_TLSDESC && r.r_sym == sym_idx);
-    if !found {
-        return Err(format!("no TLSDESC relocation for '{SYMBOL}' in .rela.dyn"));
+        .map_err(|e| format!("failed to read section headers: {e}"))?;
+
+    if let Some(rela_shdr) = rela_shdr {
+        let bad: Vec<&str> = elf
+            .section_data_as_relas(&rela_shdr)
+            .map_err(|e| format!("failed to read .rela.dyn: {e}"))?
+            .filter(|r| r.r_sym == sym_idx)
+            .filter_map(|r| {
+                FORBIDDEN_RELOCS
+                    .iter()
+                    .find(|(typ, _)| *typ == r.r_type)
+                    .map(|(_, name)| *name)
+            })
+            .collect();
+        if !bad.is_empty() {
+            return Err(format!(
+                "'{SYMBOL}' has General Dynamic / Local Dynamic relocations in .rela.dyn: {}. \
+                 Expected TLSDESC or Local Exec instead.",
+                bad.join(", ")
+            ));
+        }
     }
+
     Ok(())
 }
