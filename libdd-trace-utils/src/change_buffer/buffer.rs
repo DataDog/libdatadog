@@ -47,18 +47,16 @@ impl ChangeBuffer {
         // construction time, and to remain alive for the lifetime of `self`. We do not materialize
         // other references during the lifetime of `slice`.
         let slice = unsafe { self.as_slice() };
-        let out_of_bounds_err = || ChangeBufferError::ReadOutOfBounds {
+        let out_of_bounds_err = ChangeBufferError::ReadOutOfBounds {
             offset: *index,
             value_len: size,
             buffer_len: self.len,
         };
         let Some(end) = index.checked_add(size) else {
-            return Err(out_of_bounds_err());
+            return Err(out_of_bounds_err);
         };
 
-        let bytes = slice
-            .get(*index..*index + size)
-            .ok_or_else(out_of_bounds_err)?;
+        let bytes = slice.get(*index..*index + size).ok_or(out_of_bounds_err)?;
         *index += size;
         Ok(T::from_bytes(bytes))
     }
