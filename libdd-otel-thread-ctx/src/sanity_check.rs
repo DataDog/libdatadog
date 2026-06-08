@@ -9,9 +9,9 @@
 //! that the binary was linked with the correct option:
 //!
 //! - `otel_thread_ctx_v1` is exported as TLS GLOBAL in the dynamic symbol table.
-//! - `otel_thread_ctx_v1` is NOT accessed via General Dynamic or Local Dynamic TLS relocations
-//!   (DTPMOD/DTPOFF) in `.rela.dyn`. The linker may pick TLSDESC or Local Exec depending on
-//!   optimization; both are acceptable.
+//! - `otel_thread_ctx_v1` has no non-TLSDESC TLS relocations in `.rela.dyn`. The linker may pick
+//!   TLSDESC or Local Exec depending on optimization; both are acceptable. All other TLS relocation
+//!   types (DTPMOD, DTPOFF, TPOFF, GOTTPOFF, etc.) are rejected.
 //!
 //! This module is only available on Linux (the only platform that supports the TLSDESC dialect used
 //! by this crate) and only when the `sanity-check` feature is enabled.
@@ -29,16 +29,16 @@ pub fn check_tls_slot_in(path: &Path) -> anyhow::Result<()> {
     let elf = ElfBytes::<AnyEndian>::minimal_parse(&data)
         .with_context(|| format!("failed to parse ELF at {}", path.display()))?;
     check_dynsym(&elf)?;
-    check_no_gd_ld_reloc(&elf)?;
+    check_tlsdesc_reloc_only(&elf)?;
     Ok(())
 }
 
 /// Check that the current running module has been linked appropriately to make the OTel shared
 /// thread context discoverable.
 ///
-/// Checks that `otel_thread_ctx_v1` is exported as a TLS GLOBAL symbol with no General Dynamic or
-/// Local Dynamic TLS relocations. It's an indirect check for TLSDESC, which implies either no
-/// relocation (Local Exec/static binary case) or a TLSDESC relocation (dynamic library case).
+/// Checks that `otel_thread_ctx_v1` is exported as a TLS GLOBAL symbol and that any TLS
+/// relocations targeting it are TLSDESC. No relocation (Local Exec/static binary) is also
+/// acceptable.
 pub fn sanity_check() -> anyhow::Result<()> {
     check_tls_slot_in(&own_elf_path()?)
 }
@@ -92,18 +92,14 @@ fn check_dynsym(elf: &ElfBytes<'_, AnyEndian>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Check that there's either no TLS relocation for [SYMBOL] in the given ELF file, or if there is,
-/// it's a TLSDESC one. In practice, the check is negative: we check for the absence of relocations
-/// associated with the General Dynamic or Local Dynamic TLS access model.
-fn check_no_gd_ld_reloc(elf: &ElfBytes<'_, AnyEndian>) -> anyhow::Result<()> {
+/// Check that any relocation for [SYMBOL] in `.rela.dyn` is a TLSDESC relocation. No relocation at
+/// all (Local Exec / static binary) is also acceptable. All other TLS relocation types (DTPMOD,
+/// DTPOFF, TPOFF, GOTTPOFF, etc.) are rejected.
+fn check_tlsdesc_reloc_only(elf: &ElfBytes<'_, AnyEndian>) -> anyhow::Result<()> {
     #[cfg(target_arch = "x86_64")]
-    const FORBIDDEN_RELOCS: &[(u32, &str)] =
-        &[(16, "R_X86_64_DTPMOD64"), (17, "R_X86_64_DTPOFF64")];
+    const TLSDESC_RELOC: u32 = 36; // R_X86_64_TLSDESC
     #[cfg(target_arch = "aarch64")]
-    const FORBIDDEN_RELOCS: &[(u32, &str)] = &[
-        (1028, "R_AARCH64_TLS_DTPMOD"),
-        (1029, "R_AARCH64_TLS_DTPREL"),
-    ];
+    const TLSDESC_RELOC: u32 = 1031; // R_AARCH64_TLSDESC
 
     let (symtab, strtab) = elf
         .dynamic_symbol_table()
@@ -126,22 +122,18 @@ fn check_no_gd_ld_reloc(elf: &ElfBytes<'_, AnyEndian>) -> anyhow::Result<()> {
         .context("failed to read section headers")?;
 
     if let Some(rela_shdr) = rela_shdr {
-        let bad: Vec<&str> = elf
+        let bad: Vec<u32> = elf
             .section_data_as_relas(&rela_shdr)
             .context("failed to read .rela.dyn")?
-            .filter(|r| r.r_sym == sym_idx)
-            .filter_map(|r| {
-                FORBIDDEN_RELOCS
-                    .iter()
-                    .find(|(typ, _)| *typ == r.r_type)
-                    .map(|(_, name)| *name)
-            })
+            .filter(|r| r.r_sym == sym_idx && r.r_type != TLSDESC_RELOC)
+            .map(|r| r.r_type)
             .collect();
         if !bad.is_empty() {
+            let types: Vec<String> = bad.iter().map(|t| format!("type {t}")).collect();
             bail!(
-                "'{SYMBOL}' has General Dynamic / Local Dynamic relocations in .rela.dyn: {}. \
-                 Expected TLSDESC or Local Exec instead.",
-                bad.join(", ")
+                "'{SYMBOL}' has non-TLSDESC relocations in .rela.dyn: {}. \
+                 Only TLSDESC or no relocation (Local Exec) is accepted.",
+                types.join(", ")
             );
         }
     }
