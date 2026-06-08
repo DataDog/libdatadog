@@ -10,7 +10,7 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-remote-confi
 description = "Datadog Remote Configuration client and config parsers"
 
 [features]
-default = ["client"]
+default = ["client", "https"]
 client = [
     "libdd-trace-protobuf",
     "http-body-util",
