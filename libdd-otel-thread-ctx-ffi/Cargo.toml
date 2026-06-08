@@ -23,5 +23,8 @@ default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 autocheck = ["dep:libdd-common-ffi", "libdd-otel-thread-ctx/autocheck"]
 
+[dev-dependencies]
+libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", features = ["autocheck"] }
+
 [build-dependencies]
 build_common = { path = "../build-common" }
