@@ -3183,6 +3183,7 @@ dependencies = [
 name = "libdd-otel-thread-ctx"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "build_common",
  "cc",
  "elf",
