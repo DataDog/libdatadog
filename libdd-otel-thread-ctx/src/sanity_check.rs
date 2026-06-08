@@ -38,7 +38,7 @@ pub fn check_tls_slot_in(path: &Path) -> Result<(), String> {
 ///
 /// Checks that `otel_thread_ctx_v1` is exported as a TLS GLOBAL symbol with no General Dynamic or
 /// Local Dynamic TLS relocations. It's an indirect check for TLSDESC, which implies either no
-/// relocations (Local Exec/static binary case), or a TLSDESC relocation (dynamic library case).
+/// relocation (Local Exec/static binary case) or a TLSDESC relocation (dynamic library case).
 pub fn sanity_check() -> Result<(), String> {
     check_tls_slot_in(&own_elf_path()?)
 }
