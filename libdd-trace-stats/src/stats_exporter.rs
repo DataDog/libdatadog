@@ -172,7 +172,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             &self.endpoint,
             body,
             &headers,
-            &RetryStrategy::default(),
+            &RetryStrategy::NO_RETRY,
         )
         .await;
 
@@ -393,8 +393,8 @@ mod tests {
         send_status.unwrap_err();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 5, true).await,
-            "Expected max retry attempts"
+            poll_for_mock_hit(&mut mock, 10, 100, 1, true).await,
+            "Expected a single send attempt with no retries"
         );
     }
 

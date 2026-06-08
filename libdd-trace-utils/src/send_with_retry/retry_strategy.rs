@@ -49,6 +49,14 @@ impl Default for RetryStrategy {
 }
 
 impl RetryStrategy {
+    /// A `RetryStrategy` that performs no retries.
+    pub const NO_RETRY: RetryStrategy = RetryStrategy {
+        max_retries: 0,
+        delay_ms: Duration::from_millis(0),
+        backoff_type: RetryBackoffType::Constant,
+        jitter: None,
+    };
+
     /// Creates a new `RetryStrategy` with the specified parameters.
     ///
     /// # Arguments
