@@ -67,7 +67,7 @@ impl Drop for WeakWaker {
 
 pub struct WeakWakerFuture<F: Future> {
     fut: F,
-    weak_waker: Option<WeakWaker>,
+    weak_waker: WeakWaker,
 }
 
 impl<F: Future> WeakWakerFuture<F> {
@@ -78,7 +78,7 @@ impl<F: Future> WeakWakerFuture<F> {
     pub fn new(fut: F) -> WeakWakerFuture<F> {
         WeakWakerFuture {
             fut,
-            weak_waker: None,
+            weak_waker: WeakWaker{inner: Arc::new(WeakWakerInner { waker: AtomicWaker::new() })},
         }
     }
 }
@@ -91,25 +91,13 @@ impl<F: Future> Future for WeakWakerFuture<F> {
         // Neither `weak_waker` nor `fut` are going to be moved out of `self`.
         let m = unsafe { self.get_unchecked_mut() };
 
-        // On the first poll, allocate the WeakWakerInner Arc.
-        // On subsequent polls, reuse it and update the stored waker in-place via
+        // Update the stored waker in-place via
         // AtomicWaker::register — no heap allocation.
-        let inner = if let Some(ref ww) = m.weak_waker {
-            ww.inner.waker.register(cx.waker());
-            &ww.inner
-        } else {
-            let w = AtomicWaker::new();
-            w.register(cx.waker());
-            &m.weak_waker
-                .insert(WeakWaker {
-                    inner: Arc::new(WeakWakerInner { waker: w }),
-                })
-                .inner
-        };
+        m.weak_waker.inner.waker.register(cx.waker());
 
         // SAFETY: structural pinning for `fut`. The shared borrow of `m.weak_waker`
         // and the mutable borrow of `m.fut` are on disjoint fields; NLL allows this.
-        unsafe { Pin::new_unchecked(&mut m.fut).poll(&mut Context::from_waker(&waker_ref(inner))) }
+        unsafe { Pin::new_unchecked(&mut m.fut).poll(&mut Context::from_waker(&waker_ref(&m.weak_waker.inner))) }
     }
 }
 
@@ -136,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mpsc_queue_weak_waiter_drop_correctly() {
+    fn test_mpsc_queue_weak_waker_drop_correctly() {
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
 
         let mut fut = WeakWakerFuture::new(futures::StreamExt::next(&mut rx));
@@ -155,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mpsc_queue_weak_waiter_smoke() {
+    fn test_mpsc_queue_weak_waker_smoke() {
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
 
         let mut pinned_fut = pin!(WeakWakerFuture::new(futures::StreamExt::next(&mut rx)));
