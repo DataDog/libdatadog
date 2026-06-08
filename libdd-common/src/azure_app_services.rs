@@ -259,9 +259,9 @@ impl AzureMetadata {
         let pod_name = query.get_var(WEBSITE_POD_NAME);
         let computer_name = query.get_var(INSTANCE_NAME);
         let instance_name = resolve_instance_name(
+            computer_name.as_deref(),
             pod_name.as_deref(),
             container_name.as_deref(),
-            computer_name.as_deref(),
         );
 
         let instance_id = query.get_var(INSTANCE_ID);
@@ -412,9 +412,9 @@ impl AzureMetadata {
 
 /// Resolves the instance name to match the Azure integration metric's `instance` tag.
 fn resolve_instance_name(
+    computer_name: Option<&str>,
     pod_name: Option<&str>,
     container_name: Option<&str>,
-    computer_name: Option<&str>,
 ) -> Option<String> {
     fn non_empty(s: Option<&str>) -> Option<&str> {
         s.map(|v| v.trim()).filter(|v| !v.is_empty())
@@ -1040,6 +1040,7 @@ mod tests {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "node"),
             (INSTANCE_NAME, "10-20-30-40"),
+            (WEBSITE_POD_NAME, "pod-1"),
             (CONTAINER_NAME, "container-1"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
