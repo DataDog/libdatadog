@@ -1,5 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::unreachable,
+    clippy::too_many_lines,
+    clippy::format_push_string
+)]
 
 use std::{
     collections::{BTreeSet, HashSet},
@@ -139,7 +147,7 @@ struct SpanComparison<'a> {
 }
 
 impl<'a> SpanComparison<'a> {
-    fn new(left: &'a Span, right: &'a Span) -> Self {
+    const fn new(left: &'a Span, right: &'a Span) -> Self {
         Self { left, right }
     }
 }

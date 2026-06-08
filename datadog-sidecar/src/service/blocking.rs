@@ -375,6 +375,7 @@ pub fn set_universal_service_tags(
     app_version: String,
     global_tags: Vec<Tag>,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    remote_config_generation: u64,
 ) -> io::Result<()> {
     lock_sender(transport)?.set_universal_service_tags(
         instance_id.clone(),
@@ -384,6 +385,7 @@ pub fn set_universal_service_tags(
         app_version,
         global_tags,
         dynamic_instrumentation_state,
+        remote_config_generation,
     );
     Ok(())
 }

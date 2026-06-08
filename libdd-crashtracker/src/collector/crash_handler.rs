@@ -247,12 +247,6 @@ fn handle_posix_signal_impl(
         return Ok(());
     }
 
-    // Mark this process as a collector for the preload logger
-    #[cfg(target_os = "linux")]
-    {
-        super::api::mark_preload_logger_collector();
-    }
-
     // If this code hits a stack overflow, then it will result in a segfault.  That situation is
     // protected by the one-time guard.
 
@@ -262,6 +256,11 @@ fn handle_posix_signal_impl(
         // In the case where some lower-level signal handler recovered the error
         // we don't want to spam the system with calls.  Make this one shot.
         return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        super::api::mark_preload_logger_collector();
     }
 
     // Suppress SIGPIPE and defer SIGCHLD during crash handling.
@@ -303,16 +302,37 @@ fn handle_posix_signal_impl(
 
     let receiver = Receiver::from_crashtracker_config(config)?;
 
-    // Enable ptrace permissions for receiver if multi-thread collection is enabled
+    // Enable ptrace permissions for receiver if multi-thread collection is enabled.
+    // For fork/exec receivers, we have the child PID directly. For socket-based
+    // receivers (PHP sidecar), resolve the peer PID using SO_PEERCRED.
     #[cfg(target_os = "linux")]
     if config.collect_all_threads() {
-        if let Some(receiver_pid) = receiver.handle.pid {
-            // Allow the receiver to ptrace this process for thread context collection.
-            // PR_SET_PTRACER only uses arg2 (the pid); the trailing zeros satisfy
-            // libc::prctl's fixed 5-argument FFI binding.
+        let ptracer_pid = match receiver.handle.pid {
+            Some(pid) => pid,
+            None => {
+                let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+                let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+                // SAFETY: getsockopt is async-signal-safe and we're just reading from the socket
+                let ret = unsafe {
+                    libc::getsockopt(
+                        receiver.handle.uds_fd,
+                        libc::SOL_SOCKET,
+                        libc::SO_PEERCRED,
+                        &mut cred as *mut _ as *mut libc::c_void,
+                        &mut len,
+                    )
+                };
+                if ret == 0 {
+                    cred.pid
+                } else {
+                    0
+                }
+            }
+        };
+        if ptracer_pid > 0 {
             // SAFETY: prctl is async-signal-safe and we're just setting ptrace permissions
             unsafe {
-                libc::prctl(libc::PR_SET_PTRACER, receiver_pid as libc::c_ulong);
+                libc::prctl(libc::PR_SET_PTRACER, ptracer_pid as libc::c_ulong);
             }
         }
     }

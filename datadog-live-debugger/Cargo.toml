@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 anyhow = "1.0"
+datadog-remote-config = { path = "../datadog-remote-config", default-features = false }
 libdd-common = { path = "../libdd-common" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 http-body-util = "0.1"

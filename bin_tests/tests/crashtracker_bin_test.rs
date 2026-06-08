@@ -21,8 +21,7 @@ use bin_tests::{
     ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    default_max_threads, CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames,
-    StacktraceCollection,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -200,10 +199,9 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 /// alive until the receiver completes, guaranteeing threads are valid ptrace targets.
 ///
 /// We verify:
-///   - `error.threads` is non-empty.
+///   - `error.threads` is a non-empty array of thread objects.
 ///   - Each thread entry is well-formed: `crashed=false`, `name`, and `stack` present.
-///   - None of the additional threads are marked as crashed (the crashing thread is in
-///     `error.stack`, not `error.threads`).
+///   - The crashing thread stack is in `error.stack`, not `error.threads`.
 ///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
 ///   - Each worker has their work frame in the stack trace.
 #[test]
@@ -219,28 +217,21 @@ fn test_crash_tracking_multi_thread_collection() {
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(|payload, _fixtures| {
-        let error = &payload["error"];
-        let threads = &error["threads"];
-
-        let thread_count = threads["count"]
-            .as_u64()
-            .expect("threads.count should be a number");
-        let all_threads = threads["threads"]
+        let all_threads = payload["error"]["threads"]
             .as_array()
-            .expect("threads.threads should be a JSON array");
+            .expect("error.threads should be a JSON array of thread objects");
+
+        assert!(
+            all_threads.len() >= 2,
+            "error.threads should be non-empty when collect_all_threads is enabled; got payload: {}",
+            serde_json::to_string_pretty(payload).unwrap_or_default()
+        );
 
         let thread_names: Vec<&str> = all_threads
             .iter()
             .map(|t| t["name"].as_str().unwrap_or("<none>"))
             .collect();
 
-        assert!(
-            !all_threads.is_empty(),
-            "error.threads should be non-empty when collect_all_threads is enabled; got payload: {}",
-            serde_json::to_string_pretty(payload).unwrap_or_default()
-        );
-
-        // Every thread entry must be structurally valid and non-crashing
         for thread in all_threads {
             assert!(
                 thread["name"].is_string(),
@@ -260,12 +251,10 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
-        // Both named workers must be present; the behavior spawns exactly two
         for expected in ["ct_worker_0", "ct_worker_1"] {
             assert!(
                 thread_names.contains(&expected),
-                "Expected worker thread '{expected}' in error.threads; \
-                 got: {thread_names:?}"
+                "Expected worker thread '{expected}' in error.threads; got: {thread_names:?}"
             );
         }
 
@@ -296,12 +285,6 @@ fn test_crash_tracking_multi_thread_collection() {
             );
         }
 
-        assert!(
-            thread_count == 2,
-            "expected 2 threads, got {}",
-            thread_count
-        );
-
         Ok(())
     });
 
@@ -313,7 +296,7 @@ fn test_crash_tracking_multi_thread_collection() {
 #[cfg(target_os = "linux")]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_thread_limit() {
-    const THREAD_COUNT: usize = default_max_threads();
+    const THREAD_COUNT: usize = libdd_crashtracker::default_max_threads();
 
     let config = CrashTestConfig::new(
         BuildProfile::Release,
@@ -324,31 +307,29 @@ fn test_crash_tracking_thread_limit() {
     let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
 
     let validator: ValidatorFn = Box::new(move |payload, _fixtures| {
-        let threads = &payload["error"]["threads"];
-
-        let thread_array = threads["threads"]
+        let thread_array = payload["error"]["threads"]
             .as_array()
-            .expect("error.threads.threads should be a JSON array");
-        let count = threads["count"]
-            .as_u64()
-            .expect("error.threads.count should be a number") as usize;
+            .expect("error.threads should be a JSON array of thread objects");
 
         assert!(
             thread_array.len() >= THREAD_COUNT,
-            "expected at least {THREAD_COUNT} thread entries, got {} \
-             (count field: {})",
-            thread_array.len(),
-            count,
-        );
-        assert_eq!(
-            count,
-            thread_array.len(),
-            "threads.count ({count}) should equal the number of thread entries ({})",
+            "expected at least {THREAD_COUNT} thread entries, got {}",
             thread_array.len(),
         );
 
-        // All entries must be non-crashing
         for thread in thread_array {
+            assert!(
+                thread["name"].is_string(),
+                "thread entry missing 'name': {thread:?}"
+            );
+            assert!(
+                thread["crashed"].is_boolean(),
+                "thread entry missing 'crashed': {thread:?}"
+            );
+            assert!(
+                thread["stack"].is_object(),
+                "thread entry missing 'stack': {thread:?}"
+            );
             assert!(
                 !thread["crashed"].as_bool().unwrap_or(true),
                 "threads in error.threads must have crashed=false: {thread:?}"
@@ -359,6 +340,253 @@ fn test_crash_tracking_thread_limit() {
     });
 
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
+/// Poll for a Unix socket file to appear on disk, indicating the receiver has bound it.
+/// Returns true if the socket appeared within the deadline, false on timeout.
+#[cfg(target_os = "linux")]
+fn wait_for_socket(path: &str, timeout: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if Path::new(path).exists() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    false
+}
+
+/// Wait for a child process to exit within a timeout. If it doesn't exit in time,
+/// kill it and return the exit status.
+#[cfg(target_os = "linux")]
+fn wait_or_kill(child: &mut process::Child, timeout: std::time::Duration) -> process::ExitStatus {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return child.wait().unwrap();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return child.wait().unwrap();
+            }
+        }
+    }
+}
+
+/// Tests that a basic crash report is generated correctly when using a sidecar-style
+/// Unix socket receiver. The receiver is a separate long-lived process that the
+/// crash handler connects to through a Unix socket.
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_sidecar_basic() {
+    const RECEIVER_TIMEOUT_MS: &str = "15000";
+    const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    let profile = BuildProfile::Release;
+    let socket_receiver = artifacts::crashtracker_unix_socket_receiver(profile);
+    let artifacts = StandardArtifacts::new(profile);
+    let all_artifacts: Vec<&ArtifactsBuild> = vec![
+        &artifacts.crashtracker_bin,
+        &artifacts.crashtracker_receiver,
+        &socket_receiver,
+    ];
+    let artifacts_map = fetch_built_artifacts(&all_artifacts).unwrap();
+
+    let fixtures = bin_tests::test_runner::TestFixtures::new().unwrap();
+    let socket_path = fixtures.output_dir.join("crashtracker.sock");
+    let socket_path_str = socket_path.to_str().unwrap();
+
+    // Spawn the sidecar receiver listening on the Unix socket
+    let mut receiver_proc = process::Command::new(&artifacts_map[&socket_receiver])
+        .arg(socket_path_str)
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS)
+        .spawn()
+        .unwrap();
+
+    // Wait for the receiver to bind the socket before launching the crash app
+    assert!(
+        wait_for_socket(socket_path_str, std::time::Duration::from_secs(5)),
+        "Sidecar receiver did not bind socket within timeout"
+    );
+
+    let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(&artifacts_map[&artifacts.crashtracker_receiver])
+        .arg(&fixtures.output_dir)
+        .arg(TestMode::SidecarDoNothing.as_str())
+        .arg(CrashType::NullDeref.as_str())
+        .env("DD_TEST_UNIX_SOCKET_PATH", socket_path_str)
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS);
+
+    let mut child = cmd.spawn().unwrap();
+    let exit_status = child.wait().unwrap();
+
+    assert!(
+        !exit_status.success(),
+        "Expected crash test to exit with failure (signal), got: {exit_status:?}"
+    );
+
+    // Wait for the receiver with a timeout to avoid hanging if it never got a connection
+    let receiver_status = wait_or_kill(&mut receiver_proc, RECEIVER_WAIT_TIMEOUT);
+    assert!(
+        receiver_status.success(),
+        "Sidecar receiver exited with error: {receiver_status:?}"
+    );
+
+    // Validate the crash report
+    let crash_payload =
+        bin_tests::validation::read_and_parse_crash_payload(&fixtures.crash_profile_path).unwrap();
+
+    PayloadValidator::new(&crash_payload)
+        .validate_counters()
+        .unwrap();
+
+    assert!(
+        crash_payload["error"]["message"].is_string(),
+        "error.message should be present in sidecar crash report"
+    );
+}
+
+/// Tests that collect_all_threads works with a sidecar (Unix socket) receiver.
+/// This exercises the SO_PEERCRED path in crash_handler.rs that resolves the
+/// receiver PID for PR_SET_PTRACER when receiver.handle.pid is None.
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_sidecar_multi_thread_collection() {
+    const RECEIVER_TIMEOUT_MS: &str = "15000";
+    const RECEIVER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+    let profile = BuildProfile::Release;
+    let socket_receiver = artifacts::crashtracker_unix_socket_receiver(profile);
+    let artifacts = StandardArtifacts::new(profile);
+    let all_artifacts: Vec<&ArtifactsBuild> = vec![
+        &artifacts.crashtracker_bin,
+        &artifacts.crashtracker_receiver,
+        &socket_receiver,
+    ];
+    let artifacts_map = fetch_built_artifacts(&all_artifacts).unwrap();
+
+    let fixtures = bin_tests::test_runner::TestFixtures::new().unwrap();
+    let socket_path = fixtures.output_dir.join("crashtracker.sock");
+    let socket_path_str = socket_path.to_str().unwrap();
+
+    // Spawn the sidecar receiver listening on the Unix socket
+    let mut receiver_proc = process::Command::new(&artifacts_map[&socket_receiver])
+        .arg(socket_path_str)
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS)
+        .spawn()
+        .unwrap();
+
+    // Wait for the receiver to bind the socket before launching the crash app
+    assert!(
+        wait_for_socket(socket_path_str, std::time::Duration::from_secs(5)),
+        "Sidecar receiver did not bind socket within timeout"
+    );
+
+    let mut cmd = process::Command::new(&artifacts_map[&artifacts.crashtracker_bin]);
+    cmd.arg(format!("file://{}", fixtures.crash_profile_path.display()))
+        .arg(&artifacts_map[&artifacts.crashtracker_receiver])
+        .arg(&fixtures.output_dir)
+        .arg(TestMode::SidecarMultiThreadCollection.as_str())
+        .arg(CrashType::NullDeref.as_str())
+        .env("DD_TEST_UNIX_SOCKET_PATH", socket_path_str)
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS);
+
+    let mut child = cmd.spawn().unwrap();
+    let exit_status = child.wait().unwrap();
+
+    assert!(
+        !exit_status.success(),
+        "Expected crash test to exit with failure (signal), got: {exit_status:?}"
+    );
+
+    // Wait for the receiver with a timeout to avoid hanging if it never got a connection
+    let receiver_status = wait_or_kill(&mut receiver_proc, RECEIVER_WAIT_TIMEOUT);
+    assert!(
+        receiver_status.success(),
+        "Sidecar receiver exited with error: {receiver_status:?}"
+    );
+
+    // Validate the crash report
+    let crash_payload =
+        bin_tests::validation::read_and_parse_crash_payload(&fixtures.crash_profile_path).unwrap();
+
+    let all_threads = crash_payload["error"]["threads"].as_array();
+    assert!(
+        all_threads.is_some(),
+        "error.threads should be a JSON array; got: {:?}",
+        crash_payload["error"]["threads"]
+    );
+    let all_threads = all_threads.unwrap();
+
+    assert!(
+        all_threads.len() >= 2,
+        "error.threads should have at least 2 entries (sidecar multi-thread); got {}: {}",
+        all_threads.len(),
+        serde_json::to_string_pretty(&crash_payload).unwrap_or_default()
+    );
+
+    let thread_names: Vec<&str> = all_threads
+        .iter()
+        .map(|t| t["name"].as_str().unwrap_or("<none>"))
+        .collect();
+
+    for expected in ["ct_worker_0", "ct_worker_1"] {
+        assert!(
+            thread_names.contains(&expected),
+            "Expected worker thread '{expected}' in error.threads; got: {thread_names:?}"
+        );
+    }
+
+    // Verify worker threads have non-empty stacks (proving SO_PEERCRED + PR_SET_PTRACER works)
+    for expected in ["ct_worker_0", "ct_worker_1"] {
+        let worker = all_threads
+            .iter()
+            .find(|t| t["name"].as_str() == Some(expected));
+        assert!(
+            worker.is_some(),
+            "{expected} should be in error.threads; got: {thread_names:?}"
+        );
+        let worker = worker.unwrap();
+
+        let frames = worker["stack"]["frames"].as_array();
+        assert!(
+            frames.is_some(),
+            "{expected} stack.frames should be an array; got: {:?}",
+            worker["stack"]
+        );
+        let frames = frames.unwrap();
+
+        assert!(
+            !frames.is_empty(),
+            "{expected} should have non-empty stack frames (sidecar ptrace via SO_PEERCRED); \
+             got empty stack. This indicates PR_SET_PTRACER was not called correctly."
+        );
+
+        let worker_fn = if expected == "ct_worker_0" {
+            "worker_fn_0"
+        } else {
+            "worker_fn_1"
+        };
+        let has_worker_frame = frames.iter().any(|f| {
+            f["function"]
+                .as_str()
+                .map(|name| name.contains(worker_fn))
+                .unwrap_or(false)
+        });
+        assert!(
+            has_worker_frame,
+            "{expected} stack should contain '{worker_fn}' frame but got: {frames:?}"
+        );
+    }
 }
 
 #[test]

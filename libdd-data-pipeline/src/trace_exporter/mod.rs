@@ -47,13 +47,18 @@ use libdd_trace_utils::send_with_retry::{
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
+const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
+const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
+const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
 #[derive(Debug, Default, Clone)]
@@ -83,6 +88,7 @@ pub enum TraceExporterOutputFormat {
     #[default]
     V04,
     V05,
+    V1,
 }
 
 impl TraceExporterOutputFormat {
@@ -91,8 +97,9 @@ impl TraceExporterOutputFormat {
         add_path(
             url,
             match self {
-                TraceExporterOutputFormat::V04 => "/v0.4/traces",
-                TraceExporterOutputFormat::V05 => "/v0.5/traces",
+                TraceExporterOutputFormat::V04 => V04_TRACES_ENDPOINT,
+                TraceExporterOutputFormat::V05 => V05_TRACES_ENDPOINT,
+                TraceExporterOutputFormat::V1 => V1_TRACES_ENDPOINT,
             },
         )
     }
@@ -127,44 +134,7 @@ fn add_path(url: &Uri, path: &str) -> Uri {
     Uri::from_parts(parts).unwrap()
 }
 
-#[derive(Clone, Default, Debug)]
-pub struct TracerMetadata {
-    pub hostname: String,
-    pub env: String,
-    pub app_version: String,
-    pub runtime_id: String,
-    pub service: String,
-    pub tracer_version: String,
-    pub language: String,
-    pub language_version: String,
-    pub language_interpreter: String,
-    pub language_interpreter_vendor: String,
-    pub git_commit_sha: String,
-    pub process_tags: String,
-    pub client_computed_stats: bool,
-    pub client_computed_top_level: bool,
-}
-
-impl<'a> From<&'a TracerMetadata> for TracerHeaderTags<'a> {
-    fn from(tags: &'a TracerMetadata) -> TracerHeaderTags<'a> {
-        TracerHeaderTags::<'_> {
-            lang: &tags.language,
-            lang_version: &tags.language_version,
-            tracer_version: &tags.tracer_version,
-            lang_interpreter: &tags.language_interpreter,
-            lang_vendor: &tags.language_interpreter_vendor,
-            client_computed_stats: tags.client_computed_stats,
-            client_computed_top_level: tags.client_computed_top_level,
-            ..Default::default()
-        }
-    }
-}
-
-impl<'a> From<&'a TracerMetadata> for HeaderMap {
-    fn from(tags: &'a TracerMetadata) -> HeaderMap {
-        TracerHeaderTags::from(tags).into()
-    }
-}
+pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
 /// Handles for the background workers owned by a [`TraceExporter`].
 #[cfg(not(target_arch = "wasm32"))]
@@ -217,6 +187,13 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
+    /// Set to true while the agent advertises `/v1.0/traces` in `/info`; false otherwise.
+    /// Only consulted when `output_format` is V1.
+    v1_active: AtomicBool,
+    /// Used to emit a one-shot warning when V1 is requested by the SDK but the agent never
+    /// advertises `/v1.0/traces`. Without it we'd either spam the warning on every `/info`
+    /// poll or stay silent and leave SDK authors without a signal.
+    v1_unavailable_logged: Once,
     serializer: TraceSerializer,
     shared_runtime: Arc<SharedRuntime>,
     /// None if dogstatsd is disabled
@@ -246,29 +223,34 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
     /// Stop the background workers owned by this exporter.
     ///
-    /// Only the workers spawned for this exporter are stopped. Workers from other components
-    /// sharing the same [`SharedRuntime`] are unaffected.
+    /// Sync facade over [`Self::shutdown_async`]; panics inside an existing tokio context.
+    /// Workers from other components on the same [`SharedRuntime`] are unaffected.
     ///
     /// # Errors
-    /// Returns [`SharedRuntimeError::ShutdownTimedOut`] if a timeout was given and elapsed before
-    /// all workers finished.
+    /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
+    /// given and elapsed before all workers finished.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         let runtime = self.shared_runtime.clone();
+        runtime.block_on(self.shutdown_async(timeout))?
+    }
+
+    /// Async version of [`Self::shutdown`].
+    ///
+    /// # Errors
+    /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
+    /// given and elapsed before all workers finished.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub async fn shutdown_async(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
         if let Some(timeout) = timeout {
-            match runtime
-                .block_on(async { tokio::time::timeout(timeout, self.shutdown_workers()).await })
-                .map_err(TraceExporterError::Io)?
-            {
+            match tokio::time::timeout(timeout, self.shutdown_workers()).await {
                 Ok(()) => Ok(()),
                 Err(_) => Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(
                     timeout,
                 ))),
             }
         } else {
-            runtime
-                .block_on(self.shutdown_workers())
-                .map_err(TraceExporterError::Io)?;
+            self.shutdown_workers().await;
             Ok(())
         }
     }
@@ -306,34 +288,22 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         let _ = self;
     }
 
-    /// Send msgpack serialized traces to the agent
+    /// Send msgpack serialized traces to the agent.
     ///
-    /// # Arguments
-    ///
-    /// * data: A slice containing the serialized traces. This slice should be encoded following the
-    ///   input_format passed to the TraceExporter on creating.
-    ///
-    /// # Returns
-    /// * Ok(AgentResponse): The response from the agent
-    /// * Err(TraceExporterError): An error detailing what went wrong in the process
+    /// Sync facade over [`Self::send_async`]; panics inside an existing tokio context.
+    /// `data` must be encoded per the `input_format` given to the builder. Returns the
+    /// agent response on success.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
-
-        let res = self.send_deser(data, self.input_format.into())?;
-        if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
-            return Err(TraceExporterError::Agent(
-                error::AgentErrorKind::EmptyResponse,
-            ));
-        }
-
-        Ok(res)
+        self.shared_runtime.block_on(self.send_async(data))?
     }
 
-    /// **WARNING**: This method is experimental and should not be used for production.
-    /// Async version of [`Self::send`] for platforms that cannot use `block_on` (e.g. wasm)
+    /// Send msgpack serialized traces to the agent.
+    ///
+    /// `data` must be encoded per the `input_format` given to the builder.
+    /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
+        self.check_agent_info().await;
 
         let format: DeserInputFormat = self.input_format.into();
 
@@ -379,50 +349,85 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn check_agent_info(&self) {
-        if let Some(agent_info) = agent_info::get_agent_info() {
-            if self.has_agent_info_state_changed(&agent_info) {
-                match &**self.client_side_stats.status.load() {
-                    StatsComputationStatus::Disabled => {}
-                    StatsComputationStatus::DisabledByAgent { .. } => {
-                        let ctx = stats::StatsContext {
-                            metadata: &self.metadata,
-                            endpoint_url: &self.endpoint.url,
-                            shared_runtime: &self.shared_runtime,
-                        };
-                        stats::handle_stats_disabled_by_agent(
-                            &ctx,
-                            &agent_info,
-                            self.capabilities.clone(),
-                            &self.client_side_stats,
-                        );
-                    }
-                    StatsComputationStatus::Enabled {
-                        stats_concentrator, ..
-                    } => {
-                        let ctx = stats::StatsContext {
-                            metadata: &self.metadata,
-                            endpoint_url: &self.endpoint.url,
-                            shared_runtime: &self.shared_runtime,
-                        };
-                        stats::handle_stats_enabled(
-                            &ctx,
-                            &agent_info,
-                            stats_concentrator,
-                            &self.client_side_stats,
-                        );
-                    }
-                }
-                self.previous_info_state
-                    .store(Some(agent_info.state_hash.clone().into()))
+    /// Reconcile in-process stats state with the latest agent info.
+    /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
+    async fn check_agent_info(&self) {
+        let Some(agent_info) = agent_info::get_agent_info() else {
+            return;
+        };
+        if !self.has_agent_info_state_changed(&agent_info) {
+            return;
+        }
+
+        if matches!(self.output_format, TraceExporterOutputFormat::V1) {
+            self.refresh_v1_active(&agent_info);
+        }
+
+        // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
+        let status = self.client_side_stats.status.load_full();
+        match &*status {
+            StatsComputationStatus::Disabled => {}
+            StatsComputationStatus::DisabledByAgent { .. } => {
+                let ctx = stats::StatsContext {
+                    metadata: &self.metadata,
+                    endpoint_url: &self.endpoint.url,
+                    shared_runtime: &self.shared_runtime,
+                };
+                stats::handle_stats_disabled_by_agent(
+                    &ctx,
+                    &agent_info,
+                    self.capabilities.clone(),
+                    &self.client_side_stats,
+                );
+            }
+            StatsComputationStatus::Enabled {
+                stats_concentrator, ..
+            } => {
+                stats::handle_stats_enabled(
+                    &agent_info,
+                    stats_concentrator,
+                    &self.client_side_stats,
+                )
+                .await;
             }
         }
+        self.previous_info_state
+            .store(Some(agent_info.state_hash.clone().into()))
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn check_agent_info(&self) {
+    async fn check_agent_info(&self) {
         // No background workers on wasm — agent info is never fetched, stats are
         // never computed. This is intentionally a no-op.
+    }
+
+    /// Reconcile `v1_active` with the agent's currently-advertised endpoints. Called only when
+    /// V1 is configured and the agent info state has changed, so transitions are logged at most
+    /// once per change. Note: `v1_active` can also transition `true → false` outside this path,
+    /// via the fail-closed hook in `send_trace_chunks_inner` when the agent returns 404 on
+    /// `/v1.0/traces` (the agent does not bump its state hash on 404).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn refresh_v1_active(&self, agent_info: &Arc<AgentInfo>) {
+        let supports_v1 = agent_info
+            .info
+            .endpoints
+            .as_ref()
+            .is_some_and(|e| e.iter().any(|p| p == V1_TRACES_ENDPOINT));
+        let previous = self.v1_active.swap(supports_v1, Ordering::Relaxed);
+        match (previous, supports_v1) {
+            (false, true) => debug!("V1 trace protocol enabled (agent advertises /v1.0/traces)"),
+            (true, false) => {
+                warn!("V1 trace protocol no longer advertised by agent; falling back to v0.4")
+            }
+            (false, false) => {
+                self.v1_unavailable_logged.call_once(|| {
+                    warn!(
+                        "V1 trace protocol requested by SDK but agent does not advertise {V1_TRACES_ENDPOINT}; continuing on v0.4"
+                    );
+                });
+            }
+            (true, true) => {}
+        }
     }
 
     /// !!! This function is only for testing purposes !!!
@@ -472,8 +477,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
     /// Send a list of trace chunks to the agent (or OTLP endpoint when configured).
     ///
+    /// Sync facade over [`Self::send_trace_chunks_async`]; panics inside an existing
+    /// tokio context.
+    ///
     /// # Arguments
     /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    /// * cancellation_token: When provided, cancelling the token aborts the send while it is in
+    ///   progress. The send only observes a token that is cancelled while the request is in-flight;
+    ///   a token cancelled before this call returns immediately, and a token cancelled after the
+    ///   send has already finished has no effect. Cancelling an in-flight send may cause the trace
+    ///   chunks being sent to be lost.
     ///
     /// # Returns
     /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
@@ -482,10 +495,22 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
+        cancellation_token: Option<&CancellationToken>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
-        self.shared_runtime
-            .block_on(async { self.send_trace_chunks_inner(trace_chunks).await })?
+        self.shared_runtime.block_on(async {
+            match cancellation_token {
+                Some(token) => {
+                    tokio::select! {
+                        res = self.send_trace_chunks_async(trace_chunks) => res,
+                        _ = token.cancelled() => Err(TraceExporterError::Io(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "send cancelled via cancellation token",
+                        ))),
+                    }
+                }
+                None => self.send_trace_chunks_async(trace_chunks).await,
+            }
+        })?
     }
 
     /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
@@ -500,7 +525,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info();
+        self.check_agent_info().await;
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
@@ -533,38 +558,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         )
         .await?;
         Ok(AgentResponse::Unchanged)
-    }
-
-    /// Deserializes, processes and sends trace chunks to the agent
-    #[cfg(not(target_arch = "wasm32"))]
-    fn send_deser(
-        &self,
-        data: &[u8],
-        format: DeserInputFormat,
-    ) -> Result<AgentResponse, TraceExporterError> {
-        let (traces, _) = match format {
-            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
-            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
-        }
-        .map_err(|e| {
-            error!("Error deserializing trace from request body: {e}");
-            self.emit_metric(
-                HealthMetric::Count(health_metrics::DESERIALIZE_TRACES_ERRORS, 1),
-                None,
-            );
-            TraceExporterError::Deserialization(e)
-        })?;
-        debug!(
-            trace_count = traces.len(),
-            "Trace deserialization completed successfully"
-        );
-        self.emit_metric(
-            HealthMetric::Count(health_metrics::DESERIALIZE_TRACES, traces.len() as i64),
-            None,
-        );
-
-        self.shared_runtime
-            .block_on(async { self.send_trace_chunks_inner(traces).await })?
     }
 
     /// Send traces payload to agent with retry and telemetry reporting
@@ -630,10 +623,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             return self.send_otlp_traces_inner(traces, config).await;
         }
 
+        // Snapshot the effective format once so the serializer and the URL agree even if
+        // `v1_active` flips mid-send (the background `/info` fetcher can race us otherwise).
+        let effective_format = self.effective_output_format();
+
         let prepared = match self.serializer.prepare_traces_payload(
             traces,
             header_tags,
+            &self.metadata,
             self.agent_payload_response_version.as_ref(),
+            effective_format,
         ) {
             Ok(p) => p,
             Err(e) => {
@@ -647,18 +646,39 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         };
 
         let endpoint = Endpoint {
-            url: self.get_agent_url(),
+            url: effective_format.add_path(&self.endpoint.url),
             ..self.endpoint.clone()
         };
 
-        self.send_traces_with_telemetry(
-            &endpoint,
-            prepared.data,
-            prepared.headers,
-            prepared.chunk_count,
-            dropped_p0_stats.dropped_p0_traces,
-        )
-        .await
+        let result = self
+            .send_traces_with_telemetry(
+                &endpoint,
+                prepared.data,
+                prepared.headers,
+                prepared.chunk_count,
+                dropped_p0_stats.dropped_p0_traces,
+            )
+            .await;
+
+        // State-hash trap mitigation: the agent does not return a `Datadog-Agent-State`
+        // header on 404, so without this hook we'd stay pinned to V1 until the next `/info`
+        // poll (up to the fetcher's refresh interval). On a 404 to `/v1.0/traces`, fail
+        // closed immediately and force an `/info` refresh so the next send uses V0.4 and
+        // V1 support is re-detected as soon as the agent advertises it again.
+        if effective_format == TraceExporterOutputFormat::V1 {
+            if let Err(TraceExporterError::Request(ref e)) = result {
+                if e.status() == http::StatusCode::NOT_FOUND
+                    && self.v1_active.swap(false, Ordering::Relaxed)
+                {
+                    warn!(
+                            "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
+                        );
+                    self.info_response_observer.manual_trigger();
+                }
+            }
+        }
+
+        result
     }
 
     /// Handle the result of sending traces to the agent
@@ -844,8 +864,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         )
     }
 
-    fn get_agent_url(&self) -> Uri {
-        self.output_format.add_path(&self.endpoint.url)
+    /// Return the trace output format that will actually be used to encode and send the next
+    /// payload.
+    ///
+    /// When V1 is configured, the effective format is V1 only after the agent has advertised
+    /// `/v1.0/traces` via the `/info` endpoint (fail-closed). Until then — and any time the
+    /// agent rolls back this capability — V1 transparently falls back to V0.4. V0.4 and V0.5
+    /// pass through unchanged.
+    fn effective_output_format(&self) -> TraceExporterOutputFormat {
+        match self.output_format {
+            TraceExporterOutputFormat::V1 if self.v1_active.load(Ordering::Relaxed) => {
+                TraceExporterOutputFormat::V1
+            }
+            TraceExporterOutputFormat::V1 => TraceExporterOutputFormat::V04,
+            other => other,
+        }
     }
 
     #[cfg(test)]
@@ -935,6 +968,148 @@ mod tests {
         assert!(headers.contains_key("datadog-client-computed-top-level"));
     }
 
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_effective_output_format_v04_passthrough() {
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V04,
+            false,
+            false,
+        );
+        assert!(matches!(
+            exporter.effective_output_format(),
+            TraceExporterOutputFormat::V04
+        ));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_effective_output_format_v1_pre_negotiation_falls_back_to_v04() {
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        assert!(matches!(
+            exporter.effective_output_format(),
+            TraceExporterOutputFormat::V04
+        ));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_effective_output_format_v1_post_negotiation_uses_v1() {
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        exporter
+            .v1_active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(matches!(
+            exporter.effective_output_format(),
+            TraceExporterOutputFormat::V1
+        ));
+        assert_eq!(
+            exporter
+                .effective_output_format()
+                .add_path(&exporter.endpoint.url)
+                .to_string(),
+            "http://127.0.0.1:8126/v1.0/traces"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_refresh_v1_active_enables_when_endpoint_advertised() {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        let agent_info = Arc::new(AgentInfo {
+            state_hash: "hash-1".to_string(),
+            info: AgentInfoStruct {
+                endpoints: Some(vec![
+                    V04_TRACES_ENDPOINT.to_string(),
+                    V1_TRACES_ENDPOINT.to_string(),
+                ]),
+                ..Default::default()
+            },
+        });
+        exporter.refresh_v1_active(&agent_info);
+        assert!(exporter
+            .v1_active
+            .load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_refresh_v1_active_disables_when_endpoint_disappears() {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        exporter
+            .v1_active
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let agent_info = Arc::new(AgentInfo {
+            state_hash: "hash-2".to_string(),
+            info: AgentInfoStruct {
+                endpoints: Some(vec![V04_TRACES_ENDPOINT.to_string()]),
+                ..Default::default()
+            },
+        });
+        exporter.refresh_v1_active(&agent_info);
+        assert!(!exporter
+            .v1_active
+            .load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_refresh_v1_active_handles_missing_endpoints_field() {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        let exporter = build_test_exporter(
+            "http://127.0.0.1:8126".to_string(),
+            None,
+            TraceExporterInputFormat::V04,
+            TraceExporterOutputFormat::V1,
+            false,
+            false,
+        );
+        let agent_info = Arc::new(AgentInfo {
+            state_hash: "hash-3".to_string(),
+            info: AgentInfoStruct {
+                endpoints: None,
+                ..Default::default()
+            },
+        });
+        exporter.refresh_v1_active(&agent_info);
+        assert!(!exporter
+            .v1_active
+            .load(std::sync::atomic::Ordering::Relaxed));
+    }
+
     fn read(socket: &net::UdpSocket) -> String {
         let mut buf = [0; 1_000];
         socket.recv(&mut buf).expect("No data");
@@ -994,7 +1169,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            fake_agent.url(V04_TRACES_ENDPOINT),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1064,7 +1239,7 @@ mod tests {
         let fake_agent = MockServer::start();
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            fake_agent.url(V04_TRACES_ENDPOINT),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1100,7 +1275,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            fake_agent.url(V04_TRACES_ENDPOINT),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1158,7 +1333,7 @@ mod tests {
             env!("CARGO_PKG_VERSION")
         );
         let expected_requests = format!(
-            "datadog.tracer.exporter.transport.requests:5|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.requests:6|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
 
@@ -1208,7 +1383,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            fake_agent.url(V04_TRACES_ENDPOINT),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1250,7 +1425,7 @@ mod tests {
             env!("CARGO_PKG_VERSION")
         );
         let expected_requests = format!(
-            "datadog.tracer.exporter.transport.requests:5|d|#libdatadog_version:{}",
+            "datadog.tracer.exporter.transport.requests:6|d|#libdatadog_version:{}",
             env!("CARGO_PKG_VERSION")
         );
 
@@ -1312,7 +1487,7 @@ mod tests {
         });
 
         let exporter = build_test_exporter(
-            fake_agent.url("/v0.4/traces"),
+            fake_agent.url(V04_TRACES_ENDPOINT),
             Some(stats_socket.local_addr().unwrap().to_string()),
             TraceExporterInputFormat::V04,
             TraceExporterOutputFormat::V04,
@@ -1485,7 +1660,7 @@ mod tests {
                         }
                     }"#;
         let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.4/traces");
+            when.method(POST).path(V04_TRACES_ENDPOINT);
             then.status(200)
                 .header("content-type", "application/json")
                 .body(response_body);
@@ -1540,7 +1715,7 @@ mod tests {
                         }
                     }"#;
         let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.5/traces");
+            when.method(POST).path(V05_TRACES_ENDPOINT);
             then.status(200)
                 .header("content-type", "application/json")
                 .body(response_body);
@@ -1590,7 +1765,7 @@ mod tests {
                         }
                     }"#;
         let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.5/traces").is_true(|req| {
+            when.method(POST).path(V05_TRACES_ENDPOINT).is_true(|req| {
                 let bytes = libdd_tinybytes::Bytes::copy_from_slice(req.body_ref());
                 bytes.to_vec() == V5_EMPTY
             });
@@ -1653,7 +1828,7 @@ mod tests {
                         }
                     }"#;
         let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.4/traces");
+            when.method(POST).path(V04_TRACES_ENDPOINT);
             then.status(200)
                 .header("content-type", "application/json")
                 .header("datadog-rates-payload-version", "abc")
@@ -1688,7 +1863,7 @@ mod tests {
                         }
                     }"#;
         let mut traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.4/traces");
+            when.method(POST).path(V04_TRACES_ENDPOINT);
             then.status(200)
                 .header("content-type", "application/json")
                 .header("datadog-rates-payload-version", "abc")
@@ -1715,7 +1890,7 @@ mod tests {
         traces_endpoint.delete();
 
         let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path("/v0.4/traces");
+            when.method(POST).path(V04_TRACES_ENDPOINT);
             then.status(200)
                 .header("content-type", "application/json")
                 .header("datadog-rates-payload-version", "def")
@@ -1772,7 +1947,7 @@ mod tests {
         let mock_traces = server.mock(|when, then| {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
-                .path("/v0.4/traces");
+                .path(V04_TRACES_ENDPOINT);
             then.status(200).body(
                 r#"{
                     "rate_by_service": {
@@ -1783,7 +1958,7 @@ mod tests {
         });
 
         let mock_info = server.mock(|when, then| {
-            when.method(GET).path("/info");
+            when.method(GET).path(INFO_ENDPOINT);
             then.delay(delay).status(status).body(response);
         });
 
@@ -1888,6 +2063,7 @@ mod tests {
 
 #[cfg(test)]
 mod single_threaded_tests {
+    use super::stats::STATS_ENDPOINT;
     use super::*;
     use crate::agent_info;
     use httpmock::prelude::*;
@@ -1906,23 +2082,25 @@ mod single_threaded_tests {
         let mock_traces = server.mock(|when, then| {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
-                .path("/v0.4/traces");
+                .path(V04_TRACES_ENDPOINT);
             then.status(200).body("");
         });
 
         let mock_stats = server.mock(|when, then| {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
-                .path("/v0.6/stats");
+                .path(STATS_ENDPOINT);
             then.status(200).body("");
         });
 
         let _mock_info = server.mock(|when, then| {
-            when.method(GET).path("/info");
+            when.method(GET).path(INFO_ENDPOINT);
             then.status(200)
                 .header("content-type", "application/json")
                 .header("datadog-agent-state", "1")
-                .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
+                .body(format!(
+                    r#"{{"version":"1","client_drop_p0s":true,"endpoints":["{V04_TRACES_ENDPOINT}","{STATS_ENDPOINT}"]}}"#
+                ));
         });
 
         let runtime = Arc::new(SharedRuntime::new().unwrap());
@@ -1994,7 +2172,7 @@ mod single_threaded_tests {
         let mock_traces = server.mock(|when, then| {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
-                .path("/v0.4/traces");
+                .path(V04_TRACES_ENDPOINT);
             then.status(200).body(
                 r#"{
                     "rate_by_service": {
@@ -2008,16 +2186,18 @@ mod single_threaded_tests {
         let _mock_stats = server.mock(|when, then| {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
-                .path("/v0.6/stats");
+                .path(STATS_ENDPOINT);
             then.delay(Duration::from_secs(10)).status(200).body("");
         });
 
         let _mock_info = server.mock(|when, then| {
-            when.method(GET).path("/info");
+            when.method(GET).path(INFO_ENDPOINT);
             then.status(200)
                 .header("content-type", "application/json")
                 .header("datadog-agent-state", "1")
-                .body(r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#);
+                .body(format!(
+                    r#"{{"version":"1","client_drop_p0s":true,"endpoints":["{V04_TRACES_ENDPOINT}","{STATS_ENDPOINT}"]}}"#
+                ));
         });
 
         let runtime = Arc::new(SharedRuntime::new().unwrap());
@@ -2107,25 +2287,27 @@ mod single_threaded_tests {
         let _mock_traces = server.mock(|when, then| {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
-                .path("/v0.4/traces");
+                .path(V04_TRACES_ENDPOINT);
             then.status(200).body("");
         });
 
         let _mock_stats = server.mock(|when, then| {
             when.method(POST)
                 .header("Content-type", "application/msgpack")
-                .path("/v0.6/stats");
+                .path(STATS_ENDPOINT);
             then.status(200).body("");
         });
 
         let info_body = match agent_obfuscation_version {
             Some(v) => format!(
-                r#"{{"version":"1","client_drop_p0s":true,"obfuscation_version":{v},"endpoints":["/v0.4/traces","/v0.6/stats"]}}"#
+                r#"{{"version":"1","client_drop_p0s":true,"obfuscation_version":{v},"endpoints":["{V04_TRACES_ENDPOINT}","{STATS_ENDPOINT}"]}}"#
             ),
-            None => r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#.to_string(),
+            None => format!(
+                r#"{{"version":"1","client_drop_p0s":true,"endpoints":["{V04_TRACES_ENDPOINT}","{STATS_ENDPOINT}"]}}"#
+            ),
         };
         let _mock_info = server.mock(|when, then| {
-            when.method(GET).path("/info");
+            when.method(GET).path(INFO_ENDPOINT);
             then.status(200)
                 .header("content-type", "application/json")
                 .header("datadog-agent-state", "1")
@@ -2189,5 +2371,92 @@ mod single_threaded_tests {
             run_obfuscation_test(true, Some(current_obf_version)),
             "obfuscation must activate when opted in and agent supports"
         );
+    }
+
+    /// Agent rollback / partial-V1 scenario: `/info` advertises `/v1.0/traces` but the actual
+    /// endpoint returns 404 (e.g. customer rolled back the agent without `/info` reflecting it).
+    /// The fail-closed hook must flip `v1_active` to false on the first 404 so the next send
+    /// uses V0.4.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_v1_404_fails_closed_to_v04() {
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+
+        let mock_v1 = server.mock(|when, then| {
+            when.method(POST).path(V1_TRACES_ENDPOINT);
+            then.status(404).body("");
+        });
+
+        let mock_v04 = server.mock(|when, then| {
+            when.method(POST).path(V04_TRACES_ENDPOINT);
+            then.status(200).body("{}");
+        });
+
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path(INFO_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .header("datadog-agent-state", "1")
+                .body(format!(
+                    r#"{{"version":"1","client_drop_p0s":true,"endpoints":["{V1_TRACES_ENDPOINT}","{V04_TRACES_ENDPOINT}"]}}"#
+                ));
+        });
+
+        let runtime = Arc::new(SharedRuntime::new().unwrap());
+
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_shared_runtime(runtime.clone())
+            .enable_v1_protocol();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        // Wait until /info has been fetched so the next send promotes v1_active=true.
+        let start = std::time::Instant::now();
+        while agent_info::get_agent_info().is_none() {
+            if start.elapsed() > Duration::from_secs(5) {
+                panic!("timeout waiting for /info");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let trace_chunk = vec![SpanBytes {
+            duration: 10,
+            ..Default::default()
+        }];
+        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+
+        // 1st send: /info has promoted v1_active=true, so this hits /v1.0/traces and 404s.
+        let result1 = exporter.send(&data);
+        assert!(result1.is_err(), "first send should error on 404");
+        assert!(
+            !exporter.v1_active.load(Ordering::Relaxed),
+            "v1_active must flip to false after a V1 404"
+        );
+
+        // 2nd send: effective format is now V0.4 → hits /v0.4/traces and succeeds.
+        let result2 = exporter.send(&data);
+        assert!(
+            result2.is_ok(),
+            "second send (V0.4 fallback) should succeed: {:?}",
+            result2.err()
+        );
+
+        // The first send retries internally on 4xx (send_with_retry default), so V1 is hit
+        // multiple times before the fail-closed flip; we only care that it was hit at all.
+        assert!(
+            mock_v1.calls() >= 1,
+            "V1 endpoint must be tried at least once before the fail-closed flip"
+        );
+        mock_v04.assert();
     }
 }

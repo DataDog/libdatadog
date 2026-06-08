@@ -2,6 +2,53 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v6.0.1..libdd-trace-utils-v7.0.0) - 2026-06-05
+
+### Added
+
+- Add dedup convenience to VecMap ([#2049](https://github.com/datadog/libdatadog/issues/2049)) - ([331b904](https://github.com/datadog/libdatadog/commit/331b90444aff0db70d37bc2d507056f19881633b))
+
+### Changed
+
+- Revert add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) ([#2073](https://github.com/datadog/libdatadog/issues/2073)) - ([a21e9d5](https://github.com/datadog/libdatadog/commit/a21e9d5eeeff0be4a1b9de8104a2cf2eae2be6a3))
+
+### Fixed
+
+- Follow max retries of the strategy ([#2047](https://github.com/datadog/libdatadog/issues/2047)) - ([0172960](https://github.com/datadog/libdatadog/commit/01729601279185fa921147959f4b5c401340b838))
+- Match the Go trace agent when parsing `datadog-client-computed-*` bool headers ([#2071](https://github.com/datadog/libdatadog/issues/2071)) - ([48da0d8](https://github.com/datadog/libdatadog/commit/48da0d82cb32b43d4cdece35b794c9bcbc275a03))
+
+
+
+## [6.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v6.0.0..libdd-trace-utils-v6.0.1) - 2026-06-01
+
+### Fixed
+
+- Propagate _dd.p.tid from chunk root to all spans ([#2014](https://github.com/datadog/libdatadog/issues/2014)) - ([42d9ab0](https://github.com/datadog/libdatadog/commit/42d9ab0438338516d2e8ef962de4f8ed158c519d))
+
+
+
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v5.0.0..libdd-trace-utils-v6.0.0) - 2026-05-29
+
+### Added
+
+- Introduce VecMap datastructure ([#2022](https://github.com/datadog/libdatadog/issues/2022)) - ([f7d471d](https://github.com/datadog/libdatadog/commit/f7d471dc51bb3f2131e9577adc9ea0e06ee417c7))
+- Update test agent version ([#2038](https://github.com/datadog/libdatadog/issues/2038)) - ([670a5ad](https://github.com/datadog/libdatadog/commit/670a5ad9fe540d7f4f3eee0b1f5192f532bbc06d))
+
+### Changed
+
+- Replace use_v05_format bool and remove infallible expect ([#1946](https://github.com/datadog/libdatadog/issues/1946)) - ([54afa6f](https://github.com/datadog/libdatadog/commit/54afa6f73cb46a864a58100bbbc4027acd0b9a0b))
+
+
+
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v4.0.0..libdd-trace-utils-v5.0.0) - 2026-05-22
+
+### Added
+
+- Add from_string to span text ([#2011](https://github.com/datadog/libdatadog/issues/2011)) - ([ecdca7d](https://github.com/datadog/libdatadog/commit/ecdca7d4ef4e7f11c0194ed2f4e25173973404e7))
+- Add encoder from v04 to v1 ([#1896](https://github.com/datadog/libdatadog/issues/1896)) - ([e2fb886](https://github.com/datadog/libdatadog/commit/e2fb8860d002d1b56d0dc8b0b185fca7954371df))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v3.0.1..libdd-trace-utils-v4.0.0) - 2026-05-18
 
 ### Added
