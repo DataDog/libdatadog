@@ -21,7 +21,7 @@
 //! of the pipe and can keep the async runtime alive for longer than needed, preventing
 //! resources from being freed.
 //!
-//! When a future that has been wrapped by [`wrap`] is `await`-ed the following
+//! When a future that has been wrapped by [`WeakWakerFuture`] is `await`-ed the following
 //! happens:
 //! * the waker passed to the future is wrapped in a level of indirection, that allows dropping the
 //!   original waker without coordinating with the end of the pipe outside of the runtime.
@@ -33,12 +33,11 @@
 //! too.
 
 use std::future::Future;
-use std::ops::Deref;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Context;
 
-use futures_util::task::{waker_ref, ArcWake, AtomicWaker, WakerRef};
+use futures_util::task::{waker_ref, ArcWake, AtomicWaker};
 
 /// Wraps an [`AtomicWaker`] to create our own waker.
 ///
@@ -54,10 +53,6 @@ impl ArcWake for WeakWakerInner {
     }
 }
 
-fn make_waker(waker: &Arc<WeakWakerInner>) -> WakerRef<'_> {
-    waker_ref(waker)
-}
-
 struct WeakWaker {
     inner: Arc<WeakWakerInner>,
 }
@@ -70,20 +65,22 @@ impl Drop for WeakWaker {
     }
 }
 
-/// Wrap a future so that the waker passed to it is held only weakly.
-///
-/// See the [module-level documentation](self) for details.
-#[must_use = "futures do nothing unless you `.await` or poll them"]
-pub fn wrap<F: Future>(fut: F) -> WeakWakerFuture<F> {
-    WeakWakerFuture {
-        fut,
-        weak_waker: None,
-    }
-}
-
 pub struct WeakWakerFuture<F: Future> {
     fut: F,
     weak_waker: Option<WeakWaker>,
+}
+
+impl<F: Future> WeakWakerFuture<F> {
+    /// Wrap a future so that the waker passed to it is held only weakly.
+    ///
+    /// See the [module-level documentation](self) for details.
+    #[must_use = "futures do nothing unless you `.await` or poll them"]
+    pub fn new(fut: F) -> WeakWakerFuture<F> {
+        WeakWakerFuture {
+            fut,
+            weak_waker: None,
+        }
+    }
 }
 
 impl<F: Future> Future for WeakWakerFuture<F> {
@@ -112,20 +109,19 @@ impl<F: Future> Future for WeakWakerFuture<F> {
 
         // SAFETY: structural pinning for `fut`. The shared borrow of `m.weak_waker`
         // and the mutable borrow of `m.fut` are on disjoint fields; NLL allows this.
-        unsafe {
-            Pin::new_unchecked(&mut m.fut).poll(&mut Context::from_waker(make_waker(inner).deref()))
-        }
+        unsafe { Pin::new_unchecked(&mut m.fut).poll(&mut Context::from_waker(&waker_ref(inner))) }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::future::Future;
-    use std::pin::Pin;
+    use std::pin::pin;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::task::Context;
 
+    use super::*;
     use futures::task::waker;
     use futures_util::task::ArcWake;
 
@@ -143,7 +139,7 @@ mod tests {
     fn test_mpsc_queue_weak_waiter_drop_correctly() {
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
 
-        let mut fut = super::wrap(futures::StreamExt::next(&mut rx));
+        let mut fut = WeakWakerFuture::new(futures::StreamExt::next(&mut rx));
         let pinned_fut = Pin::new(&mut fut);
         let base_waker = Arc::new(TestWaker {
             waked: AtomicBool::new(false),
@@ -162,8 +158,7 @@ mod tests {
     fn test_mpsc_queue_weak_waiter_smoke() {
         let (tx, mut rx) = futures::channel::mpsc::unbounded::<()>();
 
-        let mut fut = super::wrap(futures::StreamExt::next(&mut rx));
-        let mut pinned_fut = Pin::new(&mut fut);
+        let mut pinned_fut = pin!(WeakWakerFuture::new(futures::StreamExt::next(&mut rx)));
         let base_waker = Arc::new(TestWaker {
             waked: AtomicBool::new(false),
         });

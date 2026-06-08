@@ -3,7 +3,7 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
-use crate::weak_waker;
+use crate::weak_waker::WeakWakerFuture;
 use crate::worker::Worker;
 use core::pin::Pin;
 use libdd_capabilities::spawn::SpawnError;
@@ -119,7 +119,7 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                 let future = Box::pin(async move {
                     // First iteration using initial_trigger.
                     //
-                    // `trigger`/`initial_trigger` are wrapped with [`weak_waker::wrap`] so the
+                    // `trigger`/`initial_trigger` are wrapped with [`WeakWakerFuture::new`] so the
                     // waker handed out to the worker (and potentially shared with code
                     // outside of this runtime, e.g. the non-runtime end of a channel) does
                     // not keep the runtime scheduler alive after this task is dropped.
@@ -128,7 +128,7 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                         _ = cloned_token.cancelled() => {
                             return worker;
                         }
-                        _ = weak_waker::wrap(worker.initial_trigger()) => {
+                        _ = WeakWakerFuture::new(worker.initial_trigger()) => {
                             worker.run().await;
                         }
                     }
@@ -140,7 +140,7 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                             _ = cloned_token.cancelled() => {
                                 break;
                             }
-                            _ = weak_waker::wrap(worker.trigger()) => {
+                            _ = WeakWakerFuture::new(worker.trigger()) => {
                                 worker.run().await;
                             }
                         }
