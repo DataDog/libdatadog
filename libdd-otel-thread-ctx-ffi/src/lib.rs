@@ -13,7 +13,7 @@ pub use linux::*;
 ///
 /// Returns `VoidResult::Ok` if all checks pass, or a `VoidResult::Err` with a
 /// diagnostic message on failure.
-#[cfg(all(target_os = "linux", feature = "autocheck"))]
+#[cfg(all(target_os = "linux", feature = "sanity-check"))]
 #[no_mangle]
 pub extern "C" fn ddog_otel_thread_ctx_autocheck() -> libdd_common_ffi::VoidResult {
     match libdd_otel_thread_ctx::autocheck::check_tls_slot_present() {

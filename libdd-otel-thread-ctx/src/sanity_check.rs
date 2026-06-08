@@ -5,29 +5,23 @@
 //! discoverable by an out-of-process reader as required by the OTel thread-level context sharing
 //! specification.
 //!
-//! Call [`check_tls_slot_present`] from within a cdylib context to verify that
-//! this shared object was linked with the required TLS properties:
+//! Call [`check_tls_slot_present`] from within a shared object or a statically linked executables
+//! to verify that the binary was linked with the correct option:
 //! - `otel_thread_ctx_v1` is exported as TLS GLOBAL in the dynamic symbol table.
 //! - `otel_thread_ctx_v1` is NOT accessed via General Dynamic or Local Dynamic TLS relocations
-//!   (DTPMOD/DTPOFF) in `.rela.dyn`. The linker may resolve to TLSDESC or Local Exec depending on
+//!   (DTPMOD/DTPOFF) in `.rela.dyn`. The linker may pick TLSDESC or Local Exec depending on
 //!   optimization; both are acceptable.
 //!
-//! This module is only available on Linux (the only platform that supports the
-//! TLSDESC dialect used by this crate) and only when the `autocheck` feature
-//! is enabled.
+//! This module is only available on Linux (the only platform that supports the TLSDESC dialect used
+//! by this crate) and only when the `sanity-check` feature is enabled.
 
 use elf::{abi, endian::AnyEndian, ElfBytes};
 use std::path::{Path, PathBuf};
 
 const SYMBOL: &str = "otel_thread_ctx_v1";
 
-/// Verify TLS properties of an ELF file at the given path.
-///
-/// Checks that `otel_thread_ctx_v1` is exported as a TLS GLOBAL symbol with no
-/// General Dynamic or Local Dynamic TLS relocations.
-///
-/// Returns `Ok(())` on success, or an `Err` with a diagnostic message on
-/// failure (does not panic).
+/// Safe as [sanity_check], but takes the object file as an argument. Useful for a test setting
+/// where the test code is separate from the artifact to validate.
 pub fn check_tls_slot_in(path: &Path) -> Result<(), String> {
     let data =
         std::fs::read(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
@@ -38,15 +32,20 @@ pub fn check_tls_slot_in(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Same as [`check_tls_slot_in`], but automatically locates this shared object
-/// via `/proc/self/maps`. Intended for use from within the cdylib at runtime.
-pub fn check_tls_slot_present() -> Result<(), String> {
-    check_tls_slot_in(&own_so_path()?)
+/// Check that the current running module has been linked appropriately to make the OTel shared
+/// thread context discoverable.
+///
+/// Checks that `otel_thread_ctx_v1` is exported as a TLS GLOBAL symbol with no General Dynamic or
+/// Local Dynamic TLS relocations. It's an indirect check for TLSDESC, which implies either no
+/// relocations (Local Exec/static binary case), or a TLSDESC relocation (dynamic library case).
+pub fn sanity_check() -> Result<(), String> {
+    check_tls_slot_in(&own_elf_path()?)
 }
 
-/// Locate this shared object via `/proc/self/maps` using `check_linking`'s address.
-fn own_so_path() -> Result<PathBuf, String> {
-    let addr = check_tls_slot_present as *const () as usize;
+/// Locate the current running module (shared or not) via `/proc/self/maps`.
+fn own_elf_path() -> Result<PathBuf, String> {
+    // We use the address of an arbitrary function of this module.
+    let addr = sanity_check as *const () as usize;
     let maps = std::fs::read_to_string("/proc/self/maps")
         .map_err(|e| format!("failed to read /proc/self/maps: {e}"))?;
     for line in maps.lines() {
@@ -67,7 +66,7 @@ fn own_so_path() -> Result<PathBuf, String> {
             }
         }
     }
-    Err("could not find our shared object in /proc/self/maps".into())
+    Err("could not find our own object file in /proc/self/maps".into())
 }
 
 fn check_dynsym(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
