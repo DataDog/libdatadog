@@ -7,7 +7,6 @@ AGENTS.md                            @DataDog/apm-common-components-core
 CLAUDE.md                            @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
 .pre-commit-config.yaml              @DataDog/libdatadog-core
-.codecov.yml                         @DataDog/apm-common-components-core
 .cargo/*                             @DataDog/libdatadog-core
 .config/nextest.toml                 @DataDog/apm-common-components-core
 .config/commitlint.config.js         @DataDog/apm-common-components-core
