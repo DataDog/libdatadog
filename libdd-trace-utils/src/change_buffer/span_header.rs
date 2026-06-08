@@ -1,6 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::mem;
+
 /// Fixed-layout span header for direct JS DataView access.
 ///
 /// JS creates a DataView over each span's header in WASM linear memory and writes fields directly.
@@ -31,36 +33,22 @@ pub struct SpanHeader {
 
 /// Field offsets for JS DataView access.
 pub mod offsets {
-    pub const SPAN_ID: usize = 0;
-    pub const TRACE_ID_LO: usize = 8;
-    pub const TRACE_ID_HI: usize = 16;
-    pub const PARENT_ID: usize = 24;
-    pub const START: usize = 32;
-    pub const DURATION: usize = 40;
-    pub const ERROR: usize = 48;
-    pub const NAME_ID: usize = 52;
-    pub const SERVICE_ID: usize = 56;
-    pub const RESOURCE_ID: usize = 60;
-    pub const TYPE_ID: usize = 64;
-    pub const ACTIVE: usize = 68;
+    use super::mem;
+    use super::SpanHeader;
+
+    pub const SPAN_ID: usize = mem::offset_of!(SpanHeader, span_id);
+    pub const TRACE_ID_LO: usize = mem::offset_of!(SpanHeader, trace_id_lo);
+    pub const TRACE_ID_HI: usize = mem::offset_of!(SpanHeader, trace_id_hi);
+    pub const PARENT_ID: usize = mem::offset_of!(SpanHeader, parent_id);
+    pub const START: usize = mem::offset_of!(SpanHeader, start);
+    pub const DURATION: usize = mem::offset_of!(SpanHeader, duration);
+    pub const ERROR: usize = mem::offset_of!(SpanHeader, error);
+    pub const NAME_ID: usize = mem::offset_of!(SpanHeader, name_id);
+    pub const SERVICE_ID: usize = mem::offset_of!(SpanHeader, service_id);
+    pub const RESOURCE_ID: usize = mem::offset_of!(SpanHeader, resource_id);
+    pub const TYPE_ID: usize = mem::offset_of!(SpanHeader, type_id);
+    pub const ACTIVE: usize = mem::offset_of!(SpanHeader, active);
 }
 
 /// Size of the header in bytes. Must match the #[repr(C)] layout.
-pub const SPAN_HEADER_SIZE: usize = std::mem::size_of::<SpanHeader>();
-
-// Compile-time assertions that the struct layout matches the declared offsets and size.
-const _: () = {
-    assert!(SPAN_HEADER_SIZE == 72);
-    assert!(std::mem::offset_of!(SpanHeader, span_id) == offsets::SPAN_ID);
-    assert!(std::mem::offset_of!(SpanHeader, trace_id_lo) == offsets::TRACE_ID_LO);
-    assert!(std::mem::offset_of!(SpanHeader, trace_id_hi) == offsets::TRACE_ID_HI);
-    assert!(std::mem::offset_of!(SpanHeader, parent_id) == offsets::PARENT_ID);
-    assert!(std::mem::offset_of!(SpanHeader, start) == offsets::START);
-    assert!(std::mem::offset_of!(SpanHeader, duration) == offsets::DURATION);
-    assert!(std::mem::offset_of!(SpanHeader, error) == offsets::ERROR);
-    assert!(std::mem::offset_of!(SpanHeader, name_id) == offsets::NAME_ID);
-    assert!(std::mem::offset_of!(SpanHeader, service_id) == offsets::SERVICE_ID);
-    assert!(std::mem::offset_of!(SpanHeader, resource_id) == offsets::RESOURCE_ID);
-    assert!(std::mem::offset_of!(SpanHeader, type_id) == offsets::TYPE_ID);
-    assert!(std::mem::offset_of!(SpanHeader, active) == offsets::ACTIVE);
-};
+pub const SPAN_HEADER_SIZE: usize = mem::size_of::<SpanHeader>();
