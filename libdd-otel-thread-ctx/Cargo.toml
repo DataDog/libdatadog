@@ -20,7 +20,7 @@ bench = false
 elf = { version = "0.7", optional = true }
 
 [features]
-autocheck = ["dep:elf"]
+sanity-check = ["dep:elf"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

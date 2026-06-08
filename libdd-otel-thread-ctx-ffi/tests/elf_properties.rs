@@ -26,5 +26,5 @@ fn cdylib_path() -> PathBuf {
 #[cfg_attr(miri, ignore)]
 fn otel_thread_ctx_v1_tls_properties() {
     let path = cdylib_path();
-    libdd_otel_thread_ctx::autocheck::check_tls_slot_in(&path).unwrap();
+    libdd_otel_thread_ctx::sanity_check::check_tls_slot_in(&path).unwrap();
 }
