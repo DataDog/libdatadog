@@ -78,7 +78,11 @@ impl<F: Future> WeakWakerFuture<F> {
     pub fn new(fut: F) -> WeakWakerFuture<F> {
         WeakWakerFuture {
             fut,
-            weak_waker: WeakWaker{inner: Arc::new(WeakWakerInner { waker: AtomicWaker::new() })},
+            weak_waker: WeakWaker {
+                inner: Arc::new(WeakWakerInner {
+                    waker: AtomicWaker::new(),
+                }),
+            },
         }
     }
 }
@@ -97,7 +101,10 @@ impl<F: Future> Future for WeakWakerFuture<F> {
 
         // SAFETY: structural pinning for `fut`. The shared borrow of `m.weak_waker`
         // and the mutable borrow of `m.fut` are on disjoint fields; NLL allows this.
-        unsafe { Pin::new_unchecked(&mut m.fut).poll(&mut Context::from_waker(&waker_ref(&m.weak_waker.inner))) }
+        unsafe {
+            Pin::new_unchecked(&mut m.fut)
+                .poll(&mut Context::from_waker(&waker_ref(&m.weak_waker.inner)))
+        }
     }
 }
 
