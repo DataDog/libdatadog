@@ -1,7 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Runtime ELF self-inspection for shared-library linking correctness.
+//! Runtime ELF self-inspection for shared library. Verifies that the OTel thread context symbol is
+//! discoverable by an out-of-process reader as required by the OTel thread-level context sharing
+//! specification.
 //!
 //! Call [`check_tls_slot_present`] from within a cdylib context to verify that
 //! this shared object was linked with the required TLS properties:
@@ -15,28 +17,31 @@
 //! is enabled.
 
 use elf::{abi, endian::AnyEndian, ElfBytes};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const SYMBOL: &str = "otel_thread_ctx_v1";
 
-/// Verify that this binary was linked with the correct TLS properties for the
-/// OTel thread-level context spec.
+/// Verify TLS properties of an ELF file at the given path.
 ///
-/// Locates the ELF file that contains this function (via `/proc/self/maps`)
-/// and asserts that `otel_thread_ctx_v1` is exported as a TLS GLOBAL symbol
-/// with no General Dynamic or Local Dynamic TLS relocations.
+/// Checks that `otel_thread_ctx_v1` is exported as a TLS GLOBAL symbol with no
+/// General Dynamic or Local Dynamic TLS relocations.
 ///
 /// Returns `Ok(())` on success, or an `Err` with a diagnostic message on
 /// failure (does not panic).
-pub fn check_tls_slot_present() -> Result<(), String> {
-    let path = own_so_path()?;
+pub fn check_tls_slot_in(path: &Path) -> Result<(), String> {
     let data =
-        std::fs::read(&path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+        std::fs::read(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     let elf = ElfBytes::<AnyEndian>::minimal_parse(&data)
         .map_err(|e| format!("failed to parse ELF at {}: {e}", path.display()))?;
     check_dynsym(&elf)?;
     check_no_gd_ld_reloc(&elf)?;
     Ok(())
+}
+
+/// Same as [`check_tls_slot_in`], but automatically locates this shared object
+/// via `/proc/self/maps`. Intended for use from within the cdylib at runtime.
+pub fn check_tls_slot_present() -> Result<(), String> {
+    check_tls_slot_in(&own_so_path()?)
 }
 
 /// Locate this shared object via `/proc/self/maps` using `check_linking`'s address.
