@@ -61,22 +61,6 @@ impl ChangeBuffer {
         Ok(T::from_bytes(bytes))
     }
 
-    /// Read a value without bounds checking.
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure `*index + size_of::<T>() <= self.len` and that `index + size_of<T>::() <
-    /// usize::MAX`.
-    #[inline(always)]
-    unsafe fn read_unchecked<T: FromBytes>(&self, index: &mut usize) -> T {
-        // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
-        // construction time. We do not materialize other references during the lifetime of `slice`.
-        let slice = unsafe { self.as_slice() };
-        let bytes = slice.get_unchecked(*index..*index + T::FROM_BYTES_SIZE);
-        *index += T::FROM_BYTES_SIZE;
-        T::from_bytes(bytes)
-    }
-
     /// Write a raw `u32` in the buffer.
     pub fn write_u32(&mut self, offset: usize, value: u32) -> Result<()> {
         let len = self.len;
