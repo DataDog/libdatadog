@@ -6,7 +6,6 @@ use crate::change_buffer::{ChangeBufferError, Result};
 
 /// A handle to a change buffer shared with another runtime. The memory is shared, meaning that
 /// cloning is cheap (copying the pointer and length).
-#[derive(Clone, Copy)]
 pub struct ChangeBuffer {
     ptr: *mut u8,
     len: usize,
