@@ -69,6 +69,7 @@ fn own_elf_path() -> Result<PathBuf, String> {
     Err("could not find our own object file in /proc/self/maps".into())
 }
 
+/// Check that [SYMBOL] is present in the `.dynsym` table of the ELF data.
 fn check_dynsym(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
     let (symtab, strtab) = elf
         .dynamic_symbol_table()
@@ -92,6 +93,9 @@ fn check_dynsym(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
     Ok(())
 }
 
+/// Check that there's either no TLS relocation for [SYMBOL] in the given ELF file, or if there is,
+/// it's a TLSDESC one. In practice, the check is negative: we check for the absence of relocations
+/// associated with the General Dynamic or Local Dynamic TLS access model.
 fn check_no_gd_ld_reloc(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
     #[cfg(target_arch = "x86_64")]
     const FORBIDDEN_RELOCS: &[(u32, &str)] =
