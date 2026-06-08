@@ -259,9 +259,8 @@ impl AzureMetadata {
         let pod_name = query.get_var(WEBSITE_POD_NAME);
         let computer_name = query.get_var(INSTANCE_NAME);
         let instance_name = resolve_instance_name(
-            website_sku.as_deref(),
-            container_name.as_deref(),
             pod_name.as_deref(),
+            container_name.as_deref(),
             computer_name.as_deref(),
         );
 
@@ -411,31 +410,19 @@ impl AzureMetadata {
     }
 }
 
-/// Resolves the instance name using the env var that provides an instance value
-/// that matches the Azure integration metric's `instance` tag for the current hosting plan
-/// with fallback logic if the preferred source is empty.
+/// Resolves the instance name to match the Azure integration metric's `instance` tag.
 fn resolve_instance_name(
-    website_sku: Option<&str>,
-    container_name: Option<&str>,
     pod_name: Option<&str>,
+    container_name: Option<&str>,
     computer_name: Option<&str>,
 ) -> Option<String> {
     fn non_empty(s: Option<&str>) -> Option<&str> {
         s.map(|v| v.trim()).filter(|v| !v.is_empty())
     }
 
-    let sku_preferred = match website_sku {
-        Some("FlexConsumption") | Some("Dynamic") => {
-            non_empty(container_name).or_else(|| non_empty(pod_name))
-        }
-        Some(_) => non_empty(computer_name),
-        None => None,
-    };
-
-    sku_preferred
-        .or_else(|| non_empty(computer_name))
-        .or_else(|| non_empty(container_name))
+    non_empty(computer_name)
         .or_else(|| non_empty(pod_name))
+        .or_else(|| non_empty(container_name))
         .map(|s| s.to_string())
 }
 
@@ -1049,68 +1036,43 @@ mod tests {
     }
 
     #[test]
-    fn test_instance_name_flex_consumption_uses_container_name() {
+    fn test_instance_name_computer_name_wins_over_pod_and_container() {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "FlexConsumption"),
-            ("CONTAINER_NAME", "0--abc-DEF"),
-            ("WEBSITE_POD_NAME", "0--abc-test"),
+            (INSTANCE_NAME, "10-20-30-40"),
+            (CONTAINER_NAME, "container-1"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "0--abc-DEF");
+        assert_eq!(metadata.get_instance_name(), "10-20-30-40");
     }
 
     #[test]
-    fn test_instance_name_flex_consumption_falls_back_to_pod_name() {
+    fn test_instance_name_pod_name_preferred_over_container_name() {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "FlexConsumption"),
-            ("WEBSITE_POD_NAME", "0--abc-def"),
+            (WEBSITE_POD_NAME, "0--abc-test"),
+            (CONTAINER_NAME, "container-1"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "0--abc-def");
+        assert_eq!(metadata.get_instance_name(), "0--abc-test");
     }
 
     #[test]
-    fn test_instance_name_dynamic_uses_container_name() {
+    fn test_instance_name_falls_back_to_container_name() {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "Dynamic"),
-            ("CONTAINER_NAME", "ABCD1234-111122223333444455"),
+            (CONTAINER_NAME, "0--abc-test"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "ABCD1234-111122223333444455");
-    }
-
-    #[test]
-    fn test_instance_name_elastic_premium_uses_computer_name() {
-        let mocked_env = MockEnv::new(&[
-            (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "ElasticPremium"),
-            (INSTANCE_NAME, "ep0fakewk0000A1"),
-        ]);
-        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "ep0fakewk0000A1");
-    }
-
-    #[test]
-    fn test_instance_name_dedicated_uses_computer_name() {
-        let mocked_env = MockEnv::new(&[
-            (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "PremiumV3"),
-            (INSTANCE_NAME, "p3fakewk0000B2"),
-        ]);
-        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "p3fakewk0000B2");
+        assert_eq!(metadata.get_instance_name(), "0--abc-test");
     }
 
     #[test]
     fn test_instance_name_empty_string_treated_as_missing() {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "ElasticPremium"),
-            ("CONTAINER_NAME", ""),
-            ("WEBSITE_POD_NAME", ""),
+            (CONTAINER_NAME, ""),
+            (WEBSITE_POD_NAME, ""),
             (INSTANCE_NAME, "worker-1"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
@@ -1121,56 +1083,12 @@ mod tests {
     fn test_instance_name_whitespace_only_treated_as_missing() {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "ElasticPremium"),
-            ("CONTAINER_NAME", "   "),
-            ("WEBSITE_POD_NAME", "   "),
+            (CONTAINER_NAME, "   "),
+            (WEBSITE_POD_NAME, "   "),
             (INSTANCE_NAME, "worker-2"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
         assert_eq!(metadata.get_instance_name(), "worker-2");
-    }
-
-    #[test]
-    fn test_instance_name_unknown_sku_falls_back_to_container_name() {
-        let mocked_env = MockEnv::new(&[
-            (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "PremiumV4"),
-            ("CONTAINER_NAME", "container-1"),
-        ]);
-        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "container-1");
-    }
-
-    #[test]
-    fn test_instance_name_windows_consumption_falls_through_to_computer_name() {
-        let mocked_env = MockEnv::new(&[
-            (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (WEBSITE_SKU, "Dynamic"),
-            (INSTANCE_NAME, "10-20-30-40"),
-        ]);
-        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "10-20-30-40");
-    }
-
-    #[test]
-    fn test_instance_name_no_sku_prefers_computer_name() {
-        let mocked_env = MockEnv::new(&[
-            (FUNCTIONS_WORKER_RUNTIME, "node"),
-            ("CONTAINER_NAME", "container-1"),
-            (INSTANCE_NAME, "worker-1"),
-        ]);
-        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "worker-1");
-    }
-
-    #[test]
-    fn test_instance_name_no_sku_falls_back_to_container_name() {
-        let mocked_env = MockEnv::new(&[
-            (FUNCTIONS_WORKER_RUNTIME, "node"),
-            ("CONTAINER_NAME", "container-1"),
-        ]);
-        let metadata = AzureMetadata::new_function(mocked_env).unwrap();
-        assert_eq!(metadata.get_instance_name(), "container-1");
     }
 
     #[test]
