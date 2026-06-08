@@ -6,7 +6,7 @@
 //! Delegates to [`libdd_otel_thread_ctx::autocheck::check_tls_slot_in`] which
 //! checks that:
 //! - `otel_thread_ctx_v1` is exported in the dynamic symbol table as a TLS GLOBAL symbol.
-//! - `otel_thread_ctx_v1` does NOT use General Dynamic or Local Dynamic TLS relocations.
+//! - `otel_thread_ctx_v1` has no non-TLSDESC TLS relocations.
 //!
 //! The cdylib path is derived at runtime from the test executable location.
 //! Both the test binary and the cdylib live in `target/<[triple/]profile>/deps/`.
