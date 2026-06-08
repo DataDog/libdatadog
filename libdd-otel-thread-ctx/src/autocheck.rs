@@ -8,9 +8,9 @@
 //! Call [`check_tls_slot_present`] from within a cdylib context to verify that
 //! this shared object was linked with the required TLS properties:
 //! - `otel_thread_ctx_v1` is exported as TLS GLOBAL in the dynamic symbol table.
-//! - `otel_thread_ctx_v1` is NOT accessed via General Dynamic or Local Dynamic
-//!   TLS relocations (DTPMOD/DTPOFF) in `.rela.dyn`. The linker may resolve to
-//!   TLSDESC or Local Exec depending on optimization; both are acceptable.
+//! - `otel_thread_ctx_v1` is NOT accessed via General Dynamic or Local Dynamic TLS relocations
+//!   (DTPMOD/DTPOFF) in `.rela.dyn`. The linker may resolve to TLSDESC or Local Exec depending on
+//!   optimization; both are acceptable.
 //!
 //! This module is only available on Linux (the only platform that supports the
 //! TLSDESC dialect used by this crate) and only when the `autocheck` feature
@@ -95,10 +95,8 @@ fn check_dynsym(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
 
 fn check_no_gd_ld_reloc(elf: &ElfBytes<'_, AnyEndian>) -> Result<(), String> {
     #[cfg(target_arch = "x86_64")]
-    const FORBIDDEN_RELOCS: &[(u32, &str)] = &[
-        (16, "R_X86_64_DTPMOD64"),
-        (17, "R_X86_64_DTPOFF64"),
-    ];
+    const FORBIDDEN_RELOCS: &[(u32, &str)] =
+        &[(16, "R_X86_64_DTPMOD64"), (17, "R_X86_64_DTPOFF64")];
     #[cfg(target_arch = "aarch64")]
     const FORBIDDEN_RELOCS: &[(u32, &str)] = &[
         (1028, "R_AARCH64_TLS_DTPMOD"),
