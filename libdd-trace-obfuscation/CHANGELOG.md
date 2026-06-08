@@ -2,6 +2,14 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v3.1.0..libdd-trace-obfuscation-v4.0.0) - 2026-06-08
+
+### Changed
+
+- Bump msrv to 1.87.0 ([#2017](https://github.com/datadog/libdatadog/issues/2017)) - ([276039d](https://github.com/datadog/libdatadog/commit/276039da8897a8e9e83ed3162912792f2241c5d7))
+
+
+
 ## [3.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v3.0.0..libdd-trace-obfuscation-v3.1.0) - 2026-05-22
 
 ### Fixed

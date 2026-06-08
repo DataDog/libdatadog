@@ -2,6 +2,14 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v3.0.0..libdd-sampling-v4.0.0) - 2026-06-08
+
+### Changed
+
+- Update dependencies ([#2090](https://github.com/DataDog/libdatadog/issues/2090)) - ([9479a9a](https://github.com/datadog/libdatadog/commit/9479a9a0faf2d70b4d54045c02911d9b339b98ed))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v2.1.0..libdd-sampling-v3.0.0) - 2026-06-05
 
 ### Changed

@@ -3005,7 +3005,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3276,7 +3276,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3313,7 +3313,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3382,7 +3382,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3413,7 +3413,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3440,7 +3440,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
