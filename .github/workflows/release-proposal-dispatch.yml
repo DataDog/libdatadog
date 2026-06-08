@@ -93,7 +93,7 @@ jobs:
           if [ "${#CRATES[@]}" -eq 1 ]; then
             CRATES_BRANCH="${CRATES[0]}"
           else
-            CRATES_BRANCH="${CRATES[0]}+$(( ${#CRATES[@]} - 1 ))-more"
+            CRATES_BRANCH="${CRATES[0]}-$(( ${#CRATES[@]} - 1 ))-more"
           fi
 
           echo "Normalized crates: $CRATES_SPACE"
