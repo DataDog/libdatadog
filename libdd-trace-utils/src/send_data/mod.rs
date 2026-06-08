@@ -957,24 +957,30 @@ mod tests {
                     .header("datadog-meta-tracer-version", header_tags.tracer_version)
                     .header("datadog-container-id", header_tags.container_id)
                     .path("/");
-                then.status(200).body("").delay(Duration::from_millis(500));
+                then.status(200)
+                    .body("")
+                    .delay(Duration::from_millis(1_000));
             })
             .await;
 
         let header_tags = HEADER_TAGS;
 
         let trace = vec![create_test_no_alloc_span(1234, 12342, 12341, 1, false)];
-        let data = SendData::new(
+        let mut data = SendData::new(
             100,
             TracerPayloadCollection::V04(vec![trace.clone(), trace.clone()]),
             header_tags,
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: 200,
+                timeout_ms: 500,
                 ..Endpoint::default()
             },
         );
+
+        // Setting constant time in order to reduce wall time in CI tests in case there is too much
+        // contention.
+        data.set_retry_strategy(RetryStrategy::new(5, 100, RetryBackoffType::Constant, None));
 
         let res = data.send(&NativeCapabilities::new_client()).await;
 
@@ -999,24 +1005,30 @@ mod tests {
                 when.method(POST)
                     .header("Content-type", "application/msgpack")
                     .path("/");
-                then.status(200).body("").delay(Duration::from_millis(500));
+                then.status(200)
+                    .body("")
+                    .delay(Duration::from_millis(1_000));
             })
             .await;
 
         let header_tags = TracerHeaderTags::default();
 
         let payload = setup_payload(&header_tags);
-        let data = SendData::new(
+        let mut data = SendData::new(
             100,
             TracerPayloadCollection::V07(vec![payload.clone(), payload.clone()]),
             header_tags,
             &Endpoint {
                 api_key: None,
                 url: server.url("/").parse::<hyper::Uri>().unwrap(),
-                timeout_ms: 200,
+                timeout_ms: 500,
                 ..Endpoint::default()
             },
         );
+
+        // Setting constant time in order to reduce wall time in CI tests in case there is too much
+        // contention.
+        data.set_retry_strategy(RetryStrategy::new(5, 100, RetryBackoffType::Constant, None));
 
         let res = data.send(&NativeCapabilities::new_client()).await;
 
