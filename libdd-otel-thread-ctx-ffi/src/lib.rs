@@ -16,7 +16,7 @@ pub use linux::*;
 #[cfg(all(target_os = "linux", feature = "autocheck"))]
 #[no_mangle]
 pub extern "C" fn ddog_otel_thread_ctx_autocheck() -> libdd_common_ffi::VoidResult {
-    match libdd_otel_thread_ctx::autocheck::check_tlsdesc_slot_present() {
+    match libdd_otel_thread_ctx::autocheck::check_tls_slot_present() {
         Ok(()) => libdd_common_ffi::VoidResult::Ok,
         Err(e) => libdd_common_ffi::VoidResult::Err(libdd_common_ffi::Error::from(e)),
     }

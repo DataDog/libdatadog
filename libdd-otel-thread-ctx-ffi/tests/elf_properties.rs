@@ -5,8 +5,8 @@
 //!
 //! These tests check that:
 //! - `otel_thread_ctx_v1` is exported in the dynamic symbol table as a TLS GLOBAL symbol.
-//! - `otel_thread_ctx_v1` is accessed via TLSDESC relocations (R_X86_64_TLSDESC or
-//!   R_AARCH64_TLSDESC), as required by the OTel thread-level context sharing spec.
+//! - `otel_thread_ctx_v1` does NOT use General Dynamic or Local Dynamic TLS relocations
+//!   (DTPMOD/DTPOFF). The linker may resolve to TLSDESC or Local Exec; both are acceptable.
 //!
 //! The cdylib path is derived at runtime from the test executable location.
 //! Both the test binary and the cdylib live in `target/<[triple/]profile>/deps/`.
@@ -62,21 +62,29 @@ fn otel_thread_ctx_v1_in_dynsym() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn otel_thread_ctx_v1_tlsdesc_reloc() {
+fn otel_thread_ctx_v1_no_gd_ld_reloc() {
     let path = cdylib_path();
     check_cdylib_readable(&path);
     let output = readelf(&["-W", "--relocs"], &path);
-    let found = output.lines().any(|l| {
-        l.contains(SYMBOL) && (l.contains("R_X86_64_TLSDESC") || l.contains("R_AARCH64_TLSDESC"))
-    });
+
+    const FORBIDDEN: &[&str] = &[
+        "R_X86_64_DTPMOD64",
+        "R_X86_64_DTPOFF64",
+        "R_AARCH64_TLS_DTPMOD",
+        "R_AARCH64_TLS_DTPREL",
+    ];
+
+    let bad_lines: Vec<&str> = output
+        .lines()
+        .filter(|l| l.contains(SYMBOL) && FORBIDDEN.iter().any(|f| l.contains(f)))
+        .collect();
     assert!(
-        found,
-        "No TLSDESC relocation found for '{SYMBOL}' in {}\n\
-         All relocations mentioning the symbol:\n{}",
+        bad_lines.is_empty(),
+        "'{SYMBOL}' has General Dynamic / Local Dynamic relocations in {}:\n{}\n\
+         Expected TLSDESC or Local Exec instead.",
         path.display(),
-        output
-            .lines()
-            .filter(|l| l.contains(SYMBOL))
+        bad_lines
+            .iter()
             .map(|l| format!("  {l}"))
             .collect::<Vec<_>>()
             .join("\n")
