@@ -1,8 +1,14 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+/// Data that can be read from raw bytes.
 pub trait FromBytes: Sized {
     type Bytes: ?Sized;
+
+    /// The number of bytes needed to be read to extract a value from `T`. Default to
+    /// `mem::size_of::<T>()`.
+    const FROM_BYTES_SIZE: usize = std::mem::size_of::<Self>();
+
     fn from_bytes(bytes: &[u8]) -> Self;
 }
 

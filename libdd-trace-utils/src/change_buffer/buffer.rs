@@ -71,12 +71,11 @@ impl ChangeBuffer {
     /// usize::MAX`.
     #[inline(always)]
     unsafe fn read_unchecked<T: Copy + FromBytes>(&self, index: &mut usize) -> T {
-        let size = std::mem::size_of::<T>();
         // Safety: the allocation of `self.ptr` is guaranteed to be valid for read and writes at
         // construction time. We do not materialize other references during the lifetime of `slice`.
         let slice = unsafe { self.as_slice() };
-        let bytes = slice.get_unchecked(*index..*index + size);
-        *index += size;
+        let bytes = slice.get_unchecked(*index..*index + T::FROM_BYTES_SIZE);
+        *index += T::FROM_BYTES_SIZE;
         T::from_bytes(bytes)
     }
 
