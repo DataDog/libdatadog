@@ -2,7 +2,7 @@
 
 
 
-## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v5.0.0..libdd-data-pipeline-v6.0.0) - 2026-06-05
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v5.0.0..libdd-data-pipeline-v6.0.0) - 2026-06-08
 
 ### Added
 

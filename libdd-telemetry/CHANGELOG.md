@@ -2,7 +2,7 @@
 
 
 
-## [5.0.1](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v5.0.0..libdd-telemetry-v5.0.1) - 2026-06-05
+## [5.0.1](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v5.0.0..libdd-telemetry-v5.0.1) - 2026-06-08
 
 ### Fixed
 

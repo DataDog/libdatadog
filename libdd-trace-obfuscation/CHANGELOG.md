@@ -2,7 +2,7 @@
 
 
 
-## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v3.1.0..libdd-trace-obfuscation-v4.0.0) - 2026-06-05
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v3.1.0..libdd-trace-obfuscation-v4.0.0) - 2026-06-08
 
 ### Changed
 
