@@ -349,7 +349,9 @@ fn map_attributes<T: TraceData>(
             break;
         }
         let key = k.borrow();
-        if enable_otel_trace_compatibility && (key == "error.msg" || key == "error.message") {
+        if enable_otel_trace_compatibility
+            && (key == "error.msg" || key == "error.message" || key == "span.kind")
+        {
             continue;
         }
         attrs.push(KeyValue {
@@ -380,9 +382,10 @@ fn map_attributes<T: TraceData>(
             value: AnyValue::BytesValue(v.borrow().to_vec()),
         });
     }
-    let excluded_error_tags = if enable_otel_trace_compatibility {
+    let excluded_compat_tags = if enable_otel_trace_compatibility {
         span.meta.contains_key("error.msg") as usize
             + span.meta.contains_key("error.message") as usize
+            + span.meta.contains_key("span.kind") as usize
     } else {
         0
     };
@@ -403,7 +406,7 @@ fn map_attributes<T: TraceData>(
     } else {
         0
     }) + span.meta.len()
-        - excluded_error_tags
+        - excluded_compat_tags
         + span.metrics.len()
         + span.meta_struct.len();
     let dropped = total.saturating_sub(attrs.len());
@@ -1062,6 +1065,61 @@ mod tests {
                 .iter()
                 .any(|kv| kv.key == "error.message"),
             "error.message should not appear in attributes when otel compat mode is enabled"
+        );
+    }
+
+    #[test]
+    fn test_otel_compat_span_kind_excluded_from_attributes() {
+        // span.kind is promoted to the OTLP kind field; it must not appear as an attribute
+        // when OTel Trace Compatibility is enabled, and must not inflate dropped_attributes_count.
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("span.kind"),
+            libdd_tinybytes::BytesString::from_static("server"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, true);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(otlp_span.kind, json_types::span_kind::SERVER);
+        assert!(
+            !otlp_span.attributes.iter().any(|kv| kv.key == "span.kind"),
+            "span.kind should not appear in attributes when otel compat mode is enabled"
+        );
+        assert_eq!(
+            otlp_span.dropped_attributes_count, None,
+            "span.kind should not be counted as a dropped attribute when intentionally excluded by compat mode"
+        );
+    }
+
+    #[test]
+    fn test_span_kind_present_in_attributes_when_compat_disabled() {
+        // When OTel Trace Compatibility is disabled, span.kind appears as a regular attribute.
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("span.kind"),
+            libdd_tinybytes::BytesString::from_static("client"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(otlp_span.kind, json_types::span_kind::CLIENT);
+        assert!(
+            otlp_span.attributes.iter().any(|kv| kv.key == "span.kind"),
+            "span.kind should appear in attributes when otel compat mode is disabled"
         );
     }
 
