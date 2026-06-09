@@ -80,14 +80,15 @@ impl StringTable {
     /// Creates a new string table, which initially holds the empty string and
     /// no others.
     pub fn new() -> Self {
+        // Common profiles fit comfortably below the historical chunk size, so
+        // start small and let larger profiles grow geometrically.
+        const SIZE_HINT: usize = 512 * 1024;
+
         // Keep in mind 32-bit .NET. There is only 2 GiB of virtual memory
         // total available to an application, and we're not the application,
         // we're just a piece inside it. Additionally, there may be 2 or more
-        // string tables in memory at a given time. Larger profiles grow
-        // geometrically up to the historical 4 MiB chunk size, while common
-        // profiles fit comfortably below this initial size. Talk to .NET
-        // profiling engineers before making this any bigger.
-        const SIZE_HINT: usize = 512 * 1024;
+        // string tables in memory at a given time. Talk to .NET profiling
+        // engineers before making this cap any bigger.
         const MAX_SIZE_HINT: usize = 4 * 1024 * 1024;
         let bytes = ChainAllocator::new_capped_in(SIZE_HINT, MAX_SIZE_HINT, VirtualAllocator {});
 
