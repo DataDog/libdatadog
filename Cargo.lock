@@ -1447,6 +1447,7 @@ dependencies = [
  "bytes",
  "constcat",
  "datadog-remote-config",
+ "futures",
  "http",
  "http-body-util",
  "libdd-common",
