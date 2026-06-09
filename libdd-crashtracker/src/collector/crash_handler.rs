@@ -20,7 +20,7 @@ use std::panic;
 use std::panic::PanicHookInfo;
 use std::ptr;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64};
 
 // Note that this file makes use the following async-signal safe functions in a signal handler.
 // <https://man7.org/linux/man-pages/man7/signal-safety.7.html>
@@ -47,6 +47,32 @@ static PANIC_MESSAGE: AtomicPtr<String> = AtomicPtr::new(ptr::null_mut());
 
 type PanicHook = Box<dyn Fn(&PanicHookInfo<'_>) + Send + Sync>;
 static PREVIOUS_PANIC_HOOK: AtomicPtr<PanicHook> = AtomicPtr::new(ptr::null_mut());
+
+/// Expected PID of the socket-based receiver (sidecar), set during trusted
+/// initialization. A value of 0 means "not set" and will cause the signal handler
+/// to skip granting ptrace permission
+static EXPECTED_RECEIVER_PID: AtomicI32 = AtomicI32::new(0);
+
+/// Register the expected receiver PID for socket-based crash receivers.
+///
+/// When `collect_all_threads` is enabled and the receiver is reached via a Unix
+/// socket (not a forked child), the signal handler will only grant ptrace
+/// permission (`PR_SET_PTRACER`) if the socket peer's PID (via `SO_PEERCRED`)
+/// matches this value.
+///
+/// Call this during trusted initialization (after connecting to or spawning
+/// the sidecar) with the sidecar's PID
+///
+/// SAFETY:
+///     This function is safe to call from any context, its a single atomic store.
+pub fn set_expected_receiver_pid(pid: i32) {
+    EXPECTED_RECEIVER_PID.store(pid, SeqCst);
+}
+
+/// Returns the currently registered expected receiver PID, or 0 if unset.
+pub fn get_expected_receiver_pid() -> i32 {
+    EXPECTED_RECEIVER_PID.load(SeqCst)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CrashHandlerError {
@@ -303,29 +329,37 @@ fn handle_posix_signal_impl(
     let receiver = Receiver::from_crashtracker_config(config)?;
 
     // Enable ptrace permissions for receiver if multi-thread collection is enabled.
-    // For fork/exec receivers, we have the child PID directly. For socket-based
-    // receivers (PHP sidecar), resolve the peer PID using SO_PEERCRED.
+    // For fork/exec receivers, we have the child PID directly (trusted: we spawned it).
+    // For socket-based receivers (PHP sidecar), verify the peer PID matches the
+    // expected receiver PID that was registered during trusted initialization
     #[cfg(target_os = "linux")]
     if config.collect_all_threads() {
         let ptracer_pid = match receiver.handle.pid {
             Some(pid) => pid,
             None => {
-                let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-                let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-                // SAFETY: getsockopt is async-signal-safe and we're just reading from the socket
-                let ret = unsafe {
-                    libc::getsockopt(
-                        receiver.handle.uds_fd,
-                        libc::SOL_SOCKET,
-                        libc::SO_PEERCRED,
-                        &mut cred as *mut _ as *mut libc::c_void,
-                        &mut len,
-                    )
-                };
-                if ret == 0 {
-                    cred.pid
-                } else {
+                let expected_pid = EXPECTED_RECEIVER_PID.load(SeqCst);
+                if expected_pid <= 0 {
+                    // No expected PID registered; fail closed.
                     0
+                } else {
+                    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
+                    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+                    // SAFETY: getsockopt is async-signal-safe
+                    let ret = unsafe {
+                        libc::getsockopt(
+                            receiver.handle.uds_fd,
+                            libc::SOL_SOCKET,
+                            libc::SO_PEERCRED,
+                            &mut cred as *mut _ as *mut libc::c_void,
+                            &mut len,
+                        )
+                    };
+                    if ret == 0 && cred.pid == expected_pid {
+                        cred.pid
+                    } else {
+                        // Peer PID doesn't match expected receiver; fail closed.
+                        0
+                    }
                 }
             }
         };
