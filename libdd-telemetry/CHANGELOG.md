@@ -2,6 +2,14 @@
 
 
 
+## [5.0.1](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v5.0.0..libdd-telemetry-v5.0.1) - 2026-06-08
+
+### Fixed
+
+- Serialize Method::Other as "*" per OpenAPI spec ([#1998](https://github.com/datadog/libdatadog/issues/1998)) - ([b2ef19f](https://github.com/datadog/libdatadog/commit/b2ef19f622350443fca3c23811fabb7b898a933e))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v4.0.0..libdd-telemetry-v5.0.0) - 2026-05-15
 
 ### Added
