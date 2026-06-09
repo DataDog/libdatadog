@@ -386,11 +386,23 @@ fn map_attributes<T: TraceData>(
     } else {
         0
     };
-    let total = (if has_per_span_service && !enable_otel_trace_compatibility { 1 } else { 0 })
-        + (if has_operation_name && !enable_otel_trace_compatibility { 1 } else { 0 })
-        + (if has_span_type && !enable_otel_trace_compatibility { 1 } else { 0 })
-        + (if has_resource_name && !enable_otel_trace_compatibility { 1 } else { 0 })
-        + span.meta.len()
+    let total = (if has_per_span_service && !enable_otel_trace_compatibility {
+        1
+    } else {
+        0
+    }) + (if has_operation_name && !enable_otel_trace_compatibility {
+        1
+    } else {
+        0
+    }) + (if has_span_type && !enable_otel_trace_compatibility {
+        1
+    } else {
+        0
+    }) + (if has_resource_name && !enable_otel_trace_compatibility {
+        1
+    } else {
+        0
+    }) + span.meta.len()
         - excluded_error_tags
         + span.metrics.len()
         + span.meta_struct.len();
@@ -484,7 +496,10 @@ mod tests {
         assert_eq!(status.code, json_types::status_code::ERROR);
         assert_eq!(status.message.as_deref(), Some("something broke"));
         assert!(
-            otlp_span.attributes.iter().any(|kv| kv.key == "error.message"),
+            otlp_span
+                .attributes
+                .iter()
+                .any(|kv| kv.key == "error.message"),
             "error.message should still appear in attributes when otel compat mode is disabled"
         );
     }
@@ -750,7 +765,11 @@ mod tests {
             "_dd.p.tid".into(),
             libdd_tinybytes::BytesString::from_static("dddddddddddddddd"),
         );
-        let req = map_traces_to_otlp(vec![vec![root, child_no_tag, child_valid]], &resource_info, false);
+        let req = map_traces_to_otlp(
+            vec![vec![root, child_no_tag, child_valid]],
+            &resource_info,
+            false,
+        );
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         // The chunk-level scan skips the malformed root and picks up child_valid's tag,
         // which is then applied to every span in the chunk.
@@ -971,11 +990,7 @@ mod tests {
         let attrs_val = &json["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"];
         let keys: Vec<&str> = attrs_val
             .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .map(|a| a["key"].as_str().unwrap())
-                    .collect()
-            })
+            .map(|arr| arr.iter().map(|a| a["key"].as_str().unwrap()).collect())
             .unwrap_or_default();
         assert!(
             !keys.contains(&"service.name"),
@@ -1042,7 +1057,10 @@ mod tests {
         assert_eq!(otlp_span.status.code, json_types::status_code::ERROR);
         assert_eq!(otlp_span.status.message.as_deref(), Some("something broke"));
         assert!(
-            !otlp_span.attributes.iter().any(|kv| kv.key == "error.message"),
+            !otlp_span
+                .attributes
+                .iter()
+                .any(|kv| kv.key == "error.message"),
             "error.message should not appear in attributes when otel compat mode is enabled"
         );
     }
