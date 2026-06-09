@@ -9,6 +9,11 @@ use std::time::Duration;
 
 const THREAD_COUNTS: [usize; 4] = [1, 2, 4, 16];
 const STRINGS_PER_THREAD: usize = 1024;
+// Bound one generated function-name component so the input has repeated
+// function-like fragments while each full string stays unique.
+const FUNCTION_NAME_VARIANTS: usize = 97;
+// Knuth/Fibonacci multiplicative hash constant, used only to vary synthetic input.
+const KNUTH_MULTIPLICATIVE_HASH: usize = 2_654_435_761;
 
 fn make_strings(thread_count: usize) -> Vec<Vec<String>> {
     (0..thread_count)
@@ -17,8 +22,8 @@ fn make_strings(thread_count: usize) -> Vec<Vec<String>> {
                 .map(|string_id| {
                     format!(
                         "/opt/datadog/profiler/thread-{thread_id}/module-{string_id:04}/function-{}::{}",
-                        string_id % 97,
-                        string_id.wrapping_mul(2_654_435_761usize)
+                        string_id % FUNCTION_NAME_VARIANTS,
+                        string_id.wrapping_mul(KNUTH_MULTIPLICATIVE_HASH)
                     )
                 })
                 .collect()
