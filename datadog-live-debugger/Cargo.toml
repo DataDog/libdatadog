@@ -7,12 +7,13 @@ publish = false
 
 [dependencies]
 anyhow = "1.0"
-datadog-remote-config = { path = "../datadog-remote-config", default-features = false }
+libdd-remote-config = { path = "../libdd-remote-config", default-features = false }
 libdd-common = { path = "../libdd-common" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 http-body-util = "0.1"
 "http" = "1"
 bytes =  "1.11.1"
+futures = "0.3"
 
 percent-encoding = "2.1"
 serde = { version = "1.0", features = ["derive"] }

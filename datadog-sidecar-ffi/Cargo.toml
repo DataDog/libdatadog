@@ -19,7 +19,7 @@ datadog-ipc = { path = "../datadog-ipc" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = false }
-datadog-remote-config = { path = "../datadog-remote-config" }
+libdd-remote-config = { path = "../libdd-remote-config" }
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes", features = ["bytes_string"] }
@@ -35,6 +35,7 @@ libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["coll
 
 [dev-dependencies]
 http = "1.1"
+libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 tempfile = { version = "3.3" }
 
 [lints.rust]

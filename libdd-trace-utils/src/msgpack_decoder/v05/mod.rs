@@ -6,8 +6,8 @@ use crate::msgpack_decoder::decode::{
     buffer::Buffer, map::read_map_len, number::read_number, string::handle_null_marker,
 };
 use crate::span::v04::{Span, SpanBytes, SpanSlice};
+use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
-use std::collections::HashMap;
 
 const PAYLOAD_LEN: u32 = 2;
 const SPAN_ELEM_COUNT: u32 = 12;
@@ -234,15 +234,14 @@ where
 fn read_indexed_map_to_bytes_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     dict: &[T::Text],
-) -> Result<HashMap<T::Text, T::Text>, DecodeError>
+) -> Result<VecMap<T::Text, T::Text>, DecodeError>
 where
     T::Text: Clone,
 {
     let len = rmp::decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
-    #[allow(clippy::expect_used)]
-    let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
+    let mut map = VecMap::with_capacity(len.try_into().unwrap_or_default());
     for _ in 0..len {
         let key = get_from_dict(buf, dict)?;
         let value = get_from_dict(buf, dict)?;
@@ -254,17 +253,17 @@ where
 fn read_metrics<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
     dict: &[T::Text],
-) -> Result<HashMap<T::Text, f64>, DecodeError>
+) -> Result<VecMap<T::Text, f64>, DecodeError>
 where
     T::Text: Clone,
 {
     if handle_null_marker(buf) {
-        return Ok(HashMap::default());
+        return Ok(VecMap::new());
     }
 
     let len = read_map_len(buf)?;
 
-    let mut map = HashMap::with_capacity(len);
+    let mut map = VecMap::with_capacity(len);
     for _ in 0..len {
         let k = get_from_dict(buf, dict)?;
         let v = read_number(buf)?;
