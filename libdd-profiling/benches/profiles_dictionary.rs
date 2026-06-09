@@ -16,7 +16,9 @@ const STRING_SHAPE_VARIANTS: usize = 4;
 // Knuth/Fibonacci multiplicative hash constant, used only to vary synthetic input.
 const KNUTH_MULTIPLICATIVE_HASH: usize = 2_654_435_761;
 
-fn make_strings(thread_count: usize) -> Vec<Vec<String>> {
+// The outer Vec partitions precomputed input by benchmark worker thread; each
+// inner Vec is the set of strings inserted by one worker.
+fn make_partitioned_strings(thread_count: usize) -> Vec<Vec<String>> {
     (0..thread_count)
         .map(|thread_id| {
             (0..STRINGS_PER_THREAD)
@@ -78,7 +80,7 @@ pub fn bench_profiles_dictionary(c: &mut Criterion) {
     for thread_count in THREAD_COUNTS {
         // Precompute input outside the measured closure so the benchmark measures
         // dictionary insertion rather than string formatting/allocation.
-        let strings = make_strings(thread_count);
+        let strings = make_partitioned_strings(thread_count);
         let total_strings = thread_count * STRINGS_PER_THREAD;
         group.throughput(Throughput::Elements(total_strings as u64));
         group.bench_with_input(
