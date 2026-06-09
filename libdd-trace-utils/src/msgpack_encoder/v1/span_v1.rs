@@ -2,14 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
+use crate::span::vec_map::VecMap;
 use crate::span::TraceData;
 use rmp::encode::{
     write_array_len, write_bin, write_bool, write_f64, write_map_len, write_sint, write_u64,
     write_uint, write_uint8, RmpWrite, ValueWriteError,
 };
 use std::borrow::Borrow;
+use std::collections::HashSet;
 
-use super::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
+use super::{
+    span_start_unix_nanos, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable,
+    FLAT_ATTR_STRIDE, TYPED_VALUE_STRIDE,
+};
 
 /// Encodes a typed `AttributeValue` as `[type_uint8, value]`.
 ///
@@ -54,19 +59,18 @@ pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
             write_bin(writer, b.borrow())?;
         }
         AttributeValue::List(arr) => {
+            // Encoded as a flat array of `[type, value]` pairs.
             write_uint8(writer, AnyValueKey::Array as u8)?;
-            write_array_len(writer, arr.len() as u32)?;
+            write_array_len(writer, arr.len() as u32 * TYPED_VALUE_STRIDE)?;
             for v in arr {
                 encode_attribute_value(writer, v, table)?;
             }
         }
         AttributeValue::KeyValue(map) => {
+            // Encoded as a flat array of `[key, type, value]` triplets — consistent with the
+            // top-level attributes map (`encode_attributes_map`).
             write_uint8(writer, AnyValueKey::KeyValueList as u8)?;
-            write_map_len(writer, map.len() as u32)?;
-            for (k, v) in map {
-                table.write_interned(writer, k.borrow())?;
-                encode_attribute_value(writer, v, table)?;
-            }
+            encode_attributes_map(writer, map, table)?;
         }
     }
     Ok(())
@@ -90,11 +94,24 @@ pub(super) fn encode_attribute_value<W: RmpWrite, T: TraceData>(
 /// This function will return any error emitted by the writer.
 pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
     writer: &mut W,
-    map: &std::collections::HashMap<T::Text, AttributeValue<T>>,
+    map: &VecMap<T::Text, AttributeValue<T>>,
     table: &mut StringTable,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    write_array_len(writer, (map.len() as u32) * 3)?;
-    for (k, v) in map {
+    // `VecMap` tolerates duplicate keys for fast insertion (later writes shadow earlier ones via
+    // `get`). Dedup here so the wire format carries each key once, with the last-written value.
+    // Walk in reverse keeping first-seen (= last-written), then reverse to restore insertion
+    // order. `T::Text: Hash + Eq + Borrow<str>` per the `SpanText` trait.
+    let mut seen: HashSet<&str> = HashSet::with_capacity(map.len());
+    let mut deduped: Vec<(&T::Text, &AttributeValue<T>)> = map
+        .iter()
+        .rev()
+        .filter(|(k, _)| seen.insert(<T::Text as Borrow<str>>::borrow(k)))
+        .map(|(k, v)| (k, v))
+        .collect();
+    deduped.reverse();
+
+    write_array_len(writer, deduped.len() as u32 * FLAT_ATTR_STRIDE)?;
+    for (k, v) in deduped {
         table.write_interned(writer, k.borrow())?;
         encode_attribute_value(writer, v, table)?;
     }
@@ -271,7 +288,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     write_u64(writer, span.span_id)?;
 
     write_uint8(writer, SpanKey::Start as u8)?;
-    write_u64(writer, span.start as u64)?;
+    write_u64(writer, span_start_unix_nanos(span.start))?;
 
     if is_parent {
         write_uint8(writer, SpanKey::ParentId as u8)?;

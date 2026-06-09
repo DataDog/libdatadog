@@ -8,9 +8,8 @@ use rmp::encode::{
     ValueWriteError,
 };
 use std::borrow::Borrow;
-use std::time;
 
-use super::{AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
+use super::{span_start_unix_nanos, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
 
 /// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
 ///
@@ -247,18 +246,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     write_u64(writer, span.span_id)?;
 
     write_uint8(writer, SpanKey::Start as u8)?;
-    if span.start < 0 {
-        // Fall back to wall-clock now (UNIX nanos). Matches the agent's
-        // `validateAndFixStartTime` which substitutes `time.Now().UnixNano()`
-        // for invalid start values.
-        let now = time::SystemTime::now()
-            .duration_since(time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
-        write_u64(writer, now)?;
-    } else {
-        write_u64(writer, span.start as u64)?;
-    }
+    write_u64(writer, span_start_unix_nanos(span.start))?;
 
     if is_parent {
         write_uint8(writer, SpanKey::ParentId as u8)?;
