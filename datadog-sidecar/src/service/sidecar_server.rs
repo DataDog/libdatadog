@@ -45,10 +45,10 @@ use crate::service::stats_flusher::{
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
-use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
+use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::Config;
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
