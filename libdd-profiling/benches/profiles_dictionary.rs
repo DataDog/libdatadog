@@ -67,6 +67,8 @@ pub fn bench_profiles_dictionary(c: &mut Criterion) {
     group.sample_size(10);
 
     for thread_count in THREAD_COUNTS {
+        // Precompute input outside the measured closure so the benchmark measures
+        // dictionary insertion rather than string formatting/allocation.
         let strings = make_strings(thread_count);
         let total_strings = thread_count * STRINGS_PER_THREAD;
         group.throughput(Throughput::Elements(total_strings as u64));
