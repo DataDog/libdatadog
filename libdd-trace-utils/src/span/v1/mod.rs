@@ -34,7 +34,7 @@ impl SpanKind {
 
 /// Typed V1 attribute value.
 /// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum AttributeValue<T: TraceData> {
     String(T::Text),
     Float(f64),
@@ -57,7 +57,7 @@ pub enum AttributeValue<T: TraceData> {
 ///     let _ = span.attributes.get("foo");
 /// }
 /// ```
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Default)]
 pub struct Span<T: TraceData> {
     pub service: T::Text,
     pub name: T::Text,
@@ -79,7 +79,7 @@ pub struct Span<T: TraceData> {
 
 /// The generic representation of a V1 span link.
 /// `T` is the type used to represent strings in the span link.
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Default)]
 pub struct SpanLink<T: TraceData> {
     pub trace_id: [u8; 16],
     pub span_id: u64,
@@ -90,7 +90,7 @@ pub struct SpanLink<T: TraceData> {
 
 /// The generic representation of a V1 span event.
 /// `T` is the type used to represent strings in the span event.
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Default)]
 pub struct SpanEvent<T: TraceData> {
     pub time_unix_nano: u64,
     pub name: T::Text,
@@ -98,7 +98,7 @@ pub struct SpanEvent<T: TraceData> {
 }
 
 /// A V1 trace chunk: a group of spans sharing the same `trace_id`, plus chunk-level metadata.
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Default)]
 pub struct TraceChunk<T: TraceData> {
     pub trace_id: [u8; 16],
     pub priority: Option<i32>,
@@ -110,7 +110,7 @@ pub struct TraceChunk<T: TraceData> {
 }
 
 /// A V1 tracer payload: tracer-level metadata and the trace chunks it carries.
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, Default)]
 pub struct TracerPayload<T: TraceData> {
     pub language_name: T::Text,
     pub language_version: T::Text,
