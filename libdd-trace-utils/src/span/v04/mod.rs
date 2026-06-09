@@ -68,11 +68,7 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 /// [`SpanValue`] trait:
 /// ```
 /// use libdd_trace_utils::span::{v04::Span, TraceData};
-/// use std::borrow::Borrow;
-/// fn foo<T: TraceData>(span: Span<T>)
-/// where
-///     T::Text: Borrow<str>,
-/// {
+/// fn foo<T: TraceData>(span: Span<T>) {
 ///     let _ = span.meta.get("foo");
 /// }
 /// ```
