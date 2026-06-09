@@ -11,6 +11,7 @@ mod trace_serializer;
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
 use libdd_trace_utils::span::trace_utils::DroppedStats;
+use trace_filter::TraceFilterer;
 
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
@@ -32,7 +33,7 @@ use crate::{
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
@@ -214,7 +215,7 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
-    trace_filterer: trace_filter::TraceFilterer,
+    trace_filterer: ArcSwap<TraceFilterer>,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
@@ -354,6 +355,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
     #[cfg(not(target_arch = "wasm32"))]
     async fn check_agent_info(&self) {
+        use trace_filter::TraceFilterer;
+
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
         };
@@ -365,11 +368,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             self.refresh_v1_active(&agent_info);
         }
 
-        self.trace_filterer.update_conf(
+        self.trace_filterer.store(Arc::new(TraceFilterer::new(
             &agent_info.info.filter_tags,
             &agent_info.info.filter_tags_regex,
             &agent_info.info.ignore_resources,
-        );
+        )));
 
         // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
         let status = self.client_side_stats.status.load_full();
@@ -594,7 +597,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
-            &self.trace_filterer,
+            &self.trace_filterer.load(),
         );
 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.

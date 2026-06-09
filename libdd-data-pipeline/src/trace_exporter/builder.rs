@@ -515,7 +515,7 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
-            trace_filterer: TraceFilterer::with_empty_conf(),
+            trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
         })
     }
 

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
-use std::{borrow::Borrow as _, sync::Arc};
+use std::borrow::Borrow as _;
 
-use arc_swap::ArcSwap;
+use crate::agent_info::schema::FilterTagsConfig;
 use libdd_common::regex_engine::Regex;
 use libdd_trace_stats::span_concentrator::StatSpan;
 use libdd_trace_utils::span::trace_utils::get_root_span_index;
@@ -29,9 +29,8 @@ struct TagRegexFilter {
     value: Option<Regex>,
 }
 
-/// Parsed config
 #[derive(Debug, Default)]
-struct TraceFiltererConf {
+pub struct TraceFilterer {
     reject: Vec<TagLiteralFilter>,
     reject_regex: Vec<TagRegexFilter>,
 
@@ -39,11 +38,6 @@ struct TraceFiltererConf {
     require_regex: Vec<TagRegexFilter>,
 
     ignore_resources: Vec<Regex>,
-}
-
-#[derive(Debug)]
-pub struct TraceFilterer {
-    conf: ArcSwap<TraceFiltererConf>,
 }
 
 impl TagFilter for TagLiteralFilter {
@@ -72,7 +66,7 @@ impl TagFilter for TagRegexFilter {
     }
 }
 
-impl TraceFiltererConf {
+impl TraceFilterer {
     fn compile_literal_filters(filters: &[String]) -> Vec<TagLiteralFilter> {
         let mut tag_regex_filters = Vec::new();
         for filter in filters {
@@ -155,9 +149,9 @@ impl TraceFiltererConf {
             .collect()
     }
 
-    fn parse(
-        filter_tags: &crate::agent_info::schema::FilterTagsConfig,
-        filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
+    pub fn new(
+        filter_tags: &FilterTagsConfig,
+        filter_tags_regex: &FilterTagsConfig,
         ignore_resources: &[String],
     ) -> Self {
         let require_regex = Self::compile_regex_filters(&filter_tags_regex.require);
@@ -166,7 +160,7 @@ impl TraceFiltererConf {
         let reject = Self::compile_literal_filters(&filter_tags.reject);
         let ignore_resources = Self::compile_resource_filters(ignore_resources);
 
-        TraceFiltererConf {
+        Self {
             reject,
             require,
             reject_regex,
@@ -174,48 +168,21 @@ impl TraceFiltererConf {
             ignore_resources,
         }
     }
-}
-
-impl TraceFilterer {
-    #[cfg(test)]
-    fn new(
-        filter_tags: &crate::agent_info::schema::FilterTagsConfig,
-        filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
-        ignore_resources: &[String],
-    ) -> Self {
-        let conf = TraceFiltererConf::parse(filter_tags, filter_tags_regex, ignore_resources);
-        Self {
-            conf: ArcSwap::from_pointee(conf),
-        }
-    }
     pub fn with_empty_conf() -> Self {
-        Self {
-            conf: ArcSwap::from_pointee(TraceFiltererConf::default()),
-        }
-    }
-
-    pub fn update_conf(
-        &self,
-        filter_tags: &crate::agent_info::schema::FilterTagsConfig,
-        filter_tags_regex: &crate::agent_info::schema::FilterTagsConfig,
-        ignore_resources: &[String],
-    ) {
-        let new_conf = TraceFiltererConf::parse(filter_tags, filter_tags_regex, ignore_resources);
-        self.conf.swap(Arc::new(new_conf));
+        Self::default()
     }
 
     pub fn filter_traces<T: libdd_trace_utils::span::TraceData>(
         &self,
         traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     ) -> usize {
-        let conf = self.conf.load();
         let traces_count_before = traces.len();
         traces.retain(|trace| {
             let Ok(root_span_index) = get_root_span_index(trace) else {
                 return true;
             };
             let root_span = &trace[root_span_index];
-            let should_drop = Self::should_drop(&conf, root_span);
+            let should_drop = self.should_drop(root_span);
             if should_drop {
                 debug!("Trace rejected as it fails to meet tag requirements. root: %v");
             }
@@ -239,10 +206,10 @@ impl TraceFilterer {
     //    filters, all of them must match tags on the root span. If any required filter doesn't
     //    match, reject the trace.
     fn should_drop<T: libdd_trace_utils::span::TraceData>(
-        conf: &TraceFiltererConf,
+        &self,
         root_span: &libdd_trace_utils::span::v04::Span<T>,
     ) -> bool {
-        if !conf.ignore_resources.is_empty() {
+        if !self.ignore_resources.is_empty() {
             let span_resource = root_span.resource();
             // Normalization
             let span_resource = if span_resource.is_empty() {
@@ -256,7 +223,7 @@ impl TraceFilterer {
                 span_resource
             };
 
-            if conf
+            if self
                 .ignore_resources
                 .iter()
                 .any(|resource_pattern| resource_pattern.is_match(span_resource))
@@ -265,7 +232,7 @@ impl TraceFilterer {
             }
         }
 
-        if conf
+        if self
             .reject
             .iter()
             .any(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
@@ -273,7 +240,7 @@ impl TraceFilterer {
             return true;
         }
 
-        if conf
+        if self
             .reject_regex
             .iter()
             .any(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
@@ -281,7 +248,7 @@ impl TraceFilterer {
             return true;
         }
 
-        if !conf
+        if !self
             .require
             .iter()
             .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
@@ -289,7 +256,7 @@ impl TraceFilterer {
             return true;
         }
 
-        if !conf
+        if !self
             .require_regex
             .iter()
             .all(|filter| Self::check_tag_filter_with_normalization(filter, root_span))
@@ -329,7 +296,6 @@ impl TraceFilterer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_info::schema::FilterTagsConfig;
     use libdd_trace_utils::span::v04::SpanBytes;
     use std::collections::HashMap;
 
@@ -585,24 +551,6 @@ mod tests {
     fn http_status_code_valid_value_triggers_reject_filter() {
         let mut traces = one_trace(span_with("r", &[("http.status_code", "500")]));
         reject_str(&["http.status_code:500"]).filter_traces(&mut traces);
-        assert!(traces.is_empty());
-    }
-
-    // ---- update_conf ----
-
-    #[test]
-    fn update_conf_takes_effect() {
-        let f = TraceFilterer::new(&no_tags(), &no_tags(), &[]);
-
-        // No filters: trace is kept.
-        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
-        f.filter_traces(&mut traces);
-        assert_eq!(traces.len(), 1);
-
-        // Swap in a reject filter: same trace is now dropped.
-        f.update_conf(&ftc(&[], &["env:prod"]), &no_tags(), &[]);
-        let mut traces = one_trace(span_with("r", &[("env", "prod")]));
-        f.filter_traces(&mut traces);
         assert!(traces.is_empty());
     }
 
