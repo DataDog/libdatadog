@@ -9,9 +9,9 @@
 //! that the binary was linked with the correct option:
 //!
 //! - `otel_thread_ctx_v1` is exported as TLS GLOBAL in the dynamic symbol table.
-//! - `otel_thread_ctx_v1` has no non-TLSDESC TLS relocations in `.rela.dyn`. The linker may pick
-//!   TLSDESC or Local Exec depending on optimization; both are acceptable. All other TLS relocation
-//!   types (DTPMOD, DTPOFF, TPOFF, GOTTPOFF, etc.) are rejected.
+//! - `otel_thread_ctx_v1` follows the TLSDESC model: there's either no relocation in `.rela.dyn`
+//!   (Local Exec), or a TLSDESC one. All other TLS relocation types (DTPMOD, DTPOFF, TPOFF,
+//!   GOTTPOFF, etc.) are rejected.
 //!
 //! This module is only available on Linux (the only platform that supports the TLSDESC dialect used
 //! by this crate) and only when the `sanity-check` feature is enabled.

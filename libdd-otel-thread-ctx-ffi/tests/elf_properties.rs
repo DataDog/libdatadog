@@ -7,7 +7,7 @@
 //! checks that:
 //! - `otel_thread_ctx_v1` is exported in the dynamic symbol table as a TLS GLOBAL symbol.
 //! - `otel_thread_ctx_v1` follows the TLSDESC access model (if there's a relocation, it's a TLSDESC
-//! one).
+//!   one).
 //!
 //! The cdylib path is derived at runtime from the test executable location.
 //! Both the test binary and the cdylib live in `target/<[triple/]profile>/deps/`.
