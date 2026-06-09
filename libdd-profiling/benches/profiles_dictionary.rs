@@ -12,6 +12,7 @@ const STRINGS_PER_THREAD: usize = 1024;
 // Bound one generated function-name component so the input has repeated
 // function-like fragments while each full string stays unique.
 const FUNCTION_NAME_VARIANTS: usize = 97;
+const STRING_SHAPE_VARIANTS: usize = 4;
 // Knuth/Fibonacci multiplicative hash constant, used only to vary synthetic input.
 const KNUTH_MULTIPLICATIVE_HASH: usize = 2_654_435_761;
 
@@ -20,11 +21,19 @@ fn make_strings(thread_count: usize) -> Vec<Vec<String>> {
         .map(|thread_id| {
             (0..STRINGS_PER_THREAD)
                 .map(|string_id| {
-                    format!(
-                        "/opt/datadog/profiler/thread-{thread_id}/module-{string_id:04}/function-{}::{}",
-                        string_id % FUNCTION_NAME_VARIANTS,
-                        string_id.wrapping_mul(KNUTH_MULTIPLICATIVE_HASH)
-                    )
+                    let function_id = string_id % FUNCTION_NAME_VARIANTS;
+                    let mixed_id = string_id.wrapping_mul(KNUTH_MULTIPLICATIVE_HASH);
+
+                    match string_id % STRING_SHAPE_VARIANTS {
+                        0 => format!("function_{function_id}::{mixed_id}"),
+                        1 => format!("/src/thread_{thread_id}/module_{function_id}/file_{string_id:04}.rs"),
+                        2 => {
+                            format!("datadog::profiling::module_{function_id}::function_{mixed_id}")
+                        }
+                        _ => format!(
+                            "/opt/datadog/profiler/thread-{thread_id}/module-{function_id}/src/file_{string_id:04}.rs::function_{function_id}::{mixed_id}",
+                        ),
+                    }
                 })
                 .collect()
         })
