@@ -65,7 +65,7 @@ pub fn from_v04_span<T: TraceData>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanBytes;
+    use crate::span::v04::{SpanBytes, VecMap};
     use libdd_tinybytes::BytesString;
 
     #[test]
@@ -81,12 +81,13 @@ mod tests {
             start: 1,
             duration: 111,
             error: 0,
-            meta: HashMap::from([(
+            meta: vec![(
                 BytesString::from("meta_field"),
                 BytesString::from("meta_value"),
-            )]),
-            metrics: HashMap::from([(BytesString::from("metrics_field"), 1.1)]),
-            meta_struct: HashMap::new(),
+            )]
+            .into(),
+            metrics: vec![(BytesString::from("metrics_field"), 1.1)].into(),
+            meta_struct: VecMap::new(),
             span_links: vec![],
             span_events: vec![],
         };

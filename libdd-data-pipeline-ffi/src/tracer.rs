@@ -499,7 +499,8 @@ mod tests {
             ddog_tracer_span_set_meta(Some(&mut *span), cs("k"), cs("v1"));
             ddog_tracer_span_set_meta(Some(&mut *span), cs("k"), cs("v2"));
 
-            assert_eq!(span.0.meta.len(), 1);
+            // After the introduction of `VecMap`, the length is still 2, as the data structure
+            // tolerates duplicate entries.
             assert_eq!(span.0.meta.get("k").unwrap().as_ref(), "v2");
 
             ddog_tracer_span_free(span);
