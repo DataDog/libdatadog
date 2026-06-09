@@ -51,22 +51,31 @@ jobs:
         env:
           RAW_CRATES: ${{ inputs.crates }}
           RAW_MAIN_START_REF: ${{ inputs.main_start_ref }}
+          HOTFIX_REF_PATTERN: ${{ env.HOTFIX_REF_PATTERN }}
         run: |
           set -euo pipefail
 
           # Split on commas/whitespace, drop empties, dedupe, sort for stable downstream order.
-          mapfile -t CRATES < <(printf '%s\n' "$RAW_CRATES" | tr ',' ' ' | tr -s '[:space:]' '\n' | sed '/^$/d' | sort -u)
+          # Use command substitution (not process substitution) so set -e/pipefail catches failures.
+          NORMALIZED=$(printf '%s\n' "$RAW_CRATES" | tr ',' ' ' | tr -s '[:space:]' '\n' | sed '/^$/d' | sort -u)
+          mapfile -t CRATES <<< "$NORMALIZED"
+          # An empty NORMALIZED produces a single empty-string element via <<<; drop it.
+          if [ "${#CRATES[@]}" -eq 1 ] && [ -z "${CRATES[0]}" ]; then
+            CRATES=()
+          fi
 
           if [ "${#CRATES[@]}" -eq 0 ]; then
             echo "Error: 'crates' input is empty after normalization." >&2
             exit 1
           fi
 
-          mapfile -t AVAILABLE < <(cargo metadata --no-deps --format-version=1 | jq -r '
+          METADATA=$(cargo metadata --no-deps --format-version=1)
+          AVAILABLE_LIST=$(jq -r '
             .packages[]
             | select(.publish == null or (.publish | type == "array" and length > 0))
             | .name
-          ' | sort -u)
+          ' <<< "$METADATA" | sort -u)
+          mapfile -t AVAILABLE <<< "$AVAILABLE_LIST"
 
           UNKNOWN=()
           for c in "${CRATES[@]}"; do
@@ -82,7 +91,7 @@ jobs:
           fi
 
           REF="$(echo "$RAW_MAIN_START_REF" | tr -d '[:space:]')"
-          if [[ -n "$REF" && "$REF" =~ ^hotfix/[^/]+/[0-9]+\.x\.x$ ]] && [ "${#CRATES[@]}" -gt 1 ]; then
+          if [[ -n "$REF" && "$REF" =~ $HOTFIX_REF_PATTERN ]] && [ "${#CRATES[@]}" -gt 1 ]; then
             echo "Error: hotfix releases (main_start_ref=$REF) accept only a single crate; got ${#CRATES[@]}: ${CRATES[*]}" >&2
             exit 1
           fi
