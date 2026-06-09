@@ -33,7 +33,7 @@ fn make_strings(thread_count: usize) -> Vec<Vec<String>> {
 
 fn insert_profile_strings(dict: &ProfilesDictionary, strings: &[String]) {
     for string in strings {
-        black_box(dict.try_insert_str2(black_box(string.as_str())).unwrap());
+        black_box(dict.try_insert_str2(string.as_str()).unwrap());
     }
 }
 
