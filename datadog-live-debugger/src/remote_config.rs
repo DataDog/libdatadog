@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::probe_defs::LiveDebuggingData;
-use datadog_remote_config::{ParseError, RemoteConfigContent, RemoteConfigProduct};
+use libdd_remote_config::{ParseError, RemoteConfigContent, RemoteConfigProduct};
 
 impl RemoteConfigContent for LiveDebuggingData {
     const PRODUCT: RemoteConfigProduct = RemoteConfigProduct::LiveDebugger;
