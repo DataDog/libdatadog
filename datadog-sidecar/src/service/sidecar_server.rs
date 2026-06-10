@@ -328,6 +328,14 @@ impl SidecarServer {
                 .set_language(&language)
                 .set_language_version(&language_version)
                 .set_tracer_version(&tracer_version);
+            // NOTE: env / app_version are deliberately NOT set at the exporter level here.
+            // Unlike `service`, the sidecar has no reliable session-level env/version (they
+            // arrive per-runtime via `set_universal_service_tags` and are dynamic per-trace).
+            // Instead the OTLP encoder derives the resource attributes
+            // `deployment.environment.name` / `service.version` from the `env` / `version`
+            // meta tags carried on each exported trace's spans (see
+            // `libdd-trace-utils/src/otlp_encoder/mapper.rs`), which is correct per-trace even
+            // for a multi-service session. Setting them here would be empty and pointless.
             if let Some(token) = endpoint.test_token.as_deref() {
                 builder.set_test_session_token(token);
             }
