@@ -80,7 +80,7 @@ pub struct TracingSamplingRule {
 #[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfig {
     pub(crate) tracing_header_tags: Option<Vec<TracingHeaderTag>>,
-    pub(crate) tracing_sample_rate: Option<f64>,
+    pub(crate) tracing_sampling_rate: Option<f64>,
     pub(crate) log_injection_enabled: Option<bool>,
     pub(crate) tracing_tags: Option<Vec<String>>,
     pub(crate) tracing_enabled: Option<bool>,
@@ -98,8 +98,8 @@ impl From<DynamicConfig> for Vec<Configs> {
                 tags.into_iter().map(|t| (t.header, t.tag_name)).collect(),
             ))
         }
-        if let Some(sample_rate) = value.tracing_sample_rate {
-            vec.push(Configs::TracingSampleRate(sample_rate));
+        if let Some(sample_rate) = value.tracing_sampling_rate {
+            vec.push(Configs::TracingSamplingRate(sample_rate));
         }
         if let Some(log_injection) = value.log_injection_enabled {
             vec.push(Configs::LogInjectionEnabled(log_injection));
@@ -129,7 +129,7 @@ impl From<DynamicConfig> for Vec<Configs> {
 #[derive(Clone)]
 pub enum Configs {
     TracingHeaderTags(HashMap<String, String>),
-    TracingSampleRate(f64),
+    TracingSamplingRate(f64),
     LogInjectionEnabled(bool),
     TracingTags(Vec<String>), // "key:val" format
     TracingEnabled(bool),
