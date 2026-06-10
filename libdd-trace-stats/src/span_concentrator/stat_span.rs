@@ -37,12 +37,6 @@ pub trait StatSpan<'a> {
     fn get_meta(&'a self, key: &str) -> Option<&'a str>;
     /// Returns the value of a metrics field
     fn get_metrics(&'a self, key: &str) -> Option<f64>;
-    /// Returns the value of a parent id
-    fn parent_id(&'a self) -> u64;
-    /// Returns the value of a span id
-    fn span_id(&'a self) -> u64;
-    /// Returns the value of a trace id
-    fn trace_id(&'a self) -> u128;
 }
 
 impl<'a, T: TraceData> StatSpan<'a> for Span<T> {
@@ -97,18 +91,6 @@ impl<'a, T: TraceData> StatSpan<'a> for Span<T> {
     fn get_metrics(&'a self, key: &str) -> Option<f64> {
         self.metrics.get(key).copied()
     }
-
-    fn parent_id(&'a self) -> u64 {
-        self.parent_id
-    }
-
-    fn span_id(&'a self) -> u64 {
-        self.span_id
-    }
-
-    fn trace_id(&'a self) -> u128 {
-        self.trace_id
-    }
 }
 
 impl<'a> StatSpan<'a> for pb::Span {
@@ -162,17 +144,5 @@ impl<'a> StatSpan<'a> for pb::Span {
 
     fn get_metrics(&'a self, key: &str) -> Option<f64> {
         self.metrics.get(key).copied()
-    }
-
-    fn parent_id(&'a self) -> u64 {
-        self.parent_id
-    }
-
-    fn span_id(&'a self) -> u64 {
-        self.span_id
-    }
-
-    fn trace_id(&'a self) -> u128 {
-        self.trace_id as u128
     }
 }

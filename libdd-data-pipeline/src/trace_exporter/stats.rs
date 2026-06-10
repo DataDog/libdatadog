@@ -8,6 +8,9 @@
 //! and processing traces for stats collection.
 
 #[cfg(not(target_arch = "wasm32"))]
+use super::add_path;
+use super::TracerMetadata;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -22,15 +25,11 @@ use libdd_trace_stats::span_concentrator::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::{debug, error};
-
-#[cfg(not(target_arch = "wasm32"))]
-use super::add_path;
-use super::trace_filter::TraceFilterer;
-use super::TracerMetadata;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =

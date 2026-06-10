@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
-use std::collections::HashSet;
+use std::{borrow::Borrow as _, collections::HashSet};
 
-use crate::agent_info::schema::FilterTagsConfig;
 use libdd_common::regex_engine::Regex;
-use libdd_trace_stats::span_concentrator::StatSpan;
+use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
+
+use crate::span::{self, TraceData};
 
 trait TagFilter {
     /// Returns true if the given tag value matches the Filterer.
@@ -74,29 +75,29 @@ pub trait Span<'a> {
     fn get_meta(&'a self, key: &str) -> Option<&'a str>;
 }
 
-impl<'a, T: StatSpan<'a>> Span<'a> for T {
+impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
     fn resource(&'a self) -> &'a str {
-        StatSpan::resource(self)
+        self.resource.borrow()
     }
 
     fn name(&'a self) -> &'a str {
-        StatSpan::name(self)
+        self.name.borrow()
     }
 
     fn span_id(&'a self) -> u64 {
-        StatSpan::span_id(self)
+        self.span_id
     }
 
     fn parent_id(&'a self) -> u64 {
-        StatSpan::parent_id(self)
+        self.parent_id
     }
 
     fn trace_id(&'a self) -> u128 {
-        StatSpan::trace_id(self)
+        self.trace_id
     }
 
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {
-        StatSpan::get_meta(self, key)
+        self.meta.get(key).map(|v| v.borrow())
     }
 }
 
@@ -224,14 +225,16 @@ impl TraceFilterer {
     }
 
     pub fn new(
-        filter_tags: &FilterTagsConfig,
-        filter_tags_regex: &FilterTagsConfig,
+        filter_tags_require: &[String],
+        filter_tags_reject: &[String],
+        filter_tags_regex_require: &[String],
+        filter_tags_regex_reject: &[String],
         ignore_resources: &[String],
     ) -> Self {
-        let require_regex = Self::compile_regex_filters(&filter_tags_regex.require);
-        let reject_regex = Self::compile_regex_filters(&filter_tags_regex.reject);
-        let require = Self::compile_literal_filters(&filter_tags.require);
-        let reject = Self::compile_literal_filters(&filter_tags.reject);
+        let require_regex = Self::compile_regex_filters(filter_tags_regex_require);
+        let reject_regex = Self::compile_regex_filters(filter_tags_regex_reject);
+        let require = Self::compile_literal_filters(filter_tags_require);
+        let reject = Self::compile_literal_filters(filter_tags_reject);
         let ignore_resources = Self::compile_resource_filters(ignore_resources);
 
         Self {
@@ -346,12 +349,11 @@ impl TraceFilterer {
         };
         match filter.key() {
             "env" => {
-                let normalized_value =
-                    libdd_trace_normalization::normalize_utils::normalize_tag_cloned(value);
+                let normalized_value = normalize_utils::normalize_tag_cloned(value);
                 filter.matches_tag_value(&normalized_value)
             }
             "http.status_code" => {
-                if !libdd_trace_normalization::normalizer::is_valid_http_status_code(value) {
+                if !normalizer::is_valid_http_status_code(value) {
                     debug!(?value,"trace filter on http.status_code ignored because root span's `http.status_code` is invalid");
                     return false;
                 }
@@ -364,22 +366,11 @@ impl TraceFilterer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use libdd_trace_utils::span::v04::SpanBytes;
+    use super::TraceFilterer;
+    use crate::span::v04::SpanBytes;
     use std::collections::HashMap;
 
     // ---- helpers ----
-
-    fn ftc(require: &[&str], reject: &[&str]) -> FilterTagsConfig {
-        FilterTagsConfig {
-            require: require.iter().map(|s| s.to_string()).collect(),
-            reject: reject.iter().map(|s| s.to_string()).collect(),
-        }
-    }
-
-    fn no_tags() -> FilterTagsConfig {
-        FilterTagsConfig::default()
-    }
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
         SpanBytes {
@@ -401,25 +392,28 @@ mod tests {
         vec![vec![s]]
     }
 
-    fn reject_str(tags: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&ftc(&[], tags), &no_tags(), &[])
+    fn map_to_owned(values: &[&str]) -> Vec<String> {
+        values.iter().map(|&s| s.to_owned()).collect()
     }
 
     fn require_str(tags: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&ftc(tags, &[]), &no_tags(), &[])
+        TraceFilterer::new(&map_to_owned(tags), &[], &[], &[], &[])
     }
 
-    fn reject_regex(tags: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&no_tags(), &ftc(&[], tags), &[])
+    fn reject_str(tags: &[&str]) -> TraceFilterer {
+        TraceFilterer::new(&[], &map_to_owned(tags), &[], &[], &[])
     }
 
     fn require_regex(tags: &[&str]) -> TraceFilterer {
-        TraceFilterer::new(&no_tags(), &ftc(tags, &[]), &[])
+        TraceFilterer::new(&[], &[], &map_to_owned(tags), &[], &[])
+    }
+
+    fn reject_regex(tags: &[&str]) -> TraceFilterer {
+        TraceFilterer::new(&[], &[], &[], &map_to_owned(tags), &[])
     }
 
     fn ignore_resources(patterns: &[&str]) -> TraceFilterer {
-        let pats: Vec<String> = patterns.iter().map(|s| s.to_string()).collect();
-        TraceFilterer::new(&no_tags(), &no_tags(), &pats)
+        TraceFilterer::new(&[], &[], &[], &[], &map_to_owned(patterns))
     }
 
     // ---- reject (TagStringFilter) ----
@@ -638,7 +632,7 @@ mod tests {
 
     #[test]
     fn no_filters_keeps_all_traces() {
-        let f = TraceFilterer::new(&no_tags(), &no_tags(), &[]);
+        let f = TraceFilterer::new(&[], &[], &[], &[], &[]);
         let mut traces = vec![
             vec![span_with("r1", &[])],
             vec![span_with("r2", &[("env", "prod")])],

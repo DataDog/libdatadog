@@ -8,7 +8,6 @@ use crate::otlp::OtlpTraceConfig;
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
-use crate::trace_exporter::trace_filter::TraceFilterer;
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
@@ -23,6 +22,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
 use libdd_shared_runtime::SharedRuntime;
+use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
 

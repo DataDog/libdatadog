@@ -5,13 +5,11 @@ pub mod builder;
 pub mod error;
 pub mod metrics;
 pub mod stats;
-mod trace_filter;
 mod trace_serializer;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
-use libdd_trace_utils::span::trace_utils::DroppedStats;
-use trace_filter::TraceFilterer;
+use libdd_trace_utils::{span::trace_utils::DroppedStats, trace_filter::TraceFilterer};
 
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
@@ -355,8 +353,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
     #[cfg(not(target_arch = "wasm32"))]
     async fn check_agent_info(&self) {
-        use trace_filter::TraceFilterer;
-
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
         };
@@ -369,8 +365,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         }
 
         self.trace_filterer.store(Arc::new(TraceFilterer::new(
-            &agent_info.info.filter_tags,
-            &agent_info.info.filter_tags_regex,
+            &agent_info.info.filter_tags.require,
+            &agent_info.info.filter_tags.reject,
+            &agent_info.info.filter_tags_regex.require,
+            &agent_info.info.filter_tags_regex.reject,
             &agent_info.info.ignore_resources,
         )));
 
