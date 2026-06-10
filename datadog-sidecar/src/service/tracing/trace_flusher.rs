@@ -14,14 +14,13 @@ use manual_future::{ManualFuture, ManualFutureCompleter};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
-use std::ops::DerefMut;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 const DEFAULT_FLUSH_INTERVAL_MS: u64 = 5_000;
 const DEFAULT_MIN_FORCE_FLUSH_SIZE_BYTES: u32 = 1_000_000;
@@ -48,11 +47,25 @@ struct AgentRemoteConfigs {
     last_used: BTreeMap<Instant, Endpoint>,
 }
 
+/// Per-endpoint flush state. Each distinct agent endpoint gets its own send buffer and its own
+/// flusher task, so a slow or unreachable endpoint (e.g. a dead agent that retries for many
+/// seconds) cannot stall delivery to healthy endpoints. In the common production case there is a
+/// single endpoint, so this behaves exactly like the previous single-buffer design.
 #[derive(Default)]
-struct TraceFlusherData {
+struct PerEndpoint {
     traces: TraceSendData,
     flusher: Option<JoinHandle<()>>,
 }
+
+#[derive(Default)]
+struct TraceFlusherData {
+    endpoints: HashMap<Endpoint, PerEndpoint>,
+}
+
+/// Upper bound on how long a synchronous (global) flush waits for endpoints to drain. The flush is
+/// best-effort: a stuck endpoint keeps retrying in its own background task, but it must never block
+/// the caller (and thus the blocking IPC flush) past this bound.
+const SYNC_FLUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct TraceFlusherMetrics {
@@ -118,9 +131,6 @@ impl TraceFlusher {
     ///
     /// * `data` - A `SendData` instance that needs to be added to the traces.
     pub(crate) fn enqueue(self: &Arc<Self>, data: SendData) {
-        let mut flush_data = self.inner.lock_or_panic();
-        let flush_data = flush_data.deref_mut();
-
         if data.len() > self.min_force_drop_size_bytes.load(Ordering::Relaxed) as usize {
             error!(
                 "Error sending trace. Individual trace size of {}B exceeds {}B limit",
@@ -130,19 +140,25 @@ impl TraceFlusher {
             return;
         }
 
-        flush_data.traces.send_data_size += data.len();
-        flush_data.traces.send_data.push(data);
+        let endpoint = data.get_target().clone();
+        let mut flush_data = self.inner.lock_or_panic();
+        let per = flush_data.endpoints.entry(endpoint.clone()).or_default();
 
-        if flush_data.flusher.is_none() {
+        per.traces.send_data_size += data.len();
+        per.traces.send_data.push(data);
+
+        if per.flusher.is_none() {
             let (force_flush, completer) = ManualFuture::new();
-            flush_data.flusher = Some(self.clone().start_trace_flusher(force_flush));
-            flush_data.traces.force_flush = Some(completer);
+            // The flusher task is scoped to this endpoint and self-terminates (removing this map
+            // entry) once its buffer drains, so endpoints don't accumulate idle tasks.
+            per.flusher = Some(self.clone().start_trace_flusher(endpoint, force_flush));
+            per.traces.force_flush = Some(completer);
         }
 
-        if flush_data.traces.send_data_size
+        if per.traces.send_data_size
             > self.min_force_flush_size_bytes.load(Ordering::Relaxed) as usize
         {
-            flush_data.traces.flush();
+            per.traces.flush();
         }
     }
 
@@ -155,17 +171,22 @@ impl TraceFlusher {
     ///
     /// If the flusher task is not running, it returns `Ok`.
     pub(crate) async fn join(&self) -> anyhow::Result<(), JoinError> {
-        let flusher = {
+        let flushers: Vec<JoinHandle<()>> = {
             let mut flush_data = self.inner.lock_or_panic();
             self.interval_ms.store(0, Ordering::SeqCst);
-            flush_data.traces.flush();
-            flush_data.deref_mut().flusher.take()
+            flush_data
+                .endpoints
+                .values_mut()
+                .filter_map(|per| {
+                    per.traces.flush();
+                    per.flusher.take()
+                })
+                .collect()
         };
-        if let Some(flusher) = flusher {
-            flusher.await
-        } else {
-            Ok(())
+        for flusher in flushers {
+            flusher.await?;
         }
+        Ok(())
     }
 
     /// Get the statistics of the trace flusher.
@@ -183,7 +204,13 @@ impl TraceFlusher {
             agent_config_allocated_shm: rc.writers.values().map(|r| r.writer.size() as u32).sum(),
             agent_config_writers: rc.writers.len() as u32,
             agent_configs_last_used_entries: rc.last_used.len() as u32,
-            send_data_size: self.inner.lock_or_panic().traces.send_data_size as u32,
+            send_data_size: self
+                .inner
+                .lock_or_panic()
+                .endpoints
+                .values()
+                .map(|per| per.traces.send_data_size as u32)
+                .sum(),
         }
     }
 
@@ -230,17 +257,24 @@ impl TraceFlusher {
 
     fn replace_trace_send_data(
         &self,
+        endpoint: &Endpoint,
         completer: ManualFutureCompleter<Option<mpsc::Sender<()>>>,
     ) -> Vec<SendData> {
-        let trace_buffer = std::mem::replace(
-            &mut self.inner.lock_or_panic().traces,
-            TraceSendData {
-                send_data: vec![],
-                send_data_size: 0,
-                force_flush: Some(completer),
-            },
-        )
-        .send_data;
+        let mut flush_data = self.inner.lock_or_panic();
+        let trace_buffer = match flush_data.endpoints.get_mut(endpoint) {
+            Some(per) => {
+                std::mem::replace(
+                    &mut per.traces,
+                    TraceSendData {
+                        send_data: vec![],
+                        send_data_size: 0,
+                        force_flush: Some(completer),
+                    },
+                )
+                .send_data
+            }
+            None => vec![],
+        };
         trace_utils::coalesce_send_data(trace_buffer)
             .into_iter()
             .collect()
@@ -266,6 +300,7 @@ impl TraceFlusher {
 
     fn start_trace_flusher(
         self: Arc<Self>,
+        endpoint: Endpoint,
         mut force_flush: ManualFuture<Option<mpsc::Sender<()>>>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -278,33 +313,49 @@ impl TraceFlusher {
                     sender = force_flush => { flush_done_sender = sender; },
                 }
 
-                debug!(
-                    "Start flushing {} bytes worth of traces",
-                    self.inner.lock_or_panic().traces.send_data_size
-                );
-
                 let (new_force_flush, completer) = ManualFuture::new();
                 force_flush = new_force_flush;
 
-                let send_data = self.replace_trace_send_data(completer);
+                // Swap out (and coalesce) only this endpoint's buffer, then send without holding
+                // the lock. Other endpoints' flushers run independently and concurrently.
+                let send_data = self.replace_trace_send_data(&endpoint, completer);
                 join_all(send_data.into_iter().map(|d| self.send_and_handle_trace(d))).await;
 
                 drop(flush_done_sender);
 
+                // Reap this endpoint's task once its buffer has drained, so dead/idle endpoints
+                // don't accumulate tasks or map entries. enqueue() will spawn a fresh task (and
+                // re-create the entry) if more data arrives for this endpoint later.
                 let mut data = self.inner.lock_or_panic();
-                let data = data.deref_mut();
-                if data.traces.send_data.is_empty() {
-                    data.flusher = None;
-                    break;
+                match data.endpoints.get(&endpoint) {
+                    Some(per) if per.traces.send_data.is_empty() => {
+                        data.endpoints.remove(&endpoint);
+                        break;
+                    }
+                    None => break,
+                    _ => {}
                 }
             }
         })
     }
 
-    /// Flushes immediately without delay.
+    /// Flushes immediately without delay. Triggers a flush on every endpoint and waits, bounded by
+    /// `SYNC_FLUSH_TIMEOUT`, for them to drain. This is best-effort: a slow or unreachable endpoint
+    /// keeps retrying in its own background task and must not block the caller (the blocking IPC
+    /// flush) past the bound.
     pub async fn flush(&self) {
-        let flush_done = self.inner.lock_or_panic().traces.await_flush();
-        flush_done.await
+        let flush_dones: Vec<_> = {
+            let mut flush_data = self.inner.lock_or_panic();
+            flush_data
+                .endpoints
+                .values_mut()
+                .map(|per| per.traces.await_flush())
+                .collect()
+        };
+        if flush_dones.is_empty() {
+            return;
+        }
+        let _ = tokio::time::timeout(SYNC_FLUSH_TIMEOUT, join_all(flush_dones)).await;
     }
 }
 
