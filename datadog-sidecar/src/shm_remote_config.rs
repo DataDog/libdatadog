@@ -305,7 +305,7 @@ impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStora
                     let configs: Vec<Configs> = config.lib_config.into();
                     for config in configs {
                         if let Configs::DynamicInstrumentationEnabled(enabled) = config {
-                            writer.dynamic_instrumentation = Some(enabled);
+                            writer.dynamic_instrumentation = enabled;
                         }
                     }
                 }
@@ -923,7 +923,7 @@ mod tests {
             if let Some(cfg) = parsed.downcast::<DynamicConfigFile>() {
                 assert!(matches!(
                     <Vec<Configs>>::from(cfg.lib_config.clone())[0],
-                    Configs::TracingEnabled(true)
+                    Configs::TracingEnabled(Some(true))
                 ));
             } else {
                 unreachable!();
