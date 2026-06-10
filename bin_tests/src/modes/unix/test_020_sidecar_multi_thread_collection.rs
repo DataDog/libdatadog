@@ -46,6 +46,15 @@ impl Behavior for Test {
         config.set_unix_socket_path(socket_path);
         config.set_collect_all_threads(true);
         config.set_max_threads(32);
+
+        // Register the expected receiver PID so the crash handler authenticates
+        // the socket peer before granting ptrace permission.
+        if let Ok(pid_str) = std::env::var("DD_TEST_RECEIVER_PID") {
+            if let Ok(pid) = pid_str.parse::<i32>() {
+                libdd_crashtracker::set_expected_receiver_pid(pid);
+            }
+        }
+
         Ok(())
     }
 
