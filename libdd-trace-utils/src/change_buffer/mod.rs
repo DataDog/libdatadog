@@ -377,14 +377,14 @@ where
                     // `*cached_slot` is `u32::MAX`. In subsequent iterations,
                     // `interpret_operation_cached` maintains its own safety invariant.
                     unsafe {
-                      self.interpret_operation_cached(
-                          &mut index,
-                          &op,
-                          &mut cached_slot,
-                          &mut cached_span_ptr,
-                          &mut cached_deferred_meta,
-                          &mut cached_deferred_metrics,
-                      )?;
+                        self.interpret_operation_cached(
+                            &mut index,
+                            &op,
+                            &mut cached_slot,
+                            &mut cached_span_ptr,
+                            &mut cached_deferred_meta,
+                            &mut cached_deferred_metrics,
+                        )?;
                     }
                 }
             }
