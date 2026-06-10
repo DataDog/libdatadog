@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
-use std::borrow::Borrow as _;
+use std::{borrow::Borrow as _, collections::HashSet};
 
 use crate::agent_info::schema::FilterTagsConfig;
 use libdd_common::regex_engine::Regex;
 use libdd_trace_stats::span_concentrator::StatSpan;
-use libdd_trace_utils::span::trace_utils::get_root_span_index;
 use tracing::{debug, error};
 
 trait TagFilter {
@@ -64,6 +63,81 @@ impl TagFilter for TagRegexFilter {
     fn key(&self) -> &str {
         &self.key
     }
+}
+
+pub trait Span<'a> {
+    fn resource(&'a self) -> &'a str;
+    fn name(&'a self) -> &'a str;
+    fn span_id(&'a self) -> u64;
+    fn parent_id(&'a self) -> u64;
+    fn trace_id(&'a self) -> u128;
+    fn get_meta(&'a self, key: &str) -> Option<&'a str>;
+}
+
+impl<'a, T: StatSpan<'a>> Span<'a> for T {
+    fn resource(&'a self) -> &'a str {
+        StatSpan::resource(self)
+    }
+
+    fn name(&'a self) -> &'a str {
+        StatSpan::name(self)
+    }
+
+    fn span_id(&'a self) -> u64 {
+        StatSpan::span_id(self)
+    }
+
+    fn parent_id(&'a self) -> u64 {
+        StatSpan::parent_id(self)
+    }
+
+    fn trace_id(&'a self) -> u128 {
+        StatSpan::trace_id(self)
+    }
+
+    fn get_meta(&'a self, key: &str) -> Option<&'a str> {
+        StatSpan::get_meta(self, key)
+    }
+}
+
+fn get_root_span_index<'a>(trace: &'a [impl Span<'a>]) -> anyhow::Result<usize> {
+    if trace.is_empty() {
+        anyhow::bail!("Cannot find root span index in an empty trace.");
+    }
+
+    // Do a first pass to find if we have an obvious root span (starting from the end) since some
+    // clients put the root span last.
+    for (i, span) in trace.iter().enumerate().rev() {
+        if span.parent_id() == 0 {
+            return Ok(i);
+        }
+    }
+
+    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id()).collect();
+
+    let mut root_span_id = None;
+    for (i, span) in trace.iter().enumerate() {
+        // If a span's parent is not in the trace, it is a root
+        if !span_ids.contains(&span.parent_id()) {
+            if root_span_id.is_some() {
+                debug!(
+                    trace_id = &trace[0].trace_id(),
+                    "trace has multiple root spans"
+                );
+            }
+            root_span_id = Some(i);
+        }
+    }
+    Ok(match root_span_id {
+        Some(i) => i,
+        None => {
+            debug!(
+                trace_id = &trace[0].trace_id(),
+                "Could not find the root span for trace"
+            );
+            trace.len() - 1
+        }
+    })
 }
 
 impl TraceFilterer {
@@ -172,17 +246,16 @@ impl TraceFilterer {
         Self::default()
     }
 
-    pub fn filter_traces<T: libdd_trace_utils::span::TraceData>(
-        &self,
-        traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
-    ) -> usize {
+    pub fn filter_traces<T>(&self, traces: &mut Vec<Vec<T>>) -> usize
+    where
+        for<'a> T: Span<'a>,
+    {
         let traces_count_before = traces.len();
-        traces.retain(|trace| {
+        traces.retain(|trace: &Vec<T>| {
             let Ok(root_span_index) = get_root_span_index(trace) else {
                 return true;
             };
-            let root_span = &trace[root_span_index];
-            let should_drop = self.should_drop(root_span);
+            let should_drop = self.should_drop(&trace[root_span_index]);
             if should_drop {
                 debug!("Trace rejected as it fails to meet tag requirements. root: %v");
             }
@@ -205,12 +278,9 @@ impl TraceFilterer {
     // 3. Require filtering: If filter_tags.require or filter_tags_regex.require contain any
     //    filters, all of them must match tags on the root span. If any required filter doesn't
     //    match, reject the trace.
-    fn should_drop<T: libdd_trace_utils::span::TraceData>(
-        &self,
-        root_span: &libdd_trace_utils::span::v04::Span<T>,
-    ) -> bool {
+    fn should_drop<'a>(&self, root_span: &'a impl Span<'a>) -> bool {
         if !self.ignore_resources.is_empty() {
-            let span_resource = root_span.resource();
+            let span_resource = Span::resource(root_span);
             // Normalization
             let span_resource = if span_resource.is_empty() {
                 let span_name = root_span.name();
@@ -267,14 +337,13 @@ impl TraceFilterer {
         false
     }
 
-    fn check_tag_filter_with_normalization<T: libdd_trace_utils::span::TraceData>(
+    fn check_tag_filter_with_normalization<'a>(
         filter: &impl TagFilter,
-        root_span: &libdd_trace_utils::span::v04::Span<T>,
+        root_span: &'a impl Span<'a>,
     ) -> bool {
-        let Some(value) = root_span.meta.get(filter.key()) else {
+        let Some(value) = root_span.get_meta(filter.key()) else {
             return false;
         };
-        let value = value.borrow();
         match filter.key() {
             "env" => {
                 let normalized_value =
