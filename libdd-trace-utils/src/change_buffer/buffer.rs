@@ -56,7 +56,7 @@ impl ChangeBuffer {
             return Err(out_of_bounds_err);
         };
 
-        let bytes = slice.get(*index..*index + size).ok_or(out_of_bounds_err)?;
+        let bytes = slice.get(*index..end).ok_or(out_of_bounds_err)?;
         *index += size;
         Ok(T::from_bytes(bytes))
     }
