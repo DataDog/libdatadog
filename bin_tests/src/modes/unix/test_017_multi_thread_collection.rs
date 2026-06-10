@@ -13,27 +13,6 @@ use std::time::{Duration, Instant};
 
 pub struct Test;
 
-static WORKER_0_READY: AtomicBool = AtomicBool::new(false);
-static WORKER_1_READY: AtomicBool = AtomicBool::new(false);
-
-#[inline(never)]
-fn worker_fn_0() {
-    WORKER_0_READY.store(true, Ordering::Release);
-    loop {
-        std::hint::black_box(0x17_00u64);
-        std::hint::spin_loop();
-    }
-}
-
-#[inline(never)]
-fn worker_fn_1() {
-    WORKER_1_READY.store(true, Ordering::Release);
-    loop {
-        std::hint::black_box(0x17_01u64);
-        std::hint::spin_loop();
-    }
-}
-
 impl Behavior for Test {
     fn setup(
         &self,
@@ -50,8 +29,36 @@ impl Behavior for Test {
     }
 
     fn post(&self, _output_dir: &Path) -> anyhow::Result<()> {
-        WORKER_0_READY.store(false, Ordering::Release);
-        WORKER_1_READY.store(false, Ordering::Release);
+        // We spawn two worker threads that spin in known, `#[inline(never)]`
+        // functions so the crash report can be validated to contain their
+        // distinct frames. The atomic flags + busy-wait ensure both threads
+        // are actually inside their spin loops before we return and trigger
+        // the crash. `mem::forget` on the JoinHandles keeps the threads alive
+        // (they would otherwise be detached on drop, which is fine, but
+        // forgetting makes the intent explicit)
+        static WORKER_0_READY: AtomicBool = AtomicBool::new(false);
+        static WORKER_1_READY: AtomicBool = AtomicBool::new(false);
+
+        #[inline(never)]
+        fn worker_fn_0() {
+            WORKER_0_READY.store(true, Ordering::Relaxed);
+            loop {
+                std::hint::black_box(0x17_00u64);
+                std::hint::spin_loop();
+            }
+        }
+
+        #[inline(never)]
+        fn worker_fn_1() {
+            WORKER_1_READY.store(true, Ordering::Relaxed);
+            loop {
+                std::hint::black_box(0x17_01u64);
+                std::hint::spin_loop();
+            }
+        }
+
+        WORKER_0_READY.store(false, Ordering::Relaxed);
+        WORKER_1_READY.store(false, Ordering::Relaxed);
 
         let h0 = thread::Builder::new()
             .name("ct_worker_0".to_string())
