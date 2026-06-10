@@ -54,7 +54,7 @@ impl<S: FileStorage> SingleFetcher<S> {
         self.fetcher
             .fetch_once(
                 self.runtime_id.as_str(),
-                self.target.clone(),
+                &self.target,
                 &self.product_capabilities,
                 self.client_id.as_str(),
                 &mut self.opaque_state,
