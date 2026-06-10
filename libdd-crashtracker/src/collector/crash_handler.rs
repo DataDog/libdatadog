@@ -11,7 +11,7 @@ use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::StackTrace;
 use errno::{errno, set_errno};
-use libc::{c_void, siginfo_t, ucontext_t};
+use libc::{c_void, pid_t, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
 use std::os::fd::OwnedFd;
 use std::os::unix::io::{AsRawFd, FromRawFd};
@@ -19,7 +19,7 @@ use std::os::unix::net::UnixStream;
 use std::panic;
 use std::panic::PanicHookInfo;
 use std::ptr;
-use std::sync::atomic::Ordering::SeqCst;
+use std::sync::atomic::Ordering::{Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64};
 
 // Note that this file makes use the following async-signal safe functions in a signal handler.
@@ -65,13 +65,13 @@ static EXPECTED_RECEIVER_PID: AtomicI32 = AtomicI32::new(0);
 ///
 /// SAFETY:
 ///     This function is safe to call from any context, its a single atomic store.
-pub fn set_expected_receiver_pid(pid: i32) {
-    EXPECTED_RECEIVER_PID.store(pid, SeqCst);
+pub fn set_expected_receiver_pid(pid: pid_t) {
+    EXPECTED_RECEIVER_PID.store(pid, Relaxed);
 }
 
 /// Returns the currently registered expected receiver PID, or 0 if unset.
-pub fn get_expected_receiver_pid() -> i32 {
-    EXPECTED_RECEIVER_PID.load(SeqCst)
+pub fn get_expected_receiver_pid() -> pid_t {
+    EXPECTED_RECEIVER_PID.load(Relaxed)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -337,7 +337,7 @@ fn handle_posix_signal_impl(
         let ptracer_pid = match receiver.handle.pid {
             Some(pid) => pid,
             None => {
-                let expected_pid = EXPECTED_RECEIVER_PID.load(SeqCst);
+                let expected_pid = get_expected_receiver_pid();
                 if expected_pid <= 0 {
                     // No expected PID registered; fail closed.
                     0
