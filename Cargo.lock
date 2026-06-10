@@ -3255,6 +3255,7 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "futures-util",
+ "hashbrown 0.15.1",
  "http",
  "http-body-util",
  "hyper",
