@@ -11,7 +11,6 @@
 //!
 //! The change buffer is currently designed and used for dd-trace-js, but the idea could be extended
 //! to other runtime where the FFI cost is high.
-#![allow(dead_code)]
 
 /// Errors that can occur when operating on a [`ChangeBuffer`] or [`ChangeBufferState`].
 #[derive(Debug)]
