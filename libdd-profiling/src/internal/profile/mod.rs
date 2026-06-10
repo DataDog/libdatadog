@@ -37,6 +37,7 @@ pub struct Profile {
     profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     active_samples: AtomicU64,
     endpoints: Endpoints,
+    experimental_omit_local_root_span_id_when_serializing: bool,
     functions: FxIndexSet<Function>,
     generation: interning_api::Generation,
     labels: FxIndexSet<Label>,
@@ -120,6 +121,10 @@ impl Profile {
             .stats
             .add_endpoint_count(endpoint.into_owned(), value);
         Ok(())
+    }
+
+    pub fn set_omit_local_root_span_id_when_serializing(&mut self, omit: bool) {
+        self.experimental_omit_local_root_span_id_when_serializing = omit;
     }
 
     pub fn try_add_sample(
@@ -543,6 +548,8 @@ impl Profile {
             extended_label_sets.push(self.expand_label_set(&label_set)?);
         }
 
+        let omit_local_root_span_id = self.experimental_omit_local_root_span_id_when_serializing;
+        let local_root_span_id_label = self.endpoints.local_root_span_id_label;
         let iter = std::mem::take(&mut self.observations).try_into_iter()?;
         for (sample, timestamp, mut values) in iter {
             let off = sample.labels.to_offset();
@@ -564,7 +571,16 @@ impl Profile {
                 // The memory was reserved by `expand_label_set`.
                 labels.push(Label::num(self.timestamp_key, ts.get(), StringId::ZERO))
             }
-            pprof_labels.extend(labels.iter().map(protobuf::Label::from));
+            if omit_local_root_span_id {
+                pprof_labels.extend(
+                    labels
+                        .iter()
+                        .filter(|label| label.get_key() != local_root_span_id_label)
+                        .map(protobuf::Label::from),
+                );
+            } else {
+                pprof_labels.extend(labels.iter().map(protobuf::Label::from));
+            }
             if timestamp.is_some() {
                 labels.pop();
             }
@@ -934,6 +950,7 @@ impl Profile {
             profiles_dictionary_translator,
             active_samples: Default::default(),
             endpoints: Default::default(),
+            experimental_omit_local_root_span_id_when_serializing: false,
             functions: Default::default(),
             generation: Generation::new(),
 
@@ -1483,6 +1500,43 @@ mod api_tests {
         // The trace endpoint label shouldn't be added to second sample because the span id doesn't
         // match
         assert_eq!(s2.labels.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn omit_local_root_span_id_when_serializing() -> anyhow::Result<()> {
+        let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
+
+        let mut profile: Profile = Profile::new(&sample_types, None);
+        profile.set_omit_local_root_span_id_when_serializing(true);
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: &[1, 10000],
+            labels: vec![api::Label {
+                key: "local root span id",
+                str: "",
+                num: 10,
+                num_unit: "",
+            }],
+        };
+
+        profile.try_add_sample(sample, None)?;
+        profile.add_endpoint(10, Cow::from("my endpoint"))?;
+
+        let serialized_profile = roundtrip_to_pprof(profile)?;
+        let sample = serialized_profile.samples.first().expect("sample");
+
+        assert_eq!(sample.labels.len(), 1);
+        let endpoint_label = sample.labels.first().expect("label");
+        assert_eq!(
+            string_table_fetch(&serialized_profile, endpoint_label.key),
+            "trace endpoint"
+        );
+        assert_eq!(
+            string_table_fetch(&serialized_profile, endpoint_label.str),
+            "my endpoint"
+        );
         Ok(())
     }
 
