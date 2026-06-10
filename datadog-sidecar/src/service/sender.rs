@@ -438,6 +438,20 @@ impl SidecarSender {
         self.channel.try_send_set_test_session_token(token);
     }
 
+    pub fn set_otlp_traces_config(
+        &mut self,
+        session_id: String,
+        endpoint: Option<libdd_common::Endpoint>,
+        headers: Vec<(String, String)>,
+        timeout_ms: u64,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_set_otlp_traces_config(session_id, endpoint, headers, timeout_ms);
+    }
+
     pub fn add_span_to_concentrator(
         &mut self,
         env: String,

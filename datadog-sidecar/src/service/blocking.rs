@@ -258,6 +258,21 @@ pub fn set_session_process_tags(
     Ok(())
 }
 
+/// Sets (or clears) the OTLP traces export configuration for a session.
+///
+/// A `None` `endpoint` clears the configuration and restores the default agent
+/// trace path. This is additive: sessions that never call it are unaffected.
+pub fn set_otlp_traces_config(
+    transport: &mut SidecarTransport,
+    session_id: String,
+    endpoint: Option<libdd_common::Endpoint>,
+    headers: Vec<(String, String)>,
+    timeout_ms: u64,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_otlp_traces_config(session_id, endpoint, headers, timeout_ms);
+    Ok(())
+}
+
 /// Sends a trace as bytes.
 pub fn send_trace_v04_bytes(
     transport: &mut SidecarTransport,

@@ -47,6 +47,23 @@ pub(crate) struct SessionInfo {
     pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
     pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
     otlp_metrics_endpoint: Arc<Mutex<Option<Endpoint>>>,
+    /// Lazily-built OTLP traces exporter, cached per session and reused across
+    /// flushes so the background `/info` worker is only spawned once. Keyed by a
+    /// fingerprint of the OTLP traces config so it is rebuilt when the config
+    /// changes (and cleared when OTLP trace export is disabled). `None` until the
+    /// first OTLP flush, or whenever OTLP trace export is not configured.
+    otlp_traces_exporter: Arc<tokio::sync::Mutex<Option<OtlpTracesExporter>>>,
+}
+
+/// A cached OTLP traces exporter together with the config fingerprint it was
+/// built from, used to detect and rebuild on config changes.
+pub(crate) struct OtlpTracesExporter {
+    pub(crate) fingerprint: String,
+    pub(crate) exporter: std::sync::Arc<
+        libdd_data_pipeline::trace_exporter::TraceExporter<
+            libdd_capabilities_impl::NativeCapabilities,
+        >,
+    >,
 }
 
 impl SessionInfo {
@@ -170,6 +187,17 @@ impl SessionInfo {
         F: FnOnce(&mut Option<Endpoint>),
     {
         f(&mut self.get_otlp_metrics_endpoint());
+    }
+
+    /// Returns the cache slot for this session's lazily-built OTLP traces
+    /// exporter. The trace send path locks this, rebuilds the exporter when the
+    /// config fingerprint changes, and reuses it otherwise. Because rebuilds are
+    /// keyed on a config fingerprint, a configuration change is picked up on the
+    /// next flush without any explicit cache invalidation.
+    pub(crate) fn otlp_traces_exporter(
+        &self,
+    ) -> Arc<tokio::sync::Mutex<Option<OtlpTracesExporter>>> {
+        self.otlp_traces_exporter.clone()
     }
 
     pub(crate) fn get_trace_config(&self) -> MutexGuard<'_, tracer::Config> {
