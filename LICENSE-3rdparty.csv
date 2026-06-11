@@ -85,7 +85,6 @@ colorchoice,https://github.com/rust-cli/anstyle,MIT OR Apache-2.0,The colorchoic
 colored,https://github.com/mackwic/colored,MPL-2.0,Thomas Wickham <mackwic@gmail.com>
 combine,https://github.com/Marwes/combine,MIT,Markus Westerlind <marwes91@gmail.com>
 concurrent-queue,https://github.com/smol-rs/concurrent-queue,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, Taiki Endo <te316e89@gmail.com>, John Nunley <dev@notgull.net>"
-console,https://github.com/console-rs/console,MIT,The console Authors
 console-api,https://github.com/tokio-rs/console,MIT,"Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>"
 console-subscriber,https://github.com/tokio-rs/console,MIT,"Eliza Weisman <eliza@buoyant.io>, Tokio Contributors <team@tokio.rs>"
 const_format,https://github.com/rodrimati1992/const_format_crates,Zlib,rodrimati1992 <rodrimatt1985@gmail.com>
@@ -126,7 +125,6 @@ dispatch2,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,"Mads Marqu
 displaydoc,https://github.com/yaahc/displaydoc,MIT OR Apache-2.0,Jane Lusby <jlusby@yaah.dev>
 dyn-clone,https://github.com/dtolnay/dyn-clone,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 either,https://github.com/rayon-rs/either,MIT OR Apache-2.0,bluss
-encode_unicode,https://github.com/tormol/encode_unicode,Apache-2.0 OR MIT,Torbjørn Birch Moltu <t.b.moltu@lyse.net>
 encoding_rs,https://github.com/hsivonen/encoding_rs,(Apache-2.0 OR MIT) AND BSD-3-Clause,Henri Sivonen <hsivonen@hsivonen.fi>
 enum-as-inner,https://github.com/bluejekyll/enum-as-inner,MIT OR Apache-2.0,Benjamin Fry <benjaminfry@me.com>
 equivalent,https://github.com/cuviper/equivalent,Apache-2.0 OR MIT,The equivalent Authors
@@ -284,10 +282,6 @@ parking_lot_core,https://github.com/Amanieu/parking_lot,MIT OR Apache-2.0,Amanie
 paste,https://github.com/dtolnay/paste,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 path-tree,https://github.com/viz-rs/path-tree,MIT OR Apache-2.0,Fangdun Tsai <cfddream@gmail.com>
 percent-encoding,https://github.com/servo/rust-url,MIT OR Apache-2.0,The rust-url developers
-pest,https://github.com/pest-parser/pest,MIT OR Apache-2.0,Dragoș Tiselice <dragostiselice@gmail.com>
-pest_derive,https://github.com/pest-parser/pest,MIT OR Apache-2.0,Dragoș Tiselice <dragostiselice@gmail.com>
-pest_generator,https://github.com/pest-parser/pest,MIT OR Apache-2.0,Dragoș Tiselice <dragostiselice@gmail.com>
-pest_meta,https://github.com/pest-parser/pest,MIT OR Apache-2.0,Dragoș Tiselice <dragostiselice@gmail.com>
 petgraph,https://github.com/petgraph/petgraph,MIT OR Apache-2.0,"bluss, mitchmindtree"
 pico-args,https://github.com/RazrFalcon/pico-args,MIT,Yevhenii Reizner <razrfalcon@gmail.com>
 pin-project,https://github.com/taiki-e/pin-project,Apache-2.0 OR MIT,The pin-project Authors
@@ -471,7 +465,6 @@ try-lock,https://github.com/seanmonstar/try-lock,MIT,Sean McArthur <sean@seanmon
 twox-hash,https://github.com/shepmaster/twox-hash,MIT,Jake Goulding <jake.goulding@gmail.com>
 typeid,https://github.com/dtolnay/typeid,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 typenum,https://github.com/paholg/typenum,MIT OR Apache-2.0,"Paho Lurie-Gregg <paho@paholg.com>, Andre Bogus <bogusandre@gmail.com>"
-ucd-trie,https://github.com/BurntSushi/ucd-generate,MIT OR Apache-2.0,Andrew Gallant <jamslam@gmail.com>
 unarray,https://github.com/cameron1024/unarray,MIT OR Apache-2.0,The unarray Authors
 unicase,https://github.com/seanmonstar/unicase,MIT OR Apache-2.0,Sean McArthur <sean@seanmonstar.com>
 unicode-ident,https://github.com/dtolnay/unicode-ident,(MIT OR Apache-2.0) AND Unicode-DFS-2016,David Tolnay <dtolnay@gmail.com>
