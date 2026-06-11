@@ -1348,7 +1348,7 @@ mod v1_payload_tests {
         let mut attrs = VecMap::new();
         attrs.insert(
             bs("list"),
-            AttributeValue::List(thin_vec::thin_vec![
+            AttributeValue::List(vec![
                 AttributeValue::String(bs("a")),
                 AttributeValue::Bool(true),
             ]),

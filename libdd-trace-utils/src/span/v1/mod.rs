@@ -42,7 +42,7 @@ pub enum AttributeValue<T: TraceData> {
     Bool(bool),
     Bytes(T::Bytes),
     KeyValue(VecMap<T::Text, AttributeValue<T>>),
-    List(ThinVec<AttributeValue<T>>),
+    List(Vec<AttributeValue<T>>),
 }
 
 /// The generic representation of a V1 span.
