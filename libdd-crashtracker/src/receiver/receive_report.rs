@@ -537,6 +537,15 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
+    builder.with_experimental_frame_count(
+        builder
+            .error
+            .stack
+            .as_ref()
+            .map(|s| s.frames.len())
+            .unwrap_or(0),
+    )?;
+
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
@@ -585,7 +594,7 @@ fn collect_and_add_thread_contexts(
 
             let stack = match captured_context {
                 Some(ctx) => ctx.stack_trace.clone(),
-                None => StackTrace::empty(),
+                None => StackTrace::new_incomplete(),
             };
 
             collected_threads.push(ThreadData {

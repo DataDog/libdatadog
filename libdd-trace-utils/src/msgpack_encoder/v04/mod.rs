@@ -50,7 +50,7 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 ///
 /// let mut buffer = vec![0u8; 1024];
 /// let span = SpanSlice {
-///     name: "test-span".into(),
+///     name: "test-span",
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -81,7 +81,7 @@ pub fn write_to_slice<T: TraceData, S: AsRef<[Span<T>]>>(
 /// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let span = SpanSlice {
-///     name: "test-span".into(),
+///     name: "test-span",
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -111,7 +111,7 @@ pub fn to_vec<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
 /// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let span = SpanSlice {
-///     name: "test-span".into(),
+///     name: "test-span",
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
@@ -150,7 +150,7 @@ pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
 /// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let span = SpanSlice {
-///     name: "test-span".into(),
+///     name: "test-span",
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];

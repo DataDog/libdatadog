@@ -173,6 +173,16 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Opt in to the V1 trace protocol.
+    ///
+    /// V1 is only used after runtime negotiation with the agent via `/info`. When the agent does
+    /// not advertise the `/v1.0/traces` endpoint, the exporter falls back to V0.4 transparently.
+    /// V1 is only compatible with V0.4 input.
+    pub fn enable_v1_protocol(&mut self) -> &mut Self {
+        self.output_format = TraceExporterOutputFormat::V1;
+        self
+    }
+
     /// Set the header indicating the tracer has computed the top-level tag
     pub fn set_client_computed_top_level(&mut self) -> &mut Self {
         self.client_computed_top_level = true;
@@ -286,8 +296,32 @@ impl TraceExporterBuilder {
         self
     }
 
-    #[allow(missing_docs)]
+    /// Build the [`TraceExporter`] synchronously.
+    ///
+    /// Sync facade over [`Self::build_async`]; panics inside an existing tokio context.
+    /// Not available on wasm — use [`Self::build_async`] there.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        mut self,
+    ) -> Result<TraceExporter<C>, TraceExporterError> {
+        let shared_runtime = match self.shared_runtime.as_ref() {
+            Some(rt) => rt.clone(),
+            None => {
+                let rt = Self::new_shared_runtime()?;
+                self.shared_runtime = Some(rt.clone());
+                rt
+            }
+        };
+        shared_runtime.block_on(self.build_async::<C>())?
+    }
+
+    /// Build the [`TraceExporter`] asynchronously.
+    ///
+    /// Awaits all async setup (e.g. telemetry start-up). Safe to drive from any async
+    /// context.
+    pub async fn build_async<
+        C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    >(
         self,
     ) -> Result<TraceExporter<C>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
@@ -300,9 +334,7 @@ impl TraceExporterBuilder {
 
         let shared_runtime = match self.shared_runtime {
             Some(rt) => rt,
-            None => Arc::new(SharedRuntime::new().map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?),
+            None => Self::new_shared_runtime()?,
         };
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
@@ -318,17 +350,6 @@ impl TraceExporterBuilder {
 
         let libdatadog_version = tag!("libdatadog_version", env!("CARGO_PKG_VERSION"));
 
-        // On native, `C::new_client()` may capture `tokio::runtime::Handle::current()`
-        // internally (e.g. `NativeCapabilities`). Enter the SharedRuntime's tokio context
-        // so that handle is available. On wasm this is a no-op — the JS event loop is
-        // always the implicit executor.
-        #[cfg(not(target_arch = "wasm32"))]
-        let _guard = shared_runtime
-            .runtime_handle()
-            .map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?
-            .enter();
         let capabilities = C::new_client();
 
         // --- Platform-specific worker setup ---
@@ -400,11 +421,7 @@ impl TraceExporterBuilder {
                             e.to_string(),
                         ))
                     })?;
-                    shared_runtime.block_on(client_tel.start()).map_err(|e| {
-                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                            e.to_string(),
-                        ))
-                    })?;
+                    client_tel.start().await;
                     (Some(client_tel), Some(handle))
                 }
                 Some(Err(e)) => return Err(e),
@@ -465,7 +482,9 @@ impl TraceExporterBuilder {
             },
             input_format: self.input_format,
             output_format: self.output_format,
-            serializer: TraceSerializer::new(self.output_format),
+            v1_active: std::sync::atomic::AtomicBool::new(false),
+            v1_unavailable_logged: std::sync::Once::new(),
+            serializer: TraceSerializer::new(),
             client_computed_top_level: self.client_computed_top_level,
             shared_runtime,
             dogstatsd,
@@ -495,6 +514,12 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
+        })
+    }
+
+    fn new_shared_runtime() -> Result<Arc<SharedRuntime>, TraceExporterError> {
+        SharedRuntime::new().map(Arc::new).map_err(|e| {
+            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })
     }
 
@@ -619,6 +644,56 @@ mod tests {
         assert_eq!(
             err.unwrap(),
             BuilderErrorKind::InvalidUri("empty string".to_string())
+        );
+    }
+
+    #[test]
+    fn test_enable_v1_protocol_sets_output_format() {
+        let mut builder = TraceExporterBuilder::default();
+        builder.enable_v1_protocol();
+        assert!(matches!(
+            builder.output_format,
+            TraceExporterOutputFormat::V1
+        ));
+    }
+
+    #[test]
+    fn test_v1_input_v05_incompatible() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_input_format(TraceExporterInputFormat::V05)
+            .set_output_format(TraceExporterOutputFormat::V1);
+        let result = builder.build::<NativeCapabilities>();
+        assert!(matches!(
+            result,
+            Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(_)
+            ))
+        ));
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_build_with_v1_starts_inactive() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_input_format(TraceExporterInputFormat::V04)
+            .enable_v1_protocol();
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        assert!(matches!(
+            exporter.output_format,
+            TraceExporterOutputFormat::V1
+        ));
+        assert!(!exporter
+            .v1_active
+            .load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(
+            exporter
+                .effective_output_format()
+                .add_path(&exporter.endpoint.url)
+                .to_string(),
+            "http://127.0.0.1:8126/v0.4/traces"
         );
     }
 }

@@ -7,7 +7,6 @@ AGENTS.md                            @DataDog/apm-common-components-core
 CLAUDE.md                            @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
 .pre-commit-config.yaml              @DataDog/libdatadog-core
-.codecov.yml                         @DataDog/apm-common-components-core
 .cargo/*                             @DataDog/libdatadog-core
 .config/nextest.toml                 @DataDog/apm-common-components-core
 .config/commitlint.config.js         @DataDog/apm-common-components-core
@@ -35,7 +34,7 @@ datadog-ffe-ffi                      @DataDog/feature-flagging-and-experimentati
 datadog-ipc*/                        @DataDog/libdatadog-php
 datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-profiling-replayer           @DataDog/libdatadog-profiling
-datadog-remote-config                @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config
+libdd-remote-config                  @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config
 datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-ffi                  @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-macros               @DataDog/libdatadog-php
@@ -51,6 +50,7 @@ libdd-data-pipeline*/                @DataDog/libdatadog-apm
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
 libdd-http-client                    @DataDog/apm-common-components-core
+libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
@@ -103,3 +103,5 @@ tools/sidecar_mockgen/               @DataDog/libdatadog-php
 libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities-rust
 libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities-rust
 libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities-rust
+datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
+datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk

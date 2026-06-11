@@ -695,7 +695,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1357,8 +1357,12 @@ dependencies = [
  "derive_more",
  "faststr",
  "libdd-common",
+ "libdd-remote-config",
+ "libdd-trace-protobuf",
  "log",
+ "lru",
  "md5",
+ "prost",
  "pyo3",
  "semver",
  "serde",
@@ -1382,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe-test-suite"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -1442,10 +1446,12 @@ dependencies = [
  "anyhow",
  "bytes",
  "constcat",
+ "futures",
  "http",
  "http-body-util",
  "libdd-common",
  "libdd-data-pipeline",
+ "libdd-remote-config",
  "percent-encoding",
  "serde",
  "serde_json",
@@ -1473,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1481,35 +1487,6 @@ dependencies = [
  "libdd-profiling-protobuf",
  "prost",
  "sysinfo",
-]
-
-[[package]]
-name = "datadog-remote-config"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "datadog-ffe",
- "datadog-live-debugger",
- "datadog-remote-config",
- "futures",
- "futures-util",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "libdd-common",
- "libdd-trace-protobuf",
- "manual_future",
- "serde",
- "serde_json",
- "serde_with",
- "sha2",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -1523,10 +1500,10 @@ dependencies = [
  "bincode",
  "chrono",
  "console-subscriber",
+ "datadog-ffe",
  "datadog-ipc",
  "datadog-ipc-macros",
  "datadog-live-debugger",
- "datadog-remote-config",
  "datadog-sidecar-macros",
  "futures",
  "http",
@@ -1541,9 +1518,9 @@ dependencies = [
  "libdd-crashtracker-ffi",
  "libdd-data-pipeline",
  "libdd-dogstatsd-client",
+ "libdd-remote-config",
  "libdd-telemetry",
  "libdd-tinybytes",
- "libdd-trace-protobuf",
  "libdd-trace-stats",
  "libdd-trace-utils",
  "manual_future",
@@ -1580,14 +1557,15 @@ version = "0.0.1"
 dependencies = [
  "datadog-ipc",
  "datadog-live-debugger",
- "datadog-remote-config",
  "datadog-sidecar",
  "http",
  "libc",
  "libdd-common",
  "libdd-common-ffi",
+ "libdd-crashtracker",
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
+ "libdd-remote-config",
  "libdd-telemetry",
  "libdd-telemetry-ffi",
  "libdd-tinybytes",
@@ -2835,6 +2813,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
+name = "libdd-agent-client"
+version = "35.0.0"
+dependencies = [
+ "bytes",
+ "flate2",
+ "httpmock",
+ "libdd-common",
+ "libdd-http-client",
+ "rustls",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "thiserror 2.0.17",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "libdd-alloc"
 version = "1.0.0"
 dependencies = [
@@ -2911,7 +2907,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2964,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -2983,7 +2979,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3025,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3036,6 +3032,7 @@ dependencies = [
  "libdd-tinybytes",
  "libdd-trace-utils",
  "rmp-serde",
+ "tokio-util",
  "tracing",
 ]
 
@@ -3050,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3072,7 +3069,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3143,7 +3140,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3154,6 +3151,7 @@ dependencies = [
 name = "libdd-otel-thread-ctx"
 version = "1.0.0"
 dependencies = [
+ "build_common",
  "cc",
 ]
 
@@ -3233,6 +3231,7 @@ dependencies = [
  "libdd-library-config-ffi",
  "libdd-log-ffi",
  "libdd-profiling",
+ "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
  "serde_json",
  "symbolizer-ffi",
@@ -3250,8 +3249,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-remote-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "futures",
+ "futures-util",
+ "hashbrown 0.15.1",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "libdd-common",
+ "libdd-remote-config",
+ "libdd-trace-protobuf",
+ "manual_future",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "thiserror 2.0.17",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "libdd-sampling"
-version = "2.0.0"
+version = "4.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3279,7 +3307,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3288,7 +3316,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3316,7 +3344,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3357,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3388,7 +3416,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3415,7 +3443,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "6.0.0"
+version = "8.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3445,6 +3473,7 @@ dependencies = [
  "rmp",
  "rmp-serde",
  "rmpv",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tempfile",
@@ -3460,10 +3489,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytes",
- "datadog-remote-config",
  "http",
  "httpmock",
  "libdd-common",
+ "libdd-remote-config",
  "libdd-trace-utils",
  "serde_json",
  "tempfile",
@@ -5579,7 +5608,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6021,7 +6050,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "34.0.0"
+version = "35.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",
