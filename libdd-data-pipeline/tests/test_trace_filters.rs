@@ -12,72 +12,76 @@ use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
 use rand::Rng;
 use serde_json::json;
 
-#[cfg_attr(miri, ignore)]
-#[tokio::test]
-async fn trace_filters_snapshot_test() {
-    const EXTRA_INFO: &str = r#"{
+mod tracing_integration_tests {
+    use super::*;
+
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn trace_filters_snapshot_test() {
+        const EXTRA_INFO: &str = r#"{
         "version":"1",
         "filter_tags": {"reject": ["my_ignore_tag"], "require": ["my_require_tag:true"]},
         "filter_tags_regex": {"reject": ["my_regex_ignore_tag:.*true.*"]},
         "ignore_resources": [".*IGNORED.*"]
     }"#;
-    let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
-    let snapshot_name = "trace_filters_snapshot_test";
-    let test_agent = DatadogTestAgent::new(
-        Some(relative_snapshot_path),
-        None,
-        &[("DD_AGENT_EXTRA_INFO", EXTRA_INFO)],
-    )
-    .await;
-    let url = test_agent.get_base_uri().await;
-    test_agent.start_session(snapshot_name, None).await;
+        let relative_snapshot_path = "libdd-data-pipeline/tests/snapshots/";
+        let snapshot_name = "trace_filters_snapshot_test";
+        let test_agent = DatadogTestAgent::new(
+            Some(relative_snapshot_path),
+            None,
+            &[("DD_AGENT_EXTRA_INFO", EXTRA_INFO)],
+        )
+        .await;
+        let url = test_agent.get_base_uri().await;
+        test_agent.start_session(snapshot_name, None).await;
 
-    let mut builder = TraceExporter::<NativeCapabilities>::builder();
-    builder
-        .enable_stats(Duration::from_secs(10))
-        .set_env("staging")
-        .set_language("nodejs")
-        .set_language_interpreter("v8")
-        .set_language_version("1.0")
-        .set_service("test")
-        .set_test_session_token(snapshot_name)
-        .set_tracer_version("1.0")
-        .set_input_format(TraceExporterInputFormat::V04)
-        .set_output_format(TraceExporterOutputFormat::V04)
-        .set_url(url.to_string().as_ref());
+        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        builder
+            .enable_stats(Duration::from_secs(10))
+            .set_env("staging")
+            .set_language("nodejs")
+            .set_language_interpreter("v8")
+            .set_language_version("1.0")
+            .set_service("test")
+            .set_test_session_token(snapshot_name)
+            .set_tracer_version("1.0")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .set_url(url.to_string().as_ref());
 
-    let trace_exporter = builder
-        .build_async::<NativeCapabilities>()
-        .await
-        .expect("Unable to build TraceExporter");
-    let data = get_v04_trace_snapshot_test_payload();
-    let timeout = Duration::from_secs(2);
-    let start = Instant::now();
-    loop {
-        if std::time::Instant::now().duration_since(start) > timeout {
-            panic!("Timeout waiting for agent info to be ready");
+        let trace_exporter = builder
+            .build_async::<NativeCapabilities>()
+            .await
+            .expect("Unable to build TraceExporter");
+        let data = get_v04_trace_snapshot_test_payload();
+        let timeout = Duration::from_secs(2);
+        let start = Instant::now();
+        loop {
+            if std::time::Instant::now().duration_since(start) > timeout {
+                panic!("Timeout waiting for agent info to be ready");
+            }
+            if agent_info::get_agent_info().is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
-        if agent_info::get_agent_info().is_some() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
+
+        let response = trace_exporter.send_async(data.as_ref()).await;
+        assert!(response.is_ok());
+
+        tokio::task::spawn_blocking(move || drop(trace_exporter))
+            .await
+            .unwrap();
+
+        let received_traces = test_agent.get_sent_traces().await;
+
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&received_traces).unwrap()
+        );
+
+        test_agent.assert_snapshot(snapshot_name).await;
     }
-
-    let response = trace_exporter.send_async(data.as_ref()).await;
-    assert!(response.is_ok());
-
-    tokio::task::spawn_blocking(move || drop(trace_exporter))
-        .await
-        .unwrap();
-
-    let received_traces = test_agent.get_sent_traces().await;
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&received_traces).unwrap()
-    );
-
-    test_agent.assert_snapshot(snapshot_name).await;
 }
 
 fn get_v04_trace_snapshot_test_payload() -> Vec<u8> {
