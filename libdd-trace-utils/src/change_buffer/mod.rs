@@ -403,10 +403,10 @@ where
                     self.interpret_operation(&mut index, &op)?;
                 }
                 _ => {
-                    // Safety: the pointer is valid as long as no new keys are inserted in the HashMap,
-                    // which only happens in Create ops. Create ops reset the cache (set pointers to null)
-                    // before inserting, so by the time we use a cached pointer again, no rehash has occurred
-                    // since it was obtained.
+                    // Safety: the pointer is valid as long as no new keys are inserted in the
+                    // HashMap, which only happens in Create ops. Create ops reset the cache (set
+                    // pointers to null) before inserting, so by the time we use a cached pointer
+                    // again, no rehash has occurred since it was obtained.
                     unsafe {
                         self.interpret_operation_cached(&mut index, &op, &mut cache)?;
                     }
@@ -737,7 +737,6 @@ where
 mod segment_isolation_tests {
     use super::*;
     use crate::span::SliceData;
-    use std::ptr::NonNull;
 
     // -----------------------------------------------------------------------
     // Minimal builder for the raw change-buffer byte format.
