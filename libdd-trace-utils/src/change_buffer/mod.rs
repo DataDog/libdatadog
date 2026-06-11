@@ -73,7 +73,6 @@ impl std::error::Error for ChangeBufferError {}
 pub type Result<T> = std::result::Result<T, ChangeBufferError>;
 
 mod utils;
-use utils::*;
 
 mod trace;
 pub use trace::*;
@@ -91,17 +90,54 @@ use crate::span::v04::Span;
 use crate::span::vec_map::VecMap;
 use crate::span::{SpanText, TraceData};
 
+/// Interned string table (O(1) lookup vs HashMap).
+///
+/// Note: currently the string table never shrinks (it is never compacted). When entries are
+/// evicted (freeing the backing strings), a small amount of memory is leaked (to hold the
+/// `None` value).
+pub(crate) struct StringTable<T>(Vec<Option<T>>);
+
+impl<T: Clone> StringTable<T> {
+    fn with_capacity(cap: usize) -> Self {
+        Self(Vec::with_capacity(cap))
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    pub(crate) fn get(&self, id: u32) -> Option<T> {
+        self.0.get(id as usize).and_then(|opt| opt.clone())
+    }
+
+    pub(crate) fn read_arg(&self, buf: &ChangeBuffer, index: &mut usize) -> Result<T> {
+        let num: u32 = buf.read(index)?;
+        self.get(num).ok_or(ChangeBufferError::StringNotFound(num))
+    }
+
+    pub(crate) fn insert(&mut self, key: u32, val: T) {
+        let idx = key as usize;
+        if idx >= self.0.len() {
+            self.0.resize_with(idx + 1, || None);
+        }
+        self.0[idx] = Some(val);
+    }
+
+    pub(crate) fn evict(&mut self, key: u32) {
+        let idx = key as usize;
+        if idx < self.0.len() {
+            self.0[idx] = None;
+        }
+    }
+}
+
 /// A stateful wrapper around a change buffer for processing and span reconstructions.
 pub struct ChangeBufferState<T: TraceData> {
     change_buffer: ChangeBuffer,
     spans: Vec<Option<Span<T>>>,
     traces: SmallTraceMap<T::Text>,
-    /// Interned string table (O(1) lookup vs HashMap).
-    ///
-    /// Note: currently the string table never shrinks (it is never compacted). When entries are
-    /// evicted (freeing the backing strings), a small amount of memory is leaked (to hold the
-    /// `None` value).
-    string_table: Vec<Option<T::Text>>,
+    string_table: StringTable<T::Text>,
     tracer_service: T::Text,
     tracer_language: T::Text,
     pid: u32,
@@ -210,7 +246,7 @@ where
             change_buffer,
             spans: Vec::with_capacity(256),
             traces: SmallTraceMap::default(),
-            string_table: Vec::with_capacity(256),
+            string_table: StringTable::with_capacity(256),
             tracer_service,
             tracer_language,
             pid,
@@ -256,7 +292,6 @@ where
         slot_indices: &[u32],
         first_is_local_root: bool,
     ) -> Result<Vec<Span<T>>> {
-        let mut chunk_trace_id: Option<u128> = None;
         let mut is_local_root = first_is_local_root;
         let mut is_chunk_root = true;
 
@@ -270,8 +305,6 @@ where
             let mut span = maybe_span.ok_or(ChangeBufferError::SpanNotFound(*slot as u64))?;
 
             self.materialize_deferred_tags(*slot, &mut span);
-
-            chunk_trace_id = Some(span.trace_id);
 
             if is_local_root {
                 self.copy_in_sampling_tags(&mut span);
@@ -397,82 +430,83 @@ where
         op: &BufferedOperation,
     ) -> Result<()> {
         let slot = op.slot_index as usize;
+        let buf = &self.change_buffer;
 
         match op.opcode {
             OpCode::SetMetaAttr => {
-                let key_id: u32 = self.get_num_arg(index)?;
-                let val_id: u32 = self.get_num_arg(index)?;
+                let key_id: u32 = buf.read(index)?;
+                let val_id: u32 = buf.read(index)?;
                 deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
             }
             OpCode::SetMetricAttr => {
-                let key_id: u32 = self.get_num_arg(index)?;
-                let val: f64 = self.get_num_arg(index)?;
+                let key_id: u32 = buf.read(index)?;
+                let val: f64 = buf.read(index)?;
                 deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
             }
             OpCode::SetServiceName => {
-                let service = self.get_string_arg(index)?;
+                let service = self.string_table.read_arg(&self.change_buffer, index)?;
                 span_at_mut(&mut self.spans, slot)?.service = service;
             }
             OpCode::SetResourceName => {
-                let resource = self.get_string_arg(index)?;
+                let resource = self.string_table.read_arg(&self.change_buffer, index)?;
                 span_at_mut(&mut self.spans, slot)?.resource = resource;
             }
             OpCode::SetError => {
-                let error = self.get_num_arg(index)?;
+                let error = buf.read(index)?;
                 span_at_mut(&mut self.spans, slot)?.error = error;
             }
             OpCode::SetStart => {
-                let start = self.get_num_arg(index)?;
+                let start = buf.read(index)?;
                 span_at_mut(&mut self.spans, slot)?.start = start;
             }
             OpCode::SetDuration => {
-                let duration = self.get_num_arg(index)?;
+                let duration = buf.read(index)?;
                 span_at_mut(&mut self.spans, slot)?.duration = duration;
             }
             OpCode::SetType => {
-                let r#type = self.get_string_arg(index)?;
+                let r#type = self.string_table.read_arg(&self.change_buffer, index)?;
                 span_at_mut(&mut self.spans, slot)?.r#type = r#type;
             }
             OpCode::SetName => {
-                let name = self.get_string_arg(index)?;
+                let name = self.string_table.read_arg(&self.change_buffer, index)?;
                 span_at_mut(&mut self.spans, slot)?.name = name;
             }
             OpCode::SetTraceMetaAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_string_arg(index)?;
+                let name = self.string_table.read_arg(&self.change_buffer, index)?;
+                let val = self.string_table.read_arg(&self.change_buffer, index)?;
                 let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.meta.insert(name, val);
                 }
             }
             OpCode::SetTraceMetricsAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_num_arg(index)?;
+                let name = self.string_table.read_arg(&self.change_buffer, index)?;
+                let val = buf.read(index)?;
                 let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.metrics.insert(name, val);
                 }
             }
             OpCode::SetTraceOrigin => {
-                let origin = self.get_string_arg(index)?;
+                let origin = self.string_table.read_arg(&self.change_buffer, index)?;
                 let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.origin = Some(origin);
                 }
             }
             OpCode::BatchSetMeta => {
-                let count: u32 = self.get_num_arg(index)?;
+                let count: u32 = buf.read(index)?;
                 for _ in 0..count {
-                    let key_id: u32 = self.get_num_arg(index)?;
-                    let val_id: u32 = self.get_num_arg(index)?;
+                    let key_id: u32 = buf.read(index)?;
+                    let val_id: u32 = buf.read(index)?;
                     deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
                 }
             }
             OpCode::BatchSetMetric => {
-                let count: u32 = self.get_num_arg(index)?;
+                let count: u32 = buf.read(index)?;
                 for _ in 0..count {
-                    let key_id: u32 = self.get_num_arg(index)?;
-                    let val: f64 = self.get_num_arg(index)?;
+                    let key_id: u32 = buf.read(index)?;
+                    let val: f64 = buf.read(index)?;
                     deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
                 }
             }
@@ -480,18 +514,6 @@ where
         }
 
         Ok(())
-    }
-
-    fn get_string_arg(&self, index: &mut usize) -> Result<T::Text> {
-        let num: u32 = self.get_num_arg(index)?;
-        self.string_table
-            .get(num as usize)
-            .and_then(|opt| opt.clone())
-            .ok_or(ChangeBufferError::StringNotFound(num))
-    }
-
-    fn get_num_arg<U: Copy + FromBytes>(&self, index: &mut usize) -> Result<U> {
-        self.change_buffer.read(index)
     }
 
     pub fn get_span(&self, slot: u32) -> Result<&Span<T>> {
@@ -520,16 +542,16 @@ where
         span.duration = h.duration;
         span.error = h.error;
 
-        if let Some(name) = self.get_string(h.name_id) {
+        if let Some(name) = self.string_table.get(h.name_id) {
             span.name = name;
         }
-        if let Some(service) = self.get_string(h.service_id) {
+        if let Some(service) = self.string_table.get(h.service_id) {
             span.service = service;
         }
-        if let Some(resource) = self.get_string(h.resource_id) {
+        if let Some(resource) = self.string_table.get(h.resource_id) {
             span.resource = resource;
         }
-        if let Some(r#type) = self.get_string(h.type_id) {
+        if let Some(r#type) = self.string_table.get(h.type_id) {
             span.r#type = r#type;
         }
 
@@ -581,13 +603,6 @@ where
     }
 
     #[inline]
-    pub fn get_string(&self, id: u32) -> Option<T::Text> {
-        self.string_table
-            .get(id as usize)
-            .and_then(|opt| opt.clone())
-    }
-
-    #[inline]
     pub fn set_default_meta(&mut self, tags: Vec<(T::Text, T::Text)>) {
         self.default_meta = tags;
     }
@@ -604,7 +619,9 @@ where
             let pairs: Vec<(u32, u32)> = self.deferred_meta[idx].drain(..).collect();
 
             for (key_id, val_id) in pairs {
-                if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id)) {
+                if let (Some(key), Some(val)) =
+                    (self.string_table.get(key_id), self.string_table.get(val_id))
+                {
                     span.meta.insert(key, val);
                 }
             }
@@ -613,7 +630,7 @@ where
             let pairs: Vec<(u32, f64)> = self.deferred_metrics[idx].drain(..).collect();
 
             for (key_id, val) in pairs {
-                if let Some(key) = self.get_string(key_id) {
+                if let Some(key) = self.string_table.get(key_id) {
                     span.metrics.insert(key, val);
                 }
             }
@@ -627,7 +644,9 @@ where
 
         if idx < self.deferred_meta.len() {
             for &(key_id, val_id) in &self.deferred_meta[idx] {
-                if let (Some(key), Some(val)) = (self.get_string(key_id), self.get_string(val_id)) {
+                if let (Some(key), Some(val)) =
+                    (self.string_table.get(key_id), self.string_table.get(val_id))
+                {
                     meta_pairs.push((key, val));
                 }
             }
@@ -635,7 +654,7 @@ where
         }
         if idx < self.deferred_metrics.len() {
             for &(key_id, val) in &self.deferred_metrics[idx] {
-                if let Some(key) = self.get_string(key_id) {
+                if let Some(key) = self.string_table.get(key_id) {
                     metric_pairs.push((key, val));
                 }
             }
@@ -665,12 +684,13 @@ where
 
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
         let slot = op.slot_index as usize;
+        let buf = &self.change_buffer;
 
         match op.opcode {
             OpCode::Create => {
-                let span_id: u64 = self.change_buffer.read(index)?;
-                let trace_id: u128 = self.change_buffer.read(index)?;
-                let parent_id = self.get_num_arg(index)?;
+                let span_id: u64 = buf.read(index)?;
+                let trace_id: u128 = buf.read(index)?;
+                let parent_id = buf.read(index)?;
                 let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
@@ -680,72 +700,72 @@ where
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::SetMetaAttr => {
-                let key_id: u32 = self.get_num_arg(index)?;
-                let val_id: u32 = self.get_num_arg(index)?;
+                let key_id: u32 = buf.read(index)?;
+                let val_id: u32 = buf.read(index)?;
                 deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
             }
             OpCode::SetMetricAttr => {
-                let key_id: u32 = self.get_num_arg(index)?;
-                let val: f64 = self.get_num_arg(index)?;
+                let key_id: u32 = buf.read(index)?;
+                let val: f64 = buf.read(index)?;
                 deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
             }
             OpCode::SetServiceName => {
-                let service = self.get_string_arg(index)?;
+                let service = self.string_table.read_arg(&self.change_buffer, index)?;
                 span_at_mut(&mut self.spans, slot)?.service = service;
             }
             OpCode::SetResourceName => {
-                let resource = self.get_string_arg(index)?;
+                let resource = self.string_table.read_arg(&self.change_buffer, index)?;
                 span_at_mut(&mut self.spans, slot)?.resource = resource;
             }
             OpCode::SetError => {
-                let error = self.get_num_arg(index)?;
+                let error = buf.read(index)?;
                 span_at_mut(&mut self.spans, slot)?.error = error;
             }
             OpCode::SetStart => {
-                let start = self.get_num_arg(index)?;
+                let start = buf.read(index)?;
                 span_at_mut(&mut self.spans, slot)?.start = start;
             }
             OpCode::SetDuration => {
-                let duration = self.get_num_arg(index)?;
+                let duration = buf.read(index)?;
                 span_at_mut(&mut self.spans, slot)?.duration = duration;
             }
             OpCode::SetType => {
-                let r#type = self.get_string_arg(index)?;
+                let r#type = self.string_table.read_arg(&self.change_buffer, index)?;
                 span_at_mut(&mut self.spans, slot)?.r#type = r#type;
             }
             OpCode::SetName => {
-                let name = self.get_string_arg(index)?;
+                let name = self.string_table.read_arg(&self.change_buffer, index)?;
                 span_at_mut(&mut self.spans, slot)?.name = name;
             }
             OpCode::SetTraceMetaAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_string_arg(index)?;
+                let name = self.string_table.read_arg(&self.change_buffer, index)?;
+                let val = self.string_table.read_arg(&self.change_buffer, index)?;
                 let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.meta.insert(name, val);
                 }
             }
             OpCode::SetTraceMetricsAttr => {
-                let name = self.get_string_arg(index)?;
-                let val = self.get_num_arg(index)?;
+                let name = self.string_table.read_arg(&self.change_buffer, index)?;
+                let val = buf.read(index)?;
                 let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.metrics.insert(name, val);
                 }
             }
             OpCode::SetTraceOrigin => {
-                let origin = self.get_string_arg(index)?;
+                let origin = self.string_table.read_arg(&self.change_buffer, index)?;
                 let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.origin = Some(origin);
                 }
             }
             OpCode::CreateSpan => {
-                let span_id: u64 = self.change_buffer.read(index)?;
-                let trace_id: u128 = self.change_buffer.read(index)?;
-                let parent_id: u64 = self.get_num_arg(index)?;
-                let name = self.get_string_arg(index)?;
-                let start: i64 = self.get_num_arg(index)?;
+                let span_id: u64 = buf.read(index)?;
+                let trace_id: u128 = buf.read(index)?;
+                let parent_id: u64 = buf.read(index)?;
+                let name = self.string_table.read_arg(&self.change_buffer, index)?;
+                let start: i64 = buf.read(index)?;
                 let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 span.name = name;
                 span.start = start;
@@ -757,14 +777,14 @@ where
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::CreateSpanFull => {
-                let span_id: u64 = self.change_buffer.read(index)?;
-                let trace_id: u128 = self.change_buffer.read(index)?;
-                let parent_id: u64 = self.get_num_arg(index)?;
-                let name = self.get_string_arg(index)?;
-                let service = self.get_string_arg(index)?;
-                let resource = self.get_string_arg(index)?;
-                let r#type = self.get_string_arg(index)?;
-                let start: i64 = self.get_num_arg(index)?;
+                let span_id: u64 = buf.read(index)?;
+                let trace_id: u128 = buf.read(index)?;
+                let parent_id: u64 = buf.read(index)?;
+                let name = self.string_table.read_arg(&self.change_buffer, index)?;
+                let service = self.string_table.read_arg(&self.change_buffer, index)?;
+                let resource = self.string_table.read_arg(&self.change_buffer, index)?;
+                let r#type = self.string_table.read_arg(&self.change_buffer, index)?;
+                let start: i64 = buf.read(index)?;
                 let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 span.name = name;
                 span.service = service;
@@ -779,18 +799,18 @@ where
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::BatchSetMeta => {
-                let count: u32 = self.get_num_arg(index)?;
+                let count: u32 = buf.read(index)?;
                 for _ in 0..count {
-                    let key_id: u32 = self.get_num_arg(index)?;
-                    let val_id: u32 = self.get_num_arg(index)?;
+                    let key_id: u32 = buf.read(index)?;
+                    let val_id: u32 = buf.read(index)?;
                     deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
                 }
             }
             OpCode::BatchSetMetric => {
-                let count: u32 = self.get_num_arg(index)?;
+                let count: u32 = buf.read(index)?;
                 for _ in 0..count {
-                    let key_id: u32 = self.get_num_arg(index)?;
-                    let val: f64 = self.get_num_arg(index)?;
+                    let key_id: u32 = buf.read(index)?;
+                    let val: f64 = buf.read(index)?;
                     deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
                 }
             }
@@ -800,17 +820,10 @@ where
     }
 
     pub fn string_table_insert_one(&mut self, key: u32, val: T::Text) {
-        let idx = key as usize;
-        if idx >= self.string_table.len() {
-            self.string_table.resize_with(idx + 1, || None);
-        }
-        self.string_table[idx] = Some(val);
+        self.string_table.insert(key, val);
     }
 
     pub fn string_table_evict_one(&mut self, key: u32) {
-        let idx = key as usize;
-        if idx < self.string_table.len() {
-            self.string_table[idx] = None;
-        }
+        self.string_table.evict(key);
     }
 }
