@@ -87,6 +87,7 @@ use crate::span::v04::Span;
 use crate::span::vec_map::VecMap;
 use crate::span::{SpanText, TraceData};
 use std::collections::HashMap;
+use std::ptr::NonNull;
 use std::u32;
 
 /// Interned string table (O(1) lookup vs HashMap).
@@ -156,12 +157,6 @@ pub struct ChangeBufferState<T: TraceData> {
     /// eliminates the alloc/dealloc churn that fragments the WASM linear memory allocator over
     /// time.
     span_pool: Vec<Span<T>>,
-    /// Maps span_id → segment_id. A segment is an independent visit to a trace by a
-    /// service (e.g. service A → B → A has two separate segments for A, both sharing the
-    /// same trace ID). Keying segment-level state by segment ID instead of trace ID prevents
-    /// SetTraceOrigin / SetTraceMetaAttr / SetTraceMetricsAttr written for one segment from
-    /// leaking into another segment that shares the same trace ID.
-    segment_ids: HashMap<u64, u64>,
 }
 
 fn new_span_pooled<T: TraceData>(
@@ -209,6 +204,18 @@ fn span_at_mut<T: TraceData>(
         .ok_or(ChangeBufferError::SpanNotFound(span_id))
 }
 
+/// Per-flush cache of raw pointers into `ChangeBufferState` HashMaps for the
+/// most recently processed span.
+///
+/// Avoids repeated HashMap lookups for consecutive ops on the same span. [SpanCache::span_ptr] is
+/// invalidated (set to null via `Default`) before any HashMap insertion that could trigger a
+/// rehash, that is before every Create op.
+struct SpanCache<T: TraceData> {
+    span_id: u64,
+    span_ptr: NonNull<Span<T>>,
+    segment_id: u64,
+}
+
 impl<T: TraceData> ChangeBufferState<T>
 where
     T::Text: Clone,
@@ -243,7 +250,6 @@ where
             str_agent_psr: T::Text::from_static_str("_dd.agent_psr"),
             str_internal: T::Text::from_static_str("internal"),
             span_pool: Vec::new(),
-            segment_ids: HashMap::with_capacity(256),
         }
     }
 
@@ -381,15 +387,29 @@ where
         let mut index = 0;
         let mut count = self.change_buffer.read::<u64>(&mut index)? as u32;
 
+        // Cached span_id and pointer to a span in the `span` HashMap.
+        //
+        // When applying span operations, we cache the last span_id and direct pointer to its entry
+        // in `spans`. This saves repeated HashMap lookups for consecutive ops targeting the same
+        // span.
+        let mut cache = None;
+
         while count > 0 {
             let op = BufferedOperation::from_buf(&self.change_buffer, &mut index)?;
 
             match op.opcode {
                 OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
+                    cache = None;
                     self.interpret_operation(&mut index, &op)?;
                 }
                 _ => {
-                    self.interpret_operation_cached(&mut index, &op)?;
+                    // Safety: the pointer is valid as long as no new keys are inserted in the HashMap,
+                    // which only happens in Create ops. Create ops reset the cache (set pointers to null)
+                    // before inserting, so by the time we use a cached pointer again, no rehash has occurred
+                    // since it was obtained.
+                    unsafe {
+                        self.interpret_operation_cached(&mut index, &op, &mut cache)?;
+                    }
                 }
             }
             count -= 1;
@@ -405,16 +425,40 @@ where
     /// [OpCode::CreateSpanFull]. To avoid panicking, we return [ChangeBufferError::UnknownOpcode]
     /// with the special value `u32::MAX` in release mode in that case, but this shouldn't happen
     /// and is a logical/internal error.
-    fn interpret_operation_cached(
+    ///
+    /// # Safety
+    ///
+    /// `cache.span_ptr` must be a pointer valid for writes into `self.spans`. This method
+    /// guarantees that it remains valid (it doesn't cause `self.spans` to invalidate the pointer,
+    /// e.g. by cause re-allocation).
+    unsafe fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
         op: &BufferedOperation,
+        cache_slot: &mut Option<SpanCache<T>>,
     ) -> Result<()> {
         let buf = &self.change_buffer;
-        let (span, segment_id) = self
-            .spans
-            .get_mut(&op.span_id)
-            .ok_or(ChangeBufferError::SpanNotFound(op.span_id))?;
+        let cached = match cache_slot.as_mut() {
+            Some(cache) if op.span_id == cache.span_id => cache,
+            _ => {
+                let (span, segment_id) = self
+                    .spans
+                    .get_mut(&op.span_id)
+                    .ok_or(ChangeBufferError::SpanNotFound(op.span_id))?;
+
+                cache_slot.insert(SpanCache {
+                    span_id: op.span_id,
+                    // Safety: a mutable reference can't be null
+                    // TODO: use NonNull::from_mut once our MRSV is recent enough
+                    span_ptr: unsafe { NonNull::new_unchecked(span as *mut Span<T>) },
+                    segment_id: *segment_id,
+                })
+            }
+        };
+
+        // SAFETY: span_ptr points into self.spans (obtained above or from the cache). self.spans is
+        // aliased mutably or immutably otherwise for the lifetime of `span`.
+        let span = unsafe { cached.span_ptr.as_mut() };
 
         match op.opcode {
             OpCode::SetMetaAttr => {
@@ -451,20 +495,23 @@ where
             OpCode::SetTraceMetaAttr => {
                 let name = buf.read_string(&self.string_table, index)?;
                 let val = buf.read_string(&self.string_table, index)?;
-                if let Some(segment) = self.segments.get_mut(&segment_id) {
+
+                if let Some(segment) = self.segments.get_mut(&cached.segment_id) {
                     segment.meta.insert(name, val);
                 }
             }
             OpCode::SetTraceMetricsAttr => {
                 let name = buf.read_string(&self.string_table, index)?;
                 let val = buf.read(index)?;
-                if let Some(segment) = self.segments.get_mut(&segment_id) {
+
+                if let Some(segment) = self.segments.get_mut(&cached.segment_id) {
                     segment.metrics.insert(name, val);
                 }
             }
             OpCode::SetTraceOrigin => {
                 let origin = buf.read_string(&self.string_table, index)?;
-                if let Some(segment) = self.segments.get_mut(&segment_id) {
+
+                if let Some(segment) = self.segments.get_mut(&cached.segment_id) {
                     segment.origin = Some(origin);
                 }
             }
@@ -755,9 +802,12 @@ mod segment_isolation_tests {
 
     // Opcode constants (mirror OpCode enum values).
     const OP_CREATE: u16 = 0;
+    const OP_SET_SERVICE_NAME: u16 = 3;
     const OP_SET_TRACE_ORIGIN: u16 = 12;
     const OP_SET_TRACE_META_ATTR: u16 = 10;
     const OP_SET_TRACE_METRICS_ATTR: u16 = 11;
+    const OP_BATCH_SET_META: u16 = 15;
+    const OP_BATCH_SET_METRIC: u16 = 16;
 
     const TRACE_ID: u128 = 0xABCD;
 
@@ -838,6 +888,121 @@ mod segment_isolation_tests {
             spans[0].meta.get("env"),
             Some(&"production"),
             "segment 1 trace meta was polluted by segment 2's SetTraceMetaAttr"
+        );
+    }
+
+    // Note: now deferred data don't exist anymore, but we keep the test nontheless.
+    //
+    // Previously: a regression test for P1 buffer-corruption bug: when `cached_deferred_meta`
+    // is null (because `materialize_span` drained it between flushes), a
+    // `BatchSetMeta` op in the cached path must still consume all its payload
+    // bytes so that the ops that follow are decoded from the correct position.
+    #[test]
+    fn batch_set_meta_after_materialize_span_consumes_payload_bytes() {
+        const SPAN_A: u64 = 1;
+        const SPAN_B: u64 = 2;
+
+        // First buffer: just create span A.
+        let mut w1 = BufWriter::new();
+        w1.op(OP_CREATE, SPAN_A);
+        w1.u128(TRACE_ID);
+        w1.u64(1); // segment_id
+        w1.u64(0); // parent_id
+        let first_buf = w1.finish();
+
+        // Second buffer: Create span B, then BatchSetMeta for span A (1 pair),
+        // then SetServiceName for span B.
+        // String table: 0="key", 1="val", 2="service-B"
+        let mut w2 = BufWriter::new();
+        w2.op(OP_CREATE, SPAN_B);
+        w2.u128(TRACE_ID);
+        w2.u64(2); // segment_id
+        w2.u64(SPAN_A); // parent_id
+        w2.op(OP_BATCH_SET_META, SPAN_A);
+        w2.u32(1); // count
+        w2.u32(0); // key_id
+        w2.u32(1); // val_id
+        w2.op(OP_SET_SERVICE_NAME, SPAN_B);
+        w2.u32(2); // string_id → "service-B"
+        let second_buf = w2.finish();
+
+        // Pre-allocate buf_data large enough for both buffers.
+        let capacity = first_buf.len().max(second_buf.len()) + 16;
+        let mut buf_data = vec![0u8; capacity];
+        buf_data[..first_buf.len()].copy_from_slice(&first_buf);
+
+        let mut state = make_state(&mut buf_data);
+        state.string_table_insert_one(0, "key");
+        state.string_table_insert_one(1, "val");
+        state.string_table_insert_one(2, "service-B");
+
+        // First flush: creates span A.
+        state.flush_change_buffer().unwrap();
+
+        // Write second buffer into buf_data in-place (the ChangeBuffer raw pointer
+        // still points at buf_data, so flush_change_buffer will see these new bytes).
+        buf_data[..second_buf.len()].copy_from_slice(&second_buf);
+
+        // Second flush: Create B (resets cache), BatchSetMeta for A (cache is None), SetServiceName
+        // for B. Without the fix, SetServiceName reads from the BatchSetMeta payload bytes and gets
+        // the wrong string id.
+        state.flush_change_buffer().unwrap();
+
+        let spans = state.flush_chunk(&vec![SPAN_B], false).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(
+            spans[0].service, "service-B",
+            "SetServiceName decoded wrong bytes because BatchSetMeta left its \
+             payload unread when deferred_meta was null"
+        );
+    }
+
+    // Same as above but for BatchSetMetric.
+    #[test]
+    fn batch_set_metric_after_materialize_span_consumes_payload_bytes() {
+        const SPAN_A: u64 = 1;
+        const SPAN_B: u64 = 2;
+
+        let mut w1 = BufWriter::new();
+        w1.op(OP_CREATE, SPAN_A);
+        w1.u128(TRACE_ID);
+        w1.u64(1);
+        w1.u64(0);
+        let first_buf = w1.finish();
+
+        let mut w2 = BufWriter::new();
+        w2.op(OP_CREATE, SPAN_B);
+        w2.u128(TRACE_ID);
+        w2.u64(2);
+        w2.u64(SPAN_A);
+        w2.op(OP_BATCH_SET_METRIC, SPAN_A);
+        w2.u32(1); // count
+        w2.u32(0); // key_id
+        w2.u64(1.5f64.to_bits()); // value
+        w2.op(OP_SET_SERVICE_NAME, SPAN_B);
+        w2.u32(2); // string_id → "service-B"
+        let second_buf = w2.finish();
+
+        let capacity = first_buf.len().max(second_buf.len()) + 16;
+        let mut buf_data = vec![0u8; capacity];
+        buf_data[..first_buf.len()].copy_from_slice(&first_buf);
+
+        let mut state = make_state(&mut buf_data);
+        state.string_table_insert_one(0, "key");
+        state.string_table_insert_one(2, "service-B");
+
+        state.flush_change_buffer().unwrap();
+
+        buf_data[..second_buf.len()].copy_from_slice(&second_buf);
+
+        state.flush_change_buffer().unwrap();
+
+        let spans = state.flush_chunk(&vec![SPAN_B], false).unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(
+            spans[0].service, "service-B",
+            "SetServiceName decoded wrong bytes because BatchSetMetric left its \
+             payload unread when deferred_metrics was null"
         );
     }
 
