@@ -267,6 +267,7 @@ where
         let mut is_chunk_root = true;
 
         let mut spans_vec = Vec::with_capacity(slot_indices.len());
+
         for slot in slot_indices {
             let maybe_span = self
                 .spans
@@ -280,6 +281,7 @@ where
                 span.metrics.insert(self.str_top_level.clone(), 1.0);
                 is_local_root = false;
             }
+
             if is_chunk_root {
                 self.copy_in_chunk_tags(&mut span);
                 is_chunk_root = false;
@@ -549,9 +551,8 @@ where
             existing.meta.extend(self.default_meta.iter().cloned());
         } else {
             self.spans.push(Some(span));
+            self.traces.get_or_insert_default(trace_id).span_count += 1;
         }
-
-        self.traces.get_or_insert_default(trace_id).span_count += 1;
         self.span_headers[header_idx as usize].active = 0;
 
         Ok(span_id)
