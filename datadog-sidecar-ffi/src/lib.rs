@@ -1687,6 +1687,12 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
 
     let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
 
+    for chunk in traces.iter_mut() {
+        for span in chunk.iter_mut() {
+            span.dedup();
+        }
+    }
+
     // Write traces to the shared memory
     let mut shm_slice = mapped_shm.as_slice_mut();
     let shm_slice_len = shm_slice.len();
