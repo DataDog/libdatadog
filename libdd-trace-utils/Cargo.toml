@@ -45,6 +45,7 @@ libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "serialization",
 ] }
 indexmap = "2.11"
+rustc-hash = "2"
 thin-vec = "0.2"
 
 # Compression feature
