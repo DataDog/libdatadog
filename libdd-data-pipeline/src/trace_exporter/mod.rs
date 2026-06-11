@@ -624,12 +624,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             &self.trace_filterer.load(),
         );
 
-        for chunk in &mut traces {
-            for span in chunk.iter_mut() {
-                span.dedup();
-            }
-        }
-
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
         // Unlike the agent path, there is no downstream agent to drop unsampled traces,
         // so drop_chunks is always called here regardless of whether stats are enabled.
