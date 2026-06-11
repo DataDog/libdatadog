@@ -201,24 +201,6 @@ fn span_at_mut<T: TraceData>(spans: &mut [Option<Span<T>>], slot: usize) -> Resu
         .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
 }
 
-fn deferred_meta_at(
-    deferred_meta: &mut [VecMap<u32, u32>],
-    slot: usize,
-) -> Result<&mut VecMap<u32, u32>> {
-    deferred_meta
-        .get_mut(slot)
-        .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
-}
-
-fn deferred_metrics_at(
-    deferred_metrics: &mut [VecMap<u32, f64>],
-    slot: usize,
-) -> Result<&mut VecMap<u32, f64>> {
-    deferred_metrics
-        .get_mut(slot)
-        .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
-}
-
 impl<T: TraceData> ChangeBufferState<T>
 where
     T::Text: Clone,
@@ -292,8 +274,6 @@ where
                 .and_then(|opt| opt.take());
 
             let mut span = maybe_span.ok_or(ChangeBufferError::SpanNotFound(*slot as u64))?;
-
-            self.materialize_deferred_tags(*slot, &mut span);
 
             if is_local_root {
                 self.copy_in_sampling_tags(&mut span);
@@ -420,7 +400,8 @@ where
     ) -> Result<()> {
         let slot = op.slot_index as usize;
         let buf = &self.change_buffer;
-        let span = self.spans
+        let span = self
+            .spans
             .get_mut(slot)
             .and_then(|opt| opt.as_mut())
             .ok_or(ChangeBufferError::SpanNotFound(slot as u64))?;
@@ -432,39 +413,35 @@ where
                 span.meta.insert(key, val);
             }
             OpCode::SetMetricAttr => {
-                let key_id: u32 = buf.read(index)?;
+                let key = buf.read_string(&self.string_table, index)?;
                 let val: f64 = buf.read(index)?;
-                deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
+                span.metrics.insert(key, val);
             }
             OpCode::SetServiceName => {
-                let service = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, slot)?.service = service;
+                span.service = buf.read_string(&self.string_table, index)?;
             }
             OpCode::SetResourceName => {
-                let resource = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, slot)?.resource = resource;
+                span.resource = buf.read_string(&self.string_table, index)?;
             }
             OpCode::SetError => {
-                span_at_mut(&mut self.spans, slot)?.error = buf.read(index)?;
+                span.error = buf.read(index)?;
             }
             OpCode::SetStart => {
-                span_at_mut(&mut self.spans, slot)?.start = buf.read(index)?;
+                span.start = buf.read(index)?;
             }
             OpCode::SetDuration => {
-                span_at_mut(&mut self.spans, slot)?.duration = buf.read(index)?;
+                span.duration = buf.read(index)?;
             }
             OpCode::SetType => {
-                let r#type = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, slot)?.r#type = r#type;
+                span.r#type = buf.read_string(&self.string_table, index)?;
             }
             OpCode::SetName => {
-                let name = buf.read_string(&self.string_table, index)?;
-                span_at_mut(&mut self.spans, slot)?.name = name;
+                span.name = buf.read_string(&self.string_table, index)?;
             }
             OpCode::SetTraceMetaAttr => {
                 let name = buf.read_string(&self.string_table, index)?;
                 let val = buf.read_string(&self.string_table, index)?;
-                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
+                let trace_id = span.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.meta.insert(name, val);
                 }
@@ -472,14 +449,14 @@ where
             OpCode::SetTraceMetricsAttr => {
                 let name = buf.read_string(&self.string_table, index)?;
                 let val = buf.read(index)?;
-                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
+                let trace_id = span.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.metrics.insert(name, val);
                 }
             }
             OpCode::SetTraceOrigin => {
                 let origin = buf.read_string(&self.string_table, index)?;
-                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
+                let trace_id = span.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.origin = Some(origin);
                 }
@@ -487,17 +464,17 @@ where
             OpCode::BatchSetMeta => {
                 let count: u32 = buf.read(index)?;
                 for _ in 0..count {
-                    let key_id: u32 = buf.read(index)?;
-                    let val_id: u32 = buf.read(index)?;
-                    deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
+                    let key = buf.read_string(&self.string_table, index)?;
+                    let val = buf.read_string(&self.string_table, index)?;
+                    span.meta.insert(key, val);
                 }
             }
             OpCode::BatchSetMetric => {
                 let count: u32 = buf.read(index)?;
                 for _ in 0..count {
-                    let key_id: u32 = buf.read(index)?;
+                    let key = buf.read_string(&self.string_table, index)?;
                     let val: f64 = buf.read(index)?;
-                    deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
+                    span.metrics.insert(key, val);
                 }
             }
             OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => unreachable!(),
@@ -571,12 +548,7 @@ where
             existing.parent_id = span.parent_id;
             existing.meta.extend(self.default_meta.iter().cloned());
         } else {
-            let slot_idx = self.spans.len();
             self.spans.push(Some(span));
-            if slot_idx >= self.deferred_meta.len() {
-                self.deferred_meta.resize_with(slot_idx + 1, VecMap::new);
-                self.deferred_metrics.resize_with(slot_idx + 1, VecMap::new);
-            }
         }
 
         self.traces.get_or_insert_default(trace_id).span_count += 1;
@@ -603,64 +575,10 @@ where
         }
     }
 
-    fn materialize_deferred_tags(&mut self, slot: u32, span: &mut Span<T>) {
-        let idx = slot as usize;
-        if idx < self.deferred_meta.len() {
-            let pairs: Vec<(u32, u32)> = self.deferred_meta[idx].drain(..).collect();
-
-            for (key_id, val_id) in pairs {
-                if let (Some(key), Some(val)) =
-                    (self.string_table.get(key_id), self.string_table.get(val_id))
-                {
-                    span.meta.insert(key, val);
-                }
-            }
-        }
-        if idx < self.deferred_metrics.len() {
-            let pairs: Vec<(u32, f64)> = self.deferred_metrics[idx].drain(..).collect();
-
-            for (key_id, val) in pairs {
-                if let Some(key) = self.string_table.get(key_id) {
-                    span.metrics.insert(key, val);
-                }
-            }
-        }
-    }
-
-    pub fn materialize_slot(&mut self, slot: u32) {
-        let idx = slot as usize;
-
-        if let Some(Some(span)) = self.spans.get_mut(idx) {
-            if idx < self.deferred_meta.len() {
-                for &(key_id, val_id) in &self.deferred_meta[idx] {
-                    if let (Some(key), Some(val)) =
-                        (self.string_table.get(key_id), self.string_table.get(val_id))
-                    {
-                        span.meta.insert(key, val);
-                    }
-                }
-                self.deferred_meta[idx].clear();
-            }
-
-            if idx < self.deferred_metrics.len() {
-                for &(key_id, val) in &self.deferred_metrics[idx] {
-                    if let Some(key) = self.string_table.get(key_id) {
-                        span.metrics.insert(key, val);
-                    }
-                }
-                self.deferred_metrics[idx].clear();
-            }
-        }
-    }
-
     fn ensure_slot(&mut self, slot: u32) {
         let idx = slot as usize;
         if idx >= self.spans.len() {
             self.spans.resize_with(idx + 1, || None);
-        }
-        if idx >= self.deferred_meta.len() {
-            self.deferred_meta.resize_with(idx + 1, VecMap::new);
-            self.deferred_metrics.resize_with(idx + 1, VecMap::new);
         }
     }
 
@@ -677,19 +595,17 @@ where
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
                 self.spans[slot] = Some(span);
-                self.deferred_meta[slot].clear();
-                self.deferred_metrics[slot].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::SetMetaAttr => {
-                let key_id: u32 = buf.read(index)?;
-                let val_id: u32 = buf.read(index)?;
-                deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
+                let key = buf.read_string(&self.string_table, index)?;
+                let val = buf.read_string(&self.string_table, index)?;
+                span_at_mut(&mut self.spans, slot)?.meta.insert(key, val);
             }
             OpCode::SetMetricAttr => {
-                let key_id: u32 = buf.read(index)?;
+                let key = buf.read_string(&self.string_table, index)?;
                 let val: f64 = buf.read(index)?;
-                deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
+                span_at_mut(&mut self.spans, slot)?.metrics.insert(key, val);
             }
             OpCode::SetServiceName => {
                 let service = buf.read_string(&self.string_table, index)?;
@@ -754,8 +670,6 @@ where
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
                 self.spans[slot] = Some(span);
-                self.deferred_meta[slot].clear();
-                self.deferred_metrics[slot].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::CreateSpanFull => {
@@ -776,24 +690,24 @@ where
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
                 self.spans[slot] = Some(span);
-                self.deferred_meta[slot].clear();
-                self.deferred_metrics[slot].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::BatchSetMeta => {
                 let count: u32 = buf.read(index)?;
+                let span = span_at_mut(&mut self.spans, slot)?;
                 for _ in 0..count {
-                    let key_id: u32 = buf.read(index)?;
-                    let val_id: u32 = buf.read(index)?;
-                    deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
+                    let key = buf.read_string(&self.string_table, index)?;
+                    let val = buf.read_string(&self.string_table, index)?;
+                    span.meta.insert(key, val);
                 }
             }
             OpCode::BatchSetMetric => {
                 let count: u32 = buf.read(index)?;
+                let span = span_at_mut(&mut self.spans, slot)?;
                 for _ in 0..count {
-                    let key_id: u32 = buf.read(index)?;
+                    let key = buf.read_string(&self.string_table, index)?;
                     let val: f64 = buf.read(index)?;
-                    deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
+                    span.metrics.insert(key, val);
                 }
             }
         };
