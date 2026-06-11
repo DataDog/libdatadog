@@ -580,12 +580,15 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn v04_and_v1_encoders_produce_equivalent_decoded_traces() {
-        use libdd_trace_utils::msgpack_encoder::v1::{to_vec, to_vec_from_payload_v1};
         use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
         use libdd_trace_utils::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
         };
-        use libdd_trace_utils::tracer_metadata::TracerMetadata;
+        use libdd_trace_utils::{
+            msgpack_encoder::v1::{to_vec, to_vec_from_payload_v1},
+            tracer_metadata::TracerMetadata,
+        };
+        use std::collections::HashMap;
 
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
         let uri = test_agent.get_uri_for_endpoint("v1.0/traces", None).await;
