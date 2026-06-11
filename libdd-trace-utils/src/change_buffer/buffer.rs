@@ -3,11 +3,12 @@
 
 use crate::change_buffer::utils::*;
 use crate::change_buffer::{ChangeBufferError, Result};
+use std::ptr::NonNull;
 
-/// A handle to a change buffer shared with another runtime. The memory is shared, meaning that
-/// cloning is cheap (copying the pointer and length).
+/// A handle to a fixed-size change buffer shared with another runtime. The memory is shared and
+/// owned/managed by the external runtime. The size of the buffer must not change once instantiated.
 pub struct ChangeBuffer {
-    ptr: *mut u8,
+    ptr: NonNull<u8>,
     len: usize,
 }
 
@@ -19,25 +20,22 @@ impl ChangeBuffer {
     /// The underlying raw memory must not be freed until after this struct's
     /// lifetime. Having the calling code manage the memory makes it simpler to
     /// integrate with managed runtimes.
-    pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {
-        Self {
-            ptr: ptr as *mut u8,
-            len,
-        }
+    pub unsafe fn from_raw_parts(ptr: NonNull<u8>, len: usize) -> Self {
+        Self { ptr, len }
     }
 
     /// # Safety
     ///
     /// Same safety conditions as [std::slice::from_raw_parts].
     unsafe fn as_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 
     /// # Safety
     ///
     /// Same safety conditions as [std::slice::from_raw_parts_mut].
     unsafe fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
+        unsafe { std::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 
     /// Read a value of type `T` starting at offset `index`.
@@ -82,6 +80,17 @@ impl ChangeBuffer {
         Ok(())
     }
 
+    pub(crate) fn read_arg<T: Clone>(
+        &self,
+        string_table: &super::StringTable<T>,
+        index: &mut usize,
+    ) -> Result<T> {
+        let num: u32 = self.read(index)?;
+        string_table
+            .get(num)
+            .ok_or(ChangeBufferError::StringNotFound(num))
+    }
+
     /// Clear the op count, which is stored in the first 4 bytes of the buffer. This effectively
     /// reset the buffer (semantically), but without actually zeroing the rest.
     pub fn clear_count(&mut self) -> Result<()> {
@@ -92,13 +101,14 @@ impl ChangeBuffer {
 #[cfg(test)]
 mod tests {
     use super::ChangeBuffer;
+    use super::NonNull;
     use crate::change_buffer::Result;
 
     #[test]
     fn buffer_creation_and_slices() {
         let mut buf = unsafe {
-            let buf: [u8; 256] = std::mem::zeroed();
-            ChangeBuffer::from_raw_parts(buf.as_ptr(), 256)
+            let mut buf: [u8; 256] = std::mem::zeroed();
+            ChangeBuffer::from_raw_parts(NonNull::new(buf.as_mut_ptr()).unwrap(), 256)
         };
         {
             // Safety: slice is the only reference to the buffer in its scope.
@@ -117,7 +127,9 @@ mod tests {
         let example =
             b"This is an example string, long enough to get 16 bytes out of it, without issue.";
         let mut ex_buf = example.to_vec();
-        let mut buf = unsafe { ChangeBuffer::from_raw_parts(ex_buf.as_mut_ptr(), ex_buf.len()) };
+        let mut buf = unsafe {
+            ChangeBuffer::from_raw_parts(NonNull::new(ex_buf.as_mut_ptr()).unwrap(), ex_buf.len())
+        };
         let mut index = 8;
         assert_eq!(8101238474429984353, buf.read::<u64>(&mut index)?);
         assert_eq!(7956016061199967596, buf.read::<u64>(&mut index)?);
@@ -132,7 +144,9 @@ mod tests {
     #[test]
     fn clear_count() -> Result<()> {
         let mut buffer = vec![0xFFu8; 64];
-        let mut buf = unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) };
+        let mut buf = unsafe {
+            ChangeBuffer::from_raw_parts(NonNull::new(buffer.as_mut_ptr()).unwrap(), buffer.len())
+        };
         buf.clear_count()?;
         let mut index = 0;
         assert_eq!(0, buf.read::<u32>(&mut index)?);
@@ -146,7 +160,9 @@ mod tests {
         buffer[8..24].copy_from_slice(&123456789u128.to_le_bytes());
         buffer[24..32].copy_from_slice(&1.5f64.to_le_bytes());
 
-        let buf = unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) };
+        let buf = unsafe {
+            ChangeBuffer::from_raw_parts(NonNull::new(buffer.as_mut_ptr()).unwrap(), buffer.len())
+        };
 
         let mut index = 0;
         assert_eq!(42, buf.read::<u32>(&mut index)?);
@@ -163,7 +179,9 @@ mod tests {
     #[test]
     fn read_out_of_bounds() {
         let mut buffer = vec![0u8; 8];
-        let buf = unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) };
+        let buf = unsafe {
+            ChangeBuffer::from_raw_parts(NonNull::new(buffer.as_mut_ptr()).unwrap(), buffer.len())
+        };
         let mut index = 4;
         assert!(buf.read::<u64>(&mut index).is_err());
     }
@@ -171,7 +189,9 @@ mod tests {
     #[test]
     fn write_out_of_bounds() {
         let mut buffer = vec![0u8; 8];
-        let mut buf = unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) };
+        let mut buf = unsafe {
+            ChangeBuffer::from_raw_parts(NonNull::new(buffer.as_mut_ptr()).unwrap(), buffer.len())
+        };
         // 8-byte buffer, u32 at offset 5 needs bytes 5..9 — out of bounds
         assert!(buf.write_u32(5, 123).is_err());
     }
