@@ -378,9 +378,7 @@ impl TraceFilterer {
 #[cfg(test)]
 mod tests {
     use super::TraceFilterer;
-    use crate::span::v04::SpanBytes;
-    use std::collections::HashMap;
-
+    use crate::span::v04::{SpanBytes, VecMap};
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
@@ -394,7 +392,7 @@ mod tests {
             meta: meta
                 .iter()
                 .map(|(k, v)| ((*k).into(), (*v).into()))
-                .collect::<HashMap<_, _>>(),
+                .collect::<VecMap<_, _>>(),
             ..Default::default()
         }
     }
