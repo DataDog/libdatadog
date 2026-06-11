@@ -281,7 +281,7 @@ impl TraceFilterer {
     // 3. Require filtering: If filter_tags.require or filter_tags_regex.require contain any
     //    filters, all of them must match tags on the root span. If any required filter doesn't
     //    match, reject the trace.
-    fn should_drop<'a>(&self, root_span: &'a impl Span<'a>) -> bool {
+    pub fn should_drop<'a>(&self, root_span: &'a impl Span<'a>) -> bool {
         if !self.ignore_resources.is_empty() {
             let span_resource = Span::resource(root_span);
             // Normalization
@@ -289,7 +289,7 @@ impl TraceFilterer {
                 let span_name = root_span.name();
                 debug!(
                     ?span_name,
-                    "Trace filter fixing malformed trace. Resource is empty so using name instead"
+                    "Trace filter: filtering on name because resource is empty"
                 );
                 span_name
             } else {
