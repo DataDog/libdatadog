@@ -289,7 +289,7 @@ impl SharedFetcher {
             let fetched = fetcher
                 .fetch_once(
                     runtime_id.as_str(),
-                    self.target.clone(),
+                    &self.target,
                     &product_capabilities,
                     self.client_id.as_str(),
                     &mut opaque_state,

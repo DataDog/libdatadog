@@ -498,6 +498,7 @@ fn test_crash_tracking_sidecar_multi_thread_collection() {
         .arg(TestMode::SidecarMultiThreadCollection.as_str())
         .arg(CrashType::NullDeref.as_str())
         .env("DD_TEST_UNIX_SOCKET_PATH", socket_path_str)
+        .env("DD_TEST_RECEIVER_PID", receiver_proc.id().to_string())
         .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", RECEIVER_TIMEOUT_MS);
 
     let mut child = cmd.spawn().unwrap();

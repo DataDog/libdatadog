@@ -323,6 +323,15 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
     let cfg = datadog_sidecar::config::FromEnv::config();
 
     let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
+
+    // The daemon process hosts the crashtracker receiver socket. Register its
+    // PID so the crash handler can authenticate the socket peer before granting
+    // ptrace permission.
+    #[cfg(unix)]
+    if let Ok(pid) = stream.peer_pid() {
+        libdd_crashtracker::set_expected_receiver_pid(pid as i32);
+    }
+
     *connection = Box::into_raw(stream);
 
     MaybeError::None
