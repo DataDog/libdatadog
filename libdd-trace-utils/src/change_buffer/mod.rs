@@ -110,8 +110,6 @@ pub struct ChangeBufferState<T: TraceData> {
     /// Contiguous array of span headers for direct JS DataView access. JS writes numeric and
     /// string-ID fields directly here. Rust reads them during flush_chunk.
     pub span_headers: Vec<SpanHeader>,
-    /// Free list of recycled header indices (from finished spans).
-    header_free_list: Vec<u32>,
     // Cached static strings to avoid repeated heap allocations (e.g. Arc<str>) on every span
     // flush. These are created once and cloned (cheap ref bump).
     str_top_level: T::Text,
@@ -169,10 +167,39 @@ fn new_span_pooled<T: TraceData>(
     }
 }
 
+fn span_at_mut<T: TraceData>(spans: &mut [Option<Span<T>>], slot: usize) -> Result<&mut Span<T>> {
+    spans
+        .get_mut(slot)
+        .and_then(|opt| opt.as_mut())
+        .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
+}
+
+fn deferred_meta_at(
+    deferred_meta: &mut [VecMap<u32, u32>],
+    slot: usize,
+) -> Result<&mut VecMap<u32, u32>> {
+    deferred_meta
+        .get_mut(slot)
+        .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
+}
+
+fn deferred_metrics_at(
+    deferred_metrics: &mut [VecMap<u32, f64>],
+    slot: usize,
+) -> Result<&mut VecMap<u32, f64>> {
+    deferred_metrics
+        .get_mut(slot)
+        .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
+}
+
 impl<T: TraceData> ChangeBufferState<T>
 where
     T::Text: Clone,
 {
+    /// The maximun size of the recycled span pool, beyond which we don't recycle spans anymore but
+    /// drop them.
+    const SPANS_POOL_MAX_SIZE: usize = 128;
+
     pub fn new(
         change_buffer: ChangeBuffer,
         tracer_service: T::Text,
@@ -189,7 +216,6 @@ where
             pid,
             default_meta: Vec::new(),
             span_headers: Vec::with_capacity(256),
-            header_free_list: Vec::new(),
             str_top_level: T::Text::from_static_str("_dd.top_level"),
             str_measured: T::Text::from_static_str("_dd.measured"),
             str_base_service: T::Text::from_static_str("_dd.base_service"),
@@ -219,7 +245,7 @@ where
     }
 
     pub fn recycle_spans(&mut self, spans: Vec<Span<T>>) {
-        let available = 128usize.saturating_sub(self.span_pool.len());
+        let available = Self::SPANS_POOL_MAX_SIZE.saturating_sub(self.span_pool.len());
         for span in spans.into_iter().take(available) {
             self.span_pool.push(span);
         }
@@ -227,7 +253,7 @@ where
 
     pub fn flush_chunk(
         &mut self,
-        slot_indices: Vec<u32>,
+        slot_indices: &[u32],
         first_is_local_root: bool,
     ) -> Result<Vec<Span<T>>> {
         let mut chunk_trace_id: Option<u128> = None;
@@ -235,7 +261,7 @@ where
         let mut is_chunk_root = true;
 
         let mut spans_vec = Vec::with_capacity(slot_indices.len());
-        for slot in &slot_indices {
+        for slot in slot_indices {
             let maybe_span = self
                 .spans
                 .get_mut(*slot as usize)
@@ -257,7 +283,7 @@ where
                 is_chunk_root = false;
             }
 
-            self.process_one_span(&mut span);
+            self.process_span(&mut span);
 
             spans_vec.push(span);
         }
@@ -317,7 +343,7 @@ where
         }
     }
 
-    fn process_one_span(&self, span: &mut Span<T>) {
+    fn process_span(&self, span: &mut Span<T>) {
         if let Some(kind) = span.meta.get("kind") {
             if *kind != self.str_internal {
                 span.metrics.insert(self.str_measured.clone(), 1.0);
@@ -345,47 +371,15 @@ where
         let mut index = 0;
         let mut count = self.change_buffer.read::<u64>(&mut index)? as u32;
 
-        let mut cached_slot: u32 = u32::MAX;
-        // Cached elements for the current span.
-        //
-        // When applying span operations, we cache the last span index (cached_slot) and the
-        // corresponding elements in `deffered_meta`, `deferred_metrics`, and `span`. We use direct
-        // pointers to save intermediate dereferences.
-        //
-        // They are safe to use as long as we don't modify their parent vector and keep a unique
-        // borrow to `self` overall.
-        //
-        // Using mutable references instead would be better, but is not possible (or very hard)
-        // given we iterate and nest calls to different submethods taking a `&mut self`.
-        let mut cached_span_ptr: *mut Span<T> = std::ptr::null_mut();
-        let mut cached_deferred_meta: *mut VecMap<u32, u32> = std::ptr::null_mut();
-        let mut cached_deferred_metrics: *mut VecMap<u32, f64> = std::ptr::null_mut();
-
         while count > 0 {
             let op = BufferedOperation::from_buf(&self.change_buffer, &mut index)?;
 
             match op.opcode {
                 OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => {
-                    cached_span_ptr = std::ptr::null_mut();
-                    cached_slot = u32::MAX;
-                    cached_deferred_meta = std::ptr::null_mut();
-                    cached_deferred_metrics = std::ptr::null_mut();
                     self.interpret_operation(&mut index, &op)?;
                 }
                 _ => {
-                    // SAFETY: at the first iteration of the loop, all pointers are null and
-                    // `*cached_slot` is `u32::MAX`. In subsequent iterations,
-                    // `interpret_operation_cached` maintains its own safety invariant.
-                    unsafe {
-                        self.interpret_operation_cached(
-                            &mut index,
-                            &op,
-                            &mut cached_slot,
-                            &mut cached_span_ptr,
-                            &mut cached_deferred_meta,
-                            &mut cached_deferred_metrics,
-                        )?;
-                    }
+                    self.interpret_operation_cached(&mut index, &op)?;
                 }
             }
             count -= 1;
@@ -397,86 +391,56 @@ where
         Ok(())
     }
 
-    /// # Safety
-    ///
-    /// The pointer arguments provided to this function: `*cached_slot`, `*cached_span_ptr`,
-    /// `*cached_deferred_meta` and `*cached_deferred_metrics` must either:
-    ///
-    /// - be all `null` if `*cached_slot` is `u32::MAX`
-    /// - point to `self.spans[*cached_slot]`, `self.deferred_meta[*cached_slot]` and
-    ///   `self.deferred_metrics[*cached_slot]` respectively otherwise.
-    unsafe fn interpret_operation_cached(
+    fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
         op: &BufferedOperation,
-        cached_slot: &mut u32,
-        cached_span_ptr: &mut *mut Span<T>,
-        cached_deferred_meta: &mut *mut VecMap<u32, u32>,
-        cached_deferred_metrics: &mut *mut VecMap<u32, f64>,
     ) -> Result<()> {
-        let span_ptr = if op.slot_index == *cached_slot && !cached_span_ptr.is_null() {
-            *cached_span_ptr
-        } else {
-            let slot = op.slot_index as usize;
-            let span = self
-                .spans
-                .get_mut(slot)
-                .and_then(|opt| opt.as_mut())
-                .ok_or(ChangeBufferError::SpanNotFound(op.slot_index as u64))?
-                as *mut Span<T>;
-            *cached_slot = op.slot_index;
-            *cached_span_ptr = span;
-            *cached_deferred_meta = &mut self.deferred_meta[slot] as *mut VecMap<u32, u32>;
-            *cached_deferred_metrics = &mut self.deferred_metrics[slot] as *mut VecMap<u32, f64>;
-            span
-        };
+        let slot = op.slot_index as usize;
 
-        // SAFETY: span_ptr is valid for read and writes: it was obtained from self.spans above or
-        // from the cache which was set in a previous iteration of the same loop. self.spans is not
-        // modified during this function (no inserts/removes).
-        let span = unsafe { &mut *span_ptr };
-
-        // SAFETY: `cached_deferred_xxx`: they point to writable memory, and we don't shrink, move
-        // nor drop the parent `deferred_xxx` vec, so the pointers remain valid. We keep a mutable
-        // borrow on `self`, which ensures ownership/uniqueness.
         match op.opcode {
             OpCode::SetMetaAttr => {
                 let key_id: u32 = self.get_num_arg(index)?;
                 let val_id: u32 = self.get_num_arg(index)?;
-                let dm = unsafe { &mut **cached_deferred_meta };
-                dm.insert(key_id, val_id);
+                deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
             }
             OpCode::SetMetricAttr => {
                 let key_id: u32 = self.get_num_arg(index)?;
                 let val: f64 = self.get_num_arg(index)?;
-                let dm = unsafe { &mut **cached_deferred_metrics };
-                dm.insert(key_id, val);
+                deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
             }
             OpCode::SetServiceName => {
-                span.service = self.get_string_arg(index)?;
+                let service = self.get_string_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.service = service;
             }
             OpCode::SetResourceName => {
-                span.resource = self.get_string_arg(index)?;
+                let resource = self.get_string_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.resource = resource;
             }
             OpCode::SetError => {
-                span.error = self.get_num_arg(index)?;
+                let error = self.get_num_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.error = error;
             }
             OpCode::SetStart => {
-                span.start = self.get_num_arg(index)?;
+                let start = self.get_num_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.start = start;
             }
             OpCode::SetDuration => {
-                span.duration = self.get_num_arg(index)?;
+                let duration = self.get_num_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.duration = duration;
             }
             OpCode::SetType => {
-                span.r#type = self.get_string_arg(index)?;
+                let r#type = self.get_string_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.r#type = r#type;
             }
             OpCode::SetName => {
-                span.name = self.get_string_arg(index)?;
+                let name = self.get_string_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.name = name;
             }
             OpCode::SetTraceMetaAttr => {
                 let name = self.get_string_arg(index)?;
                 let val = self.get_string_arg(index)?;
-                let trace_id = span.trace_id;
+                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.meta.insert(name, val);
                 }
@@ -484,34 +448,32 @@ where
             OpCode::SetTraceMetricsAttr => {
                 let name = self.get_string_arg(index)?;
                 let val = self.get_num_arg(index)?;
-                let trace_id = span.trace_id;
+                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.metrics.insert(name, val);
                 }
             }
             OpCode::SetTraceOrigin => {
                 let origin = self.get_string_arg(index)?;
-                let trace_id = span.trace_id;
+                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.origin = Some(origin);
                 }
             }
             OpCode::BatchSetMeta => {
                 let count: u32 = self.get_num_arg(index)?;
-                let dm = unsafe { &mut **cached_deferred_meta };
                 for _ in 0..count {
                     let key_id: u32 = self.get_num_arg(index)?;
                     let val_id: u32 = self.get_num_arg(index)?;
-                    dm.insert(key_id, val_id);
+                    deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
                 }
             }
             OpCode::BatchSetMetric => {
                 let count: u32 = self.get_num_arg(index)?;
-                let dm = unsafe { &mut **cached_deferred_metrics };
                 for _ in 0..count {
                     let key_id: u32 = self.get_num_arg(index)?;
                     let val: f64 = self.get_num_arg(index)?;
-                    dm.insert(key_id, val);
+                    deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
                 }
             }
             OpCode::Create | OpCode::CreateSpan | OpCode::CreateSpanFull => unreachable!(),
@@ -532,13 +494,6 @@ where
         self.change_buffer.read(index)
     }
 
-    fn get_span_mut(&mut self, slot: u32) -> Result<&mut Span<T>> {
-        self.spans
-            .get_mut(slot as usize)
-            .and_then(|opt| opt.as_mut())
-            .ok_or(ChangeBufferError::SpanNotFound(slot as u64))
-    }
-
     pub fn get_span(&self, slot: u32) -> Result<&Span<T>> {
         self.spans
             .get(slot as usize)
@@ -549,20 +504,6 @@ where
     #[inline]
     pub fn get_trace(&self, id: &u128) -> Option<&Trace<T::Text>> {
         self.traces.get(id)
-    }
-
-    pub fn alloc_header(&mut self) -> u32 {
-        if let Some(idx) = self.header_free_list.pop() {
-            self.span_headers[idx as usize] = SpanHeader::default();
-            self.span_headers[idx as usize].active = 1;
-            idx
-        } else {
-            let idx = self.span_headers.len() as u32;
-            let mut header = SpanHeader::default();
-            header.active = 1;
-            self.span_headers.push(header);
-            idx
-        }
     }
 
     pub fn materialize_header(&mut self, header_idx: u32) -> Result<u64> {
@@ -627,9 +568,7 @@ where
         }
 
         self.traces.get_or_insert_default(trace_id).span_count += 1;
-
         self.span_headers[header_idx as usize].active = 0;
-        self.header_free_list.push(header_idx);
 
         Ok(span_id)
     }
@@ -725,6 +664,8 @@ where
     }
 
     fn interpret_operation(&mut self, index: &mut usize, op: &BufferedOperation) -> Result<()> {
+        let slot = op.slot_index as usize;
+
         match op.opcode {
             OpCode::Create => {
                 let span_id: u64 = self.change_buffer.read(index)?;
@@ -733,52 +674,53 @@ where
                 let mut span = new_span_pooled(&mut self.span_pool, span_id, parent_id, trace_id);
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
-                self.spans[op.slot_index as usize] = Some(span);
-                self.deferred_meta[op.slot_index as usize].clear();
-                self.deferred_metrics[op.slot_index as usize].clear();
+                self.spans[slot] = Some(span);
+                self.deferred_meta[slot].clear();
+                self.deferred_metrics[slot].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::SetMetaAttr => {
                 let key_id: u32 = self.get_num_arg(index)?;
                 let val_id: u32 = self.get_num_arg(index)?;
-                let idx = op.slot_index as usize;
-                if idx < self.deferred_meta.len() {
-                    self.deferred_meta[idx].insert(key_id, val_id);
-                }
+                deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
             }
             OpCode::SetMetricAttr => {
                 let key_id: u32 = self.get_num_arg(index)?;
                 let val: f64 = self.get_num_arg(index)?;
-                let idx = op.slot_index as usize;
-                if idx < self.deferred_metrics.len() {
-                    self.deferred_metrics[idx].insert(key_id, val);
-                }
+                deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
             }
             OpCode::SetServiceName => {
-                self.get_span_mut(op.slot_index)?.service = self.get_string_arg(index)?;
+                let service = self.get_string_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.service = service;
             }
             OpCode::SetResourceName => {
-                self.get_span_mut(op.slot_index)?.resource = self.get_string_arg(index)?;
+                let resource = self.get_string_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.resource = resource;
             }
             OpCode::SetError => {
-                self.get_span_mut(op.slot_index)?.error = self.get_num_arg(index)?;
+                let error = self.get_num_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.error = error;
             }
             OpCode::SetStart => {
-                self.get_span_mut(op.slot_index)?.start = self.get_num_arg(index)?;
+                let start = self.get_num_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.start = start;
             }
             OpCode::SetDuration => {
-                self.get_span_mut(op.slot_index)?.duration = self.get_num_arg(index)?;
+                let duration = self.get_num_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.duration = duration;
             }
             OpCode::SetType => {
-                self.get_span_mut(op.slot_index)?.r#type = self.get_string_arg(index)?;
+                let r#type = self.get_string_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.r#type = r#type;
             }
             OpCode::SetName => {
-                self.get_span_mut(op.slot_index)?.name = self.get_string_arg(index)?;
+                let name = self.get_string_arg(index)?;
+                span_at_mut(&mut self.spans, slot)?.name = name;
             }
             OpCode::SetTraceMetaAttr => {
                 let name = self.get_string_arg(index)?;
                 let val = self.get_string_arg(index)?;
-                let trace_id = self.get_span(op.slot_index)?.trace_id;
+                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.meta.insert(name, val);
                 }
@@ -786,14 +728,14 @@ where
             OpCode::SetTraceMetricsAttr => {
                 let name = self.get_string_arg(index)?;
                 let val = self.get_num_arg(index)?;
-                let trace_id = self.get_span(op.slot_index)?.trace_id;
+                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.metrics.insert(name, val);
                 }
             }
             OpCode::SetTraceOrigin => {
                 let origin = self.get_string_arg(index)?;
-                let trace_id = self.get_span(op.slot_index)?.trace_id;
+                let trace_id = span_at_mut(&mut self.spans, slot)?.trace_id;
                 if let Some(trace) = self.traces.get_mut(&trace_id) {
                     trace.origin = Some(origin);
                 }
@@ -809,9 +751,9 @@ where
                 span.start = start;
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
-                self.spans[op.slot_index as usize] = Some(span);
-                self.deferred_meta[op.slot_index as usize].clear();
-                self.deferred_metrics[op.slot_index as usize].clear();
+                self.spans[slot] = Some(span);
+                self.deferred_meta[slot].clear();
+                self.deferred_metrics[slot].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::CreateSpanFull => {
@@ -831,31 +773,25 @@ where
                 span.start = start;
                 self.apply_default_meta(&mut span);
                 self.ensure_slot(op.slot_index);
-                self.spans[op.slot_index as usize] = Some(span);
-                self.deferred_meta[op.slot_index as usize].clear();
-                self.deferred_metrics[op.slot_index as usize].clear();
+                self.spans[slot] = Some(span);
+                self.deferred_meta[slot].clear();
+                self.deferred_metrics[slot].clear();
                 self.traces.get_or_insert_default(trace_id).span_count += 1;
             }
             OpCode::BatchSetMeta => {
                 let count: u32 = self.get_num_arg(index)?;
-                let idx = op.slot_index as usize;
                 for _ in 0..count {
                     let key_id: u32 = self.get_num_arg(index)?;
                     let val_id: u32 = self.get_num_arg(index)?;
-                    if idx < self.deferred_meta.len() {
-                        self.deferred_meta[idx].insert(key_id, val_id);
-                    }
+                    deferred_meta_at(&mut self.deferred_meta, slot)?.insert(key_id, val_id);
                 }
             }
             OpCode::BatchSetMetric => {
                 let count: u32 = self.get_num_arg(index)?;
-                let idx = op.slot_index as usize;
                 for _ in 0..count {
                     let key_id: u32 = self.get_num_arg(index)?;
                     let val: f64 = self.get_num_arg(index)?;
-                    if idx < self.deferred_metrics.len() {
-                        self.deferred_metrics[idx].insert(key_id, val);
-                    }
+                    deferred_metrics_at(&mut self.deferred_metrics, slot)?.insert(key_id, val);
                 }
             }
         };
