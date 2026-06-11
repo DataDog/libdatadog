@@ -1504,11 +1504,12 @@ mod api_tests {
     }
 
     #[test]
-    fn omit_local_root_span_id_when_serializing() -> anyhow::Result<()> {
+    fn omit_local_root_span_id_when_serializing() {
         let sample_types = [api::SampleType::CpuSamples, api::SampleType::WallTime];
 
-        let mut profile: Profile = Profile::new(&sample_types, None);
-        profile.set_omit_local_root_span_id_when_serializing(true);
+        let mut regular_profile: Profile = Profile::new(&sample_types, None);
+        let mut omit_profile: Profile = Profile::new(&sample_types, None);
+        omit_profile.set_omit_local_root_span_id_when_serializing(true);
 
         let sample = api::Sample {
             locations: vec![],
@@ -1521,23 +1522,42 @@ mod api_tests {
             }],
         };
 
-        profile.try_add_sample(sample, None)?;
-        profile.add_endpoint(10, Cow::from("my endpoint"))?;
+        for profile in [&mut regular_profile, &mut omit_profile] {
+            profile.try_add_sample(sample.clone(), None).unwrap();
+            profile.add_endpoint(10, Cow::from("my endpoint")).unwrap();
+        }
 
-        let serialized_profile = roundtrip_to_pprof(profile)?;
-        let sample = serialized_profile.samples.first().expect("sample");
+        let regular_serialized = roundtrip_to_pprof(regular_profile).unwrap();
+        let regular_sample = regular_serialized.samples.first().expect("sample");
 
-        assert_eq!(sample.labels.len(), 1);
-        let endpoint_label = sample.labels.first().expect("label");
-        assert_eq!(
-            string_table_fetch(&serialized_profile, endpoint_label.key),
-            "trace endpoint"
-        );
-        assert_eq!(
-            string_table_fetch(&serialized_profile, endpoint_label.str),
-            "my endpoint"
-        );
-        Ok(())
+        let omit_serialized = roundtrip_to_pprof(omit_profile).unwrap();
+        let omit_sample = omit_serialized.samples.first().expect("sample");
+
+        for (serialized, sample) in [
+            (&regular_serialized, regular_sample),
+            (&omit_serialized, omit_sample),
+        ] {
+            let endpoint_label = sample
+                .labels
+                .iter()
+                .find(|label| string_table_fetch(serialized, label.key) == "trace endpoint")
+                .expect("trace endpoint label");
+            assert_eq!(
+                string_table_fetch(serialized, endpoint_label.str),
+                "my endpoint"
+            );
+        }
+
+        regular_sample
+            .labels
+            .iter()
+            .find(|label| {
+                string_table_fetch(&regular_serialized, label.key) == "local root span id"
+            })
+            .expect("local root span id label");
+
+        assert_eq!(regular_sample.labels.len(), 2);
+        assert_eq!(omit_sample.labels.len(), 1);
     }
 
     #[test]
