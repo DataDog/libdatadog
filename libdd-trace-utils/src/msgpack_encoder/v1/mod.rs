@@ -339,6 +339,12 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 
     write_map_len(writer, map_len)?;
 
+    write_uint8(writer, trace_key::CHUNKS)?;
+    write_array_len(writer, traces.len() as u32)?;
+    for trace in traces {
+        encode_chunk(writer, trace.as_ref(), &mut table)?;
+    }
+
     if !metadata.language.is_empty() {
         write_uint8(writer, trace_key::LANGUAGE_NAME)?;
         table.write_interned(writer, &metadata.language)?;
@@ -391,12 +397,6 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
         }
     }
 
-    write_uint8(writer, trace_key::CHUNKS)?;
-    write_array_len(writer, traces.len() as u32)?;
-    for trace in traces {
-        encode_chunk(writer, trace.as_ref(), &mut table)?;
-    }
-
     Ok(())
 }
 
@@ -428,6 +428,12 @@ fn encode_chunk<W: RmpWrite, T: TraceData>(
     write_uint8(writer, chunk_key::TRACE_ID)?;
     write_bin(writer, &attrs.trace_id.to_be_bytes())?;
 
+    write_uint8(writer, chunk_key::SPANS)?;
+    write_array_len(writer, spans.len() as u32)?;
+    for span in spans {
+        span_v04::encode_span(writer, span, table)?;
+    }
+
     if let Some(origin) = attrs.origin {
         write_uint8(writer, chunk_key::ORIGIN)?;
         table.write_interned(writer, origin)?;
@@ -441,12 +447,6 @@ fn encode_chunk<W: RmpWrite, T: TraceData>(
     if let Some(mechanism) = attrs.sampling_mechanism {
         write_uint8(writer, chunk_key::SAMPLING_MECHANISM)?;
         write_uint(writer, mechanism as u64)?;
-    }
-
-    write_uint8(writer, chunk_key::SPANS)?;
-    write_array_len(writer, spans.len() as u32)?;
-    for span in spans {
-        span_v04::encode_span(writer, span, table)?;
     }
 
     Ok(())
@@ -522,6 +522,12 @@ fn encode_payload_v1<W: RmpWrite, T: TraceData>(
 
     write_map_len(writer, map_len)?;
 
+    write_uint8(writer, trace_key::CHUNKS)?;
+    write_array_len(writer, payload.chunks.len() as u32)?;
+    for chunk in &payload.chunks {
+        encode_chunk_v1(writer, chunk, &mut table)?;
+    }
+
     if !payload.language_name.borrow().is_empty() {
         write_uint8(writer, trace_key::LANGUAGE_NAME)?;
         table.write_interned(writer, payload.language_name.borrow())?;
@@ -562,12 +568,6 @@ fn encode_payload_v1<W: RmpWrite, T: TraceData>(
         span_v1::encode_attributes_map(writer, &payload.attributes, &mut table)?;
     }
 
-    write_uint8(writer, trace_key::CHUNKS)?;
-    write_array_len(writer, payload.chunks.len() as u32)?;
-    for chunk in &payload.chunks {
-        encode_chunk_v1(writer, chunk, &mut table)?;
-    }
-
     Ok(())
 }
 
@@ -593,6 +593,12 @@ fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
     write_uint8(writer, chunk_key::TRACE_ID)?;
     write_bin(writer, &chunk.trace_id)?;
 
+    write_uint8(writer, chunk_key::SPANS)?;
+    write_array_len(writer, chunk.spans.len() as u32)?;
+    for span in &chunk.spans {
+        span_v1::encode_span(writer, span, table)?;
+    }
+
     if !origin.is_empty() {
         write_uint8(writer, chunk_key::ORIGIN)?;
         table.write_interned(writer, origin)?;
@@ -616,12 +622,6 @@ fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
     if has_dropped {
         write_uint8(writer, chunk_key::DROPPED_TRACE)?;
         rmp::encode::write_bool(writer, true).map_err(ValueWriteError::InvalidDataWrite)?;
-    }
-
-    write_uint8(writer, chunk_key::SPANS)?;
-    write_array_len(writer, chunk.spans.len() as u32)?;
-    for span in &chunk.spans {
-        span_v1::encode_span(writer, span, table)?;
     }
 
     Ok(())
