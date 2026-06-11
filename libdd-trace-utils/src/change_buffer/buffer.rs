@@ -80,15 +80,17 @@ impl ChangeBuffer {
         Ok(())
     }
 
-    pub(crate) fn read_arg<T: Clone>(
+    /// Read a string index from the buffer, fetch the string from the string table, clone it and
+    /// return it.
+    pub(crate) fn read_string<T: Clone>(
         &self,
         string_table: &super::StringTable<T>,
         index: &mut usize,
     ) -> Result<T> {
-        let num: u32 = self.read(index)?;
+        let idx: u32 = self.read(index)?;
         string_table
-            .get(num)
-            .ok_or(ChangeBufferError::StringNotFound(num))
+            .get(idx)
+            .ok_or(ChangeBufferError::StringNotFound(idx))
     }
 
     /// Clear the op count, which is stored in the first 4 bytes of the buffer. This effectively
