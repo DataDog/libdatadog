@@ -29,6 +29,10 @@ struct TagRegexFilter {
     value: Option<Regex>,
 }
 
+/// Applies trace-level filters derived from the agent's `/info` endpoint configuration:
+/// `filter_tags`, `filter_tags_regex`, and `ignore_resources`.
+///
+/// Filtering is evaluated on the root span of each trace.
 #[derive(Debug, Default)]
 pub struct TraceFilterer {
     reject: Vec<TagLiteralFilter>,
@@ -66,12 +70,14 @@ impl TagFilter for TagRegexFilter {
     }
 }
 
+/// Minimal span interface required by [`TraceFilterer`].
 pub trait Span<'a> {
     fn resource(&'a self) -> &'a str;
     fn name(&'a self) -> &'a str;
     fn span_id(&'a self) -> u64;
     fn parent_id(&'a self) -> u64;
     fn trace_id(&'a self) -> u128;
+    /// Returns the value of the given meta tag, if present.
     fn get_meta(&'a self, key: &str) -> Option<&'a str>;
 }
 
@@ -224,6 +230,9 @@ impl TraceFilterer {
             .collect()
     }
 
+    /// Creates a new filterer from the agent's `/info` configuration fields.
+    ///
+    /// Invalid regex patterns are logged and skipped rather than causing an error.
     pub fn new(
         filter_tags_require: &[String],
         filter_tags_reject: &[String],
@@ -245,10 +254,12 @@ impl TraceFilterer {
             ignore_resources,
         }
     }
+    /// Creates a no-op filterer that keeps all traces.
     pub fn with_empty_conf() -> Self {
         Self::default()
     }
 
+    /// Removes traces that fail filter checks in-place. Returns the number of traces dropped.
     pub fn filter_traces<T>(&self, traces: &mut Vec<Vec<T>>) -> usize
     where
         for<'a> T: Span<'a>,
