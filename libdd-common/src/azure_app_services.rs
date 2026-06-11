@@ -11,7 +11,9 @@ const WEBSITE_SITE_NAME: &str = "WEBSITE_SITE_NAME";
 const WEBSITE_RESOURCE_GROUP: &str = "WEBSITE_RESOURCE_GROUP";
 const SITE_EXTENSION_VERSION: &str = "DD_AAS_DOTNET_EXTENSION_VERSION";
 const WEBSITE_OS: &str = "WEBSITE_OS";
-const INSTANCE_NAME: &str = "COMPUTERNAME";
+const COMPUTERNAME: &str = "COMPUTERNAME";
+const CONTAINER_NAME: &str = "CONTAINER_NAME";
+const WEBSITE_POD_NAME: &str = "WEBSITE_POD_NAME";
 const INSTANCE_ID: &str = "WEBSITE_INSTANCE_ID";
 const SERVICE_CONTEXT: &str = "DD_AZURE_APP_SERVICES";
 const FUNCTIONS_WORKER_RUNTIME: &str = "FUNCTIONS_WORKER_RUNTIME";
@@ -20,8 +22,6 @@ const FUNCTIONS_EXTENSION_VERSION: &str = "FUNCTIONS_EXTENSION_VERSION";
 const DD_AZURE_RESOURCE_GROUP: &str = "DD_AZURE_RESOURCE_GROUP";
 pub const WEBSITE_SKU: &str = "WEBSITE_SKU";
 pub const REGION_NAME: &str = "REGION_NAME";
-const CONTAINER_NAME: &str = "CONTAINER_NAME";
-const WEBSITE_POD_NAME: &str = "WEBSITE_POD_NAME";
 
 pub const UNKNOWN_VALUE: &str = "unknown";
 
@@ -66,7 +66,9 @@ const AAS_VAR_NAMES: &[&str] = &[
     WEBSITE_RESOURCE_GROUP,
     SITE_EXTENSION_VERSION,
     WEBSITE_OS,
-    INSTANCE_NAME,
+    COMPUTERNAME,
+    CONTAINER_NAME,
+    WEBSITE_POD_NAME,
     INSTANCE_ID,
     SERVICE_CONTEXT,
     FUNCTIONS_WORKER_RUNTIME,
@@ -74,8 +76,6 @@ const AAS_VAR_NAMES: &[&str] = &[
     FUNCTIONS_EXTENSION_VERSION,
     DD_AZURE_RESOURCE_GROUP,
     WEBSITE_SKU,
-    CONTAINER_NAME,
-    WEBSITE_POD_NAME,
 ];
 
 #[cfg(target_os = "linux")]
@@ -255,9 +255,9 @@ impl AzureMetadata {
             .get_var(WEBSITE_OS)
             .unwrap_or(std::env::consts::OS.to_string());
 
-        let container_name = query.get_var(CONTAINER_NAME);
+        let computer_name = query.get_var(COMPUTERNAME);
         let pod_name = query.get_var(WEBSITE_POD_NAME);
-        let computer_name = query.get_var(INSTANCE_NAME);
+        let container_name = query.get_var(CONTAINER_NAME);
         let instance_name = resolve_instance_name(
             computer_name.as_deref(),
             pod_name.as_deref(),
@@ -843,7 +843,7 @@ mod tests {
             (WEBSITE_RESOURCE_GROUP, expected_resource_group.as_str()),
             (SITE_EXTENSION_VERSION, expected_site_version.as_str()),
             (WEBSITE_OS, expected_operating_system.as_str()),
-            (INSTANCE_NAME, expected_instance_name.as_str()),
+            (COMPUTERNAME, expected_instance_name.as_str()),
             (INSTANCE_ID, expected_instance_id.as_str()),
             (SERVICE_CONTEXT, "1"),
             (
@@ -889,7 +889,7 @@ mod tests {
             (WEBSITE_RESOURCE_GROUP, expected_resource_group),
             (SITE_EXTENSION_VERSION, expected_site_version),
             (WEBSITE_OS, expected_operating_system),
-            (INSTANCE_NAME, expected_instance_name),
+            (COMPUTERNAME, expected_instance_name),
             (INSTANCE_ID, expected_instance_id),
             (SERVICE_CONTEXT, "1"),
             (
@@ -961,7 +961,7 @@ mod tests {
             (WEBSITE_SITE_NAME, expected_site_name),
             (WEBSITE_RESOURCE_GROUP, expected_resource_group),
             (WEBSITE_OS, expected_operating_system),
-            (INSTANCE_NAME, expected_instance_name),
+            (COMPUTERNAME, expected_instance_name),
             (INSTANCE_ID, expected_instance_id),
             (SERVICE_CONTEXT, "1"),
             (
@@ -1039,7 +1039,7 @@ mod tests {
     fn test_instance_name_computer_name_wins_over_pod_and_container() {
         let mocked_env = MockEnv::new(&[
             (FUNCTIONS_WORKER_RUNTIME, "node"),
-            (INSTANCE_NAME, "10-20-30-40"),
+            (COMPUTERNAME, "10-20-30-40"),
             (WEBSITE_POD_NAME, "pod-1"),
             (CONTAINER_NAME, "container-1"),
         ]);
@@ -1074,7 +1074,7 @@ mod tests {
             (FUNCTIONS_WORKER_RUNTIME, "node"),
             (CONTAINER_NAME, ""),
             (WEBSITE_POD_NAME, ""),
-            (INSTANCE_NAME, "worker-1"),
+            (COMPUTERNAME, "worker-1"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
         assert_eq!(metadata.get_instance_name(), "worker-1");
@@ -1086,7 +1086,7 @@ mod tests {
             (FUNCTIONS_WORKER_RUNTIME, "node"),
             (CONTAINER_NAME, "   "),
             (WEBSITE_POD_NAME, "   "),
-            (INSTANCE_NAME, "worker-2"),
+            (COMPUTERNAME, "worker-2"),
         ]);
         let metadata = AzureMetadata::new_function(mocked_env).unwrap();
         assert_eq!(metadata.get_instance_name(), "worker-2");
