@@ -588,16 +588,15 @@ mod tracing_integration_tests {
             msgpack_encoder::v1::{to_vec, to_vec_from_payload_v1},
             tracer_metadata::TracerMetadata,
         };
-        use std::collections::HashMap;
 
         let test_agent = DatadogTestAgent::new(None, None, &[]).await;
         let uri = test_agent.get_uri_for_endpoint("v1.0/traces", None).await;
 
         // ── v0.4 input ─────────────────────────────────────────────────────────────
-        let mut meta_v04 = HashMap::new();
+        let mut meta_v04 = VecMap::new();
         meta_v04.insert(bs_v1("env"), bs_v1("test-env"));
         meta_v04.insert(bs_v1("http.method"), bs_v1("GET"));
-        let mut metrics_v04 = HashMap::new();
+        let mut metrics_v04 = VecMap::new();
         metrics_v04.insert(bs_v1("http.duration_ms"), 12.5_f64);
         let v04_traces: Vec<Vec<V04SpanBytes>> = vec![vec![V04SpanBytes {
             service: bs_v1("svc"),
