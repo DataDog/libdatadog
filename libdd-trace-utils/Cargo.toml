@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-utils"
-version = "6.0.1"
+version = "8.0.0"
 description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
@@ -73,7 +73,7 @@ bolero = "0.13"
 criterion = "0.5.1"
 httpmock = { version = "0.8.0-alpha.1" }
 serde_json = "1.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 libdd-trace-utils = { path = ".", features = ["test-utils"] }
 tempfile = "3.3.0"
 
@@ -88,6 +88,7 @@ test-utils = [
     "cargo-platform",
     "urlencoding",
 ]
+change-buffer = []
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]

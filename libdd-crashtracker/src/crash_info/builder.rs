@@ -242,6 +242,15 @@ impl CrashInfoBuilder {
         Ok(())
     }
 
+    pub fn with_experimental_frame_count(&mut self, frame_count: usize) -> anyhow::Result<()> {
+        if let Some(experimental) = &mut self.experimental {
+            experimental.frame_count = Some(frame_count);
+        } else {
+            self.experimental = Some(Experimental::new().with_frame_count(frame_count));
+        }
+        Ok(())
+    }
+
     pub fn with_kind(&mut self, kind: ErrorKind) -> anyhow::Result<()> {
         self.error.with_kind(kind)
     }
@@ -653,5 +662,46 @@ mod tests {
             crash_info.os_info.version, "Unknown",
             "version should not be 'Unknown'"
         );
+    }
+
+    #[test]
+    fn test_with_experimental_frame_count_sets_field() {
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
+
+        let frame1 = StackFrame::test_instance(1);
+        let frame2 = StackFrame::test_instance(2);
+        builder.error.with_stack_frame(frame1, true).unwrap();
+        builder.error.with_stack_frame(frame2, false).unwrap();
+
+        let count = builder
+            .error
+            .stack
+            .as_ref()
+            .map(|s| s.frames.len())
+            .unwrap_or(0);
+        builder.with_experimental_frame_count(count).unwrap();
+
+        let crash_info = builder.build().unwrap();
+        let experimental = crash_info.experimental.expect("experimental should be set");
+        assert_eq!(experimental.frame_count, Some(2));
+    }
+
+    #[test]
+    fn test_with_experimental_frame_count_zero_when_no_stack() {
+        let mut builder = CrashInfoBuilder::new();
+        builder.with_kind(ErrorKind::UnixSignal).unwrap();
+
+        let count = builder
+            .error
+            .stack
+            .as_ref()
+            .map(|s| s.frames.len())
+            .unwrap_or(0);
+        builder.with_experimental_frame_count(count).unwrap();
+
+        let crash_info = builder.build().unwrap();
+        let experimental = crash_info.experimental.expect("experimental should be set");
+        assert_eq!(experimental.frame_count, Some(0));
     }
 }

@@ -8,6 +8,7 @@
 use hashbrown::HashMap;
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
+use libdd_trace_utils::span::SpanText;
 use std::borrow::{Borrow, Cow};
 
 use crate::span_concentrator::StatSpan;
@@ -304,9 +305,12 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
 }
 
 /// Return true if we care about peer tags on the span
-fn should_track_peer_tags(span_kind: &str) -> bool {
+fn should_track_peer_tags<T>(span_kind: T) -> bool
+where
+    T: SpanText,
+{
     matches!(
-        span_kind.to_lowercase().as_str(),
+        span_kind.borrow().to_lowercase().as_str(),
         "client" | "producer" | "consumer"
     )
 }
@@ -436,7 +440,7 @@ mod tests {
     use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
 
     use super::*;
-    use std::{collections::HashMap, hash::Hash};
+    use std::hash::Hash;
 
     fn get_hash(v: &impl Hash) -> u64 {
         use std::hash::Hasher;
@@ -490,7 +494,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind".into(), "client".into())]),
+                    meta: vec![("span.kind".into(), "client".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -511,10 +515,11 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "client".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -535,12 +540,13 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "producer".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
                         ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -562,12 +568,13 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "server".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
                         ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -588,7 +595,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.origin".into(), "synthetics-browser".into())]),
+                    meta: vec![("_dd.origin".into(), "synthetics-browser".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -609,7 +616,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "418".into())]),
+                    meta: vec![("http.status_code".into(), "418".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -631,7 +638,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "x".into())]),
+                    meta: vec![("http.status_code".into(), "x".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -652,7 +659,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    metrics: HashMap::from([("http.status_code".into(), 418.0)]),
+                    metrics: vec![("http.status_code".into(), 418.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -674,10 +681,11 @@ mod tests {
                     resource: "GET /api/v1/users".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("http.method".into(), "GET".into()),
                         ("http.route".into(), "/api/v1/users".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -700,11 +708,12 @@ mod tests {
                     resource: "POST /users/create".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("http.method".into(), "POST".into()),
                         ("http.route".into(), "/users/create".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -722,7 +731,7 @@ mod tests {
             // Span with grpc status from meta as named string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "OK".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "OK".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -735,7 +744,7 @@ mod tests {
             // Span with grpc status from meta as numeric string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "14".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "14".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -748,7 +757,7 @@ mod tests {
             // Span with grpc status from meta with StatusCode. prefix
             (
                 SpanBytes {
-                    meta: HashMap::from([("grpc.code".into(), "StatusCode.UNAVAILABLE".into())]),
+                    meta: vec![("grpc.code".into(), "StatusCode.UNAVAILABLE".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -761,11 +770,8 @@ mod tests {
             // Span with grpc status from metrics takes precedence over meta
             (
                 SpanBytes {
-                    meta: HashMap::from([(
-                        "rpc.grpc.status_code".into(),
-                        "PERMISSION_DENIED".into(),
-                    )]),
-                    metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
+                    meta: vec![("rpc.grpc.status_code".into(), "PERMISSION_DENIED".into())].into(),
+                    metrics: vec![("rpc.grpc.status_code".into(), 2.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -778,7 +784,7 @@ mod tests {
             // Span with grpc status from metrics via secondary key
             (
                 SpanBytes {
-                    metrics: HashMap::from([("grpc.code".into(), 3.0)]),
+                    metrics: vec![("grpc.code".into(), 3.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -791,7 +797,7 @@ mod tests {
             // Span with invalid grpc status string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "NOPE".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -808,7 +814,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "redis".into())]),
+                    meta: vec![("_dd.svc_src".into(), "redis".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -829,7 +835,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
+                    meta: vec![("_dd.svc_src".into(), "opt.split_by_tag".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -874,15 +880,12 @@ mod tests {
             // Span with peer tags with peertags aggregation enabled
             (
                 SpanSlice {
-                    service: "service".into(),
-                    name: "op".into(),
-                    resource: "res".into(),
+                    service: "service",
+                    name: "op",
+                    resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
-                        ("span.kind".into(), "client".into()),
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                    ]),
+                    meta: vec![("span.kind", "client"), ("aws.s3.bucket", "bucket-a")].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -898,17 +901,18 @@ mod tests {
             // Span with multiple peer tags with peertags aggregation enabled
             (
                 SpanSlice {
-                    service: "service".into(),
-                    name: "op".into(),
-                    resource: "res".into(),
+                    service: "service",
+                    name: "op",
+                    resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
-                        ("span.kind".into(), "producer".into()),
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                        ("db.instance".into(), "dynamo.test.us1".into()),
-                        ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    meta: vec![
+                        ("span.kind", "producer"),
+                        ("aws.s3.bucket", "bucket-a"),
+                        ("db.instance", "dynamo.test.us1"),
+                        ("db.system", "dynamodb"),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -929,17 +933,18 @@ mod tests {
             // server
             (
                 SpanSlice {
-                    service: "service".into(),
-                    name: "op".into(),
-                    resource: "res".into(),
+                    service: "service",
+                    name: "op",
+                    resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
-                        ("span.kind".into(), "server".into()),
-                        ("aws.s3.bucket".into(), "bucket-a".into()),
-                        ("db.instance".into(), "dynamo.test.us1".into()),
-                        ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    meta: vec![
+                        ("span.kind", "server"),
+                        ("aws.s3.bucket", "bucket-a"),
+                        ("db.instance", "dynamo.test.us1"),
+                        ("db.system", "dynamodb"),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -983,16 +988,17 @@ mod tests {
 
         // IPv4 address peer tag gets replaced with blocked-ip-address
         let span_ipv4 = SpanSlice {
-            service: "service".into(),
-            name: "op".into(),
-            resource: "res".into(),
+            service: "service",
+            name: "op",
+            resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([
-                ("span.kind".into(), "client".into()),
-                ("peer.hostname".into(), "10.1.2.3".into()),
-                ("db.instance".into(), "my-db".into()),
-            ]),
+            meta: vec![
+                ("span.kind", "client"),
+                ("peer.hostname", "10.1.2.3"),
+                ("db.instance", "my-db"),
+            ]
+            .into(),
             ..Default::default()
         };
         let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys);
@@ -1010,18 +1016,16 @@ mod tests {
 
         // IPv6 address peer tag gets replaced with blocked-ip-address
         let span_ipv6 = SpanSlice {
-            service: "service".into(),
-            name: "op".into(),
-            resource: "res".into(),
+            service: "service",
+            name: "op",
+            resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([
-                ("span.kind".into(), "client".into()),
-                (
-                    "peer.hostname".into(),
-                    "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF".into(),
-                ),
-            ]),
+            meta: vec![
+                ("span.kind", "client"),
+                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+            ]
+            .into(),
             ..Default::default()
         };
         let ipv6_keys = vec!["peer.hostname".to_string()];
@@ -1037,15 +1041,12 @@ mod tests {
 
         // Non-IP peer tags pass through unchanged
         let span_non_ip = SpanSlice {
-            service: "service".into(),
-            name: "op".into(),
-            resource: "res".into(),
+            service: "service",
+            name: "op",
+            resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([
-                ("span.kind".into(), "client".into()),
-                ("db.instance".into(), "dynamo.test.us1".into()),
-            ]),
+            meta: vec![("span.kind", "client"), ("db.instance", "dynamo.test.us1")].into(),
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];

@@ -766,7 +766,6 @@ mod tests {
     use super::*;
     use crate::span::v04::SpanBytes;
     use libdd_tinybytes::BytesString;
-    use std::collections::HashMap;
 
     fn make_span(
         service: &str,
@@ -830,13 +829,12 @@ mod tests {
 
     #[test]
     fn test_chunk_level_attrs_origin_and_priority() {
-        let mut meta = HashMap::new();
-        meta.insert(
+        let meta = vec![(
             BytesString::from_static("_dd.origin"),
             BytesString::from_static("lambda"),
-        );
-        let mut metrics = HashMap::new();
-        metrics.insert(BytesString::from_static("_sampling_priority_v1"), 1.0f64);
+        )]
+        .into();
+        let metrics = vec![(BytesString::from_static("_sampling_priority_v1"), 1.0f64)].into();
 
         let root = SpanBytes {
             service: BytesString::from_slice(b"svc").unwrap(),
@@ -880,9 +878,11 @@ mod tests {
     #[test]
     fn test_remote_parent_root_span_top_level() {
         // A span with a non-zero parent_id but _dd.top_level=1.0 is a root in its chunk.
-        let mut metrics = HashMap::new();
-        metrics.insert(BytesString::from_static("_dd.top_level"), 1.0f64);
-        metrics.insert(BytesString::from_static("_sampling_priority_v1"), 2.0f64);
+        let metrics = vec![
+            (BytesString::from_static("_dd.top_level"), 1.0f64),
+            (BytesString::from_static("_sampling_priority_v1"), 2.0f64),
+        ]
+        .into();
 
         let root = SpanBytes {
             service: BytesString::from_slice(b"svc").unwrap(),
@@ -903,19 +903,21 @@ mod tests {
 
     #[test]
     fn test_payload_promoted_fields() {
-        let mut meta = HashMap::new();
-        meta.insert(
-            BytesString::from_static("env"),
-            BytesString::from_static("prod"),
-        );
-        meta.insert(
-            BytesString::from_static("version"),
-            BytesString::from_static("1.2.3"),
-        );
-        meta.insert(
-            BytesString::from_static("_dd.hostname"),
-            BytesString::from_static("my-host"),
-        );
+        let meta = vec![
+            (
+                BytesString::from_static("env"),
+                BytesString::from_static("prod"),
+            ),
+            (
+                BytesString::from_static("version"),
+                BytesString::from_static("1.2.3"),
+            ),
+            (
+                BytesString::from_static("_dd.hostname"),
+                BytesString::from_static("my-host"),
+            ),
+        ]
+        .into();
 
         let span = SpanBytes {
             service: BytesString::from_slice(b"svc").unwrap(),
@@ -945,15 +947,17 @@ mod tests {
 
     #[test]
     fn test_payload_attributes_apm_mode_and_git_commit_sha() {
-        let mut meta = HashMap::new();
-        meta.insert(
-            BytesString::from_static("_dd.apm_mode"),
-            BytesString::from_static("ssi"),
-        );
-        meta.insert(
-            BytesString::from_static("_dd.git.commit.sha"),
-            BytesString::from_static("abc123"),
-        );
+        let meta = vec![
+            (
+                BytesString::from_static("_dd.apm_mode"),
+                BytesString::from_static("ssi"),
+            ),
+            (
+                BytesString::from_static("_dd.git.commit.sha"),
+                BytesString::from_static("abc123"),
+            ),
+        ]
+        .into();
 
         let span = SpanBytes {
             service: BytesString::from_slice(b"svc").unwrap(),
@@ -1044,11 +1048,11 @@ mod tests {
 
     #[test]
     fn test_128bit_trace_id_from_dd_p_tid() {
-        let mut meta = HashMap::new();
-        meta.insert(
+        let meta = vec![(
             BytesString::from_static("_dd.p.tid"),
             BytesString::from_static("640cfd5400000000"),
-        );
+        )]
+        .into();
         let span = SpanBytes {
             service: BytesString::from_slice(b"svc").unwrap(),
             name: BytesString::from_slice(b"op").unwrap(),
@@ -1099,11 +1103,11 @@ mod tests {
     fn test_sampling_mechanism_negative_value() {
         // `_dd.p.dm` is a signed integer stored as a string (e.g. "-4" → manual rule).
         // The encoder must parse it, take unsigned_abs, and emit it at chunk level.
-        let mut meta = HashMap::new();
-        meta.insert(
+        let meta = vec![(
             BytesString::from_static("_dd.p.dm"),
             BytesString::from_static("-4"),
-        );
+        )]
+        .into();
         let root = SpanBytes {
             service: BytesString::from_slice(b"svc").unwrap(),
             name: BytesString::from_slice(b"op").unwrap(),
@@ -1132,18 +1136,17 @@ mod tests {
     fn test_chunk_attrs_fallback_no_root_span() {
         // Partial flush: no root span (every span has a non-zero parent and no
         // `_dd.top_level`). Values must be accumulated from non-root spans.
-        let mut meta1 = HashMap::new();
-        meta1.insert(
+        let meta1 = vec![(
             BytesString::from_static("_dd.origin"),
             BytesString::from_static("lambda"),
-        );
-        let mut metrics2 = HashMap::new();
-        metrics2.insert(BytesString::from_static("_sampling_priority_v1"), 2.0f64);
-        let mut meta3 = HashMap::new();
-        meta3.insert(
+        )]
+        .into();
+        let metrics2 = vec![(BytesString::from_static("_sampling_priority_v1"), 2.0f64)].into();
+        let meta3 = vec![(
             BytesString::from_static("_dd.p.dm"),
             BytesString::from_static("-3"),
-        );
+        )]
+        .into();
 
         let s1 = SpanBytes {
             service: BytesString::from_slice(b"svc").unwrap(),

@@ -200,8 +200,14 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
             "env" | "version" | "component" | "span.kind" | "_dd.p.tid"
         )
     };
-    let non_promoted_meta = span.meta.iter().filter(|(k, _)| !is_promoted(k)).count() as u32;
-    let attr_count = non_promoted_meta + span.metrics.len() as u32 + span.meta_struct.len() as u32;
+    let meta_dd = span.meta.defensive_dedup();
+    let metrics_dd = span.metrics.defensive_dedup();
+    let meta_struct_dd = span.meta_struct.defensive_dedup();
+
+    let non_promoted_meta = meta_dd.iter().filter(|(k, _)| !is_promoted(k)).count() as u32;
+    let metrics_len = metrics_dd.len() as u32;
+    let meta_struct_len = meta_struct_dd.len() as u32;
+    let attr_count = non_promoted_meta + metrics_len + meta_struct_len;
     let has_attributes = attr_count > 0;
 
     let env = span.meta.get("env").map(|v| v.borrow());
@@ -278,25 +284,25 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
         write_uint8(writer, SpanKey::Attributes as u8)?;
         rmp::encode::write_array_len(writer, attr_count * 3)?;
 
-        for (k, v) in span.meta.iter() {
+        for (k, v) in meta_dd.iter() {
             if is_promoted(k) {
                 continue;
             }
-            table.write_interned(writer, k.borrow())?;
+            table.write_interned(writer, (*k).borrow())?;
             write_uint8(writer, AnyValueKey::String as u8)?;
-            table.write_interned(writer, v.borrow())?;
+            table.write_interned(writer, (*v).borrow())?;
         }
 
-        for (k, v) in span.metrics.iter() {
-            table.write_interned(writer, k.borrow())?;
+        for (k, v) in metrics_dd.iter() {
+            table.write_interned(writer, (*k).borrow())?;
             write_uint8(writer, AnyValueKey::Double as u8)?;
             write_f64(writer, *v)?;
         }
 
-        for (k, v) in span.meta_struct.iter() {
-            table.write_interned(writer, k.borrow())?;
+        for (k, v) in meta_struct_dd.iter() {
+            table.write_interned(writer, (*k).borrow())?;
             write_uint8(writer, AnyValueKey::Bytes as u8)?;
-            write_bin(writer, v.borrow())?;
+            write_bin(writer, (*v).borrow())?;
         }
     }
 
