@@ -682,6 +682,33 @@ pub unsafe extern "C" fn ddog_prof_Profile_add_endpoint_count(
     .into()
 }
 
+/// Set whether "local root span id" labels should be omitted when serializing.
+///
+/// This is an experimental setting and defaults to false.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile being configured.
+/// * `omit` - true to omit the label from serialized pprof samples.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module.
+/// This call is _NOT_ thread-safe.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_Profile_set_omit_local_root_span_id_when_serializing(
+    profile: *mut Profile,
+    omit: bool,
+) -> ProfileResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        profile.set_omit_local_root_span_id_when_serializing(omit);
+        anyhow::Ok(())
+    })()
+    .context("ddog_prof_Profile_set_omit_local_root_span_id_when_serializing failed")
+    .into()
+}
+
 /// Add a poisson-based upscaling rule which will be use to adjust values and make them
 /// closer to reality.
 ///

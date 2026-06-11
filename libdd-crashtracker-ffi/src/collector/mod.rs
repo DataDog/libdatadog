@@ -231,3 +231,24 @@ pub unsafe extern "C" fn ddog_crasht_report_unhandled_exception(
         )?;
     })
 }
+
+#[no_mangle]
+/// Register the expected PID of the socket-based crash receiver
+///
+/// When `collect_all_threads` is enabled and the receiver is reached via a Unix
+/// socket, the crash handler will only grant ptrace permission if the socket
+/// peer's PID matches this registered value.
+///
+/// Call this after establishing a trusted connection to the sidecar
+///
+/// # Safety
+///   This function is safe to call from any thread at any time.
+pub extern "C" fn ddog_crasht_set_expected_receiver_pid(pid: i32) {
+    libdd_crashtracker::set_expected_receiver_pid(pid);
+}
+
+#[no_mangle]
+/// Returns the currently registered expected receiver PID, or 0 if unset.
+pub extern "C" fn ddog_crasht_get_expected_receiver_pid() -> i32 {
+    libdd_crashtracker::get_expected_receiver_pid()
+}

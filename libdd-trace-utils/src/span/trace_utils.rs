@@ -13,16 +13,12 @@ const TRACER_TOP_LEVEL_KEY: &str = "_dd.top_level";
 const MEASURED_KEY: &str = "_dd.measured";
 const PARTIAL_VERSION_KEY: &str = "_dd.partial_version";
 
-fn set_top_level_span<T>(span: &mut Span<T>, is_top_level: bool)
+fn set_top_level_span<T>(span: &mut Span<T>)
 where
     T: TraceData,
 {
-    if is_top_level {
-        span.metrics
-            .insert(T::Text::from_static_str(TOP_LEVEL_KEY), 1.0);
-    } else {
-        span.metrics.remove(TOP_LEVEL_KEY);
-    }
+    span.metrics
+        .insert(T::Text::from_static_str(TOP_LEVEL_KEY), 1.0);
 }
 
 /// Updates all the spans top-level attribute.
@@ -42,19 +38,19 @@ where
     for span_idx in 0..trace.len() {
         let parent_id = trace[span_idx].parent_id;
         if parent_id == 0 {
-            set_top_level_span(&mut trace[span_idx], true);
+            set_top_level_span(&mut trace[span_idx]);
             continue;
         }
         match span_id_idx.get(&parent_id).map(|i| &trace[*i].service) {
             Some(parent_span_service) => {
                 if !(parent_span_service == &trace[span_idx].service) {
                     // parent is not in the same service
-                    set_top_level_span(&mut trace[span_idx], true)
+                    set_top_level_span(&mut trace[span_idx])
                 }
             }
             None => {
                 // span has no parent in chunk
-                set_top_level_span(&mut trace[span_idx], true)
+                set_top_level_span(&mut trace[span_idx])
             }
         }
     }
@@ -166,7 +162,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanBytes;
+    use crate::span::v04::{SpanBytes, VecMap};
 
     fn create_test_span(
         trace_id: u64,
@@ -185,14 +181,15 @@ mod tests {
             start,
             duration: 5,
             error: 0,
-            meta: HashMap::from([
+            meta: vec![
                 ("service".into(), "test-service".into()),
                 ("env".into(), "test-env".into()),
                 ("runtime-id".into(), "test-runtime-id-value".into()),
-            ]),
-            metrics: HashMap::new(),
+            ]
+            .into(),
+            metrics: VecMap::new(),
             r#type: "".into(),
-            meta_struct: HashMap::new(),
+            meta_struct: VecMap::new(),
             span_links: vec![],
             span_events: vec![],
         };
@@ -261,10 +258,11 @@ mod tests {
         let chunk_with_priority = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 1.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ]
+                .into(),
                 ..Default::default()
             },
             SpanBytes {
@@ -276,10 +274,11 @@ mod tests {
         let chunk_with_null_priority = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ]
+                .into(),
                 ..Default::default()
             },
             SpanBytes {
@@ -291,7 +290,7 @@ mod tests {
         let chunk_without_priority = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
+                metrics: vec![(TRACER_TOP_LEVEL_KEY.into(), 1.0)].into(),
                 ..Default::default()
             },
             SpanBytes {
@@ -303,10 +302,11 @@ mod tests {
         let chunk_with_multiple_top_level = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), -1.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ]
+                .into(),
                 ..Default::default()
             },
             SpanBytes {
@@ -317,7 +317,7 @@ mod tests {
             SpanBytes {
                 span_id: 4,
                 parent_id: 3,
-                metrics: HashMap::from([(TRACER_TOP_LEVEL_KEY.into(), 1.0)]),
+                metrics: vec![(TRACER_TOP_LEVEL_KEY.into(), 1.0)].into(),
                 ..Default::default()
             },
         ];
@@ -325,10 +325,11 @@ mod tests {
             SpanBytes {
                 span_id: 1,
                 error: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ]
+                .into(),
                 ..Default::default()
             },
             SpanBytes {
@@ -340,32 +341,34 @@ mod tests {
         let chunk_with_a_single_span = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ]
+                .into(),
                 ..Default::default()
             },
             SpanBytes {
                 span_id: 2,
                 parent_id: 1,
-                metrics: HashMap::from([(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)]),
+                metrics: vec![(SAMPLING_SINGLE_SPAN_MECHANISM.into(), 8.0)].into(),
                 ..Default::default()
             },
         ];
         let chunk_with_analyzed_span = vec![
             SpanBytes {
                 span_id: 1,
-                metrics: HashMap::from([
+                metrics: vec![
                     (SAMPLING_PRIORITY_KEY.into(), 0.0),
                     (TRACER_TOP_LEVEL_KEY.into(), 1.0),
-                ]),
+                ]
+                .into(),
                 ..Default::default()
             },
             SpanBytes {
                 span_id: 2,
                 parent_id: 1,
-                metrics: HashMap::from([(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)]),
+                metrics: vec![(SAMPLING_ANALYTICS_RATE_KEY.into(), 1.0)].into(),
                 ..Default::default()
             },
         ];

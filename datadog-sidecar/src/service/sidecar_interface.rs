@@ -177,6 +177,8 @@ pub trait SidecarInterface {
     /// * `global_tags` - Global tags which need to be propagated.
     /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
     ///   not set.
+    /// * `remote_config_generation` - The SHM reader generation last read by the client (0 if
+    ///   unread).
     async fn set_universal_service_tags(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -185,6 +187,7 @@ pub trait SidecarInterface {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        remote_config_generation: u64,
     );
 
     /// Sets request state which does not directly affect the RC connection.

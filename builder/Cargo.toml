@@ -19,6 +19,7 @@ default = [
   "log",
   "ddsketch",
   "ffe",
+  "shared-runtime",
 ]
 crashtracker = []
 profiling = []
@@ -29,6 +30,7 @@ library-config = []
 log = []
 ddsketch = []
 ffe = []
+shared-runtime = []
 regex-lite = ["libdd-common/regex-lite"]
 
 [lib]

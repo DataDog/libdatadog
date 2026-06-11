@@ -79,6 +79,21 @@ pub(crate) struct StatsComputationConfig {
     pub(crate) obfuscation_enabled: bool,
 }
 
+/// Return true if the agent supports client-side stats.
+///
+/// This requires:
+/// - `client_drop_p0s` to be enabled on the agent,
+/// - the `/v0.6/stats` endpoint to be advertised by the agent.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_stats_computation_supported(agent_info: &AgentInfo) -> bool {
+    agent_info.info.client_drop_p0s.is_some_and(|v| v)
+        && agent_info
+            .info
+            .endpoints
+            .as_ref()
+            .is_some_and(|endpoints| endpoints.iter().any(|e| e == STATS_ENDPOINT))
+}
+
 /// Return true if the agent's obfuscation version is supported by this tracer
 #[cfg(feature = "stats-obfuscation")]
 fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
@@ -196,7 +211,7 @@ pub(crate) fn handle_stats_disabled_by_agent<
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
 ) {
-    if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+    if is_stats_computation_supported(agent_info) {
         let status = start_stats_computation(
             ctx,
             get_span_kinds_for_stats(agent_info),
@@ -254,7 +269,7 @@ pub(crate) async fn handle_stats_enabled(
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     client_side_stats: &StatsComputationConfig,
 ) {
-    if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+    if is_stats_computation_supported(agent_info) {
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
@@ -350,5 +365,49 @@ mod tests {
             SUPPORTED_OBFUSCATION_VERSION.to_string(),
             SUPPORTED_OBFUSCATION_VERSION_STR
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod is_stats_computation_supported {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        use crate::trace_exporter::stats::{is_stats_computation_supported, STATS_ENDPOINT};
+
+        fn make_agent_info(
+            client_drop_p0s: Option<bool>,
+            endpoints: Option<Vec<&str>>,
+        ) -> AgentInfo {
+            AgentInfo {
+                state_hash: String::new(),
+                info: AgentInfoStruct {
+                    client_drop_p0s,
+                    endpoints: endpoints.map(|e| e.into_iter().map(String::from).collect()),
+                    ..Default::default()
+                },
+            }
+        }
+
+        #[test]
+        fn supported_when_all_requirements_met() {
+            let info = make_agent_info(Some(true), Some(vec!["/v0.4/traces", STATS_ENDPOINT]));
+            assert!(is_stats_computation_supported(&info));
+        }
+
+        #[test]
+        fn unsupported_when_client_drop_p0s_missing_or_false() {
+            let info = make_agent_info(None, Some(vec![STATS_ENDPOINT]));
+            assert!(!is_stats_computation_supported(&info));
+
+            let info = make_agent_info(Some(false), Some(vec![STATS_ENDPOINT]));
+            assert!(!is_stats_computation_supported(&info));
+        }
+
+        #[test]
+        fn unsupported_when_stats_endpoint_absent() {
+            let info = make_agent_info(Some(true), Some(vec!["/v0.4/traces"]));
+            assert!(!is_stats_computation_supported(&info));
+
+            let info = make_agent_info(Some(true), None);
+            assert!(!is_stats_computation_supported(&info));
+        }
     }
 }

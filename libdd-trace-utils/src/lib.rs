@@ -23,3 +23,6 @@ pub mod tracer_metadata;
 pub mod tracer_payload;
 
 pub mod span;
+
+#[cfg(feature = "change-buffer")]
+pub mod change_buffer;

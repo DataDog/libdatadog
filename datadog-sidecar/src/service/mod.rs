@@ -6,9 +6,9 @@ use crate::config;
 pub use datadog_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
 pub use datadog_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use datadog_ffe::telemetry::FfeTelemetryContext;
-use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct};
 use libdd_telemetry::worker::TelemetryActions;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -80,6 +80,8 @@ pub struct SessionConfig {
     pub root_service: String,
     pub root_session_id: Option<String>,
     pub parent_session_id: Option<String>,
+    /// Optional OTLP metrics intake endpoint.
+    pub otlp_metrics_endpoint: Option<Endpoint>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -94,7 +96,6 @@ pub enum SidecarAction {
     /// aggregation, serialization, and delivery. This action must be sent only
     /// by SDKs that explicitly opted into native FFE metric ownership.
     FfeEvaluationMetrics {
-        endpoint: String,
         context: FfeTelemetryContext,
         metrics: Vec<FfeEvaluationMetric>,
     },

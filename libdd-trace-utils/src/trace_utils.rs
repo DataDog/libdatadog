@@ -421,19 +421,19 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     }
     for span in trace.iter_mut() {
         if span.parent_id == 0 {
-            set_top_level_span(span, true);
+            set_top_level_span(span);
             continue;
         }
         match span_id_to_service.get(&span.parent_id) {
             Some(parent_span_service) => {
                 if !parent_span_service.eq(&span.service) {
                     // parent is not in the same service
-                    set_top_level_span(span, true)
+                    set_top_level_span(span)
                 }
             }
             None => {
                 // span has no parent in chunk
-                set_top_level_span(span, true)
+                set_top_level_span(span)
             }
         }
     }
@@ -447,12 +447,8 @@ pub fn has_top_level(span: &pb::Span) -> bool {
         || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
 }
 
-fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
-    if is_top_level {
-        span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
-    } else {
-        span.metrics.remove(TOP_LEVEL_KEY);
-    }
+fn set_top_level_span(span: &mut pb::Span) {
+    span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
 pub fn set_serverless_root_span_tags(
