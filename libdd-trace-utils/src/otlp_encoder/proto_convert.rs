@@ -314,11 +314,90 @@ mod tests {
         );
     }
 
-    // Link/Event byte-size test:
-    // A plain v04 Span produced by the mapper does not carry links or events unless
-    // span.span_links / span.span_events are populated explicitly. Building a span with
-    // a link requires constructing a SpanLink with real trace_id/span_id values, which
-    // is straightforward, but the mapper only forwards links as-is — there is no
-    // transformation that would exercise proto_convert beyond what the ID tests above
-    // already cover. We therefore skip this sub-item as instructed.
+    #[test]
+    fn converts_links_and_events_to_proto() {
+        use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink};
+        use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value;
+        use std::collections::HashMap;
+
+        let resource_info = OtlpResourceInfo {
+            service: "svc".to_string(),
+            ..Default::default()
+        };
+        // A link carries its own 128-bit trace ID (high<<64 | low) and 64-bit span ID, decoded by
+        // `link()` via a separate `hex_to_bytes` call than the top-level span IDs.
+        let span: Span<BytesData> = Span {
+            trace_id: 0x1_u128,
+            span_id: 0x2,
+            name: libdd_tinybytes::BytesString::from_static("op"),
+            resource: libdd_tinybytes::BytesString::from_static("res"),
+            r#type: libdd_tinybytes::BytesString::from_static("web"),
+            start: 1_000_000_000,
+            duration: 500_000,
+            span_links: vec![SpanLink {
+                trace_id: 0x1122334455667788,
+                trace_id_high: 0x99AABBCCDDEEFF00,
+                span_id: 0x0102030405060708,
+                attributes: HashMap::from([(
+                    libdd_tinybytes::BytesString::from_static("link.attr"),
+                    libdd_tinybytes::BytesString::from_static("lv"),
+                )]),
+                tracestate: libdd_tinybytes::BytesString::from_static("ts=1"),
+                flags: 0,
+            }],
+            span_events: vec![SpanEvent {
+                time_unix_nano: 1_700_000_000_000_000_000,
+                name: libdd_tinybytes::BytesString::from_static("ev"),
+                attributes: HashMap::from([(
+                    libdd_tinybytes::BytesString::from_static("ev.attr"),
+                    AttributeAnyValue::SingleValue(AttributeArrayValue::String(
+                        libdd_tinybytes::BytesString::from_static("evv"),
+                    )),
+                )]),
+            }],
+            ..Default::default()
+        };
+
+        let serde_req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let proto: ProtoReq = (&serde_req).into();
+        let sp = &proto.resource_spans[0].scope_spans[0].spans[0];
+
+        // --- link ---
+        let link = &sp.links[0];
+        assert_eq!(
+            link.trace_id,
+            vec![
+                0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+                0x77, 0x88
+            ]
+        );
+        assert_eq!(
+            link.span_id,
+            vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+        );
+        assert_eq!(link.trace_state, "ts=1");
+        let link_attr = link
+            .attributes
+            .iter()
+            .find(|kv| kv.key == "link.attr")
+            .expect("link attr");
+        assert!(matches!(
+            link_attr.value.as_ref().and_then(|v| v.value.as_ref()),
+            Some(Value::StringValue(s)) if s == "lv"
+        ));
+
+        // --- event ---
+        let event = &sp.events[0];
+        assert_eq!(event.time_unix_nano, 1_700_000_000_000_000_000);
+        assert_eq!(event.name, "ev");
+        let event_attr = event
+            .attributes
+            .iter()
+            .find(|kv| kv.key == "ev.attr")
+            .expect("event attr");
+        assert!(matches!(
+            event_attr.value.as_ref().and_then(|v| v.value.as_ref()),
+            Some(Value::StringValue(s)) if s == "evv"
+        ));
+    }
 }

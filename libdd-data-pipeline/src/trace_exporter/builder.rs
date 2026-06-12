@@ -290,6 +290,9 @@ impl TraceExporterBuilder {
     /// Selects the OTLP export protocol. Accepts `OtlpProtocol::HttpJson` (default) or
     /// `OtlpProtocol::HttpProtobuf`. The host language resolves this from
     /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`.
+    ///
+    /// `OtlpProtocol::Grpc` is not supported; selecting it makes [`build`](Self::build) /
+    /// [`build_async`](Self::build_async) fail with [`BuilderErrorKind::InvalidConfiguration`].
     pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
         self.otlp_protocol = protocol;
         self
@@ -337,6 +340,18 @@ impl TraceExporterBuilder {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
                     "Combination of input and output formats not allowed".to_string(),
+                ),
+            ));
+        }
+
+        // OTLP gRPC export is not implemented. Reject it here so a misconfigured exporter fails
+        // fast at build time with a clear `InvalidConfiguration` (FFI: `InvalidArgument`), matching
+        // the C FFI `set_otlp_protocol` setter, rather than erroring on every send. The send-time
+        // arm in `send_otlp_traces_inner` remains as a defensive guard.
+        if self.otlp_protocol == OtlpProtocol::Grpc {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "OTLP gRPC export is not supported".to_string(),
                 ),
             ));
         }
@@ -672,6 +687,21 @@ mod tests {
         builder
             .set_input_format(TraceExporterInputFormat::V05)
             .set_output_format(TraceExporterOutputFormat::V1);
+        let result = builder.build::<NativeCapabilities>();
+        assert!(matches!(
+            result,
+            Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_otlp_grpc_protocol_rejected_at_build() {
+        // gRPC is unsupported and must fail fast at build time (not on the first send), with the
+        // same `InvalidConfiguration` category the C FFI setter uses.
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_otlp_protocol(crate::otlp::OtlpProtocol::Grpc);
         let result = builder.build::<NativeCapabilities>();
         assert!(matches!(
             result,
