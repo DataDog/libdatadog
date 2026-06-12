@@ -65,6 +65,7 @@ pub struct TraceExporterBuilder {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    otlp_protocol: OtlpProtocol,
 }
 
 impl TraceExporterBuilder {
@@ -286,6 +287,14 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Selects the OTLP export protocol. Accepts `OtlpProtocol::HttpJson` (default) or
+    /// `OtlpProtocol::HttpProtobuf`. The host language resolves this from
+    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`.
+    pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
+        self.otlp_protocol = protocol;
+        self
+    }
+
     /// Sets additional HTTP headers to include in OTLP trace export requests.
     ///
     /// Headers should be provided as key-value pairs. The host language is responsible for
@@ -451,7 +460,7 @@ impl TraceExporterBuilder {
                     .connection_timeout
                     .map(Duration::from_millis)
                     .unwrap_or(DEFAULT_OTLP_TIMEOUT),
-                protocol: OtlpProtocol::HttpJson,
+                protocol: self.otlp_protocol,
             }
         });
 
