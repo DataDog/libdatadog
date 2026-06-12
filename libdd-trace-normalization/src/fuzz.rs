@@ -75,6 +75,10 @@ pub struct FuzzSpan {
 }
 
 impl<'a> Arbitrary<'a> for FuzzSpan {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "FIXME: generating all Span fields inline; splitting would require many helper fns"
+    )]
     fn arbitrary(u: &mut Unstructured<'a>) -> arbitrary::Result<Self> {
         // Generate all basic fields
         let service: String = u.arbitrary()?;

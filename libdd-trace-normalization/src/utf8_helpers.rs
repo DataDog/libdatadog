@@ -11,6 +11,10 @@ pub fn floor_char_boundary(s: &str, index: usize) -> usize {
         s.len()
     } else {
         let lower_bound = index.saturating_sub(3);
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "intentional: checks UTF-8 continuation byte bitmask via signed comparison"
+        )]
         let new_index = s.as_bytes()[lower_bound..=index]
             .iter()
             .rposition(|b| (*b as i8) >= -0x40);

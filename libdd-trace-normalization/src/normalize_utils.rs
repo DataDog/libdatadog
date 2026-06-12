@@ -61,6 +61,10 @@ pub fn normalize_span_start_duration(start: &mut i64, duration: &mut i64) {
     }
 
     if *start < YEAR_2000_NANOSEC_TS {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "FIXME: intentional truncation matching the Go reference impl; nanoseconds since epoch fit in i64 until year 2262"
+        )]
         let now = SystemTime::UNIX_EPOCH.elapsed().map_or_else(
             |e| -(e.duration().as_nanos() as i64),
             |t| t.as_nanos() as i64,
@@ -83,6 +87,17 @@ pub const fn normalize_parent_id(parent_id: &mut u64, trace_id: u64, span_id: u6
     }
 }
 
+/// Normalizes `tag` in-place, lowercasing and replacing illegal characters with `_`.
+///
+/// # Panics
+///
+/// Panics if the tag contains bytes that are not valid UTF-8 continuation sequences; in practice
+/// this cannot happen because the function only processes bytes it has already validated via
+/// `next_code_point`.
+#[allow(
+    clippy::too_many_lines,
+    reason = "FIXME: split into sub-functions requires threading mutable cursor state, deferred"
+)]
 pub fn normalize_tag(tag: &mut String) {
     // Since we know that we're only going to write valid utf8 we can work with the Vec directly
     let bytes = unsafe { tag.as_mut_vec() };

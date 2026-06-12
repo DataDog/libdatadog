@@ -90,6 +90,10 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> an
         anyhow::bail!("Normalize Chunk Error: root_span_index > length of trace chunk spans")
     };
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "FIXME: priority is a small integer stored as f64 in metrics; truncation is intentional and matches the Go agent"
+    )]
     if chunk.priority == SamplerPriority::None as i32 {
         // Older tracers set sampling priority in the root span.
         if let Some(root_span_priority) = root_span.metrics.get(TAG_SAMPLING_PRIORITY) {
@@ -276,6 +280,10 @@ mod tests {
         assert_eq!(before_start, test_span.start);
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "FIXME: test helper; nanoseconds fit in i64 until year 2262"
+    )]
     fn get_current_time() -> i64 {
         SystemTime::UNIX_EPOCH.elapsed().unwrap().as_nanos() as i64
     }
