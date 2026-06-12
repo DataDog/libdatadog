@@ -267,6 +267,18 @@ where
         let mut is_chunk_root = true;
 
         let mut spans_vec = Vec::with_capacity(slot_indices.len());
+        // Fetch the trace_id corresponding to this chunk. It must be the same for all the spans in
+        // the chunk.
+        let Some(trace_id) = slot_indices
+            .first()
+            .map(|idx| span_at_mut(&mut self.spans, *idx as usize))
+            .transpose()?
+            .map(|span| span.trace_id)
+        else {
+            return Ok(vec![]);
+        };
+
+        let trace = self.traces.get(&trace_id);
 
         for slot in slot_indices {
             let maybe_span = self
@@ -277,55 +289,43 @@ where
             let mut span = maybe_span.ok_or(ChangeBufferError::SpanNotFound(*slot as u64))?;
 
             if is_local_root {
-                self.copy_in_sampling_tags(&mut span);
+                self.copy_in_sampling_tags(trace, &mut span);
                 span.metrics.insert(self.str_top_level.clone(), 1.0);
                 is_local_root = false;
             }
 
             if is_chunk_root {
-                self.copy_in_chunk_tags(&mut span);
+                Self::copy_in_chunk_tags(trace, &mut span);
                 is_chunk_root = false;
             }
 
-            self.process_span(&mut span);
+            self.process_span(trace, &mut span);
 
             spans_vec.push(span);
         }
 
-        let mut seen_trace_ids: Vec<(u128, usize)> = Vec::new();
-        for span in &spans_vec {
-            if let Some(entry) = seen_trace_ids
-                .iter_mut()
-                .find(|(id, _)| *id == span.trace_id)
-            {
-                entry.1 += 1;
-            } else {
-                seen_trace_ids.push((span.trace_id, 1));
-            }
-        }
-        for (trace_id, flushed_count) in seen_trace_ids {
-            let should_remove = self
-                .traces
-                .get_mut(&trace_id)
-                .map(|trace| {
-                    if trace.span_count <= flushed_count {
-                        true
-                    } else {
-                        trace.span_count -= flushed_count;
-                        false
-                    }
-                })
-                .unwrap_or(false);
-            if should_remove {
-                self.traces.remove(&trace_id);
-            }
+        let trace = self.traces.get_mut(&trace_id);
+
+        let should_remove = trace
+            .map(|trace| {
+                if trace.span_count <= spans_vec.len() {
+                    true
+                } else {
+                    trace.span_count -= spans_vec.len();
+                    false
+                }
+            })
+            .unwrap_or(false);
+
+        if should_remove {
+            self.traces.remove(&trace_id);
         }
 
         Ok(spans_vec)
     }
 
-    fn copy_in_sampling_tags(&self, span: &mut Span<T>) {
-        if let Some(trace) = self.traces.get(&span.trace_id) {
+    fn copy_in_sampling_tags(&self, trace: Option<&Trace<T::Text>>, span: &mut Span<T>) {
+        if let Some(trace) = trace {
             if let Some(rule) = trace.sampling_rule_decision {
                 span.metrics.insert(self.str_rule_psr.clone(), rule);
             }
@@ -338,8 +338,8 @@ where
         }
     }
 
-    fn copy_in_chunk_tags(&self, span: &mut Span<T>) {
-        if let Some(trace) = self.traces.get(&span.trace_id) {
+    fn copy_in_chunk_tags(trace: Option<&Trace<T::Text>>, span: &mut Span<T>) {
+        if let Some(trace) = trace {
             span.meta
                 .extend(trace.meta.iter().map(|(k, v)| (k.clone(), v.clone())));
             span.metrics
@@ -347,7 +347,7 @@ where
         }
     }
 
-    fn process_span(&self, span: &mut Span<T>) {
+    fn process_span(&self, trace: Option<&Trace<T::Text>>, span: &mut Span<T>) {
         if let Some(kind) = span.meta.get("kind") {
             if *kind != self.str_internal {
                 span.metrics.insert(self.str_measured.clone(), 1.0);
@@ -364,7 +364,7 @@ where
         span.metrics
             .insert(self.str_process_id.clone(), f64::from(self.pid));
 
-        if let Some(trace) = self.traces.get(&span.trace_id) {
+        if let Some(trace) = trace {
             if let Some(origin) = trace.origin.clone() {
                 span.meta.insert(self.str_origin.clone(), origin);
             }
