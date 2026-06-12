@@ -29,3 +29,7 @@ build_common = { path = "../build-common" }
 
 [dev-dependencies]
 tempfile = { version = "3.3" }
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"

@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use core::default::Default;
 use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
-use std::default::Default;
 
 /// This struct MUST be backward compatible.
 #[derive(serde::Serialize, Debug, PartialEq, Eq, Hash)]
@@ -139,7 +139,7 @@ impl TracerMetadata {
                 key: "threadlocal.attribute_key_map".to_owned(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::ArrayValue(ArrayValue {
-                        values: std::iter::once(AnyValue {
+                        values: core::iter::once(AnyValue {
                             value: Some(any_value::Value::StringValue(
                                 "datadog.local_root_span_id".to_owned(),
                             )),

@@ -181,7 +181,7 @@ mod tests {
             enabled: true,
             keep_keys: keep_keys
                 .iter()
-                .map(std::string::ToString::to_string)
+                .map(alloc::string::ToString::to_string)
                 .collect(),
             ..Default::default()
         })
@@ -192,11 +192,11 @@ mod tests {
             enabled: true,
             keep_keys: keep_keys
                 .iter()
-                .map(std::string::ToString::to_string)
+                .map(alloc::string::ToString::to_string)
                 .collect(),
             transform_keys: transform_keys
                 .iter()
-                .map(std::string::ToString::to_string)
+                .map(alloc::string::ToString::to_string)
                 .collect(),
             transformer: Some(obfuscate_sql_string),
         })

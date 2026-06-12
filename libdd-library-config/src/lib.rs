@@ -1,14 +1,15 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+extern crate alloc;
+
 pub mod otel_process_ctx;
 pub mod tracer_metadata;
 
-use std::borrow::Cow;
-use std::cell::OnceCell;
+use alloc::borrow::Cow;
+use core::{cell::OnceCell, mem, ops::Deref};
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::path::Path;
-use std::{env, fs, io, mem};
+use std::{env, fs, io};
 
 /// This struct holds maps used to match and template configurations.
 ///
@@ -30,7 +31,7 @@ impl<'a> MatchMaps<'a> {
         self.env_map.get_or_init(|| {
             let mut map = HashMap::new();
             for e in &process_info.envp {
-                let Ok(s) = std::str::from_utf8(e.deref()) else {
+                let Ok(s) = core::str::from_utf8(e.deref()) else {
                     continue;
                 };
                 let (k, v) = match s.split_once('=') {
@@ -47,7 +48,7 @@ impl<'a> MatchMaps<'a> {
         self.args_map.get_or_init(|| {
             let mut map = HashMap::new();
             for arg in &process_info.args {
-                let Ok(arg) = std::str::from_utf8(arg.deref()) else {
+                let Ok(arg) = core::str::from_utf8(arg.deref()) else {
                     continue;
                 };
                 // Split args between key and value on '='
@@ -145,7 +146,7 @@ impl<'a> Matcher<'a> {
                     template_map_key(index, self.match_maps.args(self.process_info))
                 }
                 "tags" => template_map_key(index, self.match_maps.tags),
-                _ => std::borrow::Cow::Borrowed("UNDEFINED"),
+                _ => alloc::borrow::Cow::Borrowed("UNDEFINED"),
             };
             templated.push_str(&val);
             rest = tail;
@@ -257,7 +258,7 @@ impl<'de> serde::Deserialize<'de> for ConfigMap {
         impl<'de> serde::de::Visitor<'de> for ConfigMapVisitor {
             type Value = ConfigMap;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
                 formatter.write_str("struct ConfigMap(HashMap<String, String>)")
             }
 

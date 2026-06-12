@@ -178,7 +178,7 @@ fn is_chunked_encoding(headers: &[httparse::Header]) -> bool {
     headers.iter().any(|h| {
         h.name
             .eq_ignore_ascii_case(http::header::TRANSFER_ENCODING.as_str())
-            && std::str::from_utf8(h.value).is_ok_and(|v| v.to_lowercase().contains("chunked"))
+            && core::str::from_utf8(h.value).is_ok_and(|v| v.to_lowercase().contains("chunked"))
     })
 }
 
@@ -190,7 +190,7 @@ fn get_content_length(headers: &[httparse::Header]) -> Option<usize> {
             h.name
                 .eq_ignore_ascii_case(http::header::CONTENT_LENGTH.as_str())
         })
-        .and_then(|h| std::str::from_utf8(h.value).ok())
+        .and_then(|h| core::str::from_utf8(h.value).ok())
         .and_then(|v| v.trim().parse().ok())
 }
 
@@ -294,7 +294,7 @@ fn decode_chunked_body(chunked_data: &[u8]) -> anyhow::Result<Vec<u8>> {
             .with_context(|| format!("Missing CRLF after chunk size at position {}", pos))?;
 
         // Parse the chunk size (hex)
-        let size_str = std::str::from_utf8(&chunked_data[pos..pos + line_end])
+        let size_str = core::str::from_utf8(&chunked_data[pos..pos + line_end])
             .context("Invalid UTF-8 in chunk size")?;
 
         let chunk_size = usize::from_str_radix(size_str.trim(), 16)

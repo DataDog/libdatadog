@@ -36,3 +36,7 @@ serial_test = "3.2"
 [target.'cfg(unix)'.dependencies]
 memfd = { version = "0.6" }
 libc = "0.2"
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"

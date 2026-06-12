@@ -1,9 +1,9 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::ffi::{CString, NulError};
 use libc::execve;
 use nix::errno::Errno;
-use std::ffi::CString;
 
 // The args_cstrings and env_vars_strings fields are just storage.  Even though they're
 // unreferenced, they're a necessary part of the struct.
@@ -20,15 +20,15 @@ pub struct PreparedExecve {
 #[derive(Debug, thiserror::Error)]
 pub enum PreparedExecveError {
     #[error("Failed to convert binary path to CString: {0}")]
-    BinaryPathError(std::ffi::NulError),
+    BinaryPathError(NulError),
     #[error("Failed to convert argument to CString: {0}")]
-    ArgumentError(std::ffi::NulError),
+    ArgumentError(NulError),
     #[error("Failed to convert environment variable to CString: {0}")]
-    EnvironmentError(std::ffi::NulError),
+    EnvironmentError(NulError),
 }
 
-impl From<std::ffi::NulError> for PreparedExecveError {
-    fn from(err: std::ffi::NulError) -> Self {
+impl From<NulError> for PreparedExecveError {
+    fn from(err: NulError) -> Self {
         PreparedExecveError::BinaryPathError(err)
     }
 }
@@ -47,12 +47,12 @@ impl PreparedExecve {
         let args_cstrings: Vec<CString> = args
             .iter()
             .map(|s| CString::new(s.as_str()))
-            .collect::<Result<Vec<CString>, std::ffi::NulError>>()
+            .collect::<Result<Vec<CString>, NulError>>()
             .map_err(PreparedExecveError::ArgumentError)?;
         let args_ptrs: Vec<*const libc::c_char> = args_cstrings
             .iter()
             .map(|arg| arg.as_ptr())
-            .chain(std::iter::once(std::ptr::null())) // Adds a null pointer to the end of the list
+            .chain(core::iter::once(core::ptr::null())) // Adds a null pointer to the end of the list
             .collect();
 
         // Allocate and store environment variables
@@ -62,12 +62,12 @@ impl PreparedExecve {
                 let env_str = format!("{key}={value}");
                 CString::new(env_str)
             })
-            .collect::<Result<Vec<CString>, std::ffi::NulError>>()
+            .collect::<Result<Vec<CString>, NulError>>()
             .map_err(PreparedExecveError::EnvironmentError)?;
         let env_vars_ptrs: Vec<*const libc::c_char> = env_vars_cstrings
             .iter()
             .map(|env| env.as_ptr())
-            .chain(std::iter::once(std::ptr::null())) // Adds a null pointer to the end of the list
+            .chain(core::iter::once(core::ptr::null())) // Adds a null pointer to the end of the list
             .collect();
 
         Ok(Self {
@@ -119,7 +119,7 @@ mod tests {
 
         // Verify the struct was created successfully
         // We can't directly access private fields, but we can verify the struct exists
-        assert!(std::mem::size_of_val(&prepared) > 0);
+        assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
     #[test]
@@ -131,7 +131,7 @@ mod tests {
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();
 
         // Should still create successfully with empty args and env
-        assert!(std::mem::size_of_val(&prepared) > 0);
+        assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
     #[test]
@@ -152,7 +152,7 @@ mod tests {
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();
 
         // Should handle complex arguments and environment variables
-        assert!(std::mem::size_of_val(&prepared) > 0);
+        assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
     #[test]
@@ -228,7 +228,7 @@ mod tests {
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();
 
         // Should handle Unicode characters
-        assert!(std::mem::size_of_val(&prepared) > 0);
+        assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
     #[test]
@@ -240,7 +240,7 @@ mod tests {
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();
 
         // Should handle large numbers of arguments
-        assert!(std::mem::size_of_val(&prepared) > 0);
+        assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
     #[test]
@@ -254,7 +254,7 @@ mod tests {
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();
 
         // Should handle large numbers of environment variables
-        assert!(std::mem::size_of_val(&prepared) > 0);
+        assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
     #[test]
@@ -266,7 +266,7 @@ mod tests {
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();
 
         // Should handle empty binary path (though this might not be valid for execve)
-        assert!(std::mem::size_of_val(&prepared) > 0);
+        assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
     #[test]
@@ -281,7 +281,7 @@ mod tests {
         let prepared = PreparedExecve::new(binary_path, &args, &env).unwrap();
 
         // Should handle empty keys and values
-        assert!(std::mem::size_of_val(&prepared) > 0);
+        assert!(core::mem::size_of_val(&prepared) > 0);
     }
 
     #[test]

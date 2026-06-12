@@ -123,3 +123,7 @@ bench-utils = ["dep:criterion"]
 # normal environments, so we need to let the rust linter know that it is in
 # fact a real thing, though one that shows up only in some situations.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"

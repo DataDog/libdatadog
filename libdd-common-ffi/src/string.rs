@@ -29,7 +29,7 @@ impl From<String> for StringWrapper {
 
 impl From<StringWrapper> for String {
     fn from(mut value: StringWrapper) -> Self {
-        let msg = std::mem::take(&mut value.message);
+        let msg = core::mem::take(&mut value.message);
         #[allow(clippy::unwrap_used)]
         String::from_utf8(msg.into()).unwrap()
     }
