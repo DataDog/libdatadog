@@ -37,7 +37,7 @@ fn normalize_name_bench(c: &mut Criterion) {
 
 #[inline]
 fn normalize_fnmut_string<F>(
-    mut group: BenchmarkGroup<WallTime>,
+    mut group: BenchmarkGroup<'_, WallTime>,
     cases: &[&str],
     elements: usize,
     function_name: &str,

@@ -381,6 +381,6 @@ mod tests {
     fn test_name() {
         let mut v = input.to_owned();
         normalize_tag(&mut v);
-        assert_eq!(v, expected)
+        assert_eq!(v, expected);
     }
 }

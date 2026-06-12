@@ -15,7 +15,9 @@ const MAX_LINKS_SIZE: u8 = 10;
 const MAX_EVENTS_SIZE: u8 = 10;
 
 /// Helper function to generate an arbitrary `AttributeAnyValue`
-fn arbitrary_attribute_any_value(u: &mut Unstructured) -> arbitrary::Result<pb::AttributeAnyValue> {
+fn arbitrary_attribute_any_value(
+    u: &mut Unstructured<'_>,
+) -> arbitrary::Result<pb::AttributeAnyValue> {
     let value_type: u8 = u.arbitrary()?;
 
     match value_type % 4 {
