@@ -380,6 +380,7 @@ impl From<AssignmentReason> for Reason {
         match value {
             AssignmentReason::TargetingMatch => Reason::TargetingMatch,
             AssignmentReason::Split => Reason::Split,
+            AssignmentReason::Default => Reason::Default,
             AssignmentReason::Static => Reason::Static,
         }
     }

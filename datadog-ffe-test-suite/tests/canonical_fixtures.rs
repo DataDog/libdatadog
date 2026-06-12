@@ -117,6 +117,7 @@ fn reason_from_assignment(reason: AssignmentReason) -> &'static str {
     match reason {
         AssignmentReason::TargetingMatch => "TARGETING_MATCH",
         AssignmentReason::Split => "SPLIT",
+        AssignmentReason::Default => "DEFAULT",
         AssignmentReason::Static => "STATIC",
     }
 }
