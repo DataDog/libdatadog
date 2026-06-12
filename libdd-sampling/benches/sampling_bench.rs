@@ -435,4 +435,4 @@ criterion_group!(
     config = memory_allocated_measurement(&GLOBAL);
     targets = criterion_benchmark_allocs
 );
-criterion_main!(benches, alloc_benches);
+criterion_main!(alloc_benches, benches);

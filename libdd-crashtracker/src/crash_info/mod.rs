@@ -40,13 +40,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs::File, path::Path};
 
-pub fn build_crash_ping_message(sig_info: &SigInfo) -> String {
-    format!(
-        "Crashtracker crash ping: crash processing started - Process terminated by signal {:?}",
-        sig_info.si_signo_human_readable
-    )
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CrashInfo {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -80,7 +73,7 @@ pub struct CrashInfo {
 
 impl CrashInfo {
     pub fn current_schema_version() -> String {
-        "1.7".to_string()
+        "1.8".to_string()
     }
 
     pub fn demangle_names(&mut self) -> anyhow::Result<()> {
@@ -184,7 +177,7 @@ mod tests {
     fn test_schema_matches_rfc() {
         let rfc_schema_filename = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_7.json"
+            "/../docs/RFCs/artifacts/crashtracker-unified-runtime-stack-schema-v1_8.json"
         );
         let schema = schemars::schema_for!(CrashInfo);
         let schema_json = serde_json::to_string_pretty(&schema).expect("Schema to serialize");

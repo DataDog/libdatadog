@@ -121,6 +121,10 @@ impl CrashPing {
         self.siginfo.as_ref()
     }
 
+    pub fn kind(&self) -> ErrorKind {
+        self.kind.clone()
+    }
+
     pub fn upload_to_endpoint(&self, endpoint: &Option<Endpoint>) -> anyhow::Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -141,11 +145,7 @@ impl CrashPing {
         let telemetry_future = telemetry_uploader.upload_crash_ping(self);
 
         if errors_intake_uploader.is_enabled() {
-            let errors_intake_future = errors_intake_uploader.upload_crash_ping(
-                &self.crash_uuid,
-                self.siginfo.as_ref(),
-                self.metadata(),
-            );
+            let errors_intake_future = errors_intake_uploader.upload_crash_ping(self);
             let (_telemetry_result, _errors_intake_result) =
                 tokio::join!(telemetry_future, errors_intake_future);
         } else {
@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(
             HashSet::from_iter([
                 "collecting_sample:1",
-                "data_schema_version:1.7",
+                "data_schema_version:1.8",
                 "incomplete:true",
                 "is_crash:true",
                 "not_profiling:0",

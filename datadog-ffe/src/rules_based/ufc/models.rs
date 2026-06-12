@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 
 use libdd_common::regex_engine::Regex;
 use serde::{Deserialize, Serialize};
@@ -537,7 +537,7 @@ pub(crate) struct SplitWire {
 #[allow(missing_docs)]
 pub(crate) struct ShardWire {
     pub salt: String,
-    pub total_shards: u32,
+    pub total_shards: NonZeroU32,
     pub ranges: Box<[ShardRange]>,
 }
 
@@ -557,24 +557,6 @@ impl ShardRange {
 #[cfg(test)]
 mod tests {
     use super::{TryParse, UniversalFlagConfigWire};
-
-    #[test]
-    #[cfg_attr(miri, ignore)] // this test is way too slow on miri
-    fn parse_flags_v1() {
-        let json_content = std::fs::read_to_string("tests/data/flags-v1.json").unwrap();
-        let ufc: UniversalFlagConfigWire = serde_json::from_str(&json_content).unwrap();
-
-        let failures = ufc
-            .flags
-            .values()
-            .filter(|it| matches!(it, TryParse::ParseFailed(_)))
-            .count();
-        assert!(
-            failures == 0,
-            "failed to parse {failures}/{} flags",
-            ufc.flags.len()
-        );
-    }
 
     #[test]
     fn parse_partially_if_unexpected() {

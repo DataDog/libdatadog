@@ -157,6 +157,10 @@ impl CrashtrackerConfiguration {
         self.use_alt_stack = use_alt_stack;
         Ok(())
     }
+
+    pub fn set_unix_socket_path(&mut self, path: String) {
+        self.unix_socket_path = Some(path);
+    }
 }
 
 #[cfg(test)]

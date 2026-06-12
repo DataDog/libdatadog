@@ -1,0 +1,10 @@
+# Source of truth for the nightly Rust toolchain used by CI jobs that genuinely
+# require a nightly compiler (rustfmt unstable_features, cargo-miri, cargo-bolero,
+# cargo-llvm-cov doc tests, cargo-public-api). NOT read by rustup — workflows
+# parse `channel` from this file via the same awk pattern as `rust-toolchain.toml`
+# and pass the value through `RUSTUP_TOOLCHAIN` or as an explicit toolchain arg.
+#
+# Format mirrors `rust-toolchain.toml` so a single parser handles both files.
+
+[toolchain]
+channel = "nightly-2026-02-08"

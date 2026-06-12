@@ -6,7 +6,7 @@ mod tracing_integration_tests {
     use http_body_util::BodyExt;
     #[cfg(target_os = "linux")]
     use hyper::Uri;
-    use libdd_capabilities_impl::{HttpClientTrait, NativeCapabilities};
+    use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
     #[cfg(target_os = "linux")]
     use libdd_common::connector::uds::socket_path_to_uri;
     use libdd_common::{http_common, Endpoint};
@@ -17,7 +17,6 @@ mod tracing_integration_tests {
     use libdd_trace_utils::trace_utils::TracerHeaderTags;
     use libdd_trace_utils::tracer_payload::{decode_to_trace_chunks, TraceEncoding};
     use serde_json::json;
-    use std::collections::HashMap;
     #[cfg(target_os = "linux")]
     use std::fs::Permissions;
     #[cfg(target_os = "linux")]
@@ -191,7 +190,7 @@ mod tracing_integration_tests {
         root_span.name = BytesString::from("test_send_data_v04_trace_meta_struct_snapshot_01");
         root_span.r#type = BytesString::from("web");
         root_span.meta_struct =
-            HashMap::from([(BytesString::from("appsec"), Bytes::from(meta_struct_data))]);
+            vec![(BytesString::from("appsec"), Bytes::from(meta_struct_data))].into();
 
         let encoded_data = rmp_serde::to_vec_named(&vec![vec![root_span]]).unwrap();
 

@@ -7,7 +7,7 @@ use crate::span::v05::dict::SharedDict;
 use crate::span::{v05, TraceData};
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
-use crate::tracer_payload::{self, TraceChunks};
+use crate::tracer_payload::{self, TraceChunks, TraceEncoding};
 use anyhow::anyhow;
 use bytes::buf::Reader;
 use bytes::Buf;
@@ -262,13 +262,34 @@ where
     Ok((body_size, traces))
 }
 
-/// Tags gathered from a trace's root span
+/// Tags extracted from a tracer payload's traces, used to populate top level tracer payload fields.
 #[derive(Default)]
-pub struct RootSpanTags<'a> {
-    pub env: &'a str,
-    pub app_version: &'a str,
-    pub hostname: &'a str,
-    pub runtime_id: &'a str,
+pub struct TracerPayloadTags {
+    pub env: String,
+    pub app_version: String,
+    pub hostname: String,
+    pub runtime_id: String,
+}
+
+/// Returns the first non-empty value of `field` found in `trace`, searching the root span first
+/// then all other spans.
+fn search_trace_for_field(root: &pb::Span, trace: &[pb::Span], field: &str) -> Option<String> {
+    if let Some(v) = root.meta.get(field) {
+        if !v.is_empty() {
+            return Some(v.clone());
+        }
+    }
+    for span in trace {
+        if span.span_id == root.span_id {
+            continue;
+        }
+        if let Some(v) = span.meta.get(field) {
+            if !v.is_empty() {
+                return Some(v.clone());
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
@@ -284,16 +305,16 @@ pub(crate) fn construct_trace_chunk(trace: Vec<pb::Span>) -> pb::TraceChunk {
 pub(crate) fn construct_tracer_payload(
     chunks: Vec<pb::TraceChunk>,
     tracer_tags: &TracerHeaderTags,
-    root_span_tags: RootSpanTags,
+    tracer_payload_tags: TracerPayloadTags,
 ) -> pb::TracerPayload {
     pb::TracerPayload {
-        app_version: root_span_tags.app_version.to_string(),
+        app_version: tracer_payload_tags.app_version,
         language_name: tracer_tags.lang.to_string(),
         container_id: tracer_tags.container_id.to_string(),
-        env: root_span_tags.env.to_string(),
-        runtime_id: root_span_tags.runtime_id.to_string(),
+        env: tracer_payload_tags.env,
+        runtime_id: tracer_payload_tags.runtime_id,
         chunks,
-        hostname: root_span_tags.hostname.to_string(),
+        hostname: tracer_payload_tags.hostname,
         language_version: tracer_tags.lang_version.to_string(),
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),
@@ -403,19 +424,19 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     }
     for span in trace.iter_mut() {
         if span.parent_id == 0 {
-            set_top_level_span(span, true);
+            set_top_level_span(span);
             continue;
         }
         match span_id_to_service.get(&span.parent_id) {
             Some(parent_span_service) => {
                 if !parent_span_service.eq(&span.service) {
                     // parent is not in the same service
-                    set_top_level_span(span, true)
+                    set_top_level_span(span)
                 }
             }
             None => {
                 // span has no parent in chunk
-                set_top_level_span(span, true)
+                set_top_level_span(span)
             }
         }
     }
@@ -429,12 +450,8 @@ pub fn has_top_level(span: &pb::Span) -> bool {
         || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
 }
 
-fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
-    if is_top_level {
-        span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
-    } else {
-        span.metrics.remove(TOP_LEVEL_KEY);
-    }
+fn set_top_level_span(span: &mut pb::Span) {
+    span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
 pub fn set_serverless_root_span_tags(
@@ -569,42 +586,24 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     }
 }
 
-/// Used to populate root_span_tags fields if they exist in the root span's meta tags
-macro_rules! parse_root_span_tags {
-    (
-        $root_span_meta_map:ident,
-        { $($tag:literal => $($root_span_tags_struct_field:ident).+ ,)+ }
-    ) => {
-        $(
-            if let Some(root_span_tag_value) = $root_span_meta_map.get($tag) {
-                $($root_span_tags_struct_field).+ = root_span_tag_value;
-            }
-        )+
-    }
-}
-
 pub fn collect_trace_chunks<T: TraceData>(
     traces: Vec<Vec<crate::span::v04::Span<T>>>,
-    use_v05_format: bool,
+    format: TraceEncoding,
 ) -> anyhow::Result<TraceChunks<T>> {
-    if use_v05_format {
-        let mut shared_dict = SharedDict::default();
-        let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
-        for trace in traces {
-            let trace_len = trace.len();
-            let v05_trace = trace.into_iter().try_fold(
-                Vec::with_capacity(trace_len),
-                |mut acc, span| -> anyhow::Result<Vec<v05::Span>> {
-                    acc.push(v05::from_v04_span(span, &mut shared_dict)?);
-                    Ok(acc)
-                },
-            )?;
-
-            v05_traces.push(v05_trace);
+    match format {
+        TraceEncoding::V05 => {
+            let mut shared_dict = SharedDict::default();
+            let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
+            for trace in traces {
+                let v05_trace = trace
+                    .into_iter()
+                    .map(|span| v05::from_v04_span(span, &mut shared_dict))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                v05_traces.push(v05_trace);
+            }
+            Ok(TraceChunks::V05((shared_dict, v05_traces)))
         }
-        Ok(TraceChunks::V05((shared_dict, v05_traces)))
-    } else {
-        Ok(TraceChunks::V04(traces))
+        TraceEncoding::V04 => Ok(TraceChunks::V04(traces)),
     }
 }
 
@@ -617,8 +616,7 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
     let mut trace_chunks: Vec<pb::TraceChunk> = Vec::new();
 
     // We'll skip setting the global metadata and rely on the agent to unpack these
-    let mut gathered_root_span_tags = !is_agentless;
-    let mut root_span_tags = RootSpanTags::default();
+    let mut tracer_payload_tags = TracerPayloadTags::default();
 
     for trace in traces.iter_mut() {
         if is_agentless {
@@ -656,23 +654,40 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
 
         trace_chunks.push(chunk);
 
-        if !gathered_root_span_tags {
-            gathered_root_span_tags = true;
-            let meta_map = &trace[root_span_index].meta;
-            parse_root_span_tags!(
-                meta_map,
-                {
-                    "env" => root_span_tags.env,
-                    "version" => root_span_tags.app_version,
-                    "_dd.hostname" => root_span_tags.hostname,
-                    "runtime-id" => root_span_tags.runtime_id,
+        if is_agentless {
+            // Check each field independently so that a later trace can fill in fields missing
+            // from an earlier trace.
+            let root = &trace[root_span_index];
+            if tracer_payload_tags.env.is_empty() {
+                if let Some(mut v) = search_trace_for_field(root, trace, "env") {
+                    // Normalize env tag in case the span it was pulled from was skipped during
+                    // normalization
+                    libdd_trace_normalization::normalize_utils::normalize_tag(&mut v);
+                    if !v.is_empty() {
+                        tracer_payload_tags.env = v;
+                    }
                 }
-            );
+            }
+            if tracer_payload_tags.app_version.is_empty() {
+                if let Some(v) = search_trace_for_field(root, trace, "version") {
+                    tracer_payload_tags.app_version = v;
+                }
+            }
+            if tracer_payload_tags.hostname.is_empty() {
+                if let Some(v) = search_trace_for_field(root, trace, "_dd.hostname") {
+                    tracer_payload_tags.hostname = v;
+                }
+            }
+            if tracer_payload_tags.runtime_id.is_empty() {
+                if let Some(v) = search_trace_for_field(root, trace, "runtime-id") {
+                    tracer_payload_tags.runtime_id = v;
+                }
+            }
         }
     }
 
     Ok(TracerPayloadCollection::V07(vec![
-        construct_tracer_payload(trace_chunks, tracer_header_tags, root_span_tags),
+        construct_tracer_payload(trace_chunks, tracer_header_tags, tracer_payload_tags),
     ]))
 }
 
@@ -1109,7 +1124,7 @@ mod tests {
     fn test_collect_trace_chunks_v05() {
         let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
 
-        let collection = collect_trace_chunks(vec![chunk], true).unwrap();
+        let collection = collect_trace_chunks(vec![chunk], TraceEncoding::V05).unwrap();
 
         let (dict, traces) = match collection {
             TraceChunks::V05(payload) => payload,
@@ -1178,6 +1193,27 @@ mod tests {
                 .unwrap(),
             1.0
         );
+    }
+
+    #[test]
+    fn test_collect_trace_chunks_v04() {
+        let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
+
+        let collection = collect_trace_chunks(vec![chunk], TraceEncoding::V04).unwrap();
+
+        let traces = match collection {
+            TraceChunks::V04(traces) => traces,
+            _ => panic!("Unexpected type"),
+        };
+
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].len(), 1);
+        let span = &traces[0][0];
+        assert_eq!(span.trace_id, 123);
+        assert_eq!(span.span_id, 456);
+        assert_eq!(span.parent_id, 789);
+        assert_eq!(span.start, 1);
+        assert_eq!(span.error, 0);
     }
 
     #[test]
@@ -1277,5 +1313,241 @@ mod tests {
         assert!(!span.meta.contains_key("aas.site.name"));
         assert!(!span.meta.contains_key("aas.site.kind"));
         assert!(!span.meta.contains_key("aas.site.type"));
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_searches_multiple_root_spans_for_fields() {
+        // First trace root span has no fields. Second trace root span has all fields.
+        // The second root span should populate all fields.
+        let mut first_root_span = create_test_span(1, 1, 0, 1, true);
+        first_root_span.meta.remove("env");
+        first_root_span.meta.remove("runtime-id");
+
+        let mut second_root_span = create_test_span(2, 3, 0, 1, true);
+        second_root_span
+            .meta
+            .insert("version".to_string(), "1.2.3".to_string());
+        second_root_span
+            .meta
+            .insert("env".to_string(), "prod".to_string());
+        second_root_span
+            .meta
+            .insert("_dd.hostname".to_string(), "my-host".to_string());
+        second_root_span
+            .meta
+            .insert("runtime-id".to_string(), "123".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![first_root_span], vec![second_root_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].app_version, "1.2.3");
+        assert_eq!(payloads[0].env, "prod");
+        assert_eq!(payloads[0].hostname, "my-host");
+        assert_eq!(payloads[0].runtime_id, "123");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_searches_non_root_spans_for_fields() {
+        // Root span has no fields. Child span has all fields.
+        // The child span should populate all fields.
+        let mut root_span = create_test_span(1, 1, 0, 1, true);
+        root_span.meta.remove("env");
+        root_span.meta.remove("runtime-id");
+        let mut child_span = create_test_span(1, 2, 1, 1, false);
+        child_span
+            .meta
+            .insert("version".to_string(), "1.2.3".to_string());
+        child_span
+            .meta
+            .insert("env".to_string(), "prod".to_string());
+        child_span
+            .meta
+            .insert("_dd.hostname".to_string(), "my-host".to_string());
+        child_span
+            .meta
+            .insert("runtime-id".to_string(), "123".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![root_span, child_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].app_version, "1.2.3");
+        assert_eq!(payloads[0].env, "prod");
+        assert_eq!(payloads[0].hostname, "my-host");
+        assert_eq!(payloads[0].runtime_id, "123");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_root_span_takes_priority_over_child() {
+        // Root span has all fields. Child has different values for all fields.
+        // The root span should populate all fields.
+        let mut root_span = create_test_span(1, 1, 0, 1, true);
+        root_span
+            .meta
+            .insert("version".to_string(), "root-version".to_string());
+        root_span
+            .meta
+            .insert("env".to_string(), "root-env".to_string());
+        root_span
+            .meta
+            .insert("_dd.hostname".to_string(), "root-host".to_string());
+        root_span
+            .meta
+            .insert("runtime-id".to_string(), "root-runtime-id".to_string());
+
+        let mut child_span = create_test_span(1, 2, 1, 1, false);
+        child_span
+            .meta
+            .insert("version".to_string(), "child-version".to_string());
+        child_span
+            .meta
+            .insert("env".to_string(), "child-env".to_string());
+        child_span
+            .meta
+            .insert("_dd.hostname".to_string(), "child-host".to_string());
+        child_span
+            .meta
+            .insert("runtime-id".to_string(), "child-runtime-id".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![root_span, child_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].app_version, "root-version");
+        assert_eq!(payloads[0].env, "root-env");
+        assert_eq!(payloads[0].hostname, "root-host");
+        assert_eq!(payloads[0].runtime_id, "root-runtime-id");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_skips_empty_root_span_value() {
+        // Root span has empty values for all fields. Child span has non-empty values.
+        // The child span should populate all fields.
+        let mut root_span = create_test_span(1, 1, 0, 1, true);
+        root_span.meta.insert("version".to_string(), "".to_string());
+        root_span.meta.insert("env".to_string(), "".to_string());
+        root_span
+            .meta
+            .insert("_dd.hostname".to_string(), "".to_string());
+        root_span
+            .meta
+            .insert("runtime-id".to_string(), "".to_string());
+
+        let mut child_span = create_test_span(1, 2, 1, 1, false);
+        child_span
+            .meta
+            .insert("version".to_string(), "1.2.3".to_string());
+        child_span
+            .meta
+            .insert("env".to_string(), "prod".to_string());
+        child_span
+            .meta
+            .insert("_dd.hostname".to_string(), "my-host".to_string());
+        child_span
+            .meta
+            .insert("runtime-id".to_string(), "123".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![root_span, child_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].app_version, "1.2.3");
+        assert_eq!(payloads[0].env, "prod");
+        assert_eq!(payloads[0].hostname, "my-host");
+        assert_eq!(payloads[0].runtime_id, "123");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_normalizes_env() {
+        let mut root = create_test_span(1, 1, 0, 1, true);
+        root.meta
+            .insert("env".to_string(), "PRODUCTION".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![root]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].env, "production");
+    }
+
+    #[test]
+    fn test_collect_pb_trace_chunks_skips_env_empty_after_normalization() {
+        // First root span has an env that normalizes to empty (all invalid characters).
+        // Second root span has an env should populate env fields.
+        let mut first_root_span = create_test_span(1, 1, 0, 1, true);
+        first_root_span
+            .meta
+            .insert("env".to_string(), "!!!".to_string());
+
+        let mut second_root_span = create_test_span(2, 3, 0, 1, true);
+        second_root_span
+            .meta
+            .insert("env".to_string(), "prod".to_string());
+
+        let result = collect_pb_trace_chunks(
+            vec![vec![first_root_span], vec![second_root_span]],
+            &TracerHeaderTags::default(),
+            &mut tracer_payload::DefaultTraceChunkProcessor,
+            true,
+        )
+        .unwrap();
+
+        let TracerPayloadCollection::V07(payloads) = result else {
+            panic!("expected TracerPayloadCollection::V07");
+        };
+        assert_eq!(payloads[0].env, "prod");
+    }
+
+    #[test]
+    fn test_search_trace_for_field_skips_span_with_same_id_as_root() {
+        // A span with the same span_id as root is treated as the root and skipped
+        // in the child span search. Only the root spans own meta is checked for it.
+        let mut root = create_test_span(1, 1, 0, 1, true);
+        root.meta.remove("version");
+
+        // This span shares the same span_id as the root span, it should be skipped.
+        let mut duplicate = create_test_span(1, 1, 0, 1, false);
+        duplicate
+            .meta
+            .insert("version".to_string(), "should-not-appear".to_string());
+
+        let trace = vec![root.clone(), duplicate];
+        assert_eq!(search_trace_for_field(&root, &trace, "version"), None);
     }
 }

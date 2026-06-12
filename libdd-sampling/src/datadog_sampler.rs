@@ -187,15 +187,18 @@ impl DatadogSampler {
     }
 }
 
-/// Formats a sampling rate with up to 6 significant digits, stripping trailing zeros.
+/// Formats a sampling rate with up to 6 decimal places, stripping trailing zeros.
 ///
-/// This matches the Go behavior of `strconv.FormatFloat(rate, 'g', 6, 64)`.
+/// Matches `strconv.FormatFloat(rate, 'f', 6, 64)` in Go, after trailing-zero
+/// stripping. Rates below 5e-7 round to `"0"`.
 ///
 /// # Examples
 /// - `1.0` → `Some("1")`
 /// - `0.5` → `Some("0.5")`
 /// - `0.7654321` → `Some("0.765432")`
 /// - `0.100000` → `Some("0.1")`
+/// - `0.0000001` → `Some("0")` (rounds below the 6th decimal place)
+/// - `0.00000051` → `Some("0.000001")` (rounds up to one millionth)
 /// - `-0.1` → `None`
 /// - `1.1` → `None`
 fn format_sampling_rate(rate: f64) -> Option<String> {
@@ -203,29 +206,8 @@ fn format_sampling_rate(rate: f64) -> Option<String> {
         return None;
     }
 
-    if rate == 0.0 {
-        return Some("0".to_string());
-    }
-
-    let digits = 6_i32;
-    let magnitude = rate.abs().log10().floor() as i32;
-    let scale = 10f64.powi(digits - 1 - magnitude);
-    let rounded = (rate * scale).round() / scale;
-
-    // Determine decimal places needed for 6 significant digits
-    let decimal_places = if magnitude >= digits - 1 {
-        0
-    } else {
-        (digits - 1 - magnitude) as usize
-    };
-
-    let s = format!("{:.prec$}", rounded, prec = decimal_places);
-    // Strip trailing zeros after decimal point
-    Some(if s.contains('.') {
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
-    } else {
-        s
-    })
+    let s = format!("{rate:.6}");
+    Some(s.trim_end_matches('0').trim_end_matches('.').to_string())
 }
 
 pub struct TraceRootSamplingInfo {
@@ -1178,7 +1160,7 @@ mod tests {
         assert_eq!(format_sampling_rate(0.100000), Some("0.1".to_string()));
         assert_eq!(format_sampling_rate(0.500000), Some("0.5".to_string()));
 
-        // Truncation to 6 significant digits
+        // Truncation to 6 decimal places
         assert_eq!(
             format_sampling_rate(0.7654321),
             Some("0.765432".to_string())
@@ -1190,6 +1172,15 @@ mod tests {
 
         // Small values
         assert_eq!(format_sampling_rate(0.001), Some("0.001".to_string()));
+        assert_eq!(format_sampling_rate(0.000001), Some("0.000001".to_string()));
+
+        // Below the 6th decimal place rounds to "0"
+        assert_eq!(format_sampling_rate(0.0000001), Some("0".to_string()));
+        // Just above the round-up threshold lands on one millionth
+        assert_eq!(
+            format_sampling_rate(0.00000051),
+            Some("0.000001".to_string())
+        );
 
         // Boundary values
         assert_eq!(format_sampling_rate(0.75), Some("0.75".to_string()));

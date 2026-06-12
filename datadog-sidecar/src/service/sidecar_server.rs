@@ -15,6 +15,7 @@ use datadog_ipc::{PeerCredentials, SeqpacketConn};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
+use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
 use libdd_trace_utils::tracer_payload::TraceEncoding;
@@ -35,6 +36,8 @@ use crate::service::debugger_diagnostics_bookkeeper::{
     DebuggerDiagnosticsBookkeeper, DebuggerDiagnosticsBookkeeperStats,
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
+use crate::service::ffe_exposures_flusher;
+use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
     flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
@@ -43,9 +46,10 @@ use crate::service::stats_flusher::{
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
-use datadog_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
+use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::Config;
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
@@ -109,6 +113,10 @@ pub struct SidecarServer {
     debugger_diagnostics_bookkeeper: Arc<DebuggerDiagnosticsBookkeeper>,
     /// Per-env&version SHM span concentrators (global across all sessions).
     pub(crate) span_concentrators: Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
+    /// HTTP client shared by FFE fire-and-forget forwarders for connection reuse.
+    pub(crate) ffe_http_client: NativeCapabilities,
+    /// Sidecar-owned exposure cache, shared across sessions/connections.
+    pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -240,6 +248,7 @@ impl SidecarServer {
         headers: &SerializedTracerHeaderTags,
         data: tinybytes::Bytes,
         target: &Endpoint,
+        retry_interval: u64,
     ) {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
@@ -259,12 +268,15 @@ impl SidecarServer {
         match decode_to_trace_chunks(data, TraceEncoding::V04) {
             Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                let data = SendData::new(
+                let mut data = SendData::new(
                     size,
                     payload.into_tracer_payload_collection(),
                     headers,
                     target,
                 );
+                let strategy =
+                    RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
+                data.set_retry_strategy(strategy);
                 self.trace_flusher.enqueue(data);
             }
             Err(e) => {
@@ -404,6 +416,56 @@ impl SidecarInterface for ConnectionSidecarHandler {
             trace_config.language_version.clone(),
             trace_config.tracer_version.clone(),
         );
+
+        let ffe_http_client = self.server.ffe_http_client.clone();
+        let actions: Vec<SidecarAction> = actions
+            .into_iter()
+            .filter(|a| match a {
+                SidecarAction::FfeExposureBatch(batch) => {
+                    if let Some(base) = trace_config.endpoint.as_ref() {
+                        if let Some(ep) = ffe_exposures_flusher::exposure_endpoint(base) {
+                            let batch = batch.clone();
+                            let client = ffe_http_client.clone();
+                            let deduplicator = self.server.ffe_exposure_deduplicator.clone();
+                            tokio::spawn(async move {
+                                ffe_exposures_flusher::send_batch(
+                                    &client,
+                                    &ep,
+                                    &deduplicator,
+                                    batch,
+                                )
+                                .await;
+                            });
+                        } else {
+                            debug!(
+                                "ffe_exposures_flusher: could not derive endpoint, dropping batch"
+                            );
+                        }
+                    } else {
+                        debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
+                    }
+                    false
+                }
+                SidecarAction::FfeEvaluationMetrics { context, metrics } => {
+                    if let Some(ep) = session.get_otlp_metrics_endpoint().clone() {
+                        let client = ffe_http_client.clone();
+                        let context = context.clone();
+                        let metrics = metrics.clone();
+                        tokio::spawn(async move {
+                            ffe_metrics_flusher::send_metrics(&client, &ep, context, metrics).await;
+                        });
+                    } else {
+                        debug!("ffe_metrics_flusher: no configured endpoint, dropping batch");
+                    }
+                    false
+                }
+                _ => true,
+            })
+            .collect();
+
+        if actions.is_empty() {
+            return;
+        }
 
         let rt_info = self.server.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
@@ -664,6 +726,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
             cfg.language.clone_from(&config.language);
             cfg.language_version.clone_from(&config.language_version);
             cfg.tracer_version.clone_from(&config.tracer_version);
+            cfg.retry_interval = config.retry_interval.as_millis() as u64;
+        });
+        session.modify_otlp_metrics_endpoint(|endpoint| {
+            *endpoint = config.otlp_metrics_endpoint.clone();
         });
         session.configure_dogstatsd(|dogstatsd| {
             let d = new(config.dogstatsd_endpoint.clone()).ok();
@@ -784,19 +850,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
         headers: SerializedTracerHeaderTags,
     ) {
         self.track_instance(&instance_id);
-        if let Some(endpoint) = self
-            .server
-            .get_session(&instance_id.session_id)
-            .get_trace_config()
-            .endpoint
-            .clone()
-        {
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+        if let Some(endpoint) = trace_config.endpoint.clone() {
             let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
                         let bytes = tinybytes::Bytes::from(mapped);
-                        server.send_trace_v04(&headers, bytes, &endpoint);
+                        server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -817,17 +880,15 @@ impl SidecarInterface for ConnectionSidecarHandler {
         headers: SerializedTracerHeaderTags,
     ) {
         self.track_instance(&instance_id);
-        if let Some(endpoint) = self
-            .server
-            .get_session(&instance_id.session_id)
-            .get_trace_config()
-            .endpoint
-            .clone()
-        {
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+
+        if let Some(endpoint) = trace_config.endpoint.clone() {
             let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
-                server.send_trace_v04(&headers, bytes, &endpoint);
+                server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
             });
         } else {
             warn!(
@@ -910,6 +971,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        remote_config_generation: u64,
     ) {
         self.track_instance(&instance_id);
         debug!("Registered remote config metadata: instance {instance_id:?}, queue_id: {queue_id:?}, service: {service_name}, env: {env_name}, version: {app_version}");
@@ -925,6 +987,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         app.update_remote_config(
             &self.server.remote_configs,
             &session,
+            instance_id,
+            remote_config_generation,
             notify_target,
             dynamic_instrumentation_state,
         );
@@ -948,6 +1012,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
         app.update_remote_config(
             &self.server.remote_configs,
             &session,
+            instance_id,
+            0u64,
             notify_target,
             dynamic_instrumentation_state,
         );
@@ -1052,6 +1118,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session.modify_trace_config(|trace_cfg| {
             trace_cfg.set_endpoint_test_token(token.clone());
         });
+        session.modify_otlp_metrics_endpoint(|endpoint| {
+            if let Some(endpoint) = endpoint {
+                endpoint.test_token = token.clone();
+            }
+        });
         // Update the stats config so newly created concentrators carry the test token.
         session.modify_stats_config(|cfg| {
             cfg.endpoint.test_token = token.clone();
@@ -1072,6 +1143,226 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let stats = self.server.compute_stats().await;
         #[allow(clippy::expect_used)]
         simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::{FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeTelemetryContext};
+    use httpmock::{Method::POST, MockServer};
+    use tokio::time::{sleep, Duration as TokioDuration};
+
+    fn ffe_context() -> FfeTelemetryContext {
+        FfeTelemetryContext {
+            service: "svc".to_owned(),
+            env: "prod".to_owned(),
+            version: "1".to_owned(),
+        }
+    }
+
+    fn ffe_exposure(subject_id: &str) -> FfeExposure {
+        FfeExposure {
+            timestamp_ms: 123,
+            flag_key: "flag".to_owned(),
+            subject_id: subject_id.to_owned(),
+            subject_attributes_json: "{}".to_owned(),
+            allocation_key: "alloc".to_owned(),
+            variant: "variant".to_owned(),
+        }
+    }
+
+    fn ffe_metric() -> FfeEvaluationMetric {
+        FfeEvaluationMetric {
+            flag_key: "flag".to_owned(),
+            variant: "variant".to_owned(),
+            reason: "TARGETING_MATCH".to_owned(),
+            error_type: None,
+            allocation_key: Some("alloc".to_owned()),
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn ffe_exposure_actions_dispatch_without_registered_application() {
+        let http_server = MockServer::start_async().await;
+        let exposures_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(ffe_exposures_flusher::EVP_EXPOSURES_PATH);
+                then.status(202);
+            })
+            .await;
+
+        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+
+        handler
+            .enqueue_actions(
+                PeerCredentials::default(),
+                instance_id.clone(),
+                queue_id,
+                vec![SidecarAction::FfeExposureBatch(FfeExposureBatch {
+                    context: ffe_context(),
+                    exposures: vec![ffe_exposure("user")],
+                })],
+            )
+            .await;
+
+        for _ in 0..100 {
+            if exposures_mock.calls_async().await == 1 {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+
+        exposures_mock.assert_async().await;
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn ffe_metric_actions_dispatch_without_registered_application() {
+        let http_server = MockServer::start_async().await;
+        let test_session_token = "ffe/evaluation_metrics_sidecar";
+        let metrics_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path("/v1/metrics")
+                    .header("x-datadog-test-session-token", test_session_token);
+                then.status(202);
+            })
+            .await;
+
+        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_otlp_metrics_endpoint(|endpoint| {
+                *endpoint = Some(Endpoint {
+                    url: http_server.url("/v1/metrics").parse().unwrap(),
+                    test_token: Some(test_session_token.into()),
+                    ..Endpoint::default()
+                });
+            });
+
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+
+        handler
+            .enqueue_actions(
+                PeerCredentials::default(),
+                instance_id.clone(),
+                queue_id,
+                vec![SidecarAction::FfeEvaluationMetrics {
+                    context: ffe_context(),
+                    metrics: vec![ffe_metric()],
+                }],
+            )
+            .await;
+
+        for _ in 0..100 {
+            if metrics_mock.calls_async().await == 1 {
+                break;
+            }
+            sleep(TokioDuration::from_millis(10)).await;
+        }
+
+        metrics_mock.assert_async().await;
+        assert!(!handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn registered_sdk_without_ffe_actions_does_not_emit_ffe_telemetry() {
+        let http_server = MockServer::start_async().await;
+        let exposures_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(ffe_exposures_flusher::EVP_EXPOSURES_PATH);
+                then.status(202);
+            })
+            .await;
+        let metrics_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1/metrics");
+                then.status(202);
+            })
+            .await;
+
+        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .entry(queue_id)
+            .or_default();
+
+        assert!(handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+
+        handler
+            .enqueue_actions(
+                PeerCredentials::default(),
+                instance_id,
+                queue_id,
+                Vec::new(),
+            )
+            .await;
+
+        sleep(TokioDuration::from_millis(50)).await;
+
+        assert_eq!(exposures_mock.calls_async().await, 0);
+        assert_eq!(metrics_mock.calls_async().await, 0);
     }
 }
 

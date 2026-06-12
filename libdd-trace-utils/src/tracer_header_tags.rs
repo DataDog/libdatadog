@@ -27,11 +27,14 @@ pub struct TracerHeaderTags<'a> {
     pub lang_vendor: &'a str,
     pub tracer_version: &'a str,
     pub container_id: &'a str,
-    // specifies that the client has marked top-level spans, when set. If the header is present
-    // this value will resolve to 'true'
+    // specifies that the client has marked top-level spans. Follows Go's isHeaderTrue rule:
+    // absent/empty → false; "0"/"f"/"F"/"false"/"False"/"FALSE" → false;
+    // every other non-empty value (including unparseable values like "yes") → true.
     pub client_computed_top_level: bool,
-    // specifies whether the client has computed stats so that the agent doesn't have to. If the
-    // header is present and is non-empty this value will resolve to 'true'
+    // specifies whether the client has computed stats so that the agent doesn't have to.
+    // Follows Go's isHeaderTrue rule: absent/empty → false;
+    // "0"/"f"/"F"/"false"/"False"/"FALSE" → false;
+    // every other non-empty value (including unparseable values like "yes") → true.
     pub client_computed_stats: bool,
     // number of trace chunks dropped in the tracer
     pub dropped_p0_traces: usize,
@@ -130,11 +133,11 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
                 "datadog-container-id" => tags.container_id,
             }
         );
-        if headers.get("datadog-client-computed-top-level").is_some() {
-            tags.client_computed_top_level = true;
+        if let Some(v) = headers.get("datadog-client-computed-top-level") {
+            tags.client_computed_top_level = is_header_true(v.to_str().unwrap_or_default());
         }
         if let Some(v) = headers.get("datadog-client-computed-stats") {
-            tags.client_computed_stats = !v.to_str().unwrap_or_default().is_empty();
+            tags.client_computed_stats = is_header_true(v.to_str().unwrap_or_default());
         }
         if let Some(count) = headers.get("datadog-client-dropped-p0-traces") {
             tags.dropped_p0_traces = count
@@ -148,6 +151,17 @@ impl<'a> From<&'a HeaderMap<HeaderValue>> for TracerHeaderTags<'a> {
         }
         tags
     }
+}
+
+/// Mirrors the Go trace-agent's `isHeaderTrue` (pkg/trace/api/api.go).
+/// Empty → false; the false-like values `strconv.ParseBool` recognizes
+/// (`0`, `f`, `F`, `FALSE`, `False`, `false`) → false;
+/// every other non-empty value (including unparseable values like `"yes"`) → true.
+fn is_header_true(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    !matches!(value, "0" | "f" | "F" | "FALSE" | "False" | "false")
 }
 
 #[cfg(test)]
@@ -282,6 +296,95 @@ mod tests {
         assert!(
             !tags.client_computed_stats,
             "expected client_computed_stats=false when datadog-client-computed-stats header is not set"
+        );
+    }
+
+    // Table-driven tests for is_header_true
+    #[test]
+    fn test_is_header_true() {
+        // values that should resolve to true
+        for val in &[
+            "1", "t", "T", "TRUE", "true", "True", "yes", "no", "maybe", "2",
+        ] {
+            assert!(
+                is_header_true(val),
+                "expected is_header_true({val:?}) == true"
+            );
+        }
+        // values that should resolve to false
+        for val in &["0", "f", "F", "FALSE", "False", "false", ""] {
+            assert!(
+                !is_header_true(val),
+                "expected is_header_true({val:?}) == false"
+            );
+        }
+    }
+
+    // Table-driven tests for client_computed_stats header
+    #[test]
+    fn test_header_map_to_tags_computed_stats_true_values() {
+        for val in &[
+            "1", "t", "T", "TRUE", "true", "True", "yes", "no", "maybe", "2",
+        ] {
+            let mut header_map = HeaderMap::new();
+            header_map.insert("datadog-client-computed-stats", val.parse().unwrap());
+            let tags: TracerHeaderTags = (&header_map).into();
+            assert!(
+                tags.client_computed_stats,
+                "expected client_computed_stats=true for value {val:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_map_to_tags_computed_stats_false_values() {
+        for val in &["0", "f", "F", "FALSE", "False", "false", ""] {
+            let mut header_map = HeaderMap::new();
+            header_map.insert("datadog-client-computed-stats", val.parse().unwrap());
+            let tags: TracerHeaderTags = (&header_map).into();
+            assert!(
+                !tags.client_computed_stats,
+                "expected client_computed_stats=false for value {val:?}"
+            );
+        }
+    }
+
+    // Table-driven tests for client_computed_top_level header
+    #[test]
+    fn test_header_map_to_tags_computed_top_level_true_values() {
+        for val in &[
+            "1", "t", "T", "TRUE", "true", "True", "yes", "no", "maybe", "2",
+        ] {
+            let mut header_map = HeaderMap::new();
+            header_map.insert("datadog-client-computed-top-level", val.parse().unwrap());
+            let tags: TracerHeaderTags = (&header_map).into();
+            assert!(
+                tags.client_computed_top_level,
+                "expected client_computed_top_level=true for value {val:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_map_to_tags_computed_top_level_false_values() {
+        for val in &["0", "f", "F", "FALSE", "False", "false", ""] {
+            let mut header_map = HeaderMap::new();
+            header_map.insert("datadog-client-computed-top-level", val.parse().unwrap());
+            let tags: TracerHeaderTags = (&header_map).into();
+            assert!(
+                !tags.client_computed_top_level,
+                "expected client_computed_top_level=false for value {val:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_header_map_to_tags_computed_top_level_not_set() {
+        let header_map = HeaderMap::new();
+        let tags: TracerHeaderTags = (&header_map).into();
+        assert!(
+            !tags.client_computed_top_level,
+            "expected client_computed_top_level=false when header is not set"
         );
     }
 }
