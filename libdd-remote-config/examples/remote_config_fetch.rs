@@ -8,6 +8,7 @@ use libdd_remote_config::file_change_tracker::{Change, FilePath};
 use libdd_remote_config::file_storage::ParsedFileStorage;
 use libdd_remote_config::RemoteConfigProduct::ApmTracing;
 use libdd_remote_config::{RemoteConfigParsed, Target};
+use std::process::Command;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -16,8 +17,45 @@ const SERVICE: &str = "testservice";
 const ENV: &str = "testenv";
 const VERSION: &str = "1.2.3";
 
+fn get_hostname() -> String {
+    Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    let hostname = get_hostname();
+    println!("Hostname: {hostname}");
+
+    let dd_api_key = std::env::var("DD_API_KEY").ok();
+    let dd_site = std::env::var("DD_SITE").ok();
+
+    let (endpoint, agentless_enabled) = match (dd_api_key, dd_site) {
+        (Some(api_key), Some(site)) => {
+            println!("DD_API_KEY and DD_SITE are set — enabling agentless mode (site: {site})");
+            let endpoint = Endpoint::agentless(&site, api_key)
+                .expect("Failed to build agentless endpoint from DD_SITE");
+            (endpoint, true)
+        }
+        _ => {
+            println!("DD_API_KEY / DD_SITE not set — connecting to local agent");
+            (
+                Endpoint {
+                    url: http::Uri::from_static("http://localhost:8126"),
+                    api_key: None,
+                    timeout_ms: 5000, // custom timeout, defaults to 3 seconds
+                    test_token: None,
+                    ..Default::default()
+                },
+                false,
+            )
+        }
+    };
+
     // SingleChangesFetcher is ideal for a single static (runtime_id, service, env, version) tuple
     // Otherwise a SharedFetcher (or even a MultiTargetFetcher for a potentially high number of
     // targets) for multiple targets is needed. These can be manually wired together with a
@@ -40,18 +78,16 @@ async fn main() {
             invariants: ConfigInvariants {
                 language: "awesomelang".to_string(),
                 tracer_version: "99.10.5".to_string(),
-                endpoint: Endpoint {
-                    url: http::Uri::from_static("http://localhost:8126"),
-                    api_key: None,
-                    timeout_ms: 5000, // custom timeout, defaults to 3 seconds
-                    test_token: None,
-                    ..Default::default()
-                },
+                endpoint,
+                hostname,
+                agentless_enabled,
             },
             products: vec![ApmTracing],
             capabilities: vec![],
         },
-    );
+    )
+    .await
+    .expect("Failed to create SingleChangesFetcher");
 
     loop {
         match fetcher.fetch_changes().await {

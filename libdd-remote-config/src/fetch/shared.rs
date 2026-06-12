@@ -275,7 +275,13 @@ impl SharedFetcher {
         S::StoredFile: RefcountedFile,
     {
         let state = storage.state.clone();
-        let mut fetcher = ConfigFetcher::new(storage, state);
+        let mut fetcher = match ConfigFetcher::new(storage, state).await {
+            Ok(f) => f,
+            Err(e) => {
+                error!("failed to create the fetcher{:?}", e);
+                return;
+            }
+        };
 
         let mut opaque_state = ConfigClientState::default();
 

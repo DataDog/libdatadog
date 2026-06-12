@@ -155,6 +155,7 @@ impl RemoteConfigServer {
                         })
                         .collect(),
                     client_configs: applied_files.keys().map(|k| k.to_string()).collect(),
+                    config_status: 0,
                 };
                 Response::new(http_common::Body::from(
                     serde_json::to_vec(&response).unwrap(),
@@ -215,6 +216,8 @@ impl RemoteConfigServer {
                 language: "php".to_string(),
                 tracer_version: "1.2.3".to_string(),
                 endpoint: self.endpoint.clone(),
+                hostname: "localhost".to_string(),
+                agentless_enabled: false,
             },
             products: vec![
                 RemoteConfigProduct::ApmTracing,

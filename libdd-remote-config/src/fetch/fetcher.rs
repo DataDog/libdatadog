@@ -1,6 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::agentless_client::{
+    make_agentless_configs_endpoint, AgentlessConfig, AgentlessFetcher, NativeAgentlessFetcher,
+};
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
@@ -50,7 +53,9 @@ pub trait FileStorage {
 pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
+    pub hostname: String,
     pub endpoint: Endpoint,
+    pub agentless_enabled: bool,
 }
 
 struct StoredTargetFile<S> {
@@ -156,7 +161,15 @@ impl<S> ConfigFetcherState<S> {
     pub fn new(invariants: ConfigInvariants) -> Self {
         ConfigFetcherState {
             target_files_by_path: Default::default(),
-            endpoint: get_agent_configs_endpoint(&invariants.endpoint),
+            endpoint: if invariants.agentless_enabled {
+                if let Some(e) = make_agentless_configs_endpoint(invariants.endpoint.clone()) {
+                    e
+                } else {
+                    make_agent_configs_endpoint(&invariants.endpoint)
+                }
+            } else {
+                make_agent_configs_endpoint(&invariants.endpoint)
+            },
             invariants,
             expire_unused_files: true,
         }
@@ -201,9 +214,15 @@ impl<S> ConfigFetcherState<S> {
     }
 }
 
+enum FetcherMode {
+    Agent,
+    Agentless(NativeAgentlessFetcher),
+}
+
 pub struct ConfigFetcher<S: FileStorage> {
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile>>,
+    mode: FetcherMode,
 }
 
 pub struct ConfigClientState {
@@ -237,11 +256,29 @@ impl ConfigClientState {
 }
 
 impl<S: FileStorage> ConfigFetcher<S> {
-    pub fn new(file_storage: S, state: Arc<ConfigFetcherState<S::StoredFile>>) -> Self {
-        ConfigFetcher {
+    pub async fn new(
+        file_storage: S,
+        state: Arc<ConfigFetcherState<S::StoredFile>>,
+    ) -> anyhow::Result<Self> {
+        let mode: FetcherMode = if dbg!(state.invariants.agentless_enabled) {
+            FetcherMode::Agentless(
+                AgentlessFetcher::new(
+                    AgentlessConfig {
+                        hostname: state.invariants.hostname.clone(),
+                    },
+                    state.endpoint.clone(),
+                )
+                .await?,
+            )
+        } else {
+            FetcherMode::Agent
+        };
+
+        Ok(ConfigFetcher {
             file_storage,
             state,
-        }
+            mode,
+        })
     }
 
     /// Sets the apply state on a stored file.
@@ -317,39 +354,20 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 client_agent: None,
                 last_seen: 0,
                 capabilities: product_capabilities.encoded_capabilities.clone(),
+                is_updater: false,
+                client_updater: None,
             }),
             cached_target_files,
         }
     }
 
-    /// Quite generic fetching implementation:
-    ///  - runs a request against the Remote Config Server,
-    ///  - validates the data,
-    ///  - removes unused files
-    ///  - checks if the files are already known,
-    ///  - stores new files,
-    ///  - returns all currently active files.
-    ///
-    /// It also makes sure that old files are dropped before new files are inserted.
-    ///
-    /// Returns None if nothing changed. Otherwise Some(active configs).
-    pub async fn fetch_once(
+    async fn fetch_agent(
         &mut self,
-        runtime_id: &str,
+        config_req: ClientGetConfigsRequest,
         target: &Target,
-        product_capabilities: &ConfigProductCapabilities,
-        client_id: &str,
         client_state: &mut ConfigClientState,
     ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
-        let config_req = self.build_config_request(
-            runtime_id,
-            target,
-            product_capabilities,
-            client_id,
-            &*client_state,
-        );
         trace!("Submitting remote config request: {config_req:?}");
-
         let req = self
             .state
             .endpoint
@@ -555,9 +573,164 @@ impl<S: FileStorage> ConfigFetcher<S> {
         client_state.last_config_paths = config_paths;
         Ok(Some(configs))
     }
+
+    /// Quite generic fetching implementation:
+    ///  - runs a request against the Remote Config Server,
+    ///  - validates the data,
+    ///  - removes unused files
+    ///  - checks if the files are already known,
+    ///  - stores new files,
+    ///  - returns all currently active files.
+    ///
+    /// It also makes sure that old files are dropped before new files are inserted.
+    ///
+    /// Returns None if nothing changed. Otherwise Some(active configs).
+    pub async fn fetch_once(
+        &mut self,
+        runtime_id: &str,
+        target: &Target,
+        product_capabilities: &ConfigProductCapabilities,
+        client_id: &str,
+        client_state: &mut ConfigClientState,
+    ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
+        let config_req = self.build_config_request(
+            runtime_id,
+            target,
+            product_capabilities,
+            client_id,
+            &*client_state,
+        );
+        match &mut self.mode {
+            FetcherMode::Agent => self.fetch_agent(config_req, target, client_state).await,
+            FetcherMode::Agentless(agentless_fetcher) => {
+                let res = agentless_fetcher
+                    .fetch_config(config_req.client.unwrap())
+                    .await?;
+
+                client_state.root_version = res.root_version;
+                client_state.targets_version = res.target_version;
+                client_state.opaque_backend_state = res.opaque_backend_state;
+                client_state.last_error = None;
+
+                let mut target_files = self.state.target_files_by_path.lock_or_panic();
+                let mut config_paths = HashSet::new();
+                for &(path, _, _, _) in &res.targets {
+                    match RemoteConfigPath::try_parse(path) {
+                        Ok(parsed) => {
+                            config_paths.insert(parsed.into());
+                        }
+                        Err(e) => warn!("Failed parsing remote config path: {path} - {e:?}"),
+                    }
+                }
+
+                if self.state.expire_unused_files {
+                    target_files.retain(|k, _| config_paths.contains(k.as_ref()));
+                }
+
+                for (path, target_file, version, hashes) in res.targets {
+                    let parsed_path = match RemoteConfigPath::try_parse(path) {
+                        Ok(parsed_path) => parsed_path,
+                        Err(e) => {
+                            warn!("Failed parsing remote config path: {path} - {e:?}");
+                            continue;
+                        }
+                    };
+                    let Some((_, hash)) = hashes
+                        .iter()
+                        .find(|(h, _)| *h == &tuf::crypto::HashAlgorithm::Sha256)
+                        .or_else(|| {
+                            hashes
+                                .iter()
+                                .find(|(h, _)| *h == &tuf::crypto::HashAlgorithm::Sha512)
+                        })
+                    else {
+                        // todo no supported hash algorithm?
+                        continue;
+                    };
+                    let hash = hash.to_string();
+
+                    let handle = if let Some(StoredTargetFile {
+                        hash: old_hash,
+                        handle,
+                        ..
+                    }) = target_files.get(&parsed_path)
+                    {
+                        if old_hash == &hash {
+                            continue;
+                        }
+                        Some(handle.clone())
+                    } else {
+                        None
+                    };
+
+                    let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
+                    target_files.insert(
+                        parsed_path.clone(),
+                        StoredTargetFile {
+                            hash,
+                            state: ConfigState {
+                                id: parsed_path.config_id.to_string(),
+                                version,
+                                product: parsed_path.product.to_string(),
+                                apply_state: 2, // Acknowledged
+                                apply_error: "".to_string(),
+                            },
+                            meta: TargetFileMeta {
+                                path: path.to_string(),
+                                length: target_file.len() as i64,
+                                hashes: hashes
+                                    .iter()
+                                    .map(|(algorithm, hash)| {
+                                        Ok(TargetFileHash {
+                                            algorithm: match algorithm {
+                                                tuf::crypto::HashAlgorithm::Sha256 => {
+                                                    "sha256".to_string()
+                                                }
+                                                tuf::crypto::HashAlgorithm::Sha512 => {
+                                                    "sha512".to_string()
+                                                }
+                                                tuf::crypto::HashAlgorithm::Unknown(u) => u.clone(),
+                                                _ => anyhow::bail!("unhandled has algorithm"),
+                                            },
+                                            hash: hash.to_string(),
+                                        })
+                                    })
+                                    .collect::<Result<_, _>>()?,
+                            },
+                            handle: if let Some(handle) = handle {
+                                self.file_storage
+                                    .update(&handle, version, target_file.to_vec())?;
+                                handle
+                            } else {
+                                self.file_storage.store(
+                                    version,
+                                    parsed_path,
+                                    target_file.to_vec(),
+                                )?
+                            },
+                            expiring: false,
+                        },
+                    );
+                }
+                let mut configs = Vec::with_capacity(config_paths.len());
+                for config in config_paths.iter() {
+                    if let Some(target_file) = target_files.get_mut(config) {
+                        target_file.expiring = false;
+                        configs.push(target_file.handle.clone());
+                    } else {
+                        anyhow::bail!(
+                            "Found {config} in client_configs response, but it isn't stored."
+                        );
+                    }
+                }
+                client_state.last_config_paths = config_paths;
+                Ok(Some(configs))
+            }
+        }
+    }
 }
 
-fn get_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
+fn make_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
     let mut parts = endpoint.url.clone().into_parts();
     parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
     #[allow(clippy::unwrap_used)]
@@ -689,7 +862,9 @@ pub mod tests {
         let mut fetcher = ConfigFetcher::new(
             storage.clone(),
             Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
-        );
+        )
+        .await
+        .unwrap();
         let mut opaque_state = ConfigClientState::default();
 
         let mut response = http_common::empty_response(Response::builder()).unwrap();
@@ -727,6 +902,8 @@ pub mod tests {
             language: "php".to_string(),
             tracer_version: "1.2.3".to_string(),
             endpoint: server.endpoint.clone(),
+            hostname: "host".to_string(),
+            agentless_enabled: false,
         };
         let product_capabilities = ConfigProductCapabilities::new(
             vec![
@@ -739,7 +916,9 @@ pub mod tests {
         let mut fetcher = ConfigFetcher::new(
             storage.clone(),
             Arc::new(ConfigFetcherState::new(invariants)),
-        );
+        )
+        .await
+        .unwrap();
         let mut opaque_state = ConfigClientState::default();
 
         {
@@ -923,7 +1102,9 @@ pub mod tests {
         let mut fetcher = ConfigFetcher::new(
             storage,
             Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
-        );
+        )
+        .await
+        .unwrap();
         let mut opaque_state = ConfigClientState::default();
 
         // Default: nothing set, agent receives an empty list.
@@ -1021,7 +1202,9 @@ pub mod tests {
         let mut fetcher = ConfigFetcher::new(
             storage,
             Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
-        );
+        )
+        .await
+        .unwrap();
         let mut opaque_state = ConfigClientState::default();
 
         let fetched = fetcher

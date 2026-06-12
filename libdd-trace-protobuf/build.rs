@@ -308,6 +308,12 @@ fn generate_protobuf() {
         "#[serde(default)]",
     );
 
+    config.type_attribute("ClientUpdater", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("PackageState", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("PackageStateTask", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("TaskError", "#[derive(Deserialize, Serialize)]");
+
+
     config.include_file("_includes.rs");
 
     config
