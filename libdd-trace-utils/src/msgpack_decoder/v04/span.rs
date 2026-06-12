@@ -42,11 +42,8 @@ pub fn decode_span<T: DeserializableTraceData>(
         fill_span(&mut span, buffer)?;
     }
 
-    // Each of these maps is decoded from a msgpack map (so keys are unique by construction) or left
-    // empty at its `Span::default()` value. Either way it holds no duplicate keys, so mark it
-    // deduped to skip the redundant defensive dedup (and its one-time warning) at encoding time. A
-    // later mutation re-dirties the flag, so this stays correct if the span is edited before
-    // re-encoding.
+    // Decoded from msgpack maps (unique keys) or empty defaults: no duplicates, so mark deduped to
+    // skip the defensive dedup (and its warning) at encoding time. A later mutation re-dirties it.
     span.meta.mark_deduped();
     span.metrics.mark_deduped();
     span.meta_struct.mark_deduped();
