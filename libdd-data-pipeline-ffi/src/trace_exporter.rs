@@ -500,8 +500,11 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
 }
 
 /// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default) or
-/// `http/protobuf`. `grpc` is rejected as not yet supported. The host language is responsible for
-/// resolving the value (e.g. `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
+/// `http/protobuf`; `grpc` is rejected as not yet supported. The host language resolves the value
+/// (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
+///
+/// Returns `None` on success, `ErrorCode::InvalidArgument` for a null config or an unaccepted
+/// value, and `ErrorCode::InvalidInput` for a non-UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
     config: Option<&mut TraceExporterConfig>,
@@ -595,6 +598,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);
                 if let Some(ref proto) = config.otlp_protocol {
+                    // The FFI setter only stores "http/json"/"http/protobuf", so this parse always
+                    // succeeds here; a parse failure just leaves the builder's default protocol.
                     if let Ok(p) = proto.parse::<libdd_data_pipeline::otlp::OtlpProtocol>() {
                         builder.set_otlp_protocol(p);
                     }
@@ -1314,6 +1319,69 @@ mod tests {
             ddog_trace_exporter_free(exporter);
             // It should receive 1 metrics payload (excluding heartbeats)
             mock_metrics.assert_calls(1);
+        }
+    }
+
+    #[test]
+    fn config_otlp_protocol_test() {
+        unsafe {
+            // Null config → InvalidArgument
+            let error =
+                ddog_trace_exporter_config_set_otlp_protocol(None, CharSlice::from("http/json"));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // "http/json" → success, stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("http/json"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol.as_deref(),
+                Some("http/json")
+            );
+
+            // "http/protobuf" → success, stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("http/protobuf"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol.as_deref(),
+                Some("http/protobuf")
+            );
+
+            // "grpc" → InvalidArgument
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("grpc"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Garbage value → InvalidArgument
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("nonsense"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Non-UTF-8 input → InvalidInput
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
         }
     }
 
