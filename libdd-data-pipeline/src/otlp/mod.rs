@@ -25,6 +25,6 @@
 pub mod config;
 pub mod exporter;
 
-pub use config::OtlpTraceConfig;
+pub use config::{OtlpProtocol, OtlpTraceConfig};
 pub use exporter::send_otlp_traces_http;
 pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};

@@ -13,7 +13,7 @@
 
 pub mod agent_info;
 mod health_metrics;
-pub(crate) mod otlp;
+pub mod otlp;
 #[cfg(feature = "telemetry")]
 pub(crate) mod telemetry;
 #[cfg(not(target_arch = "wasm32"))]
