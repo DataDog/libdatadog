@@ -16,7 +16,9 @@ const OTLP_MAX_RETRIES: u32 = 4;
 /// Initial backoff between retries (milliseconds).
 const OTLP_RETRY_DELAY_MS: u64 = 100;
 
-/// Send OTLP trace payload (JSON bytes) to the configured endpoint with retries.
+/// Send an OTLP trace payload to the configured endpoint with retries.
+///
+/// The body encoding and `Content-Type` are selected from `config.protocol`.
 ///
 /// Uses [`send_with_retry`] for consistent retry behaviour and observability across exporters.
 ///
@@ -26,7 +28,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &OtlpTraceConfig,
     test_token: Option<&str>,
-    json_body: Vec<u8>,
+    body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
     let url = libdd_common::parse_uri(&config.endpoint_url).map_err(|e| {
         TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
@@ -41,11 +43,15 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
         ..Endpoint::default()
     };
 
+    let content_type = match config.protocol {
+        crate::otlp::config::OtlpProtocol::HttpProtobuf => {
+            libdd_common::header::APPLICATION_PROTOBUF
+        }
+        _ => libdd_common::header::APPLICATION_JSON,
+    };
+
     let mut headers = config.headers.clone();
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_JSON,
-    );
+    headers.insert(http::header::CONTENT_TYPE, content_type);
     if let Some(token) = test_token {
         if let Ok(val) = http::HeaderValue::from_str(token) {
             headers.insert(
@@ -62,7 +68,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
         None,
     );
 
-    match send_with_retry(capabilities, &target, json_body, &headers, &retry_strategy).await {
+    match send_with_retry(capabilities, &target, body, &headers, &retry_strategy).await {
         Ok(_) => Ok(()),
         Err(e) => Err(map_send_error(e).await),
     }
