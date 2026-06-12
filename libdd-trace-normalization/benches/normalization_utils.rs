@@ -73,12 +73,12 @@ fn normalize_fnmut_string<F>(
                     },
                     |strings| {
                         #[allow(clippy::unit_arg)]
-                        strings.iter_mut().for_each(|string| {
+                        for string in strings.iter_mut() {
                             black_box(function(black_box(string)));
-                        });
+                        }
                     },
                     BatchSize::LargeInput,
-                )
+                );
             },
         );
     }
@@ -111,7 +111,7 @@ fn normalize_span_bench(c: &mut Criterion) {
             duration: 12000000,
             error: 1,
             resource: "GET /some/reblochon".to_string(),
-            service: "".to_string(),
+            service: String::new(),
             name: "django.controller".to_string(),
             span_id: 1456,
             start: 1448466849000000000,
@@ -137,7 +137,7 @@ fn normalize_span_bench(c: &mut Criterion) {
                 || case.to_owned(),
                 |t| black_box(normalize_trace(black_box(t))),
                 BatchSize::LargeInput,
-            )
+            );
         },
     );
 }

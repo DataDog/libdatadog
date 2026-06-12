@@ -29,3 +29,6 @@ criterion = "0.5"
 name = "normalization_utils"
 harness = false
 path = "benches/normalization_utils.rs"
+
+[lints]
+workspace = true

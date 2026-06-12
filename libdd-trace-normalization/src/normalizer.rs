@@ -38,7 +38,7 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
         if !is_valid_status_code(code) {
             s.meta.remove("http.status_code");
         }
-    };
+    }
 
     Ok(())
 }
@@ -50,7 +50,7 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
     false
 }
 
-/// normalize_trace takes a trace and
+/// `normalize_trace` takes a trace and
 /// * returns an error if there is a trace ID discrepancy between 2 spans
 /// * returns an error if at least one span cannot be normalized
 pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
@@ -71,10 +71,10 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// normalize_chunk takes a trace chunk and
+/// `normalize_chunk` takes a trace chunk and
 /// * populates origin field if it wasn't populated
 /// * populates priority field if it wasn't populated the root span is used to populate these
-///   fields, and it's index in TraceChunk spans vec must be passed.
+///   fields, and it's index in `TraceChunk` spans vec must be passed.
 pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> anyhow::Result<()> {
     // check if priority is not populated
     let root_span = match chunk.spans.get(root_span_index) {

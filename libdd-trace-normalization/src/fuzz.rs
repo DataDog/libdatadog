@@ -14,7 +14,7 @@ const MAX_META_STRUCT_SIZE: u8 = 100;
 const MAX_LINKS_SIZE: u8 = 10;
 const MAX_EVENTS_SIZE: u8 = 10;
 
-/// Helper function to generate an arbitrary AttributeAnyValue
+/// Helper function to generate an arbitrary `AttributeAnyValue`
 fn arbitrary_attribute_any_value(u: &mut Unstructured) -> arbitrary::Result<pb::AttributeAnyValue> {
     let value_type: u8 = u.arbitrary()?;
 
@@ -186,7 +186,7 @@ impl<'a> Arbitrary<'a> for FuzzSpan {
             span_events.push(event);
         }
 
-        Ok(FuzzSpan {
+        Ok(Self {
             span: pb::Span {
                 service,
                 name,
@@ -208,7 +208,7 @@ impl<'a> Arbitrary<'a> for FuzzSpan {
     }
 }
 
-/// Main fuzzing function that tests normalize_span with arbitrary data
+/// Main fuzzing function that tests `normalize_span` with arbitrary data
 pub fn fuzz_normalize_span(fuzz_span: FuzzSpan) {
     let mut span = fuzz_span.span;
 
