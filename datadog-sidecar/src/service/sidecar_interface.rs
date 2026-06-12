@@ -69,6 +69,28 @@ pub trait SidecarInterface {
     /// * `process_tags` - The process tags.
     async fn set_session_process_tags(process_tags: Vec<Tag>);
 
+    /// Sets (or clears) the OTLP traces export configuration for a session.
+    ///
+    /// This is additive: when an OTLP traces endpoint is configured, the
+    /// session's traces are exported via libdatadog's OTLP `TraceExporter`
+    /// instead of the agent msgpack `/v0.4/traces` path. A `None` endpoint
+    /// clears the configuration and restores the default agent path. The default
+    /// (no call, or a `None` endpoint) leaves trace export behaviour unchanged.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The ID of the session.
+    /// * `endpoint` - The full OTLP traces intake endpoint (e.g. `http://host:4318/v1/traces`),
+    ///   resolved by the host language; `None` disables OTLP trace export.
+    /// * `headers` - Header key/value pairs to attach to OTLP requests.
+    /// * `timeout_ms` - Request timeout in milliseconds (`0` for the default).
+    async fn set_otlp_traces_config(
+        session_id: String,
+        endpoint: Option<libdd_common::Endpoint>,
+        headers: Vec<(String, String)>,
+        timeout_ms: u64,
+    );
+
     /// Removes the application entry for the given queue ID from the instance.
     ///
     /// # Arguments

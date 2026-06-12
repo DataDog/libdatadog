@@ -10,7 +10,7 @@ use super::json_types::{
 use super::OtlpResourceInfo;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 
 /// Maximum number of attributes per span; excess are dropped and counted.
 const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
@@ -31,6 +31,29 @@ pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
     resource_info: &OtlpResourceInfo,
 ) -> ExportTraceServiceRequest {
+    // When the caller did not supply env / app_version at the exporter level (e.g. the PHP
+    // sidecar path, where these are dynamic per-trace rather than fixed exporter config),
+    // fall back to the `env` / `version` meta tags carried on the trace's spans. This is a
+    // fallback only: callers that already set env / app_version (dd-trace-rs, dd-trace-py)
+    // keep their exporter-level values untouched.
+    let resource_info: Cow<'_, OtlpResourceInfo> =
+        if resource_info.env.is_empty() || resource_info.app_version.is_empty() {
+            let mut owned = resource_info.clone();
+            if owned.env.is_empty() {
+                if let Some(env) = search_chunks_for_meta(&trace_chunks, "env") {
+                    owned.env = env;
+                }
+            }
+            if owned.app_version.is_empty() {
+                if let Some(version) = search_chunks_for_meta(&trace_chunks, "version") {
+                    owned.app_version = version;
+                }
+            }
+            Cow::Owned(owned)
+        } else {
+            Cow::Borrowed(resource_info)
+        };
+    let resource_info = resource_info.as_ref();
     let resource = build_resource(resource_info);
     let mut all_spans: Vec<OtlpSpan> = Vec::new();
     for chunk in &trace_chunks {
@@ -65,6 +88,42 @@ pub fn map_traces_to_otlp<T: TraceData>(
     ExportTraceServiceRequest {
         resource_spans: vec![resource_spans],
     }
+}
+
+/// Returns the first non-empty value of meta `key` across all trace chunks, preferring the
+/// chunk-root span (`parent_id == 0`) of each chunk before scanning the remaining spans.
+///
+/// Used to recover resource-level `env` / `version` for export paths (e.g. the sidecar) that do
+/// not carry these as fixed exporter configuration but do tag every span with them.
+fn search_chunks_for_meta<T: TraceData>(
+    trace_chunks: &[Vec<Span<T>>],
+    key: &str,
+) -> Option<String> {
+    // First pass: chunk-root spans, which carry the authoritative service-entry metadata.
+    for chunk in trace_chunks {
+        for span in chunk {
+            if span.parent_id == 0 {
+                if let Some(v) = span.meta.get(key) {
+                    let v = v.borrow();
+                    if !v.is_empty() {
+                        return Some(v.to_string());
+                    }
+                }
+            }
+        }
+    }
+    // Second pass: any span, in case no root span is present in the payload.
+    for chunk in trace_chunks {
+        for span in chunk {
+            if let Some(v) = span.meta.get(key) {
+                let v = v.borrow();
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
@@ -904,5 +963,156 @@ mod tests {
         let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
         let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(otlp_span.flags, Some(0));
+    }
+
+    /// Returns the string value of a resource-level attribute, or None if absent.
+    fn resource_attr(req: &ExportTraceServiceRequest, key: &str) -> Option<String> {
+        let json = serde_json::to_value(req).unwrap();
+        json["resourceSpans"][0]["resource"]["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["key"] == key)
+            .map(|a| a["value"]["stringValue"].as_str().unwrap().to_string())
+    }
+
+    #[test]
+    fn test_env_version_fallback_from_span_meta() {
+        // Sidecar path: env / app_version are not set at the exporter level, but every span
+        // carries `env` / `version` meta. They must surface as resource attributes
+        // deployment.environment.name / service.version (the system-test requirement).
+        let resource_info = OtlpResourceInfo {
+            service: "svc".to_string(),
+            ..Default::default()
+        };
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 0,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            service: libdd_tinybytes::BytesString::from_static("svc"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("env"),
+            libdd_tinybytes::BytesString::from_static("system-tests"),
+        );
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("version"),
+            libdd_tinybytes::BytesString::from_static("1.0.0"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        assert_eq!(
+            resource_attr(&req, "deployment.environment.name").as_deref(),
+            Some("system-tests")
+        );
+        assert_eq!(
+            resource_attr(&req, "service.version").as_deref(),
+            Some("1.0.0")
+        );
+    }
+
+    #[test]
+    fn test_exporter_env_version_take_precedence_over_meta() {
+        // When env / app_version are set at the exporter level (dd-trace-rs / dd-trace-py),
+        // span meta must NOT override them.
+        let resource_info = OtlpResourceInfo {
+            service: "svc".to_string(),
+            env: "exporter-env".to_string(),
+            app_version: "9.9.9".to_string(),
+            ..Default::default()
+        };
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 0,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("env"),
+            libdd_tinybytes::BytesString::from_static("meta-env"),
+        );
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("version"),
+            libdd_tinybytes::BytesString::from_static("1.0.0"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        assert_eq!(
+            resource_attr(&req, "deployment.environment.name").as_deref(),
+            Some("exporter-env")
+        );
+        assert_eq!(
+            resource_attr(&req, "service.version").as_deref(),
+            Some("9.9.9")
+        );
+    }
+
+    #[test]
+    fn test_env_version_fallback_prefers_root_span() {
+        // The chunk-root span (parent_id == 0) is the authoritative source for env / version;
+        // a child span with conflicting meta must not win.
+        let resource_info = OtlpResourceInfo {
+            service: "svc".to_string(),
+            ..Default::default()
+        };
+        let mut child: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 3,
+            parent_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("child"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        child.meta.insert(
+            libdd_tinybytes::BytesString::from_static("env"),
+            libdd_tinybytes::BytesString::from_static("child-env"),
+        );
+        let mut root: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 0,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        root.meta.insert(
+            libdd_tinybytes::BytesString::from_static("env"),
+            libdd_tinybytes::BytesString::from_static("root-env"),
+        );
+        // child first to ensure ordering does not decide the result
+        let req = map_traces_to_otlp(vec![vec![child, root]], &resource_info);
+        assert_eq!(
+            resource_attr(&req, "deployment.environment.name").as_deref(),
+            Some("root-env")
+        );
+    }
+
+    #[test]
+    fn test_no_env_version_meta_omits_resource_attrs() {
+        // No exporter-level env / version and no span meta: the resource attributes must be
+        // omitted entirely (default behavior unchanged).
+        let resource_info = OtlpResourceInfo {
+            service: "svc".to_string(),
+            ..Default::default()
+        };
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 0,
+            name: libdd_tinybytes::BytesString::from_static("root"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        assert_eq!(resource_attr(&req, "deployment.environment.name"), None);
+        assert_eq!(resource_attr(&req, "service.version"), None);
     }
 }

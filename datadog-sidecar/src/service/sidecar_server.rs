@@ -38,6 +38,7 @@ use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::ffe_exposures_flusher;
 use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
+use crate::service::session_info::OtlpTracesExporter;
 use crate::service::stats_flusher::{
     flush_all_stats_now, get_or_create_concentrator, stats_endpoint, ConcentratorKey,
     SpanConcentratorState, StatsConfig,
@@ -47,6 +48,7 @@ use crate::tokio_util::run_or_spawn_shared;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
+use libdd_data_pipeline::trace_exporter::TraceExporterBuilder;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::Config;
@@ -240,6 +242,128 @@ impl SidecarServer {
         info!("Shutting down session: {}", session_id);
         session.shutdown().await;
         debug!("Successfully shut down session: {}", session_id);
+    }
+
+    /// Exports a session's v0.4 msgpack trace payload via the OTLP HTTP/JSON
+    /// `TraceExporter`.
+    ///
+    /// The exporter is built lazily and cached on the session (keyed by a
+    /// fingerprint of the OTLP traces config) so the per-exporter background
+    /// `/info` worker is only spawned once and reused across flushes; it is
+    /// rebuilt automatically when the config changes. The exporter's `send`
+    /// decodes the v0.4 payload, drops unsampled (p0) chunks itself, maps the
+    /// remaining chunks to OTLP using the session resource metadata, and POSTs
+    /// them to the configured endpoint.
+    async fn send_trace_otlp(session: &SessionInfo, data: &[u8]) {
+        // Snapshot the OTLP config (and resource metadata) under the lock, then
+        // release it before any await.
+        let (endpoint, headers, timeout_ms, language, language_version, tracer_version) = {
+            let cfg = session.get_trace_config();
+            let Some(endpoint) = cfg.otlp_traces_endpoint.clone() else {
+                // Config was cleared between the caller's check and here.
+                return;
+            };
+            (
+                endpoint,
+                cfg.otlp_traces_headers.clone(),
+                cfg.otlp_traces_timeout_ms,
+                cfg.language.clone(),
+                cfg.language_version.clone(),
+                cfg.tracer_version.clone(),
+            )
+        };
+
+        // Resource attributes: reuse the session's stats/service metadata.
+        let (service, hostname, process_tags) = {
+            let stats = session.stats_config.lock_or_panic();
+            match &*stats {
+                Some(s) => (
+                    s.root_service.clone(),
+                    s.hostname.clone(),
+                    s.process_tags.clone(),
+                ),
+                None => (String::new(), String::new(), String::new()),
+            }
+        };
+
+        // Fingerprint the inputs that affect exporter construction so the cache
+        // is rebuilt only when something relevant changes.
+        let fingerprint = format!(
+            "{}|{}|{}|{}|{}|{}|{}",
+            endpoint.url,
+            endpoint.test_token.as_deref().unwrap_or(""),
+            timeout_ms,
+            service,
+            language,
+            language_version,
+            tracer_version,
+        );
+        let fingerprint = headers.iter().fold(fingerprint, |mut acc, (k, v)| {
+            acc.push('|');
+            acc.push_str(k);
+            acc.push('=');
+            acc.push_str(v);
+            acc
+        });
+
+        let cache = session.otlp_traces_exporter();
+        let mut guard = cache.lock().await;
+        let needs_build = guard
+            .as_ref()
+            .map(|e| e.fingerprint != fingerprint)
+            .unwrap_or(true);
+        if needs_build {
+            let mut builder = TraceExporterBuilder::default();
+            builder
+                .set_otlp_endpoint(&endpoint.url.to_string())
+                .set_otlp_headers(headers)
+                .set_connection_timeout(if timeout_ms == 0 {
+                    None
+                } else {
+                    Some(timeout_ms)
+                })
+                .set_service(&service)
+                .set_hostname(&hostname)
+                .set_process_tags(&process_tags)
+                .set_language(&language)
+                .set_language_version(&language_version)
+                .set_tracer_version(&tracer_version);
+            // NOTE: env / app_version are deliberately NOT set at the exporter level here.
+            // Unlike `service`, the sidecar has no reliable session-level env/version (they
+            // arrive per-runtime via `set_universal_service_tags` and are dynamic per-trace).
+            // Instead the OTLP encoder derives the resource attributes
+            // `deployment.environment.name` / `service.version` from the `env` / `version`
+            // meta tags carried on each exported trace's spans (see
+            // `libdd-trace-utils/src/otlp_encoder/mapper.rs`), which is correct per-trace even
+            // for a multi-service session. Setting them here would be empty and pointless.
+            if let Some(token) = endpoint.test_token.as_deref() {
+                builder.set_test_session_token(token);
+            }
+            match builder.build_async::<NativeCapabilities>().await {
+                Ok(exporter) => {
+                    *guard = Some(OtlpTracesExporter {
+                        fingerprint,
+                        exporter: Arc::new(exporter),
+                    });
+                }
+                Err(e) => {
+                    error!("Failed to build OTLP traces exporter: {e:?}");
+                    return;
+                }
+            }
+        }
+
+        // Clone the cached exporter Arc so we can drop the cache lock before the
+        // (potentially slow) network send.
+        let Some(exporter) = guard.as_ref().map(|e| e.exporter.clone()) else {
+            return;
+        };
+        drop(guard);
+
+        match exporter.send_async(data).await {
+            Ok(_) => debug!("Successfully exported traces via OTLP to {}", endpoint.url),
+            Err(e) => error!("Error exporting traces via OTLP: {e:?}"),
+        }
     }
 
     fn send_trace_v04(
@@ -824,6 +948,29 @@ impl SidecarInterface for ConnectionSidecarHandler {
         *session.process_tags.lock_or_panic() = process_tags;
     }
 
+    async fn set_otlp_traces_config(
+        &self,
+        _peer: PeerCredentials,
+        session_id: String,
+        endpoint: Option<Endpoint>,
+        headers: Vec<(String, String)>,
+        timeout_ms: u64,
+    ) {
+        let session = self.server.get_session(&session_id);
+        debug!(
+            "Setting OTLP traces config for session {session_id}: endpoint={:?}, {} header(s), timeout_ms={timeout_ms}",
+            endpoint.as_ref().map(|e| e.url.to_string()),
+            headers.len()
+        );
+        // Store the resolved OTLP traces config onto the per-session trace
+        // config. The send path rebuilds its cached OTLP exporter when this
+        // config's fingerprint changes (and skips OTLP entirely when the
+        // endpoint is None), so no explicit cache invalidation is needed here.
+        session.modify_trace_config(|cfg| {
+            cfg.set_otlp_traces_endpoint(endpoint, headers, timeout_ms);
+        });
+    }
+
     async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {
         let session = self.server.get_session(&instance_id.session_id);
         tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
@@ -844,13 +991,30 @@ impl SidecarInterface for ConnectionSidecarHandler {
         headers: SerializedTracerHeaderTags,
     ) {
         self.track_instance(&instance_id);
-        if let Some(endpoint) = self
-            .server
-            .get_session(&instance_id.session_id)
-            .get_trace_config()
-            .endpoint
-            .clone()
-        {
+        let session = self.server.get_session(&instance_id.session_id);
+
+        // Snapshot the routing decision while holding the config lock, then drop
+        // the guard before any await or spawn.
+        let (otlp_enabled, agent_endpoint) = {
+            let cfg = session.get_trace_config();
+            (cfg.otlp_traces_endpoint.is_some(), cfg.endpoint.clone())
+        };
+
+        // OTLP path takes precedence when an OTLP traces endpoint is configured
+        // for this session; otherwise fall back to the unchanged agent path.
+        if otlp_enabled {
+            tokio::spawn(async move {
+                match handle.map() {
+                    Ok(mapped) => {
+                        SidecarServer::send_trace_otlp(&session, mapped.as_slice()).await;
+                    }
+                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+                }
+            });
+            return;
+        }
+
+        if let Some(endpoint) = agent_endpoint {
             let server = self.server.clone();
             tokio::spawn(async move {
                 match handle.map() {
@@ -877,13 +1041,25 @@ impl SidecarInterface for ConnectionSidecarHandler {
         headers: SerializedTracerHeaderTags,
     ) {
         self.track_instance(&instance_id);
-        if let Some(endpoint) = self
-            .server
-            .get_session(&instance_id.session_id)
-            .get_trace_config()
-            .endpoint
-            .clone()
-        {
+        let session = self.server.get_session(&instance_id.session_id);
+
+        // Snapshot the routing decision while holding the config lock, then drop
+        // the guard before any await or spawn.
+        let (otlp_enabled, agent_endpoint) = {
+            let cfg = session.get_trace_config();
+            (cfg.otlp_traces_endpoint.is_some(), cfg.endpoint.clone())
+        };
+
+        // OTLP path takes precedence when an OTLP traces endpoint is configured
+        // for this session; otherwise fall back to the unchanged agent path.
+        if otlp_enabled {
+            tokio::spawn(async move {
+                SidecarServer::send_trace_otlp(&session, &data).await;
+            });
+            return;
+        }
+
+        if let Some(endpoint) = agent_endpoint {
             let server = self.server.clone();
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);

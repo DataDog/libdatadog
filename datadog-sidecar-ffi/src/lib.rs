@@ -753,6 +753,61 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     MaybeError::None
 }
 
+/// Parses a `key1=value1,key2=value2` OTLP header string into key/value pairs.
+/// Empty and malformed (missing `=` or empty key) entries are skipped.
+fn parse_otlp_traces_headers(raw: &str) -> std::vec::Vec<(String, String)> {
+    raw.split(',')
+        .filter_map(|pair| {
+            let pair = pair.trim();
+            if pair.is_empty() {
+                return None;
+            }
+            let (k, v) = pair.split_once('=')?;
+            let k = k.trim();
+            if k.is_empty() {
+                return None;
+            }
+            Some((k.to_string(), v.trim().to_string()))
+        })
+        .collect()
+}
+
+/// Sets the OTLP traces export configuration for an existing session.
+///
+/// This is additive and non-breaking: when `otlp_traces_endpoint` is non-null,
+/// the session's traces are exported via libdatadog's OTLP `TraceExporter`
+/// (HTTP/JSON) instead of the agent msgpack `/v0.4/traces` path. Passing a null
+/// `otlp_traces_endpoint` clears the configuration and restores the default
+/// agent path. Sessions that never call this function are unaffected.
+///
+/// `headers` is the raw `key=value,...` string (e.g. the value of
+/// `OTEL_EXPORTER_OTLP_TRACES_HEADERS`); `timeout_ms` of `0` selects the
+/// default OTLP request timeout. The endpoint URL is used as-is — the host
+/// language is responsible for resolving the full `…/v1/traces` URL.
+///
+/// # Safety
+/// `otlp_traces_endpoint`, when non-null, must point to a valid `Endpoint`. All
+/// `CharSlice` arguments must point to valid, correctly-sized data.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_session_set_otlp_traces_endpoint(
+    transport: &mut Box<SidecarTransport>,
+    session_id: ffi::CharSlice,
+    otlp_traces_endpoint: *const Endpoint,
+    headers: ffi::CharSlice,
+    timeout_ms: u64,
+) -> MaybeError {
+    let session_id: String = session_id.to_utf8_lossy().into();
+    let endpoint: Option<Endpoint> = unsafe { otlp_traces_endpoint.as_ref().cloned() };
+    let headers = parse_otlp_traces_headers(&headers.to_utf8_lossy());
+
+    try_c!(blocking::set_otlp_traces_config(
+        transport, session_id, endpoint, headers, timeout_ms,
+    ));
+
+    MaybeError::None
+}
+
 #[repr(C)]
 pub struct TracerHeaderTags<'a> {
     pub lang: ffi::CharSlice<'a>,
@@ -1797,5 +1852,34 @@ mod tests {
         .expect("expected OTLP metrics endpoint");
 
         assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+    }
+
+    #[test]
+    fn parse_otlp_traces_headers_basic() {
+        let parsed = parse_otlp_traces_headers("api-key=abc123,team=apm");
+        assert_eq!(
+            parsed,
+            vec![
+                ("api-key".to_string(), "abc123".to_string()),
+                ("team".to_string(), "apm".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_otlp_traces_headers_trims_and_skips_malformed() {
+        let parsed = parse_otlp_traces_headers(" k1 = v1 , , bad , k2=v2 ");
+        assert_eq!(
+            parsed,
+            vec![
+                ("k1".to_string(), "v1".to_string()),
+                ("k2".to_string(), "v2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_otlp_traces_headers_empty() {
+        assert!(parse_otlp_traces_headers("").is_empty());
     }
 }
