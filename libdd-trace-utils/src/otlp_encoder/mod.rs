@@ -5,6 +5,7 @@
 
 pub mod json_types;
 pub mod mapper;
+pub mod proto_convert;
 
 pub use mapper::map_traces_to_otlp;
 
