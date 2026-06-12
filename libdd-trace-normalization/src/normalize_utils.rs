@@ -61,10 +61,6 @@ pub fn normalize_span_start_duration(start: &mut i64, duration: &mut i64) {
     }
 
     if *start < YEAR_2000_NANOSEC_TS {
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "FIXME: intentional truncation matching the Go reference impl; nanoseconds since epoch fit in i64 until year 2262"
-        )]
         let now = SystemTime::UNIX_EPOCH.elapsed().map_or_else(
             |e| -(e.duration().as_nanos() as i64),
             |t| t.as_nanos() as i64,
