@@ -83,6 +83,7 @@ pub struct TraceExporterConfig {
     connection_timeout: Option<u64>,
     shared_runtime: Option<Arc<SharedRuntime>>,
     otlp_endpoint: Option<String>,
+    otlp_protocol: Option<String>,
 }
 
 #[no_mangle]
@@ -498,6 +499,34 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     )
 }
 
+/// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default) or
+/// `http/protobuf`. `grpc` is rejected as not yet supported. The host language is responsible for
+/// resolving the value (e.g. `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
+    config: Option<&mut TraceExporterConfig>,
+    protocol: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let value = match sanitize_string(protocol) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            match value.as_str() {
+                "http/json" | "http/protobuf" => {
+                    handle.otlp_protocol = Some(value);
+                    None
+                }
+                _ => gen_error!(ErrorCode::InvalidArgument),
+            }
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
@@ -565,6 +594,11 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);
+                if let Some(ref proto) = config.otlp_protocol {
+                    if let Ok(p) = proto.parse::<libdd_data_pipeline::otlp::OtlpProtocol>() {
+                        builder.set_otlp_protocol(p);
+                    }
+                }
             }
 
             match builder.build() {
