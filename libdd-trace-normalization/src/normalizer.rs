@@ -38,7 +38,7 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
         if !is_valid_status_code(code) {
             s.meta.remove("http.status_code");
         }
-    };
+    }
 
     Ok(())
 }
@@ -50,9 +50,14 @@ pub(crate) fn is_valid_status_code(sc: &str) -> bool {
     false
 }
 
-/// normalize_trace takes a trace and
+/// `normalize_trace` takes a trace and
 /// * returns an error if there is a trace ID discrepancy between 2 spans
 /// * returns an error if at least one span cannot be normalized
+///
+/// # Errors
+///
+/// Returns an error if the trace is empty, if spans have mismatched trace IDs, or if any span
+/// fails normalization.
 pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
     let first_trace_id = match trace.first() {
         Some(first_span) => first_span.trace_id,
@@ -71,17 +76,18 @@ pub fn normalize_trace(trace: &mut [pb::Span]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// normalize_chunk takes a trace chunk and
+/// `normalize_chunk` takes a trace chunk and
 /// * populates origin field if it wasn't populated
 /// * populates priority field if it wasn't populated the root span is used to populate these
-///   fields, and it's index in TraceChunk spans vec must be passed.
+///   fields, and it's index in `TraceChunk` spans vec must be passed.
+///
+/// # Errors
+///
+/// Returns an error if `root_span_index` is out of bounds for the chunk's spans.
 pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> anyhow::Result<()> {
     // check if priority is not populated
-    let root_span = match chunk.spans.get(root_span_index) {
-        Some(span) => span,
-        None => {
-            anyhow::bail!("Normalize Chunk Error: root_span_index > length of trace chunk spans")
-        }
+    let Some(root_span) = chunk.spans.get(root_span_index) else {
+        anyhow::bail!("Normalize Chunk Error: root_span_index > length of trace chunk spans")
     };
 
     if chunk.priority == SamplerPriority::None as i32 {
@@ -101,7 +107,7 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> an
     if chunk.origin.is_empty() {
         if let Some(origin) = root_span.meta.get(TAG_ORIGIN) {
             // Older tracers set origin in the root span.
-            chunk.origin = origin.to_string();
+            chunk.origin = origin.clone();
         }
     }
     Ok(())
@@ -512,7 +518,7 @@ mod tests {
         let mut root = new_test_span();
         root.metrics.insert(
             normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SamplerPriority::UserKeep as i32 as f64,
+            f64::from(normalizer::SamplerPriority::UserKeep as i32),
         );
 
         let mut chunk = new_test_chunk_with_span(root);
@@ -526,7 +532,7 @@ mod tests {
         let mut root = new_test_span();
         root.metrics.insert(
             normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SamplerPriority::UserKeep as i32 as f64,
+            f64::from(normalizer::SamplerPriority::UserKeep as i32),
         );
 
         let mut chunk = new_test_chunk_with_span(root);
@@ -554,7 +560,7 @@ mod tests {
         chunk.spans = vec![new_test_span(), new_test_span(), new_test_span()];
         chunk.spans[1].metrics.insert(
             normalizer::TAG_SAMPLING_PRIORITY.to_string(),
-            normalizer::SamplerPriority::UserKeep as i32 as f64,
+            f64::from(normalizer::SamplerPriority::UserKeep as i32),
         );
         assert!(normalizer::normalize_chunk(&mut chunk, 0).is_ok());
         assert_eq!(normalizer::SamplerPriority::UserKeep as i32, chunk.priority);

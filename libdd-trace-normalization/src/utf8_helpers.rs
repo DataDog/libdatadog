@@ -2,15 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Taken from the source of
-/// https://doc.rust-lang.org/std/primitive.str.html#method.floor_char_boundary
-/// TODO remove when str::floor_char_boundary is stable
+/// <https://doc.rust-lang.org/std/primitive.str.html#method.floor_char_boundary>
+/// TODO remove when `str::floor_char_boundary` is stable
 #[inline]
-pub(crate) fn floor_char_boundary(s: &str, index: usize) -> usize {
+pub fn floor_char_boundary(s: &str, index: usize) -> usize {
     #[allow(clippy::unwrap_used)]
     if index >= s.len() {
         s.len()
     } else {
         let lower_bound = index.saturating_sub(3);
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "intentional: checks UTF-8 continuation byte bitmask via signed comparison"
+        )]
         let new_index = s.as_bytes()[lower_bound..=index]
             .iter()
             .rposition(|b| (*b as i8) >= -0x40);
@@ -19,11 +23,11 @@ pub(crate) fn floor_char_boundary(s: &str, index: usize) -> usize {
     }
 }
 
-pub(crate) fn next_code_point<'a, I: Iterator<Item = &'a u8>>(bytes: &mut I) -> Option<u32> {
+pub fn next_code_point<'a, I: Iterator<Item = &'a u8>>(bytes: &mut I) -> Option<u32> {
     // Decode UTF-8
     let x = *bytes.next()?;
     if x < 128 {
-        return Some(x as u32);
+        return Some(u32::from(x));
     }
 
     // Multibyte case follows
@@ -40,7 +44,7 @@ pub(crate) fn next_code_point<'a, I: Iterator<Item = &'a u8>>(bytes: &mut I) -> 
         // SAFETY: `bytes` produces an UTF-8-like string,
         // so the iterator must produce a value here.
         let z = *bytes.next()?;
-        let y_z = utf8_acc_cont_byte((y & CONT_MASK) as u32, z);
+        let y_z = utf8_acc_cont_byte(u32::from(y & CONT_MASK), z);
         ch = (init << 12) | y_z;
         if x >= 0xF0 {
             // [x y z w] case

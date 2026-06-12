@@ -8,17 +8,17 @@ pub(crate) const MAX_TYPE_LEN: usize = 100;
 /// an arbitrary cutoff to spot weird-looking values
 /// nanoseconds since epoch on Jan 1, 2000
 const YEAR_2000_NANOSEC_TS: i64 = 946684800000000000;
-/// DEFAULT_SPAN_NAME is the default name we assign a span if it's missing and we have no reasonable
-/// fallback
+/// `DEFAULT_SPAN_NAME` is the default name we assign a span if it's missing and we have no
+/// reasonable fallback
 pub(crate) const DEFAULT_SPAN_NAME: &str = "unnamed_operation";
-/// DEFAULT_SERVICE_NAME is the default name we assign a service if it's missing and we have no
+/// `DEFAULT_SERVICE_NAME` is the default name we assign a service if it's missing and we have no
 /// reasonable fallback
 pub(crate) const DEFAULT_SERVICE_NAME: &str = "unnamed-service";
-/// MAX_NAME_LEN the maximum length a name can have
+/// `MAX_NAME_LEN` the maximum length a name can have
 pub(crate) const MAX_NAME_LEN: usize = 100;
-/// MAX_SERVICE_LEN the maximum length a service can have
+/// `MAX_SERVICE_LEN` the maximum length a service can have
 const MAX_SERVICE_LEN: usize = 100;
-/// MAX_SERVICE_LEN the maximum length a tag can have
+/// `MAX_SERVICE_LEN` the maximum length a tag can have
 const MAX_TAG_LEN: usize = 200;
 
 // normalize_service normalizes a span service
@@ -72,7 +72,7 @@ pub fn normalize_span_start_duration(start: &mut i64, duration: &mut i64) {
     }
 }
 
-pub fn normalize_parent_id(parent_id: &mut u64, trace_id: u64, span_id: u64) {
+pub const fn normalize_parent_id(parent_id: &mut u64, trace_id: u64, span_id: u64) {
     // ParentID, TraceID and SpanID set in the client could be the same
     // Supporting the ParentID == TraceID == SpanID for the root span, is compliant
     // with the Zipkin implementation. Furthermore, as described in the PR
@@ -83,6 +83,17 @@ pub fn normalize_parent_id(parent_id: &mut u64, trace_id: u64, span_id: u64) {
     }
 }
 
+/// Normalizes `tag` in-place, lowercasing and replacing illegal characters with `_`.
+///
+/// # Panics
+///
+/// Panics if the tag contains bytes that are not valid UTF-8 continuation sequences; in practice
+/// this cannot happen because the function only processes bytes it has already validated via
+/// `next_code_point`.
+#[allow(
+    clippy::too_many_lines,
+    reason = "FIXME: split into sub-functions requires threading mutable cursor state, deferred"
+)]
 pub fn normalize_tag(tag: &mut String) {
     // Since we know that we're only going to write valid utf8 we can work with the Vec directly
     let bytes = unsafe { tag.as_mut_vec() };
@@ -249,7 +260,7 @@ fn normalize_metric_name(name: &mut String) {
                 // we don't go back to the beginning
                 write_cursor -= 1;
                 bytes[write_cursor] = b'.';
-                last_written_char = b'.'
+                last_written_char = b'.';
             }
             // If we've written a _ or a . last, do nothing
             (_, b'_' | b'.') => {}
@@ -381,6 +392,6 @@ mod tests {
     fn test_name() {
         let mut v = input.to_owned();
         normalize_tag(&mut v);
-        assert_eq!(v, expected)
+        assert_eq!(v, expected);
     }
 }
