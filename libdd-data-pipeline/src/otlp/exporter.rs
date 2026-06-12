@@ -43,6 +43,8 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
         ..Endpoint::default()
     };
 
+    // `Grpc` is rejected earlier in `send_otlp_traces_inner` and never reaches this function, so it
+    // is grouped with the JSON content-type here only to keep the match exhaustive.
     let content_type = match config.protocol {
         crate::otlp::config::OtlpProtocol::HttpProtobuf => {
             libdd_common::header::APPLICATION_PROTOBUF

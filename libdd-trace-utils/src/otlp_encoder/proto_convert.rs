@@ -48,6 +48,9 @@ fn hex_nibble(b: u8) -> Option<u8> {
     }
 }
 
+/// Parse a decimal timestamp string into `u64`. `mapper.rs` always emits these from `u64`/`i64`
+/// fields via `format!`, so a parse failure can only mean a mapper bug; we fall back to 0 rather
+/// than panicking (FFI reliability), matching the zero-fallback policy of `hex_to_bytes`.
 fn parse_u64(s: &str) -> u64 {
     s.parse().unwrap_or(0)
 }
@@ -127,6 +130,8 @@ fn span(s: &j::OtlpSpan) -> ProtoSpan {
             .unwrap_or_default(),
         flags: s.flags.unwrap_or(0),
         name: s.name.clone(),
+        // `kind` is a prost open enum (stored as i32); the mapper produces valid SpanKind values,
+        // and unknown values are passed through unchanged per OTLP open-enum semantics.
         kind: s.kind,
         start_time_unix_nano: parse_u64(&s.start_time_unix_nano),
         end_time_unix_nano: parse_u64(&s.end_time_unix_nano),
