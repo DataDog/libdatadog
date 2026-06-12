@@ -30,7 +30,7 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
     resource_info: &OtlpResourceInfo,
-    enable_otel_trace_compatibility: bool,
+    otel_trace_semantics_enabled: bool,
 ) -> ExportTraceServiceRequest {
     let resource = build_resource(resource_info);
     let mut all_spans: Vec<OtlpSpan> = Vec::new();
@@ -55,7 +55,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
                 span,
                 &resource_info.service,
                 chunk_trace_id_high,
-                enable_otel_trace_compatibility,
+                otel_trace_semantics_enabled,
             ));
         }
     }
@@ -122,7 +122,7 @@ fn map_span<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
     chunk_trace_id_high: u64,
-    enable_otel_trace_compatibility: bool,
+    otel_trace_semantics_enabled: bool,
 ) -> OtlpSpan {
     // Reconstruct the full 128-bit trace ID. The caller resolves the high 64 bits once per
     // chunk (from either the native u128 `trace_id` field or the "_dd.p.tid" meta tag).
@@ -147,7 +147,7 @@ fn map_span<T: TraceData>(
         .map(|v| tag_to_otlp_kind(v.borrow()))
         .unwrap_or_else(|| dd_type_to_otlp_kind(span.r#type.borrow()));
     let (attributes, dropped_attributes_count) =
-        map_attributes(span, resource_service, enable_otel_trace_compatibility);
+        map_attributes(span, resource_service, otel_trace_semantics_enabled);
     // DD tracers use either "error.msg" or "error.message".
     // A span should only carry one of these, so the order of preference is arbitrary.
     let error_msg = span
@@ -308,13 +308,13 @@ fn dd_type_to_otlp_kind(t: &str) -> i32 {
 fn map_attributes<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
-    enable_otel_trace_compatibility: bool,
+    otel_trace_semantics_enabled: bool,
 ) -> (Vec<KeyValue>, usize) {
     let mut attrs: Vec<KeyValue> = Vec::new();
     // Add service.name when the span's service differs from the resource-level service.
     let span_service = span.service.borrow();
     let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
-    if has_per_span_service && !enable_otel_trace_compatibility {
+    if has_per_span_service && !otel_trace_semantics_enabled {
         attrs.push(KeyValue {
             key: "service.name".to_string(),
             value: AnyValue::StringValue(span_service.to_string()),
@@ -322,7 +322,7 @@ fn map_attributes<T: TraceData>(
     }
     let operation_name = span.name.borrow();
     let has_operation_name = !operation_name.is_empty();
-    if has_operation_name && !enable_otel_trace_compatibility {
+    if has_operation_name && !otel_trace_semantics_enabled {
         attrs.push(KeyValue {
             key: "operation.name".to_string(),
             value: AnyValue::StringValue(operation_name.to_string()),
@@ -330,7 +330,7 @@ fn map_attributes<T: TraceData>(
     }
     let span_type = span.r#type.borrow();
     let has_span_type = !span_type.is_empty();
-    if has_span_type && !enable_otel_trace_compatibility {
+    if has_span_type && !otel_trace_semantics_enabled {
         attrs.push(KeyValue {
             key: "span.type".to_string(),
             value: AnyValue::StringValue(span_type.to_string()),
@@ -338,7 +338,7 @@ fn map_attributes<T: TraceData>(
     }
     let resource_name = span.resource.borrow();
     let has_resource_name = !resource_name.is_empty();
-    if has_resource_name && !enable_otel_trace_compatibility {
+    if has_resource_name && !otel_trace_semantics_enabled {
         attrs.push(KeyValue {
             key: "resource.name".to_string(),
             value: AnyValue::StringValue(resource_name.to_string()),
@@ -349,7 +349,7 @@ fn map_attributes<T: TraceData>(
             break;
         }
         let key = k.borrow();
-        if enable_otel_trace_compatibility
+        if otel_trace_semantics_enabled
             && (key == "error.msg" || key == "error.message" || key == "span.kind")
         {
             continue;
@@ -382,26 +382,26 @@ fn map_attributes<T: TraceData>(
             value: AnyValue::BytesValue(v.borrow().to_vec()),
         });
     }
-    let excluded_compat_tags = if enable_otel_trace_compatibility {
+    let excluded_compat_tags = if otel_trace_semantics_enabled {
         span.meta.contains_key("error.msg") as usize
             + span.meta.contains_key("error.message") as usize
             + span.meta.contains_key("span.kind") as usize
     } else {
         0
     };
-    let total = (if has_per_span_service && !enable_otel_trace_compatibility {
+    let total = (if has_per_span_service && !otel_trace_semantics_enabled {
         1
     } else {
         0
-    }) + (if has_operation_name && !enable_otel_trace_compatibility {
+    }) + (if has_operation_name && !otel_trace_semantics_enabled {
         1
     } else {
         0
-    }) + (if has_span_type && !enable_otel_trace_compatibility {
+    }) + (if has_span_type && !otel_trace_semantics_enabled {
         1
     } else {
         0
-    }) + (if has_resource_name && !enable_otel_trace_compatibility {
+    }) + (if has_resource_name && !otel_trace_semantics_enabled {
         1
     } else {
         0
@@ -972,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn test_enable_otel_trace_compatibility() {
+    fn test_otel_trace_semantics_enabled() {
         let resource_info = OtlpResourceInfo {
             service: "resource-svc".to_string(),
             ..Default::default()

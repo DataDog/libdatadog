@@ -548,7 +548,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         let request = map_traces_to_otlp(
             traces,
             &resource_info,
-            config.enable_otel_trace_compatibility,
+            config.otel_trace_semantics_enabled,
         );
         let json_body = serde_json::to_vec(&request).map_err(|e| {
             error!("OTLP JSON serialization error: {e}");
