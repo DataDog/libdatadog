@@ -34,5 +34,6 @@ pyo3 = { version = "0.28", optional = true, default-features = false, features =
 default = ["remote-config"]
 exposure-events = ["dep:lru"]
 evaluation-metrics = ["dep:libdd-trace-protobuf", "dep:prost"]
+flagevaluation-evp = []
 pyo3 = ["dep:pyo3"]
 remote-config = ["dep:libdd-remote-config"]
