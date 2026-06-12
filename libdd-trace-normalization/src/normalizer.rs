@@ -107,7 +107,7 @@ pub fn normalize_chunk(chunk: &mut pb::TraceChunk, root_span_index: usize) -> an
     if chunk.origin.is_empty() {
         if let Some(origin) = root_span.meta.get(TAG_ORIGIN) {
             // Older tracers set origin in the root span.
-            chunk.origin = origin.to_string();
+            chunk.origin = origin.clone();
         }
     }
     Ok(())
