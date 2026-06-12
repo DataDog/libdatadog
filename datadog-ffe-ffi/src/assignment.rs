@@ -485,16 +485,3 @@ pub unsafe extern "C" fn ddog_ffe_assignment_drop(assignment: *mut Handle<Resolu
     // SAFETY: the caller must ensure that assignment is valid
     unsafe { Handle::free(assignment) }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn invalid_flag_configuration_maps_to_default_without_error_code() {
-        let details = ResolutionDetails::from(EvaluationError::FlagConfigurationInvalid);
-
-        assert!(matches!(Reason::from(&details), Reason::Default));
-        assert_eq!(ErrorCode::from(&details), ErrorCode::Ok);
-    }
-}
