@@ -14,8 +14,8 @@ pub enum OtlpProtocol {
     HttpJson,
     /// HTTP with protobuf body (Content-Type: application/x-protobuf).
     HttpProtobuf,
-    /// gRPC. (Not supported yet)
-    #[allow(dead_code)]
+    /// gRPC. Parsed by `FromStr` so callers get a clean error, but rejected at export time
+    /// (unsupported).
     Grpc,
 }
 

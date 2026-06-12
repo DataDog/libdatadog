@@ -5,8 +5,9 @@
 //!
 //! When an OTLP endpoint is configured via
 //! [`crate::trace_exporter::TraceExporterBuilder::set_otlp_endpoint`], the trace exporter sends
-//! traces in OTLP HTTP/JSON format to that endpoint instead of the Datadog agent. The host language
-//! is responsible for resolving the endpoint from its own configuration (e.g.
+//! traces in OTLP HTTP format to that endpoint instead of the Datadog agent; the wire encoding
+//! (JSON or protobuf) is selected via [`OtlpProtocol`]. The host language is responsible for
+//! resolving the endpoint from its own configuration (e.g.
 //! `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`).
 //!
 //! ## Sampling
@@ -22,9 +23,9 @@
 //! spans from a local trace are closed (i.e. send complete trace chunks). This crate does not
 //! buffer or flush partially—it exports whatever trace chunks it receives.
 
-pub mod config;
-pub mod exporter;
+pub(crate) mod config;
+pub(crate) mod exporter;
 
 pub use config::{OtlpProtocol, OtlpTraceConfig};
-pub use exporter::send_otlp_traces_http;
+pub(crate) use exporter::send_otlp_traces_http;
 pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};

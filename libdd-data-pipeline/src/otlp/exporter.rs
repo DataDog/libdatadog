@@ -47,7 +47,9 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
         crate::otlp::config::OtlpProtocol::HttpProtobuf => {
             libdd_common::header::APPLICATION_PROTOBUF
         }
-        _ => libdd_common::header::APPLICATION_JSON,
+        crate::otlp::config::OtlpProtocol::HttpJson | crate::otlp::config::OtlpProtocol::Grpc => {
+            libdd_common::header::APPLICATION_JSON
+        }
     };
 
     let mut headers = config.headers.clone();
