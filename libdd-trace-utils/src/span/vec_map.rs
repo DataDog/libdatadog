@@ -184,24 +184,21 @@ impl<K, V> VecMap<K, V> {
         self.deduped
     }
 
-    /// Assert, without scanning, that this map currently holds no duplicate keys, setting the
-    /// `deduped` flag accordingly.
-    ///
-    /// This is meant for builders that produce a map from a source where key uniqueness is
-    /// guaranteed by construction — for example msgpack decoding of a trace payload, where the
-    /// wire format is a map. It avoids the linear [Self::dedup] pass (and the defensive dedup at
-    /// encoding time) in that case.
-    ///
-    /// The assertion only covers the map's current state: any subsequent mutation that could
-    /// introduce duplicates ([Self::insert], [Self::extend], [Self::iter_mut], ...) re-dirties the
-    /// flag, so a later [Self::dedup] will run as usual.
-    ///
-    /// **Caution**: if the source can actually contain duplicate keys, prefer [Self::dedup], which
-    /// removes them. Marking a map with duplicates as deduped lets them flow through to encoding
-    /// unchanged.
     #[inline]
     pub fn mark_deduped(&mut self) {
         self.deduped = true;
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.data.clear()
+    }
+
+    #[inline]
+    pub fn drain<R: std::ops::RangeBounds<usize>>(
+        &mut self,
+        range: R,
+    ) -> std::vec::Drain<'_, (K, V)> {
+        self.data.drain(range)
     }
 }
 
