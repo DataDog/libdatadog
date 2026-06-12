@@ -15,6 +15,7 @@ use datadog_ipc::{PeerCredentials, SeqpacketConn};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
+use libdd_trace_utils::send_with_retry::{RetryBackoffType, RetryStrategy};
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::tracer_payload::decode_to_trace_chunks;
 use libdd_trace_utils::tracer_payload::TraceEncoding;
@@ -247,6 +248,7 @@ impl SidecarServer {
         headers: &SerializedTracerHeaderTags,
         data: tinybytes::Bytes,
         target: &Endpoint,
+        retry_interval: u64,
     ) {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
@@ -266,12 +268,15 @@ impl SidecarServer {
         match decode_to_trace_chunks(data, TraceEncoding::V04) {
             Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
-                let data = SendData::new(
+                let mut data = SendData::new(
                     size,
                     payload.into_tracer_payload_collection(),
                     headers,
                     target,
                 );
+                let strategy =
+                    RetryStrategy::new(5, retry_interval, RetryBackoffType::Exponential, None);
+                data.set_retry_strategy(strategy);
                 self.trace_flusher.enqueue(data);
             }
             Err(e) => {
@@ -721,6 +726,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             cfg.language.clone_from(&config.language);
             cfg.language_version.clone_from(&config.language_version);
             cfg.tracer_version.clone_from(&config.tracer_version);
+            cfg.retry_interval = config.retry_interval.as_millis() as u64;
         });
         session.modify_otlp_metrics_endpoint(|endpoint| {
             *endpoint = config.otlp_metrics_endpoint.clone();
@@ -844,19 +850,16 @@ impl SidecarInterface for ConnectionSidecarHandler {
         headers: SerializedTracerHeaderTags,
     ) {
         self.track_instance(&instance_id);
-        if let Some(endpoint) = self
-            .server
-            .get_session(&instance_id.session_id)
-            .get_trace_config()
-            .endpoint
-            .clone()
-        {
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+        if let Some(endpoint) = trace_config.endpoint.clone() {
             let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
                 match handle.map() {
                     Ok(mapped) => {
                         let bytes = tinybytes::Bytes::from(mapped);
-                        server.send_trace_v04(&headers, bytes, &endpoint);
+                        server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
                     }
                     Err(e) => error!("Failed mapping shared trace data memory: {}", e),
                 }
@@ -877,17 +880,15 @@ impl SidecarInterface for ConnectionSidecarHandler {
         headers: SerializedTracerHeaderTags,
     ) {
         self.track_instance(&instance_id);
-        if let Some(endpoint) = self
-            .server
-            .get_session(&instance_id.session_id)
-            .get_trace_config()
-            .endpoint
-            .clone()
-        {
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+
+        if let Some(endpoint) = trace_config.endpoint.clone() {
             let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
-                server.send_trace_v04(&headers, bytes, &endpoint);
+                server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
             });
         } else {
             warn!(
