@@ -36,6 +36,15 @@ fn generate_protobuf() {
 
     config.out_dir(output_path.clone());
 
+    // The vendored OpenTelemetry trace protos carry doc comments with indented example blocks
+    // (e.g. on `Span.attributes`) that rustdoc would interpret as Rust doctests and fail to
+    // compile. Drop the generated comments for these packages; the vendored `.proto` files remain
+    // the documentation source of truth.
+    config.disable_comments([
+        ".opentelemetry.proto.trace.v1",
+        ".opentelemetry.proto.collector.trace.v1",
+    ]);
+
     // The following prost_build config changes modify the protobuf generated structs in
     // in the following ways:
 
