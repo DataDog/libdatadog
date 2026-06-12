@@ -72,6 +72,10 @@ fn kv(k: &j::KeyValue) -> ProtoKeyValue {
     ProtoKeyValue {
         key: k.key.clone(),
         value: Some(ProtoAnyValue::from(&k.value)),
+        // `key_ref` and `entity_refs` (on Resource) are profiling-signal-only proto fields,
+        // unused for traces. Set explicitly to their zero defaults so the converter fails to
+        // compile if the proto shape changes (rather than silently misusing
+        // `..Default::default()`).
         key_ref: 0,
     }
 }
@@ -89,6 +93,8 @@ fn resource_spans(rs: &j::ResourceSpans) -> ProtoResourceSpans {
         resource: rs.resource.as_ref().map(|r| ProtoResource {
             attributes: r.attributes.iter().map(kv).collect(),
             dropped_attributes_count: 0,
+            // `entity_refs` is a profiling-signal-only proto field, unused for traces.
+            // Explicit default (see `key_ref` note in `kv()`).
             entity_refs: Vec::new(),
         }),
         scope_spans: rs.scope_spans.iter().map(scope_spans).collect(),
@@ -129,6 +135,8 @@ fn span(s: &j::OtlpSpan) -> ProtoSpan {
         events: s.events.iter().map(event).collect(),
         dropped_events_count: s.dropped_events_count.unwrap_or(0),
         links: s.links.iter().map(link).collect(),
+        // The serde `OtlpSpan` model does not track dropped links (the mapper enforces no
+        // link cap), so 0 is always correct here.
         dropped_links_count: 0,
         status: Some(ProtoStatus {
             message: s.status.message.clone().unwrap_or_default(),
@@ -137,6 +145,13 @@ fn span(s: &j::OtlpSpan) -> ProtoSpan {
     }
 }
 
+/// Map a serde status-code integer to its prost counterpart.
+///
+/// The serde (`json_types::status_code`) and prost (`ProtoStatusCode`) numeric values are
+/// intentionally identical — UNSET=0, OK=1, ERROR=2 — so each arm is a no-op in practice.
+/// The explicit match is kept as a correctness guard: the `_` arm deliberately clamps any
+/// unrecognized value (e.g. a future proto extension not yet reflected in the serde model)
+/// to `Unset` rather than forwarding an out-of-range integer to the wire.
 fn status_code(code: i32) -> i32 {
     match code {
         c if c == j::status_code::OK => ProtoStatusCode::Ok as i32,
@@ -152,6 +167,7 @@ fn link(l: &j::OtlpSpanLink) -> ProtoLink {
         trace_state: l.trace_state.clone().unwrap_or_default(),
         attributes: l.attributes.iter().map(kv).collect(),
         dropped_attributes_count: l.dropped_attributes_count.unwrap_or(0),
+        // `json_types::OtlpSpanLink` has no `flags` field, so 0 is the faithful value.
         flags: 0,
     }
 }
@@ -167,10 +183,12 @@ fn event(e: &j::OtlpSpanEvent) -> ProtoEvent {
 
 #[cfg(test)]
 mod tests {
+    use super::hex_to_bytes;
     use crate::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
-    use crate::span::BytesData;
     use crate::span::v04::Span;
+    use crate::span::BytesData;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
+    use libdd_trace_protobuf::opentelemetry::proto::trace::v1::status::StatusCode as ProtoStatusCode;
 
     #[test]
     fn converts_ids_and_attributes_to_proto() {
@@ -202,7 +220,10 @@ mod tests {
             sp.trace_id,
             vec![0, 0, 0, 0, 0, 0, 0, 0, 0xD2, 0x69, 0xB6, 0x33, 0x81, 0x3F, 0xC6, 0x0C]
         );
-        assert_eq!(sp.span_id, vec![0xEE, 0xE1, 0x9B, 0x7E, 0xC3, 0xC1, 0xB1, 0x74]);
+        assert_eq!(
+            sp.span_id,
+            vec![0xEE, 0xE1, 0x9B, 0x7E, 0xC3, 0xC1, 0xB1, 0x74]
+        );
         assert_eq!(
             sp.parent_span_id,
             vec![0xEE, 0xE1, 0x9B, 0x7E, 0xC3, 0xC1, 0xB1, 0x73]
@@ -221,4 +242,78 @@ mod tests {
             Some(Value::IntValue(42))
         ));
     }
+
+    // --- hex_to_bytes fallback tests ---
+
+    #[test]
+    fn hex_to_bytes_wrong_length_returns_zeros() {
+        // "abc" is 3 chars but we expect 2 bytes (4 chars); should fall back to all-zero.
+        assert_eq!(hex_to_bytes("abc", 2), vec![0u8; 2]);
+    }
+
+    #[test]
+    fn hex_to_bytes_bad_nibble_returns_zeros() {
+        // "zz" is the right length for 1 byte but contains invalid hex chars.
+        assert_eq!(hex_to_bytes("zz", 1), vec![0u8; 1]);
+    }
+
+    // --- Status code + double metric test ---
+
+    #[test]
+    fn error_span_produces_error_status_and_double_metric() {
+        // mapper.rs sets status.code = status_code::ERROR when span.error != 0, so
+        // proto_convert's status_code() must return ProtoStatusCode::Error as i32.
+        let resource_info = OtlpResourceInfo {
+            service: "svc-error-test".to_string(),
+            ..Default::default()
+        };
+        let mut span: Span<BytesData> = Span {
+            trace_id: 0x1_u128,
+            span_id: 0x2,
+            name: libdd_tinybytes::BytesString::from_static("op"),
+            resource: libdd_tinybytes::BytesString::from_static("res"),
+            r#type: libdd_tinybytes::BytesString::from_static("web"),
+            start: 1_000_000_000,
+            duration: 500_000,
+            error: 1, // triggers ERROR status in mapper
+            ..Default::default()
+        };
+        span.metrics
+            .insert(libdd_tinybytes::BytesString::from_static("ratio"), 1.5_f64);
+
+        let serde_req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let proto: ProtoReq = (&serde_req).into();
+
+        let sp = &proto.resource_spans[0].scope_spans[0].spans[0];
+
+        // (a) status code must be ERROR
+        assert_eq!(
+            sp.status.as_ref().unwrap().code,
+            ProtoStatusCode::Error as i32
+        );
+
+        // (b) the "ratio" metric must arrive as a DoubleValue
+        use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value;
+        let ratio_attr = sp
+            .attributes
+            .iter()
+            .find(|kv| kv.key == "ratio")
+            .expect("ratio attr must be present");
+        assert!(
+            matches!(
+                ratio_attr.value.as_ref().unwrap().value,
+                Some(Value::DoubleValue(v)) if (v - 1.5).abs() < f64::EPSILON
+            ),
+            "expected DoubleValue(1.5), got {:?}",
+            ratio_attr.value
+        );
+    }
+
+    // Link/Event byte-size test:
+    // A plain v04 Span produced by the mapper does not carry links or events unless
+    // span.span_links / span.span_events are populated explicitly. Building a span with
+    // a link requires constructing a SpanLink with real trace_id/span_id values, which
+    // is straightforward, but the mapper only forwards links as-is — there is no
+    // transformation that would exercise proto_convert beyond what the ID tests above
+    // already cover. We therefore skip this sub-item as instructed.
 }
