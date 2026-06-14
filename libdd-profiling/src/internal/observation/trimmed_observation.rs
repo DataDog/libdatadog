@@ -53,6 +53,14 @@ impl TrimmedObservation {
         unsafe { std::slice::from_raw_parts_mut(self.data, len.0) }
     }
 
+    /// Read-only view of the observation's values. Used by non-destructive
+    /// (snapshot) serialization, which iterates observations by reference
+    /// instead of consuming them.
+    /// Safety: the ObservationLength must have come from the same profile as the Observation
+    pub unsafe fn as_slice(&self, len: ObservationLength) -> &[i64] {
+        unsafe { std::slice::from_raw_parts(self.data, len.0) }
+    }
+
     /// Consumes self, ensuring that the memory behind it is dropped.
     /// It is an error to drop a TrimmedObservation without consuming it first.
     /// Safety: the ObservationLength must have come from the same profile as the Observation

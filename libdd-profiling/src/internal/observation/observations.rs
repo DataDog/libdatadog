@@ -83,6 +83,34 @@ impl Observations {
         Ok(())
     }
 
+    /// Subtracts `values` from a previously-aggregated (untimestamped) sample,
+    /// element-wise and saturating. When every value of the bucket reaches
+    /// zero the bucket is removed entirely, so a persistent live-heap profile
+    /// does not accumulate dead zero-valued samples over time.
+    ///
+    /// Only aggregated observations can be decremented: timestamped samples are
+    /// kept individually and represent point-in-time events, so subtracting
+    /// from them is meaningless. Subtracting a sample that is not present is a
+    /// no-op (the matching add may have been dropped before it was recorded).
+    pub fn sub(&mut self, sample: Sample, values: &[i64]) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.inner.is_some(),
+            "Use of sub on Observations that were not initialized"
+        );
+
+        // SAFETY: we just ensured it has an item above.
+        let observations = unsafe { self.inner.as_mut().unwrap_unchecked() };
+        let obs_len = observations.obs_len;
+
+        anyhow::ensure!(
+            obs_len.eq(values.len()),
+            "Observation length mismatch, expected {obs_len:?} values, got {} instead",
+            values.len()
+        );
+
+        observations.aggregated_data.sub(sample, values)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.inner.is_none()
             || (self.aggregated_samples_count() == 0 && self.timestamped_samples_count() == 0)
@@ -100,6 +128,30 @@ impl Observations {
             .as_ref()
             .map(|o| o.timestamped_samples_count)
             .unwrap_or(0)
+    }
+
+    /// True if any timestamped (non-aggregated) samples have been recorded.
+    /// Non-destructive snapshot serialization only supports aggregated
+    /// observations, because timestamped samples live in a write-only
+    /// compressor stream that cannot be iterated without consuming it.
+    pub fn has_timestamped(&self) -> bool {
+        self.timestamped_samples_count() > 0
+    }
+
+    /// Iterate aggregated observations by reference, without consuming them.
+    /// Yields `(sample, values)` for each live bucket. Used by snapshot
+    /// serialization of a persistent profile (e.g. the live-heap profile),
+    /// which must keep its state across uploads.
+    pub fn iter_aggregated(&self) -> impl Iterator<Item = (Sample, &[i64])> + '_ {
+        self.inner.as_ref().into_iter().flat_map(|observations| {
+            let obs_len = observations.obs_len;
+            observations.aggregated_data.data.iter().map(move |(s, o)| {
+                // SAFETY: every TrimmedObservation in this map was built with
+                // obs_len via AggregatedObservations::add/sub.
+                let values = unsafe { o.as_slice(obs_len) };
+                (*s, values)
+            })
+        })
     }
 
     pub fn try_into_iter(self) -> io::Result<ObservationsIntoIter> {
@@ -162,6 +214,56 @@ impl AggregatedObservations {
         } else {
             let trimmed = TrimmedObservation::new(values, self.obs_len);
             self.data.insert(sample, trimmed);
+        }
+
+        Ok(())
+    }
+
+    /// Element-wise saturating subtraction from an existing aggregated bucket.
+    ///
+    /// Heap observations aggregate every live allocation that shares a
+    /// `stacktrace + labels` identity into one bucket whose values are the
+    /// running sums. Freeing one allocation therefore must *subtract* that
+    /// allocation's contribution rather than delete the bucket, which may still
+    /// hold other live allocations from the same call site. Once the bucket
+    /// drops to all-zero (the last live allocation for that identity was freed)
+    /// it is removed so the profile does not carry dead samples.
+    ///
+    /// A subtraction against a missing key is a no-op: the corresponding add
+    /// may have been dropped before being recorded, and there is nothing to
+    /// decrement.
+    fn sub(&mut self, sample: Sample, values: &[i64]) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.obs_len.eq(values.len()),
+            "Observation length mismatch, expected {:?} values, got {} instead",
+            self.obs_len,
+            values.len()
+        );
+
+        let all_zero = if let Some(v) = self.data.get_mut(&sample) {
+            // SAFETY: This is the only way to build one of these, and we already
+            // checked the length matches.
+            let slice = unsafe { v.as_mut_slice(self.obs_len) };
+            // Floor at zero: the accumulators this is used for (live-heap space
+            // and count) are non-negative, and a value cannot represent "less
+            // than nothing live". Over-subtraction (e.g. an unbalanced free)
+            // clamps to zero rather than producing a nonsensical negative
+            // sample on the wire.
+            slice
+                .iter_mut()
+                .zip(values)
+                .for_each(|(a, b)| *a = a.saturating_sub(*b).max(0));
+            slice.iter().all(|&x| x == 0)
+        } else {
+            return Ok(());
+        };
+
+        if all_zero {
+            if let Some(obs) = self.data.remove(&sample) {
+                // SAFETY: The only way to build one of these is through
+                // [Self::add]/[Self::sub], which already checked the length.
+                unsafe { obs.consume(self.obs_len) };
+            }
         }
 
         Ok(())
@@ -298,6 +400,55 @@ mod tests {
                 panic!("Unexpected key");
             }
         });
+    }
+
+    #[test]
+    fn sub_decrements_shared_bucket_and_removes_at_zero() {
+        let mut o = Observations::new(2);
+        let s1 = Sample {
+            labels: LabelSetId::from_offset(1),
+            stacktrace: StackTraceId::from_offset(1),
+        };
+
+        // Two live allocations sharing the same stack aggregate into one bucket.
+        o.add(s1, None, &[100, 1]).unwrap();
+        o.add(s1, None, &[40, 1]).unwrap();
+        assert_eq!(1, o.aggregated_samples_count());
+
+        // Freeing one allocation subtracts its contribution; bucket survives.
+        o.sub(s1, &[40, 1]).unwrap();
+        assert_eq!(1, o.aggregated_samples_count());
+
+        // Freeing the last allocation zeroes the bucket, which is then removed.
+        o.sub(s1, &[100, 1]).unwrap();
+        assert_eq!(0, o.aggregated_samples_count());
+        assert!(o.is_empty());
+    }
+
+    #[test]
+    fn sub_missing_key_is_noop() {
+        let mut o = Observations::new(2);
+        let s1 = Sample {
+            labels: LabelSetId::from_offset(1),
+            stacktrace: StackTraceId::from_offset(1),
+        };
+        // Subtracting from an empty store must not error or panic.
+        o.sub(s1, &[10, 1]).unwrap();
+        assert!(o.is_empty());
+    }
+
+    #[test]
+    fn sub_saturates_and_does_not_underflow() {
+        let mut o = Observations::new(2);
+        let s1 = Sample {
+            labels: LabelSetId::from_offset(1),
+            stacktrace: StackTraceId::from_offset(1),
+        };
+        o.add(s1, None, &[10, 1]).unwrap();
+        // Over-subtract: values saturate at zero rather than going negative, and
+        // the all-zero bucket is removed.
+        o.sub(s1, &[1000, 1]).unwrap();
+        assert_eq!(0, o.aggregated_samples_count());
     }
 
     #[test]

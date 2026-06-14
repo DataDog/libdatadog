@@ -120,6 +120,23 @@ impl StringTable {
         self.strings.len()
     }
 
+    /// Iterates the interned strings by reference, in insertion (StringId)
+    /// order, without consuming the table. Used by non-destructive snapshot
+    /// serialization, where the string table must remain valid for subsequent
+    /// uploads. The returned references are bound to `&self`, which keeps the
+    /// backing arena alive.
+    pub fn iter(&self) -> impl Iterator<Item = &str> + '_ {
+        self.strings.iter().map(|s| -> &str { s })
+    }
+
+    /// Returns the insertion offset (StringId value) of an already-interned
+    /// string, or `None` if it is not present. Unlike [`Self::intern`] this
+    /// does not mutate the table, so it can be used during non-destructive
+    /// snapshot serialization.
+    pub fn index_of(&self, str: &str) -> Option<usize> {
+        self.strings.get_index_of(str)
+    }
+
     /// Adds the string to the string table if it isn't present already, and
     /// returns a [StringId] that corresponds to the order that this string
     /// was originally inserted.

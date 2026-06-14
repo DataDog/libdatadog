@@ -29,6 +29,13 @@ pub fn roundtrip_to_pprof(profile: crate::internal::Profile) -> anyhow::Result<P
     deserialize_compressed_pprof(&encoded.buffer)
 }
 
+/// Serialize a profile via the non-destructive snapshot path and decode the
+/// result, leaving the original profile intact and usable.
+pub fn snapshot_to_pprof(profile: &crate::internal::Profile) -> anyhow::Result<Profile> {
+    let encoded = profile.serialize_snapshot(None, None)?;
+    deserialize_compressed_pprof(&encoded.buffer)
+}
+
 pub fn sorted_samples(profile: &Profile) -> Vec<Sample> {
     let mut samples = profile.samples.clone();
     samples.sort_unstable();

@@ -612,6 +612,129 @@ pub unsafe extern "C" fn ddog_prof_Profile_add2(
     })())
 }
 
+/// Adds a batch of `api2` samples to the profile in a single call.
+///
+/// Equivalent to calling [`ddog_prof_Profile_add2`] once per element of
+/// `samples` with the same `timestamp`, but crosses the FFI boundary and takes
+/// the profile's internal lock (on the caller's side) only once. Used by the
+/// persistent live-heap profile to apply a whole snapshot interval's worth of
+/// new allocations at export time. If any sample fails to add, the batch stops
+/// and returns the error; samples already added remain in the profile.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. All pointers inside each `sample` must be valid for the duration of
+/// this call.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_add2_batch(
+    profile: *mut Profile,
+    samples: Slice<Sample2>,
+    timestamp: Option<NonZeroI64>,
+) -> ProfileStatus {
+    ProfileStatus::from((|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        for sample in samples.try_as_slice()? {
+            let locations = sample.locations.try_as_slice()?;
+            let values = sample.values.try_as_slice()?;
+            let labels = sample.labels.try_as_slice()?;
+
+            let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
+                Ok(api2::Label {
+                    key: label.key,
+                    str: core::str::from_utf8(label.str.try_as_bytes()?)?,
+                    num: label.num,
+                    num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
+                })
+            });
+            profile
+                .try_add_sample2(locations, values, labels_iter, timestamp)
+                .context("ddog_prof_Profile_add2_batch failed")?;
+        }
+        anyhow::Ok(())
+    })())
+}
+
+/// Subtracts an `api2` sample from the profile's aggregated observations.
+///
+/// This is the inverse of [`ddog_prof_Profile_add2`] for untimestamped
+/// samples: it element-wise saturating-subtracts (flooring at zero) the
+/// sample's values from the matching `stacktrace + labels` bucket, removing the
+/// bucket once it reaches all-zero. Used by the live-heap profile to retire
+/// freed allocations. Subtracting a sample that is not present is a no-op.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. All pointers inside the `sample` must be valid for the duration of
+/// this call.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_sub2(
+    profile: *mut Profile,
+    sample: Sample2,
+) -> ProfileStatus {
+    ProfileStatus::from((|| {
+        let profile = profile_ptr_to_inner(profile)?;
+
+        let locations = sample.locations.try_as_slice()?;
+        let values = sample.values.try_as_slice()?;
+        let labels = sample.labels.try_as_slice()?;
+
+        let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
+            Ok(api2::Label {
+                key: label.key,
+                str: core::str::from_utf8(label.str.try_as_bytes()?)?,
+                num: label.num,
+                num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
+            })
+        });
+        profile
+            .try_sub_sample2(locations, values, labels_iter)
+            .context("ddog_prof_Profile_sub2 failed")
+    })())
+}
+
+/// Subtracts a batch of `api2` samples from the profile's aggregated
+/// observations in a single call. See [`ddog_prof_Profile_sub2`] for the
+/// per-sample semantics and [`ddog_prof_Profile_add2_batch`] for the batching
+/// rationale.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. All pointers inside each `sample` must be valid for the duration of
+/// this call.
+/// This call is _NOT_ thread-safe.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_sub2_batch(
+    profile: *mut Profile,
+    samples: Slice<Sample2>,
+) -> ProfileStatus {
+    ProfileStatus::from((|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        for sample in samples.try_as_slice()? {
+            let locations = sample.locations.try_as_slice()?;
+            let values = sample.values.try_as_slice()?;
+            let labels = sample.labels.try_as_slice()?;
+
+            let labels_iter = labels.iter().map(|label| -> anyhow::Result<api2::Label> {
+                Ok(api2::Label {
+                    key: label.key,
+                    str: core::str::from_utf8(label.str.try_as_bytes()?)?,
+                    num: label.num,
+                    num_unit: core::str::from_utf8(label.num_unit.try_as_bytes()?)?,
+                })
+            });
+            profile
+                .try_sub_sample2(locations, values, labels_iter)
+                .context("ddog_prof_Profile_sub2_batch failed")?;
+        }
+        anyhow::Ok(())
+    })())
+}
+
 pub(crate) unsafe fn profile_ptr_to_inner<'a>(
     profile_ptr: *mut Profile,
 ) -> anyhow::Result<&'a mut internal::Profile> {
@@ -893,6 +1016,56 @@ pub unsafe extern "C" fn ddog_prof_Profile_serialize(
         old_profile.serialize_into_compressed_pprof(end_time, None)
     })()
     .context("ddog_prof_Profile_serialize failed")
+    .into()
+}
+
+/// Serialize the aggregated profile *without* draining or resetting it, so the
+/// same profile keeps its accumulated state and can be serialized again later.
+///
+/// This is intended for persistent profiles such as the live-heap profile,
+/// whose aggregated observations carry across uploads (new allocations are
+/// added with [`ddog_prof_Profile_add2`] / [`ddog_prof_Profile_add2_batch`] and
+/// freed allocations are subtracted with [`ddog_prof_Profile_sub2`] /
+/// [`ddog_prof_Profile_sub2_batch`]). Unlike [`ddog_prof_Profile_serialize`],
+/// the profile is left intact.
+///
+/// Only aggregated (untimestamped) observations are supported; an error is
+/// returned if the profile contains any timestamped samples.
+///
+/// Don't forget to clean up the ok with `ddog_prof_EncodedProfile_drop` or the
+/// error variant with `ddog_Error_drop` when you are done with them.
+///
+/// # Arguments
+/// * `profile` - a reference to the profile being serialized; not modified.
+/// * `start_time` - optional start time for the serialized profile. If
+///   None/null is passed, the time of profile creation will be used.
+/// * `end_time` - optional end time of the profile. If None/null is passed, the
+///   current time will be used.
+///
+/// # Safety
+/// The `profile` must point to a valid profile object.
+/// The `start_time` and `end_time` must be null or otherwise point to a valid
+/// TimeSpec object.
+#[must_use]
+#[no_mangle]
+pub unsafe extern "C" fn ddog_prof_Profile_serialize_snapshot(
+    profile: *mut Profile,
+    start_time: Option<&Timespec>,
+    end_time: Option<&Timespec>,
+) -> SerializeResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+
+        // serialize_snapshot reads start_time from the profile; temporarily set
+        // it if the caller provided one, since we are not rotating the profile.
+        if let Some(start_time) = start_time {
+            profile.set_start_time(start_time.into())?;
+        }
+
+        let end_time = end_time.map(SystemTime::from);
+        profile.serialize_snapshot(end_time, None)
+    })()
+    .context("ddog_prof_Profile_serialize_snapshot failed")
     .into()
 }
 

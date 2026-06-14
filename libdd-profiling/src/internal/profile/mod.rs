@@ -255,6 +255,92 @@ impl Profile {
         self.try_add_sample_internal(values, labels, internal_locations, timestamp)
     }
 
+    /// Subtracts a previously-added `api2` sample from the aggregated profile.
+    ///
+    /// This is the inverse of [`Self::try_add_sample2`] for untimestamped
+    /// samples: it interns the same `stacktrace + labels` identity and
+    /// element-wise saturating-subtracts `values` from the matching aggregated
+    /// bucket, removing the bucket once it reaches all-zero. It is used by the
+    /// persistent live-heap profile to retire freed allocations without
+    /// re-emitting the entire live set on every export.
+    ///
+    /// # Safety
+    ///
+    /// All MappingId2, FunctionId2, and StringId2 values should be coming
+    /// from the same profiles dictionary used by this profile internally.
+    pub unsafe fn try_sub_sample2<
+        'a,
+        L: ExactSizeIterator<Item = anyhow::Result<api2::Label<'a>>>,
+    >(
+        &mut self,
+        locations: &[api2::Location2],
+        values: &[i64],
+        labels: L,
+    ) -> anyhow::Result<()> {
+        let Some(translator) = &mut self.profiles_dictionary_translator else {
+            anyhow::bail!("profiles dictionary not set");
+        };
+
+        #[cfg(debug_assertions)]
+        let labels = labels.collect::<Vec<_>>();
+        #[cfg(debug_assertions)]
+        {
+            Self::validate_sample_labels2(labels.as_slice())?;
+        }
+
+        let string_table = &mut self.strings;
+        let functions = &mut self.functions;
+        let mappings = &mut self.mappings;
+        let locations_set = &mut self.locations;
+        let labels_set = &mut self.labels;
+
+        let labels = {
+            let mut lbls = Vec::new();
+            lbls.try_reserve_exact(labels.len())?;
+            for label in labels {
+                let label = label.context("profile label failed to convert")?;
+                let key = translator.translate_string(string_table, label.key.into())?;
+                let internal_label = if !label.str.is_empty() {
+                    let str = string_table.try_intern(label.str)?;
+                    Label::str(key, str)
+                } else {
+                    let num = label.num;
+                    let num_unit = string_table.try_intern(label.num_unit)?;
+                    Label::num(key, num, num_unit)
+                };
+
+                let id = labels_set.try_dedup(internal_label)?;
+                lbls.push(id);
+            }
+            lbls.into_boxed_slice()
+        };
+
+        let mut internal_locations = Vec::new();
+        internal_locations
+            .try_reserve_exact(locations.len())
+            .context("failed to reserve memory for sample locations")?;
+        for location in locations {
+            let l = Location {
+                mapping_id: translator.translate_mapping(
+                    mappings,
+                    string_table,
+                    location.mapping,
+                )?,
+                function_id: translator.translate_function(
+                    functions,
+                    string_table,
+                    location.function,
+                )?,
+                address: location.address,
+                line: location.line,
+            };
+            let location_id = locations_set.checked_dedup(l)?;
+            internal_locations.push(location_id);
+        }
+
+        self.try_sub_sample_internal(values, labels, internal_locations)
+    }
+
     /// Gets the profiles dictionary, needed for `api2` operations.
     pub fn get_profiles_dictionary(&self) -> Option<&ProfilesDictionary> {
         self.profiles_dictionary_translator
@@ -321,6 +407,27 @@ impl Profile {
         let stacktrace = self.try_add_stacktrace(locations)?;
         self.observations
             .add(Sample::new(labels, stacktrace), timestamp, values)?;
+        Ok(())
+    }
+
+    fn try_sub_sample_internal(
+        &mut self,
+        values: &[i64],
+        labels: Box<[LabelId]>,
+        locations: Vec<LocationId>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            values.len() == self.sample_types.len(),
+            "expected {} sample types, but sample had {} sample types",
+            self.sample_types.len(),
+            values.len(),
+        );
+
+        let labels = self.label_sets.try_dedup(LabelSet::new(labels))?;
+
+        let stacktrace = self.try_add_stacktrace(locations)?;
+        self.observations
+            .sub(Sample::new(labels, stacktrace), values)?;
         Ok(())
     }
 
@@ -500,6 +607,236 @@ impl Profile {
         let mut encoded_profile = self.encode(&mut compressor, end_time, duration)?;
         encoded_profile.buffer = compressor.finish()?;
         Ok(encoded_profile)
+    }
+
+    /// Serialize the profile *without consuming or resetting it*, so the same
+    /// profile can keep accumulating state and be serialized again later.
+    ///
+    /// This exists for persistent profiles such as the live-heap profile, whose
+    /// aggregated observations carry across uploads (new allocations are added
+    /// and freed allocations are subtracted via [`Self::try_sub_sample2`]).
+    /// Re-emitting the full live set every upload would otherwise require either
+    /// destroying the running state ([`Self::serialize_into_compressed_pprof`])
+    /// or re-adding every live sample from scratch.
+    ///
+    /// Only aggregated (untimestamped) observations are supported: timestamped
+    /// samples live in a write-only compressor stream that cannot be iterated
+    /// without consuming it. Returns an error if any timestamped sample is
+    /// present.
+    pub fn serialize_snapshot(
+        &self,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+    ) -> anyhow::Result<EncodedProfile> {
+        const INITIAL_PPROF_BUFFER_SIZE: usize = 32 * 1024;
+        const MAX_PROFILE_SIZE: usize = 16 * 1024 * 1024;
+
+        let mut compressor = Compressor::<DefaultProfileCodec>::try_new(
+            INITIAL_PPROF_BUFFER_SIZE,
+            MAX_PROFILE_SIZE,
+            Self::COMPRESSION_LEVEL,
+        )
+        .context("failed to create compressor")?;
+
+        let mut encoded_profile = self.encode_ref(&mut compressor, end_time, duration)?;
+        encoded_profile.buffer = compressor.finish()?;
+        Ok(encoded_profile)
+    }
+
+    /// Non-destructive counterpart to [`Self::encode`]. Iterates the profile's
+    /// interning tables and aggregated observations by reference, leaving the
+    /// profile intact. Sample-type and period strings, which the destructive
+    /// path interns into the table at serialization time, are instead resolved
+    /// against a local overlay (`extra_strings`) appended after the existing
+    /// strings, so `&self` is never mutated.
+    fn encode_ref<W: io::Write>(
+        &self,
+        writer: &mut W,
+        end_time: Option<SystemTime>,
+        duration: Option<Duration>,
+    ) -> anyhow::Result<EncodedProfile> {
+        anyhow::ensure!(
+            !self.observations.has_timestamped(),
+            "serialize_snapshot does not support timestamped observations"
+        );
+
+        let end = end_time.unwrap_or_else(SystemTime::now);
+        let start = self.start_time;
+        let endpoints_stats = self.endpoints.stats.clone();
+        let duration_nanos = duration
+            .unwrap_or_else(|| end.duration_since(start).unwrap_or(Duration::ZERO))
+            .as_nanos()
+            .min(i64::MAX as u128) as i64;
+
+        // Local string overlay: strings the destructive path would intern at
+        // serialization time (sample-type and period type/unit names) are
+        // resolved here without mutating the table. New strings are assigned
+        // ids past the end of the existing table and emitted after it.
+        fn intern_ref<'s>(
+            strings: &StringTable,
+            extra: &mut Vec<&'s str>,
+            s: &'s str,
+        ) -> StringId {
+            if let Some(off) = strings.index_of(s) {
+                StringId::from_offset(off)
+            } else if let Some(pos) = extra.iter().position(|e| *e == s) {
+                StringId::from_offset(strings.len() + pos)
+            } else {
+                extra.push(s);
+                StringId::from_offset(strings.len() + extra.len() - 1)
+            }
+        }
+        let mut extra_strings: Vec<&str> = Vec::new();
+
+        // Resolve sample-type and period strings up front so the overlay is
+        // complete before we emit the string section.
+        let mut sample_type_records: Vec<ValueType> = Vec::new();
+        sample_type_records.try_reserve_exact(self.sample_types.len())?;
+        for sample_type in self.sample_types.iter().copied() {
+            let vt: api::ValueType<'static> = sample_type.into();
+            let r#type = intern_ref(&self.strings, &mut extra_strings, vt.r#type);
+            let unit = intern_ref(&self.strings, &mut extra_strings, vt.unit);
+            sample_type_records.push(ValueType {
+                r#type: Record::from(r#type),
+                unit: Record::from(unit),
+            });
+        }
+        let period_type_and_value: Option<(ValueType, i64)> = self.period.map(|period| {
+            let vt: api::ValueType<'static> = period.sample_type.into();
+            let r#type = intern_ref(&self.strings, &mut extra_strings, vt.r#type);
+            let unit = intern_ref(&self.strings, &mut extra_strings, vt.unit);
+            (
+                ValueType {
+                    r#type: Record::from(r#type),
+                    unit: Record::from(unit),
+                },
+                period.value,
+            )
+        });
+
+        // Expand label sets by reference, in id order.
+        let mut extended_label_sets: Vec<Vec<Label>> = Vec::new();
+        extended_label_sets.try_reserve_exact(self.label_sets.len())?;
+        for label_set in self.label_sets.iter() {
+            extended_label_sets.push(self.expand_label_set(label_set)?);
+        }
+
+        let omit_local_root_span_id = self.experimental_omit_local_root_span_id_when_serializing;
+        let local_root_span_id_label = self.endpoints.local_root_span_id_label;
+
+        // Samples (field 2). Aggregated observations only; no timestamp label.
+        for (sample, raw_values) in self.observations.iter_aggregated() {
+            let off = sample.labels.to_offset();
+            let labels = extended_label_sets.get(off).ok_or_else(oob_label_set)?;
+            let locations = &self.get_stacktrace(sample.stacktrace)?.locations;
+            let mut location_ids = Vec::new();
+            location_ids.try_reserve_exact(locations.len())?;
+            location_ids.extend(locations.iter().map(LocationId::to_raw_id));
+            self.check_location_ids_are_valid(&location_ids, self.locations.len())?;
+
+            let mut values = Vec::new();
+            values.try_reserve_exact(raw_values.len())?;
+            values.extend_from_slice(raw_values);
+            self.upscaling_rules.upscale_values(&mut values, labels);
+
+            let mut pprof_labels: Vec<_> = Vec::new();
+            pprof_labels.try_reserve_exact(labels.len())?;
+            if omit_local_root_span_id {
+                pprof_labels.extend(
+                    labels
+                        .iter()
+                        .filter(|label| label.get_key() != local_root_span_id_label)
+                        .map(protobuf::Label::from),
+                );
+            } else {
+                pprof_labels.extend(labels.iter().map(protobuf::Label::from));
+            }
+
+            let item = protobuf::Sample {
+                location_ids: Record::from(location_ids.as_slice()),
+                values: Record::from(values.as_slice()),
+                // SAFETY: converting &[Label] to &[Field<Label,..>] which is
+                // safe, because Field is repr(transparent).
+                labels: unsafe {
+                    &*(pprof_labels.as_slice() as *const [protobuf::Label]
+                        as *const [Record<protobuf::Label, 3, NO_OPT_ZERO>])
+                },
+            };
+            Record::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
+        }
+
+        // Sample types (field 1).
+        for sample_type in sample_type_records {
+            Record::<_, 1, NO_OPT_ZERO>::from(sample_type).encode(writer)?;
+        }
+
+        // Mappings (field 3), locations (field 4), functions (field 5), all by
+        // reference. Internal records are Copy, so reading through `&item` is
+        // free.
+        for (offset, item) in self.mappings.iter().enumerate() {
+            let mapping = protobuf::Mapping {
+                id: Record::from((offset + 1) as u64),
+                memory_start: Record::from(item.memory_start),
+                memory_limit: Record::from(item.memory_limit),
+                file_offset: Record::from(item.file_offset),
+                filename: Record::from(item.filename),
+                build_id: Record::from(item.build_id),
+            };
+            Record::<_, 3, NO_OPT_ZERO>::from(mapping).encode(writer)?;
+        }
+
+        for (offset, item) in self.locations.iter().enumerate() {
+            let location = protobuf::Location {
+                id: Record::from((offset + 1) as u64),
+                mapping_id: Record::from(item.mapping_id.map(MappingId::into_raw_id).unwrap_or(0)),
+                address: Record::from(item.address),
+                line: Record::from(protobuf::Line {
+                    function_id: Record::from(item.function_id.into_raw_id()),
+                    lineno: Record::from(item.line),
+                }),
+            };
+            Record::<_, 4, NO_OPT_ZERO>::from(location).encode(writer)?;
+        }
+
+        for (offset, item) in self.functions.iter().enumerate() {
+            let function = protobuf::Function {
+                id: Record::from((offset + 1) as u64),
+                name: Record::from(item.name),
+                system_name: Record::from(item.system_name),
+                filename: Record::from(item.filename),
+            };
+            Record::<_, 5, NO_OPT_ZERO>::from(function).encode(writer)?;
+        }
+
+        // Strings (field 6): existing table in id order, then the overlay.
+        for item in self.strings.iter() {
+            Record::<_, 6, NO_OPT_ZERO>::from(item).encode(writer)?;
+        }
+        for item in extra_strings.iter().copied() {
+            Record::<_, 6, NO_OPT_ZERO>::from(item).encode(writer)?;
+        }
+
+        let time_nanos = self
+            .start_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |duration| {
+                duration.as_nanos().min(i64::MAX as u128) as i64
+            });
+
+        Record::<_, 9, OPT_ZERO>::from(time_nanos).encode(writer)?;
+        Record::<_, 10, OPT_ZERO>::from(duration_nanos).encode(writer)?;
+
+        if let Some((period_type, period)) = period_type_and_value {
+            Record::<_, 11, OPT_ZERO>::from(period_type).encode(writer)?;
+            Record::<_, 12, OPT_ZERO>::from(period).encode(writer)?;
+        };
+
+        Ok(EncodedProfile {
+            start,
+            end,
+            buffer: Vec::new(),
+            endpoints_stats,
+        })
     }
 
     /// Resolves label ids into labels and appends the endpoint label, leaving
@@ -1096,7 +1433,9 @@ fn oob_label_set() -> io::Error {
 #[cfg(test)]
 mod api_tests {
     use super::*;
-    use crate::pprof::test_utils::{roundtrip_to_pprof, sorted_samples, string_table_fetch};
+    use crate::pprof::test_utils::{
+        roundtrip_to_pprof, snapshot_to_pprof, sorted_samples, string_table_fetch,
+    };
     use libdd_profiling_protobuf::prost_impls;
     use std::collections::HashSet;
 
@@ -1558,6 +1897,126 @@ mod api_tests {
 
         assert_eq!(regular_sample.labels.len(), 2);
         assert_eq!(omit_sample.labels.len(), 1);
+    }
+
+    /// Builds a profile with two untimestamped aggregated samples and no
+    /// dictionary, suitable for exercising the snapshot serialize path.
+    fn provide_aggregated_only_profile() -> Profile {
+        let sample_types = [api::SampleType::CpuSamples];
+        let mapping = api::Mapping {
+            filename: "php",
+            ..Default::default()
+        };
+        let labels = vec![api::Label {
+            key: "pid",
+            num: 101,
+            ..Default::default()
+        }];
+
+        let mut profile = Profile::new(&sample_types, None);
+        for name in ["{main}", "test"] {
+            let sample = api::Sample {
+                locations: vec![api::Location {
+                    mapping,
+                    function: api::Function {
+                        name,
+                        system_name: name,
+                        filename: "index.php",
+                    },
+                    ..Default::default()
+                }],
+                values: &[1],
+                labels: labels.clone(),
+            };
+            profile
+                .try_add_sample(sample, None)
+                .expect("profile to not be full");
+        }
+        profile
+    }
+
+    #[test]
+    fn serialize_snapshot_leaves_profile_intact() {
+        let profile = provide_aggregated_only_profile();
+
+        // First snapshot.
+        let first = snapshot_to_pprof(&profile).expect("snapshot to succeed");
+        assert_eq!(first.samples.len(), 2);
+        assert_eq!(first.mappings.len(), 1);
+        assert_eq!(first.functions.len(), 2);
+        assert_eq!(first.sample_types.len(), 1);
+
+        // The profile must still hold its state and be serializable again,
+        // producing the same number of samples (the snapshot did not drain it).
+        assert_eq!(profile.only_for_testing_num_aggregated_samples(), 2);
+        let second = snapshot_to_pprof(&profile).expect("second snapshot to succeed");
+        assert_eq!(second.samples.len(), 2);
+
+        // The "CpuSamples" sample-type string, which is interned at serialize
+        // time, must be present in the decoded string table.
+        assert!(second
+            .string_table
+            .iter()
+            .any(|s| s == "cpu-samples" || s == "sample"));
+    }
+
+    #[test]
+    fn serialize_snapshot_still_usable_for_more_samples() {
+        let mut profile = provide_aggregated_only_profile();
+        let _ = snapshot_to_pprof(&profile).expect("snapshot to succeed");
+
+        // Adding after a snapshot must work and be reflected on the next one.
+        let sample = api::Sample {
+            locations: vec![api::Location {
+                mapping: api::Mapping {
+                    filename: "php",
+                    ..Default::default()
+                },
+                function: api::Function {
+                    name: "third",
+                    system_name: "third",
+                    filename: "index.php",
+                },
+                ..Default::default()
+            }],
+            values: &[1],
+            labels: vec![api::Label {
+                key: "pid",
+                num: 101,
+                ..Default::default()
+            }],
+        };
+        profile.try_add_sample(sample, None).expect("add to succeed");
+
+        let after = snapshot_to_pprof(&profile).expect("snapshot to succeed");
+        assert_eq!(after.samples.len(), 3);
+    }
+
+    #[test]
+    fn serialize_snapshot_rejects_timestamped_samples() {
+        let mut profile = provide_aggregated_only_profile();
+        let sample = api::Sample {
+            locations: vec![api::Location {
+                mapping: api::Mapping {
+                    filename: "php",
+                    ..Default::default()
+                },
+                function: api::Function {
+                    name: "timed",
+                    system_name: "timed",
+                    filename: "index.php",
+                },
+                ..Default::default()
+            }],
+            values: &[1],
+            labels: vec![],
+        };
+        profile
+            .try_add_sample(sample, Timestamp::new(42))
+            .expect("add to succeed");
+
+        // Snapshot serialization only supports aggregated observations.
+        assert!(profile.serialize_snapshot(None, None).is_err());
     }
 
     #[test]
