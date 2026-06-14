@@ -11,6 +11,20 @@
 //! Two-tier aggregation (full → degraded → drop-counted) and context pruning
 //! are enforced by the caller (PHP sidecar bridge, 02-07). This module only
 //! owns the payload types and serialization helpers.
+//!
+//! Serialization note (bincode wire vs EVP POST): these types cross the
+//! worker→sidecar IPC boundary, which is encoded with **bincode** — a
+//! non-self-describing format whose derived `Deserialize` reads every field in
+//! declaration order. `#[serde(skip_serializing_if = ...)]` is therefore
+//! **incompatible** with the bincode wire: a skipped field is omitted on
+//! serialize but still expected on deserialize, causing field misalignment and
+//! a dropped batch. For that reason **all fields here are always serialized**
+//! (no `skip_serializing_if`). The flageval-worker EVP schema rejects null /
+//! empty placeholders (especially for degraded-tier events), so the sidecar
+//! flusher (`ffe_flagevaluation_flusher::build_payload`) strips null / empty
+//! placeholder entries from the JSON before the HTTP POST, reproducing the old
+//! skip semantics only on the outbound wire. `#[serde(default)]` is kept on
+//! fields that have it for deserialize robustness.
 
 use super::FfeTelemetryContext;
 use serde::{Deserialize, Serialize};
@@ -51,10 +65,13 @@ pub struct FfeFlagEvaluationBatch {
 
 /// A single aggregated flag evaluation event.
 ///
-/// Required fields are always present. Optional fields use
-/// `skip_serializing_if = "Option::is_none"` (or the bool equivalent) so the
-/// degraded tier emits a valid schema object without any null placeholders
-/// (reviewer concern #2 review:4477935835).
+/// **All fields are always serialized** (no `skip_serializing_if`) so the type
+/// is safe over the non-self-describing bincode IPC wire (see the module-level
+/// serialization note). The degraded tier therefore serializes optional fields
+/// as `null`/`false` on the wire; the sidecar flusher
+/// (`ffe_flagevaluation_flusher::build_payload`) strips those null/empty
+/// placeholders before the EVP POST so the flageval-worker schema sees no null
+/// placeholders (reviewer concern #2 review:4477935835).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FfeFlagEvaluationEvent {
     /// Unix timestamp of the aggregation window (milliseconds).
@@ -68,31 +85,31 @@ pub struct FfeFlagEvaluationEvent {
     /// Number of evaluations folded into this bucket.
     pub evaluation_count: u64,
 
-    // Optional fields — present in the full tier, absent in the degraded tier.
-
+    // Optional fields — present in the full tier, `None` in the degraded tier.
+    // Serialized as `null` on the bincode wire; the flusher strips them.
     /// Variant key; absent when the evaluation returned the runtime default
     /// (no variant assigned).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub variant: Option<VariantKey>,
     /// Allocation key from the UFC rule that produced this evaluation.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub allocation: Option<AllocationKey>,
     /// Targeting key identifying the evaluation subject.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub targeting_key: Option<String>,
     /// Pruned evaluation context (≤256 fields, values ≤256 chars, skip-not-truncate).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub context: Option<FlagEvalEventContext>,
     /// Evaluation error, if any.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub error: Option<EvalError>,
 
-    // Optional fields — may appear in either tier.
-
+    // Optional field — may appear in either tier.
     /// `true` when the evaluation returned the SDK runtime default (absent
-    /// variant, not a UFC-assigned variant). Omitted when false; defaults to
-    /// `false` on deserialization when absent.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    /// variant, not a UFC-assigned variant). Serialized as `false` on the wire
+    /// when unset; the flusher strips the `false` placeholder before the POST.
+    /// `#[serde(default)]` keeps deserialization robust when the field is absent.
+    #[serde(default)]
     pub runtime_default_used: bool,
 }
 
@@ -128,18 +145,35 @@ pub struct EvalError {
 /// originating service name for cross-service attribution.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FlagEvalEventContext {
-    /// Pruned evaluation context attributes (≤256 fields, values ≤256 chars).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub evaluation: Option<BTreeMap<String, serde_json::Value>>,
-    /// Datadog-specific context sub-object.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Pruned evaluation context attributes (≤256 fields, values ≤256 chars),
+    /// carried over the wire as a **JSON-object string** (e.g. `{"plan":"premium"}`).
+    ///
+    /// The sidecar IPC codec is bincode, which cannot (de)serialize
+    /// `serde_json::Value` (it relies on `deserialize_any`, which bincode
+    /// rejects). To keep the bincode wire encodable, the pruned context is
+    /// stringified at event-build time and re-expanded into a JSON object by the
+    /// sidecar flusher (`ffe_flagevaluation_flusher::build_payload`) before the
+    /// EVP POST, so the on-the-wire EVP schema (`context.evaluation` as an
+    /// object) is unchanged. `Eq` is preserved because `String` is `Eq`.
+    ///
+    /// Always serialized (no `skip_serializing_if`) for bincode-wire safety;
+    /// the sidecar flusher strips it when `None` → `null`.
+    #[serde(default)]
+    pub evaluation: Option<String>,
+    /// Datadog-specific context sub-object. Always serialized for bincode-wire
+    /// safety; the flusher strips it when `None` → `null` (and recursively
+    /// removes the enclosing `context` object if it becomes empty).
+    #[serde(default)]
     pub dd: Option<ContextDD>,
 }
 
 /// Datadog-specific context fields inside the per-event `context.dd` object.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ContextDD {
-    #[serde(skip_serializing_if = "String::is_empty")]
+    /// Originating service name. Always serialized for bincode-wire safety; the
+    /// flusher strips it when empty (`""`), reproducing the old
+    /// `skip_serializing_if = "String::is_empty"` semantics on the POST.
+    #[serde(default)]
     pub service: String,
 }
 
@@ -147,12 +181,11 @@ pub struct ContextDD {
 
 /// Prune evaluation context attributes to satisfy the frozen contract bounds:
 /// - At most `MAX_CONTEXT_FIELDS` (256) entries are kept.
-/// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped**
-///   (not truncated) to avoid partial-data misattribution.
-/// - Non-string values (bool, number, null) are kept regardless of
-///   their display length.
-/// - Keys are iterated in sorted order for deterministic canonical-key
-///   stability; the returned `BTreeMap` preserves that order.
+/// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped** (not truncated) to
+///   avoid partial-data misattribution.
+/// - Non-string values (bool, number, null) are kept regardless of their display length.
+/// - Keys are iterated in sorted order for deterministic canonical-key stability; the returned
+///   `BTreeMap` preserves that order.
 ///
 /// This satisfies reviewer concern #1 (`review:4477935835`).
 pub fn prune_context(
@@ -205,11 +238,14 @@ mod tests {
             }),
             targeting_key: Some("user-123".to_owned()),
             context: Some(FlagEvalEventContext {
-                evaluation: Some({
-                    let mut m = BTreeMap::new();
-                    m.insert("plan".to_owned(), json!("premium"));
-                    m
-                }),
+                evaluation: Some(
+                    serde_json::to_string(&{
+                        let mut m = BTreeMap::new();
+                        m.insert("plan".to_owned(), json!("premium"));
+                        m
+                    })
+                    .unwrap(),
+                ),
                 dd: Some(ContextDD {
                     service: "frontend".to_owned(),
                 }),
@@ -244,11 +280,8 @@ mod tests {
         assert_eq!(ev["targeting_key"], "user-123");
     }
 
-    // ── Test: degraded-tier event omits optional fields (no null) ─────────────
-
-    #[test]
-    fn degraded_tier_event_omits_optional_fields_not_null() {
-        let degraded = FfeFlagEvaluationEvent {
+    fn degraded_event() -> FfeFlagEvaluationEvent {
+        FfeFlagEvaluationEvent {
             timestamp: 1_700_000_000_000,
             flag: FlagKey {
                 key: "flag-b".to_owned(),
@@ -262,8 +295,20 @@ mod tests {
             context: None,
             error: None,
             runtime_default_used: false,
-        };
-        let json = serde_json::to_string(&degraded).unwrap();
+        }
+    }
+
+    // ── Test: degraded-tier event serializes optional fields as null ──────────
+    //
+    // The type no longer uses `skip_serializing_if` (bincode-wire safety), so on
+    // the wire `None`/`false` optional fields ARE present (as null/false). The
+    // null-placeholder stripping that the flageval-worker schema requires now
+    // happens in the sidecar flusher's `build_payload`, not at the type level —
+    // see `ffe_flagevaluation_flusher` tests.
+
+    #[test]
+    fn degraded_tier_event_serializes_optional_fields_as_null() {
+        let json = serde_json::to_string(&degraded_event()).unwrap();
         let v: Value = serde_json::from_str(&json).unwrap();
 
         // Required fields present.
@@ -272,18 +317,46 @@ mod tests {
         assert!(v["last_evaluation"].is_number());
         assert_eq!(v["evaluation_count"], 7);
 
-        // Optional fields entirely absent (not null).
-        assert!(v.get("variant").is_none(), "variant should be absent");
-        assert!(v.get("allocation").is_none(), "allocation should be absent");
+        // Optional fields are present as null/false placeholders on the wire
+        // (stripped later by the flusher, NOT at the type level).
+        assert!(v["variant"].is_null(), "variant should serialize as null");
         assert!(
-            v.get("targeting_key").is_none(),
-            "targeting_key should be absent"
+            v["allocation"].is_null(),
+            "allocation should serialize as null"
         );
-        assert!(v.get("context").is_none(), "context should be absent");
-        assert!(v.get("error").is_none(), "error should be absent");
         assert!(
-            v.get("runtime_default_used").is_none(),
-            "runtime_default_used should be absent when false"
+            v["targeting_key"].is_null(),
+            "targeting_key should serialize as null"
+        );
+        assert!(v["context"].is_null(), "context should serialize as null");
+        assert!(v["error"].is_null(), "error should serialize as null");
+        assert_eq!(
+            v["runtime_default_used"], false,
+            "runtime_default_used should serialize as false"
+        );
+    }
+
+    // ── Test: bincode round-trip with mixed Some/None fields ──────────────────
+    //
+    // This is the mechanical guard for the worker→sidecar IPC bug: bincode is a
+    // non-self-describing codec, so any `skip_serializing_if` on these types
+    // would omit a field on serialize while the derived Deserialize still
+    // expects it in order → field misalignment → the sidecar drops the batch.
+    // A batch mixing a full-tier event (Some fields) and a degraded-tier event
+    // (None fields) must survive serialize→deserialize byte-for-byte.
+
+    #[test]
+    fn batch_round_trips_via_bincode_with_mixed_optional_fields() {
+        let batch = FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![full_event(), degraded_event()],
+        };
+        let bytes = bincode::serialize(&batch).expect("bincode serialize must succeed");
+        let decoded: FfeFlagEvaluationBatch =
+            bincode::deserialize(&bytes).expect("bincode deserialize must succeed");
+        assert_eq!(
+            batch, decoded,
+            "bincode round-trip must be lossless for a batch mixing Some and None fields"
         );
     }
 

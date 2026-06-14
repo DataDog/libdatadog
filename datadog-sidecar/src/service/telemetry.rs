@@ -453,10 +453,10 @@ impl TelemetryCachedClient {
                         warn!("Attempted to send telemetry point for unregistered metric: {metric_name}");
                     }
                 }
-                SidecarAction::PhpComposerTelemetryFile(_) => {}      // handled separately
-                SidecarAction::FfeExposureBatch(_) => {}              // handled in sidecar_server
-                SidecarAction::FfeFlagEvaluationBatch(_) => {}        // handled in sidecar_server
-                SidecarAction::FfeEvaluationMetrics { .. } => {}      // handled in sidecar_server
+                SidecarAction::PhpComposerTelemetryFile(_) => {} // handled separately
+                SidecarAction::FfeExposureBatch(_) => {}         // handled in sidecar_server
+                SidecarAction::FfeFlagEvaluationBatch(_) => {}   // handled in sidecar_server
+                SidecarAction::FfeEvaluationMetrics { .. } => {} // handled in sidecar_server
             }
         }
         actions

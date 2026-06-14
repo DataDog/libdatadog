@@ -156,6 +156,46 @@ impl SidecarTransport {
         Err(e)
     }
 
+    /// Like [`with_retry`](Self::with_retry) but accepts an `FnMut` closure, so the
+    /// closure may mutate captured state between the first attempt and the retry.
+    ///
+    /// Needed by [`enqueue_actions_reliable`] whose payload (`Vec<SidecarAction>`) is
+    /// not `Clone`: the closure `take`s the actions out of an `Option` per attempt
+    /// rather than cloning them. Reconnect/retry-once semantics are identical to
+    /// `with_retry`.
+    fn with_retry_mut<F, V>(&mut self, mut f: F) -> io::Result<V>
+    where
+        F: FnMut(&mut SidecarSender) -> io::Result<V>,
+    {
+        let e = {
+            let mut inner = match self.inner.lock() {
+                Ok(t) => t,
+                Err(e) => return Err(io::Error::other(e.to_string())),
+            };
+            match f(&mut inner) {
+                Ok(ret) => return Ok(ret),
+                Err(e) => e,
+            }
+        };
+        if e.kind() == io::ErrorKind::BrokenPipe
+            || e.kind() == io::ErrorKind::ConnectionReset
+            || e.kind() == io::ErrorKind::NotConnected
+        {
+            warn!("with_retry_mut ({}): The sidecar transport is closed. Reconnecting... This generally indicates a problem with the sidecar, most likely a crash. Check the logs / core dump locations and possibly report a bug", e.kind());
+            if let Some(ref reconnect) = self.reconnect_fn {
+                if Self::do_reconnect(&mut self.inner, reconnect, true) {
+                    return f(&mut self.inner.lock_or_panic());
+                }
+            }
+        } else {
+            warn!(
+                "with_retry_mut: non-connection error ({:?}), not reconnecting",
+                e.kind()
+            );
+        }
+        Err(e)
+    }
+
     /// Send garbage data (used in tests to verify error handling).
     pub fn send_garbage(&mut self) -> io::Result<()> {
         match self.inner.lock() {
@@ -220,6 +260,36 @@ pub fn enqueue_actions(
 ) -> io::Result<()> {
     lock_sender(transport)?.enqueue_actions(instance_id.clone(), *queue_id, actions);
     Ok(())
+}
+
+/// Reliably enqueues a list of actions to be performed.
+///
+/// Unlike [`enqueue_actions`], this uses the **checked, blocking** channel path with
+/// NO load-shedding and NO silent drop: the `io::Result` from the send propagates to
+/// the caller. On a broken pipe / connection reset / not-connected error the transport
+/// reconnects (the same reconnect path that replays metric registrations) and the send
+/// is retried exactly once on the fresh connection.
+///
+/// Intended for one-shot, non-replayed payloads (e.g. FFE flagevaluation batches) that
+/// must not be silently dropped under transient backpressure or a broken pipe.
+///
+/// `actions` is not `Clone` (the `SidecarAction::Telemetry` variant is intentionally
+/// not clonable), so it is held in an `Option` that the retry closure `take`s; on the
+/// first attempt's connection error the actions are re-stocked from the returned send
+/// failure and replayed once after reconnect.
+pub fn enqueue_actions_reliable(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    actions: Vec<SidecarAction>,
+) -> io::Result<()> {
+    let mut pending = Some(actions);
+    transport.with_retry_mut(|sender| {
+        let actions = pending
+            .take()
+            .expect("enqueue_actions_reliable retry invoked without pending actions");
+        sender.enqueue_actions_reliable(instance_id.clone(), *queue_id, actions)
+    })
 }
 
 /// Removes the application entry for the given queue ID from the instance.

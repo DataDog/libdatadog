@@ -52,7 +52,7 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     endpoint: &Endpoint,
     batch: FfeFlagEvaluationBatch,
 ) {
-    let payload = match serde_json::to_string(&batch) {
+    let payload = match build_payload(&batch) {
         Ok(p) => p,
         Err(e) => {
             debug!("ffe_flagevaluation_flusher: failed to encode batch payload: {e:?}");
@@ -60,6 +60,113 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
         }
     };
     send_payload(client, endpoint, payload).await;
+}
+
+/// Build the EVP POST body from a batch.
+///
+/// The flagevaluation types are serialized over the sidecar's **bincode** IPC
+/// wire, which is non-self-describing: a field omitted by `skip_serializing_if`
+/// would misalign the derived `Deserialize` and cause the sidecar to drop the
+/// whole batch. The types therefore carry **no** `skip_serializing_if` and emit
+/// every field (optional ones as `null`/`false`/`""`). The flageval-worker EVP
+/// schema, however, rejects those null/empty placeholders (especially for
+/// degraded-tier events), so this helper strips them here, on the outbound POST
+/// only — reproducing the old skip-serialization semantics without breaking the
+/// bincode wire.
+///
+/// Two transforms happen, in order, on each `flagEvaluations` element:
+///   1. `context.evaluation` is carried as a JSON-object **string** (bincode
+///      cannot encode `serde_json::Value`); it is re-expanded back into a JSON
+///      **object** in place. An unparseable string drops the field gracefully
+///      (never panics), matching the best-effort telemetry contract.
+///   2. The whole value is recursively cleaned (`strip_placeholders`) so the
+///      POST contains no `null`, `false`, empty-string, empty-object, or
+///      empty-array placeholder entries. Numeric zeros (timestamps/counts) are
+///      preserved — they are real data.
+fn build_payload(batch: &FfeFlagEvaluationBatch) -> Result<String, serde_json::Error> {
+    let mut value = serde_json::to_value(batch)?;
+
+    if let Some(events) = value
+        .get_mut("flagEvaluations")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for event in events {
+            let Some(context) = event.get_mut("context") else {
+                continue;
+            };
+            let Some(evaluation) = context.get_mut("evaluation") else {
+                continue;
+            };
+            if let Some(s) = evaluation.as_str() {
+                match serde_json::from_str::<serde_json::Value>(s) {
+                    // Re-expand the JSON-object string into an object in place.
+                    Ok(parsed) => *evaluation = parsed,
+                    // Unparseable string → drop the field gracefully (never panic).
+                    Err(_) => {
+                        if let Some(obj) = context.as_object_mut() {
+                            obj.remove("evaluation");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Strip null/empty placeholders so the EVP POST matches the flageval-worker
+    // schema (which rejects null placeholders) — see the function doc comment.
+    strip_placeholders(&mut value);
+
+    serde_json::to_string(&value)
+}
+
+/// Recursively remove placeholder entries from a JSON value so the EVP POST
+/// carries no null/empty fields, reproducing the old `skip_serializing_if`
+/// semantics on the outbound wire only.
+///
+/// An object entry (or array element) is dropped when its value, after the
+/// children have themselves been cleaned (bottom-up), is one of:
+///   - `null`            (was `Option::is_none`)
+///   - `false`           (was the `runtime_default_used` bool skip)
+///   - `""`              (was `String::is_empty`, e.g. `ContextDD::service`)
+///   - `{}`              (an object that became empty after cleaning, e.g. a
+///                        `context.dd` whose only field `service` was stripped)
+///   - `[]`              (an array that became empty after cleaning)
+///
+/// Numeric values (including `0`) are NEVER removed — timestamps and counts are
+/// real data. Non-zero bools (`true`) and non-empty strings/collections are
+/// kept.
+fn strip_placeholders(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            // Clean children first (bottom-up), then drop entries that are now
+            // placeholders, so a container emptied by cleaning is itself removed.
+            for child in map.values_mut() {
+                strip_placeholders(child);
+            }
+            map.retain(|_, v| !is_placeholder(v));
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                strip_placeholders(item);
+            }
+            items.retain(|v| !is_placeholder(v));
+        }
+        _ => {}
+    }
+}
+
+/// Whether a (already-cleaned) JSON value is an empty/null placeholder that
+/// should be dropped from the POST. Numeric zeros are NOT placeholders.
+fn is_placeholder(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => true,
+        serde_json::Value::Bool(b) => !b,
+        serde_json::Value::String(s) => s.is_empty(),
+        serde_json::Value::Object(map) => map.is_empty(),
+        serde_json::Value::Array(items) => items.is_empty(),
+        // Numbers (incl. 0) are real data — never placeholders.
+        serde_json::Value::Number(_) => false,
+    }
 }
 
 async fn send_payload<C: HttpClientCapability + SleepCapability>(
@@ -123,10 +230,14 @@ fn truncate(bytes: &[u8], cap: usize) -> String {
 mod tests {
     use super::*;
     use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
-    use datadog_ffe::telemetry::flagevaluation::{FfeFlagEvaluationEvent, FlagKey};
+    use datadog_ffe::telemetry::flagevaluation::{
+        AllocationKey, ContextDD, EvalError, FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey,
+        VariantKey,
+    };
     use httpmock::MockServer;
     use libdd_capabilities::{HttpError, MaybeSend};
     use libdd_capabilities_impl::NativeCapabilities;
+    use std::collections::BTreeMap;
     use std::future;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
@@ -156,7 +267,19 @@ mod tests {
             variant: None,
             allocation: None,
             targeting_key: None,
-            context: None,
+            // `evaluation` is carried as a JSON-object STRING on the wire (bincode
+            // can't carry serde_json::Value); the flusher re-expands it to an object.
+            context: Some(FlagEvalEventContext {
+                evaluation: Some(
+                    serde_json::to_string(&{
+                        let mut m = BTreeMap::new();
+                        m.insert("country".to_owned(), serde_json::json!("US"));
+                        m
+                    })
+                    .unwrap(),
+                ),
+                dd: None,
+            }),
             error: None,
             runtime_default_used: false,
         }
@@ -167,6 +290,211 @@ mod tests {
             context: context(),
             flag_evaluations: vec![eval_event()],
         }
+    }
+
+    // A full-tier event with every optional field populated.
+    fn full_event() -> FfeFlagEvaluationEvent {
+        FfeFlagEvaluationEvent {
+            timestamp: 1_700_000_000_000,
+            flag: FlagKey {
+                key: "my-flag".to_owned(),
+            },
+            first_evaluation: 1_699_999_990_000,
+            last_evaluation: 1_700_000_000_000,
+            evaluation_count: 42,
+            variant: Some(VariantKey {
+                key: "on".to_owned(),
+            }),
+            allocation: Some(AllocationKey {
+                key: "alloc-a".to_owned(),
+            }),
+            targeting_key: Some("user-123".to_owned()),
+            context: Some(FlagEvalEventContext {
+                evaluation: Some(
+                    serde_json::to_string(&{
+                        let mut m = BTreeMap::new();
+                        m.insert("plan".to_owned(), serde_json::json!("premium"));
+                        m
+                    })
+                    .unwrap(),
+                ),
+                dd: Some(ContextDD {
+                    service: "frontend".to_owned(),
+                }),
+            }),
+            error: Some(EvalError {
+                message: "boom".to_owned(),
+            }),
+            runtime_default_used: true,
+        }
+    }
+
+    // A degraded-tier event: all optional fields are None/false. On the bincode
+    // wire these serialize as null/false placeholders; build_payload must strip
+    // them so the flageval-worker schema sees no null placeholders.
+    fn degraded_event() -> FfeFlagEvaluationEvent {
+        FfeFlagEvaluationEvent {
+            timestamp: 1_700_000_000_000,
+            flag: FlagKey {
+                key: "flag-b".to_owned(),
+            },
+            first_evaluation: 1_699_999_990_000,
+            last_evaluation: 1_700_000_000_000,
+            evaluation_count: 7,
+            variant: None,
+            allocation: None,
+            targeting_key: None,
+            context: None,
+            error: None,
+            runtime_default_used: false,
+        }
+    }
+
+    // Test: a degraded-tier event (all optional fields None/false) serializes to
+    // a POST object with NO null/empty placeholder keys. Required numeric fields
+    // (timestamps, counts — including any zeros) are preserved.
+    #[test]
+    fn build_payload_strips_degraded_tier_placeholders() {
+        let batch = FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![degraded_event()],
+        };
+        let payload = build_payload(&batch).expect("build_payload must succeed");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let ev = &v["flagEvaluations"][0];
+
+        // Required fields present.
+        assert_eq!(ev["flag"]["key"], "flag-b");
+        assert_eq!(ev["evaluation_count"], 7);
+        assert!(ev["first_evaluation"].is_number());
+        assert!(ev["last_evaluation"].is_number());
+        assert!(ev["timestamp"].is_number());
+
+        // No null/empty placeholder keys.
+        assert!(ev.get("variant").is_none(), "variant must be stripped");
+        assert!(
+            ev.get("allocation").is_none(),
+            "allocation must be stripped"
+        );
+        assert!(
+            ev.get("targeting_key").is_none(),
+            "targeting_key must be stripped"
+        );
+        assert!(ev.get("context").is_none(), "context must be stripped");
+        assert!(ev.get("error").is_none(), "error must be stripped");
+        assert!(
+            ev.get("runtime_default_used").is_none(),
+            "runtime_default_used=false must be stripped"
+        );
+    }
+
+    // Test: a full-tier event keeps all populated optional fields, with
+    // context.evaluation expanded to an OBJECT and context.dd preserved.
+    #[test]
+    fn build_payload_keeps_full_tier_fields() {
+        let batch = FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![full_event()],
+        };
+        let payload = build_payload(&batch).expect("build_payload must succeed");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let ev = &v["flagEvaluations"][0];
+
+        assert_eq!(ev["variant"]["key"], "on", "variant must be kept");
+        assert_eq!(
+            ev["allocation"]["key"], "alloc-a",
+            "allocation must be kept"
+        );
+        assert_eq!(
+            ev["targeting_key"], "user-123",
+            "targeting_key must be kept"
+        );
+        assert_eq!(ev["error"]["message"], "boom", "error must be kept");
+        assert_eq!(
+            ev["runtime_default_used"], true,
+            "runtime_default_used=true must be kept"
+        );
+
+        // context.evaluation is expanded to an OBJECT (not a string), and dd is kept.
+        let ctx = &ev["context"];
+        assert!(
+            ctx["evaluation"].is_object(),
+            "context.evaluation must be an object: {}",
+            ctx["evaluation"]
+        );
+        assert_eq!(ctx["evaluation"]["plan"], "premium");
+        assert_eq!(
+            ctx["dd"]["service"], "frontend",
+            "context.dd.service must be kept"
+        );
+    }
+
+    // Test: a context whose only dd field (service) is empty collapses entirely —
+    // empty service is stripped, the now-empty dd object is stripped, and if
+    // evaluation is also absent the whole context object is removed.
+    #[test]
+    fn build_payload_collapses_empty_nested_context() {
+        let mut ev = degraded_event();
+        ev.context = Some(FlagEvalEventContext {
+            evaluation: None,
+            dd: Some(ContextDD {
+                service: String::new(),
+            }),
+        });
+        let batch = FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![ev],
+        };
+        let payload = build_payload(&batch).expect("build_payload must succeed");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+
+        assert!(
+            v["flagEvaluations"][0].get("context").is_none(),
+            "a context that becomes empty after cleaning must be removed entirely"
+        );
+    }
+
+    // Test: build_payload re-expands the wire-side JSON-object STRING in
+    // `context.evaluation` into a JSON OBJECT in the POST body (EVP schema shape).
+    #[test]
+    fn build_payload_expands_evaluation_string_into_object() {
+        let payload = build_payload(&batch()).expect("build_payload must succeed");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+
+        let evaluation = &v["flagEvaluations"][0]["context"]["evaluation"];
+        assert!(
+            evaluation.is_object(),
+            "context.evaluation must be a JSON object in the POST body, not a string: {evaluation}"
+        );
+        assert_eq!(
+            evaluation["country"], "US",
+            "the expanded object must preserve the original key/value"
+        );
+        assert!(
+            !evaluation.is_string(),
+            "context.evaluation must not remain a quoted string"
+        );
+    }
+
+    // Test: an unparseable `evaluation` string is dropped gracefully (no panic,
+    // no malformed body) rather than left as a raw string in the POST body.
+    #[test]
+    fn build_payload_drops_unparseable_evaluation_gracefully() {
+        let mut batch = batch();
+        batch.flag_evaluations[0].context = Some(FlagEvalEventContext {
+            evaluation: Some("this is not json".to_owned()),
+            dd: None,
+        });
+
+        let payload = build_payload(&batch).expect("build_payload must not fail on bad input");
+        let v: serde_json::Value = serde_json::from_str(&payload).unwrap();
+
+        assert!(
+            v["flagEvaluations"][0]["context"]
+                .get("evaluation")
+                .is_none(),
+            "unparseable evaluation must be dropped from the body"
+        );
     }
 
     #[tokio::test]
