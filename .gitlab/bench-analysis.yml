@@ -14,11 +14,13 @@ bench-analysis:
     # GitHub token via dd-octo-sts (no static PAT, CI-03)
     - GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr) || true
     - export GH_TOKEN
-    # Install Node LTS + Claude Code (D-04)
-    - 'export NVM_DIR="${HOME}/.nvm"'
-    - '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"'
-    - nvm install --lts
-    - npm install -g @anthropic-ai/claude-code
+    # Install nvm, Node LTS, and Claude Code (D-04)
+    - |
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+      export NVM_DIR="$HOME/.nvm"
+      . "$NVM_DIR/nvm.sh"
+      nvm install --lts
+      npm install -g @anthropic-ai/claude-code
     # Fetch AI Gateway token immediately before invocation to minimize expiry window (D-06)
     - ANTHROPIC_AUTH_TOKEN=$(./authanywhere --audience rapid-ai-platform)
     - export ANTHROPIC_AUTH_TOKEN
