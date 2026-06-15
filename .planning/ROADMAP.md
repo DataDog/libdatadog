@@ -13,7 +13,7 @@ Four phases build the pipeline from CI scaffolding through mock data, Claude ana
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Auth & CI Scaffolding** - GitLab CI job with AI Gateway and GitHub auth wired up
+- [x] **Phase 1: Auth & CI Scaffolding** - GitLab CI job with AI Gateway and GitHub auth wired up (completed 2026-06-15)
 - [ ] **Phase 2: Mock Data & Pre-processor** - Fixture files and jq diff script producing benchmark-diff.json
 - [ ] **Phase 3: Claude Analysis** - System prompt, invocation script, and suspect code pointer
 - [ ] **Phase 4: Reporting & GitHub Integration** - CI artifact declaration and PR comment posting
@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `ANTHROPIC_AUTH_TOKEN` is populated via `authanywhere --audience rapid-ai-platform` with no static secrets
   3. `GH_TOKEN` is populated via `dd-octo-sts` with no static PATs
   4. `claude --bare -p` with `--allowedTools "Read,Write,Glob,Grep"` and `--permission-mode bypassPermissions` is invocable in the CI environment**Plans**: 1 plan
-- [ ] 01-01-PLAN.md — Walking Skeleton: bench-analysis CI job + dd-octo-sts PR policy + end-to-end auth/Claude smoke test
+- [x] 01-01-PLAN.md — Walking Skeleton: bench-analysis CI job + dd-octo-sts PR policy + end-to-end auth/Claude smoke test
 
 ### Phase 2: Mock Data & Pre-processor
 
@@ -83,7 +83,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auth & CI Scaffolding | 0/1 | Not started | - |
+| 1. Auth & CI Scaffolding | 1/1 | Complete   | 2026-06-15 |
 | 2. Mock Data & Pre-processor | 0/? | Not started | - |
 | 3. Claude Analysis | 0/? | Not started | - |
 | 4. Reporting & GitHub Integration | 0/? | Not started | - |
