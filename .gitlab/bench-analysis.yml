@@ -9,8 +9,8 @@ bench-analysis:
     - |
       if [ $(uname -m) = x86_64 ]; then AAA="amd64"; else AAA="arm64"; fi
       curl -OL "https://binaries.ddbuild.io/dd-source/authanywhere/LATEST/authanywhere-linux-${AAA}"
-      mv "authanywhere-linux-${AAA}" /usr/local/bin/authanywhere
-      chmod +x /usr/local/bin/authanywhere
+      mv "authanywhere-linux-${AAA}" ./authanywhere
+      chmod +x ./authanywhere
     # GitHub token via dd-octo-sts (no static PAT, CI-03)
     - GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr)
     - export GH_TOKEN
@@ -20,7 +20,7 @@ bench-analysis:
     - nvm install --lts
     - npm install -g @anthropic-ai/claude-code
     # Fetch AI Gateway token immediately before invocation to minimize expiry window (D-06)
-    - ANTHROPIC_AUTH_TOKEN=$(authanywhere --audience rapid-ai-platform)
+    - ANTHROPIC_AUTH_TOKEN=$(./authanywhere --audience rapid-ai-platform)
     - export ANTHROPIC_AUTH_TOKEN
     - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io/anthropic"'
     # Smoke test (D-09, CI-04)
