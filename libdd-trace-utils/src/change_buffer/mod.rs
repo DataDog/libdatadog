@@ -88,7 +88,6 @@ use crate::span::vec_map::VecMap;
 use crate::span::{SpanText, TraceData};
 use std::collections::HashMap;
 use std::ptr::NonNull;
-use std::u32;
 
 /// Interned string table (O(1) lookup vs HashMap).
 ///
