@@ -222,6 +222,10 @@ where
     /// The maximun size of the recycled span pool, beyond which we don't recycle spans anymore but
     /// drop them.
     const SPANS_POOL_MAX_SIZE: usize = 128;
+    /// Capacity for the initial allocation of the span table.
+    const SPANS_CAPACITY: usize = 128;
+    /// Capacity for the initial allocation of the string table.
+    const STRING_TABLE_CAPACITY: usize = 128;
 
     pub fn new(
         change_buffer: ChangeBuffer,
@@ -231,9 +235,9 @@ where
     ) -> Self {
         ChangeBufferState {
             change_buffer,
-            spans: HashMap::with_capacity(256),
+            spans: HashMap::with_capacity(Self::SPANS_CAPACITY),
             segments: SmallSegmentMap::default(),
-            string_table: StringTable::with_capacity(256),
+            string_table: StringTable::with_capacity(Self::STRING_TABLE_CAPACITY),
             tracer_service,
             tracer_language,
             pid,
