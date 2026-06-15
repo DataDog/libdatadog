@@ -29,7 +29,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `ANTHROPIC_AUTH_TOKEN` is populated via `authanywhere --audience rapid-ai-platform` with no static secrets
   3. `GH_TOKEN` is populated via `dd-octo-sts` with no static PATs
   4. `claude --bare -p` with `--allowedTools "Read,Write,Glob,Grep"` and `--permission-mode bypassPermissions` is invocable in the CI environment
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 01-01-PLAN.md — Walking Skeleton: bench-analysis CI job + dd-octo-sts PR policy + end-to-end auth/Claude smoke test
 
 ### Phase 2: Mock Data & Pre-processor
 **Goal**: Fixture files and a jq pre-processor produce a structured benchmark diff without running real benchmarks
@@ -71,7 +72,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auth & CI Scaffolding | 0/? | Not started | - |
+| 1. Auth & CI Scaffolding | 0/1 | Not started | - |
 | 2. Mock Data & Pre-processor | 0/? | Not started | - |
 | 3. Claude Analysis | 0/? | Not started | - |
 | 4. Reporting & GitHub Integration | 0/? | Not started | - |
