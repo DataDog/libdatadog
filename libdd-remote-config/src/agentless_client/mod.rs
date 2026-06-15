@@ -6,6 +6,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use anyhow::{bail, format_err};
 use base64::Engine;
 use futures::AsyncReadExt as _;
 use hashbrown::{HashMap, HashSet};
@@ -115,10 +116,10 @@ impl<'a> BorrowedTufTarget<'a> {
         if let Some(expiry) = desc.custom().get(CUSTOM_METADATA_EXPIRY_PATH) {
             let expiry_ts = expiry
                 .as_u64()
-                .ok_or_else(|| anyhow::format_err!("expiry not a number"))?;
+                .ok_or_else(|| format_err!("expiry not a number"))?;
 
             if expiry_ts * 1000 <= now_unix_milli_ts() {
-                anyhow::bail!("expired target at path: {path}")
+                bail!("expired target at path: {path}")
             }
         }
 
@@ -175,7 +176,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     ) -> anyhow::Result<FetchTargetResult> {
         let expected_hashes = tuf::crypto::retain_supported_hashes(target.desc.hashes());
         if expected_hashes.is_empty() {
-            anyhow::bail!("no supported hash for path: {}", target.path);
+            bail!("no supported hash for path: {}", target.path);
         }
         let (target_hash_algo, target_hash) = &expected_hashes[0];
         let target_path = target.path;
@@ -212,7 +213,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
 
         let expected_len = target.desc.length() as usize;
         if buf.len() != expected_len {
-            anyhow::bail!("bad length for file at path: {}", target.path)
+            bail!("bad length for file at path: {}", target.path)
         }
 
         {
@@ -232,7 +233,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                     .iter()
                     .all(|(k, v)| expected.get(&k).is_some_and(|e| *e == v)))
             {
-                anyhow::bail!("hash did not match: {}", target.path)
+                bail!("hash did not match: {}", target.path)
             }
         }
 
@@ -410,6 +411,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         let repo = self.director_client.remote_repo_mut();
         *repo = TUFRepo::new();
         for target_file in &response.target_files {
+            let trimmed_path = trim_hash_target_path(&target_file.path)?;
+            let trimmed_target_path = TargetPath::new(&trimmed_path)?;
+            repo.store_target(&trimmed_target_path, &mut target_file.raw.as_slice())
+                .await?;
+
             // let trimmed_path = trim_hash_target_path(&target_file.path)?;
             // let trimmed_target_path = TargetPath::new(&trimmed_path)?;
             repo.store_target(
@@ -422,7 +428,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         let config_repo_mut = self.config_client.remote_repo_mut();
         *config_repo_mut = TUFRepo::new();
         let Some(metas) = response.config_metas.as_ref() else {
-            anyhow::bail!("missing config meta from LatestConfigsResponse")
+            bail!("missing config meta from LatestConfigsResponse")
         };
 
         store(config_repo_mut, &root_path, &metas.roots).await?;
@@ -436,7 +442,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
 
         let director_remote_repo = self.director_client.remote_repo_mut();
         let Some(metas) = response.director_metas.as_ref() else {
-            anyhow::bail!("missing director meta from LatestConfigsResponse")
+            bail!("missing director meta from LatestConfigsResponse")
         };
 
         store(director_remote_repo, &root_path, &metas.roots).await?;
@@ -510,7 +516,7 @@ fn parse_rc_response<T: prost::Message + Default>(
     let status = response.status().as_u16();
     let body = response.into_body();
     if !(200..300).contains(&status) {
-        anyhow::bail!(
+        bail!(
             "Non 2XX status code: {}\n{}",
             status,
             String::from_utf8_lossy(&body)
@@ -538,7 +544,7 @@ fn trusted_targets(
     Ok(director_client
         .database()
         .trusted_targets()
-        .ok_or_else(|| anyhow::format_err!("missing targets from TUF director client"))?
+        .ok_or_else(|| format_err!("missing targets from TUF director client"))?
         .targets()
         .iter()
         .filter_map(|(path, desc)| {
@@ -576,6 +582,35 @@ async fn store_noversion(
     }
     Ok(())
 }
+
+/// See https://datadoghq.atlassian.net/browse/RC-1859 for more information.
+fn trim_hash_target_path(target_path: &str) -> anyhow::Result<String> {
+    let path = std::path::Path::new(target_path);
+    // Get the last component
+    let last_component = path
+        .components()
+        .next_back()
+        .ok_or_else(|| format_err!("invalid target: {target_path}"))?;
+    let basename = match last_component {
+        std::path::Component::Normal(name) => name
+            .to_str()
+            .ok_or_else(|| format_err!("invalid target: {target_path}"))?,
+        _ => return Err(format_err!("invalid target: {target_path}")),
+    };
+
+    // Split the basename at the first occurrence of '.'
+    let split: Vec<&str> = basename.splitn(2, '.').collect();
+    let basename_trimmed = if split.len() > 1 { split[1] } else { basename };
+
+    // Reconstruct the whole path
+    let parent = path
+        .parent()
+        .ok_or_else(|| format_err!("invalid target: {target_path}"))?;
+    let mut result_path = parent.components().as_path().to_path_buf();
+    result_path.push(basename_trimmed);
+    Ok(result_path.to_str().unwrap_or_default().to_string())
+}
+
 
 // ── Debug helpers: render `raw: Vec<u8>` fields as JSON ────────────────────
 
