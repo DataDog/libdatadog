@@ -19,7 +19,7 @@ pub fn named_pipe_path_to_uri(path: &Path) -> Result<hyper::Uri, hyper::http::Er
     hyper::Uri::builder()
         .scheme("windows")
         .authority(path)
-        .path_and_query("")
+        .path_and_query("/")
         .build()
 }
 
