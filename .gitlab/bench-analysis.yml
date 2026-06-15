@@ -11,21 +11,21 @@ bench-analysis:
   timeout: 10m
   script:
     # Tool probe (fail fast per D-07)
-    - command -v authanywhere || { echo "ERROR: authanywhere not found in image"; exit 1; }
+    - "command -v authanywhere || { echo 'ERROR: authanywhere not found in image'; exit 1; }"
     # GitHub token via dd-octo-sts (no static PAT, CI-03)
     - GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr)
     - export GH_TOKEN
     # Install Node LTS + Claude Code (D-04)
-    - export NVM_DIR="${HOME}/.nvm"
+    - 'export NVM_DIR="${HOME}/.nvm"'
     - '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"'
     - nvm install --lts
     - npm install -g @anthropic-ai/claude-code
     # Fetch AI Gateway token immediately before invocation to minimize expiry window (D-06)
     - ANTHROPIC_AUTH_TOKEN=$(authanywhere --audience rapid-ai-platform)
     - export ANTHROPIC_AUTH_TOKEN
-    - export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io/anthropic"
+    - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io/anthropic"'
     # Smoke test (D-09, CI-04)
-    - claude --bare -p 'echo hello' --allowedTools "Read,Write,Glob,Grep" --permission-mode bypassPermissions
+    - "claude --bare -p 'echo hello' --allowedTools 'Read,Write,Glob,Grep' --permission-mode bypassPermissions"
   artifacts:
     paths:
       - artifacts/
