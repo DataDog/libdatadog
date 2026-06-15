@@ -46,8 +46,8 @@ pub struct TraceFilterer {
 
 /// Minimal span interface required by [`TraceFilterer`].
 pub trait Span<'a> {
-    fn resource(&'a self) -> &'a str;
-    fn name(&'a self) -> &'a str;
+    /// Returns the normalized resource value
+    fn resource_normalized(&'a self) -> &'a str;
     /// Returns the value of the given meta tag, if present.
     fn get_meta(&'a self, key: &str) -> Option<&'a str>;
 }
@@ -79,12 +79,19 @@ impl TagFilter for TagRegexFilter {
 }
 
 impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
-    fn resource(&'a self) -> &'a str {
-        self.resource.borrow()
-    }
-
-    fn name(&'a self) -> &'a str {
-        self.name.borrow()
+    fn resource_normalized(&'a self) -> &'a str {
+        // Normalization
+        let span_resource = self.resource.borrow();
+        if span_resource.is_empty() {
+            let span_name = self.name.borrow();
+            debug!(
+                ?span_name,
+                "Trace filter: filtering on name because resource is empty"
+            );
+            span_name
+        } else {
+            span_resource
+        }
     }
 
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {
@@ -236,18 +243,7 @@ impl TraceFilterer {
     //    match, reject the trace.
     pub fn should_drop<'a>(&self, root_span: &'a impl Span<'a>) -> bool {
         if !self.ignore_resources.is_empty() {
-            let span_resource = Span::resource(root_span);
-            // Normalization
-            let span_resource = if span_resource.is_empty() {
-                let span_name = root_span.name();
-                debug!(
-                    ?span_name,
-                    "Trace filter: filtering on name because resource is empty"
-                );
-                span_name
-            } else {
-                span_resource
-            };
+            let span_resource = root_span.resource_normalized();
 
             if self
                 .ignore_resources
