@@ -27,6 +27,23 @@ use std::time::Duration;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
+/// Build an [`http::HeaderMap`] from key/value pairs, skipping malformed entries.
+fn build_otlp_header_map(headers: Vec<(String, String)>) -> http::HeaderMap {
+    let mut out = http::HeaderMap::new();
+    for (k, v) in headers {
+        match (
+            http::HeaderName::from_bytes(k.as_bytes()),
+            http::HeaderValue::from_str(&v),
+        ) {
+            (Ok(n), Ok(vv)) => {
+                out.insert(n, vv);
+            }
+            _ => tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", k, v),
+        }
+    }
+    out
+}
+
 #[allow(missing_docs)]
 #[derive(Debug, Default)]
 pub struct TraceExporterBuilder {
@@ -429,30 +446,16 @@ impl TraceExporterBuilder {
             }
         };
 
-        let otlp_config = self.otlp_endpoint.map(|url| {
-            let mut headers = http::HeaderMap::new();
-            for (key, value) in self.otlp_headers {
-                match (
-                    http::HeaderName::from_bytes(key.as_bytes()),
-                    http::HeaderValue::from_str(&value),
-                ) {
-                    (Ok(name), Ok(val)) => {
-                        headers.insert(name, val);
-                    }
-                    _ => {
-                        tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
-                    }
-                }
-            }
-            OtlpTraceConfig {
-                endpoint_url: url,
-                headers,
-                timeout: self
-                    .connection_timeout
-                    .map(Duration::from_millis)
-                    .unwrap_or(DEFAULT_OTLP_TIMEOUT),
-                protocol: OtlpProtocol::HttpJson,
-            }
+        let otlp_timeout = self
+            .connection_timeout
+            .map(Duration::from_millis)
+            .unwrap_or(DEFAULT_OTLP_TIMEOUT);
+
+        let otlp_config = self.otlp_endpoint.map(|url| OtlpTraceConfig {
+            endpoint_url: url,
+            headers: build_otlp_header_map(self.otlp_headers),
+            timeout: otlp_timeout,
+            protocol: OtlpProtocol::HttpJson,
         });
 
         Ok(TraceExporter {
