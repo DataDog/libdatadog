@@ -25,6 +25,7 @@ bench-analysis:
     - ANTHROPIC_AUTH_TOKEN=$(./authanywhere --audience rapid-ai-platform)
     - export ANTHROPIC_AUTH_TOKEN
     - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io/anthropic"'
+    - "export ANTHROPIC_CUSTOM_HEADERS=$'source: claude\\norg-id: 2\\nprovider: anthropic\\nx-dd-tag-ml_app: bench-analysis\\nx-dd-tag-dd.team: ecosystems-reliability'"
     # Smoke test (D-09, CI-04)
     - "claude --bare -p 'echo hello' --allowedTools 'Read,Write,Glob,Grep' --permission-mode bypassPermissions"
   artifacts:
