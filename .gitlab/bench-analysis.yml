@@ -6,8 +6,11 @@ bench-analysis:
     name: registry.ddbuild.io/images/dd-octo-sts-ci-base:2025.06-1
   timeout: 10m
   script:
-    # Tool probe (fail fast per D-07)
-    - "command -v authanywhere || { echo 'ERROR: authanywhere not found in image'; exit 1; }"
+    - |
+      if [ $(uname -m) = x86_64 ]; then AAA="amd64"; else AAA="arm64"; fi
+      curl -OL "https://binaries.ddbuild.io/dd-source/authanywhere/LATEST/authanywhere-linux-${AAA}"
+      mv "authanywhere-linux-${AAA}" /usr/local/bin/authanywhere
+      chmod +x /usr/local/bin/authanywhere
     # GitHub token via dd-octo-sts (no static PAT, CI-03)
     - GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr)
     - export GH_TOKEN
