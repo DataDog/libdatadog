@@ -22,4 +22,6 @@ pub struct OtlpResourceInfo {
     pub language: String,
     pub tracer_version: String,
     pub runtime_id: String,
+    pub hostname: String,
+    pub process_tags: String,
 }
