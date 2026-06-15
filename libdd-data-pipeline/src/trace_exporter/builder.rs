@@ -3,7 +3,7 @@
 
 use crate::agent_info::AgentInfoFetcher;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
-use crate::otlp::OtlpTraceConfig;
+use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -82,6 +82,9 @@ pub struct TraceExporterBuilder {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    otlp_metrics_endpoint: Option<String>,
+    otlp_metrics_headers: Vec<(String, String)>,
+    otel_trace_semantics_enabled: bool,
 }
 
 impl TraceExporterBuilder {
@@ -313,6 +316,24 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enable OTLP HTTP/JSON trace-metrics export to `url` (e.g. `.../v1/metrics`).
+    pub fn set_otlp_metrics_endpoint(&mut self, url: &str) -> &mut Self {
+        self.otlp_metrics_endpoint = Some(url.to_owned());
+        self
+    }
+
+    /// Additional HTTP headers for OTLP trace-metrics requests.
+    pub fn set_otlp_metrics_headers(&mut self, headers: Vec<(String, String)>) -> &mut Self {
+        self.otlp_metrics_headers = headers;
+        self
+    }
+
+    /// Strip Datadog-specific `dd.*`/`_dd.*` data-point attributes from the exported histogram.
+    pub fn enable_otel_trace_semantics(&mut self) -> &mut Self {
+        self.otel_trace_semantics_enabled = true;
+        self
+    }
+
     /// Build the [`TraceExporter`] synchronously.
     ///
     /// Sync facade over [`Self::build_async`]; panics inside an existing tokio context.
@@ -458,6 +479,66 @@ impl TraceExporterBuilder {
             protocol: OtlpProtocol::HttpJson,
         });
 
+        let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
+            endpoint_url: url,
+            headers: build_otlp_header_map(self.otlp_metrics_headers),
+            timeout: otlp_timeout,
+            protocol: OtlpProtocol::HttpJson,
+            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+        });
+
+        let runtime_id = uuid::Uuid::new_v4().to_string();
+
+        // OTLP metrics + stats bucket size: start the concentrator unconditionally (bypass the
+        // agent gate) so `check_agent_info` cannot later disable stats.
+        #[allow(unused_mut)]
+        let mut otlp_stats_enabled = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(metrics_config), Some(bucket_size)) =
+            (otlp_metrics_config.clone(), self.stats_bucket_size)
+        {
+            use crate::otlp::OtlpStatsExporter;
+            use libdd_trace_stats::span_concentrator::SpanConcentrator;
+            use std::sync::Mutex;
+            let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
+                bucket_size,
+                std::time::SystemTime::now(),
+                span_kinds,
+                self.peer_tags.clone(),
+                #[cfg(feature = "stats-obfuscation")]
+                None,
+            )));
+            let mut resource = OtlpResourceInfo::default();
+            resource.service = self.service.clone();
+            resource.env = self.env.clone();
+            resource.app_version = self.app_version.clone();
+            resource.language = self.language.clone();
+            resource.tracer_version = self.tracer_version.clone();
+            resource.runtime_id = runtime_id.clone();
+            resource.hostname = self.hostname.clone();
+            resource.process_tags = self.process_tags.clone();
+            let worker = OtlpStatsExporter {
+                flush_interval: bucket_size,
+                concentrator: concentrator.clone(),
+                config: metrics_config,
+                resource,
+                test_token: self.test_session_token.clone(),
+                capabilities: capabilities.clone(),
+            };
+            let worker_handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?;
+            stats = StatsComputationStatus::Enabled {
+                stats_concentrator: concentrator,
+                worker_handle,
+            };
+            otlp_stats_enabled = true;
+        }
+
         Ok(TraceExporter {
             endpoint: Endpoint {
                 url: agent_url,
@@ -480,7 +561,7 @@ impl TraceExporterBuilder {
                 hostname: self.hostname,
                 env: self.env,
                 app_version: self.app_version,
-                runtime_id: uuid::Uuid::new_v4().to_string(),
+                runtime_id,
                 service: self.service,
             },
             input_format: self.input_format,
@@ -517,6 +598,7 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
+            otlp_stats_enabled,
         })
     }
 

@@ -213,6 +213,11 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
+    /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
+    /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
+    /// skipped.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    otlp_stats_enabled: bool,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
@@ -352,6 +357,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
     async fn check_agent_info(&self) {
+        // OTLP trace metrics run the concentrator independently of the agent; never let agent
+        // info enable or disable stats in that mode.
+        if self.otlp_stats_enabled {
+            return;
+        }
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
         };

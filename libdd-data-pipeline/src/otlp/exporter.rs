@@ -16,7 +16,6 @@ use std::time::Duration;
 /// Max total attempts for OTLP export (initial + retries on transient failures).
 pub(crate) const OTLP_MAX_ATTEMPTS: u32 = 5;
 /// Single attempt with no retries, used on shutdown to avoid a long backoff in the shutdown window.
-#[allow(dead_code)] // consumed by the OTLP trace-metrics worker in a follow-up commit
 pub(crate) const OTLP_SHUTDOWN_MAX_ATTEMPTS: u32 = 1;
 const OTLP_RETRY_DELAY_MS: u64 = 100;
 

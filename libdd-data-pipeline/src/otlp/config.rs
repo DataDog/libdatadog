@@ -39,7 +39,6 @@ pub struct OtlpTraceConfig {
 
 /// Parsed OTLP trace-metrics exporter configuration.
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // wired up in the OTLP trace-metrics exporter commit
 pub struct OtlpMetricsConfig {
     /// Full URL to POST metrics to (e.g. `http://localhost:4318/v1/metrics`).
     pub endpoint_url: String,
