@@ -24,6 +24,7 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
     "rpc.grpc.status.code",
     "grpc.status.code",
 ];
+const GRPC_METHOD_FIELD: &[&str] = &["grpc.method.name", "rpc.method"];
 
 /// Aggregation key fields shared across all concentrator implementations — everything
 /// **except** peer tags.
@@ -48,6 +49,10 @@ pub struct FixedAggregationKey<T> {
     pub grpc_status_code: Option<u8>,
     pub is_synthetics_request: bool,
     pub is_trace_root: bool,
+    /// gRPC method name (DD schema `grpc.method.name`). Empty when absent. Stored owned/borrowed
+    /// like the other string fields so it participates in the SHM `StringRef` representation.
+    /// Appended at the end to preserve `PartialOrd` ordering of the pre-existing fields.
+    pub grpc_method: T,
 }
 
 impl<T> FixedAggregationKey<T> {
@@ -72,6 +77,7 @@ impl<T> FixedAggregationKey<T> {
             grpc_status_code: self.grpc_status_code,
             is_synthetics_request: self.is_synthetics_request,
             is_trace_root: self.is_trace_root,
+            grpc_method: f(self.grpc_method.borrow()),
         }
     }
 }
@@ -150,6 +156,17 @@ fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     }
 
     None
+}
+
+fn get_grpc_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
+    for key in GRPC_METHOD_FIELD {
+        if let Some(val) = span.get_meta(key) {
+            if !val.is_empty() {
+                return val;
+            }
+        }
+    }
+    ""
 }
 
 fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
@@ -251,6 +268,8 @@ impl<'a> BorrowedAggregationKey<'a> {
 
         let grpc_status_code = get_grpc_status_code(span);
 
+        let grpc_method = get_grpc_method(span);
+
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
 
         Self {
@@ -265,6 +284,7 @@ impl<'a> BorrowedAggregationKey<'a> {
                 service_source,
                 http_status_code: status_code,
                 grpc_status_code,
+                grpc_method,
                 is_synthetics_request: span
                     .get_meta(TAG_ORIGIN)
                     .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
@@ -291,6 +311,7 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
                 grpc_status_code: value.grpc_status_code.parse().ok(),
                 is_synthetics_request: value.synthetics,
                 is_trace_root: value.is_trace_root == 1,
+                grpc_method: String::new(),
             },
             peer_tags: value
                 .peer_tags
@@ -377,8 +398,7 @@ pub struct OtlpExactCell {
 /// Exact OK/ERROR cells for one aggregation group, in the same order as the `stats` vector
 /// of the accompanying [`pb::ClientStatsBucket`]. `grpc_method` is the group's gRPC method (DD
 /// schema `grpc.method.name`) carried out-of-band so it does not appear in the agent stats
-/// protobuf wire format. It is initialized empty here; a subsequent change populates it from
-/// the aggregation key.
+/// protobuf wire format.
 #[derive(Debug, Clone, Default)]
 pub struct OtlpExactGroup {
     pub ok: OtlpExactCell,
@@ -437,7 +457,9 @@ impl StatsBucket {
     pub(super) fn flush_with_otlp_exact(self, bucket_duration: u64) -> OtlpStatsBucket {
         let mut stats = Vec::with_capacity(self.data.len());
         let mut exact = Vec::with_capacity(self.data.len());
-        for (k, g) in self.data {
+        for (mut k, g) in self.data {
+            // Move grpc_method into the sidecar; the agent-stats path doesn't carry it.
+            let grpc_method = std::mem::take(&mut k.fixed.grpc_method);
             exact.push(OtlpExactGroup {
                 ok: OtlpExactCell {
                     count: g.hits.saturating_sub(g.errors),
@@ -451,7 +473,7 @@ impl StatsBucket {
                     min_ns: g.error_min,
                     max_ns: g.error_max,
                 },
-                grpc_method: String::new(),
+                grpc_method,
             });
             stats.push(encode_grouped_stats(k, g));
         }
@@ -810,6 +832,19 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(0),
+                    is_trace_root: true,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // grpc method extracted from `grpc.method.name` (DD schema) or `rpc.method` (OTel).
+            (
+                SpanBytes {
+                    meta: vec![("grpc.method.name".into(), "/pkg.Svc/Method".into())].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    grpc_method: "/pkg.Svc/Method".into(),
                     is_trace_root: true,
                     ..Default::default()
                 }
