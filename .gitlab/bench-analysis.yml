@@ -22,12 +22,32 @@ bench-analysis:
       nvm install --lts
       npm install -g @anthropic-ai/claude-code
     # Fetch AI Gateway token immediately before invocation to minimize expiry window (D-06)
-    - ANTHROPIC_AUTH_TOKEN=$(./authanywhere --audience rapid-ai-platform)
-    - export ANTHROPIC_AUTH_TOKEN
-    - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io/anthropic"'
+    - |
+      raw_token=$(./authanywhere --audience rapid-ai-platform)
+      ANTHROPIC_AUTH_TOKEN="${raw_token#Authorization: Bearer }"
+      export ANTHROPIC_AUTH_TOKEN
+    - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io"'
     - "export ANTHROPIC_CUSTOM_HEADERS=$'source: claude\\norg-id: 2\\nprovider: anthropic\\nx-dd-tag-ml_app: bench-analysis\\nx-dd-tag-dd.team: ecosystems-reliability'"
+    # Verify auth and list available models
+    - |
+      echo "--- /v1/models ---"
+      curl -f \
+        -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+        -H "source: claude" \
+        -H "org-id: 2" \
+        -H "provider: anthropic" \
+        "https://ai-gateway.us1.ddbuild.io/v1/models" || echo "models endpoint failed: $?"
+      echo "--- test message ---"
+      curl -f \
+        -H "Authorization: Bearer $ANTHROPIC_AUTH_TOKEN" \
+        -H "source: claude" \
+        -H "org-id: 2" \
+        -H "provider: anthropic" \
+        -H "Content-Type: application/json" \
+        -d '{"model":"anthropic/claude-haiku-4-5-20251001","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}' \
+        "https://ai-gateway.us1.ddbuild.io/v1/messages" || echo "messages endpoint failed: $?"
     # Smoke test (D-09, CI-04)
-    - "claude --bare -p 'echo hello' --allowedTools 'Read,Write,Glob,Grep' --permission-mode bypassPermissions"
+    - "claude --bare -p 'echo hello' --model anthropic/claude-sonnet-4-6 --allowedTools 'Read,Write,Glob,Grep' --permission-mode bypassPermissions"
   artifacts:
     paths:
       - artifacts/
