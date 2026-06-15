@@ -3474,7 +3474,6 @@ dependencies = [
  "rmp",
  "rmp-serde",
  "rmpv",
- "rustc-hash",
  "serde",
  "serde_json",
  "tempfile",
