@@ -721,7 +721,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                                                     "sha512".to_string()
                                                 }
                                                 tuf::crypto::HashAlgorithm::Unknown(u) => u.clone(),
-                                                _ => anyhow::bail!("unhandled has algorithm"),
+                                                a => anyhow::bail!("unhandled hash algorithm: {a:?}"),
                                             },
                                             hash: hash.to_string(),
                                         })

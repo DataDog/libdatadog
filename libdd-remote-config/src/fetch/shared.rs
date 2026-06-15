@@ -278,7 +278,7 @@ impl SharedFetcher {
         let mut fetcher = match ConfigFetcher::new(storage, state).await {
             Ok(f) => f,
             Err(e) => {
-                error!("failed to create the fetcher{:?}", e);
+                error!("failed to create the fetcher: {:?}", e);
                 return;
             }
         };

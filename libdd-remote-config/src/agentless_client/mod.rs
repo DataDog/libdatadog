@@ -246,7 +246,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     pub async fn fetch_config(
         &mut self,
         c: remoteconfig::Client,
-    ) -> anyhow::Result<ClientResponse> {
+    ) -> anyhow::Result<ClientResponse<'_>> {
         let (
             current_config_snapshot_version,
             current_config_root_version,
