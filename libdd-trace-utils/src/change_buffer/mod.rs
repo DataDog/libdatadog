@@ -193,6 +193,7 @@ fn new_span_pooled<T: TraceData>(
     }
 }
 
+// Similar to [ChangeBufferState::span_mut], but doesn't borrow the whole [ChangeBufferState].
 fn span_at_mut<T: TraceData>(
     spans: &mut FxHashMap<u64, (Span<T>, u64)>,
     span_id: u64,
@@ -203,12 +204,11 @@ fn span_at_mut<T: TraceData>(
         .ok_or(ChangeBufferError::SpanNotFound(span_id))
 }
 
-/// Per-flush cache of raw pointers into `ChangeBufferState` HashMaps for the
-/// most recently processed span.
+/// Per-flush cache of the span in [ChangeBufferState::spans] for the most recently
+/// processed span.
 ///
-/// Avoids repeated HashMap lookups for consecutive ops on the same span. [SpanCache::span_ptr] is
-/// invalidated (set to null via `Default`) before any HashMap insertion that could trigger a
-/// rehash, that is before every Create op.
+/// Avoids repeated lookups for consecutive ops on the same span. A [SpanCache] is invalidated
+/// before any HashMap insertion that could trigger a rehash, that is before every Create op.
 struct SpanCache<T: TraceData> {
     span_id: u64,
     span_ptr: NonNull<Span<T>>,
@@ -433,7 +433,7 @@ where
     ///
     /// `cache.span_ptr` must be a pointer valid for writes into `self.spans`. This method
     /// guarantees that it remains valid (it doesn't cause `self.spans` to invalidate the pointer,
-    /// e.g. by cause re-allocation).
+    /// e.g. by causing re-allocation).
     unsafe fn interpret_operation_cached(
         &mut self,
         index: &mut usize,
@@ -442,7 +442,7 @@ where
     ) -> Result<()> {
         let buf = &self.change_buffer;
         let cached = match cache_slot.as_mut() {
-            Some(cache) if op.span_id == cache.span_id => cache,
+            Some(cached) if op.span_id == cached.span_id => cached,
             _ => {
                 let (span, segment_id) = self
                     .spans
@@ -459,8 +459,9 @@ where
             }
         };
 
-        // SAFETY: span_ptr points into self.spans (obtained above or from the cache). self.spans is
-        // aliased mutably or immutably otherwise for the lifetime of `span`.
+        // Safety: span_ptr points into self.spans and is valid for write (safety pre-condition of
+        // this function).
+        // self.spans is never aliased/accessed otherwise for the lifetime of `span`.
         let span = unsafe { cached.span_ptr.as_mut() };
 
         match op.opcode {
@@ -557,11 +558,8 @@ where
     }
 
     #[inline]
-    pub fn span_mut(&mut self, span_id: &u64) -> Result<&mut Span<T>> {
-        self.spans
-            .get_mut(span_id)
-            .map(|(span, _segment_id)| span)
-            .ok_or(ChangeBufferError::SpanNotFound(*span_id))
+    pub fn span_mut(&mut self, span_id: u64) -> Result<&mut Span<T>> {
+        span_at_mut(&mut self.spans, span_id)
     }
 
     #[inline]
