@@ -1,5 +1,6 @@
 bench-analysis:
-  tags: ["gcp:general-purpose"]
+  tags:
+    - arch:amd64
   needs: []
   image:
     name: registry.ddbuild.io/images/dd-octo-sts-ci-base:2025.06-1
