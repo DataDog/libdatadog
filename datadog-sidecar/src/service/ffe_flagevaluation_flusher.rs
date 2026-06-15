@@ -75,14 +75,13 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
 /// bincode wire.
 ///
 /// Two transforms happen, in order, on each `flagEvaluations` element:
-///   1. `context.evaluation` is carried as a JSON-object **string** (bincode
-///      cannot encode `serde_json::Value`); it is re-expanded back into a JSON
-///      **object** in place. An unparseable string drops the field gracefully
-///      (never panics), matching the best-effort telemetry contract.
-///   2. The whole value is recursively cleaned (`strip_placeholders`) so the
-///      POST contains no `null`, `false`, empty-string, empty-object, or
-///      empty-array placeholder entries. Numeric zeros (timestamps/counts) are
-///      preserved — they are real data.
+///   1. `context.evaluation` is carried as a JSON-object **string** (bincode cannot encode
+///      `serde_json::Value`); it is re-expanded back into a JSON **object** in place. An
+///      unparseable string drops the field gracefully (never panics), matching the best-effort
+///      telemetry contract.
+///   2. The whole value is recursively cleaned (`strip_placeholders`) so the POST contains no
+///      `null`, `false`, empty-string, empty-object, or empty-array placeholder entries. Numeric
+///      zeros (timestamps/counts) are preserved — they are real data.
 fn build_payload(batch: &FfeFlagEvaluationBatch) -> Result<String, serde_json::Error> {
     let mut value = serde_json::to_value(batch)?;
 
@@ -128,8 +127,8 @@ fn build_payload(batch: &FfeFlagEvaluationBatch) -> Result<String, serde_json::E
 ///   - `null`            (was `Option::is_none`)
 ///   - `false`           (was the `runtime_default_used` bool skip)
 ///   - `""`              (was `String::is_empty`, e.g. `ContextDD::service`)
-///   - `{}`              (an object that became empty after cleaning, e.g. a
-///                        `context.dd` whose only field `service` was stripped)
+///   - `{}`              (an object that became empty after cleaning, e.g. a `context.dd` whose
+///     only field `service` was stripped)
 ///   - `[]`              (an array that became empty after cleaning)
 ///
 /// Numeric values (including `0`) are NEVER removed — timestamps and counts are

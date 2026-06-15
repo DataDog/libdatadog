@@ -285,9 +285,14 @@ pub fn enqueue_actions_reliable(
 ) -> io::Result<()> {
     let mut pending = Some(actions);
     transport.with_retry_mut(|sender| {
-        let actions = pending
-            .take()
-            .expect("enqueue_actions_reliable retry invoked without pending actions");
+        // `actions` is not `Clone`, so it is consumed on the first attempt. If a
+        // reconnect-retry fires after that, there is nothing left to replay — bubble an
+        // error rather than panic (the eval path is best-effort and logs the failure).
+        let Some(actions) = pending.take() else {
+            return Err(io::Error::other(
+                "enqueue_actions_reliable: actions already consumed; cannot replay after reconnect",
+            ));
+        };
         sender.enqueue_actions_reliable(instance_id.clone(), *queue_id, actions)
     })
 }
