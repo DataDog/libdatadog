@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Trace-level filter logic for client-side stats (filter_tags, filter_tags_regex,
 //! ignore_resources as published by the agent's /info endpoint).
-use std::{borrow::Borrow as _, collections::HashSet};
+use std::borrow::Borrow as _;
 
 use libdd_common::regex_engine::Regex;
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
-use crate::span::{self, TraceData};
+use crate::span::{self, trace_utils::get_root_span_index, TraceData};
 
 trait TagFilter {
     /// Returns true if the given tag value matches the Filterer.
@@ -44,6 +44,14 @@ pub struct TraceFilterer {
     ignore_resources: Vec<Regex>,
 }
 
+/// Minimal span interface required by [`TraceFilterer`].
+pub trait Span<'a> {
+    fn resource(&'a self) -> &'a str;
+    fn name(&'a self) -> &'a str;
+    /// Returns the value of the given meta tag, if present.
+    fn get_meta(&'a self, key: &str) -> Option<&'a str>;
+}
+
 impl TagFilter for TagLiteralFilter {
     fn matches_tag_value(&self, value: &str) -> bool {
         match &self.value {
@@ -70,17 +78,6 @@ impl TagFilter for TagRegexFilter {
     }
 }
 
-/// Minimal span interface required by [`TraceFilterer`].
-pub trait Span<'a> {
-    fn resource(&'a self) -> &'a str;
-    fn name(&'a self) -> &'a str;
-    fn span_id(&'a self) -> u64;
-    fn parent_id(&'a self) -> u64;
-    fn trace_id(&'a self) -> u128;
-    /// Returns the value of the given meta tag, if present.
-    fn get_meta(&'a self, key: &str) -> Option<&'a str>;
-}
-
 impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
     fn resource(&'a self) -> &'a str {
         self.resource.borrow()
@@ -90,61 +87,9 @@ impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
         self.name.borrow()
     }
 
-    fn span_id(&'a self) -> u64 {
-        self.span_id
-    }
-
-    fn parent_id(&'a self) -> u64 {
-        self.parent_id
-    }
-
-    fn trace_id(&'a self) -> u128 {
-        self.trace_id
-    }
-
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {
         self.meta.get(key).map(|v| v.borrow())
     }
-}
-
-fn get_root_span_index<'a>(trace: &'a [impl Span<'a>]) -> anyhow::Result<usize> {
-    if trace.is_empty() {
-        anyhow::bail!("Cannot find root span index in an empty trace.");
-    }
-
-    // Do a first pass to find if we have an obvious root span (starting from the end) since some
-    // clients put the root span last.
-    for (i, span) in trace.iter().enumerate().rev() {
-        if span.parent_id() == 0 {
-            return Ok(i);
-        }
-    }
-
-    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id()).collect();
-
-    let mut root_span_id = None;
-    for (i, span) in trace.iter().enumerate() {
-        // If a span's parent is not in the trace, it is a root
-        if !span_ids.contains(&span.parent_id()) {
-            if root_span_id.is_some() {
-                debug!(
-                    trace_id = &trace[0].trace_id(),
-                    "trace has multiple root spans"
-                );
-            }
-            root_span_id = Some(i);
-        }
-    }
-    Ok(match root_span_id {
-        Some(i) => i,
-        None => {
-            debug!(
-                trace_id = &trace[0].trace_id(),
-                "Could not find the root span for trace"
-            );
-            trace.len() - 1
-        }
-    })
 }
 
 impl TraceFilterer {
@@ -260,12 +205,9 @@ impl TraceFilterer {
     }
 
     /// Removes traces that fail filter checks in-place. Returns the number of traces dropped.
-    pub fn filter_traces<T>(&self, traces: &mut Vec<Vec<T>>) -> usize
-    where
-        for<'a> T: Span<'a>,
-    {
+    pub fn filter_traces(&self, traces: &mut Vec<Vec<span::v04::Span<impl TraceData>>>) -> usize {
         let traces_count_before = traces.len();
-        traces.retain(|trace: &Vec<T>| {
+        traces.retain(|trace| {
             let Ok(root_span_index) = get_root_span_index(trace) else {
                 return true;
             };
