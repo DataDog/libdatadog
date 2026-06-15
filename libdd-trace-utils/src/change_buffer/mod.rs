@@ -74,8 +74,8 @@ pub type Result<T> = std::result::Result<T, ChangeBufferError>;
 
 mod utils;
 
-mod trace;
-pub use trace::{Segment, SmallSegmentMap};
+mod segment;
+pub use segment::{Segment, SmallSegmentMap};
 
 mod operation;
 use operation::*;
