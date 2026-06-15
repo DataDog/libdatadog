@@ -3,11 +3,6 @@ bench-analysis:
   needs: []
   image:
     name: registry.ddbuild.io/images/dd-octo-sts-ci-base:2025.06-1
-  rules:
-    - if: $CI_MERGE_REQUEST_IID
-      when: always
-    - if: $CI_EXTERNAL_PULL_REQUEST_IID
-      when: always
   timeout: 10m
   script:
     # Tool probe (fail fast per D-07)
