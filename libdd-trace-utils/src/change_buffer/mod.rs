@@ -86,7 +86,7 @@ pub use buffer::*;
 use crate::span::v04::Span;
 use crate::span::vec_map::VecMap;
 use crate::span::{SpanText, TraceData};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::ptr::NonNull;
 
 /// Interned string table (O(1) lookup vs HashMap).
@@ -132,7 +132,7 @@ pub struct ChangeBufferState<T: TraceData> {
     /// Live spans, keyed by span_id. Each entry pairs the span with the segment_id
     /// assigned at Create time, co-locating the two pieces of data that are always
     /// looked up together.
-    spans: HashMap<u64, (Span<T>, u64)>,
+    spans: FxHashMap<u64, (Span<T>, u64)>,
     segments: SmallSegmentMap<T::Text>,
     string_table: StringTable<T::Text>,
     tracer_service: T::Text,
@@ -194,7 +194,7 @@ fn new_span_pooled<T: TraceData>(
 }
 
 fn span_at_mut<T: TraceData>(
-    spans: &mut HashMap<u64, (Span<T>, u64)>,
+    spans: &mut FxHashMap<u64, (Span<T>, u64)>,
     span_id: u64,
 ) -> Result<&mut Span<T>> {
     spans
@@ -235,7 +235,7 @@ where
     ) -> Self {
         ChangeBufferState {
             change_buffer,
-            spans: HashMap::with_capacity(Self::SPANS_CAPACITY),
+            spans: FxHashMap::with_capacity_and_hasher(Self::SPANS_CAPACITY, Default::default()),
             segments: SmallSegmentMap::default(),
             string_table: StringTable::with_capacity(Self::STRING_TABLE_CAPACITY),
             tracer_service,
