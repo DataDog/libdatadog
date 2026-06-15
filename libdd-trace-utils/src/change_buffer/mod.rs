@@ -841,7 +841,7 @@ mod segment_isolation_tests {
         state.flush_change_buffer().unwrap();
 
         // Flush only segment 1.
-        let spans = state.flush_chunk(&vec![1], true).unwrap();
+        let spans = state.flush_chunk(&[1], true).unwrap();
         assert_eq!(spans.len(), 1);
 
         // Segment 1 must carry its own origin, not segment 2's.
@@ -882,7 +882,7 @@ mod segment_isolation_tests {
 
         state.flush_change_buffer().unwrap();
 
-        let spans = state.flush_chunk(&vec![1], true).unwrap();
+        let spans = state.flush_chunk(&[1], true).unwrap();
         assert_eq!(spans.len(), 1);
 
         // Segment 1's chunk root must not carry segment 2's value.
@@ -950,7 +950,7 @@ mod segment_isolation_tests {
         // the wrong string id.
         state.flush_change_buffer().unwrap();
 
-        let spans = state.flush_chunk(&vec![SPAN_B], false).unwrap();
+        let spans = state.flush_chunk(&[SPAN_B], false).unwrap();
         assert_eq!(spans.len(), 1);
         assert_eq!(
             spans[0].service, "service-B",
@@ -999,7 +999,7 @@ mod segment_isolation_tests {
 
         state.flush_change_buffer().unwrap();
 
-        let spans = state.flush_chunk(&vec![SPAN_B], false).unwrap();
+        let spans = state.flush_chunk(&[SPAN_B], false).unwrap();
         assert_eq!(spans.len(), 1);
         assert_eq!(
             spans[0].service, "service-B",
@@ -1036,7 +1036,7 @@ mod segment_isolation_tests {
 
         state.flush_change_buffer().unwrap();
 
-        let spans = state.flush_chunk(&vec![1], true).unwrap();
+        let spans = state.flush_chunk(&[1], true).unwrap();
         assert_eq!(spans.len(), 1);
 
         assert_eq!(
