@@ -3269,6 +3269,7 @@ dependencies = [
  "libdd-remote-config",
  "libdd-trace-protobuf",
  "manual_future",
+ "pyo3",
  "serde",
  "serde_json",
  "serde_with",

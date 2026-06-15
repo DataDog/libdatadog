@@ -77,6 +77,18 @@ impl<S: FileStorage> SingleFetcher<S> {
     pub fn set_extra_services(&mut self, services: Vec<String>) {
         self.opaque_state.set_extra_services(services);
     }
+
+    /// Replace the set of subscribed products and capabilities.
+    ///
+    /// Hosts whose product/capability set changes at runtime (e.g. enabling ASM
+    /// products on remote activation) call this before a subsequent `fetch_once`.
+    pub fn set_product_capabilities(
+        &mut self,
+        products: Vec<RemoteConfigProduct>,
+        capabilities: Vec<RemoteConfigCapabilities>,
+    ) {
+        self.product_capabilities = ConfigProductCapabilities::new(products, capabilities);
+    }
 }
 
 pub struct SingleChangesFetcher<S: FileStorage>
@@ -128,5 +140,14 @@ where
     /// See [`SingleFetcher::set_extra_services`].
     pub fn set_extra_services(&mut self, services: Vec<String>) {
         self.fetcher.set_extra_services(services);
+    }
+
+    /// See [`SingleFetcher::set_product_capabilities`].
+    pub fn set_product_capabilities(
+        &mut self,
+        products: Vec<RemoteConfigProduct>,
+        capabilities: Vec<RemoteConfigCapabilities>,
+    ) {
+        self.fetcher.set_product_capabilities(products, capabilities);
     }
 }

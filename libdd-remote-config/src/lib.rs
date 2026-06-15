@@ -39,6 +39,7 @@ pub struct Target {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int, from_py_object))]
 pub enum RemoteConfigCapabilities {
     AsmActivation = 1,
     AsmIpBlocking = 2,
@@ -83,6 +84,9 @@ pub enum RemoteConfigCapabilities {
     ApmTracingEnableLiveDebugging = 41,
     AsmDdMulticonfig = 42,
     AsmTraceTaggingRules = 43,
+    AsmExtendedDataCollection = 44,
     ApmTracingMulticonfig = 45,
     FfeFlagConfigurationRules = 46,
+    DdDataStreamsTransactionExtractors = 47,
+    LlmObsActivation = 48,
 }

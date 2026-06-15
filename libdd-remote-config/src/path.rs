@@ -14,6 +14,7 @@ pub enum RemoteConfigSource {
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int, hash, frozen, from_py_object))]
 pub enum RemoteConfigProduct {
     AgentConfig,
     AgentTask,
@@ -24,6 +25,15 @@ pub enum RemoteConfigProduct {
     AsmFeatures,
     FfeFlags,
     LiveDebugger,
+    LiveDebuggerSymbolDb,
+}
+
+#[cfg(feature = "pyo3")]
+#[pyo3::pymethods]
+impl RemoteConfigProduct {
+    fn __str__(&self) -> String {
+        self.to_string()
+    }
 }
 
 impl Display for RemoteConfigProduct {
@@ -38,6 +48,7 @@ impl Display for RemoteConfigProduct {
             RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
             RemoteConfigProduct::FfeFlags => "FFE_FLAGS",
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
+            RemoteConfigProduct::LiveDebuggerSymbolDb => "LIVE_DEBUGGING_SYMBOL_DB",
         };
         write!(f, "{str}")
     }
@@ -88,6 +99,7 @@ impl RemoteConfigPath {
                 "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
                 "FFE_FLAGS" => RemoteConfigProduct::FfeFlags,
                 "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
+                "LIVE_DEBUGGING_SYMBOL_DB" => RemoteConfigProduct::LiveDebuggerSymbolDb,
                 product => anyhow::bail!("Unknown product {}", product),
             },
             config_id: parts[parts.len() - 2],
