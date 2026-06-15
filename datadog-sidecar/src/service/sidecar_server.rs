@@ -779,6 +779,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 language: config.language,
                 tracer_version: config.tracer_version,
                 endpoint: config.endpoint,
+                // TODO: hostname will need to be added when agentess is enabled
+                hostname: String::new(),
+                agentless_enabled: false,
             },
             products: config.remote_config_products,
             capabilities: config.remote_config_capabilities,

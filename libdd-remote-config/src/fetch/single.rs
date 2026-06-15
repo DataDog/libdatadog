@@ -50,6 +50,28 @@ impl<S: FileStorage> SingleFetcher<S> {
         })
     }
 
+    pub fn new_no_agentless(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+    ) -> anyhow::Result<Self> {
+        Ok(SingleFetcher {
+            fetcher: futures::executor::block_on(ConfigFetcher::new(
+                sink,
+                Arc::new(ConfigFetcherState::new(options.invariants)),
+            ))?,
+            target: Arc::new(target),
+            product_capabilities: ConfigProductCapabilities::new(
+                options.products,
+                options.capabilities,
+            ),
+            runtime_id,
+            client_id: uuid::Uuid::new_v4().to_string(),
+            client_state: ConfigClientState::default(),
+        })
+    }
+
     pub fn with_client_id(mut self, client_id: String) -> Self {
         self.client_id = client_id;
         self
@@ -106,6 +128,18 @@ where
         Ok(SingleChangesFetcher {
             changes: ChangeTracker::default(),
             fetcher: SingleFetcher::new(sink, target, runtime_id, options).await?,
+        })
+    }
+
+    pub fn new_no_agentless(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+    ) -> anyhow::Result<Self> {
+        Ok(SingleChangesFetcher {
+            changes: ChangeTracker::default(),
+            fetcher: SingleFetcher::new_no_agentless(sink, target, runtime_id, options)?,
         })
     }
 

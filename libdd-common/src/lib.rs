@@ -343,7 +343,7 @@ impl Endpoint {
                 )
                 .path_and_query(PathAndQuery::from_static(""))
                 .build()
-                .unwrap(),
+                .with_context(|| format!("rc url is invalid for site: {site}"))?,
             api_key: Some(api_key.into()),
             timeout_ms: Self::DEFAULT_TIMEOUT,
             test_token: None,

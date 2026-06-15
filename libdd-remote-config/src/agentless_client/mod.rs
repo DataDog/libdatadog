@@ -3,7 +3,6 @@
 
 use std::{
     fmt,
-    future::Future,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -35,14 +34,15 @@ const CONFIG_ROOT_VERSION: u64 = 16;
 const DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/prod/director_root.json");
 const DIRECTOR_ROOT_VERSION: u64 = 15;
 
-const FAKE_AGENT_VERSION: &'static str = "7.78.4";
+const FAKE_AGENT_VERSION: &str = "7.78.4";
 
 type TUFRepo = tuf::repository::EphemeralRepository<tuf::interchange::Json>;
 type TUFClient = tuf::client::Client<tuf::interchange::Json, TUFRepo, TUFRepo>;
 
 // Make a remote config API endpoint from and endpoint where `e.url` is the base dd site
 // If the endpoint is not suitable (api key not set, not https), returns N
-pub fn make_agentless_configs_endpoint(e: Endpoint) -> Option<Endpoint> {
+pub fn make_agentless_configs_endpoint(e: &Endpoint) -> Option<Endpoint> {
+    let e = e.clone();
     dbg!(&e);
     if !(e.url.scheme_str().is_some_and(|s| s == "https")
         && e.url.authority().is_some()
@@ -67,12 +67,6 @@ pub struct AgentlessConfig {
     pub hostname: String,
 }
 
-struct CachedFile {
-    hash: Vec<(&'static tuf::crypto::HashAlgorithm, tuf::crypto::HashValue)>,
-    target_file: Vec<u8>,
-    version: u64,
-}
-
 pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeHttpClient>;
 
 pub struct AgentlessFetcher<C: HttpClientCapability> {
@@ -85,28 +79,38 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     products: HashSet<String>,
     refresh_interval: Duration,
     endpoint: Endpoint,
-    // TODO: Not sure this is needed if the wrapper client already caches files?
+    // TODO: Not sure this is needed if the wrapped client already caches files?
     target_cache: HashMap<tuf::metadata::TargetPath, CachedFile>,
+}
+
+struct CachedFile {
+    hashes: Vec<(&'static tuf::crypto::HashAlgorithm, tuf::crypto::HashValue)>,
+    target_file: Vec<u8>,
+    version: u64,
+}
+
+pub struct ClientTargetResponse<'a> {
+    pub path: &'a str,
+    pub version: u64,
+    pub hashes: &'a [(&'static tuf::crypto::HashAlgorithm, tuf::crypto::HashValue)],
+    pub content: &'a [u8],
 }
 
 pub struct ClientResponse<'a> {
     pub root_version: u64,
     pub target_version: u64,
-    pub opaque_backend_state: Vec<u8>,
-    pub targets: Vec<(
-        &'a str,
-        &'a [u8],
-        u64,
-        &'a Vec<(&'static tuf::crypto::HashAlgorithm, tuf::crypto::HashValue)>,
-    )>,
+    pub opaque_backend_state: &'a [u8],
+    pub targets: Vec<ClientTargetResponse<'a>>,
 }
 
-struct BorrowedTarget<'a> {
-    pub path: &'a TargetPath,
-    pub desc: &'a TargetDescription,
+struct BorrowedTufTarget<'a> {
+    pub path: &'a tuf::metadata::TargetPath,
+    pub desc: &'a tuf::metadata::TargetDescription,
 }
 
-impl<'a> BorrowedTarget<'a> {
+const CUSTOM_METADATA_EXPIRY_PATH: &str = "expires";
+
+impl<'a> BorrowedTufTarget<'a> {
     pub fn try_create(path: &'a TargetPath, desc: &'a TargetDescription) -> anyhow::Result<Self> {
         if let Some(expiry) = desc.custom().get(CUSTOM_METADATA_EXPIRY_PATH) {
             let expiry_ts = expiry
@@ -122,44 +126,17 @@ impl<'a> BorrowedTarget<'a> {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Target {
-    pub path: TargetPath,
-    pub desc: TargetDescription,
-}
-
-const CUSTOM_METADATA_EXPIRY_PATH: &str = "expires";
-
-impl Target {
-    /// Returns Ok(Target) when valid and unexpired; Err(Error) otherwise.
-    pub fn try_create(path: &TargetPath, desc: &TargetDescription) -> anyhow::Result<Self> {
-        if let Some(expiry) = desc.custom().get(CUSTOM_METADATA_EXPIRY_PATH) {
-            let expiry_ts = expiry
-                .as_u64()
-                .ok_or_else(|| anyhow::format_err!("expiry not a number"))?;
-
-            if expiry_ts * 1000 <= now_unix_milli_ts() {
-                anyhow::bail!("expired target at path: {path}")
-            }
-        }
-
-        Ok(Self {
-            path: path.clone(),
-            desc: desc.clone(),
-        })
-    }
-}
-
 enum FetchTargetResult {
     Cached,
     New(CachedFile),
 }
 
 impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
-    /// Create a new `RemoteConfig` client.
+    /// Create a new `AgentlessFetcher` client.
     ///
     /// # Errors
     /// Returns an error if TUF root initialization fails.
+    /// This can happen for instance if the trust root certificates have expired
     pub async fn new(cfg: AgentlessConfig, endpoint: Endpoint) -> anyhow::Result<Self> {
         Ok(Self {
             endpoint,
@@ -183,7 +160,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             target_cache: HashMap::new(),
 
             opaque_backend_state: Vec::new(),
-            refresh_interval: Duration::from_secs(5),
+            refresh_interval: Duration::from_secs(60),
             initialized: false,
         })
     }
@@ -192,7 +169,10 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     /// hashes against the metadata in the config repo.
     ///
     /// If it is already in the cache, return `Cached`
-    async fn fetch_target(&self, target: &BorrowedTarget<'_>) -> anyhow::Result<FetchTargetResult> {
+    async fn fetch_target(
+        &self,
+        target: &BorrowedTufTarget<'_>,
+    ) -> anyhow::Result<FetchTargetResult> {
         let expected_hashes = tuf::crypto::retain_supported_hashes(target.desc.hashes());
         if expected_hashes.is_empty() {
             anyhow::bail!("no supported hash for path: {}", target.path);
@@ -200,7 +180,6 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         let (target_hash_algo, target_hash) = &expected_hashes[0];
         let target_path = target.path;
 
-        dbg!(target.desc.custom());
         let version = target
             .desc
             .custom()
@@ -210,7 +189,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
 
         if let Some(item) = self.target_cache.get(target_path) {
             if item
-                .hash
+                .hashes
                 .iter()
                 .find(|(alg, _)| alg == target_hash_algo)
                 .is_some_and(|(_, h)| h == target_hash)
@@ -258,7 +237,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         }
 
         Ok(FetchTargetResult::New(CachedFile {
-            hash: expected_hashes,
+            hashes: expected_hashes,
             target_file: buf,
             version,
         }))
@@ -285,7 +264,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                 u64::from(self.director_client.database().trusted_root().version()),
             )
         } else {
-            (0, 0, 0)
+            (0, CONFIG_ROOT_VERSION, DIRECTOR_ROOT_VERSION)
         };
 
         let all_products = c.products.iter().fold(HashSet::new(), |mut acc, p| {
@@ -302,15 +281,20 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             .cloned()
             .collect::<Vec<_>>();
 
+        let now = now_unix_milli_ts();
+
         let request = remoteconfig::LatestConfigsRequest {
             hostname: self.hostname.clone(),
             current_config_snapshot_version,
             current_config_root_version,
             current_director_root_version,
             products: old_products,
-            new_products: new_products,
+            new_products,
             backend_client_state: self.opaque_backend_state.clone(),
-            active_clients: vec![c.clone()],
+            active_clients: vec![remoteconfig::Client {
+                last_seen: now,
+                ..c
+            }],
             agent_version: FAKE_AGENT_VERSION.to_owned(),
             has_error: false,
             error: String::new(),
@@ -320,14 +304,18 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             agent_uuid: String::new(),
         };
         let response = self.get_latest_config(request).await?;
+
+        self.apply(&response).await?;
         if !self.initialized {
             self.initialized = true;
         }
-
-        self.apply(&response).await?;
         self.products = all_products;
 
-        // TODO: filter predicates ?
+        // TODO:
+        // In the future we will want to query configs for mutliple clients (for PHP, which can have
+        // many processes use the same rc client)
+        // This means we will need to dispatch the different files based on filter predicates
+        // which we currently do not parse
 
         Ok(ClientResponse {
             root_version: u64::from(self.config_client.database().trusted_root().version()),
@@ -338,11 +326,16 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                     .ok_or(anyhow::anyhow!("Missing target data"))?
                     .version(),
             ),
-            opaque_backend_state: self.opaque_backend_state.clone(),
+            opaque_backend_state: &self.opaque_backend_state,
             targets: self
                 .target_cache
                 .iter()
-                .map(|(p, t)| (p.as_str(), t.target_file.as_slice(), t.version, &t.hash))
+                .map(|(p, t)| ClientTargetResponse {
+                    path: p.as_str(),
+                    version: t.version,
+                    hashes: &t.hashes,
+                    content: t.target_file.as_slice(),
+                })
                 .collect(),
         })
     }
@@ -363,45 +356,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         parse_rc_response(res)
     }
 
-    pub async fn init(&mut self) -> anyhow::Result<()> {
-        let response = self.initial_config().await?;
-        Ok(self.apply(&response).await?)
-    }
-
-    /// Fetch the initial Remote Config payload for this tracer.
-    ///
-    /// # Errors
-    /// Returns an error if the HTTP request fails or the response cannot be decoded.
-    pub fn initial_config(
-        &self,
-    ) -> impl Future<Output = anyhow::Result<remoteconfig::LatestConfigsResponse>> + Send + use<'_, C>
-    {
-        let initial_request = remoteconfig::LatestConfigsRequest {
-            hostname: self.hostname.clone(),
-            current_config_snapshot_version: 0,
-            current_config_root_version: CONFIG_ROOT_VERSION,
-            current_director_root_version: DIRECTOR_ROOT_VERSION,
-            new_products: vec![],
-            active_clients: vec![],
-            backend_client_state: self.opaque_backend_state.clone(),
-            agent_version: FAKE_AGENT_VERSION.to_owned(),
-            products: vec![],
-            has_error: false,
-            error: String::new(),
-            trace_agent_env: String::new(),
-            tags: vec![],
-            agent_uuid: String::new(),
-            org_uuid: String::new(),
-        };
-        self.get_latest_config(initial_request)
-    }
-
     /// Fetch the latest Remote Config for this client.
     ///
     /// # Errors
     /// Returns an error if the HTTP request fails or the response cannot be decoded.
-    #[allow(clippy::future_not_send)]
-    pub async fn get_latest_config(
+    async fn get_latest_config(
         &self,
         req: remoteconfig::LatestConfigsRequest,
     ) -> anyhow::Result<remoteconfig::LatestConfigsResponse> {
@@ -571,10 +530,11 @@ fn now_unix_milli_ts() -> u64 {
     .unwrap_or(u64::MAX)
 }
 
-/// Return the available, unexpired target paths and their descriptions based on the current metadata.
+/// Return the available, unexpired target paths and their descriptions based on the current
+/// metadata.
 fn trusted_targets(
     director_client: &TUFClient,
-) -> anyhow::Result<impl Iterator<Item = BorrowedTarget<'_>> + '_> {
+) -> anyhow::Result<impl Iterator<Item = BorrowedTufTarget<'_>> + '_> {
     Ok(director_client
         .database()
         .trusted_targets()
@@ -582,7 +542,7 @@ fn trusted_targets(
         .targets()
         .iter()
         .filter_map(|(path, desc)| {
-            BorrowedTarget::try_create(path, desc)
+            BorrowedTufTarget::try_create(path, desc)
                 .inspect_err(|e| {
                     debug!(%path, "Skipping target: error {}", e);
                 })

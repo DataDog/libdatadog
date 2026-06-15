@@ -266,6 +266,9 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             language: language.to_utf8_lossy().into(),
             tracer_version: tracer_version.to_utf8_lossy().into(),
             endpoint: endpoint.clone(),
+            // TODO: hostname will need to be added when agentess is enabled
+            hostname: String::new(),
+            agentless_enabled: false,
         },
         &Arc::new(Target {
             service: service_name.to_utf8_lossy().into(),

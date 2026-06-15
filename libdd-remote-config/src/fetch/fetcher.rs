@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::agentless_client::{
-    make_agentless_configs_endpoint, AgentlessConfig, AgentlessFetcher, NativeAgentlessFetcher,
+    self, make_agentless_configs_endpoint, AgentlessConfig, AgentlessFetcher,
+    NativeAgentlessFetcher,
 };
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
@@ -159,18 +160,31 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
 
 impl<S> ConfigFetcherState<S> {
     pub fn new(invariants: ConfigInvariants) -> Self {
+        let (endpoint, agentless_enabled) = if invariants.agentless_enabled {
+            match (
+                make_agentless_configs_endpoint(&invariants.endpoint),
+                invariants.hostname.is_empty(),
+            ) {
+                (Some(e), false) => (e, true),
+                (Some(_), true) => {
+                    warn!("rc_config_fetcher: agentless enabled but the hostname is empty. Downgrading to agent endpoint");
+                    (make_agent_configs_endpoint(&invariants.endpoint), false)
+                }
+                (None, _) => {
+                    warn!("rc_config_fetcher: agentless enabled but the endpoint is invalid. Downgrading to agent endpoint");
+                    (make_agent_configs_endpoint(&invariants.endpoint), false)
+                }
+            }
+        } else {
+            (make_agent_configs_endpoint(&invariants.endpoint), false)
+        };
         ConfigFetcherState {
             target_files_by_path: Default::default(),
-            endpoint: if invariants.agentless_enabled {
-                if let Some(e) = make_agentless_configs_endpoint(invariants.endpoint.clone()) {
-                    e
-                } else {
-                    make_agent_configs_endpoint(&invariants.endpoint)
-                }
-            } else {
-                make_agent_configs_endpoint(&invariants.endpoint)
+            endpoint,
+            invariants: ConfigInvariants {
+                agentless_enabled,
+                ..invariants
             },
-            invariants,
             expire_unused_files: true,
         }
     }
@@ -214,6 +228,7 @@ impl<S> ConfigFetcherState<S> {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum FetcherMode {
     Agent,
     Agentless(NativeAgentlessFetcher),
@@ -256,6 +271,9 @@ impl ConfigClientState {
 }
 
 impl<S: FileStorage> ConfigFetcher<S> {
+    /// Create a new config fetcher
+    /// This is guaranteed to be immediate (no await point) if `state.invariants.agentless_enabled`
+    /// is false
     pub async fn new(
         file_storage: S,
         state: Arc<ConfigFetcherState<S::StoredFile>>,
@@ -603,18 +621,25 @@ impl<S: FileStorage> ConfigFetcher<S> {
         match &mut self.mode {
             FetcherMode::Agent => self.fetch_agent(config_req, target, client_state).await,
             FetcherMode::Agentless(agentless_fetcher) => {
+                #[allow(clippy::expect_used)]
                 let res = agentless_fetcher
-                    .fetch_config(config_req.client.unwrap())
+                    .fetch_config(
+                        config_req
+                            .client
+                            .expect("RC ConfigFetcher::build_config_request should always return a `Some` client"),
+                    )
                     .await?;
 
                 client_state.root_version = res.root_version;
                 client_state.targets_version = res.target_version;
-                client_state.opaque_backend_state = res.opaque_backend_state;
+                if res.opaque_backend_state != client_state.opaque_backend_state {
+                    client_state.opaque_backend_state = res.opaque_backend_state.to_vec();
+                }
                 client_state.last_error = None;
 
                 let mut target_files = self.state.target_files_by_path.lock_or_panic();
                 let mut config_paths = HashSet::new();
-                for &(path, _, _, _) in &res.targets {
+                for &agentless_client::ClientTargetResponse { path, .. } in &res.targets {
                     match RemoteConfigPath::try_parse(path) {
                         Ok(parsed) => {
                             config_paths.insert(parsed.into());
@@ -627,7 +652,13 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     target_files.retain(|k, _| config_paths.contains(k.as_ref()));
                 }
 
-                for (path, target_file, version, hashes) in res.targets {
+                for agentless_client::ClientTargetResponse {
+                    path,
+                    content: target_file,
+                    version,
+                    hashes,
+                } in res.targets
+                {
                     let parsed_path = match RemoteConfigPath::try_parse(path) {
                         Ok(parsed_path) => parsed_path,
                         Err(e) => {

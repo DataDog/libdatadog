@@ -62,7 +62,7 @@ thiserror = "2"
 hashbrown = "0.15"
 tuf = { git = "https://github.com/DataDog/rust-tuf/", tag = "0.3.0-beta10-opw-3" }
 prost = "0.14.1"
-futures = "0.3"
+futures = { version = "0.3", features = ["executor"] }
 
 # Test feature
 hyper-util = { workspace = true, features = ["service"], optional = true }
