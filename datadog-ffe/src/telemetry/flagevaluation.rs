@@ -94,6 +94,9 @@ pub struct FfeFlagEvaluationEvent {
     /// Allocation key from the UFC rule that produced this evaluation.
     #[serde(default)]
     pub allocation: Option<AllocationKey>,
+    /// Targeting rule key from UFC metadata. Omit when no real rule metadata exists.
+    #[serde(default)]
+    pub targeting_rule: Option<TargetingRuleKey>,
     /// Targeting key identifying the evaluation subject.
     #[serde(default)]
     pub targeting_key: Option<String>,
@@ -130,6 +133,12 @@ pub struct VariantKey {
 /// Holds the allocation key for the `allocation` field.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AllocationKey {
+    pub key: String,
+}
+
+/// Holds the targeting rule key for the `targeting_rule` field.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TargetingRuleKey {
     pub key: String,
 }
 
@@ -181,11 +190,12 @@ pub struct ContextDD {
 
 /// Prune evaluation context attributes to satisfy the frozen contract bounds:
 /// - At most `MAX_CONTEXT_FIELDS` (256) entries are kept.
-/// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped** (not truncated) to
-///   avoid partial-data misattribution.
-/// - Non-string values (bool, number, null) are kept regardless of their display length.
-/// - Keys are iterated in sorted order for deterministic canonical-key stability; the returned
-///   `BTreeMap` preserves that order.
+/// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped**
+///   (not truncated) to avoid partial-data misattribution.
+/// - Non-string values (bool, number, null) are kept regardless of
+///   their display length.
+/// - Keys are iterated in sorted order for deterministic canonical-key
+///   stability; the returned `BTreeMap` preserves that order.
 ///
 /// This satisfies reviewer concern #1 (`review:4477935835`).
 pub fn prune_context(
@@ -237,6 +247,7 @@ mod tests {
                 key: "alloc-a".to_owned(),
             }),
             targeting_key: Some("user-123".to_owned()),
+            targeting_rule: None,
             context: Some(FlagEvalEventContext {
                 evaluation: Some(
                     serde_json::to_string(&{
@@ -291,6 +302,7 @@ mod tests {
             evaluation_count: 7,
             variant: None,
             allocation: None,
+            targeting_rule: None,
             targeting_key: None,
             context: None,
             error: None,
@@ -300,15 +312,15 @@ mod tests {
 
     // ── Test: degraded-tier event serializes optional fields as null ──────────
     //
-    // The type no longer uses `skip_serializing_if` (bincode-wire safety), so on
+    // The type does not use `skip_serializing_if` (bincode-wire safety), so on
     // the wire `None`/`false` optional fields ARE present (as null/false). The
-    // null-placeholder stripping that the flageval-worker schema requires now
-    // happens in the sidecar flusher's `build_payload`, not at the type level —
-    // see `ffe_flagevaluation_flusher` tests.
+    // null-placeholder stripping that the flageval-worker schema requires
+    // happens in the sidecar flusher's `build_payload`, not at the type level.
 
     #[test]
     fn degraded_tier_event_serializes_optional_fields_as_null() {
-        let json = serde_json::to_string(&degraded_event()).unwrap();
+        let degraded = degraded_event();
+        let json = serde_json::to_string(&degraded).unwrap();
         let v: Value = serde_json::from_str(&json).unwrap();
 
         // Required fields present.
@@ -318,11 +330,15 @@ mod tests {
         assert_eq!(v["evaluation_count"], 7);
 
         // Optional fields are present as null/false placeholders on the wire
-        // (stripped later by the flusher, NOT at the type level).
+        // (stripped later by the flusher, not at the type level).
         assert!(v["variant"].is_null(), "variant should serialize as null");
         assert!(
             v["allocation"].is_null(),
             "allocation should serialize as null"
+        );
+        assert!(
+            v["targeting_rule"].is_null(),
+            "targeting_rule should serialize as null"
         );
         assert!(
             v["targeting_key"].is_null(),
@@ -338,12 +354,12 @@ mod tests {
 
     // ── Test: bincode round-trip with mixed Some/None fields ──────────────────
     //
-    // This is the mechanical guard for the worker→sidecar IPC bug: bincode is a
+    // Mechanical guard for the worker→sidecar IPC bug: bincode is a
     // non-self-describing codec, so any `skip_serializing_if` on these types
-    // would omit a field on serialize while the derived Deserialize still
-    // expects it in order → field misalignment → the sidecar drops the batch.
-    // A batch mixing a full-tier event (Some fields) and a degraded-tier event
-    // (None fields) must survive serialize→deserialize byte-for-byte.
+    // would omit a field on serialize while derived Deserialize still expects it
+    // in order → field misalignment → the sidecar drops the batch. A batch
+    // mixing a full-tier event (Some fields) and degraded-tier event (None
+    // fields) must survive serialize→deserialize byte-for-byte.
 
     #[test]
     fn batch_round_trips_via_bincode_with_mixed_optional_fields() {

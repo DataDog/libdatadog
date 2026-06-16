@@ -457,7 +457,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
                             );
                         }
                     } else {
-                        debug!("ffe_flagevaluation_flusher: no session endpoint, dropping batch");
+                        debug!(
+                            "ffe_flagevaluation_flusher: no session endpoint, dropping batch"
+                        );
                     }
                     false
                 }

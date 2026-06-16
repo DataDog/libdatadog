@@ -353,34 +353,6 @@ impl SidecarSender {
             .try_send_enqueue_actions(instance_id, queue_id, actions);
     }
 
-    /// Reliably enqueue actions: NO load-shedding, NO silent drop.
-    ///
-    /// Builds the SAME `EnqueueActions` request as [`enqueue_actions`] /
-    /// `try_send_enqueue_actions`, but sends it via the checked, blocking channel
-    /// path ([`SidecarInterfaceChannel::send_request_blocking`]) so the `io::Result`
-    /// propagates to the caller instead of being dropped. The outbox is drained
-    /// (blocking) first so priority state-change messages are not reordered behind
-    /// this send.
-    ///
-    /// Used for one-shot, non-replayed payloads (e.g. FFE flagevaluation batches)
-    /// that must not be lost under transient backpressure or a broken pipe. A
-    /// `BrokenPipe`/`ConnectionReset`/`NotConnected` error returned here lets
-    /// `SidecarTransport::with_retry` reconnect and retry once.
-    pub fn enqueue_actions_reliable(
-        &mut self,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-        actions: Vec<SidecarAction>,
-    ) -> io::Result<()> {
-        self.drain_outbox_blocking();
-        let req = SidecarInterfaceRequest::EnqueueActions {
-            instance_id,
-            queue_id,
-            actions,
-        };
-        self.channel.send_request_blocking(&req)
-    }
-
     pub fn send_trace_v04_shm(
         &mut self,
         instance_id: InstanceId,
