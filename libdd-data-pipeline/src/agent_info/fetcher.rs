@@ -173,7 +173,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 /// );
 /// // Start the fetcher on a shared runtime
 /// use libdd_shared_runtime::SharedRuntime;
-/// let runtime = libdd_shared_runtime::OwnedSharedRuntime::new()?;
+/// let runtime = libdd_shared_runtime::ForkSafeSharedRuntime::new()?;
 /// runtime.spawn_worker(fetcher, true)?;
 ///
 /// // Get the Arc to access the info
@@ -369,7 +369,7 @@ mod single_threaded_tests {
     use crate::agent_info;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_shared_runtime::{OwnedSharedRuntime, SharedRuntime};
+    use libdd_shared_runtime::{ForkSafeSharedRuntime, SharedRuntime};
 
     const TEST_INFO: &str = r#"{
         "version": "0.0.0",
@@ -609,7 +609,7 @@ mod single_threaded_tests {
             Duration::from_millis(100),
         );
         assert!(agent_info::get_agent_info().is_none());
-        let shared_runtime = OwnedSharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Wait until the info is fetched
@@ -692,7 +692,7 @@ mod single_threaded_tests {
             // Interval is too long to fetch during the test
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
-        let shared_runtime = OwnedSharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the new agent state
@@ -773,7 +773,7 @@ mod single_threaded_tests {
         let (fetcher, response_observer) =
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
-        let shared_runtime = OwnedSharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the same agent state

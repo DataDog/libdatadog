@@ -8,11 +8,11 @@
 
 //! A shared tokio runtime for running background workers across multiple components.
 //!
-//! This crate provides [`OwnedSharedRuntime`], which owns a single tokio runtime and manages
+//! This crate provides [`ForkSafeSharedRuntime`], which owns a single tokio runtime and manages
 //! [`PausableWorker`]s on it. Components such as the trace exporter can share one runtime
 //! instead of each creating their own, reducing thread and resource overhead.
 //!
-//! [`OwnedSharedRuntime`] also provides fork-safety hooks (`before_fork`, `after_fork_parent`,
+//! [`ForkSafeSharedRuntime`] also provides fork-safety hooks (`before_fork`, `after_fork_parent`,
 //! `after_fork_child`) that pause and restart workers around `fork()` calls, preventing
 //! deadlocks in child processes.
 //!
@@ -24,8 +24,8 @@ pub mod worker;
 
 // Top-level re-exports for convenience
 #[cfg(not(target_arch = "wasm32"))]
-pub use shared_runtime::{BorrowedSharedRuntime, OwnedKind};
+pub use shared_runtime::{BorrowedSharedRuntime, ForkSafeRuntimeKind};
 pub use shared_runtime::{
-    OwnedSharedRuntime, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
+    ForkSafeSharedRuntime, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
 };
 pub use worker::Worker;

@@ -1,19 +1,19 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`SharedRuntime`] trait, [`OwnedSharedRuntime`], and [`BorrowedSharedRuntime`].
+//! [`SharedRuntime`] trait, [`ForkSafeSharedRuntime`], and [`BorrowedSharedRuntime`].
 
 pub(crate) mod pausable_worker;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod borrowed;
-mod owned;
+mod fork_safe;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use borrowed::BorrowedSharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
-pub use owned::OwnedKind;
-pub use owned::OwnedSharedRuntime;
+pub use fork_safe::ForkSafeRuntimeKind;
+pub use fork_safe::ForkSafeSharedRuntime;
 
 use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
@@ -32,9 +32,9 @@ pub(crate) struct WorkerEntry {
     pub(crate) worker: PausableWorker<BoxedWorker>,
 }
 
-/// Common interface for [`OwnedSharedRuntime`] and [`BorrowedSharedRuntime`].
+/// Common interface for [`ForkSafeSharedRuntime`] and [`BorrowedSharedRuntime`].
 ///
-/// Fork hooks and synchronous shutdown are inherent methods on [`OwnedSharedRuntime`] only.
+/// Fork hooks and synchronous shutdown are inherent methods on [`ForkSafeSharedRuntime`] only.
 /// Not object-safe — use `impl SharedRuntime` generics rather than `dyn SharedRuntime`.
 pub trait SharedRuntime {
     /// Spawns a worker. `restart_on_fork = true` causes `after_fork_child` to reset and restart
@@ -47,7 +47,7 @@ pub trait SharedRuntime {
     ) -> Result<WorkerHandle, SharedRuntimeError>;
 
     /// Shuts down all tracked workers. The runtime itself is not torn down — use
-    /// [`OwnedSharedRuntime::shutdown`] to also drop the runtime.
+    /// [`ForkSafeSharedRuntime::shutdown`] to also drop the runtime.
     fn shutdown_async(&self) -> impl std::future::Future<Output = ()> + MaybeSend + '_
     where
         Self: Sync;

@@ -1796,7 +1796,7 @@ mod tests {
     fn test_channel_close_flushes_and_parks_via_shared_runtime() {
         use httpmock::prelude::*;
         use libdd_common::Endpoint;
-        use libdd_shared_runtime::{OwnedSharedRuntime, SharedRuntime};
+        use libdd_shared_runtime::{ForkSafeSharedRuntime, SharedRuntime};
         use std::time::Duration;
 
         const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
@@ -1820,7 +1820,7 @@ mod tests {
             .unwrap();
         builder.runtime_id = Some("rid".into());
 
-        let shared_runtime = OwnedSharedRuntime::new().expect("OwnedSharedRuntime::new");
+        let shared_runtime = ForkSafeSharedRuntime::new().expect("ForkSafeSharedRuntime::new");
         let runtime_handle = shared_runtime
             .block_on(async { tokio::runtime::Handle::current() })
             .expect("runtime handle");
