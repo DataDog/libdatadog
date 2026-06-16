@@ -9,10 +9,9 @@ use rmp::encode::{
     write_uint, write_uint8, RmpWrite, ValueWriteError,
 };
 use std::borrow::Borrow;
-use std::collections::HashSet;
 
 use super::{
-    span_start_unix_nanos, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable,
+    normalize_span_start, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable,
     FLAT_ATTR_STRIDE, TYPED_VALUE_STRIDE,
 };
 
@@ -97,21 +96,12 @@ pub(super) fn encode_attributes_map<W: RmpWrite, T: TraceData>(
     map: &VecMap<T::Text, AttributeValue<T>>,
     table: &mut StringTable,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    // `VecMap` tolerates duplicate keys for fast insertion (later writes shadow earlier ones via
-    // `get`). Dedup here so the wire format carries each key once, with the last-written value.
-    // Walk in reverse keeping first-seen (= last-written), then reverse to restore insertion
-    // order. `T::Text: Hash + Eq + Borrow<str>` per the `SpanText` trait.
-    let mut seen: HashSet<&str> = HashSet::with_capacity(map.len());
-    let mut deduped: Vec<(&T::Text, &AttributeValue<T>)> = map
-        .iter()
-        .rev()
-        .filter(|(k, _)| seen.insert(<T::Text as Borrow<str>>::borrow(k)))
-        .map(|(k, v)| (k, v))
-        .collect();
-    deduped.reverse();
-
+    // `VecMap` tolerates duplicate keys for fast insertion; `defensive_dedup` returns a view
+    // with each key emitted once (last-write-wins) and warns if the map wasn't already deduped
+    // before encoding.
+    let deduped = map.defensive_dedup();
     write_array_len(writer, deduped.len() as u32 * FLAT_ATTR_STRIDE)?;
-    for (k, v) in deduped {
+    for (k, v) in deduped.iter() {
         table.write_interned(writer, k.borrow())?;
         encode_attribute_value(writer, v, table)?;
     }
@@ -288,7 +278,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     write_u64(writer, span.span_id)?;
 
     write_uint8(writer, SpanKey::Start as u8)?;
-    write_u64(writer, span_start_unix_nanos(span.start))?;
+    write_u64(writer, normalize_span_start(span.start))?;
 
     if is_parent {
         write_uint8(writer, SpanKey::ParentId as u8)?;

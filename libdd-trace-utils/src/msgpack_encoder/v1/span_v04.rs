@@ -9,7 +9,7 @@ use rmp::encode::{
 };
 use std::borrow::Borrow;
 
-use super::{span_start_unix_nanos, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
+use super::{normalize_span_start, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
 
 /// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
 ///
@@ -252,7 +252,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     write_u64(writer, span.span_id)?;
 
     write_uint8(writer, SpanKey::Start as u8)?;
-    write_u64(writer, span_start_unix_nanos(span.start))?;
+    write_u64(writer, normalize_span_start(span.start))?;
 
     if is_parent {
         write_uint8(writer, SpanKey::ParentId as u8)?;

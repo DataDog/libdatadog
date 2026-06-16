@@ -438,14 +438,14 @@ mod tracing_integration_tests {
         );
     }
 
-    /// Builds a TracerPayload that exercises the multi-key attribute paths the v0.4→V1 encoder
+    /// Builds a TracerPayload that exercises the multi-key attribute paths the v0.4 to V1 encoder
     /// can't cover on its own (HashMap iteration order makes byte-by-byte cross-validation flaky
-    /// for n &gt; 1), plus the primitive `AttributeValue` variants the test-agent currently
+    /// for n > 1), plus the primitive `AttributeValue` variants the test-agent currently
     /// supports.
     ///
-    /// NOTE: `AttributeValue::List` and `AttributeValue::KeyValue` are deliberately omitted —
-    /// `ddapm-test-agent` v1.56.0 returns `400: Array of strings values are not supported yet`
-    /// for the `Array` variant. Once test-agent V1 support catches up, add them here too.
+    /// APMSP-3479 - TODO: `AttributeValue::List` and `AttributeValue::KeyValue` are deliberately
+    /// omitted because not yet supported by `ddapm-test-agent` v1.56.0. Once test-agent V1
+    /// support catches up, add them here too.
     fn make_v1_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
         use libdd_trace_utils::span::v1::{
             AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
@@ -548,51 +548,30 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
-    /// Recursively normalizes a JSON value by sorting every object's keys. Necessary because the
-    /// test-agent serializes maps in HashMap iteration order, which is non-deterministic in Rust
-    /// — two semantically-equivalent traces can decode to JSON with keys in different orders.
-    fn normalize_json(v: &mut serde_json::Value) {
-        match v {
-            serde_json::Value::Object(map) => {
-                let entries: Vec<(String, serde_json::Value)> =
-                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                let mut sorted: std::collections::BTreeMap<String, serde_json::Value> =
-                    entries.into_iter().collect();
-                for child in sorted.values_mut() {
-                    normalize_json(child);
-                }
-                *map = sorted.into_iter().collect();
-            }
-            serde_json::Value::Array(arr) => {
-                for child in arr.iter_mut() {
-                    normalize_json(child);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Asserts the v0.4→V1 encoder and the v1::Span encoder produce decoded traces with the same
-    /// canonical content. Replaces the byte-equality cross-validation suite — instead of
-    /// comparing raw bytes (which forced n=1 collections due to HashMap order non-determinism),
-    /// we let the test-agent decode both payloads and compare the resulting structures after
-    /// recursive key sorting.
+    /// Cross-validates the v0.4→V1 and v1::Span encoders against a single canonical snapshot.
+    /// Both encodings are POSTed into the same session with distinct `trace_id`s, so the
+    /// snapshot records two traces — one per encoder — that must each decode to the same
+    /// shape. Any drift in either encoder makes its trace diverge from the checked-in form.
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
-    async fn v04_and_v1_encoders_produce_equivalent_decoded_traces() {
+    async fn compare_v04_and_v1_encoders_snapshot_test() {
+        use libdd_trace_utils::msgpack_encoder::v1::{to_vec, to_vec_from_payload_v1};
         use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
         use libdd_trace_utils::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
         };
-        use libdd_trace_utils::{
-            msgpack_encoder::v1::{to_vec, to_vec_from_payload_v1},
-            tracer_metadata::TracerMetadata,
-        };
+        use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
-        let test_agent = DatadogTestAgent::new(None, None, &[]).await;
-        let uri = test_agent.get_uri_for_endpoint("v1.0/traces", None).await;
+        let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
+        let snapshot_name = "compare_v04_and_v1_encoders_snapshot_test";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
+        let uri = test_agent
+            .get_uri_for_endpoint("v1.0/traces", Some(snapshot_name))
+            .await;
 
-        // ── v0.4 input ─────────────────────────────────────────────────────────────
+        test_agent.start_session(snapshot_name, None).await;
+
+        // ── v0.4 input — trace_id = 1 ──────────────────────────────────────────────
         let mut meta_v04 = VecMap::new();
         meta_v04.insert(bs_v1("env"), bs_v1("test-env"));
         meta_v04.insert(bs_v1("http.method"), bs_v1("GET"));
@@ -612,15 +591,15 @@ mod tracing_integration_tests {
         }]];
         let metadata = TracerMetadata::default();
 
-        // ── v1::Span input — semantically equivalent to the v0.4 one ───────────────
-        // `env` is promoted out of meta by the v0.4→V1 encoder; in the V1 model it lives on the
-        // span as a typed field. `http.method` and `http.duration_ms` go to span attributes.
+        // ── v1::Span input — trace_id = 2, semantically equivalent otherwise ───────
+        // Distinct trace_id so the test-agent records both as separate traces in the snapshot
+        // (rather than merging/deduping when (trace_id, span_id) collide).
         let mut attrs_v1 = VecMap::new();
         attrs_v1.insert(bs_v1("http.method"), AttributeValue::String(bs_v1("GET")));
         attrs_v1.insert(bs_v1("http.duration_ms"), AttributeValue::Float(12.5));
         let v1_payload = TracerPayloadBytes {
             chunks: vec![TraceChunkBytes {
-                trace_id: tid_bytes(0, 1),
+                trace_id: tid_bytes(0, 2),
                 spans: vec![V1SpanBytes {
                     service: bs_v1("svc"),
                     name: bs_v1("op"),
@@ -638,40 +617,14 @@ mod tracing_integration_tests {
             ..Default::default()
         };
 
-        // ── Encode each via its dedicated encoder and POST both ────────────────────
+        // ── POST both into the same session ────────────────────────────────────────
         let bytes_v04 = to_vec(&v04_traces, &metadata);
         let bytes_v1 = to_vec_from_payload_v1(&v1_payload);
         post_v1_payload(uri.clone(), bytes_v04).await;
         post_v1_payload(uri, bytes_v1).await;
 
-        // ── Fetch what the test-agent decoded and compare structurally ─────────────
-        // The two POSTs share the same trace_id, so the test-agent groups them into a single
-        // "trace" containing both decoded spans. Equivalence means those two spans must match
-        // after recursive key normalization.
-        let traces = test_agent.get_sent_traces().await;
-        assert_eq!(
-            traces.len(),
-            1,
-            "expected 1 merged trace, got {}",
-            traces.len()
-        );
-        let spans = traces[0]
-            .as_array()
-            .expect("trace must be an array of spans");
-        assert_eq!(
-            spans.len(),
-            2,
-            "expected 2 spans (one per encoder), got {}",
-            spans.len()
-        );
-
-        let mut a = spans[0].clone();
-        let mut b = spans[1].clone();
-        normalize_json(&mut a);
-        normalize_json(&mut b);
-        assert_eq!(
-            a, b,
-            "v0.4→V1 and v1::Span encoders must decode to the same span"
-        );
+        // Both POSTs share trace_id=1, so the test-agent merges them into a single trace of
+        // 2 decoded spans. The checked-in snapshot is the canonical equivalent decoded form.
+        test_agent.assert_snapshot(snapshot_name).await;
     }
 }

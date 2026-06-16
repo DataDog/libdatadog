@@ -147,7 +147,7 @@ impl StringTable {
 /// the input is negative. Matches the agent's `validateAndFixStartTime`, which substitutes
 /// `time.Now().UnixNano()` for invalid start values; without this, a negative `i64` would wrap
 /// to a near-`u64::MAX` timestamp on cast.
-pub(super) fn span_start_unix_nanos(start: i64) -> u64 {
+pub(super) fn normalize_span_start(start: i64) -> u64 {
     if start < 0 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
