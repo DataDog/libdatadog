@@ -858,7 +858,6 @@ mod tests {
                 is_synthetics_request: false,
                 is_trace_root: true,
                 grpc_status_code: None,
-                grpc_method: "",
             },
             peer_tags: &[],
             duration_ns: dur,
