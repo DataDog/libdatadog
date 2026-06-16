@@ -9,7 +9,7 @@ use libdd_trace_protobuf::pb;
 use aggregation::StatsBucket;
 
 mod aggregation;
-use aggregation::BorrowedAggregationKey;
+use aggregation::{get_grpc_method, BorrowedAggregationKey};
 pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
 
 pub mod stat_span;
@@ -184,6 +184,7 @@ impl SpanConcentrator {
                 span.duration(),
                 span.is_error(),
                 span.has_top_level(),
+                get_grpc_method(span),
             );
     }
 

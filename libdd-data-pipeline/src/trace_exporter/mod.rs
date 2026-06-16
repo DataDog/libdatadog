@@ -357,11 +357,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
     async fn check_agent_info(&self) {
-        // OTLP trace metrics run the concentrator independently of the agent; never let agent
-        // info enable or disable stats in that mode.
-        if self.otlp_stats_enabled {
-            return;
-        }
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
         };
@@ -371,6 +366,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
         if matches!(self.output_format, TraceExporterOutputFormat::V1) {
             self.refresh_v1_active(&agent_info);
+        }
+
+        // OTLP trace metrics run the concentrator independently; skip stats enable/disable.
+        if self.otlp_stats_enabled {
+            return;
         }
 
         // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
