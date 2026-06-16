@@ -66,6 +66,11 @@ impl<S: FileStorage> SingleFetcher<S> {
         &self.client_id
     }
 
+    /// Accesses the underlying file storage (the [`ConfigFetcher`]'s `file_storage`).
+    pub fn file_storage(&self) -> &S {
+        &self.fetcher.file_storage
+    }
+
     /// Sets the apply state on a stored file.
     pub fn set_config_state(&self, file: &RemoteConfigPath, state: ConfigApplyState) {
         self.fetcher.set_config_state(file, state)

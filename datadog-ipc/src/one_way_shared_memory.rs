@@ -223,6 +223,18 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
     }
 }
 
+impl OneWayShmWriter<ShmHandle> {
+    /// Consume the writer, unmapping it and returning a handle to the segment —
+    /// for a forked child (or any consumer) that no longer needs to write and
+    /// just wants to hand the segment to a reader. No extra handle clones linger.
+    pub fn into_handle(self) -> ShmHandle {
+        self.handle
+            .into_inner()
+            .unwrap_or_else(|e| e.into_inner())
+            .into()
+    }
+}
+
 impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
     /// Create a writer backed by a named shared-memory segment at `path`.
     ///
