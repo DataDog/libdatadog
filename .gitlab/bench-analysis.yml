@@ -12,7 +12,7 @@ bench-analysis:
       mv "authanywhere-linux-${AAA}" ./authanywhere
       chmod +x ./authanywhere
     # GitHub token via dd-octo-sts (no static PAT, CI-03)
-    - GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr) || true
+    - GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr)
     - export GH_TOKEN
     # Install nvm, Node LTS, and Claude Code (D-04)
     - |
