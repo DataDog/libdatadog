@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, warn};
 
-/// A [`SharedRuntime`] backed by a caller-owned `tokio::runtime::Runtime`.
+/// A [`SharedRuntime`] that exposes a caller-provided `tokio::runtime::Runtime`.
 ///
 /// Holds an `Arc<Runtime>` so the runtime stays alive as long as this struct does,
 /// even if the original owner drops their clone. The runtime itself is not affected
@@ -64,10 +64,6 @@ impl SharedRuntime for BorrowedSharedRuntime {
             worker_id,
             workers: self.workers.clone(),
         })
-    }
-
-    fn runtime_handle(&self) -> Result<tokio::runtime::Handle, SharedRuntimeError> {
-        Ok(self.runtime.handle().clone())
     }
 
     async fn shutdown_async(&self) {
@@ -170,16 +166,6 @@ mod tests {
                 .expect("worker did not run on borrowed runtime"),
             0
         );
-    }
-
-    #[test]
-    fn test_borrowed_runtime_handle_clones_input() {
-        let rt = new_outer_runtime();
-        let original_id = rt.handle().id();
-        let borrowed = BorrowedSharedRuntime::from_runtime(rt);
-
-        let cloned = borrowed.runtime_handle().unwrap();
-        assert_eq!(cloned.id(), original_id);
     }
 
     #[test]

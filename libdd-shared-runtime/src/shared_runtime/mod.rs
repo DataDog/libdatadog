@@ -46,10 +46,6 @@ pub trait SharedRuntime {
         restart_on_fork: bool,
     ) -> Result<WorkerHandle, SharedRuntimeError>;
 
-    /// Returns the runtime handle, or [`SharedRuntimeError::RuntimeUnavailable`] if shut down.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn runtime_handle(&self) -> Result<tokio::runtime::Handle, SharedRuntimeError>;
-
     /// Shuts down all tracked workers. The runtime itself is not torn down — use
     /// [`OwnedSharedRuntime::shutdown`] to also drop the runtime.
     fn shutdown_async(&self) -> impl std::future::Future<Output = ()> + MaybeSend + '_

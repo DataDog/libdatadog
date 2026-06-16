@@ -122,17 +122,6 @@ mod native {
             })
         }
 
-        /// Returns the runtime handle, or [`SharedRuntimeError::RuntimeUnavailable`] if shut down.
-        pub fn runtime_handle(&self) -> Result<tokio::runtime::Handle, SharedRuntimeError> {
-            Ok(self
-                .runtime
-                .lock_or_panic()
-                .as_ref()
-                .ok_or(SharedRuntimeError::RuntimeUnavailable)?
-                .handle()
-                .clone())
-        }
-
         /// Pauses all workers before `fork()`. Worker pause errors are logged, not propagated.
         pub fn before_fork(&self) {
             debug!("before_fork: pausing all workers");
@@ -305,10 +294,6 @@ mod native {
             }
 
             Ok(self.push_worker(&mut workers_guard, pausable_worker, restart_on_fork))
-        }
-
-        fn runtime_handle(&self) -> Result<tokio::runtime::Handle, SharedRuntimeError> {
-            OwnedSharedRuntime::runtime_handle(self)
         }
 
         async fn shutdown_async(&self) {
@@ -558,10 +543,6 @@ mod native {
 
             shared_runtime.shutdown(None).unwrap();
 
-            assert!(matches!(
-                shared_runtime.runtime_handle(),
-                Err(SharedRuntimeError::RuntimeUnavailable)
-            ));
             assert!(shared_runtime.driver.lock_or_panic().is_none());
         }
 
