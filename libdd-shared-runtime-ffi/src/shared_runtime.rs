@@ -23,8 +23,6 @@ pub enum SharedRuntimeErrorCode {
     RuntimeCreation,
     /// Shutdown timed out.
     ShutdownTimedOut,
-    /// The requested operation is not supported on this runtime kind.
-    Unsupported,
     /// An unexpected panic occurred inside the FFI call.
     #[cfg(feature = "catch_panic")]
     Panic,
@@ -56,7 +54,6 @@ impl From<SharedRuntimeError> for SharedRuntimeFFIError {
             SharedRuntimeError::WorkerError(_) => SharedRuntimeErrorCode::WorkerError,
             SharedRuntimeError::RuntimeCreation(_) => SharedRuntimeErrorCode::RuntimeCreation,
             SharedRuntimeError::ShutdownTimedOut(_) => SharedRuntimeErrorCode::ShutdownTimedOut,
-            SharedRuntimeError::UnsupportedInBorrowedMode => SharedRuntimeErrorCode::Unsupported,
         };
         SharedRuntimeFFIError::new(code, &err.to_string())
     }

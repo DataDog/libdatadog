@@ -8,7 +8,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use libdd_common::MutexExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 /// A [`SharedRuntime`] backed by a caller-owned `tokio::runtime::Runtime`.
 ///
@@ -40,7 +40,10 @@ impl SharedRuntime for BorrowedSharedRuntime {
         restart_on_fork: bool,
     ) -> Result<WorkerHandle, SharedRuntimeError> {
         if restart_on_fork {
-            return Err(SharedRuntimeError::UnsupportedInBorrowedMode);
+            warn!(
+                "restart_on_fork is ignored on BorrowedSharedRuntime: borrowed mode is not \
+                 fork-safe; the outer runtime owner is responsible for fork handling"
+            );
         }
 
         let boxed_worker: BoxedWorker = Box::new(worker);
@@ -53,7 +56,7 @@ impl SharedRuntime for BorrowedSharedRuntime {
 
         self.workers.lock_or_panic().push(WorkerEntry {
             id: worker_id,
-            restart_on_fork,
+            restart_on_fork: false,
             worker: pausable_worker,
         });
 
@@ -136,16 +139,21 @@ mod tests {
     }
 
     #[test]
-    fn test_borrowed_spawn_worker_restart_on_fork_errors() {
+    fn test_borrowed_spawn_worker_ignores_restart_on_fork() {
         let rt = new_outer_runtime();
         let borrowed = BorrowedSharedRuntime::from_runtime(rt);
-        let (worker, _receiver) = make_test_worker();
+        let (worker, receiver) = make_test_worker();
 
-        let result = borrowed.spawn_worker(worker, true);
-        assert!(matches!(
-            result,
-            Err(SharedRuntimeError::UnsupportedInBorrowedMode)
-        ));
+        let _handle = borrowed
+            .spawn_worker(worker, true)
+            .expect("restart_on_fork=true should be silently ignored in borrowed mode");
+
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker did not run when restart_on_fork was passed"),
+            0
+        );
     }
 
     #[test]

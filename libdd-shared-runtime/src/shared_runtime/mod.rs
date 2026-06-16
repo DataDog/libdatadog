@@ -38,7 +38,8 @@ pub(crate) struct WorkerEntry {
 /// Not object-safe — use `impl SharedRuntime` generics rather than `dyn SharedRuntime`.
 pub trait SharedRuntime {
     /// Spawns a worker. `restart_on_fork = true` causes `after_fork_child` to reset and restart
-    /// it; `false` drops it without calling shutdown. [`BorrowedSharedRuntime`] rejects `true`.
+    /// it; `false` drops it without calling shutdown. [`BorrowedSharedRuntime`] ignores this flag
+    /// — borrowed mode is not fork-safe and defers fork handling to the outer runtime owner.
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
@@ -138,8 +139,6 @@ pub enum SharedRuntimeError {
     RuntimeCreation(io::Error),
     /// Shutdown timed out.
     ShutdownTimedOut(std::time::Duration),
-    /// The requested operation is not supported on a borrowed-handle runtime.
-    UnsupportedInBorrowedMode,
 }
 
 impl fmt::Display for SharedRuntimeError {
@@ -155,9 +154,6 @@ impl fmt::Display for SharedRuntimeError {
             }
             Self::ShutdownTimedOut(duration) => {
                 write!(f, "Shutdown timed out after {:?}", duration)
-            }
-            Self::UnsupportedInBorrowedMode => {
-                write!(f, "Operation not supported in borrowed-handle mode")
             }
         }
     }
