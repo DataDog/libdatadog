@@ -790,6 +790,7 @@ pub struct ExporterManager {
 }
 
 impl ExporterManager {
+    #[allow(clippy::boxed_local)]
     pub fn new_manager(exporter: Box<ProfileExporter>) -> anyhow::Result<Box<ExporterManager>> {
         let inner = exporter::ExporterManager::new(exporter.inner)?;
         Ok(Box::new(ExporterManager { inner }))
