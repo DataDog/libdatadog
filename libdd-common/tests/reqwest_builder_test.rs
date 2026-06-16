@@ -152,7 +152,6 @@ mod reqwest_tests {
 
 #[cfg(feature = "test-utils")]
 mod resolve_tests {
-    use libdd_common::test_utils::{create_temp_file_path, parse_http_request_sync};
     use libdd_common::{Endpoint, ResolvedEndpointKind};
 
     #[test]
@@ -188,6 +187,7 @@ mod resolve_tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_file_dump_captures_http_request() {
+        use libdd_common::test_utils::{create_temp_file_path, parse_http_request_sync};
         use std::io::{Read, Write};
         use std::os::unix::net::UnixStream;
 
