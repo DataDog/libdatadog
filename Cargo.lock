@@ -3002,6 +3002,7 @@ dependencies = [
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-normalization",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-stats",
