@@ -100,7 +100,7 @@ fn bench_add(c: &mut Criterion) {
                 DDSketch::default,
                 |mut sketch| {
                     for i in 0..ADD_BATCH {
-                        let _ = sketch.add(black_box((dist.generate)(i)));
+                        let _ = black_box(sketch.add(black_box((dist.generate)(i))));
                     }
                     sketch
                 },
@@ -120,8 +120,8 @@ fn bench_add(c: &mut Criterion) {
                             // (`ddog_ddsketch_add_with_count`); vary the count so the bench also
                             // covers the weight != 1 path rather than reducing to plain `add`.
                             let count = 1.0 + (i % 8) as f64;
-                            let _ = sketch
-                                .add_with_count(black_box((dist.generate)(i)), black_box(count));
+                            let _ = black_box(sketch
+                                .add_with_count(black_box((dist.generate)(i)), black_box(count)));
                         }
                         sketch
                     },
