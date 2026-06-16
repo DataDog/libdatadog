@@ -22,7 +22,7 @@ use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use libdd_common::MutexExt;
 use std::ffi::{CStr, CString};
 use std::io;
-use std::sync::atomic::{fence, AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -32,6 +32,8 @@ where
 {
     handle: Mutex<MappedMem<T>>,
 }
+
+pub type OneWayShmOpener<T, D> = fn(&D) -> Option<MappedMem<T>>;
 
 pub struct OneWayShmReader<T, D>
 where
@@ -44,7 +46,7 @@ where
     // (e.g. a named segment opened by path). Readers over an inherited anonymous
     // mapping leave this `None`. A fn pointer keeps the reader `Send`/`Sync`
     // without a trait impl (which would be orphan-illegal for foreign `D`).
-    opener: Option<fn(&D) -> Option<MappedMem<T>>>,
+    opener: Option<OneWayShmOpener<T, D>>,
     pub extra: D,
 }
 
@@ -91,12 +93,16 @@ unsafe fn reinterpret_u8_as_u64_slice(slice: &[u8]) -> &[u64] {
 // The `futex`-based wakeup is gated behind the `one_way_shm_futex` feature (and
 // Linux, where cross-process `futex` on shared memory is supported). When it is
 // disabled, `wait_for_change` falls back to a timed sleep (callers poll) and
-// `write` skips the wake — useful for consumers (e.g. the sidecar) that notify
-// out of band.
+// `write` skips the wake; for consumers like PHP that desire out of band
+// notification, we can skip the futex_wake syscall overhead.
 //
 // `addr` points to the 32-bit wait word (the low 32 bits of the generation
 // counter). It must be 4-byte aligned and live in shared memory.
-#[cfg(all(feature = "one_way_shm_futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "one_way_shm_futex",
+    target_os = "linux",
+    target_endian = "little"
+))]
 fn futex_wake(addr: *const u32) {
     // FUTEX_WAKE (non-private) on a shared mapping wakes waiters across
     // processes. i32::MAX => wake all waiters.
@@ -105,7 +111,11 @@ fn futex_wake(addr: *const u32) {
     }
 }
 
-#[cfg(all(feature = "one_way_shm_futex", target_os = "linux"))]
+#[cfg(all(
+    feature = "one_way_shm_futex",
+    target_os = "linux",
+    target_endian = "little"
+))]
 fn futex_wait(addr: *const u32, expected: u32, timeout: Duration) {
     let ts = libc::timespec {
         tv_sec: timeout.as_secs() as libc::time_t,
@@ -125,10 +135,18 @@ fn futex_wait(addr: *const u32, expected: u32, timeout: Duration) {
     }
 }
 
-#[cfg(not(all(feature = "one_way_shm_futex", target_os = "linux")))]
+#[cfg(not(all(
+    feature = "one_way_shm_futex",
+    target_os = "linux",
+    target_endian = "little"
+)))]
 fn futex_wake(_addr: *const u32) {}
 
-#[cfg(not(all(feature = "one_way_shm_futex", target_os = "linux")))]
+#[cfg(not(all(
+    feature = "one_way_shm_futex",
+    target_os = "linux",
+    target_endian = "little"
+)))]
 fn futex_wait(_addr: *const u32, _expected: u32, timeout: Duration) {
     // No futex (feature disabled or unsupported platform); sleep so callers poll
     // the generation at the requested cadence.
@@ -163,9 +181,9 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
     /// inert (empty reads, `wait_for_change` sleeps) until a handle is supplied —
     /// use [`Self::new_with_opener`] when the segment should be opened lazily.
     /// `extra` is arbitrary caller state carried alongside the reader.
-    pub fn new(handle: Option<MappedMem<T>>, extra: D) -> OneWayShmReader<T, D> {
+    pub fn new(handle: MappedMem<T>, extra: D) -> OneWayShmReader<T, D> {
         OneWayShmReader {
-            handle,
+            handle: Some(handle),
             current_data: None,
             last_wait_generation: 0,
             opener: None,
@@ -178,7 +196,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
     pub fn new_with_opener(
         handle: Option<MappedMem<T>>,
         extra: D,
-        opener: fn(&D) -> Option<MappedMem<T>>,
+        opener: OneWayShmOpener<T, D>,
     ) -> OneWayShmReader<T, D> {
         OneWayShmReader {
             handle,
@@ -267,6 +285,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
                 let copied_data: &RawData = new_mem.as_slice().into();
 
                 // Ensure a new write hasn't started yet
+                // Note that we actually care about is "dmb ishld" on ARM being emitted.
                 fence(Ordering::Acquire); // prevent loads before from being reordered with gen load after
                 if new_generation == source_data.meta.generation.load(Ordering::Relaxed) {
                     reader.current_data.replace(new_mem);
@@ -332,29 +351,24 @@ impl<T: FileBackedHandle + From<MappedMem<T>>, D> OneWayShmReader<T, D> {
         // stable for the duration of the wait. `wait_for_change` and `read` are
         // only ever called from the same (reader) thread, so no concurrent remap
         // can invalidate this pointer.
-        let generation_ptr: *const AtomicU64 = {
+        let generation_ptr = {
             let Some(ref handle) = self.handle else {
                 return false;
             };
             let data: &RawData = unsafe { reinterpret_u8_as_u64_slice(handle.as_slice()) }.into();
-            &data.meta.generation as *const AtomicU64
+            data.meta.generation.as_ptr().cast::<u32>()
         };
-        // Safety: see comment above — the mapping outlives this call.
-        let generation = unsafe { &*generation_ptr };
-        // The futex wait word is the low 32 bits of the generation counter (its
-        // incremental nature makes 32 bits sufficient). On little-endian targets
-        // (the only ones we futex on) that is the start of the 8-byte counter.
-        let wait_word = generation_ptr.cast::<u32>();
+        let generation = unsafe { AtomicU32::from_ptr(generation_ptr) };
 
-        let current = generation.load(Ordering::Acquire) as u32;
+        let current = generation.load(Ordering::Acquire);
         if current != self.last_wait_generation {
             self.last_wait_generation = current;
             return true;
         }
 
-        futex_wait(wait_word, current, timeout);
+        futex_wait(generation_ptr, current, timeout);
 
-        let after = generation.load(Ordering::Acquire) as u32;
+        let after = generation.load(Ordering::Acquire);
         let changed = after != self.last_wait_generation;
         self.last_wait_generation = after;
         changed
@@ -394,7 +408,7 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> OneWayShmWriter<T> {
         // Actually &mut mapped.as_slice_mut() as RawData seems safe, but unsized locals are
         // unstable
         let data = unsafe { &mut *(mapped.as_slice_mut() as *mut [u8] as *mut RawData) };
-        data.meta.generation.fetch_add(1, Ordering::AcqRel);
+        data.meta.generation.fetch_add(1, Ordering::Acquire);
         data.meta.size = size;
 
         data.as_slice_mut()[0..contents.len()].copy_from_slice(contents);

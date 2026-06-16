@@ -188,11 +188,9 @@ impl AgentInfoReader {
     pub fn new(endpoint: &Endpoint) -> AgentInfoReader {
         let path = info_path(endpoint);
         AgentInfoReader {
-            reader: OneWayShmReader::new_with_opener(
-                open_named_shm(&path).ok(),
-                path,
-                |path| open_named_shm(path).ok(),
-            ),
+            reader: OneWayShmReader::new_with_opener(open_named_shm(&path).ok(), path, |path| {
+                open_named_shm(path).ok()
+            }),
             info: None,
         }
     }

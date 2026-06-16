@@ -13,8 +13,18 @@ pub enum RemoteConfigSource {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int, hash, frozen, from_py_object))]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    Eq,
+    Hash,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+)]
 pub enum RemoteConfigProduct {
     AgentConfig,
     AgentTask,
@@ -26,14 +36,6 @@ pub enum RemoteConfigProduct {
     FfeFlags,
     LiveDebugger,
     LiveDebuggerSymbolDb,
-}
-
-#[cfg(feature = "pyo3")]
-#[pyo3::pymethods]
-impl RemoteConfigProduct {
-    fn __str__(&self) -> String {
-        self.to_string()
-    }
 }
 
 impl Display for RemoteConfigProduct {

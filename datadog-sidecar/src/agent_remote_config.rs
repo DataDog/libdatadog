@@ -62,13 +62,17 @@ pub fn new_reader(endpoint: &Endpoint) -> AgentRemoteConfigReader<NamedShmHandle
     AgentRemoteConfigReader(OneWayShmReader::new_with_opener(
         try_open_shm(endpoint),
         Some(AgentRemoteConfigEndpoint(endpoint.clone())),
-        |extra| extra.as_ref().and_then(|endpoint| try_open_shm(&endpoint.0)),
+        |extra| {
+            extra
+                .as_ref()
+                .and_then(|endpoint| try_open_shm(&endpoint.0))
+        },
     ))
 }
 
 pub fn reader_from_shm(handle: ShmHandle) -> io::Result<AgentRemoteConfigReader<ShmHandle>> {
     Ok(AgentRemoteConfigReader(OneWayShmReader::new(
-        Some(handle.map()?),
+        handle.map()?,
         None,
     )))
 }
@@ -78,7 +82,6 @@ pub fn new_writer(endpoint: &Endpoint) -> io::Result<AgentRemoteConfigWriter<Nam
         OneWayShmWriter::<NamedShmHandle>::new(path_for_endpoint(endpoint))?,
     ))
 }
-
 
 impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigReader<T> {
     pub fn read(&mut self) -> (bool, &[u8]) {

@@ -37,9 +37,20 @@ pub struct Target {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    Hash,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+    strum_macros::Display,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-#[cfg_attr(feature = "pyo3", pyo3::pyclass(eq, eq_int, from_py_object))]
 pub enum RemoteConfigCapabilities {
     AsmActivation = 1,
     AsmIpBlocking = 2,

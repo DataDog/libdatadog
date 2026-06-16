@@ -148,6 +148,7 @@ where
         products: Vec<RemoteConfigProduct>,
         capabilities: Vec<RemoteConfigCapabilities>,
     ) {
-        self.fetcher.set_product_capabilities(products, capabilities);
+        self.fetcher
+            .set_product_capabilities(products, capabilities);
     }
 }

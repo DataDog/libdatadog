@@ -146,7 +146,6 @@ impl RemoteConfigWriter {
     }
 }
 
-
 #[derive(Default)]
 struct TargetInfo {
     preferred_dynamic_instrumentation: u32,
