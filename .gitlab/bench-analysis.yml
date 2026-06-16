@@ -23,6 +23,10 @@ bench-analysis:
       npm install -g @anthropic-ai/claude-code
     - |
       raw_token=$(./authanywhere --audience rapid-ai-platform)
+      if [[ "$raw_token" != "Authorization: Bearer "* ]]; then
+        echo "ERROR: authanywhere output format unexpected: ${raw_token:0:40}" >&2
+        exit 1
+      fi
       ANTHROPIC_AUTH_TOKEN="${raw_token#Authorization: Bearer }"
       export ANTHROPIC_AUTH_TOKEN
     - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io"'
