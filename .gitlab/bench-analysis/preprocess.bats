@@ -17,6 +17,10 @@ SCENARIOS=(
   "obfuscation-sql-libdatadog"
 )
 
+setup() {
+  rm -f "$COMPARISON_OUT"
+}
+
 @test "valid JSON: baseline.json and candidate.json parse without error" {
   python3 -c "import json; json.load(open('$BASELINE'))"
   python3 -c "import json; json.load(open('$CANDIDATE'))"
