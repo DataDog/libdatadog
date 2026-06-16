@@ -17,6 +17,12 @@ name = "main"
 harness = false
 path = "benches/main.rs"
 
+[[bench]]
+name = "vec_map_bench"
+harness = false
+path = "benches/vec_map_bench.rs"
+required-features = ["bench-internals"]
+
 [dependencies]
 anyhow = "1.0"
 base64 = "0.22"
@@ -88,6 +94,10 @@ test-utils = [
     "urlencoding",
 ]
 change-buffer = []
+# Opt-in switch for crate-internal microbenchmarks (e.g. `vec_map_bench`). Mirrors the
+# `bench-internals` feature in `libdd-sampling`; the bench targets it via `required-features` so
+# they are not built by default. Not intended for downstream consumers.
+bench-internals = []
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]
