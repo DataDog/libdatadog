@@ -21,16 +21,11 @@ bench-analysis:
       . "$NVM_DIR/nvm.sh"
       nvm install --lts
       npm install -g @anthropic-ai/claude-code
-    - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io"'
     - |
-      cat > /tmp/get-ai-token.sh << SCRIPT
-      #!/bin/sh
-      raw=\$(${PWD}/authanywhere --audience rapid-ai-platform)
-      echo "\${raw#Authorization: Bearer }"
-      SCRIPT
-      chmod +x /tmp/get-ai-token.sh
-      mkdir -p ~/.claude
-      echo '{"apiKeyHelper": "/tmp/get-ai-token.sh"}' > ~/.claude/settings.json
+      raw_token=$(./authanywhere --audience rapid-ai-platform)
+      ANTHROPIC_AUTH_TOKEN="${raw_token#Authorization: Bearer }"
+      export ANTHROPIC_AUTH_TOKEN
+    - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io"'
     - "export ANTHROPIC_CUSTOM_HEADERS=$'source: claude\\norg-id: 2\\nprovider: anthropic\\nx-dd-tag-ml_app: bench-analysis\\nx-dd-tag-dd.team: ecosystems-reliability'"
     # Smoke test (D-09, CI-04)
     - "claude --bare -p 'Read the root Cargo.toml and tell me the workspace version.' --model anthropic/claude-sonnet-4-6 --allowedTools 'Read' --permission-mode bypassPermissions"
