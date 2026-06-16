@@ -36,17 +36,18 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 ### Phase 2: Mock Data & Pre-processor
 
-**Goal**: Fixture files and a jq pre-processor produce a structured benchmark diff without running real benchmarks
+**Goal**: BP v1 fixture files and a `bp-analyzer compare pairwise` pre-processor produce `artifacts/benchmark-comparison.md` without running real benchmarks
 **Mode:** mvp
 **Depends on**: Phase 1
 **Requirements**: DATA-01, DATA-02
 **Success Criteria** (what must be TRUE):
 
-  1. Mock Criterion before/after JSON fixtures exist covering regression, noise-level change, improvement, and unchanged benchmarks
-  2. Running the jq pre-processor against the fixtures produces `artifacts/benchmark-diff.json` with delta%, change classification, and confidence interval bounds per benchmark
-  3. The diff JSON is non-empty and passes a schema check (required fields present)
+  1. Mock BP v1 before/after JSON fixtures exist covering regression, noise-level change, improvement, and unchanged benchmarks
+  2. Running the `bp-analyzer` pre-processor against the fixtures produces `artifacts/benchmark-comparison.md` with per-metric significance classification (supersedes original jq/benchmark-diff.json plan, D-04/D-05/D-12)
+  3. The comparison markdown is non-empty and names every benchmark scenario
 
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 02-01-PLAN.md — BP v1 fixtures + bp-analyzer pre-processor producing benchmark-comparison.md, wired into bench-analysis.yml
 
 ### Phase 3: Claude Analysis
 
@@ -84,6 +85,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auth & CI Scaffolding | 1/1 | Complete   | 2026-06-15 |
-| 2. Mock Data & Pre-processor | 0/? | Not started | - |
+| 2. Mock Data & Pre-processor | 0/1 | Planned | - |
 | 3. Claude Analysis | 0/? | Not started | - |
 | 4. Reporting & GitHub Integration | 0/? | Not started | - |
