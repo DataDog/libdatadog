@@ -253,7 +253,7 @@ fn normalize_span_start_duration_bench(c: &mut Criterion) {
                     || vec![(start, duration); ELEMENTS],
                     |pairs| {
                         for (s, d) in pairs {
-                            black_box(normalize_span_start_duration(black_box(s), black_box(d)));
+                            normalize_span_start_duration(black_box(s), black_box(d));
                         }
                     },
                     BatchSize::LargeInput,
