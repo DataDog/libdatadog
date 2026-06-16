@@ -55,7 +55,7 @@ serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 target-triple = "0.1.4"
 thiserror = "2"
-ureq = { version = "3.2", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+ureq = { version = "=3.2.0", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
 zstd = { version = "0.13", default-features = false }
 # ring is the crypto provider for non-FIPS builds on all platforms.
 # FIPS builds activate aws-lc-rs via the rustls/fips feature instead.

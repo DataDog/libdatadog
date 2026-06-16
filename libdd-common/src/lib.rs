@@ -18,6 +18,7 @@ pub mod azure_app_services;
 pub mod cc_utils;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connector;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod dump_server;
 mod endpoint_resolved;
 pub mod entity_id;
@@ -455,7 +456,7 @@ impl Endpoint {
     /// - The endpoint scheme is unsupported
     /// - Path decoding fails
     /// - The dump server fails to start (for file:// scheme)
-    #[cfg(feature = "reqwest")]
+    #[cfg(all(feature = "reqwest", not(target_arch = "wasm32")))]
     pub fn to_reqwest_client_builder(&self) -> anyhow::Result<(reqwest::ClientBuilder, String)> {
         use anyhow::Context;
 
@@ -530,6 +531,7 @@ impl Endpoint {
     /// - The endpoint scheme is unsupported
     /// - Path decoding fails
     /// - The dump server fails to start (for file:// scheme)
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn resolve_for_http(&self) -> anyhow::Result<ResolvedEndpoint> {
         use anyhow::Context;
 
