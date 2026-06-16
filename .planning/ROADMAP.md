@@ -47,6 +47,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The comparison markdown is non-empty and names every benchmark scenario
 
 **Plans**: 1 plan
+
 - [ ] 02-01-PLAN.md — BP v1 fixtures + bp-analyzer pre-processor producing benchmark-comparison.md, wired into bench-analysis.yml
 
 ### Phase 3: Claude Analysis

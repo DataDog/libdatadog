@@ -33,7 +33,7 @@ Create mock benchmark fixture files in the Datadog Benchmarking Platform v1 sche
 - **D-11:** Files live in `.gitlab/bench-analysis/fixtures/`. Keeps all bench-analysis CI assets co-located alongside `bench-analysis.yml`.
 
 ### Requirements Drift Note
-- **D-12:** DATA-02 in REQUIREMENTS.md describes a "jq script" producing `benchmark-diff.json`. This is superseded by the `bp-analyzer` approach. Planner should note this drift; REQUIREMENTS.md will be updated at phase completion to reflect the actual implementation.
+- **D-12** [informational]: DATA-02 in REQUIREMENTS.md describes a "jq script" producing `benchmark-diff.json`. This is superseded by the `bp-analyzer` approach. Planner should note this drift; REQUIREMENTS.md will be updated at phase completion to reflect the actual implementation.
 
 ### Claude's Discretion
 - Exact number of fixture files and benchmark scenarios (3–6 scenarios is reasonable, covering the DATA-01 classification cases)
