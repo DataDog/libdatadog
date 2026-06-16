@@ -9,6 +9,7 @@ mod trace_serializer;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
+use libdd_trace_utils::{span::trace_utils::DroppedStats, trace_filter::TraceFilterer};
 
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
@@ -30,7 +31,7 @@ use crate::{
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
@@ -213,6 +214,7 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
+    trace_filterer: ArcSwap<TraceFilterer>,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
     /// skipped.
@@ -353,9 +355,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 .map(|s| s.as_str())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn check_agent_info(&self) {
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
@@ -372,6 +374,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         if self.otlp_stats_enabled {
             return;
         }
+
+        self.trace_filterer.store(Arc::new(TraceFilterer::new(
+            &agent_info.info.filter_tags.require,
+            &agent_info.info.filter_tags.reject,
+            &agent_info.info.filter_tags_regex.require,
+            &agent_info.info.filter_tags_regex.reject,
+            &agent_info.info.ignore_resources,
+        )));
 
         // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
         let status = self.client_side_stats.status.load_full();
@@ -593,7 +603,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         mp_payload: Vec<u8>,
         headers: HeaderMap,
         chunks: usize,
-        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))] chunks_dropped_p0: usize,
+        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+        dropped_stats: DroppedStats,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
@@ -614,7 +625,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 &result,
                 payload_len as u64,
                 chunks as u64,
-                chunks_dropped_p0 as u64,
+                dropped_stats,
             )) {
                 error!(?e, "Error sending telemetry");
             }
@@ -631,11 +642,12 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
-        let dropped_p0_stats = stats::process_traces_for_stats(
+        let dropped_stats = stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
+            &self.trace_filterer.load(),
         );
 
         for chunk in &mut traces {
@@ -688,7 +700,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 prepared.data,
                 prepared.headers,
                 prepared.chunk_count,
-                dropped_p0_stats.dropped_p0_traces,
+                dropped_stats,
             )
             .await;
 

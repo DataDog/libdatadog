@@ -8,6 +8,9 @@
 //! and processing traces for stats collection.
 
 #[cfg(not(target_arch = "wasm32"))]
+use super::add_path;
+use super::TracerMetadata;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -22,14 +25,11 @@ use libdd_trace_stats::span_concentrator::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::{debug, error};
-
-#[cfg(not(target_arch = "wasm32"))]
-use super::add_path;
-use super::TracerMetadata;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
@@ -305,12 +305,15 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
-) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+    trace_filterer: &TraceFilterer,
+) -> libdd_trace_utils::span::trace_utils::DroppedStats {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
     } = &**status
     {
+        let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
+
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
                 libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
@@ -319,20 +322,22 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         add_spans_to_stats(stats_concentrator, traces);
         // Once stats have been computed we can drop all chunks that are not going to be
         // sampled by the agent
-        let dropped_p0_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
+        let mut dropped_stats = libdd_trace_utils::span::trace_utils::drop_chunks(traces);
+        dropped_stats.dropped_by_trace_filter = dropped_by_trace_filter;
 
         // Update the headers to indicate that stats have been computed and forward dropped
         // traces counts
         header_tags.client_computed_top_level = true;
         header_tags.client_computed_stats = true;
-        header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
-        header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+        header_tags.dropped_p0_traces = dropped_stats.dropped_p0_traces;
+        header_tags.dropped_p0_spans = dropped_stats.dropped_p0_spans;
 
-        dropped_p0_stats
+        dropped_stats
     } else {
-        libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+        libdd_trace_utils::span::trace_utils::DroppedStats {
             dropped_p0_traces: 0,
             dropped_p0_spans: 0,
+            dropped_by_trace_filter: 0,
         }
     }
 }
