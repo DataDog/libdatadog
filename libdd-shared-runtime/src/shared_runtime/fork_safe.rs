@@ -39,7 +39,9 @@ mod native {
                 .worker_threads(*worker_threads)
                 .enable_all()
                 .build(),
-            ForkSafeRuntimeKind::CurrentThread => Builder::new_current_thread().enable_all().build(),
+            ForkSafeRuntimeKind::CurrentThread => {
+                Builder::new_current_thread().enable_all().build()
+            }
         }
     }
 
@@ -132,27 +134,29 @@ mod native {
         /// Pauses all workers before `fork()`. Worker pause errors are logged, not propagated.
         pub fn before_fork(&self) {
             debug!("before_fork: pausing all workers");
-            if let Some(runtime) = self.runtime.lock_or_panic().take() {
-                // Stop the current-thread driver first (if any) so we can drive
-                // the runtime ourselves via block_on below. For MultiThread this
-                // is a no-op.
-                if let Some(driver) = self.driver.lock_or_panic().take() {
-                    drop(driver);
-                }
-                let mut workers_lock = self.workers.lock_or_panic();
-                runtime.block_on(async {
-                    let futures: FuturesUnordered<_> = workers_lock
-                        .iter_mut()
-                        .map(|worker_entry| async {
-                            if let Err(e) = worker_entry.worker.pause().await {
-                                error!("Worker failed to pause before fork: {:?}", e);
-                            }
-                        })
-                        .collect();
-
-                    futures.collect::<()>().await;
-                });
+            let mut runtime_lock = self.runtime.lock_or_panic();
+            let Some(runtime) = runtime_lock.take() else {
+                return;
+            };
+            // Stop the current-thread driver first (if any) so we can drive
+            // the runtime ourselves via block_on below. For MultiThread this
+            // is a no-op.
+            if let Some(driver) = self.driver.lock_or_panic().take() {
+                drop(driver);
             }
+            let mut workers_lock = self.workers.lock_or_panic();
+            runtime.block_on(async {
+                let futures: FuturesUnordered<_> = workers_lock
+                    .iter_mut()
+                    .map(|worker_entry| async {
+                        if let Err(e) = worker_entry.worker.pause().await {
+                            error!("Worker failed to pause before fork: {:?}", e);
+                        }
+                    })
+                    .collect();
+
+                futures.collect::<()>().await;
+            });
         }
 
         fn restart_runtime_for_kind(&self) -> Result<(), SharedRuntimeError> {
@@ -522,7 +526,8 @@ mod native {
 
         #[test]
         fn test_current_thread_spawn_worker_runs() {
-            let shared_runtime = ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
+            let shared_runtime =
+                ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
             let (worker, receiver) = make_test_worker();
 
             let _ = shared_runtime.spawn_worker(worker, true).unwrap();
@@ -540,7 +545,8 @@ mod native {
 
         #[test]
         fn test_current_thread_shutdown_stops_driver() {
-            let shared_runtime = ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
+            let shared_runtime =
+                ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
             let (worker, receiver) = make_test_worker();
 
             let _ = shared_runtime.spawn_worker(worker, true).unwrap();
@@ -555,7 +561,8 @@ mod native {
 
         #[test]
         fn test_current_thread_fork_cycle_respawns_driver() {
-            let shared_runtime = ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
+            let shared_runtime =
+                ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
             let (worker, receiver) = make_test_worker();
 
             let _ = shared_runtime.spawn_worker(worker, true).unwrap();

@@ -337,7 +337,10 @@ mod tests {
     use regex::Regex;
     use tokio::time::sleep;
 
-    fn get_test_client(url: &str, runtime: &ForkSafeSharedRuntime) -> (TelemetryClient, WorkerHandle) {
+    fn get_test_client(
+        url: &str,
+        runtime: &ForkSafeSharedRuntime,
+    ) -> (TelemetryClient, WorkerHandle) {
         let (client, worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_service_version("test_version")
