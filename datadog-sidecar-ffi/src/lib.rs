@@ -640,6 +640,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
     flush_interval_milliseconds: u32,
+    retry_interval_milliseconds: u32,
     remote_config_poll_interval_millis: u32,
     telemetry_heartbeat_interval_millis: u32,
     telemetry_extended_heartbeat_interval_millis: u64,
@@ -718,6 +719,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         } else {
             Some(parent_session_id.to_utf8_lossy().into())
         },
+        retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
     };
     #[cfg(unix)]
     try_c!(blocking::set_session_config(
@@ -1686,6 +1688,12 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     );
 
     let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
+
+    for chunk in traces.iter_mut() {
+        for span in chunk.iter_mut() {
+            span.dedup();
+        }
+    }
 
     // Write traces to the shared memory
     let mut shm_slice = mapped_shm.as_slice_mut();

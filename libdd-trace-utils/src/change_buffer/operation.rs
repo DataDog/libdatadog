@@ -88,7 +88,12 @@ mod tests {
     ///
     /// The original mutable borrowed vec must survive for the lifetime of the change buffer.
     unsafe fn change_buffer_from_vec(buffer: &mut Vec<u8>) -> ChangeBuffer {
-        unsafe { ChangeBuffer::from_raw_parts(buffer.as_mut_ptr(), buffer.len()) }
+        unsafe {
+            ChangeBuffer::from_raw_parts(
+                std::ptr::NonNull::new(buffer.as_mut_ptr()).unwrap(),
+                buffer.len(),
+            )
+        }
     }
 
     #[test]

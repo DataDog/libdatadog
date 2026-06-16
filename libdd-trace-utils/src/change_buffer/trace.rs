@@ -1,10 +1,12 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::span::vec_map::VecMap;
+
 #[derive(Default)]
 pub struct Trace<T> {
-    pub meta: Vec<(T, T)>,
-    pub metrics: Vec<(T, f64)>,
+    pub meta: VecMap<T, T>,
+    pub metrics: VecMap<T, f64>,
     pub origin: Option<T>,
     pub sampling_rule_decision: Option<f64>,
     pub sampling_limit_decision: Option<f64>,

@@ -17,6 +17,7 @@
 //! deadlocks in child processes.
 
 pub mod shared_runtime;
+mod weak_waker;
 pub mod worker;
 
 // Top-level re-exports for convenience
