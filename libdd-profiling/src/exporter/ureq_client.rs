@@ -1,12 +1,15 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(unix)]
 use std::fmt;
+#[cfg(unix)]
 use std::sync::Arc;
 
 use anyhow::Context;
 use http::StatusCode;
 use libdd_common::{ResolvedEndpoint, ResolvedEndpointKind};
+#[cfg(unix)]
 use ureq::unversioned::transport::Buffers;
 
 use super::transport::PreparedRequest;
