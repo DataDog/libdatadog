@@ -3041,9 +3041,12 @@ dependencies = [
 name = "libdd-ddsketch"
 version = "1.0.1"
 dependencies = [
+ "criterion",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
 ]
 
 [[package]]
