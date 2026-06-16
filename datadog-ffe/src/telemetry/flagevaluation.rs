@@ -190,12 +190,11 @@ pub struct ContextDD {
 
 /// Prune evaluation context attributes to satisfy the frozen contract bounds:
 /// - At most `MAX_CONTEXT_FIELDS` (256) entries are kept.
-/// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped**
-///   (not truncated) to avoid partial-data misattribution.
-/// - Non-string values (bool, number, null) are kept regardless of
-///   their display length.
-/// - Keys are iterated in sorted order for deterministic canonical-key
-///   stability; the returned `BTreeMap` preserves that order.
+/// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped** (not truncated) to
+///   avoid partial-data misattribution.
+/// - Non-string values (bool, number, null) are kept regardless of their display length.
+/// - Keys are iterated in sorted order for deterministic canonical-key stability; the returned
+///   `BTreeMap` preserves that order.
 ///
 /// This satisfies reviewer concern #1 (`review:4477935835`).
 pub fn prune_context(
