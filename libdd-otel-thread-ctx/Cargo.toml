@@ -22,7 +22,3 @@ elf = { version = "0.7", optional = true }
 
 [features]
 sanity-check = ["dep:elf", "dep:anyhow"]
-
-[build-dependencies]
-build_common = { path = "../build-common" }
-cc = "1.1.31"
