@@ -1,0 +1,61 @@
+name: Test Nix
+
+on: # yamllint disable-line rule:truthy
+  pull_request:
+  push:
+    branches:
+      - main
+      - mq-working-branch-*
+
+# Default permissions for all jobs
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: darwin
+            cpu: arm64
+            base: macos-15 # always arm64-darwin
+          - os: linux
+            cpu: x86_64
+            base: ubuntu-24.04 # always x86_64-linux-gnu
+          - os: linux
+            cpu: aarch64
+            base: ubuntu-24.04-arm # always aarch64-linux-gnu
+
+    name: Test Nix (${{ matrix.platform.cpu }}-${{ matrix.platform.os }})
+    runs-on: ${{ matrix.platform.base }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check CPU arch
+        run: |
+          test "$(uname -m)" = "${{ matrix.platform.cpu }}"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@ab739621df7a23f52766f9ccc97f38da6b7af14f # v31.10.5
+      - name: Print toolchain versions
+        run: |
+          nix develop --command rustc --version
+          nix develop --command cargo --version
+          nix develop --command cbindgen --version
+      - name: Build workspace
+        run: nix develop --command cargo build --workspace --exclude builder
+
+  complete:
+    name: Nix (complete)
+    runs-on: ubuntu-24.04
+    needs:
+      - test
+    steps:
+      - run: echo "DONE!"
