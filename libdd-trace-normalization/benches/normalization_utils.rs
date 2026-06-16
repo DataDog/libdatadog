@@ -252,10 +252,9 @@ fn normalize_span_start_duration_bench(c: &mut Criterion) {
                 b.iter_batched_ref(
                     || vec![(start, duration); ELEMENTS],
                     |pairs| {
-                        pairs.iter_mut().for_each(|(s, d)| {
-                            normalize_span_start_duration(black_box(s), black_box(d));
-                        });
-                        black_box(pairs);
+                        for (s, d) in pairs {
+                            black_box(normalize_span_start_duration(black_box(s), black_box(d)));
+                        }
                     },
                     BatchSize::LargeInput,
                 )
