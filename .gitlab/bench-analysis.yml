@@ -16,7 +16,7 @@ bench-analysis:
     - export GH_TOKEN
     # Install nvm, Node LTS, and Claude Code (D-04)
     - |
-      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+      curl --fail -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
       export NVM_DIR="$HOME/.nvm"
       . "$NVM_DIR/nvm.sh"
       nvm install --lts
