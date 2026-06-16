@@ -272,12 +272,30 @@ fn normalize_metric_name(name: &mut String) {
     bytes.truncate(write_cursor);
 }
 
+/// Wrapper exposing [`normalize_metric_name`] for benchmarks only (see the `bench-internals`
+/// feature). Not part of the public API; the benchmarked function itself is left untouched.
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+#[inline(always)]
+pub fn normalize_metric_name_bench_wrapper(name: &mut String) {
+    normalize_metric_name(name)
+}
+
 // truncate_utf8 truncates the given string to make sure it uses less than limit bytes.
 // If the last character is a utf8 character that would be split, it removes it
 // entirely to make sure the resulting string is not broken.
 pub(crate) fn truncate_utf8(s: &mut String, limit: usize) {
     let boundary = crate::utf8_helpers::floor_char_boundary(s, limit);
     s.truncate(boundary);
+}
+
+/// Wrapper exposing [`truncate_utf8`] for benchmarks only (see the `bench-internals` feature).
+/// Not part of the public API; the benchmarked function itself is left untouched.
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+#[inline(always)]
+pub fn truncate_utf8_bench_wrapper(s: &mut String, limit: usize) {
+    truncate_utf8(s, limit)
 }
 
 #[cfg(test)]
