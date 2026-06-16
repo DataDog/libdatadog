@@ -1,13 +1,20 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(unix)]
+
+#[cfg(unix)]
 mod common;
 
+#[cfg(unix)]
 use libdd_common::test_utils::{create_temp_file_path, parse_http_request_sync, TempFileGuard};
+#[cfg(unix)]
 use libdd_profiling::exporter::ProfileExporter;
+#[cfg(unix)]
 use libdd_profiling::internal::EncodedProfile;
 
 /// Create a file-based exporter and return the temp file path with auto-cleanup
+#[cfg(unix)]
 fn create_file_exporter(
     profiling_library_name: &str,
     profiling_library_version: &str,
