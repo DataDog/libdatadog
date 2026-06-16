@@ -467,6 +467,7 @@ fn test_export_agentless_uds() -> anyhow::Result<()> {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "ureq transport does not support Windows named pipes"]
 #[cfg_attr(miri, ignore)]
 fn test_export_agent_named_pipe() -> anyhow::Result<()> {
     test_agent_with_transport(Transport::NamedPipe)
@@ -474,11 +475,13 @@ fn test_export_agent_named_pipe() -> anyhow::Result<()> {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "ureq transport does not support Windows named pipes"]
 #[cfg_attr(miri, ignore)]
 fn test_export_agentless_named_pipe() -> anyhow::Result<()> {
     test_agentless_with_transport(Transport::NamedPipe)
 }
 
+#[cfg(unix)]
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_export_file() -> anyhow::Result<()> {

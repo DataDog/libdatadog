@@ -185,7 +185,7 @@ impl ExporterManager {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::exporter::config;

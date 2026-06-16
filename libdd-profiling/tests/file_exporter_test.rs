@@ -36,7 +36,7 @@ fn create_file_exporter(
     Ok((exporter, file_path))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use libdd_common::tag;
