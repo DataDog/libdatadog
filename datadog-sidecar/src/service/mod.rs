@@ -71,6 +71,7 @@ pub struct SessionConfig {
     pub telemetry_extended_heartbeat_interval: Duration,
     pub force_flush_size: usize,
     pub force_drop_size: usize,
+    pub retry_interval: Duration,
     pub log_level: String,
     pub log_file: config::LogMethod,
     pub remote_config_products: Vec<RemoteConfigProduct>,
