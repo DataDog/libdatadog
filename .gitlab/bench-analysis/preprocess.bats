@@ -4,11 +4,12 @@
 # Pipeline tests (preprocess.sh execution, scenario names in output) require
 # bp-analyzer in PATH and are skipped locally.
 
-FIXTURE_DIR=".gitlab/bench-analysis/fixtures"
+REPO_ROOT="$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)"
+FIXTURE_DIR="$REPO_ROOT/.gitlab/bench-analysis/fixtures"
 BASELINE="$FIXTURE_DIR/baseline.json"
 CANDIDATE="$FIXTURE_DIR/candidate.json"
-PREPROCESS_SH=".gitlab/bench-analysis/preprocess.sh"
-COMPARISON_OUT="artifacts/benchmark-comparison.md"
+PREPROCESS_SH="$REPO_ROOT/.gitlab/bench-analysis/preprocess.sh"
+COMPARISON_OUT="$REPO_ROOT/artifacts/benchmark-comparison.md"
 
 SCENARIOS=(
   "normalize-service-libdatadog"
