@@ -97,6 +97,10 @@ tools/                               @DataDog/apm-common-components-core
 windows/                             @DataDog/libdatadog-core
 fuzz/                                @DataDog/chaos-platform
 
+# Nix
+*.nix                                @DataDog/nix-guild @DataDog/apm-common-components-core
+flake.*                              @DataDog/nix-guild @DataDog/apm-common-components-core
+
 # Specific overrides (must come after their general patterns above)
 bin_tests/tests/test_the_tests.rs    @DataDog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs  @DataDog/libdatadog-core
