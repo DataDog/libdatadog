@@ -5,8 +5,8 @@
 //!
 //! This crate implements the publisher side of the Thread Context OTEP (PR #4947).
 //!
-//! Since `rustc` doesn't currently support the TLSDESC dialect, we use a C shim to set and get
-//! the thread-local storage used for the context.
+//! Since `rustc` doesn't currently support the TLSDESC dialect, we define the thread-local
+//! storage symbol and its accessor using inline assembly (`global_asm!` / `asm!`).
 //!
 //! ## Usage
 //!
@@ -70,17 +70,75 @@ pub mod sanity_check;
 #[cfg(target_os = "linux")]
 pub mod linux {
     use std::{
-        ffi::c_void,
         mem,
         ptr::{self, NonNull},
         sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
     };
 
+    // Define the thread-local pointer that external readers (e.g. the eBPF profiler) discover via
+    // the dynamic symbol table. It must be an exported ELF `STT_TLS` object accessed via the
+    // TLSDESC dialect, as mandated by the OTel thread-level context sharing spec.
+    //
+    // Stable `rustc` cannot select the TLS dialect for a `#[thread_local]` static, so we declare
+    // the symbol directly in assembly (an 8-byte, zero-initialised slot in `.tbss`) and resolve
+    // its per-thread address through TLSDESC in [`tls_slot`].
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    core::arch::global_asm!(
+        ".section .tbss,\"awT\",@nobits",
+        ".globl otel_thread_ctx_v1",
+        ".type  otel_thread_ctx_v1, @tls_object",
+        ".size  otel_thread_ctx_v1, 8",
+        "otel_thread_ctx_v1:",
+        ".zero  8",
+        ".previous",
+    );
+
+    /// Return the address of the current thread's `otel_thread_ctx_v1` TLS slot, resolved through
+    /// the TLSDESC dialect.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
+        let ptr: usize;
+        core::arch::asm!(
+            "leaq otel_thread_ctx_v1@tlsdesc(%rip), %rax",
+            "call *otel_thread_ctx_v1@TLSCALL(%rax)",
+            "addq %fs:0, %rax",
+            out("rax") ptr,
+            options(att_syntax),
+        );
+        ptr as *mut *mut ThreadContextRecord
+    }
+
+    /// Return the address of the current thread's `otel_thread_ctx_v1` TLS slot, resolved through
+    /// the TLSDESC dialect.
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
+        let ptr: usize;
+        core::arch::asm!(
+            "adrp  x0, :tlsdesc:otel_thread_ctx_v1",
+            "ldr   x1, [x0, :tlsdesc_lo12:otel_thread_ctx_v1]",
+            "add   x0, x0, :tlsdesc_lo12:otel_thread_ctx_v1",
+            ".tlsdesccall otel_thread_ctx_v1",
+            "blr   x1",
+            "mrs   x2, tpidr_el0",
+            "add   x0, x0, x2",
+            out("x0") ptr,
+            out("x1") _,
+            out("x2") _,
+            out("x30") _,
+        );
+        ptr as *mut *mut ThreadContextRecord
+    }
+
     /// Run `f` with an atomic view of the current thread's TLS slot.
     ///
-    /// The address calculation requires a call to a C shim in order to use the TLSDESC dialect
-    /// from Rust. The returned address is stable (per thread), so callers should try to do as
-    /// much work as possible inside a single call to reduce the number of C-shim round-trips.
+    /// The address calculation goes through the TLSDESC dialect via [`tls_slot`]. The returned
+    /// address is stable (per thread), so callers should try to do as much work as possible
+    /// inside a single call.
     ///
     /// The slot is read by an async signal handler. Atomic operations should in general use
     /// [Ordering::Relaxed], but modifications to the record might need additional compiler-only
@@ -89,11 +147,6 @@ pub mod linux {
     where
         F: FnOnce(&AtomicPtr<ThreadContextRecord>) -> R,
     {
-        extern "C" {
-            /// Return the address of the current thread's `otel_thread_ctx_v1` local.
-            fn libdd_get_otel_thread_ctx_v1() -> *mut *mut c_void;
-        }
-
         const {
             assert!(
                 mem::align_of::<AtomicPtr<ThreadContextRecord>>()
@@ -102,11 +155,9 @@ pub mod linux {
         }
 
         // Safety: the const assertion above ensures the alignment is correct. The TLS slot is
-        // valid for the lifetime of the current thread. The `extern "C"` declaration is scoped
-        // to this function, guaranteeing that all accesses go through the `AtomicPtr` wrapper.
-        let slot = unsafe {
-            AtomicPtr::from_ptr(libdd_get_otel_thread_ctx_v1().cast::<*mut ThreadContextRecord>())
-        };
+        // valid for the lifetime of the current thread, and all accesses go through the
+        // `AtomicPtr` wrapper.
+        let slot = unsafe { AtomicPtr::from_ptr(tls_slot()) };
         f(slot)
     }
 
@@ -462,7 +513,7 @@ pub mod linux {
     }
 
     #[cfg(test)]
-    // The tests are set to be ignored by Miri, since accessing the TLS through C isn't supported.
+    // The tests are set to be ignored by Miri, since the inline-asm TLSDESC access isn't supported.
     mod tests {
         use super::{ThreadContext, ThreadContextRecord};
         use std::sync::atomic::Ordering;
@@ -672,7 +723,7 @@ pub mod linux {
             let _ = ThreadContext::detach();
         }
 
-        // Make sure the C shim is indeed providing a thread-local address.
+        // Make sure the TLSDESC accessor is indeed providing a thread-local address.
         #[test]
         #[cfg_attr(miri, ignore)]
         fn tls_slots_are_per_thread() {
