@@ -27,6 +27,7 @@ bench-analysis:
       export ANTHROPIC_AUTH_TOKEN
     - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io"'
     - "export ANTHROPIC_CUSTOM_HEADERS=$'source: claude\\norg-id: 2\\nprovider: anthropic\\nx-dd-tag-ml_app: bench-analysis\\nx-dd-tag-dd.team: ecosystems-reliability'"
+    - bash .gitlab/bench-analysis/preprocess.sh
     # Smoke test (D-09, CI-04)
     - "claude --bare -p 'Read the root Cargo.toml and tell me the workspace version.' --model anthropic/claude-sonnet-4-6 --allowedTools 'Read' --permission-mode bypassPermissions"
   artifacts:
