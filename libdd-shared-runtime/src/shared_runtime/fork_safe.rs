@@ -45,13 +45,27 @@ mod native {
 
     struct CurrentThreadDriver {
         cancel: CancellationToken,
-        thread: std::thread::JoinHandle<()>,
+        thread: Option<std::thread::JoinHandle<()>>,
     }
 
     impl std::fmt::Debug for CurrentThreadDriver {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("CurrentThreadDriver")
                 .finish_non_exhaustive()
+        }
+    }
+
+    impl Drop for CurrentThreadDriver {
+        fn drop(&mut self) {
+            self.cancel.cancel();
+            if let Some(thread) = self.thread.take() {
+                if let Err(e) = thread.join() {
+                    error!(
+                        "current-thread driver thread panicked while joining: {:?}",
+                        e
+                    );
+                }
+            }
         }
     }
 
@@ -67,17 +81,10 @@ mod native {
                 rt.block_on(cancel_clone.cancelled());
             })
             .map_err(SharedRuntimeError::RuntimeCreation)?;
-        Ok(CurrentThreadDriver { cancel, thread })
-    }
-
-    fn stop_current_thread_driver(d: CurrentThreadDriver) {
-        d.cancel.cancel();
-        if let Err(e) = d.thread.join() {
-            error!(
-                "current-thread driver thread panicked while joining: {:?}",
-                e
-            );
-        }
+        Ok(CurrentThreadDriver {
+            cancel,
+            thread: Some(thread),
+        })
     }
 
     /// Owns a tokio runtime and manages [`PausableWorker`]s on it.
@@ -130,7 +137,7 @@ mod native {
                 // the runtime ourselves via block_on below. For MultiThread this
                 // is a no-op.
                 if let Some(driver) = self.driver.lock_or_panic().take() {
-                    stop_current_thread_driver(driver);
+                    drop(driver);
                 }
                 let mut workers_lock = self.workers.lock_or_panic();
                 runtime.block_on(async {
@@ -232,7 +239,7 @@ mod native {
                     // Stop the driver (if any) before driving the runtime
                     // ourselves via block_on.
                     if let Some(driver) = self.driver.lock_or_panic().take() {
-                        stop_current_thread_driver(driver);
+                        drop(driver);
                     }
                     if let Some(timeout) = timeout {
                         match runtime.block_on(async {
