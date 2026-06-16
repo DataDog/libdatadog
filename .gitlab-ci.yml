@@ -4,6 +4,9 @@ variables:
   DOWNSTREAM_BRANCH:
     value: "main"
     description: "downstream jobs are triggered on this branch"
+  DD_TRACE_PY_BRANCH:
+    value: "fayssal/auto-update-libdatadog"
+    description: "the dd-trace-py branch the manual trigger_dd_trace_py job runs on"
 
   # To bump: docker buildx imagetools inspect registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
   BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks@sha256:941d9b580302c07194e9bd2141d5f47c6cfb97d5a73c8ce9af2fce7a76034a0b
@@ -15,6 +18,7 @@ include:
   - local: .gitlab/impacted-crates.yml
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/fuzz.yml
+  - local: .gitlab/dd-trace-py.yml
 
 .untrusted_ref_guard:
   rules:
