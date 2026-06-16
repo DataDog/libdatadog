@@ -1,19 +1,17 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`SharedRuntime`] trait, [`ForkSafeSharedRuntime`], and [`BorrowedSharedRuntime`].
+//! [`SharedRuntime`] trait, [`ForkSafeRuntime`], and [`BasicRuntime`].
 
 pub(crate) mod pausable_worker;
 
 #[cfg(not(target_arch = "wasm32"))]
-mod borrowed;
+mod basic;
 mod fork_safe;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use borrowed::BorrowedSharedRuntime;
-#[cfg(not(target_arch = "wasm32"))]
-pub use fork_safe::ForkSafeRuntimeKind;
-pub use fork_safe::ForkSafeSharedRuntime;
+pub use basic::BasicRuntime;
+pub use fork_safe::ForkSafeRuntime;
 
 use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
@@ -32,14 +30,14 @@ pub(crate) struct WorkerEntry {
     pub(crate) worker: PausableWorker<BoxedWorker>,
 }
 
-/// Common interface for [`ForkSafeSharedRuntime`] and [`BorrowedSharedRuntime`].
+/// Common interface for [`ForkSafeRuntime`] and [`BasicRuntime`].
 ///
-/// Fork hooks and synchronous shutdown are inherent methods on [`ForkSafeSharedRuntime`] only.
+/// Fork hooks and synchronous shutdown are inherent methods on [`ForkSafeRuntime`] only.
 /// Not object-safe — use `impl SharedRuntime` generics rather than `dyn SharedRuntime`.
 pub trait SharedRuntime {
     /// Spawns a worker. `restart_on_fork = true` causes `after_fork_child` to reset and restart
-    /// it; `false` drops it without calling shutdown. [`BorrowedSharedRuntime`] ignores this flag
-    /// — borrowed mode is not fork-safe and defers fork handling to the outer runtime owner.
+    /// it; `false` drops it without calling shutdown. [`BasicRuntime`] ignores this flag
+    /// — regular mode is not fork-safe; use [`ForkSafeRuntime`] when fork hooks are needed.
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
@@ -47,7 +45,7 @@ pub trait SharedRuntime {
     ) -> Result<WorkerHandle, SharedRuntimeError>;
 
     /// Shuts down all tracked workers. The runtime itself is not torn down — use
-    /// [`ForkSafeSharedRuntime::shutdown`] to also drop the runtime.
+    /// [`ForkSafeRuntime::shutdown`] to also drop the runtime.
     fn shutdown_async(&self) -> impl std::future::Future<Output = ()> + MaybeSend + '_
     where
         Self: Sync;
@@ -122,7 +120,7 @@ impl WorkerHandle {
     }
 }
 
-/// Errors that can occur when using a SharedRuntime.
+/// Errors that can occur when using a `SharedRuntime` implementation.
 #[derive(Debug)]
 pub enum SharedRuntimeError {
     /// The runtime is not available or in an invalid state.

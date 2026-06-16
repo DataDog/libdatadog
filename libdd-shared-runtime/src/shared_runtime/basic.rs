@@ -10,21 +10,47 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, warn};
 
-/// A [`SharedRuntime`] that exposes a caller-provided `tokio::runtime::Runtime`.
+/// Non-fork-safe [`SharedRuntime`] implementation.
 ///
-/// Holds an `Arc<Runtime>` so the runtime stays alive as long as this struct does,
-/// even if the original owner drops their clone. The runtime itself is not affected
-/// by operations on this struct — only the workers tracked here are. Borrowed-mode
-/// is **not** fork-safe and does not provide a synchronous shutdown.
+/// The internal `Arc<tokio::runtime::Runtime>` is either library-built
+/// ([`BasicRuntime::new`] / [`BasicRuntime::with_worker_threads`]) or
+/// caller-provided ([`BasicRuntime::from_handle`]). The `Arc` keeps the runtime
+/// alive for the lifetime of this struct even if the caller drops their clone of
+/// the handle.
+///
+/// This type does **not** implement the fork protocol. If the process forks,
+/// use [`crate::ForkSafeRuntime`] instead — or handle the fork at the
+/// outer runtime layer that owns the tokio runtime passed in.
 #[derive(Debug)]
-pub struct BorrowedSharedRuntime {
+pub struct BasicRuntime {
     runtime: Arc<tokio::runtime::Runtime>,
     workers: Arc<Mutex<Vec<WorkerEntry>>>,
     next_worker_id: AtomicU64,
 }
 
-impl BorrowedSharedRuntime {
-    pub fn from_runtime(runtime: Arc<tokio::runtime::Runtime>) -> Self {
+impl BasicRuntime {
+    /// Creates a new `BasicRuntime` backed by a library-built multi-thread tokio runtime
+    /// with 1 worker thread.
+    pub fn new() -> Result<Self, SharedRuntimeError> {
+        debug!("Creating new BasicRuntime (library-built runtime)");
+        Self::with_worker_threads(1)
+    }
+
+    /// Creates a new `BasicRuntime` backed by a library-built multi-thread tokio runtime
+    /// with the given number of worker threads.
+    pub fn with_worker_threads(worker_threads: usize) -> Result<Self, SharedRuntimeError> {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(worker_threads)
+            .enable_all()
+            .build()?;
+        Ok(Self::from_handle(Arc::new(runtime)))
+    }
+
+    /// Creates a new `BasicRuntime` wrapping a caller-provided runtime.
+    ///
+    /// The runtime is held via `Arc`, so it stays alive for the lifetime of this struct
+    /// even if the caller drops their clone.
+    pub fn from_handle(runtime: Arc<tokio::runtime::Runtime>) -> Self {
         Self {
             runtime,
             workers: Arc::new(Mutex::new(Vec::new())),
@@ -33,7 +59,7 @@ impl BorrowedSharedRuntime {
     }
 }
 
-impl SharedRuntime for BorrowedSharedRuntime {
+impl SharedRuntime for BasicRuntime {
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
@@ -41,13 +67,13 @@ impl SharedRuntime for BorrowedSharedRuntime {
     ) -> Result<WorkerHandle, SharedRuntimeError> {
         if restart_on_fork {
             warn!(
-                "restart_on_fork is ignored on BorrowedSharedRuntime: borrowed mode is not \
-                 fork-safe; the outer runtime owner is responsible for fork handling"
+                "restart_on_fork is ignored on BasicRuntime: regular mode is not fork-safe; \
+                 use ForkSafeRuntime if you need fork hooks"
             );
         }
 
         let boxed_worker: BoxedWorker = Box::new(worker);
-        debug!(?boxed_worker, "Spawning worker on BorrowedSharedRuntime");
+        debug!(?boxed_worker, "Spawning worker on BasicRuntime");
         let mut pausable_worker = PausableWorker::new(boxed_worker);
 
         pausable_worker.start(tokio_spawn_fn(self.runtime.handle()))?;
@@ -67,7 +93,7 @@ impl SharedRuntime for BorrowedSharedRuntime {
     }
 
     async fn shutdown_async(&self) {
-        debug!("Shutting down all workers on BorrowedSharedRuntime");
+        debug!("Shutting down all workers on BasicRuntime");
         let workers = {
             let mut workers_lock = self.workers.lock_or_panic();
             std::mem::take(&mut *workers_lock)
@@ -130,19 +156,50 @@ mod tests {
                 .worker_threads(1)
                 .enable_all()
                 .build()
-                .expect("failed to build outer runtime for borrowed test"),
+                .expect("failed to build outer runtime for BasicRuntime test"),
         )
     }
 
     #[test]
-    fn test_borrowed_spawn_worker_ignores_restart_on_fork() {
-        let rt = new_outer_runtime();
-        let borrowed = BorrowedSharedRuntime::from_runtime(rt);
+    fn test_new_lib_built_runtime_spawn_worker_runs() {
+        let shared_runtime = BasicRuntime::new().expect("BasicRuntime::new");
         let (worker, receiver) = make_test_worker();
 
-        let _handle = borrowed
+        let _handle = shared_runtime.spawn_worker(worker, false).unwrap();
+
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker did not run on library-built BasicRuntime"),
+            0
+        );
+    }
+
+    #[test]
+    fn test_with_worker_threads_spawn_worker_runs() {
+        let shared_runtime =
+            BasicRuntime::with_worker_threads(2).expect("BasicRuntime::with_worker_threads");
+        let (worker, receiver) = make_test_worker();
+
+        let _handle = shared_runtime.spawn_worker(worker, false).unwrap();
+
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("worker did not run on multi-thread BasicRuntime"),
+            0
+        );
+    }
+
+    #[test]
+    fn test_spawn_worker_ignores_restart_on_fork() {
+        let rt = new_outer_runtime();
+        let shared_runtime = BasicRuntime::from_handle(rt);
+        let (worker, receiver) = make_test_worker();
+
+        let _handle = shared_runtime
             .spawn_worker(worker, true)
-            .expect("restart_on_fork=true should be silently ignored in borrowed mode");
+            .expect("restart_on_fork=true should be silently ignored on BasicRuntime");
 
         assert_eq!(
             receiver
@@ -153,33 +210,33 @@ mod tests {
     }
 
     #[test]
-    fn test_borrowed_spawn_worker_runs() {
+    fn test_from_handle_spawn_worker_runs() {
         let rt = new_outer_runtime();
-        let borrowed = BorrowedSharedRuntime::from_runtime(rt);
+        let shared_runtime = BasicRuntime::from_handle(rt);
         let (worker, receiver) = make_test_worker();
 
-        let _handle = borrowed.spawn_worker(worker, false).unwrap();
+        let _handle = shared_runtime.spawn_worker(worker, false).unwrap();
 
         assert_eq!(
             receiver
                 .recv_timeout(Duration::from_secs(1))
-                .expect("worker did not run on borrowed runtime"),
+                .expect("worker did not run on BasicRuntime"),
             0
         );
     }
 
     #[test]
-    fn test_borrowed_shutdown_async_stops_workers_only() {
+    fn test_shutdown_async_stops_workers_only() {
         let rt = new_outer_runtime();
-        let borrowed = BorrowedSharedRuntime::from_runtime(rt.clone());
+        let shared_runtime = BasicRuntime::from_handle(rt.clone());
         let (worker, receiver) = make_test_worker();
 
-        let _handle = borrowed.spawn_worker(worker, false).unwrap();
+        let _handle = shared_runtime.spawn_worker(worker, false).unwrap();
         receiver
             .recv_timeout(Duration::from_secs(1))
             .expect("worker did not run before shutdown");
 
-        rt.block_on(borrowed.shutdown_async());
+        rt.block_on(shared_runtime.shutdown_async());
 
         // The shutdown sentinel from Worker::shutdown.
         let mut last = receiver
@@ -189,22 +246,22 @@ mod tests {
             last = v;
         }
         assert_eq!(last, -1);
-        assert_eq!(borrowed.workers.lock_or_panic().len(), 0);
+        assert_eq!(shared_runtime.workers.lock_or_panic().len(), 0);
 
         // The outer runtime must still be usable after shutdown_async.
         rt.block_on(async { sleep(Duration::from_millis(10)).await });
     }
 
     #[test]
-    fn test_borrowed_keeps_runtime_alive_after_caller_drops() {
+    fn test_keeps_runtime_alive_after_caller_drops() {
         let rt = new_outer_runtime();
-        let borrowed = BorrowedSharedRuntime::from_runtime(rt.clone());
-        // Caller drops their clone; the Arc inside BorrowedSharedRuntime
+        let shared_runtime = BasicRuntime::from_handle(rt.clone());
+        // Caller drops their clone; the Arc inside BasicRuntime
         // must keep the runtime alive so spawn_worker still works.
         drop(rt);
         let (worker, receiver) = make_test_worker();
 
-        let _handle = borrowed.spawn_worker(worker, false).unwrap();
+        let _handle = shared_runtime.spawn_worker(worker, false).unwrap();
 
         assert_eq!(
             receiver

@@ -10,7 +10,6 @@ mod native {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
     use tokio::runtime::{Builder, Runtime};
-    use tokio_util::sync::CancellationToken;
     use tracing::{debug, error};
 
     use super::super::{
@@ -18,75 +17,11 @@ mod native {
         BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle,
     };
 
-    /// Flavor of tokio runtime constructed by [`ForkSafeSharedRuntime`].
-    #[derive(Debug, Clone)]
-    pub enum ForkSafeRuntimeKind {
-        /// Multi-threaded runtime with the given worker-thread count.
-        MultiThread { worker_threads: usize },
-        /// Current-thread runtime; a dedicated driver thread is spawned so tasks make progress.
-        CurrentThread,
-    }
-
-    impl Default for ForkSafeRuntimeKind {
-        fn default() -> Self {
-            Self::MultiThread { worker_threads: 1 }
-        }
-    }
-
-    fn build_runtime_for(kind: &ForkSafeRuntimeKind) -> Result<Runtime, io::Error> {
-        match kind {
-            ForkSafeRuntimeKind::MultiThread { worker_threads } => Builder::new_multi_thread()
-                .worker_threads(*worker_threads)
-                .enable_all()
-                .build(),
-            ForkSafeRuntimeKind::CurrentThread => {
-                Builder::new_current_thread().enable_all().build()
-            }
-        }
-    }
-
-    struct CurrentThreadDriver {
-        cancel: CancellationToken,
-        thread: Option<std::thread::JoinHandle<()>>,
-    }
-
-    impl std::fmt::Debug for CurrentThreadDriver {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("CurrentThreadDriver")
-                .finish_non_exhaustive()
-        }
-    }
-
-    impl Drop for CurrentThreadDriver {
-        fn drop(&mut self) {
-            self.cancel.cancel();
-            if let Some(thread) = self.thread.take() {
-                if let Err(e) = thread.join() {
-                    error!(
-                        "current-thread driver thread panicked while joining: {:?}",
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    fn spawn_current_thread_driver(
-        rt: &Arc<Runtime>,
-    ) -> Result<CurrentThreadDriver, SharedRuntimeError> {
-        let cancel = CancellationToken::new();
-        let cancel_clone = cancel.clone();
-        let rt = rt.clone();
-        let thread = std::thread::Builder::new()
-            .name("shared-runtime-driver".into())
-            .spawn(move || {
-                rt.block_on(cancel_clone.cancelled());
-            })
-            .map_err(SharedRuntimeError::RuntimeCreation)?;
-        Ok(CurrentThreadDriver {
-            cancel,
-            thread: Some(thread),
-        })
+    fn build_runtime(worker_threads: usize) -> Result<Runtime, io::Error> {
+        Builder::new_multi_thread()
+            .worker_threads(worker_threads)
+            .enable_all()
+            .build()
     }
 
     /// Owns a tokio runtime and manages [`PausableWorker`]s on it.
@@ -96,36 +31,28 @@ mod native {
     /// [`after_fork_child`](Self::after_fork_child)) and synchronous [`shutdown`](Self::shutdown).
     ///
     /// # Mutex lock order
-    /// `runtime` → `driver` → `workers`. Avoid holding multiple locks simultaneously.
+    /// `runtime` → `workers`.
     #[derive(Debug)]
-    pub struct ForkSafeSharedRuntime {
-        kind: ForkSafeRuntimeKind,
+    pub struct ForkSafeRuntime {
+        worker_threads: usize,
         runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
-        driver: Mutex<Option<CurrentThreadDriver>>,
         workers: Arc<Mutex<Vec<WorkerEntry>>>,
         next_worker_id: AtomicU64,
     }
 
-    impl ForkSafeSharedRuntime {
+    impl ForkSafeRuntime {
         /// Creates a multi-thread runtime with 1 worker thread.
         pub fn new() -> Result<Self, SharedRuntimeError> {
-            debug!("Creating new ForkSafeSharedRuntime");
-            Self::with_kind(ForkSafeRuntimeKind::default())
+            debug!("Creating new ForkSafeRuntime");
+            Self::with_worker_threads(1)
         }
 
-        /// Creates an `ForkSafeSharedRuntime` with the given runtime flavor.
-        /// For [`ForkSafeRuntimeKind::CurrentThread`] a dedicated driver thread is also spawned.
-        pub fn with_kind(kind: ForkSafeRuntimeKind) -> Result<Self, SharedRuntimeError> {
-            let runtime = Arc::new(build_runtime_for(&kind)?);
-            let driver = if matches!(kind, ForkSafeRuntimeKind::CurrentThread) {
-                Some(spawn_current_thread_driver(&runtime)?)
-            } else {
-                None
-            };
+        /// Creates a `ForkSafeRuntime` with the given number of tokio worker threads.
+        pub fn with_worker_threads(worker_threads: usize) -> Result<Self, SharedRuntimeError> {
+            let runtime = Arc::new(build_runtime(worker_threads)?);
             Ok(Self {
-                kind,
+                worker_threads,
                 runtime: Arc::new(Mutex::new(Some(runtime))),
-                driver: Mutex::new(driver),
                 workers: Arc::new(Mutex::new(Vec::new())),
                 next_worker_id: AtomicU64::new(1),
             })
@@ -138,12 +65,6 @@ mod native {
             let Some(runtime) = runtime_lock.take() else {
                 return;
             };
-            // Stop the current-thread driver first (if any) so we can drive
-            // the runtime ourselves via block_on below. For MultiThread this
-            // is a no-op.
-            if let Some(driver) = self.driver.lock_or_panic().take() {
-                drop(driver);
-            }
             let mut workers_lock = self.workers.lock_or_panic();
             runtime.block_on(async {
                 let futures: FuturesUnordered<_> = workers_lock
@@ -159,15 +80,10 @@ mod native {
             });
         }
 
-        fn restart_runtime_for_kind(&self) -> Result<(), SharedRuntimeError> {
+        fn restart_runtime(&self) -> Result<(), SharedRuntimeError> {
             let mut runtime_lock = self.runtime.lock_or_panic();
             if runtime_lock.is_none() {
-                let rt = Arc::new(build_runtime_for(&self.kind)?);
-                if matches!(self.kind, ForkSafeRuntimeKind::CurrentThread) {
-                    let driver = spawn_current_thread_driver(&rt)?;
-                    *self.driver.lock_or_panic() = Some(driver);
-                }
-                *runtime_lock = Some(rt);
+                *runtime_lock = Some(Arc::new(build_runtime(self.worker_threads)?));
             }
             Ok(())
         }
@@ -175,7 +91,7 @@ mod native {
         /// Restarts the runtime and workers in the parent after forking; worker state is preserved.
         pub fn after_fork_parent(&self) -> Result<(), SharedRuntimeError> {
             debug!("after_fork_parent: restarting runtime and workers");
-            self.restart_runtime_for_kind()?;
+            self.restart_runtime()?;
 
             let runtime_lock = self.runtime.lock_or_panic();
             let handle = runtime_lock
@@ -199,7 +115,7 @@ mod native {
         /// without shutdown.
         pub fn after_fork_child(&self) -> Result<(), SharedRuntimeError> {
             debug!("after_fork_child: reinitializing runtime and workers");
-            self.restart_runtime_for_kind()?;
+            self.restart_runtime()?;
 
             let runtime_lock = self.runtime.lock_or_panic();
             let handle = runtime_lock
@@ -237,14 +153,9 @@ mod native {
             &self,
             timeout: Option<std::time::Duration>,
         ) -> Result<(), SharedRuntimeError> {
-            debug!(?timeout, "Shutting down ForkSafeSharedRuntime");
+            debug!(?timeout, "Shutting down ForkSafeRuntime");
             match self.runtime.lock_or_panic().take() {
                 Some(runtime) => {
-                    // Stop the driver (if any) before driving the runtime
-                    // ourselves via block_on.
-                    if let Some(driver) = self.driver.lock_or_panic().take() {
-                        drop(driver);
-                    }
                     if let Some(timeout) = timeout {
                         match runtime.block_on(async {
                             tokio::time::timeout(
@@ -284,14 +195,14 @@ mod native {
         }
     }
 
-    impl SharedRuntime for ForkSafeSharedRuntime {
+    impl SharedRuntime for ForkSafeRuntime {
         fn spawn_worker<T: Worker + Sync + 'static>(
             &self,
             worker: T,
             restart_on_fork: bool,
         ) -> Result<WorkerHandle, SharedRuntimeError> {
             let boxed_worker: BoxedWorker = Box::new(worker);
-            debug!(?boxed_worker, "Spawning worker on ForkSafeSharedRuntime");
+            debug!(?boxed_worker, "Spawning worker on ForkSafeRuntime");
             let mut pausable_worker = PausableWorker::new(boxed_worker);
 
             // Hold both locks together (runtime → workers, per struct lock order) so
@@ -370,14 +281,14 @@ mod native {
         }
 
         #[test]
-        fn test_owned_runtime_creation() {
-            let shared_runtime = ForkSafeSharedRuntime::new();
+        fn test_fork_safe_runtime_creation() {
+            let shared_runtime = ForkSafeRuntime::new();
             assert!(shared_runtime.is_ok());
         }
 
         #[test]
         fn test_spawn_worker() {
-            let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
+            let shared_runtime = ForkSafeRuntime::new().unwrap();
             let (worker, receiver) = make_test_worker();
 
             let result = shared_runtime.spawn_worker(worker, true);
@@ -395,7 +306,7 @@ mod native {
         #[test]
         fn test_worker_handle_stop() {
             let rt = tokio::runtime::Runtime::new().unwrap();
-            let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
+            let shared_runtime = ForkSafeRuntime::new().unwrap();
             let (worker, receiver) = make_test_worker();
 
             let handle = shared_runtime.spawn_worker(worker, true).unwrap();
@@ -422,7 +333,7 @@ mod native {
 
         #[test]
         fn test_before_and_after_fork_parent() {
-            let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
+            let shared_runtime = ForkSafeRuntime::new().unwrap();
             let (worker, receiver) = make_test_worker();
 
             let _ = shared_runtime.spawn_worker(worker, true).unwrap();
@@ -450,7 +361,7 @@ mod native {
 
         #[test]
         fn test_after_fork_child() {
-            let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
+            let shared_runtime = ForkSafeRuntime::new().unwrap();
             let (worker, receiver) = make_test_worker();
 
             let _ = shared_runtime.spawn_worker(worker, true).unwrap();
@@ -478,7 +389,7 @@ mod native {
 
         #[test]
         fn test_shutdown() {
-            let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
+            let shared_runtime = ForkSafeRuntime::new().unwrap();
             let (worker, receiver) = make_test_worker();
 
             let _ = shared_runtime.spawn_worker(worker, true).unwrap();
@@ -500,7 +411,7 @@ mod native {
 
         #[test]
         fn test_after_fork_child_drops_worker_not_restart_on_fork() {
-            let shared_runtime = ForkSafeSharedRuntime::new().unwrap();
+            let shared_runtime = ForkSafeRuntime::new().unwrap();
             let (worker, receiver) = make_test_worker();
 
             let _ = shared_runtime.spawn_worker(worker, false).unwrap();
@@ -521,69 +432,6 @@ mod native {
                 "worker should not run or shut down after fork in child when restart_on_fork is false"
             );
         }
-
-        // --- ForkSafeRuntimeKind::CurrentThread tests ---
-
-        #[test]
-        fn test_current_thread_spawn_worker_runs() {
-            let shared_runtime =
-                ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
-            let (worker, receiver) = make_test_worker();
-
-            let _ = shared_runtime.spawn_worker(worker, true).unwrap();
-
-            // Worker can only make progress if the driver thread is alive.
-            assert_eq!(
-                receiver
-                    .recv_timeout(Duration::from_secs(1))
-                    .expect("worker did not run on current-thread runtime"),
-                0
-            );
-
-            shared_runtime.shutdown(None).unwrap();
-        }
-
-        #[test]
-        fn test_current_thread_shutdown_stops_driver() {
-            let shared_runtime =
-                ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
-            let (worker, receiver) = make_test_worker();
-
-            let _ = shared_runtime.spawn_worker(worker, true).unwrap();
-            receiver
-                .recv_timeout(Duration::from_secs(1))
-                .expect("worker did not run");
-
-            shared_runtime.shutdown(None).unwrap();
-
-            assert!(shared_runtime.driver.lock_or_panic().is_none());
-        }
-
-        #[test]
-        fn test_current_thread_fork_cycle_respawns_driver() {
-            let shared_runtime =
-                ForkSafeSharedRuntime::with_kind(ForkSafeRuntimeKind::CurrentThread).unwrap();
-            let (worker, receiver) = make_test_worker();
-
-            let _ = shared_runtime.spawn_worker(worker, true).unwrap();
-            receiver
-                .recv_timeout(Duration::from_secs(1))
-                .expect("worker did not run pre-fork");
-
-            shared_runtime.before_fork();
-            while receiver.try_recv().is_ok() {}
-
-            assert!(shared_runtime.driver.lock_or_panic().is_none());
-            assert!(shared_runtime.after_fork_parent().is_ok());
-            assert!(shared_runtime.driver.lock_or_panic().is_some());
-
-            // Worker resumption is only possible if the driver was re-spawned.
-            receiver
-                .recv_timeout(Duration::from_secs(1))
-                .expect("worker did not resume after fork on current-thread runtime");
-
-            shared_runtime.shutdown(None).unwrap();
-        }
     }
 }
 
@@ -603,14 +451,14 @@ mod wasm {
 
     /// Owns workers running via `spawn_local` on wasm32.
     #[derive(Debug)]
-    pub struct ForkSafeSharedRuntime {
+    pub struct ForkSafeRuntime {
         workers: Arc<Mutex<Vec<WorkerEntry>>>,
         next_worker_id: AtomicU64,
     }
 
-    impl ForkSafeSharedRuntime {
+    impl ForkSafeRuntime {
         pub fn new() -> Result<Self, SharedRuntimeError> {
-            debug!("Creating new ForkSafeSharedRuntime (wasm)");
+            debug!("Creating new ForkSafeRuntime (wasm)");
             Ok(Self {
                 workers: Arc::new(Mutex::new(Vec::new())),
                 next_worker_id: AtomicU64::new(1),
@@ -636,17 +484,14 @@ mod wasm {
         }
     }
 
-    impl SharedRuntime for ForkSafeSharedRuntime {
+    impl SharedRuntime for ForkSafeRuntime {
         fn spawn_worker<T: Worker + Sync + 'static>(
             &self,
             worker: T,
             restart_on_fork: bool,
         ) -> Result<WorkerHandle, SharedRuntimeError> {
             let boxed_worker: BoxedWorker = Box::new(worker);
-            debug!(
-                ?boxed_worker,
-                "Spawning worker on ForkSafeSharedRuntime (wasm)"
-            );
+            debug!(?boxed_worker, "Spawning worker on ForkSafeRuntime (wasm)");
             let mut pausable_worker = PausableWorker::new(boxed_worker);
             let mut workers_guard = self.workers.lock_or_panic();
 

@@ -778,7 +778,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use libdd_shared_runtime::{ForkSafeSharedRuntime, SharedRuntime};
+    use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
 
     use crate::trace_buffer::{BufferSize, Export, TraceBuffer, TraceBufferConfig};
     use crate::trace_exporter::agent_response::AgentResponse;
@@ -825,11 +825,11 @@ mod tests {
         assert_export: Box<dyn FnMut(Vec<Vec<()>>) + Send + Sync>,
         cfg: TraceBufferConfig,
     ) -> (
-        Arc<ForkSafeSharedRuntime>,
+        Arc<ForkSafeRuntime>,
         Arc<tokio::sync::Semaphore>,
         TraceBuffer<()>,
     ) {
-        let rt = Arc::new(ForkSafeSharedRuntime::new().unwrap());
+        let rt = Arc::new(ForkSafeRuntime::new().unwrap());
         let sem: Arc<tokio::sync::Semaphore> = Arc::new(tokio::sync::Semaphore::new(0));
         let (sender, worker) = TraceBuffer::new(
             cfg,

@@ -271,7 +271,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_shared_runtime::{ForkSafeSharedRuntime, SharedRuntime};
+    use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -401,7 +401,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_run() {
-        let shared_runtime = ForkSafeSharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
 
         let server = MockServer::start();
 
@@ -445,7 +445,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_worker_shutdown() {
-        let shared_runtime = ForkSafeSharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
 
         let server = MockServer::start();
 

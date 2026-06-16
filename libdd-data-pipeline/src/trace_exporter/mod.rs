@@ -39,7 +39,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
-use libdd_shared_runtime::{ForkSafeSharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{ForkSafeRuntime, WorkerHandle};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -180,7 +180,7 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
 
 /// `C` is the capabilities bundle (HTTP, sleep). Leaf crates
 /// pin it to a concrete type (`NativeCapabilities` or `WasmCapabilities`).
-/// Task spawning is handled internally by `SharedRuntime`.
+/// Task spawning is handled internally by `ForkSafeRuntime`.
 #[derive(Debug)]
 pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
     endpoint: Endpoint,
@@ -195,7 +195,7 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     /// poll or stay silent and leave SDK authors without a signal.
     v1_unavailable_logged: Once,
     serializer: TraceSerializer,
-    shared_runtime: Arc<ForkSafeSharedRuntime>,
+    shared_runtime: Arc<ForkSafeRuntime>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
@@ -224,7 +224,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Stop the background workers owned by this exporter.
     ///
     /// Sync facade over [`Self::shutdown_async`]; panics inside an existing tokio context.
-    /// Workers from other components on the same [`SharedRuntime`] are unaffected.
+    /// Workers from other components on the same [`ForkSafeRuntime`] are unaffected.
     ///
     /// # Errors
     /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
@@ -2103,7 +2103,7 @@ mod single_threaded_tests {
                 ));
         });
 
-        let runtime = Arc::new(ForkSafeSharedRuntime::new().unwrap());
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
 
         let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
@@ -2200,7 +2200,7 @@ mod single_threaded_tests {
                 ));
         });
 
-        let runtime = Arc::new(ForkSafeSharedRuntime::new().unwrap());
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
 
         let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder
@@ -2256,7 +2256,7 @@ mod single_threaded_tests {
     #[cfg(feature = "stats-obfuscation")]
     fn build_obfuscation_test_exporter(
         url: String,
-        runtime: Arc<ForkSafeSharedRuntime>,
+        runtime: Arc<ForkSafeRuntime>,
         opt_in: bool,
     ) -> TraceExporter<NativeCapabilities> {
         let mut builder = TraceExporter::<NativeCapabilities>::builder();
@@ -2314,7 +2314,7 @@ mod single_threaded_tests {
                 .body(info_body);
         });
 
-        let runtime = Arc::new(ForkSafeSharedRuntime::new().unwrap());
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
         let exporter = build_obfuscation_test_exporter(server.url("/"), runtime.clone(), opt_in);
 
         while agent_info::get_agent_info().is_none() {
@@ -2404,7 +2404,7 @@ mod single_threaded_tests {
                 ));
         });
 
-        let runtime = Arc::new(ForkSafeSharedRuntime::new().unwrap());
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
 
         let mut builder = TraceExporter::<NativeCapabilities>::builder();
         builder

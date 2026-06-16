@@ -8,24 +8,26 @@
 
 //! A shared tokio runtime for running background workers across multiple components.
 //!
-//! This crate provides [`ForkSafeSharedRuntime`], which owns a single tokio runtime and manages
-//! [`PausableWorker`]s on it. Components such as the trace exporter can share one runtime
-//! instead of each creating their own, reducing thread and resource overhead.
+//! This crate provides two implementations of [`SharedRuntime`], distinguished by whether
+//! they handle `fork()`:
 //!
-//! [`ForkSafeSharedRuntime`] also provides fork-safety hooks (`before_fork`, `after_fork_parent`,
-//! `after_fork_child`) that pause and restart workers around `fork()` calls, preventing
-//! deadlocks in child processes.
+//! - [`ForkSafeRuntime`] owns a tokio runtime and exposes fork hooks (`before_fork`,
+//!   `after_fork_parent`, `after_fork_child`) that pause and restart workers around `fork()` calls,
+//!   preventing deadlocks in child processes.
+//! - [`BasicRuntime`] is the regular (non-fork-safe) variant. Its internal tokio runtime can be
+//!   library-built ([`BasicRuntime::new`] / [`BasicRuntime::with_worker_threads`]) or supplied by
+//!   the caller as an `Arc<tokio::runtime::Runtime>` ([`BasicRuntime::from_handle`]).
 //!
-//! [`BorrowedSharedRuntime`] is an alternative that wraps a caller-owned
-//! `Arc<tokio::runtime::Runtime>` without fork hooks or lifecycle control.
+//! Components such as the trace exporter can share one runtime instead of each creating their
+//! own, reducing thread and resource overhead.
 
 pub mod shared_runtime;
 pub mod worker;
 
 // Top-level re-exports for convenience
 #[cfg(not(target_arch = "wasm32"))]
-pub use shared_runtime::{BorrowedSharedRuntime, ForkSafeRuntimeKind};
+pub use shared_runtime::BasicRuntime;
 pub use shared_runtime::{
-    ForkSafeSharedRuntime, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
+    ForkSafeRuntime, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
 };
 pub use worker::Worker;

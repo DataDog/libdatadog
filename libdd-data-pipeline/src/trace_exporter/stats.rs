@@ -14,7 +14,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
-use libdd_shared_runtime::{ForkSafeSharedRuntime, SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, WorkerHandle};
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
@@ -48,7 +48,7 @@ pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 pub(crate) struct StatsContext<'a> {
     pub metadata: &'a TracerMetadata,
     pub endpoint_url: &'a http::Uri,
-    pub shared_runtime: &'a ForkSafeSharedRuntime,
+    pub shared_runtime: &'a ForkSafeRuntime,
 }
 
 #[derive(Debug)]

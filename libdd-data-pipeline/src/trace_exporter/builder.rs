@@ -21,7 +21,7 @@ use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use libdd_shared_runtime::{ForkSafeSharedRuntime, SharedRuntime};
+use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -58,7 +58,7 @@ pub struct TraceExporterBuilder {
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
-    shared_runtime: Option<Arc<ForkSafeSharedRuntime>>,
+    shared_runtime: Option<Arc<ForkSafeRuntime>>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
@@ -251,7 +251,13 @@ impl TraceExporterBuilder {
     }
 
     /// Set a shared runtime used by the exporter for background workers.
-    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<ForkSafeSharedRuntime>) -> &mut Self {
+    ///
+    /// Requires a [`ForkSafeRuntime`] specifically, not any [`SharedRuntime`] impl: the
+    /// exporter calls [`ForkSafeRuntime::block_on`] from its sync entry points and assumes
+    /// the host wires up the fork hooks (`before_fork` / `after_fork_*`) around `fork()`.
+    /// A `BasicRuntime` or a raw `tokio::runtime::Runtime` cannot be passed here — create a
+    /// `ForkSafeRuntime` and share that instead.
+    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<ForkSafeRuntime>) -> &mut Self {
         self.shared_runtime = Some(shared_runtime);
         self
     }
@@ -517,8 +523,8 @@ impl TraceExporterBuilder {
         })
     }
 
-    fn new_shared_runtime() -> Result<Arc<ForkSafeSharedRuntime>, TraceExporterError> {
-        ForkSafeSharedRuntime::new().map(Arc::new).map_err(|e| {
+    fn new_shared_runtime() -> Result<Arc<ForkSafeRuntime>, TraceExporterError> {
+        ForkSafeRuntime::new().map(Arc::new).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })
     }
@@ -611,7 +617,7 @@ mod tests {
     #[test]
     fn test_set_shared_runtime() {
         let mut builder = TraceExporterBuilder::default();
-        let shared_runtime = Arc::new(ForkSafeSharedRuntime::new().unwrap());
+        let shared_runtime = Arc::new(ForkSafeRuntime::new().unwrap());
         builder.set_shared_runtime(shared_runtime.clone());
 
         let exporter = builder.build::<NativeCapabilities>().unwrap();

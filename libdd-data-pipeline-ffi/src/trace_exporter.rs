@@ -16,7 +16,7 @@ use libdd_data_pipeline::trace_exporter::{
 
 pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities>;
 
-use libdd_shared_runtime::ForkSafeSharedRuntime;
+use libdd_shared_runtime::ForkSafeRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
 
@@ -81,7 +81,7 @@ pub struct TraceExporterConfig {
     process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
-    shared_runtime: Option<Arc<ForkSafeSharedRuntime>>,
+    shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
 }
 
@@ -456,7 +456,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
-    handle: Option<NonNull<ForkSafeSharedRuntime>>,
+    handle: Option<NonNull<ForkSafeRuntime>>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         match (config, handle) {
