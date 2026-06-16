@@ -19,9 +19,9 @@ arbitrary = { version = "1.3", features = ["derive"], optional = true }
 
 [features]
 fuzzing = ["arbitrary"]
-# Exposes thin public `*_bench_wrapper` shims (e.g. for `normalize_metric_name`, `truncate_utf8`)
-# so benchmarks can reach otherwise-internal functions. The benchmarked functions themselves are
-# left untouched. Not intended for downstream consumers — enable only when running benches.
+# Exposes thin public `*_bench_wrapper` shims so benchmarks can reach
+# otherwise-internal functions. The benchmarked functions themselves are left
+# untouched. Enable only when running benches.
 bench-internals = []
 
 [dev-dependencies]
