@@ -26,6 +26,7 @@ struct ReceivedRequest {
 }
 
 /// Helper to create a unique temp file path.
+#[cfg(unix)]
 fn create_temp_file_path(extension: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "libdd_test_{}_{:x}.{}",
@@ -166,6 +167,7 @@ where
 
 /// Result source for capturing the HTTP request.
 enum RequestSource {
+    #[cfg(unix)]
     File(PathBuf),
     Captured(Arc<Mutex<Vec<ReceivedRequest>>>),
 }
@@ -235,6 +237,7 @@ fn export_full_profile(
 
     // Get the request from the appropriate source.
     match source {
+        #[cfg(unix)]
         RequestSource::File(path) => {
             // No sleep needed: send_blocking() waits until the dump file is written.
             let request_bytes = std::fs::read(&path)?;
