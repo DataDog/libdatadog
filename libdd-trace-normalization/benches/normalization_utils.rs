@@ -225,7 +225,13 @@ fn truncate_utf8_bench(c: &mut Criterion) {
 /// "needs-clock" case forces the `SystemTime::elapsed()` path.
 fn normalize_span_start_duration_bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("normalization/normalize_span_start_duration");
-    group.throughput(Elements(1000));
+    // Each measured iteration normalizes a batch of `ELEMENTS` spans so the per-span cost (a few
+    // integer ops, or a `SystemTime` read on the year-2000 path) isn't swamped by timer overhead.
+    // The batch is rebuilt fresh in (untimed) setup because the function mutates its inputs in
+    // place: on the "needs-clock" path the first call rewrites `start` to a recent timestamp, which
+    // would make a second call on the same value skip the clock branch.
+    const ELEMENTS: usize = 1000;
+    group.throughput(Elements(ELEMENTS as u64));
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(2));
     group.sample_size(200);
@@ -243,12 +249,16 @@ fn normalize_span_start_duration_bench(c: &mut Criterion) {
             BenchmarkId::new("normalize_span_start_duration", label),
             &(*start, *duration),
             |b, &(start, duration)| {
-                b.iter(|| {
-                    let mut s = black_box(start);
-                    let mut d = black_box(duration);
-                    normalize_span_start_duration(black_box(&mut s), black_box(&mut d));
-                    black_box((s, d));
-                });
+                b.iter_batched_ref(
+                    || vec![(start, duration); ELEMENTS],
+                    |pairs| {
+                        pairs.iter_mut().for_each(|(s, d)| {
+                            normalize_span_start_duration(black_box(s), black_box(d));
+                        });
+                        black_box(pairs);
+                    },
+                    BatchSize::LargeInput,
+                )
             },
         );
     }
