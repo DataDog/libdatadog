@@ -39,7 +39,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
-use libdd_shared_runtime::{ForkSafeRuntime, WorkerHandle};
+use libdd_shared_runtime::{DefaultRuntime, WorkerHandle};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -180,7 +180,7 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
 
 /// `C` is the capabilities bundle (HTTP, sleep). Leaf crates
 /// pin it to a concrete type (`NativeCapabilities` or `WasmCapabilities`).
-/// Task spawning is handled internally by `ForkSafeRuntime`.
+/// Task spawning is handled internally by [`DefaultRuntime`].
 #[derive(Debug)]
 pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
     endpoint: Endpoint,
@@ -195,7 +195,7 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     /// poll or stay silent and leave SDK authors without a signal.
     v1_unavailable_logged: Once,
     serializer: TraceSerializer,
-    shared_runtime: Arc<ForkSafeRuntime>,
+    shared_runtime: Arc<DefaultRuntime>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
@@ -224,7 +224,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Stop the background workers owned by this exporter.
     ///
     /// Sync facade over [`Self::shutdown_async`]; panics inside an existing tokio context.
-    /// Workers from other components on the same [`ForkSafeRuntime`] are unaffected.
+    /// Workers from other components on the same [`DefaultRuntime`] are unaffected.
     ///
     /// # Errors
     /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
@@ -2068,6 +2068,7 @@ mod single_threaded_tests {
     use crate::agent_info;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
 

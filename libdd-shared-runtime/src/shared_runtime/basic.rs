@@ -32,7 +32,6 @@ impl BasicRuntime {
     /// Creates a new `BasicRuntime` backed by a library-built multi-thread tokio runtime
     /// with 1 worker thread.
     pub fn new() -> Result<Self, SharedRuntimeError> {
-        debug!("Creating new BasicRuntime (library-built runtime)");
         Self::with_worker_threads(1)
     }
 

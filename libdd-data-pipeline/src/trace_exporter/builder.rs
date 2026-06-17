@@ -21,7 +21,7 @@ use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
+use libdd_shared_runtime::{DefaultRuntime, SharedRuntime};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -58,7 +58,7 @@ pub struct TraceExporterBuilder {
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
-    shared_runtime: Option<Arc<ForkSafeRuntime>>,
+    shared_runtime: Option<Arc<DefaultRuntime>>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
@@ -252,12 +252,14 @@ impl TraceExporterBuilder {
 
     /// Set a shared runtime used by the exporter for background workers.
     ///
-    /// Requires a [`ForkSafeRuntime`] specifically, not any [`SharedRuntime`] impl: the
-    /// exporter calls [`ForkSafeRuntime::block_on`] from its sync entry points and assumes
-    /// the host wires up the fork hooks (`before_fork` / `after_fork_*`) around `fork()`.
-    /// A `BasicRuntime` or a raw `tokio::runtime::Runtime` cannot be passed here — create a
-    /// `ForkSafeRuntime` and share that instead.
-    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<ForkSafeRuntime>) -> &mut Self {
+    /// Accepts a [`DefaultRuntime`], which resolves to [`ForkSafeRuntime`] on native and
+    /// [`libdd_shared_runtime::LocalRuntime`] on wasm32. On native, the exporter calls
+    /// [`ForkSafeRuntime::block_on`] from its sync entry points and assumes the host wires
+    /// up the fork hooks (`before_fork` / `after_fork_*`) around `fork()` — a plain
+    /// `BasicRuntime` or a raw `tokio::runtime::Runtime` are not accepted here. On wasm32
+    /// the sync entry points do not exist and [`LocalRuntime`](libdd_shared_runtime::LocalRuntime)
+    /// is used for async spawning only.
+    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<DefaultRuntime>) -> &mut Self {
         self.shared_runtime = Some(shared_runtime);
         self
     }
@@ -523,8 +525,8 @@ impl TraceExporterBuilder {
         })
     }
 
-    fn new_shared_runtime() -> Result<Arc<ForkSafeRuntime>, TraceExporterError> {
-        ForkSafeRuntime::new().map(Arc::new).map_err(|e| {
+    fn new_shared_runtime() -> Result<Arc<DefaultRuntime>, TraceExporterError> {
+        DefaultRuntime::new().map(Arc::new).map_err(|e| {
             TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })
     }
@@ -550,6 +552,7 @@ mod tests {
     use super::*;
     use crate::trace_exporter::error::BuilderErrorKind;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::ForkSafeRuntime;
 
     #[cfg_attr(miri, ignore)]
     #[test]

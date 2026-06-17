@@ -8,15 +8,24 @@
 
 //! A shared tokio runtime for running background workers across multiple components.
 //!
-//! This crate provides two implementations of [`SharedRuntime`], distinguished by whether
-//! they handle `fork()`:
+//! This crate provides three implementations of [`SharedRuntime`], distinguished by their
+//! threading model and fork-safety guarantees:
 //!
-//! - [`ForkSafeRuntime`] owns a tokio runtime and exposes fork hooks (`before_fork`,
-//!   `after_fork_parent`, `after_fork_child`) that pause and restart workers around `fork()` calls,
-//!   preventing deadlocks in child processes.
-//! - [`BasicRuntime`] is the regular (non-fork-safe) variant. Its internal tokio runtime can be
-//!   library-built ([`BasicRuntime::new`] / [`BasicRuntime::with_worker_threads`]) or supplied by
-//!   the caller as an `Arc<tokio::runtime::Runtime>` ([`BasicRuntime::from_handle`]).
+//! - [`ForkSafeRuntime`] *(native only)* — owns a multi-thread tokio runtime and exposes the full
+//!   fork protocol ([`ForkSafeRuntime::before_fork`] / [`ForkSafeRuntime::after_fork_parent`] /
+//!   [`ForkSafeRuntime::after_fork_child`]) that pauses and restarts workers around `fork()` calls,
+//!   preventing deadlocks in child processes. Also provides synchronous
+//!   [`ForkSafeRuntime::block_on`] and [`ForkSafeRuntime::shutdown`].
+//! - [`BasicRuntime`] *(native only)* — the regular (non-fork-safe) variant. Its internal tokio
+//!   runtime can be library-built ([`BasicRuntime::new`] / [`BasicRuntime::with_worker_threads`])
+//!   or supplied by the caller as an `Arc<tokio::runtime::Runtime>`
+//!   ([`BasicRuntime::from_handle`]).
+//! - [`LocalRuntime`] *(wasm32 only)* — single-threaded local executor; spawns workers via
+//!   `wasm_bindgen_futures::spawn_local`. No fork protocol, no `block_on`, async-only.
+//!
+//! [`DefaultRuntime`] is a target-specific alias: [`ForkSafeRuntime`] on native and
+//! [`LocalRuntime`] on wasm32. Use it when you need a single field type that compiles on both
+//! targets.
 //!
 //! Components such as the trace exporter can share one runtime instead of each creating their
 //! own, reducing thread and resource overhead.
@@ -27,7 +36,11 @@ pub mod worker;
 // Top-level re-exports for convenience
 #[cfg(not(target_arch = "wasm32"))]
 pub use shared_runtime::BasicRuntime;
+#[cfg(not(target_arch = "wasm32"))]
+pub use shared_runtime::ForkSafeRuntime;
+#[cfg(target_arch = "wasm32")]
+pub use shared_runtime::LocalRuntime;
 pub use shared_runtime::{
-    ForkSafeRuntime, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
+    DefaultRuntime, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
 };
 pub use worker::Worker;

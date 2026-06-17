@@ -1,17 +1,39 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`SharedRuntime`] trait, [`ForkSafeRuntime`], and [`BasicRuntime`].
+//! [`SharedRuntime`] trait and its implementations: [`ForkSafeRuntime`], [`BasicRuntime`],
+//! and [`LocalRuntime`].
 
 pub(crate) mod pausable_worker;
 
 #[cfg(not(target_arch = "wasm32"))]
 mod basic;
+#[cfg(not(target_arch = "wasm32"))]
 mod fork_safe;
+#[cfg(target_arch = "wasm32")]
+mod local;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use basic::BasicRuntime;
+#[cfg(not(target_arch = "wasm32"))]
 pub use fork_safe::ForkSafeRuntime;
+#[cfg(target_arch = "wasm32")]
+pub use local::LocalRuntime;
+
+/// The runtime appropriate for the current target.
+///
+/// Resolves to [`ForkSafeRuntime`] on native — owns a multi-thread tokio runtime and
+/// exposes the fork protocol ([`ForkSafeRuntime::before_fork`] /
+/// [`ForkSafeRuntime::after_fork_parent`] / [`ForkSafeRuntime::after_fork_child`]) plus
+/// a synchronous [`ForkSafeRuntime::block_on`] and [`ForkSafeRuntime::shutdown`].
+///
+/// Resolves to [`LocalRuntime`] on wasm32 — single-threaded, async-only, no fork
+/// protocol. Methods like `block_on`, `before_fork`, and `after_fork_*` are native-only
+/// and are **not** available via this alias on wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+pub type DefaultRuntime = ForkSafeRuntime;
+#[cfg(target_arch = "wasm32")]
+pub type DefaultRuntime = LocalRuntime;
 
 use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
@@ -30,22 +52,23 @@ pub(crate) struct WorkerEntry {
     pub(crate) worker: PausableWorker<BoxedWorker>,
 }
 
-/// Common interface for [`ForkSafeRuntime`] and [`BasicRuntime`].
+/// Common interface for all [`SharedRuntime`] implementations.
 ///
-/// Fork hooks and synchronous shutdown are inherent methods on [`ForkSafeRuntime`] only.
-/// Not object-safe — use `impl SharedRuntime` generics rather than `dyn SharedRuntime`.
+/// Fork hooks and synchronous shutdown are inherent methods on [`ForkSafeRuntime`] only
+/// (native target). Not object-safe — use `impl SharedRuntime` generics rather than
+/// `dyn SharedRuntime`.
 pub trait SharedRuntime {
-    /// Spawns a worker. `restart_on_fork = true` causes `after_fork_child` to reset and restart
-    /// it; `false` drops it without calling shutdown. [`BasicRuntime`] ignores this flag
-    /// — regular mode is not fork-safe; use [`ForkSafeRuntime`] when fork hooks are needed.
+    /// Spawns a worker. `restart_on_fork = true` causes `ForkSafeRuntime::after_fork_child`
+    /// to reset and restart it; `false` drops it without calling shutdown. [`BasicRuntime`]
+    /// and [`LocalRuntime`] ignore this flag — they do not implement a fork protocol.
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
         restart_on_fork: bool,
     ) -> Result<WorkerHandle, SharedRuntimeError>;
 
-    /// Shuts down all tracked workers. The runtime itself is not torn down — use
-    /// [`ForkSafeRuntime::shutdown`] to also drop the runtime.
+    /// Shuts down all tracked workers. The runtime itself is not torn down — call
+    /// [`ForkSafeRuntime::shutdown`] (native only) to also drop the tokio runtime.
     fn shutdown_async(&self) -> impl std::future::Future<Output = ()> + MaybeSend + '_
     where
         Self: Sync;
