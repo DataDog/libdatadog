@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-command -v bp-analyzer >/dev/null || { echo "ERROR: bp-analyzer not found in PATH" >&2; exit 1; }
+BP_ANALYZER="${BP_ANALYZER:-$(command -v bp-analyzer 2>/dev/null || echo /opt/dogbrew/bin/bp-analyzer)}"
+[ -x "$BP_ANALYZER" ] || { echo "ERROR: bp-analyzer not found" >&2; exit 1; }
 
 BASELINE_BRANCH="${BASELINE_BRANCH:-main}"
 CANDIDATE_BRANCH="${CANDIDATE_BRANCH:-${CI_COMMIT_REF_NAME:-pr-branch}}"
@@ -10,7 +11,7 @@ CANDIDATE_JSON="${CANDIDATE_JSON:-.gitlab/bench-analysis/fixtures/candidate.json
 
 mkdir -p artifacts
 
-bp-analyzer compare pairwise \
+"$BP_ANALYZER" compare pairwise \
   --baseline "{\"git_branch\":\"${BASELINE_BRANCH}\"}" \
   --candidate "{\"git_branch\":\"${CANDIDATE_BRANCH}\"}" \
   --format=md \

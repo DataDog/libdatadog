@@ -65,13 +65,13 @@ for path in ['$BASELINE', '$CANDIDATE']:
 }
 
 @test "non-empty comparison: preprocess.sh exits 0 and benchmark-comparison.md is non-empty" {
-  command -v bp-analyzer >/dev/null || skip "bp-analyzer not available (CI-only)"
+  { command -v bp-analyzer || [ -x /opt/dogbrew/bin/bp-analyzer ]; } >/dev/null 2>&1 || skip "bp-analyzer not available (CI-only)"
   bash "$PREPROCESS_SH"
   [ -s "$COMPARISON_OUT" ]
 }
 
 @test "comparison names scenarios: output contains all four scenario strings" {
-  command -v bp-analyzer >/dev/null || skip "bp-analyzer not available (CI-only)"
+  { command -v bp-analyzer || [ -x /opt/dogbrew/bin/bp-analyzer ]; } >/dev/null 2>&1 || skip "bp-analyzer not available (CI-only)"
   [ -s "$COMPARISON_OUT" ] || bash "$PREPROCESS_SH"
   for scenario in "${SCENARIOS[@]}"; do
     grep -q "$scenario" "$COMPARISON_OUT"
