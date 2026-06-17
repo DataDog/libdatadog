@@ -33,6 +33,7 @@ bench-analysis:
     - "export ANTHROPIC_CUSTOM_HEADERS=$'source: claude\\norg-id: 2\\nprovider: anthropic\\nx-dd-tag-ml_app: bench-analysis\\nx-dd-tag-dd.team: ecosystems-reliability'"
     - bash .gitlab/bench-analysis/preprocess.sh
     - bash .gitlab/bench-analysis/analyze.sh
+    - bash .gitlab/bench-analysis/report.sh
   artifacts:
     paths:
       - artifacts/
