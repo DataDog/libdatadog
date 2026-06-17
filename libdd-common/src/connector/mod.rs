@@ -123,6 +123,9 @@ mod https {
     }
 
     #[cfg(not(feature = "use_webpki_roots"))]
+    /// Returns a default connector that uses the system trust roots.
+    /// `SSL_CERT_FILE` and `SSL_CERT_DIR` variable are only supported on linux, see
+    /// `rustls_platform_verifier` doc for details.
     pub(super) fn build_https_connector() -> anyhow::Result<
         hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
     > {
@@ -174,6 +177,8 @@ mod tests {
     use crate::http_common;
     #[cfg(any(feature = "use_webpki_roots", target_os = "linux"))]
     use {super::*, std::env};
+    #[cfg(feature = "tls-core")]
+    use {crate::http_common::Body, hyper::Request};
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -230,5 +235,27 @@ mod tests {
         assert!(matches!(connector, Connector::Https(_)));
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "tls-core")]
+    /// Verify that a HTTPS GET request succeeds using
+    /// the default Connector (native platform TLS verifier or webpki roots).
+    async fn test_https_request_succeeds() {
+        let client = http_common::new_default_client();
+        let request = Request::get("https://www.datadoghq.com")
+            .body(Body::empty())
+            .expect("failed to build request");
+        let response = client
+            .request(request)
+            .await
+            .expect("HTTPS request to datadoghq.com failed");
+        let status = response.status();
+        // Accept any successful (2xx) or redirect (3xx) response.
+        assert!(
+            status.is_success() || status.is_redirection(),
+            "unexpected status code: {status}"
+        );
     }
 }
