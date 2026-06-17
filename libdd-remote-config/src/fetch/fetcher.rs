@@ -249,6 +249,8 @@ pub struct ConfigClientState {
     /// Services discovered at runtime. Sent to the agent on each poll so it can route configs
     /// targeting those services to this client. Updated out-of-band by the consumer
     extra_services: Vec<String>,
+    /// Server-recommended interval between consecutive polls.
+    refresh_interval: Option<Duration>,
 }
 
 impl Default for ConfigClientState {
@@ -260,6 +262,7 @@ impl Default for ConfigClientState {
             root_version: 1,
             last_error: None,
             extra_services: vec![],
+            refresh_interval: None,
         }
     }
 }
@@ -267,6 +270,10 @@ impl Default for ConfigClientState {
 impl ConfigClientState {
     pub fn set_extra_services(&mut self, services: Vec<String>) {
         self.extra_services = services;
+    }
+
+    pub fn server_recommended_refresh_interval(&self) -> Option<Duration> {
+        self.refresh_interval
     }
 }
 
@@ -632,6 +639,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
 
                 client_state.root_version = res.root_version;
                 client_state.targets_version = res.target_version;
+                client_state.refresh_interval = Some(res.refresh_interval);
                 if res.opaque_backend_state != client_state.opaque_backend_state {
                     client_state.opaque_backend_state = res.opaque_backend_state.to_vec();
                 }
@@ -721,7 +729,9 @@ impl<S: FileStorage> ConfigFetcher<S> {
                                                     "sha512".to_string()
                                                 }
                                                 tuf::crypto::HashAlgorithm::Unknown(u) => u.clone(),
-                                                a => anyhow::bail!("unhandled hash algorithm: {a:?}"),
+                                                a => {
+                                                    anyhow::bail!("unhandled hash algorithm: {a:?}")
+                                                }
                                             },
                                             hash: hash.to_string(),
                                         })

@@ -8,6 +8,9 @@ use crate::fetch::{
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use std::sync::Arc;
+use std::time::Duration;
+
+const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Simple implementation
 pub struct SingleFetcher<S: FileStorage> {
@@ -90,8 +93,17 @@ impl<S: FileStorage> SingleFetcher<S> {
             .await
     }
 
-    pub fn get_client_id(&self) -> &String {
+    pub fn get_client_id(&self) -> &str {
         &self.client_id
+    }
+
+    /// Returns the server-recommended interval before the next poll.
+    /// In agentless mode this is updated after every successful fetch.
+    /// In agent mode it returns the default of 5 seconds.
+    pub fn get_refresh_interval(&self) -> Duration {
+        self.client_state
+            .server_recommended_refresh_interval()
+            .unwrap_or(DEFAULT_REFRESH_INTERVAL)
     }
 
     /// Sets the apply state on a stored file.
@@ -161,8 +173,14 @@ where
         })
     }
 
-    pub fn get_client_id(&self) -> &String {
+    pub fn get_client_id(&self) -> &str {
         self.fetcher.get_client_id()
+    }
+
+    /// Returns the interval before the next poll.
+    /// See [`SingleFetcher::get_refresh_interval`].
+    pub fn get_refresh_interval(&self) -> Duration {
+        self.fetcher.get_refresh_interval()
     }
 
     /// Sets the apply state on a stored file.

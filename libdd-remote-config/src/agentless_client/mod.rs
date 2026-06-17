@@ -102,6 +102,7 @@ pub struct ClientResponse<'a> {
     pub target_version: u64,
     pub opaque_backend_state: &'a [u8],
     pub targets: Vec<ClientTargetResponse<'a>>,
+    pub refresh_interval: Duration,
 }
 
 struct BorrowedTufTarget<'a> {
@@ -338,6 +339,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                     content: t.target_file.as_slice(),
                 })
                 .collect(),
+            refresh_interval: self.refresh_interval,
         })
     }
 
@@ -610,7 +612,6 @@ fn trim_hash_target_path(target_path: &str) -> anyhow::Result<String> {
     result_path.push(basename_trimmed);
     Ok(result_path.to_str().unwrap_or_default().to_string())
 }
-
 
 // ── Debug helpers: render `raw: Vec<u8>` fields as JSON ────────────────────
 

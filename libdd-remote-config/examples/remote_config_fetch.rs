@@ -118,7 +118,7 @@ async fn main() {
             }
         }
 
-        sleep(Duration::from_secs(1)).await;
+        sleep(fetcher.get_refresh_interval()).await;
     }
 }
 

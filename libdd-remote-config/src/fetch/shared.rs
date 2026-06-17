@@ -320,7 +320,9 @@ impl SharedFetcher {
             };
 
             match fetched {
-                Ok(None) => clean_inactive(), // nothing changed
+                Ok(None) => {
+                    clean_inactive();
+                }
                 Ok(Some(files)) => {
                     if !files.is_empty() || !last_files.is_empty() {
                         for file in files.iter() {
@@ -353,6 +355,12 @@ impl SharedFetcher {
                     clean_inactive();
                     error!("{:?}", e);
                 }
+            }
+
+            if let Some(interval) = opaque_state.server_recommended_refresh_interval() {
+                // Keep the run-loop interval in sync with the server-provided value
+                self.interval
+                    .store(interval.as_nanos() as u64, Ordering::Relaxed);
             }
 
             select! {
