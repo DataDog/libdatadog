@@ -1,7 +1,6 @@
 name: Test Nix
 
 on: # yamllint disable-line rule:truthy
-  pull_request:
   push:
     branches:
       - main
