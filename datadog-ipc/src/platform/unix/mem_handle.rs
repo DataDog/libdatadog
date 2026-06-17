@@ -160,7 +160,7 @@ impl ShmHandle {
     /// Refresh the size of the shared memory segment
     pub fn adjust_to_file_size(&mut self) -> io::Result<()> {
         let fd = self.handle.as_owned_fd()?;
-        self.size = nix::sys::stat::fstat(fd.as_fd())?.st_size as usize;
+        self.size = nix::sys::stat::fstat(fd.as_raw_fd())?.st_size as usize;
         Ok(())
     }
 }
