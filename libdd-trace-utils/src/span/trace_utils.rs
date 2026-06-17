@@ -125,10 +125,9 @@ pub fn is_partial_snapshot<T: TraceData>(span: &Span<T>) -> bool {
         .is_some_and(|v| *v >= 0.0)
 }
 
-pub struct DroppedStats {
+pub struct DroppedP0Stats {
     pub dropped_p0_traces: usize,
     pub dropped_p0_spans: usize,
-    pub dropped_by_trace_filter: usize,
 }
 
 // Keys used for sampling
@@ -146,7 +145,7 @@ const SAMPLING_ANALYTICS_RATE_KEY: &str = "_dd1.sr.eausr";
 ///
 /// # Trace-level attributes
 /// Some attributes related to the whole trace are stored in the root span of the chunk.
-pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedStats
+pub fn drop_chunks<T>(traces: &mut Vec<Vec<Span<T>>>) -> DroppedP0Stats
 where
     T: TraceData,
 {
@@ -197,10 +196,9 @@ where
         true
     });
 
-    DroppedStats {
+    DroppedP0Stats {
         dropped_p0_traces,
         dropped_p0_spans,
-        dropped_by_trace_filter: 0,
     }
 }
 
