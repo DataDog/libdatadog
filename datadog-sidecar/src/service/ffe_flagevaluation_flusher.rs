@@ -9,11 +9,16 @@
 //! responses are logged at `warn`, network errors at `debug`, and dropped
 //! (matches dd-trace-go behaviour). No agent capability gate.
 
-use crate::service::FfeFlagEvaluationBatch;
+use crate::service::{FfeFlagEvaluationBatch, FfeFlagEvaluationEvent, FfeTelemetryContext};
+use datadog_ffe::telemetry::flagevaluation::{DEGRADED_CAP, GLOBAL_CAP};
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
+use libdd_common::MutexExt;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, warn};
 
@@ -25,6 +30,212 @@ pub(crate) const EVP_SUBDOMAIN_HEADER: &str = "X-Datadog-EVP-Subdomain";
 pub(crate) const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
+const COALESCE_DELAY: Duration = Duration::from_millis(250);
+const MAX_PENDING_BUCKETS: usize = GLOBAL_CAP + DEGRADED_CAP;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct DestinationKey {
+    url: String,
+    timeout_ms: u64,
+    test_token: Option<String>,
+    use_system_resolver: bool,
+    context: FfeTelemetryContext,
+}
+
+impl DestinationKey {
+    fn new(endpoint: &Endpoint, context: &FfeTelemetryContext) -> Self {
+        Self {
+            url: endpoint.url.to_string(),
+            timeout_ms: endpoint.timeout_ms,
+            test_token: endpoint.test_token.as_ref().map(|s| s.to_string()),
+            use_system_resolver: endpoint.use_system_resolver,
+            context: context.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct EventKey {
+    flag_key: String,
+    variant_key: Option<String>,
+    allocation_key: Option<String>,
+    targeting_rule_key: Option<String>,
+    targeting_key: Option<String>,
+    context_evaluation: Option<String>,
+    context_dd_service: Option<String>,
+    error_message: Option<String>,
+    runtime_default_used: bool,
+}
+
+impl EventKey {
+    fn new(event: &FfeFlagEvaluationEvent) -> Self {
+        Self {
+            flag_key: event.flag.key.clone(),
+            variant_key: event.variant.as_ref().map(|v| v.key.clone()),
+            allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
+            targeting_rule_key: event.targeting_rule.as_ref().map(|r| r.key.clone()),
+            targeting_key: event.targeting_key.clone(),
+            context_evaluation: event
+                .context
+                .as_ref()
+                .and_then(|context| context.evaluation.clone()),
+            context_dd_service: event
+                .context
+                .as_ref()
+                .and_then(|context| context.dd.as_ref().map(|dd| dd.service.clone())),
+            error_message: event.error.as_ref().map(|e| e.message.clone()),
+            runtime_default_used: event.runtime_default_used,
+        }
+    }
+}
+
+struct PendingDestination {
+    endpoint: Endpoint,
+    context: FfeTelemetryContext,
+    events: HashMap<EventKey, FfeFlagEvaluationEvent>,
+}
+
+#[derive(Default)]
+struct CoalescerState {
+    destinations: HashMap<DestinationKey, PendingDestination>,
+    flush_running: bool,
+    pending_bucket_count: usize,
+    dropped_overflow: u64,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct FlagEvaluationCoalescer {
+    state: Arc<Mutex<CoalescerState>>,
+}
+
+impl FlagEvaluationCoalescer {
+    pub(crate) fn enqueue(
+        &self,
+        client: NativeCapabilities,
+        endpoint: Endpoint,
+        batch: FfeFlagEvaluationBatch,
+    ) {
+        if batch.flag_evaluations.is_empty() {
+            return;
+        }
+
+        let mut state = self.state.lock_or_panic();
+        let destination_key = DestinationKey::new(&endpoint, &batch.context);
+        state
+            .destinations
+            .entry(destination_key.clone())
+            .or_insert_with(|| PendingDestination {
+                endpoint,
+                context: batch.context,
+                events: HashMap::new(),
+            });
+
+        for event in batch.flag_evaluations {
+            let key = EventKey::new(&event);
+            let merged = {
+                let pending = state
+                    .destinations
+                    .get_mut(&destination_key)
+                    .expect("destination was inserted before event merge");
+                if let Some(existing) = pending.events.get_mut(&key) {
+                    merge_event(existing, &event);
+                    true
+                } else {
+                    false
+                }
+            };
+            if merged {
+                continue;
+            }
+
+            if state.pending_bucket_count >= MAX_PENDING_BUCKETS {
+                state.dropped_overflow = state.dropped_overflow.saturating_add(1);
+                continue;
+            }
+
+            state
+                .destinations
+                .get_mut(&destination_key)
+                .expect("destination was inserted before event insert")
+                .events
+                .insert(key, event);
+            state.pending_bucket_count += 1;
+        }
+
+        if !state.flush_running {
+            state.flush_running = true;
+            let coalescer = self.clone();
+            tokio::spawn(async move {
+                coalescer.flush_loop(client).await;
+            });
+        }
+    }
+
+    pub(crate) async fn flush_now(&self, client: NativeCapabilities) {
+        let batches = self.take_batches();
+        futures::future::join_all(batches.into_iter().map(|(endpoint, batch)| {
+            let client = client.clone();
+            async move { send_batch(&client, &endpoint, batch).await }
+        }))
+        .await;
+    }
+
+    async fn flush_loop(self, client: NativeCapabilities) {
+        loop {
+            tokio::time::sleep(COALESCE_DELAY).await;
+            let batches = self.take_batches();
+            futures::future::join_all(batches.into_iter().map(|(endpoint, batch)| {
+                let client = client.clone();
+                async move { send_batch(&client, &endpoint, batch).await }
+            }))
+            .await;
+
+            let mut state = self.state.lock_or_panic();
+            if state.destinations.is_empty() {
+                state.flush_running = false;
+                break;
+            }
+        }
+    }
+
+    fn take_batches(&self) -> Vec<(Endpoint, FfeFlagEvaluationBatch)> {
+        let mut state = self.state.lock_or_panic();
+        if state.dropped_overflow > 0 {
+            warn!(
+                "ffe_flagevaluation_flusher: dropped {} pending bucket(s) after sidecar coalescer cap",
+                state.dropped_overflow
+            );
+            state.dropped_overflow = 0;
+        }
+
+        let destinations = std::mem::take(&mut state.destinations);
+        state.pending_bucket_count = 0;
+        destinations
+            .into_values()
+            .filter_map(|pending| {
+                if pending.events.is_empty() {
+                    return None;
+                }
+                Some((
+                    pending.endpoint,
+                    FfeFlagEvaluationBatch {
+                        context: pending.context,
+                        flag_evaluations: pending.events.into_values().collect(),
+                    },
+                ))
+            })
+            .collect()
+    }
+}
+
+fn merge_event(existing: &mut FfeFlagEvaluationEvent, incoming: &FfeFlagEvaluationEvent) {
+    existing.timestamp = existing.timestamp.max(incoming.timestamp);
+    existing.first_evaluation = existing.first_evaluation.min(incoming.first_evaluation);
+    existing.last_evaluation = existing.last_evaluation.max(incoming.last_evaluation);
+    existing.evaluation_count = existing
+        .evaluation_count
+        .saturating_add(incoming.evaluation_count);
+}
 
 /// Build the FFE flagevaluation endpoint from a session's agent base endpoint.
 /// Overrides only the path (`/evp_proxy/v2/api/v2/flagevaluations`), preserving
@@ -561,6 +772,37 @@ mod tests {
 
         mock.assert_async().await;
         assert_eq!(mock.calls_async().await, 1);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn coalesces_identical_batches_before_posting() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATIONS_PATH)
+                    .body_includes("\"evaluation_count\":10");
+                then.status(202);
+            })
+            .await;
+
+        let base = endpoint_for(&server);
+        let ep = flagevaluation_endpoint(&base).unwrap();
+        let client = NativeCapabilities::new_client();
+        let coalescer = FlagEvaluationCoalescer::default();
+
+        coalescer.enqueue(client.clone(), ep.clone(), batch());
+        coalescer.enqueue(client.clone(), ep, batch());
+
+        for _ in 0..100 {
+            if mock.calls_async().await == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        mock.assert_calls_async(1).await;
     }
 
     #[tokio::test]

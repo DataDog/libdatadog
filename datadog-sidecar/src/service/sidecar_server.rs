@@ -118,6 +118,8 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    /// Sidecar-owned EVP flagevaluation coalescer, shared across PHP request lifetimes.
+    pub(crate) ffe_flagevaluation_coalescer: ffe_flagevaluation_flusher::FlagEvaluationCoalescer,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -451,11 +453,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     if let Some(base) = trace_config.endpoint.as_ref() {
                         if let Some(ep) = ffe_flagevaluation_flusher::flagevaluation_endpoint(base)
                         {
-                            let batch = batch.clone();
-                            let client = ffe_http_client.clone();
-                            tokio::spawn(async move {
-                                ffe_flagevaluation_flusher::send_batch(&client, &ep, batch).await;
-                            });
+                            self.server.ffe_flagevaluation_coalescer.enqueue(
+                                ffe_http_client.clone(),
+                                ep,
+                                batch.clone(),
+                            );
                         } else {
                             debug!(
                                 "ffe_flagevaluation_flusher: could not derive endpoint, dropping batch"
@@ -1082,6 +1084,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn flush(&self, _peer: PeerCredentials, options: SidecarFlushOptions) {
+        self.server
+            .ffe_flagevaluation_coalescer
+            .flush_now(self.server.ffe_http_client.clone())
+            .await;
+
         if options.traces_and_stats {
             let flusher = self.server.trace_flusher.clone();
             if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
