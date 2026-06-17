@@ -14,7 +14,7 @@ Four phases build the pipeline from CI scaffolding through mock data, Claude ana
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Auth & CI Scaffolding** - GitLab CI job with AI Gateway and GitHub auth wired up (completed 2026-06-15)
-- [ ] **Phase 2: Mock Data & Pre-processor** - Fixture files and jq diff script producing benchmark-diff.json
+- [x] **Phase 2: Mock Data & Pre-processor** - Fixture files and jq diff script producing benchmark-diff.json (completed 2026-06-16)
 - [ ] **Phase 3: Claude Analysis** - System prompt, invocation script, and suspect code pointer
 - [ ] **Phase 4: Reporting & GitHub Integration** - CI artifact declaration and PR comment posting
 
@@ -48,7 +48,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Plans**: 1 plan
 
-- [ ] 02-01-PLAN.md — BP v1 fixtures + bp-analyzer pre-processor producing benchmark-comparison.md, wired into bench-analysis.yml
+- [x] 02-01-PLAN.md — BP v1 fixtures + bp-analyzer pre-processor producing benchmark-comparison.md, wired into bench-analysis.yml
 
 ### Phase 3: Claude Analysis
 
@@ -62,7 +62,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Running the invocation script produces a non-empty `artifacts/benchmark-report.md` (the script fails the CI job if the file is absent or empty)
   3. The report references specific files or functions from the PR diff when benchmarks overlap with changed code
 
-**Plans**: TBD
+**Plans**: 1 plan
+
+- [ ] 03-01-PLAN.md — analyze-prompt.md system prompt + analyze.sh (PR diff context, non-empty assertion) + analyze.bats, wired into bench-analysis.yml replacing the smoke test
 
 ### Phase 4: Reporting & GitHub Integration
 
@@ -86,6 +88,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auth & CI Scaffolding | 1/1 | Complete   | 2026-06-15 |
-| 2. Mock Data & Pre-processor | 0/1 | Planned | - |
-| 3. Claude Analysis | 0/? | Not started | - |
+| 2. Mock Data & Pre-processor | 1/1 | Complete   | 2026-06-16 |
+| 3. Claude Analysis | 0/1 | Not started | - |
 | 4. Reporting & GitHub Integration | 0/? | Not started | - |
