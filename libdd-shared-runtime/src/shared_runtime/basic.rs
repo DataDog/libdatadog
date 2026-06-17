@@ -56,6 +56,23 @@ impl BasicRuntime {
             next_worker_id: AtomicU64::new(1),
         }
     }
+
+    fn push_worker(
+        &self,
+        workers_guard: &mut std::sync::MutexGuard<Vec<WorkerEntry>>,
+        pausable_worker: PausableWorker<BoxedWorker>,
+    ) -> WorkerHandle {
+        let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
+        workers_guard.push(WorkerEntry {
+            id: worker_id,
+            restart_on_fork: false,
+            worker: pausable_worker,
+        });
+        WorkerHandle {
+            worker_id,
+            workers: self.workers.clone(),
+        }
+    }
 }
 
 impl SharedRuntime for BasicRuntime {
@@ -75,20 +92,12 @@ impl SharedRuntime for BasicRuntime {
         debug!(?boxed_worker, "Spawning worker on BasicRuntime");
         let mut pausable_worker = PausableWorker::new(boxed_worker);
 
+        // Hold the workers lock across start+push so a concurrent shutdown_async cannot
+        // drain the registry between starting the task and recording it — which would
+        // otherwise leave a live worker behind that shutdown_async never paused.
+        let mut workers_guard = self.workers.lock_or_panic();
         pausable_worker.start(tokio_spawn_fn(self.runtime.handle()))?;
-
-        let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
-
-        self.workers.lock_or_panic().push(WorkerEntry {
-            id: worker_id,
-            restart_on_fork: false,
-            worker: pausable_worker,
-        });
-
-        Ok(WorkerHandle {
-            worker_id,
-            workers: self.workers.clone(),
-        })
+        Ok(self.push_worker(&mut workers_guard, pausable_worker))
     }
 
     async fn shutdown_async(&self) {
