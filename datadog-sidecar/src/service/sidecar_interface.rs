@@ -69,10 +69,14 @@ pub trait SidecarInterface {
     /// * `process_tags` - The process tags.
     async fn set_session_process_tags(process_tags: Vec<Tag>);
 
-    /// Records the source of the default service name for the session.
-    async fn set_session_default_service_name(
-        service_name_source: Option<crate::service::ServiceNameSource>,
-    );
+    /// Records the auto-resolved default service name for the session
+    /// (thread-bound; the tracer's fallback when `DD_SERVICE` is unset).
+    /// Pass `None` to clear it.
+    async fn set_session_default_service_name(name: Option<String>);
+
+    /// Records whether `DD_SERVICE` is currently set for the session
+    /// (per-request mutable; tracer should refresh on RINIT).
+    async fn set_session_user_service_defined(is_defined: bool);
 
     /// Removes the application entry for the given queue ID from the instance.
     ///

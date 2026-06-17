@@ -273,9 +273,17 @@ pub fn set_session_process_tags(
 
 pub fn set_session_default_service_name(
     transport: &mut SidecarTransport,
-    service_name_source: Option<crate::service::ServiceNameSource>,
+    name: Option<String>,
 ) -> io::Result<()> {
-    lock_sender(transport)?.set_session_default_service_name(service_name_source);
+    lock_sender(transport)?.set_session_default_service_name(name);
+    Ok(())
+}
+
+pub fn set_session_user_service_defined(
+    transport: &mut SidecarTransport,
+    is_defined: bool,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_user_service_defined(is_defined);
     Ok(())
 }
 

@@ -751,25 +751,38 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     MaybeError::None
 }
 
-/// Records the default service name for the session. Empty = user-defined
-/// (sidecar emits `svc.user:true`); non-empty = auto-resolved with that name
-/// (sidecar emits `svc.auto:<name>`).
+/// Records the tracer's auto-resolved default service name for the session
+/// (process-bound; sidecar emits `svc.auto:<name>` when `DD_SERVICE` is not
+/// currently set for the active request). Pass an empty `CharSlice` to clear.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_session_set_default_service_name(
     transport: &mut Box<SidecarTransport>,
     default_service_name: ffi::CharSlice,
 ) -> MaybeError {
-    let source = if default_service_name.is_empty() {
-        datadog_sidecar::service::ServiceNameSource::UserDefined
+    let name = if default_service_name.is_empty() {
+        None
     } else {
-        datadog_sidecar::service::ServiceNameSource::AutoResolved(
-            default_service_name.to_utf8_lossy().into_owned(),
-        )
+        Some(default_service_name.to_utf8_lossy().into_owned())
     };
-    try_c!(blocking::set_session_default_service_name(
+    try_c!(blocking::set_session_default_service_name(transport, name));
+
+    MaybeError::None
+}
+
+/// Records whether `DD_SERVICE` is currently set for the session (per-request
+/// mutable; refresh on each RINIT). When `true` the sidecar emits
+/// `svc.user:true`; when `false` it falls back to the previously-recorded
+/// `svc.auto:<name>` (if any).
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_session_set_user_service_defined(
+    transport: &mut Box<SidecarTransport>,
+    is_user_defined: bool,
+) -> MaybeError {
+    try_c!(blocking::set_session_user_service_defined(
         transport,
-        Some(source),
+        is_user_defined,
     ));
 
     MaybeError::None

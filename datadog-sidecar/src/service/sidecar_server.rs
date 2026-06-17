@@ -831,18 +831,25 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session.refresh_stats_process_tags();
     }
 
-    async fn set_session_default_service_name(
-        &self,
-        _peer: PeerCredentials,
-        service_name_source: Option<crate::service::ServiceNameSource>,
-    ) {
+    async fn set_session_default_service_name(&self, _peer: PeerCredentials, name: Option<String>) {
         let session_id = self
             .session_id
             .get()
             .map(|s| s.as_str())
             .unwrap_or_default();
         let session = self.server.get_session(session_id);
-        *session.service_name_source.lock_or_panic() = service_name_source;
+        *session.auto_resolved_service_name.lock_or_panic() = name;
+        session.refresh_stats_process_tags();
+    }
+
+    async fn set_session_user_service_defined(&self, _peer: PeerCredentials, is_defined: bool) {
+        let session_id = self
+            .session_id
+            .get()
+            .map(|s| s.as_str())
+            .unwrap_or_default();
+        let session = self.server.get_session(session_id);
+        *session.user_service_defined.lock_or_panic() = is_defined;
         session.refresh_stats_process_tags();
     }
 

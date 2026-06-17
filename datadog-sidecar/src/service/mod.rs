@@ -101,9 +101,3 @@ pub enum SidecarAction {
         metrics: Vec<FfeEvaluationMetric>,
     },
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub enum ServiceNameSource {
-    UserDefined,
-    AutoResolved(String),
-}
