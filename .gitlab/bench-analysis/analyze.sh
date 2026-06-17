@@ -22,7 +22,8 @@ export NVM_DIR="$HOME/.nvm"
 claude --bare -p "$(printf 'Read %s using the Read tool, then write a benchmark analysis report to %s.\n\n<pr_diff>\n%s\n</pr_diff>' "${COMPARISON}" "${REPORT}" "${PR_DIFF}")" \
   --system-prompt-file "${PROMPT_FILE}" \
   --model anthropic/claude-sonnet-4-6 \
-  --allowedTools "Read,Write"
+  --allowedTools "Read,Write" \
+  --yes
 
 if [ ! -s "${REPORT}" ]; then
   echo "ERROR: ${REPORT} is empty — Claude produced no output" >&2
