@@ -11,9 +11,14 @@ bench-analysis:
       curl -OL "https://binaries.ddbuild.io/dd-source/authanywhere/LATEST/authanywhere-linux-${AAA}"
       mv "authanywhere-linux-${AAA}" ./authanywhere
       chmod +x ./authanywhere
-    # GitHub token via dd-octo-sts (no static PAT, CI-03)
-    - GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr)
-    - export GH_TOKEN
+    # GitHub token via dd-octo-sts (no static PAT, CI-03); skip if not available
+    - |
+      if command -v dd-octo-sts >/dev/null 2>&1; then
+        GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr)
+        export GH_TOKEN
+      else
+        echo "dd-octo-sts not available — GitHub comment posting skipped"
+      fi
     # Install nvm, Node LTS, and Claude Code (D-04)
     - |
       curl --fail -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
