@@ -25,11 +25,9 @@
           overlays = [ (import rust-overlay) ];
         };
 
-        # pinned Rust toolchain; single source of truth is ./rust-toolchain.toml
-        # (channel + components + profile), so the devshell matches CI and rustup.
-        rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-      in {
-        devShells.default = pkgs.stdenv.mkDerivation {
+        # A devshell for a given Rust toolchain (read from a toolchain file via
+        # rust-overlay), with the rest of the build dependencies.
+        mkDevShell = rust: pkgs.stdenv.mkDerivation {
           name = "libdatadog-devshell";
 
           # The stdenv cc-wrapper injects -D_FORTIFY_SOURCE, which glibc rejects
@@ -48,6 +46,14 @@
             pkgs.libtool
           ];
         };
+      in {
+        # Default: the pinned stable toolchain (single source of truth is
+        # ./rust-toolchain.toml), matching CI and rustup.
+        devShells.default = mkDevShell (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml);
+
+        # Nightly toolchain (./nightly-toolchain.toml) for the jobs that
+        # genuinely need a nightly compiler. Use with `nix develop .#nightly`.
+        devShells.nightly = mkDevShell (pkgs.rust-bin.fromRustupToolchainFile ./nightly-toolchain.toml);
       }
     );
 }
