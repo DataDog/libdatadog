@@ -45,7 +45,7 @@ impl DynamicConfigFile {
 
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "test", derive(Serialize))]
-pub struct TracingHeaderTag {
+pub(crate) struct TracingHeaderTag {
     pub header: String,
     pub tag_name: String,
 }
@@ -79,15 +79,15 @@ pub struct TracingSamplingRule {
 #[derive(Debug, Clone, Deserialize)]
 #[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfig {
-    pub tracing_header_tags: Option<Vec<TracingHeaderTag>>,
-    pub tracing_sampling_rate: Option<f64>,
-    pub log_injection_enabled: Option<bool>,
-    pub tracing_tags: Option<Vec<String>>,
-    pub tracing_enabled: Option<bool>,
-    pub tracing_sampling_rules: Option<Vec<TracingSamplingRule>>,
-    pub dynamic_instrumentation_enabled: Option<bool>,
-    pub exception_replay_enabled: Option<bool>,
-    pub code_origin_enabled: Option<bool>,
+    pub(crate) tracing_header_tags: Option<Vec<TracingHeaderTag>>,
+    pub(crate) tracing_sampling_rate: Option<f64>,
+    pub(crate) log_injection_enabled: Option<bool>,
+    pub(crate) tracing_tags: Option<Vec<String>>,
+    pub(crate) tracing_enabled: Option<bool>,
+    pub(crate) tracing_sampling_rules: Option<Vec<TracingSamplingRule>>,
+    pub(crate) dynamic_instrumentation_enabled: Option<bool>,
+    pub(crate) exception_replay_enabled: Option<bool>,
+    pub(crate) code_origin_enabled: Option<bool>,
 }
 
 impl From<DynamicConfig> for Vec<Configs> {

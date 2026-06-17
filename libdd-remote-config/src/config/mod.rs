@@ -4,8 +4,3 @@
 pub mod agent_config;
 pub mod agent_task;
 pub mod dynamic;
-
-pub use dynamic::{
-    Configs, DynamicConfig, DynamicConfigFile, DynamicConfigTarget, TracingSamplingRule,
-    TracingSamplingRuleProvenance, TracingSamplingRuleTag,
-};
