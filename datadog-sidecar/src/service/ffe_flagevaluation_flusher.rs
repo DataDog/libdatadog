@@ -10,7 +10,7 @@
 //! (matches dd-trace-go behaviour). No agent capability gate.
 
 use crate::service::{FfeFlagEvaluationBatch, FfeFlagEvaluationEvent, FfeTelemetryContext};
-use datadog_ffe::telemetry::flagevaluation::{DEGRADED_CAP, GLOBAL_CAP};
+use datadog_ffe::telemetry::flagevaluation::{DEGRADED_CAP, GLOBAL_CAP, PER_FLAG_CAP};
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
@@ -32,6 +32,7 @@ pub(crate) const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
 const COALESCE_DELAY: Duration = Duration::from_millis(250);
 const MAX_PENDING_BUCKETS: usize = GLOBAL_CAP + DEGRADED_CAP;
+const MAX_EVENTS_PER_POST: usize = 512;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DestinationKey {
@@ -87,6 +88,20 @@ impl EventKey {
             runtime_default_used: event.runtime_default_used,
         }
     }
+
+    fn degraded(event: &FfeFlagEvaluationEvent) -> Self {
+        Self {
+            flag_key: event.flag.key.clone(),
+            variant_key: event.variant.as_ref().map(|v| v.key.clone()),
+            allocation_key: event.allocation.as_ref().map(|a| a.key.clone()),
+            targeting_rule_key: event.targeting_rule.as_ref().map(|r| r.key.clone()),
+            targeting_key: None,
+            context_evaluation: None,
+            context_dd_service: None,
+            error_message: event.error.as_ref().map(|e| e.message.clone()),
+            runtime_default_used: event.runtime_default_used,
+        }
+    }
 }
 
 struct PendingDestination {
@@ -100,6 +115,9 @@ struct CoalescerState {
     destinations: HashMap<DestinationKey, PendingDestination>,
     flush_running: bool,
     pending_bucket_count: usize,
+    full_bucket_count: usize,
+    full_bucket_count_by_flag: HashMap<String, usize>,
+    degraded_bucket_count: usize,
     dropped_overflow: u64,
 }
 
@@ -130,36 +148,42 @@ impl FlagEvaluationCoalescer {
                 events: HashMap::new(),
             });
 
-        for event in batch.flag_evaluations {
+        for mut event in batch.flag_evaluations {
             let key = EventKey::new(&event);
-            let merged = {
-                let pending = state
-                    .destinations
-                    .get_mut(&destination_key)
-                    .expect("destination was inserted before event merge");
-                if let Some(existing) = pending.events.get_mut(&key) {
-                    merge_event(existing, &event);
-                    true
-                } else {
-                    false
-                }
-            };
-            if merged {
+            if merge_pending_event(&mut state, &destination_key, &key, &event) {
                 continue;
             }
 
-            if state.pending_bucket_count >= MAX_PENDING_BUCKETS {
+            let flag_key = event.flag.key.clone();
+            let full_bucket_count_for_flag = state
+                .full_bucket_count_by_flag
+                .get(&flag_key)
+                .copied()
+                .unwrap_or(0);
+
+            if state.full_bucket_count < GLOBAL_CAP && full_bucket_count_for_flag < PER_FLAG_CAP {
+                insert_pending_event(&mut state, &destination_key, key, event);
+                state.full_bucket_count += 1;
+                *state.full_bucket_count_by_flag.entry(flag_key).or_default() += 1;
+                continue;
+            }
+
+            event.targeting_key = None;
+            event.context = None;
+            let degraded_key = EventKey::degraded(&event);
+            if merge_pending_event(&mut state, &destination_key, &degraded_key, &event) {
+                continue;
+            }
+
+            if state.degraded_bucket_count >= DEGRADED_CAP
+                || state.pending_bucket_count >= MAX_PENDING_BUCKETS
+            {
                 state.dropped_overflow = state.dropped_overflow.saturating_add(1);
                 continue;
             }
 
-            state
-                .destinations
-                .get_mut(&destination_key)
-                .expect("destination was inserted before event insert")
-                .events
-                .insert(key, event);
-            state.pending_bucket_count += 1;
+            insert_pending_event(&mut state, &destination_key, degraded_key, event);
+            state.degraded_bucket_count += 1;
         }
 
         if !state.flush_running {
@@ -210,6 +234,9 @@ impl FlagEvaluationCoalescer {
 
         let destinations = std::mem::take(&mut state.destinations);
         state.pending_bucket_count = 0;
+        state.full_bucket_count = 0;
+        state.full_bucket_count_by_flag.clear();
+        state.degraded_bucket_count = 0;
         destinations
             .into_values()
             .filter_map(|pending| {
@@ -226,6 +253,39 @@ impl FlagEvaluationCoalescer {
             })
             .collect()
     }
+}
+
+fn merge_pending_event(
+    state: &mut CoalescerState,
+    destination_key: &DestinationKey,
+    key: &EventKey,
+    event: &FfeFlagEvaluationEvent,
+) -> bool {
+    let pending = state
+        .destinations
+        .get_mut(destination_key)
+        .expect("destination was inserted before event merge");
+    if let Some(existing) = pending.events.get_mut(key) {
+        merge_event(existing, event);
+        true
+    } else {
+        false
+    }
+}
+
+fn insert_pending_event(
+    state: &mut CoalescerState,
+    destination_key: &DestinationKey,
+    key: EventKey,
+    event: FfeFlagEvaluationEvent,
+) {
+    state
+        .destinations
+        .get_mut(destination_key)
+        .expect("destination was inserted before event insert")
+        .events
+        .insert(key, event);
+    state.pending_bucket_count += 1;
 }
 
 fn merge_event(existing: &mut FfeFlagEvaluationEvent, incoming: &FfeFlagEvaluationEvent) {
@@ -263,14 +323,31 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     endpoint: &Endpoint,
     batch: FfeFlagEvaluationBatch,
 ) {
-    let payload = match build_payload(&batch) {
-        Ok(p) => p,
-        Err(e) => {
-            debug!("ffe_flagevaluation_flusher: failed to encode batch payload: {e:?}");
-            return;
-        }
-    };
-    send_payload(client, endpoint, payload).await;
+    for chunk in split_batch_for_post(batch) {
+        let payload = match build_payload(&chunk) {
+            Ok(p) => p,
+            Err(e) => {
+                debug!("ffe_flagevaluation_flusher: failed to encode batch payload: {e:?}");
+                return;
+            }
+        };
+        send_payload(client, endpoint, payload).await;
+    }
+}
+
+fn split_batch_for_post(batch: FfeFlagEvaluationBatch) -> Vec<FfeFlagEvaluationBatch> {
+    let FfeFlagEvaluationBatch {
+        context,
+        flag_evaluations,
+    } = batch;
+
+    flag_evaluations
+        .chunks(MAX_EVENTS_PER_POST)
+        .map(|chunk| FfeFlagEvaluationBatch {
+            context: context.clone(),
+            flag_evaluations: chunk.to_vec(),
+        })
+        .collect()
 }
 
 /// Build the EVP POST body from a batch.
@@ -461,7 +538,7 @@ mod tests {
     use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
     use datadog_ffe::telemetry::flagevaluation::{
         AllocationKey, ContextDD, EvalError, FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey,
-        TargetingRuleKey, VariantKey,
+        TargetingRuleKey, VariantKey, PER_FLAG_CAP,
     };
     use httpmock::MockServer;
     use libdd_capabilities::{HttpError, MaybeSend};
@@ -776,6 +853,32 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
+    async fn splits_large_batches_before_posting() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATIONS_PATH)
+                    .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
+                    .header("content-type", "application/json");
+                then.status(202);
+            })
+            .await;
+
+        let base = endpoint_for(&server);
+        let ep = flagevaluation_endpoint(&base).unwrap();
+        let client = NativeCapabilities::new_client();
+        let mut batch = batch();
+        let event = batch.flag_evaluations[0].clone();
+        batch.flag_evaluations = vec![event; MAX_EVENTS_PER_POST * 2 + 1];
+
+        send_batch(&client, &ep, batch).await;
+
+        mock.assert_calls_async(3).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn coalesces_identical_batches_before_posting() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -803,6 +906,64 @@ mod tests {
         }
 
         mock.assert_calls_async(1).await;
+    }
+
+    #[test]
+    fn coalescer_degrades_after_per_flag_cap() {
+        let endpoint = Endpoint {
+            url: "http://agent:8126".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let ep = flagevaluation_endpoint(&endpoint).unwrap();
+        let coalescer = FlagEvaluationCoalescer::default();
+        coalescer.state.lock().unwrap().flush_running = true;
+
+        let mut events = Vec::with_capacity(PER_FLAG_CAP + 50);
+        for index in 0..(PER_FLAG_CAP + 50) {
+            let mut event = full_event();
+            event.evaluation_count = 1;
+            event.targeting_key = Some(format!("user-{index}"));
+            events.push(event);
+        }
+
+        coalescer.enqueue(
+            NativeCapabilities::new_client(),
+            ep,
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: events,
+            },
+        );
+
+        let batches = coalescer.take_batches();
+        assert_eq!(batches.len(), 1);
+        let events = &batches[0].1.flag_evaluations;
+        let full_events = events
+            .iter()
+            .filter(|event| event.targeting_key.is_some() || event.context.is_some())
+            .count();
+        let degraded = events
+            .iter()
+            .find(|event| event.targeting_key.is_none() && event.context.is_none())
+            .expect("overflow must be folded into a degraded bucket");
+
+        assert_eq!(full_events, PER_FLAG_CAP);
+        assert_eq!(degraded.evaluation_count, 50);
+        assert_eq!(
+            degraded.variant.as_ref().map(|v| v.key.as_str()),
+            Some("on")
+        );
+        assert_eq!(
+            degraded.allocation.as_ref().map(|a| a.key.as_str()),
+            Some("alloc-a")
+        );
+        assert_eq!(
+            degraded
+                .targeting_rule
+                .as_ref()
+                .map(|rule| rule.key.as_str()),
+            Some("rule-1")
+        );
     }
 
     #[tokio::test]
