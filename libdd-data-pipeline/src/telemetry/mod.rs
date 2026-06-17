@@ -322,6 +322,16 @@ impl TelemetryClient {
         Ok(())
     }
 
+    /// Send dropped P0 trace counts to telemetry.
+    pub fn send_p0_drops(&self, dropped_p0_traces: u64) -> Result<(), TelemetryError> {
+        if dropped_p0_traces > 0 {
+            let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
+            self.worker
+                .add_point(dropped_p0_traces as f64, key, vec![])?;
+        }
+        Ok(())
+    }
+
     /// Starts the client
     pub async fn start(&self) {
         _ = self

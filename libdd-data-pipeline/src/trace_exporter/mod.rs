@@ -622,6 +622,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             &self.client_side_stats.status,
             self.client_computed_top_level,
             &self.trace_filterer.load(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+            self.telemetry.as_ref(),
         );
 
         for chunk in &mut traces {
