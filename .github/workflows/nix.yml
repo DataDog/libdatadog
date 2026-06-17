@@ -5,6 +5,15 @@ on: # yamllint disable-line rule:truthy
     branches:
       - main
       - mq-working-branch-*
+  # Also run on PRs that touch the devshell or what it reads. Paths mirror the
+  # Nix CODEOWNERS entries, plus rust-toolchain.toml (read by the flake) and
+  # this workflow itself.
+  pull_request:
+    paths:
+      - "*.nix"
+      - "flake.*"
+      - "rust-toolchain.toml"
+      - ".github/workflows/nix.yml"
 
 # Default permissions for all jobs
 permissions: {}
