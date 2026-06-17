@@ -24,6 +24,7 @@ CLAUDE_BIN=$(which claude)
 # claude refuses --dangerously-skip-permissions as root; run under a non-root user
 CLAUDE_USER="claude-ci"
 useradd -m "$CLAUDE_USER" 2>/dev/null || true
+chmod o+x /root           # allow traversal into /root so claude-ci can reach nvm
 chmod -R a+rX "$NVM_DIR"  # allow claude-ci to read/execute node and claude
 chown -R "$CLAUDE_USER" artifacts/
 
