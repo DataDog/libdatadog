@@ -78,7 +78,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. The CI job posts the report as a GitHub PR comment; re-running the job updates the existing comment rather than creating a duplicate
   3. A dd-octo-sts policy file in `.github/chainguard/` grants `pull_requests: write` for PR branches (not restricted to main/release)
 
-**Plans**: TBD
+**Plans**: 1 plan
+
+- [ ] 04-01-PLAN.md — report.sh posts/updates the GitHub PR comment (gh api + HTML marker dedup, no-PR guard) + report.bats, wired into bench-analysis.yml after analyze.sh
 
 ## Progress
 
@@ -90,4 +92,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Auth & CI Scaffolding | 1/1 | Complete   | 2026-06-15 |
 | 2. Mock Data & Pre-processor | 1/1 | Complete   | 2026-06-16 |
 | 3. Claude Analysis | 0/1 | Not started | - |
-| 4. Reporting & GitHub Integration | 0/? | Not started | - |
+| 4. Reporting & GitHub Integration | 0/1 | Not started | - |
