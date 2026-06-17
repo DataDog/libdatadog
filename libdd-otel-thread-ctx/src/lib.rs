@@ -82,6 +82,11 @@ pub mod linux {
     // Stable `rustc` cannot select the TLS dialect for a `#[thread_local]` static, so we declare
     // the symbol directly in assembly (an 8-byte, zero-initialised slot in `.tbss`) and resolve
     // its per-thread address through TLSDESC in [`tls_slot`].
+    //
+    // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
+    // rely on these exact relocation-bearing instruction patterns for TLS relaxation, especially
+    // when this crate is linked statically. Harmless-looking rewrites can hide part of the sequence
+    // from the linker and produce a partially relaxed access that computes an invalid TLS address.
     #[cfg(all(
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")

@@ -3192,6 +3192,7 @@ name = "libdd-otel-thread-ctx-ffi"
 version = "1.0.0"
 dependencies = [
  "build_common",
+ "elf",
  "libdd-common-ffi",
  "libdd-otel-thread-ctx",
 ]
