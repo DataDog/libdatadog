@@ -91,6 +91,7 @@ pub mod linux {
         ".globl otel_thread_ctx_v1",
         ".type  otel_thread_ctx_v1, @tls_object",
         ".size  otel_thread_ctx_v1, 8",
+        ".balign 8",
         "otel_thread_ctx_v1:",
         ".zero  8",
         ".previous",
