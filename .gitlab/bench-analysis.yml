@@ -3,7 +3,7 @@ bench-analysis:
     - arch:amd64
   needs: []
   image:
-    name: registry.ddbuild.io/benchmarking-platform-tools-ubuntu:latest
+    name: registry.ddbuild.io/images/benchmarking-platform-tools-ubuntu:latest
   timeout: 10m
   script:
     - |
