@@ -24,6 +24,7 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 sanity-check = ["dep:libdd-common-ffi", "libdd-otel-thread-ctx/sanity-check"]
 
 [dev-dependencies]
+elf = "0.7"
 libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", features = ["sanity-check"] }
 
 [build-dependencies]

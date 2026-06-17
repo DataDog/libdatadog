@@ -8,6 +8,9 @@ use std::env;
 fn main() {
     generate_and_configure_header("otel-thread-ctx.h");
 
+    let cross_compiling = env::var("HOST").unwrap() != env::var("TARGET").unwrap();
+    println!("cargo:rustc-env=LIBDD_OTEL_THREAD_CTX_FFI_CROSS_COMPILING={cross_compiling}");
+
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     if target_os != "linux" {
         return;
