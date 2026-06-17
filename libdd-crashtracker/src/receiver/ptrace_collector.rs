@@ -129,6 +129,12 @@ fn wait_for_stop(tid: libc::pid_t, deadline: Instant) -> Result<(), PtraceError>
 /// to enter ptrace-stop state before returning.
 ///
 /// `stop_deadline` bounds how long we poll for the stop event.
+///
+/// After the thread enters ptrace-stop, this function also polls until the
+/// instruction pointer is non-zero. On older kernels there may be a race where
+/// `waitpid` returns WIFSTOPPED but the thread's register state hasn't been fully
+/// flushed to the ptrace-accessible area yet. Reading registers in that window
+/// yields zeros, which causes libunwind to produce an empty stack trace.
 fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceError> {
     // PTRACE_SEIZE attaches without stopping the thread
     let result = unsafe {
@@ -163,7 +169,39 @@ fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceE
         let _ = detach_thread(tid);
         return Err(e);
     }
+
+    // On older kernels, the register state may not be
+    // immediately readable after waitpid reports the stop. Spin briefly
+    // until PEEKUSER returns a non-zero IP, proving registers are committed.
+    wait_for_registers(tid, stop_deadline);
+
     Ok(())
+}
+
+/// Poll the thread's instruction pointer using PTRACE_PEEKUSER until it is
+/// non-zero or the deadline expires. On modern kernels this should return on the
+/// first iteration; on older ones, it may take a few microseconds.
+fn wait_for_registers(tid: libc::pid_t, deadline: Instant) {
+    #[cfg(target_arch = "x86_64")]
+    const IP_OFFSET: libc::c_long = 16 * std::mem::size_of::<libc::c_long>() as libc::c_long; // RIP
+
+    #[cfg(target_arch = "aarch64")]
+    const IP_OFFSET: libc::c_long = 32 * std::mem::size_of::<libc::c_long>() as libc::c_long; // PC
+
+    const SPIN_SLEEP: Duration = Duration::from_micros(100);
+
+    loop {
+        unsafe { *libc::__errno_location() = 0 };
+        let ip = unsafe { libc::ptrace(libc::PTRACE_PEEKUSER, tid as libc::c_long, IP_OFFSET, 0) };
+        // PEEKUSER returns the register value; errno==0 means success.
+        if ip != 0 && unsafe { *libc::__errno_location() } == 0 {
+            return;
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(SPIN_SLEEP);
+    }
 }
 
 fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {

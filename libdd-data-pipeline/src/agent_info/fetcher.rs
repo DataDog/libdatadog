@@ -195,7 +195,6 @@ pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
-    trigger_tx: mpsc::Sender<()>,
     /// `C` lives on the struct because `Worker::run(&mut self)` (a fixed trait
     /// signature) calls `fetch_info_with_state::<C>()` internally.
     _phantom: PhantomData<C>,
@@ -216,7 +215,6 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
             info_endpoint,
             refresh_interval,
             trigger_rx: Some(trigger_rx),
-            trigger_tx: trigger_tx.clone(),
             _phantom: PhantomData,
         };
 
@@ -269,16 +267,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
                 sleeper.sleep(self.refresh_interval).await;
             }
         }
-    }
-
-    async fn on_pause(&mut self) {
-        // Release the IoStack waker stored in trigger_rx by waking the channel and drain the
-        // message to avoid a spurious fetch on restart. If the channel is not empty then it has
-        // already been waked.
-        if self.trigger_rx.as_ref().is_some_and(|rx| rx.is_empty()) {
-            let _ = self.trigger_tx.try_send(());
-            self.drain();
-        };
     }
 
     async fn run(&mut self) {

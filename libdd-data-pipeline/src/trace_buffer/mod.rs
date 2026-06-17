@@ -42,13 +42,16 @@ where
         size += self.resource.as_ref().len();
         size += self.r#type.as_ref().len();
 
-        for (k, v) in &self.meta {
+        // We expect VecMaps to be already deduped at this point, so `defensive_dedup` should be
+        // cheap (and alloc-free). In the future we could relax the check and accept non-deduped
+        // VecMap, trading over-estimating the size of a span for less work.
+        for (k, v) in self.meta.defensive_dedup().iter() {
             size += k.as_ref().len() + v.as_ref().len();
         }
-        for k in self.metrics.keys() {
+        for (k, _) in self.metrics.defensive_dedup().iter() {
             size += k.as_ref().len() + 8;
         }
-        for (k, v) in &self.meta_struct {
+        for (k, v) in self.meta_struct.defensive_dedup().iter() {
             size += k.as_ref().len() + v.as_ref().len();
         }
         for link in &self.span_links {

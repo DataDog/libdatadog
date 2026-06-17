@@ -1,7 +1,6 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +13,7 @@ use libdd_data_pipeline::trace_exporter::{
 use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
 use libdd_tinybytes::BytesString;
 use libdd_trace_utils::span::v04::SpanBytes;
+use libdd_trace_utils::span::vec_map::VecMap;
 
 // Number of chunks each sender thread sends per benchmark iteration.
 const CHUNKS_PER_SENDER: usize = 900;
@@ -34,18 +34,20 @@ fn make_span() -> SpanBytes {
         start: 1_700_000_000_000_000_000_i64,
         duration: 5_000_000_i64,
         error: 0,
-        meta: HashMap::from_iter([
+        meta: vec![
             (bs("env"), bs("prod")),
             (bs("version"), bs("1.0.0")),
             (bs("http.method"), bs("GET")),
             (bs("http.url"), bs("/api/v1/users")),
             (bs("peer.service"), bs("users-service")),
-        ]),
-        metrics: HashMap::from_iter([
+        ]
+        .into(),
+        metrics: vec![
             (bs("_sampling_priority_v1"), 1.0_f64),
             (bs("_dd.agent_psr"), 1.0_f64),
-        ]),
-        meta_struct: HashMap::new(),
+        ]
+        .into(),
+        meta_struct: VecMap::new(),
         span_links: vec![],
         span_events: vec![],
     }

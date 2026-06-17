@@ -22,6 +22,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
 use libdd_shared_runtime::{DefaultRuntime, SharedRuntime};
+use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -522,6 +523,7 @@ impl TraceExporterBuilder {
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
+            trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
         })
     }
 
