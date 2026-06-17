@@ -19,11 +19,10 @@ mkdir -p artifacts
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
 
-CLAUDE_ALLOW_ROOT=1 claude --bare -p "$(printf 'Read %s using the Read tool, then write a benchmark analysis report to %s.\n\n<pr_diff>\n%s\n</pr_diff>' "${COMPARISON}" "${REPORT}" "${PR_DIFF}")" \
+claude --bare -p "$(printf 'Read %s using the Read tool, then write a benchmark analysis report to %s.\n\n<pr_diff>\n%s\n</pr_diff>' "${COMPARISON}" "${REPORT}" "${PR_DIFF}")" \
   --system-prompt-file "${PROMPT_FILE}" \
   --model anthropic/claude-sonnet-4-6 \
-  --allowedTools "Read,Write" \
-  --permission-mode bypassPermissions
+  --allowedTools "Read,Write"
 
 if [ ! -s "${REPORT}" ]; then
   echo "ERROR: ${REPORT} is empty — Claude produced no output" >&2
