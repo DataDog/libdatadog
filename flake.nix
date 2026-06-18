@@ -31,6 +31,16 @@
         mkShell = rust-toolchain:
           pkgs.mkShell {
             name = "libdatadog-devshell";
+            # The stdenv cc-wrapper injects -D_FORTIFY_SOURCE, which glibc rejects
+            # when compiling without optimization. Some build scripts (e.g.
+            # spawn_worker's trampoline.c) compile C at -O0 with -Werror, so the
+            # resulting fortify #warning becomes a hard error. Disable fortify
+            # hardening in the shell so those builds succeed.
+            hardeningDisable = [
+              "fortify"
+              "fortify3"
+            ];
+
             packages = [
               rust-toolchain
               pkgs.rust-cbindgen
