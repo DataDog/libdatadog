@@ -3422,7 +3422,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "anyhow",
  "arc-swap",
