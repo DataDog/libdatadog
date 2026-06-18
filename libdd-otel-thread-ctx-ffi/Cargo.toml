@@ -26,6 +26,7 @@ sanity-check = ["dep:libdd-common-ffi", "libdd-otel-thread-ctx/sanity-check"]
 [dev-dependencies]
 elf = "0.7"
 libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", features = ["sanity-check"] }
+object = { version = "0.36", default-features = false, features = ["archive", "read_core"] }
 
 [build-dependencies]
 build_common = { path = "../build-common" }
