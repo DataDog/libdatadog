@@ -6,13 +6,14 @@ on: # yamllint disable-line rule:truthy
       - main
       - mq-working-branch-*
   # Also run on PRs that touch the devshell or what it reads. Paths mirror the
-  # Nix CODEOWNERS entries, plus rust-toolchain.toml (read by the flake) and
+  # Nix CODEOWNERS entries, plus the toolchain files (read by the flake) and
   # this workflow itself.
   pull_request:
     paths:
       - "*.nix"
       - "flake.*"
       - "rust-toolchain.toml"
+      - "nightly-toolchain.toml"
       - ".github/workflows/nix.yml"
 
 # Default permissions for all jobs
@@ -71,6 +72,8 @@ jobs:
           nix develop --command rustc --version
           nix develop --command cargo --version
           nix develop --command cbindgen --version
+      - name: Check nightly formatter toolchain
+        run: nix develop .#nightly --command cargo fmt --version
       - name: Build workspace
         run: nix develop --command cargo build --workspace --exclude builder
 
