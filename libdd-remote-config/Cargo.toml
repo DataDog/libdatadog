@@ -54,6 +54,9 @@ serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = "3"
 thiserror = "2"
 hashbrown = "0.15"
+# `EnumIter` for external consumers to make struct available to runtime
+strum = { version = "0.26", default-features = false }
+strum_macros = "0.26"
 
 # Test feature
 hyper-util = { workspace = true, features = ["service"], optional = true }
