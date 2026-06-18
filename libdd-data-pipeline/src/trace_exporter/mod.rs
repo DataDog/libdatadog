@@ -547,14 +547,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r.runtime_id = self.metadata.runtime_id.clone();
             r
         };
-        let request = map_traces_to_otlp(traces, &resource_info);
         let body = match config.protocol {
-            OtlpProtocol::HttpJson => libdd_trace_utils::otlp_encoder::encode_otlp_json(&request)
-                .map_err(|e| {
-                error!("OTLP JSON serialization error: {e}");
-                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-            })?,
+            OtlpProtocol::HttpJson => {
+                let request = map_traces_to_otlp(traces, &resource_info);
+                libdd_trace_utils::otlp_encoder::encode_otlp_json(&request).map_err(|e| {
+                    error!("OTLP JSON serialization error: {e}");
+                    TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+                        e.to_string(),
+                    ))
+                })?
+            }
             OtlpProtocol::HttpProtobuf => {
+                let request = libdd_trace_utils::otlp_encoder::map_traces_to_otlp_proto(
+                    traces,
+                    &resource_info,
+                );
                 libdd_trace_utils::otlp_encoder::encode_otlp_protobuf(&request)
             }
             OtlpProtocol::Grpc => {

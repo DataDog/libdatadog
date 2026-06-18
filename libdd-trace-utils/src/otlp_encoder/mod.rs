@@ -5,10 +5,11 @@
 
 pub mod json_types;
 pub mod mapper;
-pub mod proto_convert;
+pub mod proto_mapper;
 
 pub use json_types::ExportTraceServiceRequest;
 pub use mapper::map_traces_to_otlp;
+pub use proto_mapper::map_traces_to_otlp_proto;
 
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoExportTraceServiceRequest;
 use prost::Message;
@@ -18,10 +19,9 @@ pub fn encode_otlp_json(req: &ExportTraceServiceRequest) -> serde_json::Result<V
     serde_json::to_vec(req)
 }
 
-/// Serialize an OTLP request to the HTTP/protobuf wire format.
-pub fn encode_otlp_protobuf(req: &ExportTraceServiceRequest) -> Vec<u8> {
-    let proto: ProtoExportTraceServiceRequest = req.into();
-    proto.encode_to_vec()
+/// Serialize a prost OTLP request to the HTTP/protobuf wire format.
+pub fn encode_otlp_protobuf(req: &ProtoExportTraceServiceRequest) -> Vec<u8> {
+    req.encode_to_vec()
 }
 
 #[cfg(test)]
@@ -33,7 +33,7 @@ mod encode_tests {
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as ProtoValue;
     use prost::Message;
 
-    fn sample() -> ExportTraceServiceRequest {
+    fn sample_native() -> (Vec<Vec<Span<BytesData>>>, OtlpResourceInfo) {
         let resource_info = OtlpResourceInfo {
             service: "svc".to_string(),
             ..Default::default()
@@ -56,14 +56,15 @@ mod encode_tests {
             "http.method".into(),
             libdd_tinybytes::BytesString::from_static("GET"),
         );
-        map_traces_to_otlp(vec![vec![span]], &resource_info)
+        (vec![vec![span]], resource_info)
     }
 
     #[test]
     fn json_and_protobuf_carry_same_span() {
-        let req = sample();
-        let json = encode_otlp_json(&req).unwrap();
-        let pb = encode_otlp_protobuf(&req);
+        // Build the JSON request and the prost request from the same native spans.
+        let (chunks, resource_info) = sample_native();
+        let json = encode_otlp_json(&map_traces_to_otlp(chunks.clone(), &resource_info)).unwrap();
+        let pb = encode_otlp_protobuf(&map_traces_to_otlp_proto(chunks, &resource_info));
 
         let json_v: serde_json::Value = serde_json::from_slice(&json).unwrap();
         let jspan = &json_v["resourceSpans"][0]["scopeSpans"][0]["spans"][0];

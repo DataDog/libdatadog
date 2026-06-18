@@ -4,8 +4,8 @@
 //! Maps Datadog trace/spans to OTLP ExportTraceServiceRequest.
 
 use super::json_types::{
-    self, AnyValue, ExportTraceServiceRequest, InstrumentationScope, KeyValue, OtlpSpan,
-    OtlpSpanEvent, OtlpSpanLink, Resource, ResourceSpans, ScopeSpans, Status,
+    self, AnyValue, ArrayValue, ExportTraceServiceRequest, InstrumentationScope, KeyValue,
+    OtlpSpan, OtlpSpanEvent, OtlpSpanLink, Resource, ResourceSpans, ScopeSpans, Status,
 };
 use super::OtlpResourceInfo;
 use crate::span::v04::{Span, SpanEvent, SpanLink};
@@ -13,7 +13,191 @@ use crate::span::TraceData;
 use std::borrow::Borrow;
 
 /// Maximum number of attributes per span; excess are dropped and counted.
-const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
+pub(crate) const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
+
+// ─── Representation-neutral helpers ──────────────────────────────────────────
+
+/// Representation-neutral attribute value. Both the JSON (`json_types`) and protobuf (prost)
+/// assemblers convert from this single classification so the two encoders cannot drift.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum AttrValue {
+    Str(String),
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+    Bytes(Vec<u8>),
+    Array(Vec<AttrValue>),
+}
+
+/// Collect a span's OTLP attributes as ordered (key, neutral-value) pairs plus the dropped count.
+/// Mirrors the prior `map_attributes`: per-span service.name (when it differs from the resource
+/// service), operation.name, span.type, resource.name, then meta (string), metrics (int/double),
+/// meta_struct (bytes), capped at `MAX_ATTRIBUTES_PER_SPAN`.
+pub(crate) fn collect_span_attributes<T: TraceData>(
+    span: &Span<T>,
+    resource_service: &str,
+) -> (Vec<(String, AttrValue)>, usize) {
+    let mut attrs: Vec<(String, AttrValue)> = Vec::new();
+    let span_service = span.service.borrow();
+    let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
+    if has_per_span_service {
+        attrs.push((
+            "service.name".to_string(),
+            AttrValue::Str(span_service.to_string()),
+        ));
+    }
+    let operation_name = span.name.borrow();
+    let has_operation_name = !operation_name.is_empty();
+    if has_operation_name {
+        attrs.push((
+            "operation.name".to_string(),
+            AttrValue::Str(operation_name.to_string()),
+        ));
+    }
+    let span_type = span.r#type.borrow();
+    let has_span_type = !span_type.is_empty();
+    if has_span_type {
+        attrs.push((
+            "span.type".to_string(),
+            AttrValue::Str(span_type.to_string()),
+        ));
+    }
+    let resource_name = span.resource.borrow();
+    let has_resource_name = !resource_name.is_empty();
+    if has_resource_name {
+        attrs.push((
+            "resource.name".to_string(),
+            AttrValue::Str(resource_name.to_string()),
+        ));
+    }
+    for (k, v) in span.meta.iter() {
+        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
+            break;
+        }
+        attrs.push((
+            k.borrow().to_string(),
+            AttrValue::Str(v.borrow().to_string()),
+        ));
+    }
+    for (k, v) in span.metrics.iter() {
+        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
+            break;
+        }
+        let value = if v.fract() == 0.0 && (*v >= i64::MIN as f64 && *v <= i64::MAX as f64) {
+            AttrValue::Int(*v as i64)
+        } else {
+            AttrValue::Double(*v)
+        };
+        attrs.push((k.borrow().to_string(), value));
+    }
+    for (k, v) in span.meta_struct.iter() {
+        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
+            break;
+        }
+        attrs.push((
+            k.borrow().to_string(),
+            AttrValue::Bytes(v.borrow().to_vec()),
+        ));
+    }
+    let total = (has_per_span_service as usize)
+        + (has_operation_name as usize)
+        + (has_span_type as usize)
+        + (has_resource_name as usize)
+        + span.meta.len()
+        + span.metrics.len()
+        + span.meta_struct.len();
+    let dropped = total.saturating_sub(attrs.len());
+    (attrs, dropped)
+}
+
+/// Collect a span event's attributes as neutral (key, value) pairs.
+pub(crate) fn collect_event_attributes<T: TraceData>(
+    ev: &SpanEvent<T>,
+) -> Vec<(String, AttrValue)> {
+    use crate::span::v04::{AttributeAnyValue, AttributeArrayValue};
+    fn single<T: TraceData>(av: &AttributeArrayValue<T>) -> AttrValue {
+        match av {
+            AttributeArrayValue::String(s) => AttrValue::Str(s.borrow().to_string()),
+            AttributeArrayValue::Boolean(b) => AttrValue::Bool(*b),
+            AttributeArrayValue::Integer(i) => AttrValue::Int(*i),
+            AttributeArrayValue::Double(d) => AttrValue::Double(*d),
+        }
+    }
+    ev.attributes
+        .iter()
+        .map(|(k, v)| {
+            let value = match v {
+                AttributeAnyValue::SingleValue(av) => single(av),
+                AttributeAnyValue::Array(items) => {
+                    AttrValue::Array(items.iter().map(single).collect())
+                }
+            };
+            (k.borrow().to_string(), value)
+        })
+        .collect()
+}
+
+/// OTLP status (code, optional message) for a span. ERROR with `error.msg` when `span.error != 0`,
+/// otherwise UNSET.
+pub(crate) fn span_status<T: TraceData>(span: &Span<T>) -> (i32, Option<String>) {
+    if span.error != 0 {
+        (
+            json_types::status_code::ERROR,
+            span.meta.get("error.msg").map(|v| v.borrow().to_string()),
+        )
+    } else {
+        (json_types::status_code::UNSET, None)
+    }
+}
+
+/// OTLP SpanKind for a span: prefer the explicit `span.kind` meta tag, else the DD span type.
+pub(crate) fn span_kind<T: TraceData>(span: &Span<T>) -> i32 {
+    span.meta
+        .get("span.kind")
+        .map(|v| tag_to_otlp_kind(v.borrow()))
+        .unwrap_or_else(|| dd_type_to_otlp_kind(span.r#type.borrow()))
+}
+
+/// Resolve the high 64 bits of the chunk's 128-bit trace id (native field or `_dd.p.tid`).
+pub(crate) fn chunk_trace_id_high<T: TraceData>(chunk: &[Span<T>]) -> u64 {
+    chunk
+        .iter()
+        .find_map(|s| {
+            let high = (s.trace_id >> 64) as u64;
+            if high != 0 {
+                return Some(high);
+            }
+            s.meta
+                .get("_dd.p.tid")
+                .and_then(|v| u64::from_str_radix(v.borrow(), 16).ok())
+        })
+        .unwrap_or(0)
+}
+
+// ─── JSON adapter ────────────────────────────────────────────────────────────
+
+/// Convert a neutral attribute value to the serde JSON model.
+fn json_value(v: AttrValue) -> AnyValue {
+    match v {
+        AttrValue::Str(s) => AnyValue::StringValue(s),
+        AttrValue::Bool(b) => AnyValue::BoolValue(b),
+        AttrValue::Int(i) => AnyValue::IntValue(i),
+        AttrValue::Double(d) => AnyValue::DoubleValue(d),
+        AttrValue::Bytes(b) => AnyValue::BytesValue(b),
+        AttrValue::Array(items) => AnyValue::ArrayValue(ArrayValue {
+            values: items.into_iter().map(json_value).collect(),
+        }),
+    }
+}
+
+fn json_kv((key, value): (String, AttrValue)) -> KeyValue {
+    KeyValue {
+        key,
+        value: json_value(value),
+    }
+}
+
+// ─── Public mapper ────────────────────────────────────────────────────────────
 
 /// Maps Datadog trace chunks and resource info to an OTLP ExportTraceServiceRequest.
 ///
@@ -37,18 +221,7 @@ pub fn map_traces_to_otlp<T: TraceData>(
         // Resolve the high 64 bits of the 128-bit trace ID once per chunk. For each span,
         // prefer the native u128 `trace_id` field (e.g. Python's native spans hold the full
         // 128-bit ID there) and fall back to its RFC #85 `_dd.p.tid` meta tag.
-        let chunk_trace_id_high: u64 = chunk
-            .iter()
-            .find_map(|s| {
-                let high = (s.trace_id >> 64) as u64;
-                if high != 0 {
-                    return Some(high);
-                }
-                s.meta
-                    .get("_dd.p.tid")
-                    .and_then(|v| u64::from_str_radix(v.borrow(), 16).ok())
-            })
-            .unwrap_or(0);
+        let chunk_trace_id_high = chunk_trace_id_high(chunk);
         for span in chunk {
             all_spans.push(map_span(span, &resource_info.service, chunk_trace_id_high));
         }
@@ -132,25 +305,13 @@ fn map_span<T: TraceData>(
     let end_nano = span.start + span.duration;
     let start_time_unix_nano = start_nano.to_string();
     let end_time_unix_nano = end_nano.to_string();
-    // Prefer explicit "span.kind" tag (set by OTEL-instrumented tracers); fall back to
-    // the Datadog span type field for DD-instrumented spans.
-    let kind = span
-        .meta
-        .get("span.kind")
-        .map(|v| tag_to_otlp_kind(v.borrow()))
-        .unwrap_or_else(|| dd_type_to_otlp_kind(span.r#type.borrow()));
-    let (attributes, dropped_attributes_count) = map_attributes(span, resource_service);
-    let error_msg = span.meta.get("error.msg").map(|v| v.borrow().to_string());
-    let status = if span.error != 0 {
-        Status {
-            message: error_msg,
-            code: json_types::status_code::ERROR,
-        }
-    } else {
-        Status {
-            message: None,
-            code: json_types::status_code::UNSET,
-        }
+    let kind = span_kind(span);
+    let (attrs, dropped_attributes_count) = collect_span_attributes(span, resource_service);
+    let attributes = attrs.into_iter().map(json_kv).collect();
+    let (status_code, status_message) = span_status(span);
+    let status = Status {
+        message: status_message,
+        code: status_code,
     };
     // Set flags from sampling priority: 1 = sampled/keep, 0 = dropped.
     let flags = span
@@ -203,9 +364,11 @@ fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> OtlpSpanLink {
     let attributes: Vec<KeyValue> = link
         .attributes
         .iter()
-        .map(|(k, v)| KeyValue {
-            key: k.borrow().to_string(),
-            value: AnyValue::StringValue(v.borrow().to_string()),
+        .map(|(k, v)| {
+            json_kv((
+                k.borrow().to_string(),
+                AttrValue::Str(v.borrow().to_string()),
+            ))
         })
         .collect();
     OtlpSpanLink {
@@ -221,10 +384,9 @@ fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>
     const MAX_EVENTS_PER_SPAN: usize = 128;
     let mut otlp_events = Vec::with_capacity(events.len().min(MAX_EVENTS_PER_SPAN));
     for ev in events.iter().take(MAX_EVENTS_PER_SPAN) {
-        let attributes: Vec<KeyValue> = ev
-            .attributes
-            .iter()
-            .map(|(k, v)| event_attr_to_key_value(k, v))
+        let attributes: Vec<KeyValue> = collect_event_attributes(ev)
+            .into_iter()
+            .map(json_kv)
             .collect();
         otlp_events.push(OtlpSpanEvent {
             time_unix_nano: ev.time_unix_nano.to_string(),
@@ -235,37 +397,6 @@ fn map_span_events<T: TraceData>(events: &[SpanEvent<T>]) -> (Vec<OtlpSpanEvent>
     }
     let dropped = events.len().saturating_sub(otlp_events.len());
     (otlp_events, dropped)
-}
-
-fn event_attr_to_key_value<T: TraceData>(
-    k: &T::Text,
-    v: &crate::span::v04::AttributeAnyValue<T>,
-) -> KeyValue {
-    use crate::span::v04::AttributeArrayValue;
-    let value = match v {
-        crate::span::v04::AttributeAnyValue::SingleValue(av) => match av {
-            AttributeArrayValue::String(s) => AnyValue::StringValue(s.borrow().to_string()),
-            AttributeArrayValue::Boolean(b) => AnyValue::BoolValue(*b),
-            AttributeArrayValue::Integer(i) => AnyValue::IntValue(*i),
-            AttributeArrayValue::Double(d) => AnyValue::DoubleValue(*d),
-        },
-        crate::span::v04::AttributeAnyValue::Array(items) => {
-            let values = items
-                .iter()
-                .map(|item| match item {
-                    AttributeArrayValue::String(s) => AnyValue::StringValue(s.borrow().to_string()),
-                    AttributeArrayValue::Boolean(b) => AnyValue::BoolValue(*b),
-                    AttributeArrayValue::Integer(i) => AnyValue::IntValue(*i),
-                    AttributeArrayValue::Double(d) => AnyValue::DoubleValue(*d),
-                })
-                .collect();
-            AnyValue::ArrayValue(crate::otlp_encoder::json_types::ArrayValue { values })
-        }
-    };
-    KeyValue {
-        key: k.borrow().to_string(),
-        value,
-    }
 }
 
 /// Maps the explicit "span.kind" meta tag (set by OTEL-instrumented tracers) to an OTLP SpanKind.
@@ -289,84 +420,6 @@ fn dd_type_to_otlp_kind(t: &str) -> i32 {
         "consumer" => json_types::span_kind::CONSUMER,
         _ => json_types::span_kind::INTERNAL,
     }
-}
-
-fn map_attributes<T: TraceData>(span: &Span<T>, resource_service: &str) -> (Vec<KeyValue>, usize) {
-    let mut attrs: Vec<KeyValue> = Vec::new();
-    // Add service.name when the span's service differs from the resource-level service.
-    let span_service = span.service.borrow();
-    let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
-    if has_per_span_service {
-        attrs.push(KeyValue {
-            key: "service.name".to_string(),
-            value: AnyValue::StringValue(span_service.to_string()),
-        });
-    }
-    let operation_name = span.name.borrow();
-    let has_operation_name = !operation_name.is_empty();
-    if has_operation_name {
-        attrs.push(KeyValue {
-            key: "operation.name".to_string(),
-            value: AnyValue::StringValue(operation_name.to_string()),
-        });
-    }
-    let span_type = span.r#type.borrow();
-    let has_span_type = !span_type.is_empty();
-    if has_span_type {
-        attrs.push(KeyValue {
-            key: "span.type".to_string(),
-            value: AnyValue::StringValue(span_type.to_string()),
-        });
-    }
-    let resource_name = span.resource.borrow();
-    let has_resource_name = !resource_name.is_empty();
-    if has_resource_name {
-        attrs.push(KeyValue {
-            key: "resource.name".to_string(),
-            value: AnyValue::StringValue(resource_name.to_string()),
-        });
-    }
-    for (k, v) in span.meta.iter() {
-        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
-            break;
-        }
-        attrs.push(KeyValue {
-            key: k.borrow().to_string(),
-            value: AnyValue::StringValue(v.borrow().to_string()),
-        });
-    }
-    for (k, v) in span.metrics.iter() {
-        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
-            break;
-        }
-        let value = if v.fract() == 0.0 && (*v >= i64::MIN as f64 && *v <= i64::MAX as f64) {
-            AnyValue::IntValue(*v as i64)
-        } else {
-            AnyValue::DoubleValue(*v)
-        };
-        attrs.push(KeyValue {
-            key: k.borrow().to_string(),
-            value,
-        });
-    }
-    for (k, v) in span.meta_struct.iter() {
-        if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
-            break;
-        }
-        attrs.push(KeyValue {
-            key: k.borrow().to_string(),
-            value: AnyValue::BytesValue(v.borrow().to_vec()),
-        });
-    }
-    let total = (if has_per_span_service { 1 } else { 0 })
-        + (if has_operation_name { 1 } else { 0 })
-        + (if has_span_type { 1 } else { 0 })
-        + (if has_resource_name { 1 } else { 0 })
-        + span.meta.len()
-        + span.metrics.len()
-        + span.meta_struct.len();
-    let dropped = total.saturating_sub(attrs.len());
-    (attrs, dropped)
 }
 
 #[cfg(test)]
