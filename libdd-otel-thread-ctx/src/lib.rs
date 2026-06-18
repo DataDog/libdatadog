@@ -82,11 +82,6 @@ pub mod linux {
     // Stable `rustc` cannot select the TLS dialect for a `#[thread_local]` static, so we declare
     // the symbol directly in assembly (an 8-byte, zero-initialised slot in `.tbss`) and resolve
     // its per-thread address through TLSDESC in [`tls_slot`].
-    //
-    // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
-    // rely on these exact relocation-bearing instruction patterns for TLS relaxation, especially
-    // when this crate is linked statically. Harmless-looking rewrites can hide part of the sequence
-    // from the linker and produce a partially relaxed access that computes an invalid TLS address.
     #[cfg(all(
         target_os = "linux",
         any(target_arch = "x86_64", target_arch = "aarch64")
@@ -108,6 +103,11 @@ pub mod linux {
     #[inline(always)]
     unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
         let ptr: usize;
+        // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
+        // rely on these exact relocation-bearing instruction patterns for TLS relaxation,
+        // especially when this crate is linked statically. Harmless-looking rewrites can hide part
+        // of the sequence from the linker and produce a partially relaxed access that computes an
+        // invalid TLS address.
         core::arch::asm!(
             "leaq otel_thread_ctx_v1@tlsdesc(%rip), %rax",
             "call *otel_thread_ctx_v1@TLSCALL(%rax)",
@@ -124,6 +124,7 @@ pub mod linux {
     #[inline(always)]
     unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
         let ptr: usize;
+        // WARNING: do not change the assembly below. See the warning above for amd64.
         core::arch::asm!(
             "mrs   x1, tpidr_el0",
             "adrp  x0, :tlsdesc:otel_thread_ctx_v1",

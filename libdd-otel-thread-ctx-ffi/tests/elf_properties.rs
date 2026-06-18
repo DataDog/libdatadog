@@ -10,14 +10,16 @@
 //! - `otel_thread_ctx_v1` is exported in the dynamic symbol table as a TLS GLOBAL symbol.
 //! - `otel_thread_ctx_v1` follows the TLSDESC access model: if there is a relocation for it, it is
 //!   a TLSDESC relocation.
-//! - A native executable that statically links libdd-otel-thread-ctx-ffi without exporting
-//!   `otel_thread_ctx_v1` has libdd's TLSDESC access relaxed to local-exec TLS, leaving no
-//!   relocation for `otel_thread_ctx_v1`.
+//! - The Rust inline-asm TLSDESC access sequence byte-for-byte matches what a C compiler generates
+//!   (guaranteeing that linker TLS relaxation works identically to a compiler-generated access).
 //!
 //! Library artifact paths are derived at runtime from the test executable location.
 //! The test binary and crate artifacts live in `target/<[triple/]profile>/deps/`.
 
-#![cfg(target_os = "linux")]
+#![cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 
 use std::{
     fmt,
@@ -52,12 +54,6 @@ struct TlsDescRelocation {
 struct TlsDescSequence {
     bytes: Vec<u8>,
     relocations: Vec<TlsDescRelocation>,
-}
-
-#[derive(Debug)]
-struct ArchiveMemberRelocations {
-    member_name: String,
-    relocation_types: Vec<RelocationType>,
 }
 
 fn deps_dir() -> PathBuf {
@@ -122,26 +118,6 @@ fn skip_tls_shim_asm_test() -> bool {
         eprintln!("skipping test: {SKIP_TLS_SHIM_ASM_TEST_ENV} is set");
     }
     skip
-}
-
-fn command_output(command: &mut Command) -> String {
-    let out = command
-        .output()
-        .unwrap_or_else(|e| panic!("failed to run {command:?}: {e}"));
-    assert!(
-        out.status.success(),
-        "{command:?} failed with status {}\nstdout:\n{}\nstderr:\n{}",
-        out.status,
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).into_owned()
-}
-
-fn objdump(args: &[&str], path: &Path) -> String {
-    let mut command = Command::new("objdump");
-    command.args(args).arg(path);
-    command_output(&mut command)
 }
 
 fn assert_command_success(command: &mut Command) {
@@ -211,77 +187,6 @@ fn symbol_indexes_in_table(
                 .map(|_| index as u32)
         })
         .collect()
-}
-
-fn relocation_types_for_symbol_in_elf(
-    data: &[u8],
-    symbol: &str,
-    label: &str,
-) -> Vec<RelocationType> {
-    let elf = parse_elf(data, label);
-    let Some(section_headers) = elf.section_headers() else {
-        panic!("{label} has no ELF section headers");
-    };
-    let mut relocation_types = Vec::new();
-
-    for section_header in section_headers
-        .iter()
-        .filter(|shdr| matches!(shdr.sh_type, abi::SHT_REL | abi::SHT_RELA))
-    {
-        let symbol_indexes =
-            symbol_indexes_in_table(&elf, section_header.sh_link as usize, symbol, label);
-        if symbol_indexes.is_empty() {
-            continue;
-        }
-
-        match section_header.sh_type {
-            abi::SHT_REL => {
-                let rels = elf
-                    .section_data_as_rels(&section_header)
-                    .unwrap_or_else(|e| panic!("failed to read REL relocations in {label}: {e}"));
-                relocation_types.extend(
-                    rels.filter(|rel| symbol_indexes.contains(&rel.r_sym))
-                        .map(|rel| RelocationType(rel.r_type)),
-                );
-            }
-            abi::SHT_RELA => {
-                let relas = elf
-                    .section_data_as_relas(&section_header)
-                    .unwrap_or_else(|e| panic!("failed to read RELA relocations in {label}: {e}"));
-                relocation_types.extend(
-                    relas
-                        .filter(|rela| symbol_indexes.contains(&rela.r_sym))
-                        .map(|rela| RelocationType(rela.r_type)),
-                );
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    relocation_types
-}
-
-fn relocation_types_for_symbol_in_file(path: &Path, symbol: &str) -> Vec<RelocationType> {
-    let data =
-        std::fs::read(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-    relocation_types_for_symbol_in_elf(&data, symbol, &path.display().to_string())
-}
-
-fn archive_relocation_types_for_symbol(path: &Path, symbol: &str) -> Vec<ArchiveMemberRelocations> {
-    let mut relocations = Vec::new();
-
-    for_each_archive_elf_member(path, |member_name, member_data| {
-        let label = format!("{}({member_name})", path.display());
-        let relocation_types = relocation_types_for_symbol_in_elf(member_data, symbol, &label);
-        if !relocation_types.is_empty() {
-            relocations.push(ArchiveMemberRelocations {
-                member_name: member_name.to_owned(),
-                relocation_types,
-            });
-        }
-    });
-
-    relocations
 }
 
 fn for_each_archive_elf_member(path: &Path, mut f: impl FnMut(&str, &[u8])) {
@@ -530,88 +435,6 @@ fn compile_tls_shim_object(dir: &Path) -> PathBuf {
     object
 }
 
-fn format_relocations(relocations: &[ArchiveMemberRelocations]) -> String {
-    if relocations.is_empty() {
-        return "<none>".to_owned();
-    }
-
-    relocations
-        .iter()
-        .map(|relocations| {
-            format!(
-                "{}: {:?}",
-                relocations.member_name, relocations.relocation_types
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn is_disassembly_header_for(line: &str, name: &str) -> bool {
-    let Some((_, symbol)) = line.split_once('<') else {
-        return false;
-    };
-    let Some(symbol) = symbol.strip_suffix(">:") else {
-        return false;
-    };
-    symbol == name
-        || symbol
-            .strip_prefix(name)
-            .is_some_and(|suffix| suffix.starts_with("::"))
-}
-
-fn disassembled_functions(output: &str, name: &str) -> Vec<String> {
-    let mut functions = Vec::new();
-    let mut current_function = Vec::new();
-
-    for line in output.lines() {
-        if is_disassembly_header_for(line, name) {
-            if !current_function.is_empty() {
-                functions.push(current_function.join("\n"));
-                current_function.clear();
-            }
-            current_function.push(line);
-            continue;
-        }
-
-        if !current_function.is_empty() {
-            if line.is_empty() {
-                functions.push(current_function.join("\n"));
-                current_function.clear();
-                continue;
-            }
-            current_function.push(line);
-        }
-    }
-
-    if !current_function.is_empty() {
-        functions.push(current_function.join("\n"));
-    }
-
-    assert!(
-        !functions.is_empty(),
-        "could not find disassembly for {name} in:\n{output}"
-    );
-    functions
-}
-
-#[cfg(target_arch = "aarch64")]
-fn disassembly_window_around_line(
-    function: &str,
-    needle: &str,
-    before: usize,
-    after: usize,
-) -> String {
-    let lines = function.lines().collect::<Vec<_>>();
-    let line_index = lines
-        .iter()
-        .position(|line| line.contains(needle))
-        .unwrap_or_else(|| panic!("could not find {needle:?} in:\n{function}"));
-    let start = line_index.saturating_sub(before);
-    let end = usize::min(line_index + after + 1, lines.len());
-    lines[start..end].join("\n")
-}
-
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
@@ -665,143 +488,4 @@ fn otel_thread_ctx_v1_tls_properties() {
     let path = cdylib_path();
     check_readable(&path);
     libdd_otel_thread_ctx::sanity_check::check_tls_slot_in(&path).unwrap();
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-fn statically_linked_executable_relaxes_libdd_tls_slot_to_local_exec() {
-    if !native_target() {
-        return;
-    }
-
-    if !required_tools_available(&["cc", "objdump"]) {
-        return;
-    }
-
-    let staticlib = staticlib_path();
-    check_readable(&staticlib);
-
-    let dir = build_dir("otel-thread-ctx-local-exec");
-    let source = dir.join("consumer.c");
-    let object = dir.join("consumer.o");
-    let executable = dir.join("consumer");
-    std::fs::write(
-        &source,
-        r#"
-#include <stdint.h>
-
-void ddog_otel_thread_ctx_update(
-    const uint8_t (*trace_id)[16],
-    const uint8_t (*span_id)[8],
-    const uint8_t (*local_root_span_id)[8]);
-void *ddog_otel_thread_ctx_detach(void);
-void ddog_otel_thread_ctx_free(void *ctx);
-
-int main(void) {
-    uint8_t trace_id[16] = {1};
-    uint8_t span_id[8] = {2};
-    uint8_t local_root_span_id[8] = {3};
-
-    ddog_otel_thread_ctx_update(&trace_id, &span_id, &local_root_span_id);
-    void *ctx = ddog_otel_thread_ctx_detach();
-    ddog_otel_thread_ctx_free(ctx);
-
-    return ctx == 0 ? 1 : 0;
-}
-"#,
-    )
-    .unwrap_or_else(|e| panic!("failed to write {}: {e}", source.display()));
-
-    let mut compile_object = Command::new("cc");
-    compile_object.args(["-O2", "-ffunction-sections", "-fdata-sections"]);
-    compile_object.arg("-c").arg(&source).arg("-o").arg(&object);
-    assert_command_success(&mut compile_object);
-
-    let staticlib_relocations = archive_relocation_types_for_symbol(&staticlib, SYMBOL);
-    assert!(
-        staticlib_relocations.iter().any(|relocations| relocations
-            .relocation_types
-            .iter()
-            .any(|t| is_tlsdesc_object_relocation(*t))),
-        "expected an object-file TLSDESC relocation for {SYMBOL} in {}\nfound:\n{}",
-        staticlib.display(),
-        format_relocations(&staticlib_relocations)
-    );
-
-    let object_relocations = relocation_types_for_symbol_in_file(&object, SYMBOL);
-    assert!(
-        object_relocations.is_empty(),
-        "expected generated C object to have no relocations for {SYMBOL}; found {object_relocations:?}"
-    );
-
-    let mut link_executable = Command::new("cc");
-    link_executable
-        .arg(&object)
-        .arg(&staticlib)
-        .args([
-            "-Wl,--gc-sections",
-            "-lpthread",
-            "-ldl",
-            "-lm",
-            "-lrt",
-            "-lutil",
-        ])
-        .arg("-o")
-        .arg(&executable);
-    assert_command_success(&mut link_executable);
-
-    // Run the generated executable so the test validates the relaxed TLS access at runtime too.
-    let mut run_executable = Command::new(&executable);
-    assert_command_success(&mut run_executable);
-
-    let executable_relocations = relocation_types_for_symbol_in_file(&executable, SYMBOL);
-    assert!(
-        executable_relocations.is_empty(),
-        "expected no remaining relocations for {SYMBOL} in {}; found {executable_relocations:?}",
-        executable.display()
-    );
-
-    let disassembly = objdump(&["-drwC"], &executable);
-    let tls_slot_functions =
-        disassembled_functions(&disassembly, "libdd_otel_thread_ctx::linux::with_tls_slot");
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        assert!(
-            tls_slot_functions
-                .iter()
-                .any(|function| function.contains("%fs:0x0")),
-            "expected tls_slot() in libdd-otel-thread-ctx to be relaxed to local-exec x86-64 \
-             TLS access through %fs:0x0\n{}",
-            tls_slot_functions.join("\n\n")
-        );
-        assert!(
-            tls_slot_functions
-                .iter()
-                .all(|function| !function.contains("tlsdesc")),
-            "expected linker-relaxed local-exec TLS code without TLSDESC operands:\n{}",
-            tls_slot_functions.join("\n\n")
-        );
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-        let function = tls_slot_functions
-            .iter()
-            .find(|function| function.contains("tpidr_el0"))
-            .unwrap_or_else(|| {
-                panic!(
-                    "expected tls_slot() in libdd-otel-thread-ctx to use tpidr_el0 after \
-                     relaxation\n{}",
-                    tls_slot_functions.join("\n\n")
-                )
-            });
-        let window = disassembly_window_around_line(function, "tpidr_el0", 4, 3);
-        assert!(
-            !window.contains("tlsdesc") && !window.contains("\tblr"),
-            "expected linker-relaxed local-exec TLS code around tpidr_el0 without a TLSDESC call:\n\
-             {window}"
-        );
-    }
 }
