@@ -229,12 +229,7 @@ int main() {
                 );
             }
             std::cout << "✅ Exporter created" << std::endl;
-            
-            // Create a cancellation token for the export
-            // In a real application, you could clone this and cancel from another thread
-            // Example: auto token_clone = cancel_token->clone_token(); token_clone->cancel();
-            auto cancel_token = new_cancellation_token();
-            
+
             // Prepare metadata (same for all export modes)
             std::string app_metadata = R"({
     "app_version": "1.2.3",
@@ -246,7 +241,7 @@ int main() {
             
             // Export the profile (unified code path)
             std::cout << "Exporting profile with additional metadata..." << std::endl;
-            (*exporter)->send_profile_with_cancellation(
+            (*exporter)->send_profile(
                 *profile,
                 // Files to compress and attach
                 {AttachmentFile{
@@ -263,8 +258,7 @@ int main() {
                 // Internal metadata (JSON string)
                 R"({"profiler_version": "1.0", "custom_field": "demo"})",
                 // System info (JSON string)
-                R"({"os": "macos", "arch": "arm64", "cores": 8})",
-                *cancel_token
+                R"({"os": "macos", "arch": "arm64", "cores": 8})"
             );
             std::cout << "✅ Profile exported successfully!" << std::endl;
             

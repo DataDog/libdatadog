@@ -1,13 +1,20 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![cfg(unix)]
+
+#[cfg(unix)]
 mod common;
 
+#[cfg(unix)]
 use libdd_common::test_utils::{create_temp_file_path, parse_http_request_sync, TempFileGuard};
+#[cfg(unix)]
 use libdd_profiling::exporter::ProfileExporter;
+#[cfg(unix)]
 use libdd_profiling::internal::EncodedProfile;
 
 /// Create a file-based exporter and return the temp file path with auto-cleanup
+#[cfg(unix)]
 fn create_file_exporter(
     profiling_library_name: &str,
     profiling_library_version: &str,
@@ -36,7 +43,7 @@ fn create_file_exporter(
     Ok((exporter, file_path))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use libdd_common::tag;
@@ -64,7 +71,7 @@ mod tests {
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
         exporter
-            .send_blocking(profile, &[], &[], None, None, None, None)
+            .send_blocking(profile, &[], &[], None, None, None)
             .expect("send to succeed");
 
         // Read the dump file
@@ -173,7 +180,6 @@ mod tests {
                 Some(internal_metadata.clone()),
                 None,
                 None,
-                None,
             )
             .expect("send to succeed");
 
@@ -215,15 +221,7 @@ mod tests {
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
         exporter
-            .send_blocking(
-                profile,
-                &[],
-                &[],
-                None,
-                None,
-                Some(expected_process_tags),
-                None,
-            )
+            .send_blocking(profile, &[], &[], None, None, Some(expected_process_tags))
             .expect("send to succeed");
 
         // Read the dump file
@@ -279,7 +277,7 @@ mod tests {
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
         exporter
-            .send_blocking(profile, &[], &[], None, Some(info.clone()), None, None)
+            .send_blocking(profile, &[], &[], None, Some(info.clone()), None)
             .expect("send to succeed");
 
         // Read the dump file
@@ -319,7 +317,7 @@ mod tests {
         // Build and send profile
         let profile = EncodedProfile::test_instance().expect("test profile");
         exporter
-            .send_blocking(profile, &[], &[], None, None, None, None)
+            .send_blocking(profile, &[], &[], None, None, None)
             .expect("send to succeed");
 
         // Read the dump file

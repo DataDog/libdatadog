@@ -5,7 +5,6 @@
 #include <datadog/common.h>
 #include <datadog/profiling.h>
 #include <memory>
-#include <thread>
 
 static ddog_CharSlice to_slice_c_char(const char *s) { return {.ptr = s, .len = strlen(s)}; }
 
@@ -143,43 +142,10 @@ int main(int argc, char *argv[]) {
       DDOG_CHARSLICE_C_BARE("{\"application\": {\"start_time\": \"2024-01-24T11:17:22+0000\"}, "
                             "\"platform\": {\"kernel\": \"Darwin Kernel 22.5.0\"}}");
 
-  auto cancel = ddog_CancellationToken_new();
-  auto cancel_for_background_thread = ddog_CancellationToken_clone(&cancel);
-
-  // Eagerly initialize the tokio runtime. This is optional, but required
-  // to avoid race conditions if another thread might be using the
-  // the cancellation token at the same time as the profile is being sent
-  // (as is the case here).
-  ddog_VoidResult init_result = ddog_prof_Exporter_init_runtime(exporter);
-  if (init_result.tag != DDOG_VOID_RESULT_OK) {
-    print_error("Failed to initialize exporter runtime: ", init_result.err);
-    ddog_Error_drop(&init_result.err);
-    ddog_prof_Exporter_drop(exporter);
-    return 1;
-  }
-
-  // As an example of CancellationToken usage, here we create a background
-  // thread that sleeps for some time and then cancels a request early (e.g.
-  // before the timeout in ddog_prof_Exporter_send_blocking is hit).
-  //
-  // If the request is faster than the sleep time, no cancellation takes place.
-  std::thread trigger_cancel_if_request_takes_too_long_thread(
-      [](ddog_CancellationToken cancel_for_background_thread) {
-        int timeout_ms = 5000;
-        std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
-        printf("Request took longer than %d ms, triggering asynchronous "
-               "cancellation\n",
-               timeout_ms);
-        ddog_CancellationToken_cancel(&cancel_for_background_thread);
-        ddog_CancellationToken_drop(&cancel_for_background_thread);
-      },
-      cancel_for_background_thread);
-  trigger_cancel_if_request_takes_too_long_thread.detach();
-
   int exit_code = 0;
   auto send_result = ddog_prof_Exporter_send_blocking(
-      exporter, encoded_profile, files_to_compress_and_export, 
-      nullptr, nullptr, &internal_metadata_example, &info_example, &cancel);
+      exporter, encoded_profile, files_to_compress_and_export, nullptr, nullptr,
+      &internal_metadata_example, &info_example);
   if (send_result.tag == DDOG_PROF_RESULT_HTTP_STATUS_ERR_HTTP_STATUS) {
     print_error("Failed to send profile: ", send_result.err);
     exit_code = 1;
@@ -189,6 +155,5 @@ int main(int argc, char *argv[]) {
   }
 
   ddog_prof_Exporter_drop(exporter);
-  ddog_CancellationToken_drop(&cancel);
   return exit_code;
 }
