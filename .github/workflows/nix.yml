@@ -18,6 +18,10 @@ on: # yamllint disable-line rule:truthy
 # Default permissions for all jobs
 permissions: {}
 
+concurrency:
+  group: ci-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}-nix
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
