@@ -181,9 +181,7 @@ impl TracerFlareManager {
                 language,
                 tracer_version,
                 endpoint: remote_config_endpoint,
-                // TODO: hostname will need to be added when agentess is enabled
-                hostname: String::new(),
-                agentless_enabled: false,
+                agentless: None,
             },
             products: vec![
                 RemoteConfigProduct::AgentConfig,

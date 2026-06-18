@@ -3,13 +3,13 @@
 
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+use libdd_remote_config::agentless_client::AgentlessConfig;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use libdd_remote_config::file_change_tracker::{Change, FilePath};
 use libdd_remote_config::file_storage::ParsedFileStorage;
 use libdd_remote_config::RemoteConfigProduct::ApmTracing;
 use libdd_remote_config::{RemoteConfigParsed, Target};
 use std::process::Command;
-use std::time::Duration;
 use tokio::time::sleep;
 
 const RUNTIME_ID: &str = "23e76587-5ae1-410c-a05c-137cae600a10";
@@ -34,12 +34,18 @@ async fn main() {
     let dd_api_key = std::env::var("DD_API_KEY").ok();
     let dd_site = std::env::var("DD_SITE").ok();
 
-    let (endpoint, agentless_enabled) = match (dd_api_key, dd_site) {
+    let (endpoint, agentless) = match (dd_api_key, dd_site) {
         (Some(api_key), Some(site)) => {
             println!("DD_API_KEY and DD_SITE are set — enabling agentless mode (site: {site})");
             let endpoint = Endpoint::agentless(&site, api_key)
                 .expect("Failed to build agentless endpoint from DD_SITE");
-            (endpoint, true)
+            (
+                endpoint,
+                Some(AgentlessConfig {
+                    hostname,
+                    ..Default::default()
+                }),
+            )
         }
         _ => {
             println!("DD_API_KEY / DD_SITE not set — connecting to local agent");
@@ -51,7 +57,7 @@ async fn main() {
                     test_token: None,
                     ..Default::default()
                 },
-                false,
+                None,
             )
         }
     };
@@ -79,8 +85,7 @@ async fn main() {
                 language: "awesomelang".to_string(),
                 tracer_version: "99.10.5".to_string(),
                 endpoint,
-                hostname,
-                agentless_enabled,
+                agentless,
             },
             products: vec![ApmTracing],
             capabilities: vec![],

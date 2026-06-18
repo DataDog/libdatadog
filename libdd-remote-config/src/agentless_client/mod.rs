@@ -3,6 +3,8 @@
 
 use std::{
     fmt,
+    ops::RangeInclusive,
+    path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -29,11 +31,86 @@ use tuf::{
     repository::RepositoryProvider as _,
 };
 
-#[allow(dead_code)] // used in tests and reserved for TUF config-repo init
-const CONFIG_ROOT: &[u8] = include_bytes!("../../roots/prod/config_root.json");
-const CONFIG_ROOT_VERSION: u64 = 16;
-const DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/prod/director_root.json");
-const DIRECTOR_ROOT_VERSION: u64 = 15;
+// Embedded TUF trust roots, per site
+const PROD_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/prod/config_root.json");
+const PROD_CONFIG_ROOT_VERSION: u64 = 16;
+
+const PROD_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/prod/director_root.json");
+const PROD_DIRECTOR_ROOT_VERSION: u64 = 15;
+
+const STAGING_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/staging/config_root.json");
+const STAGING_CONFIG_ROOT_VERSION: u64 = 29;
+
+const STAGING_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/staging/director_root.json");
+const STAGING_DIRECTOR_ROOT_VERSION: u64 = 1;
+
+const GOV_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/gov/config_root.json");
+const GOV_CONFIG_ROOT_VERSION: u64 = 1;
+
+const GOV_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/gov/director_root.json");
+const GOV_DIRECTOR_ROOT_VERSION: u64 = 1;
+
+/// Datadog site selection used to pick a default TUF trust-root pair.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Site {
+    Prod,
+    Staging,
+    Gov,
+}
+
+impl Site {
+    /// Map an endpoint authority/host to a Datadog site.
+    ///
+    /// The configured agentless endpoint authority looks like `config.<site>`
+    /// (see `make_agentless_configs_endpoint`), so we strip a leading
+    /// `config.` prefix and apply the same rules the agent uses.
+    fn from_host(host: &str) -> Self {
+        let site = host.strip_prefix("config.").unwrap_or(host);
+        if site == "datad0g.com" || site.ends_with(".datad0g.com") {
+            Site::Staging
+        } else if site == "ddog-gov.com" || site.ends_with(".ddog-gov.com") {
+            Site::Gov
+        } else {
+            Site::Prod
+        }
+    }
+
+    fn embedded_config_root(self) -> (&'static [u8], u64) {
+        match self {
+            Site::Prod => (PROD_CONFIG_ROOT, PROD_CONFIG_ROOT_VERSION),
+            Site::Staging => (STAGING_CONFIG_ROOT, STAGING_CONFIG_ROOT_VERSION),
+            Site::Gov => (GOV_CONFIG_ROOT, GOV_CONFIG_ROOT_VERSION),
+        }
+    }
+
+    fn embedded_director_root(self) -> (&'static [u8], u64) {
+        match self {
+            Site::Prod => (PROD_DIRECTOR_ROOT, PROD_DIRECTOR_ROOT_VERSION),
+            Site::Staging => (STAGING_DIRECTOR_ROOT, STAGING_DIRECTOR_ROOT_VERSION),
+            Site::Gov => (GOV_DIRECTOR_ROOT, GOV_DIRECTOR_ROOT_VERSION),
+        }
+    }
+}
+
+/// Extract the `version` integer from a signed TUF root JSON document. Used
+/// only when loading an override root from disk; the embedded roots have
+/// their versions hardcoded above.
+fn parse_root_version(raw: &[u8]) -> anyhow::Result<u64> {
+    let v: Value = serde_json::from_slice(raw)?;
+    v.get("signed")
+        .and_then(|s| s.get("version"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| format_err!("missing or invalid signed.version in TUF root"))
+}
+
+/// Read a TUF root override from disk, returning the bytes and their parsed
+/// version
+fn load_root(override_path: &std::path::Path) -> anyhow::Result<(Vec<u8>, u64)> {
+    let bytes = std::fs::read(override_path)
+        .map_err(|e| format_err!("failed to read TUF root override at {override_path:?}: {e}"))?;
+    let version = parse_root_version(&bytes)?;
+    Ok((bytes, version))
+}
 
 const FAKE_AGENT_VERSION: &str = "7.78.4";
 
@@ -63,9 +140,19 @@ pub fn make_agentless_configs_endpoint(e: &Endpoint) -> Option<Endpoint> {
     })
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Hash, Eq, PartialEq, Default)]
 pub struct AgentlessConfig {
+    /// Hostname reported to the RC backend in `LatestConfigsRequest.hostname`.
+    /// Required (must be non-empty) in agentless mode; an empty value causes
+    /// `ConfigFetcherState::new` to downgrade to agent mode.
     pub hostname: String,
+    /// Optional path to a TUF config-repo root JSON to use instead of the
+    /// embedded one. Useful for staging/private deployments where the trust
+    /// chain differs from the published defaults.
+    pub config_root_override_path: Option<PathBuf>,
+    /// Optional path to a TUF director-repo root JSON to use instead of the
+    /// embedded one.
+    pub director_root_override_path: Option<PathBuf>,
 }
 
 pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeHttpClient>;
@@ -76,9 +163,13 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     opaque_backend_state: Vec<u8>,
     director_client: TUFClient,
     config_client: TUFClient,
+    initial_config_root_version: u64,
+    initial_director_root_version: u64,
     hostname: String,
     products: HashSet<String>,
     refresh_interval: Duration,
+    /// Number of consecutive `fetch_config` failures. Reset to 0 on success.
+    consecutive_failures: u32,
     endpoint: Endpoint,
     // TODO: Not sure this is needed if the wrapped client already caches files?
     target_cache: HashMap<tuf::metadata::TargetPath, CachedFile>,
@@ -140,31 +231,71 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     /// Returns an error if TUF root initialization fails.
     /// This can happen for instance if the trust root certificates have expired
     pub async fn new(cfg: AgentlessConfig, endpoint: Endpoint) -> anyhow::Result<Self> {
+        // Pick the default trust roots based on the endpoint's host. Overrides
+        // (if any) take precedence.
+        let site = endpoint
+            .url
+            .authority()
+            .map(|a| Site::from_host(a.as_str()))
+            .unwrap_or(Site::Prod);
+
+        let (config_root_bytes, initial_config_root_version) =
+            match cfg.config_root_override_path.as_deref() {
+                Some(p) => load_root(p)?,
+                None => {
+                    let (embedded, version) = site.embedded_config_root();
+                    (embedded.to_vec(), version)
+                }
+            };
+        let (director_root_bytes, initial_director_root_version) =
+            match cfg.director_root_override_path.as_deref() {
+                Some(p) => load_root(p)?,
+                None => {
+                    let (embedded, version) = site.embedded_director_root();
+                    (embedded.to_vec(), version)
+                }
+            };
+
         Ok(Self {
             endpoint,
             http: C::new_client(),
             director_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(DIRECTOR_ROOT.to_vec()),
+                &RawSignedMetadata::new(director_root_bytes),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
             .await?,
             config_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(CONFIG_ROOT.to_vec()),
+                &RawSignedMetadata::new(config_root_bytes),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
             .await?,
+            initial_config_root_version,
+            initial_director_root_version,
             hostname: cfg.hostname,
             products: HashSet::new(),
             target_cache: HashMap::new(),
 
             opaque_backend_state: Vec::new(),
             refresh_interval: Duration::from_secs(60),
+            consecutive_failures: 0,
             initialized: false,
         })
+    }
+
+    /// Number of consecutive failed `fetch_config` calls. `0` after a success.
+    pub fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures
+    }
+
+    /// Recommended delay before the next `fetch_config` attempt given the
+    /// current consecutive-failure count. Returns `None` when no backoff
+    /// applies (i.e. either no failures yet, or only a single one).
+    pub fn next_backoff(&self) -> Option<Duration> {
+        compute_backoff(self.consecutive_failures)
     }
 
     /// Return the value of a particular target , checking both its length and
@@ -266,7 +397,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                 u64::from(self.director_client.database().trusted_root().version()),
             )
         } else {
-            (0, CONFIG_ROOT_VERSION, DIRECTOR_ROOT_VERSION)
+            (
+                0,
+                self.initial_config_root_version,
+                self.initial_director_root_version,
+            )
         };
 
         let all_products = c.products.iter().fold(HashSet::new(), |mut acc, p| {
@@ -285,6 +420,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
 
         let now = now_unix_milli_ts();
 
+        let (has_error, error) = match c.state.as_ref() {
+            Some(state) if state.has_error => (true, state.error.clone()),
+            _ => (false, String::new()),
+        };
+
         let request = remoteconfig::LatestConfigsRequest {
             hostname: self.hostname.clone(),
             current_config_snapshot_version,
@@ -298,14 +438,21 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                 ..c
             }],
             agent_version: FAKE_AGENT_VERSION.to_owned(),
-            has_error: false,
-            error: String::new(),
+            has_error,
+            error,
             trace_agent_env: String::new(),
             org_uuid: String::new(),
             tags: vec![],
             agent_uuid: String::new(),
         };
-        let response = self.get_latest_config(request).await?;
+        let response = match self.get_latest_config(request).await {
+            Ok(r) => r,
+            Err(e) => {
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                return Err(e);
+            }
+        };
+        self.consecutive_failures = 0;
 
         self.apply(&response).await?;
         if !self.initialized {
@@ -400,7 +547,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         &mut self,
         response: &remoteconfig::LatestConfigsResponse,
     ) -> anyhow::Result<()> {
-        // At a high level, what we're doing here is populating the "remote" repos with the metadata
+        // At a high level,  we're populating the "remote" repos with the metadata
         // that we received from upstream (which does not validate it), and then using the clients'
         // `update` methods to synchronize that metadata to the "local" repos, during which
         // validation is performed.
@@ -414,14 +561,8 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         *repo = TUFRepo::new();
         for target_file in &response.target_files {
             let trimmed_path = trim_hash_target_path(&target_file.path)?;
-            let trimmed_target_path = TargetPath::new(&trimmed_path)?;
-            repo.store_target(&trimmed_target_path, &mut target_file.raw.as_slice())
-                .await?;
-
-            // let trimmed_path = trim_hash_target_path(&target_file.path)?;
-            // let trimmed_target_path = TargetPath::new(&trimmed_path)?;
             repo.store_target(
-                &TargetPath::new(&target_file.path)?,
+                &TargetPath::new(&trimmed_path)?,
                 &mut target_file.raw.as_slice(),
             )
             .await?;
@@ -487,6 +628,9 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     }
 }
 
+const REFRESH_INTERVAL_BOUNDS: RangeInclusive<Duration> =
+    Duration::from_secs(1)..=Duration::from_secs(60);
+
 fn get_director_custom(director_client: &TUFClient) -> Option<(Option<Vec<u8>>, Option<Duration>)> {
     let custom = director_client
         .database()
@@ -502,7 +646,9 @@ fn get_director_custom(director_client: &TUFClient) -> Option<(Option<Vec<u8>>, 
         custom
             .get("agent_refresh_interval")
             .and_then(Value::as_u64)
-            .map(Duration::from_secs),
+            .map(Duration::from_secs)
+            // Mirror the agent: silently drop values outside `[1s, 1m]`
+            .filter(|d| REFRESH_INTERVAL_BOUNDS.contains(d)),
     ))
 }
 
@@ -526,6 +672,36 @@ fn parse_rc_response<T: prost::Message + Default>(
     }
 
     Ok(T::decode(body)?)
+}
+
+/// Compute the backoff delay to wait before the next `fetch_config` attempt,
+/// given the number of consecutive failures observed so far.
+fn compute_backoff(consecutive_failures: u32) -> Option<Duration> {
+    match consecutive_failures {
+        0 | 1 => None,
+        2 => Some(jitter_secs(30, 60)),
+        3 => Some(jitter_secs(60, 120)),
+        _ => Some(Duration::from_secs(120)),
+    }
+}
+
+/// Pseudo-random duration in `[min_secs, max_secs]`, derived from the current
+/// wall-clock subsecond nanos. This is sufficient for jitter purposes (we do
+/// not need cryptographic randomness here, and pulling in a `rand` dependency
+/// for one usage is overkill).
+fn jitter_secs(min_secs: u64, max_secs: u64) -> Duration {
+    let (lo, hi) = if min_secs <= max_secs {
+        (min_secs, max_secs)
+    } else {
+        (max_secs, min_secs)
+    };
+    let span = hi.saturating_sub(lo);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()))
+        .unwrap_or(0);
+    let offset = if span == 0 { 0 } else { nanos % (span + 1) };
+    Duration::from_secs(lo + offset)
 }
 
 fn now_unix_milli_ts() -> u64 {
@@ -585,32 +761,23 @@ async fn store_noversion(
     Ok(())
 }
 
+/// Strip the leading `<hash>.` prefix from the basename of a TUF target path.
+/// For instance "datadog/2/<product>/<id>/<hash>.config"` => `"datadog/2/<product>/<id>/config"`
+///
 /// See https://datadoghq.atlassian.net/browse/RC-1859 for more information.
 fn trim_hash_target_path(target_path: &str) -> anyhow::Result<String> {
-    let path = std::path::Path::new(target_path);
-    // Get the last component
-    let last_component = path
-        .components()
-        .next_back()
+    let (parent, basename) = target_path
+        .rsplit_once('/')
         .ok_or_else(|| format_err!("invalid target: {target_path}"))?;
-    let basename = match last_component {
-        std::path::Component::Normal(name) => name
-            .to_str()
-            .ok_or_else(|| format_err!("invalid target: {target_path}"))?,
-        _ => return Err(format_err!("invalid target: {target_path}")),
-    };
+    if basename.is_empty() {
+        bail!("invalid target: {target_path}")
+    }
 
-    // Split the basename at the first occurrence of '.'
-    let split: Vec<&str> = basename.splitn(2, '.').collect();
-    let basename_trimmed = if split.len() > 1 { split[1] } else { basename };
+    // Strip the leading `<hash>.` component if present. If the basename
+    // contains no `.`, keep it as-is (matches the previous behaviour).
+    let basename_trimmed = basename.split_once('.').map_or(basename, |(_, rest)| rest);
 
-    // Reconstruct the whole path
-    let parent = path
-        .parent()
-        .ok_or_else(|| format_err!("invalid target: {target_path}"))?;
-    let mut result_path = parent.components().as_path().to_path_buf();
-    result_path.push(basename_trimmed);
-    Ok(result_path.to_str().unwrap_or_default().to_string())
+    Ok(format!("{parent}/{basename_trimmed}"))
 }
 
 // ── Debug helpers: render `raw: Vec<u8>` fields as JSON ────────────────────
@@ -735,12 +902,6 @@ impl fmt::Debug for DebugLatestConfigsResponse<'_> {
 
 /// Returns a value that implements [`fmt::Debug`] for [`remoteconfig::LatestConfigsResponse`],
 /// rendering every `raw` byte field as a parsed JSON value instead of a raw byte array.
-///
-/// Use with the standard formatting machinery:
-///
-/// ```rust,ignore
-/// println!("{:#?}", debug_latest_configs_response(&response));
-/// ```
 pub fn debug_latest_configs_response(
     resp: &remoteconfig::LatestConfigsResponse,
 ) -> impl fmt::Debug + '_ {
@@ -749,14 +910,92 @@ pub fn debug_latest_configs_response(
 
 #[cfg(test)]
 mod tests {
-    use super::{CONFIG_ROOT, CONFIG_ROOT_VERSION, DIRECTOR_ROOT, DIRECTOR_ROOT_VERSION};
+    use super::trim_hash_target_path;
+    use super::{
+        Site, GOV_CONFIG_ROOT, GOV_CONFIG_ROOT_VERSION, GOV_DIRECTOR_ROOT,
+        GOV_DIRECTOR_ROOT_VERSION, PROD_CONFIG_ROOT, PROD_CONFIG_ROOT_VERSION, PROD_DIRECTOR_ROOT,
+        PROD_DIRECTOR_ROOT_VERSION, STAGING_CONFIG_ROOT, STAGING_CONFIG_ROOT_VERSION,
+        STAGING_DIRECTOR_ROOT, STAGING_DIRECTOR_ROOT_VERSION,
+    };
 
     #[test]
-    fn test_root_version_match() {
-        let config_root: serde_json::Value = serde_json::from_slice(CONFIG_ROOT).unwrap();
-        assert_eq!(config_root["signed"]["version"], CONFIG_ROOT_VERSION);
+    fn strips_hash_prefix() {
+        assert_eq!(
+            trim_hash_target_path("datadog/2/APM_TRACING/abcd/deadbeef.config").unwrap(),
+            "datadog/2/APM_TRACING/abcd/config"
+        );
+    }
 
-        let director_root: serde_json::Value = serde_json::from_slice(DIRECTOR_ROOT).unwrap();
-        assert_eq!(director_root["signed"]["version"], DIRECTOR_ROOT_VERSION);
+    #[test]
+    fn no_hash_prefix_is_kept() {
+        assert_eq!(
+            trim_hash_target_path("datadog/2/APM_TRACING/abcd/config").unwrap(),
+            "datadog/2/APM_TRACING/abcd/config"
+        );
+    }
+
+    #[test]
+    fn backslash_is_not_a_separator() {
+        // Windows-style separators must NOT be treated as path separators.
+        // The whole string is the basename here.
+        assert!(trim_hash_target_path(r"datadog\2\foo.bar").is_err());
+    }
+
+    #[test]
+    fn empty_or_no_slash_is_error() {
+        assert!(trim_hash_target_path("").is_err());
+        assert!(trim_hash_target_path("deadbeef.config").is_err());
+    }
+
+    #[test]
+    fn trailing_slash_is_error() {
+        assert!(trim_hash_target_path("datadog/2/foo/").is_err());
+    }
+
+    #[test]
+    fn test_root_versions_match() {
+        // Every embedded root's hardcoded version must match the
+        // `signed.version` field inside the JSON. If you bump a root file,
+        // bump the matching `_VERSION` constant in this module too.
+        for (raw, expected) in [
+            (PROD_CONFIG_ROOT, PROD_CONFIG_ROOT_VERSION),
+            (PROD_DIRECTOR_ROOT, PROD_DIRECTOR_ROOT_VERSION),
+            (STAGING_CONFIG_ROOT, STAGING_CONFIG_ROOT_VERSION),
+            (STAGING_DIRECTOR_ROOT, STAGING_DIRECTOR_ROOT_VERSION),
+            (GOV_CONFIG_ROOT, GOV_CONFIG_ROOT_VERSION),
+            (GOV_DIRECTOR_ROOT, GOV_DIRECTOR_ROOT_VERSION),
+        ] {
+            let v: serde_json::Value = serde_json::from_slice(raw).unwrap();
+            assert_eq!(v["signed"]["version"], expected);
+        }
+    }
+
+    #[test]
+    fn test_compute_backoff() {
+        use super::compute_backoff;
+        use std::time::Duration;
+
+        assert_eq!(compute_backoff(0), None);
+        assert_eq!(compute_backoff(1), None);
+
+        let b2 = compute_backoff(2).unwrap();
+        assert!((Duration::from_secs(30)..=Duration::from_secs(60)).contains(&b2));
+
+        let b3 = compute_backoff(3).unwrap();
+        assert!((Duration::from_secs(60)..=Duration::from_secs(120)).contains(&b3));
+
+        assert_eq!(compute_backoff(4), Some(Duration::from_secs(120)));
+        assert_eq!(compute_backoff(42), Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn test_site_from_host() {
+        assert_eq!(Site::from_host("config.datadoghq.com"), Site::Prod);
+        assert_eq!(Site::from_host("config.us3.datadoghq.com"), Site::Prod);
+        assert_eq!(Site::from_host("config.datadoghq.eu"), Site::Prod);
+        assert_eq!(Site::from_host("config.datad0g.com"), Site::Staging);
+        assert_eq!(Site::from_host("datad0g.com"), Site::Staging);
+        assert_eq!(Site::from_host("config.ddog-gov.com"), Site::Gov);
+        assert_eq!(Site::from_host("config.foo.ddog-gov.com"), Site::Gov);
     }
 }

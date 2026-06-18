@@ -216,8 +216,7 @@ impl RemoteConfigServer {
                 language: "php".to_string(),
                 tracer_version: "1.2.3".to_string(),
                 endpoint: self.endpoint.clone(),
-                hostname: "localhost".to_string(),
-                agentless_enabled: false,
+                agentless: None,
             },
             products: vec![
                 RemoteConfigProduct::ApmTracing,

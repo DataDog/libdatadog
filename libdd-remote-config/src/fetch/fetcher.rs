@@ -54,9 +54,16 @@ pub trait FileStorage {
 pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
-    pub hostname: String,
     pub endpoint: Endpoint,
-    pub agentless_enabled: bool,
+    /// Enables and configures agentless mode. If some the fetcher will
+    /// talk directly to the RC backend
+    pub agentless: Option<AgentlessConfig>,
+}
+
+impl ConfigInvariants {
+    pub fn agentless_enabled(&self) -> bool {
+        self.agentless.is_some()
+    }
 }
 
 struct StoredTargetFile<S> {
@@ -160,29 +167,28 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
 
 impl<S> ConfigFetcherState<S> {
     pub fn new(invariants: ConfigInvariants) -> Self {
-        let (endpoint, agentless_enabled) = if invariants.agentless_enabled {
-            match (
+        let (endpoint, agentless) = match &invariants.agentless {
+            Some(agentless_cfg) => match (
                 make_agentless_configs_endpoint(&invariants.endpoint),
-                invariants.hostname.is_empty(),
+                agentless_cfg.hostname.is_empty(),
             ) {
-                (Some(e), false) => (e, true),
+                (Some(e), false) => (e, Some(agentless_cfg.clone())),
                 (Some(_), true) => {
                     warn!("rc_config_fetcher: agentless enabled but the hostname is empty. Downgrading to agent endpoint");
-                    (make_agent_configs_endpoint(&invariants.endpoint), false)
+                    (make_agent_configs_endpoint(&invariants.endpoint), None)
                 }
                 (None, _) => {
                     warn!("rc_config_fetcher: agentless enabled but the endpoint is invalid. Downgrading to agent endpoint");
-                    (make_agent_configs_endpoint(&invariants.endpoint), false)
+                    (make_agent_configs_endpoint(&invariants.endpoint), None)
                 }
-            }
-        } else {
-            (make_agent_configs_endpoint(&invariants.endpoint), false)
+            },
+            None => (make_agent_configs_endpoint(&invariants.endpoint), None),
         };
         ConfigFetcherState {
             target_files_by_path: Default::default(),
             endpoint,
             invariants: ConfigInvariants {
-                agentless_enabled,
+                agentless,
                 ..invariants
             },
             expire_unused_files: true,
@@ -285,18 +291,11 @@ impl<S: FileStorage> ConfigFetcher<S> {
         file_storage: S,
         state: Arc<ConfigFetcherState<S::StoredFile>>,
     ) -> anyhow::Result<Self> {
-        let mode: FetcherMode = if dbg!(state.invariants.agentless_enabled) {
-            FetcherMode::Agentless(
-                AgentlessFetcher::new(
-                    AgentlessConfig {
-                        hostname: state.invariants.hostname.clone(),
-                    },
-                    state.endpoint.clone(),
-                )
-                .await?,
-            )
-        } else {
-            FetcherMode::Agent
+        let mode: FetcherMode = match &state.invariants.agentless {
+            Some(agentless_cfg) => FetcherMode::Agentless(
+                AgentlessFetcher::new(agentless_cfg.clone(), state.endpoint.clone()).await?,
+            ),
+            None => FetcherMode::Agent,
         };
 
         Ok(ConfigFetcher {
@@ -629,13 +628,25 @@ impl<S: FileStorage> ConfigFetcher<S> {
             FetcherMode::Agent => self.fetch_agent(config_req, target, client_state).await,
             FetcherMode::Agentless(agentless_fetcher) => {
                 #[allow(clippy::expect_used)]
-                let res = agentless_fetcher
-                    .fetch_config(
-                        config_req
-                            .client
-                            .expect("RC ConfigFetcher::build_config_request should always return a `Some` client"),
-                    )
-                    .await?;
+                let client = config_req.client.expect(
+                    "RC ConfigFetcher::build_config_request should always return a `Some` client",
+                );
+                // Capture errors into `client_state.last_error` so the next
+                // call propagates `has_error` / `error` to the backend.
+                let res = match agentless_fetcher.fetch_config(client).await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        client_state.last_error = Some(format!("{e:#}"));
+                        // Surface the recommended backoff to the consumer of
+                        // `ConfigClientState::server_recommended_refresh_interval`
+                        // so it waits before the next attempt. `None` means
+                        // "no extra backoff, use the regular interval".
+                        if let Some(backoff) = agentless_fetcher.next_backoff() {
+                            client_state.refresh_interval = Some(backoff);
+                        }
+                        return Err(e);
+                    }
+                };
 
                 client_state.root_version = res.root_version;
                 client_state.targets_version = res.target_version;
@@ -943,8 +954,7 @@ pub mod tests {
             language: "php".to_string(),
             tracer_version: "1.2.3".to_string(),
             endpoint: server.endpoint.clone(),
-            hostname: "host".to_string(),
-            agentless_enabled: false,
+            agentless: None,
         };
         let product_capabilities = ConfigProductCapabilities::new(
             vec![
