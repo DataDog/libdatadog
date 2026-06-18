@@ -2,6 +2,14 @@
 
 
 
+## [5.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v5.0.0..libdd-trace-stats-v5.0.1) - 2026-06-18
+
+### Changed
+
+- Use VecMap for `meta`, `metrics` and `meta_struct` for v04 spans ([#2043](https://github.com/datadog/libdatadog/issues/2043)) - ([74284ca](https://github.com/datadog/libdatadog/commit/74284cac76e9e6f8e4085b0029c851ec8d47b2f4))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v4.0.0..libdd-trace-stats-v5.0.0) - 2026-06-08
 
 ### Changed
