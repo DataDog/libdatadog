@@ -5,8 +5,12 @@ variables:
     value: "main"
     description: "downstream jobs are triggered on this branch"
   DD_TRACE_PY_BRANCH:
-    value: "fayssal/auto-update-libdatadog"
+    value: "augusto/cross-repo-trigger-target"
     description: "the dd-trace-py branch the manual trigger_dd_trace_py job runs on"
+  # Prototype knob: flip the downstream test job pass/fail to verify mirror propagation.
+  SHOULD_FAIL:
+    value: "false"
+    description: "when true, the downstream dd-trace-py test job exits 1 (mirror propagation test)"
 
 include:
   - local: .gitlab/benchmarks.yml

@@ -1,23 +1,81 @@
-# Manual trigger for the dd-trace-py downstream pipeline.
-# This lets a maintainer test the current libdatadog commit against dd-trace-py
-# on demand from the GitLab pipeline UI.
+# Cross-repo benchmark trigger — PROTOTYPE (2-hop dynamic child pipeline).
+#
+# Topology under test:
+#
+#   generate_child (script)            -> emits child.yml, sets dotenv vars
+#     └─ run_child (trigger:include)   -> child pipeline in THIS project, strategy: mirror   [HOP 1]
+#          └─ child.yml: trigger_dd_trace_py
+#               └─ trigger:project dd-trace-py, strategy: mirror                              [HOP 2]
+#                    └─ dd-trace-py `test` job (passes/fails on SHOULD_FAIL)
+#
+# Goals of this prototype:
+#   1. Confirm the downstream dd-trace-py pass/fail mirrors all the way back to run_child.
+#   2. Confirm variables produced in generate_child (both via dotenv and via the
+#      generated child.yml) reach the dd-trace-py `test` job. Those variables are how
+#      we will later drive patches and PR comments.
 
-trigger_dd_trace_py:
-  variables:
-    LIBDATADOG_COMMIT_BRANCH: $CI_COMMIT_BRANCH
-    LIBDATADOG_COMMIT_SHA: $CI_COMMIT_SHA
-    LIBDATADOG_SHORT_COMMIT_SHA: ${CI_COMMIT_SHORT_SHA}
-    LIBDATADOG_COMMIT_TAG: $CI_COMMIT_TAG
-    UPDATE_LIBDATADOG_VERSION: "true"
+# HOP 0: a normal runner job. It is the only place we can run a script, so this is
+# where the (future) label check lives and where we decide what to forward downstream.
+generate_child:
+  tags: ["arch:amd64"]
+  image: registry.ddbuild.io/images/mirror/alpine:3.20
   rules:
-    # Run automatically on every push to the default branch.
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: on_success
+    - when: manual
       allow_failure: true
-    # Otherwise allow a maintainer to trigger it manually from the pipeline UI.
+  script:
+    # Marker proving dotenv variables produced here are visible downstream.
+    - echo "DOTENV_MARKER=from-generate-dotenv" >> trigger.env
+    # Emit the child pipeline. Variables hardcoded here prove the generate -> child ->
+    # dd-trace-py path independently of dotenv.
+    - |
+      cat > child.yml <<YAML
+      trigger_dd_trace_py:
+        variables:
+          # Markers to confirm cross-pipeline variable passing into dd-trace-py.
+          PARENT_MARKER: "from-generated-child-yml"
+          LIBDATADOG_SHA: "${CI_COMMIT_SHA}"
+          SOURCE_REPO: "DataDog/libdatadog"
+          SOURCE_BRANCH: "${CI_COMMIT_REF_NAME}"
+          PATCH_MODE: "none"
+          # Pass/fail knob forwarded to the dd-trace-py test job.
+          SHOULD_FAIL: "${SHOULD_FAIL}"
+          # Forward the dotenv marker. It is NOT set in generate_child's own scope
+          # (dotenv vars are only available to LATER jobs), so it arrives via run_child
+          # below. This tests the dotenv -> bridge -> downstream path.
+          DOTENV_MARKER: "\$DOTENV_MARKER"
+        trigger:
+          project: DataDog/apm-reliability/dd-trace-py
+          strategy: mirror
+          branch: "${DD_TRACE_PY_BRANCH}"
+      YAML
+    - echo "----- generated child.yml -----"
+    - cat child.yml
+  artifacts:
+    paths:
+      - child.yml
+    reports:
+      dotenv: trigger.env
+
+# HOP 1: child pipeline in THIS project from the generated artifact.
+# strategy: mirror makes this job's status equal the child pipeline's status, which in
+# turn (HOP 2) mirrors dd-trace-py. This is the propagation we are validating.
+run_child:
+  needs:
+    - job: generate_child
+      artifacts: true
+  variables:
+    # Pull the dotenv var produced by generate_child into the child pipeline scope so
+    # child.yml's "$DOTENV_MARKER" resolves. Confirms dotenv reaches the bridge job.
+    DOTENV_MARKER: $DOTENV_MARKER
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
     - when: manual
       allow_failure: true
   trigger:
-    project: DataDog/apm-reliability/dd-trace-py
-    strategy: depend
-    branch: $DD_TRACE_PY_BRANCH
+    include:
+      - artifact: child.yml
+        job: generate_child
+    strategy: mirror
