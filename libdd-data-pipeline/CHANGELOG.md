@@ -2,6 +2,20 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v6.0.0..libdd-data-pipeline-v7.0.0) - 2026-06-18
+
+### Added
+
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+- Use weak waker in trigger [APMSP-3371] ([#2050](https://github.com/datadog/libdatadog/issues/2050)) - ([da8cbcb](https://github.com/datadog/libdatadog/commit/da8cbcb8b81b5b46d8d06da494157d6c74eabf0e))
+- Add endpoint gating to client-side stats [APMSP-3361] ([#2040](https://github.com/datadog/libdatadog/issues/2040)) - ([cde8f3a](https://github.com/datadog/libdatadog/commit/cde8f3ad7300a5c8ecdcd26c4b76ebd6c2250b36))
+
+### Changed
+
+- Use VecMap for `meta`, `metrics` and `meta_struct` for v04 spans ([#2043](https://github.com/datadog/libdatadog/issues/2043)) - ([74284ca](https://github.com/datadog/libdatadog/commit/74284cac76e9e6f8e4085b0029c851ec8d47b2f4))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v5.0.0..libdd-data-pipeline-v6.0.0) - 2026-06-08
 
 ### Added
