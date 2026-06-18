@@ -9,6 +9,7 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
+use libdd_data_pipeline::otlp::OtlpProtocol;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
     TraceExporterInputFormat, TraceExporterOutputFormat,
@@ -83,7 +84,7 @@ pub struct TraceExporterConfig {
     connection_timeout: Option<u64>,
     shared_runtime: Option<Arc<SharedRuntime>>,
     otlp_endpoint: Option<String>,
-    otlp_protocol: Option<String>,
+    otlp_protocol: Option<OtlpProtocol>,
 }
 
 #[no_mangle]
@@ -516,9 +517,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
                 Ok(s) => s,
                 Err(e) => return Some(e),
             };
-            match value.as_str() {
-                "http/json" | "http/protobuf" => {
-                    handle.otlp_protocol = Some(value);
+            // `FromStr` is the single source of truth for string -> OtlpProtocol. The OTLP trace
+            // exporter is HTTP-only, so we additionally reject `Grpc` here (it parses, but is
+            // unsupported) rather than storing a value the exporter would refuse at send time.
+            // The `_` arm also covers any future non_exhaustive variant.
+            match value.parse::<OtlpProtocol>() {
+                Ok(p @ (OtlpProtocol::HttpJson | OtlpProtocol::HttpProtobuf)) => {
+                    handle.otlp_protocol = Some(p);
                     None
                 }
                 _ => gen_error!(ErrorCode::InvalidArgument),
@@ -597,12 +602,8 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);
-                if let Some(ref proto) = config.otlp_protocol {
-                    // The FFI setter only stores "http/json"/"http/protobuf", so this parse always
-                    // succeeds here; a parse failure just leaves the builder's default protocol.
-                    if let Ok(p) = proto.parse::<libdd_data_pipeline::otlp::OtlpProtocol>() {
-                        builder.set_otlp_protocol(p);
-                    }
+                if let Some(protocol) = config.otlp_protocol {
+                    builder.set_otlp_protocol(protocol);
                 }
             }
 
@@ -1339,8 +1340,8 @@ mod tests {
             );
             assert_eq!(error, None);
             assert_eq!(
-                config.as_ref().unwrap().otlp_protocol.as_deref(),
-                Some("http/json")
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::HttpJson)
             );
 
             // "http/protobuf" → success, stored
@@ -1351,8 +1352,8 @@ mod tests {
             );
             assert_eq!(error, None);
             assert_eq!(
-                config.as_ref().unwrap().otlp_protocol.as_deref(),
-                Some("http/protobuf")
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::HttpProtobuf)
             );
 
             // "grpc" → InvalidArgument
@@ -1382,6 +1383,32 @@ mod tests {
             );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
             ddog_trace_exporter_error_free(error);
+        }
+    }
+
+    #[test]
+    fn set_otlp_protocol_stores_parsed_enum() {
+        use libdd_data_pipeline::otlp::OtlpProtocol;
+        let mut cfg = TraceExporterConfig::default();
+        let err = unsafe {
+            ddog_trace_exporter_config_set_otlp_protocol(
+                Some(&mut cfg),
+                CharSlice::from("http/protobuf"),
+            )
+        };
+        assert!(err.is_none());
+        assert_eq!(cfg.otlp_protocol, Some(OtlpProtocol::HttpProtobuf));
+    }
+
+    #[test]
+    fn set_otlp_protocol_rejects_grpc_and_unknown() {
+        let mut cfg = TraceExporterConfig::default();
+        for bad in ["grpc", "nonsense"] {
+            let err = unsafe {
+                ddog_trace_exporter_config_set_otlp_protocol(Some(&mut cfg), CharSlice::from(bad))
+            };
+            assert!(err.is_some(), "expected error for {bad}");
+            assert_eq!(cfg.otlp_protocol, None, "{bad} must not be stored");
         }
     }
 
