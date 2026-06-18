@@ -3195,6 +3195,7 @@ dependencies = [
  "elf",
  "libdd-common-ffi",
  "libdd-otel-thread-ctx",
+ "object 0.36.5",
 ]
 
 [[package]]

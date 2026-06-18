@@ -125,13 +125,14 @@ pub mod linux {
     unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
         let ptr: usize;
         core::arch::asm!(
+            "mrs   x1, tpidr_el0",
             "adrp  x0, :tlsdesc:otel_thread_ctx_v1",
-            "ldr   x1, [x0, :tlsdesc_lo12:otel_thread_ctx_v1]",
+            "ldr   x2, [x0, :tlsdesc_lo12:otel_thread_ctx_v1]",
             "add   x0, x0, :tlsdesc_lo12:otel_thread_ctx_v1",
             ".tlsdesccall otel_thread_ctx_v1",
-            "blr   x1",
-            "mrs   x2, tpidr_el0",
-            "add   x0, x0, x2",
+            // x1 is guaranteed not to be clobbered by the call
+            "blr   x2",
+            "add   x0, x1, x0",
             out("x0") ptr,
             out("x1") _,
             out("x2") _,
