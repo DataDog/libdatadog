@@ -59,7 +59,7 @@ const METRICS_PER_SPAN: usize = 3;
 ///
 /// Data is fully deterministic.
 fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span: bool) -> Vec<u8> {
-    let mut dict: Vec<String> = Vec::new();
+    let mut dict = Vec::new();
     let intern = |s: String, dict: &mut Vec<String>| -> u32 {
         let idx = dict.len() as u32;
         dict.push(s);
@@ -93,17 +93,17 @@ fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span:
     })
     .collect();
 
-    let shared_metric_keys: Vec<u32> = ["_sampling_priority_v1", "_dd.measured", "_dd.top_level"]
+    let shared_metric_keys: Vec<_> = ["_sampling_priority_v1", "_dd.measured", "_dd.top_level"]
         .iter()
         .take(METRICS_PER_SPAN)
         .map(|k| intern((*k).to_string(), &mut dict))
         .collect();
 
-    let mut traces: Vec<Vec<V05Span>> = Vec::with_capacity(num_traces);
+    let mut traces = Vec::with_capacity(num_traces);
 
     for trace_idx in 0..num_traces {
-        let mut spans: Vec<V05Span> = Vec::with_capacity(spans_per_trace);
-        let root_span_id = 100_000_000_000u64 + trace_idx as u64;
+        let mut spans = Vec::with_capacity(spans_per_trace);
+        let root_span_id = 100_000_000_000 + trace_idx as u64;
 
         for span_idx in 0..spans_per_trace {
             let span_id = root_span_id + span_idx as u64 + 1;
@@ -184,7 +184,7 @@ fn bench_v05_matrix<M: criterion::measurement::Measurement>(
     // with a varying number of spans each. Span counts stay realistic for a single flush while
     // exercising the dictionary-dedup path across many spans.
     const NUM_TRACES: usize = 20;
-    let span_counts = [10usize, 100, 500];
+    let span_counts = [10, 100, 500];
 
     let mut group = c.benchmark_group(group_name);
 
