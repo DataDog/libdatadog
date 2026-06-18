@@ -3,7 +3,7 @@ issuer: https://gitlab.ddbuild.io
 subject_pattern: "project_path:DataDog/.*"
 
 claim_pattern:
-  project_id: "2768"
+  project_path: "DataDog/apm-reliability/libdatadog"
   # No ref restriction: bench-analysis runs on any PR branch (D-08)
 
 permissions:
