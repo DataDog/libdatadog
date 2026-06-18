@@ -1,3 +1,6 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
 {
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/release-25.11";
