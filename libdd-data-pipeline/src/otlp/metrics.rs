@@ -5,7 +5,7 @@
 //! DDSketch summaries from the span concentrator are bucketed into fixed explicit bounds (seconds).
 
 use super::config::OtlpMetricsConfig;
-use super::exporter::{send_otlp_http, OTLP_MAX_ATTEMPTS, OTLP_SHUTDOWN_MAX_ATTEMPTS};
+use super::exporter::{send_otlp_http, OTLP_MAX_RETRIES, OTLP_SHUTDOWN_MAX_RETRIES};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_ddsketch::DDSketch;
@@ -227,7 +227,7 @@ pub struct OtlpStatsExporter<C: HttpClientCapability + SleepCapability> {
 
 impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
     /// Flush the concentrator and export stats; returns `Ok(true)` if anything was sent.
-    async fn send(&self, force_flush: bool, max_attempts: u32) -> anyhow::Result<bool> {
+    async fn send(&self, force_flush: bool, max_retries: u32) -> anyhow::Result<bool> {
         let buckets = {
             #[allow(clippy::unwrap_used)]
             let mut c = self.concentrator.lock().unwrap();
@@ -250,7 +250,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
             self.config.timeout,
             self.test_token.as_deref(),
             serde_json::to_vec(&request)?,
-            max_attempts,
+            max_retries,
         )
         .await?;
         Ok(true)
@@ -267,14 +267,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     }
 
     async fn run(&mut self) {
-        if let Err(e) = self.send(false, OTLP_MAX_ATTEMPTS).await {
+        if let Err(e) = self.send(false, OTLP_MAX_RETRIES).await {
             error!(?e, "Error exporting OTLP trace metrics");
         }
     }
 
     async fn shutdown(&mut self) {
         // Single attempt: a long backoff could miss the bounded shutdown window.
-        if let Err(e) = self.send(true, OTLP_SHUTDOWN_MAX_ATTEMPTS).await {
+        if let Err(e) = self.send(true, OTLP_SHUTDOWN_MAX_RETRIES).await {
             error!(?e, "Error exporting OTLP trace metrics on shutdown");
         }
     }

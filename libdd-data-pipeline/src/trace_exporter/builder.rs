@@ -86,6 +86,7 @@ pub struct TraceExporterBuilder {
     otlp_metrics_endpoint: Option<String>,
     otlp_metrics_headers: Vec<(String, String)>,
     otel_trace_semantics_enabled: bool,
+    runtime_id: Option<String>,
 }
 
 impl TraceExporterBuilder {
@@ -335,6 +336,15 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Set the runtime identifier supplied by the language tracer.
+    ///
+    /// When set, this ID is reused for both OTLP trace exports and OTLP trace-metrics so that all
+    /// signals can be correlated by the backend. If not set, a fresh UUID is generated.
+    pub fn set_runtime_id(&mut self, id: &str) -> &mut Self {
+        self.runtime_id = Some(id.to_owned());
+        self
+    }
+
     /// Build the [`TraceExporter`] synchronously.
     ///
     /// Sync facade over [`Self::build_async`]; panics inside an existing tokio context.
@@ -488,7 +498,9 @@ impl TraceExporterBuilder {
             otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 
-        let runtime_id = uuid::Uuid::new_v4().to_string();
+        let runtime_id = self
+            .runtime_id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         // OTLP metrics + stats bucket size: start the concentrator unconditionally (bypass the
         // agent gate) so `check_agent_info` cannot later disable stats.

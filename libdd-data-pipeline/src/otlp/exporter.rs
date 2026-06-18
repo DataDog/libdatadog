@@ -13,10 +13,10 @@ use libdd_trace_utils::send_with_retry::{
 };
 use std::time::Duration;
 
-/// Max total attempts for OTLP export (initial + retries on transient failures).
-pub(crate) const OTLP_MAX_ATTEMPTS: u32 = 5;
-/// Single attempt with no retries, used on shutdown to avoid a long backoff in the shutdown window.
-pub(crate) const OTLP_SHUTDOWN_MAX_ATTEMPTS: u32 = 1;
+/// Max retries for OTLP export on transient failures.
+pub(crate) const OTLP_MAX_RETRIES: u32 = 4;
+/// No retries on shutdown to avoid a long backoff in the shutdown window.
+pub(crate) const OTLP_SHUTDOWN_MAX_RETRIES: u32 = 0;
 const OTLP_RETRY_DELAY_MS: u64 = 100;
 
 /// POST an OTLP HTTP/JSON payload to `endpoint_url`; `test_token` enables snapshot tests.
@@ -27,7 +27,7 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
     timeout: Duration,
     test_token: Option<&str>,
     json_body: Vec<u8>,
-    max_attempts: u32,
+    max_retries: u32,
 ) -> Result<(), TraceExporterError> {
     let url = libdd_common::parse_uri(endpoint_url).map_err(|e| {
         TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
@@ -56,10 +56,8 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
         }
     }
 
-    // `RetryStrategy` counts *retries*, and performs `max_retries + 1` total attempts. Convert the
-    // attempt budget accordingly so `max_attempts == 1` means a single try with no retries.
     let retry_strategy = RetryStrategy::new(
-        max_attempts.saturating_sub(1),
+        max_retries,
         OTLP_RETRY_DELAY_MS,
         RetryBackoffType::Exponential,
         None,
@@ -90,7 +88,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
         config.timeout,
         test_token,
         json_body,
-        OTLP_MAX_ATTEMPTS,
+        OTLP_MAX_RETRIES,
     )
     .await
 }
