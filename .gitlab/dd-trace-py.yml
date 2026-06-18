@@ -3,9 +3,9 @@
 # Topology under test:
 #
 #   generate_child (script)            -> emits child.yml (the trigger to dd-trace-py)
-#     └─ run_child (trigger:include)   -> child pipeline in THIS project, strategy: mirror   [HOP 1]
+#     └─ run_child (trigger:include)   -> child pipeline in THIS project, strategy: depend   [HOP 1]
 #          └─ child.yml: trigger_dd_trace_py
-#               └─ trigger:project dd-trace-py, strategy: mirror                              [HOP 2]
+#               └─ trigger:project dd-trace-py, strategy: depend                              [HOP 2]
 #                    └─ dd-trace-py `test` job (passes/fails on SHOULD_FAIL)
 #
 # Goals of this prototype:
@@ -38,7 +38,7 @@ generate_child:
           SHOULD_FAIL: "$SHOULD_FAIL"
         trigger:
           project: DataDog/apm-reliability/dd-trace-py
-          strategy: mirror
+          strategy: depend
           branch: "$DD_TRACE_PY_BRANCH"
       YAML
     - echo "----- generated child.yml -----"
@@ -48,8 +48,8 @@ generate_child:
       - child.yml
 
 # HOP 1: child pipeline in THIS project from the generated artifact.
-# strategy: mirror makes this job's status equal the child pipeline's status, which in
-# turn (HOP 2) mirrors dd-trace-py. This is the propagation we are validating.
+# strategy: depend makes this job depend on the child pipeline's status, which in
+# turn (HOP 2) depends on dd-trace-py. This is the propagation we are validating.
 #
 # variables: set here are injected into the child pipeline, so child.yml's
 # trigger_dd_trace_py can forward them on to dd-trace-py. This is the variable path we
@@ -71,4 +71,4 @@ run_child:
     include:
       - artifact: child.yml
         job: generate_child
-    strategy: mirror
+    strategy: depend
