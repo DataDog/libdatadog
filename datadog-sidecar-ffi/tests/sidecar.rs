@@ -84,18 +84,26 @@ fn test_ddog_sidecar_register_app() {
 
     unsafe {
         let process_tags = libdd_common_ffi::Vec::default();
+        let agent_endpoint = Endpoint {
+            url: http::Uri::from_static("http://localhost:8082/"),
+            test_token: Some("agent-token".into()),
+            ..Default::default()
+        };
+        let otlp_metrics_endpoint = Endpoint {
+            url: http::Uri::from_static("http://localhost:4318/v1/metrics"),
+            ..Default::default()
+        };
         ddog_sidecar_session_set_config(
             &mut transport,
             "session_id".into(),
-            &Endpoint {
-                url: http::Uri::from_static("http://localhost:8082/"),
-                ..Default::default()
-            },
+            &agent_endpoint,
             &Endpoint::default(),
+            &otlp_metrics_endpoint,
             "".into(),
             "".into(),
             "".into(),
             1000,
+            100,
             1000000,
             1,
             86400000,
@@ -148,10 +156,12 @@ fn test_ddog_sidecar_register_app() {
                 ..Default::default()
             },
             &Endpoint::default(),
+            null(),
             "".into(),
             "".into(),
             "".into(),
             1000,
+            100,
             1000000,
             1,
             86400000,

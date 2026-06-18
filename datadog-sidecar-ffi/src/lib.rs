@@ -14,8 +14,6 @@ use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
-use datadog_remote_config::fetch::ConfigInvariants;
-use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use datadog_sidecar::agent_remote_config::{
     new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
 };
@@ -42,6 +40,8 @@ use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_remote_config::fetch::ConfigInvariants;
+use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::{
@@ -63,6 +63,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use datadog_sidecar::setup::{connect_to_master, MasterListener};
+
+fn otlp_metrics_endpoint_with_agent_test_token(
+    mut otlp_metrics_endpoint: Option<Endpoint>,
+    agent_endpoint: &Endpoint,
+) -> Option<Endpoint> {
+    if let Some(endpoint) = &mut otlp_metrics_endpoint {
+        if endpoint.test_token.is_none() {
+            endpoint.test_token = agent_endpoint.test_token.clone();
+        }
+    }
+
+    otlp_metrics_endpoint
+}
 
 #[no_mangle]
 #[cfg(target_os = "windows")]
@@ -310,6 +323,15 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
     let cfg = datadog_sidecar::config::FromEnv::config();
 
     let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
+
+    // The daemon process hosts the crashtracker receiver socket. Register its
+    // PID so the crash handler can authenticate the socket peer before granting
+    // ptrace permission.
+    #[cfg(unix)]
+    if let Ok(pid) = stream.peer_pid() {
+        libdd_crashtracker::set_expected_receiver_pid(pid as i32);
+    }
+
     *connection = Box::into_raw(stream);
 
     MaybeError::None
@@ -613,10 +635,12 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     session_id: ffi::CharSlice,
     agent_endpoint: &Endpoint,
     dogstatsd_endpoint: &Endpoint,
+    otlp_metrics_endpoint: *const Endpoint,
     language: ffi::CharSlice,
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
     flush_interval_milliseconds: u32,
+    retry_interval_milliseconds: u32,
     remote_config_poll_interval_millis: u32,
     telemetry_heartbeat_interval_millis: u32,
     telemetry_extended_heartbeat_interval_millis: u64,
@@ -638,9 +662,14 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     parent_session_id: ffi::CharSlice,
 ) -> MaybeError {
     let session_id_str: String = session_id.to_utf8_lossy().into();
+    let otlp_metrics_endpoint: Option<Endpoint> =
+        unsafe { otlp_metrics_endpoint.as_ref().cloned() };
+    let otlp_metrics_endpoint =
+        otlp_metrics_endpoint_with_agent_test_token(otlp_metrics_endpoint, agent_endpoint);
     let session_config = SessionConfig {
         endpoint: agent_endpoint.clone(),
         dogstatsd_endpoint: dogstatsd_endpoint.clone(),
+        otlp_metrics_endpoint,
         language: language.to_utf8_lossy().into(),
         language_version: language_version.to_utf8_lossy().into(),
         tracer_version: tracer_version.to_utf8_lossy().into(),
@@ -690,6 +719,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         } else {
             Some(parent_session_id.to_utf8_lossy().into())
         },
+        retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
     };
     #[cfg(unix)]
     try_c!(blocking::set_session_config(
@@ -1223,23 +1253,21 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
 /// safely coexist until they explicitly migrate.
 ///
 /// # Safety
-/// `endpoint`, `context`, and every element in `metrics` must contain valid
-/// UTF-8 `CharSlice` values. Empty `endpoint` or `metrics` is a no-op.
+/// `context` and every element in `metrics` must contain valid UTF-8
+/// `CharSlice` values. Empty `metrics` is a no-op.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
     transport: &mut Box<SidecarTransport>,
     instance_id: &InstanceId,
     queue_id: &QueueId,
-    endpoint: CharSlice,
     context: &FfeTelemetryContext<'_>,
     metrics: Slice<FfeEvaluationMetric<'_>>,
 ) -> MaybeError {
-    if endpoint.is_empty() || metrics.is_empty() {
+    if metrics.is_empty() {
         return MaybeError::None;
     }
 
-    let endpoint = try_c!(char_slice_to_string(endpoint));
     let context = try_c!(ffe_context_from_ffi(context));
     let metrics = try_c!(metrics
         .try_as_slice()
@@ -1257,11 +1285,7 @@ pub unsafe extern "C" fn ddog_sidecar_send_ffe_evaluation_metrics(
         transport,
         instance_id,
         queue_id,
-        vec![SidecarAction::FfeEvaluationMetrics {
-            endpoint,
-            context,
-            metrics,
-        }],
+        vec![SidecarAction::FfeEvaluationMetrics { context, metrics }],
     ));
     MaybeError::None
 }
@@ -1337,6 +1361,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
     app_version: ffi::CharSlice,
     global_tags: &libdd_common_ffi::Vec<Tag>,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    remote_config_generation: u64,
 ) -> MaybeError {
     try_c!(blocking::set_universal_service_tags(
         transport,
@@ -1347,6 +1372,7 @@ pub unsafe extern "C" fn ddog_sidecar_set_universal_service_tags(
         app_version.to_utf8_lossy().into(),
         global_tags.to_vec(),
         dynamic_instrumentation_state,
+        remote_config_generation,
     ));
 
     MaybeError::None
@@ -1663,6 +1689,12 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
 
     let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
 
+    for chunk in traces.iter_mut() {
+        for span in chunk.iter_mut() {
+            span.dedup();
+        }
+    }
+
     // Write traces to the shared memory
     let mut shm_slice = mapped_shm.as_slice_mut();
     let shm_slice_len = shm_slice.len();
@@ -1728,4 +1760,44 @@ pub unsafe extern "C" fn ddog_drop_agent_info_reader(_: Box<AgentInfoReader>) {}
 pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTransport>) {
     // This shall fail.
     let _ = transport.send_garbage();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    #[test]
+    fn otlp_metrics_endpoint_inherits_agent_test_token_when_missing() {
+        let agent_endpoint = Endpoint {
+            test_token: Some(Cow::Borrowed("agent-token")),
+            ..Endpoint::default()
+        };
+
+        let endpoint =
+            otlp_metrics_endpoint_with_agent_test_token(Some(Endpoint::default()), &agent_endpoint)
+                .expect("expected OTLP metrics endpoint");
+
+        assert_eq!(endpoint.test_token.as_deref(), Some("agent-token"));
+    }
+
+    #[test]
+    fn otlp_metrics_endpoint_keeps_explicit_test_token() {
+        let agent_endpoint = Endpoint {
+            test_token: Some(Cow::Borrowed("agent-token")),
+            ..Endpoint::default()
+        };
+        let otlp_metrics_endpoint = Endpoint {
+            test_token: Some(Cow::Borrowed("metrics-token")),
+            ..Endpoint::default()
+        };
+
+        let endpoint = otlp_metrics_endpoint_with_agent_test_token(
+            Some(otlp_metrics_endpoint),
+            &agent_endpoint,
+        )
+        .expect("expected OTLP metrics endpoint");
+
+        assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+    }
 }

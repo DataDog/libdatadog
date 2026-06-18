@@ -585,7 +585,7 @@ fn collect_and_add_thread_contexts(
 
             let stack = match captured_context {
                 Some(ctx) => ctx.stack_trace.clone(),
-                None => StackTrace::empty(),
+                None => StackTrace::new_incomplete(),
             };
 
             collected_threads.push(ThreadData {

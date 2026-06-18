@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use serde::{Deserialize, Serialize};
-use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::sync::Arc;
 
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
@@ -24,7 +23,6 @@ pub enum RemoteConfigProduct {
     AsmDD,
     AsmFeatures,
     FfeFlags,
-    #[cfg(feature = "live-debugger")]
     LiveDebugger,
 }
 
@@ -39,7 +37,6 @@ impl Display for RemoteConfigProduct {
             RemoteConfigProduct::AsmDD => "ASM_DD",
             RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
             RemoteConfigProduct::FfeFlags => "FFE_FLAGS",
-            #[cfg(feature = "live-debugger")]
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
         };
         write!(f, "{str}")
@@ -90,7 +87,6 @@ impl RemoteConfigPath {
                 "ASM_DD" => RemoteConfigProduct::AsmDD,
                 "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
                 "FFE_FLAGS" => RemoteConfigProduct::FfeFlags,
-                #[cfg(feature = "live-debugger")]
                 "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
                 product => anyhow::bail!("Unknown product {}", product),
             },
@@ -152,116 +148,17 @@ impl<'a> From<&'a RemoteConfigPath> for RemoteConfigPathRef<'a> {
     }
 }
 
-impl RemoteConfigPathType for RemoteConfigPath {
-    fn source(&self) -> RemoteConfigSource {
-        self.source
-    }
-
-    fn product(&self) -> RemoteConfigProduct {
-        self.product
-    }
-
-    fn config_id(&self) -> &str {
-        self.config_id.as_str()
-    }
-
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
-
-    fn to_owned(&self) -> RemoteConfigPath {
-        self.clone()
+impl<'a> hashbrown::Equivalent<Arc<RemoteConfigPath>> for RemoteConfigPathRef<'a> {
+    fn equivalent(&self, key: &Arc<RemoteConfigPath>) -> bool {
+        let RemoteConfigPathRef {
+            source,
+            product,
+            config_id,
+            name,
+        } = self;
+        source == &key.source
+            && product == &key.product
+            && config_id == &key.config_id
+            && name == &key.name
     }
 }
-
-impl<'a> RemoteConfigPathType for &RemoteConfigPathRef<'a> {
-    fn source(&self) -> RemoteConfigSource {
-        self.source
-    }
-
-    fn product(&self) -> RemoteConfigProduct {
-        self.product
-    }
-
-    fn config_id(&self) -> &'a str {
-        self.config_id
-    }
-
-    fn name(&self) -> &'a str {
-        self.name
-    }
-
-    fn to_owned(&self) -> RemoteConfigPath {
-        (*self).into()
-    }
-}
-
-impl<'a> RemoteConfigPathType for RemoteConfigPathRef<'a> {
-    fn source(&self) -> RemoteConfigSource {
-        self.source
-    }
-
-    fn product(&self) -> RemoteConfigProduct {
-        self.product
-    }
-
-    fn config_id(&self) -> &'a str {
-        self.config_id
-    }
-
-    fn name(&self) -> &'a str {
-        self.name
-    }
-
-    fn to_owned(&self) -> RemoteConfigPath {
-        self.into()
-    }
-}
-
-pub trait RemoteConfigPathType {
-    fn source(&self) -> RemoteConfigSource;
-    fn product(&self) -> RemoteConfigProduct;
-    fn config_id(&self) -> &str;
-    fn name(&self) -> &str;
-    fn to_owned(&self) -> RemoteConfigPath;
-}
-
-impl ToOwned for dyn RemoteConfigPathType + '_ {
-    type Owned = RemoteConfigPath;
-
-    fn to_owned(&self) -> Self::Owned {
-        self.to_owned()
-    }
-}
-
-impl<'a> Borrow<dyn RemoteConfigPathType + 'a> for RemoteConfigPath {
-    fn borrow(&self) -> &(dyn RemoteConfigPathType + 'a) {
-        self
-    }
-}
-
-impl<'a> Borrow<dyn RemoteConfigPathType + 'a> for Arc<RemoteConfigPath> {
-    fn borrow(&self) -> &(dyn RemoteConfigPathType + 'a) {
-        &**self
-    }
-}
-
-impl Hash for dyn RemoteConfigPathType + '_ {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.source().hash(state);
-        self.product().hash(state);
-        self.config_id().hash(state);
-        self.name().hash(state);
-    }
-}
-
-impl PartialEq for dyn RemoteConfigPathType + '_ {
-    fn eq(&self, other: &Self) -> bool {
-        self.config_id() == other.config_id()
-            && self.name() == other.name()
-            && self.source() == other.source()
-            && self.product() == other.product()
-    }
-}
-
-impl Eq for dyn RemoteConfigPathType + '_ {}

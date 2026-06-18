@@ -74,6 +74,8 @@ pub fn main() {
         f.push("ddsketch-ffi".to_string());
         #[cfg(feature = "ffe")]
         f.push("datadog-ffe-ffi".to_string());
+        #[cfg(feature = "shared-runtime")]
+        f.push("shared-runtime".to_string());
         f
     };
 

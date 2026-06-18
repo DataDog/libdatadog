@@ -13,8 +13,8 @@ use futures::future;
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
-use datadog_remote_config::fetch::ConfigOptions;
-use libdd_common::{tag::Tag, MutexExt};
+use libdd_common::{tag::Tag, Endpoint, MutexExt};
+use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::service::agent_info::AgentInfoGuard;
@@ -46,6 +46,7 @@ pub(crate) struct SessionInfo {
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
     pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
     pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
+    otlp_metrics_endpoint: Arc<Mutex<Option<Endpoint>>>,
 }
 
 impl SessionInfo {
@@ -158,6 +159,17 @@ impl SessionInfo {
         if let Some(cfg) = &mut *self.stats_config.lock_or_panic() {
             f(cfg)
         }
+    }
+
+    pub(crate) fn get_otlp_metrics_endpoint(&self) -> MutexGuard<'_, Option<Endpoint>> {
+        self.otlp_metrics_endpoint.lock_or_panic()
+    }
+
+    pub(crate) fn modify_otlp_metrics_endpoint<F>(&self, f: F)
+    where
+        F: FnOnce(&mut Option<Endpoint>),
+    {
+        f(&mut self.get_otlp_metrics_endpoint());
     }
 
     pub(crate) fn get_trace_config(&self) -> MutexGuard<'_, tracer::Config> {

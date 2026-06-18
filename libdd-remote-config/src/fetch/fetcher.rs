@@ -2,13 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::targets::{Root, TargetsList};
-use crate::{
-    RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigPathRef, RemoteConfigPathType,
-    RemoteConfigProduct, Target,
-};
+use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
+use hashbrown::HashMap;
 use http::uri::PathAndQuery;
-use http::uri::Scheme;
 use http::StatusCode;
 use http_body_util::BodyExt;
 use libdd_common::{http_common, Endpoint, MutexExt};
@@ -18,14 +15,11 @@ use libdd_trace_protobuf::remoteconfig::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
-use std::collections::{HashMap, HashSet};
-use std::mem::transmute;
+use std::collections::HashSet;
 use std::ops::Add;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use tracing::{debug, trace, warn};
-
-const PROD_INTAKE_SUBDOMAIN: &str = "config";
 
 /// Manages config files.
 /// Presents store() and update() operations.
@@ -162,7 +156,7 @@ impl<S> ConfigFetcherState<S> {
     pub fn new(invariants: ConfigInvariants) -> Self {
         ConfigFetcherState {
             target_files_by_path: Default::default(),
-            endpoint: get_product_endpoint(PROD_INTAKE_SUBDOMAIN, &invariants.endpoint),
+            endpoint: get_agent_configs_endpoint(&invariants.endpoint),
             invariants,
             expire_unused_files: true,
         }
@@ -214,24 +208,31 @@ pub struct ConfigFetcher<S: FileStorage> {
 
 pub struct ConfigClientState {
     opaque_backend_state: Vec<u8>,
-    last_configs: Vec<String>,
-    // 'static because it actually depends on last_configs, and rust doesn't like self-referencing
-    last_config_paths: HashSet<RemoteConfigPathRef<'static>>,
+    last_config_paths: HashSet<RemoteConfigPath>,
     targets_version: u64,
     root_version: u64,
     last_error: Option<String>,
+    /// Services discovered at runtime. Sent to the agent on each poll so it can route configs
+    /// targeting those services to this client. Updated out-of-band by the consumer
+    extra_services: Vec<String>,
 }
 
 impl Default for ConfigClientState {
     fn default() -> Self {
         ConfigClientState {
             opaque_backend_state: vec![],
-            last_configs: vec![],
             last_config_paths: Default::default(),
             targets_version: 0,
             root_version: 1,
             last_error: None,
+            extra_services: vec![],
         }
+    }
+}
+
+impl ConfigClientState {
+    pub fn set_extra_services(&mut self, services: Vec<String>) {
+        self.extra_services = services;
     }
 }
 
@@ -248,30 +249,14 @@ impl<S: FileStorage> ConfigFetcher<S> {
         self.state.set_config_state(file, state)
     }
 
-    /// Quite generic fetching implementation:
-    ///  - runs a request against the Remote Config Server,
-    ///  - validates the data,
-    ///  - removes unused files
-    ///  - checks if the files are already known,
-    ///  - stores new files,
-    ///  - returns all currently active files.
-    ///
-    /// It also makes sure that old files are dropped before new files are inserted.
-    ///
-    /// Returns None if nothing changed. Otherwise Some(active configs).
-    pub async fn fetch_once(
-        &mut self,
+    fn build_config_request(
+        &self,
         runtime_id: &str,
-        target: Arc<Target>,
+        target: &Target,
         product_capabilities: &ConfigProductCapabilities,
         client_id: &str,
-        opaque_state: &mut ConfigClientState,
-    ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
-        if self.state.endpoint.api_key.is_some() {
-            // Using remote config talking to the backend directly is not supported.
-            return Ok(Some(vec![]));
-        }
-
+        client_state: &ConfigClientState,
+    ) -> ClientGetConfigsRequest {
         let Target {
             service,
             env,
@@ -291,24 +276,23 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 }
             }
 
-            for config in opaque_state.last_config_paths.iter() {
-                if let Some(StoredTargetFile { state, .. }) =
-                    target_files.get(config as &dyn RemoteConfigPathType)
-                {
+            for config in client_state.last_config_paths.iter() {
+                if let Some(StoredTargetFile { state, .. }) = target_files.get(config) {
                     config_states.push(state.clone());
                 }
             }
         }
+        let extra_services = client_state.extra_services.clone();
 
-        let config_req = ClientGetConfigsRequest {
+        ClientGetConfigsRequest {
             client: Some(libdd_trace_protobuf::remoteconfig::Client {
                 state: Some(ClientState {
-                    root_version: opaque_state.root_version,
-                    targets_version: opaque_state.targets_version,
+                    root_version: client_state.root_version,
+                    targets_version: client_state.targets_version,
                     config_states,
-                    has_error: opaque_state.last_error.is_some(),
-                    error: opaque_state.last_error.take().unwrap_or_default(),
-                    backend_client_state: std::mem::take(&mut opaque_state.opaque_backend_state),
+                    has_error: client_state.last_error.is_some(),
+                    error: client_state.last_error.clone().unwrap_or_default(),
+                    backend_client_state: client_state.opaque_backend_state.clone(),
                 }),
                 id: client_id.into(),
                 products: product_capabilities
@@ -322,7 +306,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     language: self.state.invariants.language.to_string(),
                     tracer_version: self.state.invariants.tracer_version.clone(),
                     service,
-                    extra_services: vec![],
+                    extra_services,
                     env,
                     app_version,
                     tags: tags.iter().map(|t| t.to_string()).collect(),
@@ -335,8 +319,35 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 capabilities: product_capabilities.encoded_capabilities.clone(),
             }),
             cached_target_files,
-        };
+        }
+    }
 
+    /// Quite generic fetching implementation:
+    ///  - runs a request against the Remote Config Server,
+    ///  - validates the data,
+    ///  - removes unused files
+    ///  - checks if the files are already known,
+    ///  - stores new files,
+    ///  - returns all currently active files.
+    ///
+    /// It also makes sure that old files are dropped before new files are inserted.
+    ///
+    /// Returns None if nothing changed. Otherwise Some(active configs).
+    pub async fn fetch_once(
+        &mut self,
+        runtime_id: &str,
+        target: &Target,
+        product_capabilities: &ConfigProductCapabilities,
+        client_id: &str,
+        client_state: &mut ConfigClientState,
+    ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
+        let config_req = self.build_config_request(
+            runtime_id,
+            target,
+            product_capabilities,
+            client_id,
+            &*client_state,
+        );
         trace!("Submitting remote config request: {config_req:?}");
 
         let req = self
@@ -365,9 +376,10 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 return Ok(Some(vec![]));
             }
 
-            let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+            let response_body = String::from_utf8_lossy(&body_bytes);
             anyhow::bail!("Server did not accept remote config request: {response_body}");
         }
+        client_state.last_error = None;
 
         // Nothing changed
         if body_bytes.len() <= 3 {
@@ -375,8 +387,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             return Ok(None);
         }
 
-        let response: ClientGetConfigsResponse =
-            serde_json::from_str(&String::from_utf8_lossy(body_bytes.as_ref()))?;
+        let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes.as_ref())?;
 
         let decoded_targets =
             base64::engine::general_purpose::STANDARD.decode(response.targets.as_slice())?;
@@ -387,8 +398,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
             ))
         })?;
 
-        opaque_state.root_version = response.roots.iter().try_fold(
-            opaque_state.root_version,
+        client_state.root_version = response.roots.iter().try_fold(
+            client_state.root_version,
             |max, cur| -> anyhow::Result<_> {
                 let decoded_root =
                     base64::engine::general_purpose::STANDARD.decode(cur.as_slice())?;
@@ -402,7 +413,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
             },
         )?;
 
-        opaque_state.opaque_backend_state = targets_list
+        client_state.opaque_backend_state = targets_list
             .signed
             .custom
             .opaque_backend_state
@@ -427,22 +438,18 @@ impl<S: FileStorage> ConfigFetcher<S> {
         // continuously
         let mut target_files = self.state.target_files_by_path.lock_or_panic();
 
-        let mut config_paths: HashSet<RemoteConfigPathRef<'static>> = HashSet::new();
+        let mut config_paths = HashSet::new();
         for path in response.client_configs.iter() {
             match RemoteConfigPath::try_parse(path) {
-                // SAFTEY: The lifetime of RemoteConfigPathRef is tied to the config_paths
-                // Vec<String>
                 Ok(parsed) => {
-                    config_paths.insert(unsafe {
-                        transmute::<RemoteConfigPathRef<'_>, RemoteConfigPathRef<'_>>(parsed)
-                    });
+                    config_paths.insert(parsed.into());
                 }
                 Err(e) => warn!("Failed parsing remote config path: {path} - {e:?}"),
             }
         }
 
         if self.state.expire_unused_files {
-            target_files.retain(|k, _| config_paths.contains(&(&**k).into()));
+            target_files.retain(|k, _| config_paths.contains(k.as_ref()));
         }
 
         for (path, target_file) in targets_list.signed.targets {
@@ -471,7 +478,7 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 hash: old_hash,
                 handle,
                 ..
-            }) = target_files.get(&parsed_path as &dyn RemoteConfigPathType)
+            }) = target_files.get(&parsed_path)
             {
                 if old_hash == hash {
                     continue;
@@ -480,66 +487,63 @@ impl<S: FileStorage> ConfigFetcher<S> {
             } else {
                 None
             };
-            // If the file isn't there, it's not meant for us.
-            if let Some(raw_file) = incoming_files.get(path) {
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) {
-                    let computed_hash = hasher(decoded.as_slice());
-                    if hash != computed_hash {
-                        anyhow::bail!("Computed hash of file {computed_hash} did not match remote config targets file hash {hash} for path {path}: file: {}", String::from_utf8_lossy(decoded.as_slice()));
-                    }
-                    if let Some(version) = target_file.try_parse_version() {
-                        debug!(
-                            "Fetched new remote config file at path {path} targeting {target:?}"
-                        );
-
-                        let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
-                        target_files.insert(
-                            parsed_path.clone(),
-                            StoredTargetFile {
-                                hash: computed_hash,
-                                state: ConfigState {
-                                    id: parsed_path.config_id.to_string(),
-                                    version,
-                                    product: parsed_path.product.to_string(),
-                                    apply_state: 2, // Acknowledged
-                                    apply_error: "".to_string(),
-                                },
-                                meta: TargetFileMeta {
-                                    path: path.to_string(),
-                                    length: decoded.len() as i64,
-                                    hashes: target_file
-                                        .hashes
-                                        .iter()
-                                        .map(|(algorithm, hash)| TargetFileHash {
-                                            algorithm: algorithm.to_string(),
-                                            hash: hash.to_string(),
-                                        })
-                                        .collect(),
-                                },
-                                handle: if let Some(handle) = handle {
-                                    self.file_storage.update(&handle, version, decoded)?;
-                                    handle
-                                } else {
-                                    self.file_storage.store(version, parsed_path, decoded)?
-                                },
-                                expiring: false,
-                            },
-                        );
-                    } else {
-                        anyhow::bail!("Failed parsing version from remote config path {path}");
-                    }
-                } else {
-                    anyhow::bail!(
-                        "Failed base64 decoding config for path {path}: {}",
-                        String::from_utf8_lossy(raw_file)
-                    )
-                }
+            let Some(raw_file) = incoming_files.get(path) else {
+                // If the file isn't there, it's not meant for us.
+                continue;
+            };
+            let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) else {
+                anyhow::bail!(
+                    "Failed base64 decoding config for path {path}: {}",
+                    String::from_utf8_lossy(raw_file)
+                )
+            };
+            let computed_hash = hasher(decoded.as_slice());
+            if hash != computed_hash {
+                anyhow::bail!("Computed hash of file {computed_hash} did not match remote config targets file hash {hash} for path {path}: file: {}", String::from_utf8_lossy(decoded.as_slice()));
             }
+            let Some(version) = target_file.try_parse_version() else {
+                anyhow::bail!("Failed parsing version from remote config path {path}");
+            };
+            debug!("Fetched new remote config file at path {path} targeting {target:?}");
+
+            let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
+            target_files.insert(
+                parsed_path.clone(),
+                StoredTargetFile {
+                    hash: computed_hash,
+                    state: ConfigState {
+                        id: parsed_path.config_id.to_string(),
+                        version,
+                        product: parsed_path.product.to_string(),
+                        apply_state: 2, // Acknowledged
+                        apply_error: "".to_string(),
+                    },
+                    meta: TargetFileMeta {
+                        path: path.to_string(),
+                        length: decoded.len() as i64,
+                        hashes: target_file
+                            .hashes
+                            .iter()
+                            .map(|(algorithm, hash)| TargetFileHash {
+                                algorithm: algorithm.to_string(),
+                                hash: hash.to_string(),
+                            })
+                            .collect(),
+                    },
+                    handle: if let Some(handle) = handle {
+                        self.file_storage.update(&handle, version, decoded)?;
+                        handle
+                    } else {
+                        self.file_storage.store(version, parsed_path, decoded)?
+                    },
+                    expiring: false,
+                },
+            );
         }
 
         let mut configs = Vec::with_capacity(config_paths.len());
         for config in config_paths.iter() {
-            if let Some(target_file) = target_files.get_mut(config as &dyn RemoteConfigPathType) {
+            if let Some(target_file) = target_files.get_mut(config) {
                 target_file.expiring = false;
                 configs.push(target_file.handle.clone());
             } else {
@@ -547,29 +551,20 @@ impl<S: FileStorage> ConfigFetcher<S> {
             }
         }
 
-        opaque_state.targets_version = targets_list.signed.version as u64;
-        opaque_state.last_configs = response.client_configs;
-        opaque_state.last_config_paths = config_paths;
+        client_state.targets_version = targets_list.signed.version as u64;
+        client_state.last_config_paths = config_paths;
         Ok(Some(configs))
     }
 }
 
-fn get_product_endpoint(subdomain: &str, endpoint: &Endpoint) -> Endpoint {
+fn get_agent_configs_endpoint(endpoint: &Endpoint) -> Endpoint {
     let mut parts = endpoint.url.clone().into_parts();
-    #[allow(clippy::unwrap_used)]
-    if parts.authority.is_some() && parts.scheme.is_none() {
-        parts.scheme = Some(Scheme::HTTPS);
-        parts.authority = Some(
-            format!("{}.{}", subdomain, parts.authority.unwrap())
-                .parse()
-                .unwrap(),
-        );
-    }
     parts.path_and_query = Some(PathAndQuery::from_static("/v0.7/config"));
     #[allow(clippy::unwrap_used)]
     Endpoint {
         url: http::Uri::from_parts(parts).unwrap(),
-        api_key: endpoint.api_key.clone(),
+        // Nullify the api key since we talk only to the agent
+        api_key: None,
         test_token: endpoint.test_token.clone(),
         ..*endpoint
     }
@@ -581,6 +576,7 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::RemoteConfigSource;
     use http::Response;
+    use std::mem::transmute;
     use std::sync::LazyLock;
 
     pub(crate) static PATH_FIRST: LazyLock<RemoteConfigPath> = LazyLock::new(|| RemoteConfigPath {
@@ -614,7 +610,7 @@ pub mod tests {
             app_version: "1.3.5".to_string(),
             tags: vec![],
             process_tags: vec![
-                libdd_common::tag!("entrypoint.workdir", "datadog-remote-config"),
+                libdd_common::tag!("entrypoint.workdir", "libdd-remote-config"),
                 libdd_common::tag!("entrypoint.type", "script"),
             ],
         })
@@ -703,7 +699,7 @@ pub mod tests {
         let fetched = fetcher
             .fetch_once(
                 DUMMY_RUNTIME_ID,
-                DUMMY_TARGET.clone(),
+                &DUMMY_TARGET,
                 &server.dummy_product_capabilities(),
                 "foo",
                 &mut opaque_state,
@@ -751,7 +747,7 @@ pub mod tests {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    &DUMMY_TARGET,
                     &product_capabilities,
                     "foo",
                     &mut opaque_state,
@@ -805,7 +801,7 @@ pub mod tests {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    &DUMMY_TARGET,
                     &product_capabilities,
                     "foo",
                     &mut opaque_state,
@@ -849,7 +845,7 @@ pub mod tests {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    &DUMMY_TARGET,
                     &product_capabilities,
                     "foo",
                     &mut opaque_state,
@@ -885,7 +881,7 @@ pub mod tests {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    &DUMMY_TARGET,
                     &product_capabilities,
                     "foo",
                     &mut opaque_state,
@@ -901,7 +897,7 @@ pub mod tests {
             let fetched = fetcher
                 .fetch_once(
                     DUMMY_RUNTIME_ID,
-                    DUMMY_TARGET.clone(),
+                    &DUMMY_TARGET,
                     &product_capabilities,
                     "foo",
                     &mut opaque_state,
@@ -911,6 +907,100 @@ pub mod tests {
                 .unwrap();
             assert_eq!(fetched.len(), 1);
             assert_eq!(storage.files.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_extra_services_forwarded_in_client_tracer() {
+        let server: Arc<RemoteConfigServer> = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage,
+            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+        );
+        let mut opaque_state = ConfigClientState::default();
+
+        // Default: nothing set, agent receives an empty list.
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &server.dummy_product_capabilities(),
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+        {
+            let req = server.last_request.lock().unwrap();
+            let tracer = req
+                .as_ref()
+                .unwrap()
+                .client
+                .as_ref()
+                .unwrap()
+                .client_tracer
+                .as_ref()
+                .unwrap();
+            assert!(tracer.extra_services.is_empty());
+        }
+
+        // After set_extra_services, the next poll forwards them to the agent.
+        opaque_state.set_extra_services(vec!["svc-a".to_string(), "svc-b".to_string()]);
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &server.dummy_product_capabilities(),
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+        {
+            let req = server.last_request.lock().unwrap();
+            let tracer = req
+                .as_ref()
+                .unwrap()
+                .client
+                .as_ref()
+                .unwrap()
+                .client_tracer
+                .as_ref()
+                .unwrap();
+            assert_eq!(tracer.extra_services, &["svc-a", "svc-b"]);
+        }
+
+        // Replace-semantics: a subsequent set fully overrides the previous list.
+        opaque_state.set_extra_services(vec!["svc-c".to_string()]);
+        fetcher
+            .fetch_once(
+                DUMMY_RUNTIME_ID,
+                &DUMMY_TARGET,
+                &server.dummy_product_capabilities(),
+                "foo",
+                &mut opaque_state,
+            )
+            .await
+            .unwrap();
+        {
+            let req = server.last_request.lock().unwrap();
+            let tracer = req
+                .as_ref()
+                .unwrap()
+                .client
+                .as_ref()
+                .unwrap()
+                .client_tracer
+                .as_ref()
+                .unwrap();
+            assert_eq!(tracer.extra_services, &["svc-c"]);
         }
     }
 
@@ -937,7 +1027,7 @@ pub mod tests {
         let fetched = fetcher
             .fetch_once(
                 DUMMY_RUNTIME_ID,
-                DUMMY_TARGET_WITH_PROCESS_TAGS.clone(),
+                &DUMMY_TARGET_WITH_PROCESS_TAGS,
                 &server.dummy_product_capabilities(),
                 "foo",
                 &mut opaque_state,
@@ -954,7 +1044,7 @@ pub mod tests {
         assert_eq!(
             tracer.process_tags,
             &[
-                "entrypoint.workdir:datadog-remote-config",
+                "entrypoint.workdir:libdd-remote-config",
                 "entrypoint.type:script"
             ]
         );

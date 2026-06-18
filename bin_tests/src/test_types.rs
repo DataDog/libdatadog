@@ -22,6 +22,8 @@ pub enum TestMode {
     ErrnoPreservation,
     MultiThreadCollection,
     ThreadLimit,
+    SidecarDoNothing,
+    SidecarMultiThreadCollection,
 }
 
 impl TestMode {
@@ -45,6 +47,8 @@ impl TestMode {
             Self::ErrnoPreservation => "errno_preservation",
             Self::MultiThreadCollection => "multi_thread_collection",
             Self::ThreadLimit => "thread_limit",
+            Self::SidecarDoNothing => "sidecar_donothing",
+            Self::SidecarMultiThreadCollection => "sidecar_multi_thread_collection",
         }
     }
 
@@ -68,6 +72,8 @@ impl TestMode {
             Self::ErrnoPreservation,
             Self::MultiThreadCollection,
             Self::ThreadLimit,
+            Self::SidecarDoNothing,
+            Self::SidecarMultiThreadCollection,
         ]
     }
 }
@@ -100,6 +106,8 @@ impl std::str::FromStr for TestMode {
             "errno_preservation" => Ok(Self::ErrnoPreservation),
             "multi_thread_collection" => Ok(Self::MultiThreadCollection),
             "thread_limit" => Ok(Self::ThreadLimit),
+            "sidecar_donothing" => Ok(Self::SidecarDoNothing),
+            "sidecar_multi_thread_collection" => Ok(Self::SidecarMultiThreadCollection),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }

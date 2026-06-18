@@ -1,0 +1,43 @@
+[[
+  {
+    "name": "test_send_data_v1_native_snapshot_root",
+    "service": "test-service",
+    "resource": "/api/users",
+    "trace_id": 0,
+    "span_id": 1,
+    "parent_id": 0,
+    "type": "web",
+    "meta": {
+      "_dd.origin": "synthetics",
+      "_dd.p.dm": "-4",
+      "_dd.p.tid": "0123456789abcdef",
+      "component": "http",
+      "env": "test-env",
+      "http.method": "GET",
+      "span.kind": "server",
+      "version": "1.2.3"
+    },
+    "metrics": {
+      "_sampling_priority_v1": 1,
+      "http.duration_ms": 12.5,
+      "http.status_code": 200,
+      "http.success": 1
+    },
+    "span_links": [
+      {
+        "trace_id": 18364758544493064720,
+        "trace_id_high": 81985529216486895,
+        "span_id": 11574427654092267680,
+        "tracestate": "dd=t.tid:abc",
+        "flags": 1
+      }
+    ],
+    "span_events": [
+      {
+        "time_unix_nano": 1727211691770715042,
+        "name": "exception"
+      }
+    ],
+    "duration": 5000,
+    "start": 1000000
+  }]]
