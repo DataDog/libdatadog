@@ -192,7 +192,6 @@ impl SendPayloadTelemetry {
     /// * `value` - The result of sending traces with retry
     /// * `bytes_sent` - The number of bytes in the payload
     /// * `chunks` - The number of trace chunks in the payload
-    /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
     pub fn from_retry_result(value: &SendWithRetryResult, bytes_sent: u64, chunks: u64) -> Self {
         let mut telemetry = Self::default();
         match value {

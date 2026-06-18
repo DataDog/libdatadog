@@ -299,7 +299,6 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 }
 
 /// Process traces for stats computation and update header tags accordingly.
-/// Returns the number of P0 traces and spans that were dropped.
 ///
 /// If a telemetry client is provided and stats are enabled, dropped P0 counts
 /// will be sent to telemetry.
