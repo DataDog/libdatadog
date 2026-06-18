@@ -8,6 +8,7 @@ use std::time::Duration;
 
 /// OTLP trace export protocol.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OtlpProtocol {
     /// HTTP with JSON body (Content-Type: application/json). Default for HTTP.
     #[default]
