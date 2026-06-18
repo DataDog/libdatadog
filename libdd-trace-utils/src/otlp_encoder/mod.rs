@@ -30,6 +30,7 @@ mod encode_tests {
     use crate::span::v04::Span;
     use crate::span::BytesData;
     use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoReq;
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value::Value as ProtoValue;
     use prost::Message;
 
     fn sample() -> ExportTraceServiceRequest {
@@ -37,15 +38,24 @@ mod encode_tests {
             service: "svc".to_string(),
             ..Default::default()
         };
-        let span: Span<BytesData> = Span {
-            trace_id: 0xD269B633813FC60C_u128,
+        let mut span: Span<BytesData> = Span {
+            trace_id: 0x5b8efff798038103_d269b633813fc60c_u128,
             span_id: 0xEEE19B7EC3C1B174,
             name: libdd_tinybytes::BytesString::from_static("op"),
             resource: libdd_tinybytes::BytesString::from_static("res"),
             start: 1,
             duration: 2,
+            error: 1,
             ..Default::default()
         };
+        span.meta.insert(
+            "error.msg".into(),
+            libdd_tinybytes::BytesString::from_static("boom"),
+        );
+        span.meta.insert(
+            "http.method".into(),
+            libdd_tinybytes::BytesString::from_static("GET"),
+        );
         map_traces_to_otlp(vec![vec![span]], &resource_info)
     }
 
@@ -56,22 +66,50 @@ mod encode_tests {
         let pb = encode_otlp_protobuf(&req);
 
         let json_v: serde_json::Value = serde_json::from_slice(&json).unwrap();
-        let json_name = json_v["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["name"]
-            .as_str()
-            .unwrap()
-            .to_string();
-
+        let jspan = &json_v["resourceSpans"][0]["scopeSpans"][0]["spans"][0];
         let proto = ProtoReq::decode(pb.as_slice()).unwrap();
-        let proto_name = proto.resource_spans[0].scope_spans[0].spans[0].name.clone();
+        let pspan = &proto.resource_spans[0].scope_spans[0].spans[0];
 
-        assert_eq!(json_name, "res");
-        assert_eq!(proto_name, "res");
-        let json_sid = json_v["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["spanId"]
-            .as_str()
+        // name
+        assert_eq!(jspan["name"].as_str().unwrap(), pspan.name);
+        // span_id: JSON hex string == prost raw bytes, hex-encoded
+        assert_eq!(
+            jspan["spanId"].as_str().unwrap(),
+            hex::encode(&pspan.span_id)
+        );
+        // trace_id: same, full 128 bits
+        assert_eq!(
+            jspan["traceId"].as_str().unwrap(),
+            hex::encode(&pspan.trace_id)
+        );
+        // status: code + message
+        let pstatus = pspan.status.as_ref().expect("proto status");
+        assert_eq!(
+            jspan["status"]["code"].as_i64().unwrap() as i32,
+            pstatus.code
+        );
+        assert_eq!(
+            jspan["status"]["message"].as_str().unwrap_or(""),
+            pstatus.message
+        );
+        // one attribute: http.method == "GET" in both encodings
+        let jattr = jspan["attributes"]
+            .as_array()
             .unwrap()
-            .to_string();
-        let proto_sid = &proto.resource_spans[0].scope_spans[0].spans[0].span_id;
-        assert_eq!(json_sid, hex::encode(proto_sid));
+            .iter()
+            .find(|a| a["key"] == "http.method")
+            .expect("json http.method");
+        assert_eq!(jattr["value"]["stringValue"].as_str().unwrap(), "GET");
+        let pattr = pspan
+            .attributes
+            .iter()
+            .find(|a| a.key == "http.method")
+            .expect("proto http.method");
+        let pval = match pattr.value.as_ref().unwrap().value.as_ref().unwrap() {
+            ProtoValue::StringValue(s) => s.as_str(),
+            other => panic!("expected string value, got {other:?}"),
+        };
+        assert_eq!(pval, "GET");
     }
 }
 
