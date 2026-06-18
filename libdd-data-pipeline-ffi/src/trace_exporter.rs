@@ -504,6 +504,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
 /// `http/protobuf`; `grpc` is rejected as not yet supported. The host language resolves the value
 /// (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
 ///
+/// Has no effect unless an OTLP endpoint is also configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
+/// Datadog agent and this protocol selection is ignored.
+///
 /// Returns `None` on success, `ErrorCode::InvalidArgument` for a null config or an unaccepted
 /// value, and `ErrorCode::InvalidInput` for a non-UTF-8 string.
 #[no_mangle]
@@ -537,10 +541,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
 
 /// Create a new TraceExporter instance.
 ///
-/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
-/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
-/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
-/// OTLP when OTLP is enabled.
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces to
+/// that endpoint in OTLP over HTTP — JSON or protobuf per the configured protocol — instead of
+/// to the Datadog agent. The same payload (e.g. MessagePack) is passed to
+/// `ddog_trace_exporter_send`; the library decodes and converts it to OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///
