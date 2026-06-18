@@ -66,7 +66,12 @@ pub fn map_traces_to_otlp_proto<T: TraceData>(
         resource_spans: vec![ProtoResourceSpans {
             resource: Some(resource),
             scope_spans: vec![ProtoScopeSpans {
-                scope: Some(ProtoScope::default()),
+                scope: Some(ProtoScope {
+                    name: String::new(),
+                    version: String::new(),
+                    attributes: Vec::new(),
+                    dropped_attributes_count: 0,
+                }),
                 spans: all_spans,
                 schema_url: String::new(),
             }],
@@ -152,8 +157,9 @@ fn map_span_proto<T: TraceData>(
         flags,
         name: span.resource.borrow().to_string(),
         kind: span_kind(span),
-        start_time_unix_nano: span.start as u64,
-        end_time_unix_nano: (span.start + span.duration) as u64,
+        // Clamp negatives to 0 — matches the prior parse_u64 zero-fallback on negative input.
+        start_time_unix_nano: span.start.max(0) as u64,
+        end_time_unix_nano: (span.start + span.duration).max(0) as u64,
         attributes,
         dropped_attributes_count: dropped_attributes_count as u32,
         events,
@@ -254,5 +260,33 @@ mod tests {
         assert_eq!(s.start_time_unix_nano, 1544712660000000000);
         assert_eq!(s.end_time_unix_nano, 1544712661000000000);
         assert_eq!(s.name, "res");
+    }
+
+    #[test]
+    fn negative_start_clamps_to_zero() {
+        // Regression test: a span with negative start (malformed input) must map to
+        // start_time_unix_nano == 0 (and not wrap to u64::MAX), matching the old parse_u64
+        // behavior.
+        let resource_info = OtlpResourceInfo {
+            service: "svc".to_string(),
+            ..Default::default()
+        };
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 1,
+            start: -1,
+            duration: 0,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp_proto(vec![vec![span]], &resource_info);
+        let s = &req.resource_spans[0].scope_spans[0].spans[0];
+        assert_eq!(
+            s.start_time_unix_nano, 0,
+            "negative start must clamp to 0, not wrap"
+        );
+        assert_eq!(
+            s.end_time_unix_nano, 0,
+            "negative start+duration must clamp to 0, not wrap"
+        );
     }
 }
