@@ -91,6 +91,17 @@ impl TracerMetadata {
             }
         }
 
+        #[cfg(all(feature = "otel-thread-ctx", target_os = "linux"))]
+        fn key_value_int(key: &'static str, val: i64) -> KeyValue {
+            KeyValue {
+                key: key.to_owned(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::IntValue(val)),
+                }),
+                key_ref: 0,
+            }
+        }
+
         // Even if there's no value, we still set the key to let the reader know that we do support
         // and emit this specific attribute, which happens to be empty in this case.
         fn key_value_opt(key: &'static str, val: &Option<String>) -> KeyValue {
@@ -134,6 +145,24 @@ impl TracerMetadata {
                 "threadlocal.schema_version",
                 "tlsdesc_v1_dev".to_owned(),
             ));
+
+            #[cfg(target_os = "linux")]
+            if let Some(symbol_info) =
+                libdd_otel_thread_ctx::linux::otel_thread_ctx_v1_symbol_info()
+            {
+                if let (Ok(module_id), Ok(block_offset)) = (
+                    i64::try_from(symbol_info.tls_module_id),
+                    i64::try_from(symbol_info.tls_block_offset),
+                ) {
+                    attributes.push(key_value_int("threadlocal.tls_module_id", module_id));
+                    attributes.push(key_value_int("threadlocal.tls_block_offset", block_offset));
+                }
+
+                attributes.push(key_value(
+                    "threadlocal.libc",
+                    symbol_info.libc_kind.as_str().to_owned(),
+                ));
+            }
 
             attributes.push(KeyValue {
                 key: "threadlocal.attribute_key_map".to_owned(),
@@ -294,6 +323,32 @@ mod tests {
             schema_version.value,
             Some(any_value::Value::StringValue("tlsdesc_v1_dev".to_owned()))
         );
+
+        #[cfg(target_os = "linux")]
+        {
+            let module_id = find_attr(&ctx, "threadlocal.tls_module_id")
+                .expect("threadlocal.tls_module_id should be present");
+            let module_id = match &module_id.value {
+                Some(any_value::Value::IntValue(module_id)) => *module_id,
+                other => panic!("expected IntValue, got {:?}", other),
+            };
+            assert!(module_id > 0);
+
+            let block_offset = find_attr(&ctx, "threadlocal.tls_block_offset")
+                .expect("threadlocal.tls_block_offset should be present");
+            match &block_offset.value {
+                Some(any_value::Value::IntValue(_)) => {}
+                other => panic!("expected IntValue, got {:?}", other),
+            }
+
+            let libc =
+                find_attr(&ctx, "threadlocal.libc").expect("threadlocal.libc should be present");
+            let libc = match &libc.value {
+                Some(any_value::Value::StringValue(libc)) => libc.as_str(),
+                other => panic!("expected StringValue, got {:?}", other),
+            };
+            assert!(matches!(libc, "glibc" | "musl"));
+        }
 
         // Key map attribute: ordered array of key name strings
         let key_map = find_attr(&ctx, "threadlocal.attribute_key_map")

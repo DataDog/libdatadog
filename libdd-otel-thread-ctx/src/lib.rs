@@ -66,6 +66,8 @@
 
 #[cfg(target_os = "linux")]
 pub mod linux {
+    #[cfg(not(target_env = "gnu"))]
+    use std::ffi::CStr;
     use std::{
         ffi::c_void,
         mem,
@@ -458,10 +460,195 @@ pub mod linux {
         }
     }
 
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    pub enum LibcKind {
+        Unknown,
+        Musl,
+        Glibc,
+    }
+
+    impl LibcKind {
+        pub fn as_str(self) -> &'static str {
+            match self {
+                Self::Unknown => "unknown",
+                Self::Musl => "musl",
+                Self::Glibc => "glibc",
+            }
+        }
+    }
+
+    /// Loader metadata for `otel_thread_ctx_v1`.
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    pub struct ThreadContextSymbolInfo {
+        pub tls_module_id: usize,
+        pub tls_block_offset: usize,
+        pub libc_kind: LibcKind,
+    }
+
+    /// Find loader metadata for the exported `otel_thread_ctx_v1` TLS symbol.
+    ///
+    /// The values come from `dl_iterate_phdr`: `tls_module_id` is `dlpi_tls_modid`, and
+    /// `tls_block_offset` is the current thread's resolved symbol address minus `dlpi_tls_data`.
+    pub fn otel_thread_ctx_v1_symbol_info() -> Option<ThreadContextSymbolInfo> {
+        extern "C" {
+            fn libdd_get_otel_thread_ctx_v1() -> *mut *mut c_void;
+        }
+
+        // Safety: the C shim returns the address of the current thread's TLS slot.
+        let symbol_addr = unsafe { libdd_get_otel_thread_ctx_v1() } as usize;
+        let mut state = SymbolInfoLookupState::new(symbol_addr);
+
+        // Safety: `lookup_otel_thread_ctx_v1` only uses `state` during the call.
+        unsafe {
+            libc::dl_iterate_phdr(
+                Some(lookup_otel_thread_ctx_v1),
+                (&mut state as *mut SymbolInfoLookupState).cast(),
+            );
+        }
+
+        state.symbol_info()
+    }
+    struct SymbolInfoLookupState {
+        symbol_addr: usize,
+        found_symbol: bool,
+        tls_module_id: usize,
+        tls_block_offset: usize,
+        libc_kind: LibcKind,
+    }
+
+    impl SymbolInfoLookupState {
+        fn new(symbol_addr: usize) -> Self {
+            Self {
+                symbol_addr,
+                found_symbol: false,
+                tls_module_id: 0,
+                tls_block_offset: 0,
+                libc_kind: Self::initial_libc_kind(),
+            }
+        }
+
+        #[cfg(target_env = "gnu")]
+        fn initial_libc_kind() -> LibcKind {
+            LibcKind::Glibc
+        }
+
+        #[cfg(not(target_env = "gnu"))]
+        fn initial_libc_kind() -> LibcKind {
+            LibcKind::Unknown
+        }
+
+        fn symbol_info(self) -> Option<ThreadContextSymbolInfo> {
+            if !self.found_symbol {
+                return None;
+            }
+
+            Some(ThreadContextSymbolInfo {
+                tls_module_id: self.tls_module_id,
+                tls_block_offset: self.tls_block_offset,
+                libc_kind: self.resolved_libc_kind(),
+            })
+        }
+
+        #[cfg(target_env = "gnu")]
+        fn resolved_libc_kind(&self) -> LibcKind {
+            LibcKind::Glibc
+        }
+
+        #[cfg(all(not(target_env = "gnu"), target_env = "musl"))]
+        fn resolved_libc_kind(&self) -> LibcKind {
+            match self.libc_kind {
+                LibcKind::Unknown => LibcKind::Musl,
+                libc_kind => libc_kind,
+            }
+        }
+
+        #[cfg(all(not(target_env = "gnu"), not(target_env = "musl")))]
+        fn resolved_libc_kind(&self) -> LibcKind {
+            self.libc_kind
+        }
+
+        #[cfg(target_env = "gnu")]
+        fn update_libc_kind(&mut self, _module_name: *const libc::c_char) {}
+
+        #[cfg(not(target_env = "gnu"))]
+        fn update_libc_kind(&mut self, module_name: *const libc::c_char) {
+            if module_name.is_null() {
+                return;
+            }
+
+            // Safety: `dl_iterate_phdr` provides a valid NUL-terminated module name pointer.
+            let module_name = unsafe { CStr::from_ptr(module_name) }.to_bytes();
+            if contains(module_name, b"ld-musl-") || contains(module_name, b"libc.musl-") {
+                self.libc_kind = LibcKind::Musl;
+            } else if contains(module_name, b"ld-linux") || contains(module_name, b"libc.so.6") {
+                self.libc_kind = LibcKind::Glibc;
+            }
+        }
+    }
+
+    #[cfg(not(target_env = "gnu"))]
+    fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
+
+    unsafe extern "C" fn lookup_otel_thread_ctx_v1(
+        info: *mut libc::dl_phdr_info,
+        size: libc::size_t,
+        data: *mut c_void,
+    ) -> libc::c_int {
+        if info.is_null() || data.is_null() {
+            return 0;
+        }
+
+        // Safety: `data` is the pointer to `SymbolInfoLookupState` passed to `dl_iterate_phdr`,
+        // and `info` is a valid pointer for the duration of this callback.
+        let state = unsafe { &mut *data.cast::<SymbolInfoLookupState>() };
+        let info = unsafe { &*info };
+
+        state.update_libc_kind(info.dlpi_name);
+
+        let has_tls_fields =
+            size >= mem::offset_of!(libc::dl_phdr_info, dlpi_tls_data) + size_of::<*mut c_void>();
+        if !has_tls_fields || info.dlpi_tls_data.is_null() || info.dlpi_phdr.is_null() {
+            return 0;
+        }
+
+        let tls_block_start = info.dlpi_tls_data as usize;
+        for phdr_idx in 0..usize::from(info.dlpi_phnum) {
+            // Safety: `dl_iterate_phdr` provides `dlpi_phnum` entries starting at `dlpi_phdr`.
+            let phdr = unsafe { &*info.dlpi_phdr.add(phdr_idx) };
+            if phdr.p_type != libc::PT_TLS {
+                continue;
+            }
+
+            let tls_block_size = match usize::try_from(phdr.p_memsz) {
+                Ok(size) => size,
+                Err(_) => continue,
+            };
+            if state.symbol_addr >= tls_block_start
+                && state.symbol_addr - tls_block_start < tls_block_size
+            {
+                state.found_symbol = true;
+                state.tls_module_id = info.dlpi_tls_modid;
+                state.tls_block_offset = state.symbol_addr - tls_block_start;
+                break;
+            }
+        }
+
+        if state.found_symbol && state.libc_kind != LibcKind::Unknown {
+            1
+        } else {
+            0
+        }
+    }
+
+
     #[cfg(test)]
     // The tests are set to be ignored by Miri, since accessing the TLS through C isn't supported.
     mod tests {
-        use super::{ThreadContext, ThreadContextRecord};
+        use super::{LibcKind, ThreadContext, ThreadContextRecord};
         use std::sync::atomic::Ordering;
 
         /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the
@@ -667,6 +854,20 @@ pub mod linux {
             assert_eq!(record.attrs_data_size, 2 + 16 + 2 + 255);
 
             let _ = ThreadContext::detach();
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn otel_thread_ctx_v1_symbol_info_is_discoverable() {
+            let info = super::otel_thread_ctx_v1_symbol_info()
+                .expect("otel_thread_ctx_v1 TLS symbol info should be discoverable");
+
+            assert!(info.tls_module_id > 0, "TLS module id should be non-zero");
+            assert!(
+                matches!(info.libc_kind, LibcKind::Glibc | LibcKind::Musl),
+                "runtime libc should be glibc or musl, got {:?}",
+                info.libc_kind
+            );
         }
 
         // Make sure the C shim is indeed providing a thread-local address.

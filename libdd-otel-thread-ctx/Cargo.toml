@@ -16,6 +16,9 @@ publish = false
 crate-type = ["lib"]
 bench = false
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 build_common = { path = "../build-common" }
 cc = "1.1.31"
