@@ -9,7 +9,7 @@ pub mod mapper;
 
 pub use mapper::map_traces_to_otlp;
 
-use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoExportTraceServiceRequest;
+pub use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::ExportTraceServiceRequest as ProtoExportTraceServiceRequest;
 use prost::Message;
 
 /// Serialize the prost OTLP request to the HTTP/protobuf wire format.

@@ -16,7 +16,7 @@ use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
 use crate::otlp::{
-    map_traces_to_otlp, send_otlp_traces_http, OtlpProtocol, OtlpResourceInfo, OtlpTraceConfig,
+    map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig, OtlpWireProtocol,
 };
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -547,28 +547,23 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r.runtime_id = self.metadata.runtime_id.clone();
             r
         };
+        let wire = OtlpWireProtocol::try_from(config.protocol).map_err(|unsupported| {
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
+                "unsupported OTLP protocol for HTTP export: {unsupported:?}"
+            )))
+        })?;
         // Single prost OTLP IR; each protocol encodes the same request to its wire format.
         let request = map_traces_to_otlp(traces, &resource_info);
-        let body = match config.protocol {
-            OtlpProtocol::HttpJson => libdd_trace_utils::otlp_encoder::encode_otlp_json(&request)
-                .map_err(|e| {
-                error!("OTLP JSON serialization error: {e}");
-                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
-            })?,
-            OtlpProtocol::HttpProtobuf => {
-                libdd_trace_utils::otlp_encoder::encode_otlp_protobuf(&request)
-            }
-            OtlpProtocol::Grpc => {
-                return Err(TraceExporterError::Internal(
-                    InternalErrorKind::InvalidWorkerState(
-                        "OTLP gRPC export is not supported".to_string(),
-                    ),
-                ));
-            }
-        };
+        let body = wire.encode(&request).map_err(|e| {
+            error!("OTLP serialization error: {e}");
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
+                "failed to encode OTLP request: {e}"
+            )))
+        })?;
         send_otlp_traces_http(
             &self.capabilities,
             config,
+            wire,
             self.endpoint.test_token.as_deref(),
             body,
         )

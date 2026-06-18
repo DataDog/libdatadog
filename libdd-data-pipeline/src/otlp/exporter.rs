@@ -1,9 +1,9 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! OTLP HTTP/JSON trace exporter.
+//! OTLP HTTP trace exporter (JSON or protobuf).
 
-use super::config::OtlpTraceConfig;
+use super::config::{OtlpTraceConfig, OtlpWireProtocol};
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
@@ -18,7 +18,7 @@ const OTLP_RETRY_DELAY_MS: u64 = 100;
 
 /// Send an OTLP trace payload to the configured endpoint with retries.
 ///
-/// The body encoding and `Content-Type` are selected from `config.protocol`.
+/// The `Content-Type` is derived from `wire`, which already selected the encoding.
 ///
 /// Uses [`send_with_retry`] for consistent retry behaviour and observability across exporters.
 ///
@@ -27,6 +27,7 @@ const OTLP_RETRY_DELAY_MS: u64 = 100;
 pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &OtlpTraceConfig,
+    wire: OtlpWireProtocol,
     test_token: Option<&str>,
     body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
@@ -43,16 +44,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
         ..Endpoint::default()
     };
 
-    // `Grpc` is rejected earlier in `send_otlp_traces_inner` and never reaches this function, so it
-    // is grouped with the JSON content-type here only to keep the match exhaustive.
-    let content_type = match config.protocol {
-        crate::otlp::config::OtlpProtocol::HttpProtobuf => {
-            libdd_common::header::APPLICATION_PROTOBUF
-        }
-        crate::otlp::config::OtlpProtocol::HttpJson | crate::otlp::config::OtlpProtocol::Grpc => {
-            libdd_common::header::APPLICATION_JSON
-        }
-    };
+    let content_type = wire.content_type();
 
     let mut headers = config.headers.clone();
     headers.insert(http::header::CONTENT_TYPE, content_type);
