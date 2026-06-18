@@ -4,12 +4,8 @@
 //! Serializes the generated prost OTLP types to OTLP-spec HTTP/JSON. Trace/span ids are
 //! lowercase hex, 64-bit integers (incl. timestamps) are decimal strings, `bytesValue` is
 //! base64, enums are integers, field names are lowerCamelCase, and proto3 defaults are omitted.
-//! This is the only place the OTLP/JSON wire shape is defined now that the hand-rolled
-//! `json_types` model is gone; the prost types are the single source of truth.
-
-// The serializer wrappers are pub(crate) but not yet called from outside this module;
-// Task 4 wires them into the encode path.  Suppress the dead_code lint for now.
-#![allow(dead_code)]
+//! This is the only place the OTLP/JSON wire shape is defined: the prost types are the single
+//! source of truth, serialized directly to the OTLP/JSON wire format here.
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::ser::{Serialize, SerializeMap, Serializer};
