@@ -3,6 +3,7 @@
 
 //! OTLP HTTP/JSON encoder: maps Datadog spans to ExportTraceServiceRequest.
 
+pub mod json_serializer;
 pub mod json_types;
 pub mod mapper;
 pub mod proto_mapper;
