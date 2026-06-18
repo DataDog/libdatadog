@@ -2,7 +2,7 @@
 #
 # Topology under test:
 #
-#   generate_child (script)            -> emits child.yml, sets dotenv vars
+#   generate_child (script)            -> emits child.yml (the trigger to dd-trace-py)
 #     └─ run_child (trigger:include)   -> child pipeline in THIS project, strategy: mirror   [HOP 1]
 #          └─ child.yml: trigger_dd_trace_py
 #               └─ trigger:project dd-trace-py, strategy: mirror                              [HOP 2]
@@ -10,12 +10,13 @@
 #
 # Goals of this prototype:
 #   1. Confirm the downstream dd-trace-py pass/fail mirrors all the way back to run_child.
-#   2. Confirm variables produced in generate_child (both via dotenv and via the
-#      generated child.yml) reach the dd-trace-py `test` job. Those variables are how
-#      we will later drive patches and PR comments.
+#   2. Confirm variables set on run_child reach the dd-trace-py `test` job. A bridge job's
+#      variables: are injected into its child pipeline, so child.yml can forward them
+#      downstream by reference. Those variables are how we will later drive patches and
+#      PR comments.
 
 # HOP 0: a normal runner job. It is the only place we can run a script, so this is
-# where the (future) label check lives and where we decide what to forward downstream.
+# where the (future) label check lives and where we emit the trigger we want to run.
 generate_child:
   tags: ["arch:amd64"]
   image: registry.ddbuild.io/images/mirror/alpine:3.20
@@ -25,50 +26,42 @@ generate_child:
     - when: manual
       allow_failure: true
   script:
-    # Marker proving dotenv variables produced here are visible downstream.
-    - echo "DOTENV_MARKER=from-generate-dotenv" >> trigger.env
-    # Emit the child pipeline. Variables hardcoded here prove the generate -> child ->
-    # dd-trace-py path independently of dotenv.
+    # Emit the child pipeline. The variables below are forwarded BY REFERENCE: they
+    # resolve against the child pipeline scope, which inherits run_child's variables:.
     - |
-      cat > child.yml <<YAML
+      cat > child.yml <<'YAML'
       trigger_dd_trace_py:
         variables:
-          # Markers to confirm cross-pipeline variable passing into dd-trace-py.
-          PARENT_MARKER: "from-generated-child-yml"
-          LIBDATADOG_SHA: "${CI_COMMIT_SHA}"
-          SOURCE_REPO: "DataDog/libdatadog"
-          SOURCE_BRANCH: "${CI_COMMIT_REF_NAME}"
-          PATCH_MODE: "none"
-          # Pass/fail knob forwarded to the dd-trace-py test job.
-          SHOULD_FAIL: "${SHOULD_FAIL}"
-          # Forward the dotenv marker. It is NOT set in generate_child's own scope
-          # (dotenv vars are only available to LATER jobs), so it arrives via run_child
-          # below. This tests the dotenv -> bridge -> downstream path.
-          DOTENV_MARKER: "\$DOTENV_MARKER"
+          SOURCE_REPO: "$SOURCE_REPO"
+          SOURCE_BRANCH: "$SOURCE_BRANCH"
+          PATCH_MODE: "$PATCH_MODE"
+          SHOULD_FAIL: "$SHOULD_FAIL"
         trigger:
           project: DataDog/apm-reliability/dd-trace-py
           strategy: mirror
-          branch: "${DD_TRACE_PY_BRANCH}"
+          branch: "$DD_TRACE_PY_BRANCH"
       YAML
     - echo "----- generated child.yml -----"
     - cat child.yml
   artifacts:
     paths:
       - child.yml
-    reports:
-      dotenv: trigger.env
 
 # HOP 1: child pipeline in THIS project from the generated artifact.
 # strategy: mirror makes this job's status equal the child pipeline's status, which in
 # turn (HOP 2) mirrors dd-trace-py. This is the propagation we are validating.
+#
+# variables: set here are injected into the child pipeline, so child.yml's
+# trigger_dd_trace_py can forward them on to dd-trace-py. This is the variable path we
+# will later use to carry patch mode, PR comment context, etc.
 run_child:
   needs:
     - job: generate_child
       artifacts: true
   variables:
-    # Pull the dotenv var produced by generate_child into the child pipeline scope so
-    # child.yml's "$DOTENV_MARKER" resolves. Confirms dotenv reaches the bridge job.
-    DOTENV_MARKER: $DOTENV_MARKER
+    SOURCE_REPO: "DataDog/libdatadog"
+    SOURCE_BRANCH: "$CI_COMMIT_REF_NAME"
+    PATCH_MODE: "none"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: on_success
