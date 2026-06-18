@@ -40,7 +40,7 @@
           # hardening in the shell so those builds succeed.
           hardeningDisable = [ "fortify" "fortify3" ];
 
-          buildInputs = [
+          nativeBuildInputs = [
             rust            # rustc + cargo + rustfmt + clippy, pinned via toolchain file
             pkgs.rust-cbindgen
             pkgs.cmake
