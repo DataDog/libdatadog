@@ -2,6 +2,27 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v8.0.0..libdd-trace-utils-v9.0.0) - 2026-06-18
+
+### Added
+
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+- Change buffer foundation ([#2046](https://github.com/datadog/libdatadog/issues/2046)) - ([693406c](https://github.com/datadog/libdatadog/commit/693406cc108379b3923751f9c3c0267a24f00845))
+- Add v1 span and its encoder ([#2039](https://github.com/datadog/libdatadog/issues/2039)) - ([c7fbf3a](https://github.com/datadog/libdatadog/commit/c7fbf3aa843d3256d353e7aeec13dfb0a8c1f120))
+- Change buffer implementation ([#2055](https://github.com/datadog/libdatadog/issues/2055)) - ([a21b946](https://github.com/datadog/libdatadog/commit/a21b946af7163968906f2730e93e6f56b9051257))
+
+### Changed
+
+- Replace slot index with span_id, fix segment isolation ([#2105](https://github.com/datadog/libdatadog/issues/2105)) - ([5bbf425](https://github.com/datadog/libdatadog/commit/5bbf425da51d69adf655ab5042a68bcedac8d047))
+- Use VecMap for `meta`, `metrics` and `meta_struct` for v04 spans ([#2043](https://github.com/datadog/libdatadog/issues/2043)) - ([74284ca](https://github.com/datadog/libdatadog/commit/74284cac76e9e6f8e4085b0029c851ec8d47b2f4))
+- Fix timeouts on heavily contended scenarios ([#2093](https://github.com/datadog/libdatadog/issues/2093)) - ([e780619](https://github.com/datadog/libdatadog/commit/e780619d5e0626a8cc161c4cb848057fbbe13533))
+
+### Fixed
+
+- Mark decoded span maps as deduped ([#2110](https://github.com/datadog/libdatadog/issues/2110)) - ([8907887](https://github.com/datadog/libdatadog/commit/8907887c56605bee49b2ee06040bda1aea99ec47))
+
+
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v7.0.0..libdd-trace-utils-v8.0.0) - 2026-06-08
 
 ### Changed
