@@ -3211,6 +3211,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
+ "windows-sys 0.52.0",
  "zstd",
 ]
 

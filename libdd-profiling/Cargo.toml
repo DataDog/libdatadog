@@ -78,5 +78,15 @@ proptest = "1"
 strum = { version = "0.26", features = ["derive"] }
 tempfile = "3"
 
+# Used only by the `arena_memory` example to read this process's commit charge
+# (PROCESS_MEMORY_COUNTERS_EX.PrivateUsage) via GetProcessMemoryInfo on Windows.
+[target.'cfg(windows)'.dev-dependencies.windows-sys]
+version = "0.52"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+]
+
 [build-dependencies]
 cxx-build = { version = "1.0", optional = true }
