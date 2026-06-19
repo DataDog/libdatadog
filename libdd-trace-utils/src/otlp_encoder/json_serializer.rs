@@ -54,6 +54,43 @@ impl Serialize for HexId<'_> {
     }
 }
 
+/// Serializes a 64-bit integer as a decimal JSON *string* — OTLP encodes `int64`/`uint64` (incl.
+/// nanosecond timestamps) as strings to avoid IEEE-754 precision loss — without allocating.
+struct NumStr<T: core::fmt::Display>(T);
+impl<T: core::fmt::Display> Serialize for NumStr<T> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use core::fmt::Write as _;
+        // u64::MAX and i64::MIN are at most 20 chars; 24 bytes is ample.
+        let mut buf = DecimalBuf::default();
+        if write!(buf, "{}", self.0).is_ok() {
+            return s.serialize_str(buf.as_str());
+        }
+        s.serialize_str(&self.0.to_string())
+    }
+}
+
+#[derive(Default)]
+struct DecimalBuf {
+    buf: [u8; 24],
+    len: usize,
+}
+impl DecimalBuf {
+    fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+    }
+}
+impl core::fmt::Write for DecimalBuf {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let end = self.len + s.len();
+        if end > self.buf.len() {
+            return Err(core::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
 impl Serialize for OtlpJson<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let mut m = s.serialize_map(Some(1))?;
@@ -171,8 +208,8 @@ impl Serialize for SpanJson<'_> {
         }
         m.serialize_entry("name", &sp.name)?;
         m.serialize_entry("kind", &sp.kind)?;
-        m.serialize_entry("startTimeUnixNano", &sp.start_time_unix_nano.to_string())?;
-        m.serialize_entry("endTimeUnixNano", &sp.end_time_unix_nano.to_string())?;
+        m.serialize_entry("startTimeUnixNano", &NumStr(sp.start_time_unix_nano))?;
+        m.serialize_entry("endTimeUnixNano", &NumStr(sp.end_time_unix_nano))?;
         if !sp.attributes.is_empty() {
             m.serialize_entry("attributes", &KeyValueSeq(&sp.attributes))?;
         }
@@ -226,7 +263,7 @@ impl Serialize for EventJson<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let e = self.0;
         let mut m = s.serialize_map(None)?;
-        m.serialize_entry("timeUnixNano", &e.time_unix_nano.to_string())?;
+        m.serialize_entry("timeUnixNano", &NumStr(e.time_unix_nano))?;
         m.serialize_entry("name", &e.name)?;
         if !e.attributes.is_empty() {
             m.serialize_entry("attributes", &KeyValueSeq(&e.attributes))?;
@@ -297,7 +334,7 @@ impl Serialize for AnyValueJson<'_> {
             Some(ProtoValue::StringValue(v)) => m.serialize_entry("stringValue", v)?,
             Some(ProtoValue::BoolValue(v)) => m.serialize_entry("boolValue", v)?,
             // int64 must be a string to avoid precision loss in JSON.
-            Some(ProtoValue::IntValue(v)) => m.serialize_entry("intValue", &v.to_string())?,
+            Some(ProtoValue::IntValue(v)) => m.serialize_entry("intValue", &NumStr(*v))?,
             Some(ProtoValue::DoubleValue(v)) => m.serialize_entry("doubleValue", v)?,
             Some(ProtoValue::BytesValue(v)) => {
                 m.serialize_entry("bytesValue", &STANDARD.encode(v))?
