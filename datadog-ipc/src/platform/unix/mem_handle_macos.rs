@@ -201,6 +201,14 @@ impl<T: FileBackedHandle + From<MappedMem<T>>> MappedMem<T> {
     }
 }
 
+impl ShmHandle {
+    /// Refresh the size of the shared memory segment
+    pub fn adjust_to_file_size(&mut self) -> io::Result<()> {
+        self.size = NOT_COMMITTED;
+        Ok(())
+    }
+}
+
 impl Drop for ShmPath {
     fn drop(&mut self) {
         _ = shm_unlink(path_slice(self.name.as_c_str()));

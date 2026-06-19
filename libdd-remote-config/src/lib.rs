@@ -37,7 +37,19 @@ pub struct Target {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    Hash,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+    strum_macros::Display,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RemoteConfigCapabilities {
     AsmActivation = 1,
@@ -83,6 +95,9 @@ pub enum RemoteConfigCapabilities {
     ApmTracingEnableLiveDebugging = 41,
     AsmDdMulticonfig = 42,
     AsmTraceTaggingRules = 43,
+    AsmExtendedDataCollection = 44,
     ApmTracingMulticonfig = 45,
     FfeFlagConfigurationRules = 46,
+    DdDataStreamsTransactionExtractors = 47,
+    LlmObsActivation = 48,
 }
