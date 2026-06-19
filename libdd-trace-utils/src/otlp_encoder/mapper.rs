@@ -86,24 +86,40 @@ fn chunk_trace_id_high<T: TraceData>(chunk: &[Span<T>]) -> u64 {
 
 /// Maps the explicit "span.kind" meta tag (set by OTEL-instrumented tracers) to an OTLP SpanKind.
 fn tag_to_otlp_kind(t: &str) -> i32 {
-    match t.to_lowercase().as_str() {
-        "server" => span_kind::SERVER,
-        "client" => span_kind::CLIENT,
-        "producer" => span_kind::PRODUCER,
-        "consumer" => span_kind::CONSUMER,
-        "internal" => span_kind::INTERNAL,
-        _ => span_kind::UNSPECIFIED,
+    // Case-insensitive match without allocating: these are ASCII keywords, so
+    // `eq_ignore_ascii_case` avoids the per-span `to_lowercase()` String on the encode hot
+    // path.
+    if t.eq_ignore_ascii_case("server") {
+        span_kind::SERVER
+    } else if t.eq_ignore_ascii_case("client") {
+        span_kind::CLIENT
+    } else if t.eq_ignore_ascii_case("producer") {
+        span_kind::PRODUCER
+    } else if t.eq_ignore_ascii_case("consumer") {
+        span_kind::CONSUMER
+    } else if t.eq_ignore_ascii_case("internal") {
+        span_kind::INTERNAL
+    } else {
+        span_kind::UNSPECIFIED
     }
 }
 
 /// Maps the Datadog span type field (set by DD-instrumented tracers) to an OTLP SpanKind.
 fn dd_type_to_otlp_kind(t: &str) -> i32 {
-    match t.to_lowercase().as_str() {
-        "server" | "web" | "http" => span_kind::SERVER,
-        "client" => span_kind::CLIENT,
-        "producer" => span_kind::PRODUCER,
-        "consumer" => span_kind::CONSUMER,
-        _ => span_kind::INTERNAL,
+    // Case-insensitive match without allocating (see `tag_to_otlp_kind`).
+    if t.eq_ignore_ascii_case("server")
+        || t.eq_ignore_ascii_case("web")
+        || t.eq_ignore_ascii_case("http")
+    {
+        span_kind::SERVER
+    } else if t.eq_ignore_ascii_case("client") {
+        span_kind::CLIENT
+    } else if t.eq_ignore_ascii_case("producer") {
+        span_kind::PRODUCER
+    } else if t.eq_ignore_ascii_case("consumer") {
+        span_kind::CONSUMER
+    } else {
+        span_kind::INTERNAL
     }
 }
 

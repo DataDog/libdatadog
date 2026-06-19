@@ -4,7 +4,7 @@
 //! OTLP encoder: maps Datadog spans to the prost OTLP types (the IR), then to the HTTP/protobuf
 //! or HTTP/JSON wire format.
 
-pub mod json_serializer;
+pub(crate) mod json_serializer;
 pub mod mapper;
 
 pub use mapper::map_traces_to_otlp;
