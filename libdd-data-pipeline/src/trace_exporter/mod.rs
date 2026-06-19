@@ -9,7 +9,7 @@ mod trace_serializer;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
-use libdd_trace_utils::{span::trace_utils::DroppedStats, trace_filter::TraceFilterer};
+use libdd_trace_utils::trace_filter::TraceFilterer;
 
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
@@ -599,8 +599,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         mp_payload: Vec<u8>,
         headers: HeaderMap,
         chunks: usize,
-        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
-        dropped_stats: DroppedStats,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
@@ -621,7 +619,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
                 &result,
                 payload_len as u64,
                 chunks as u64,
-                dropped_stats,
             )) {
                 error!(?e, "Error sending telemetry");
             }
@@ -638,12 +635,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
-        let dropped_stats = stats::process_traces_for_stats(
+        stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
             &self.trace_filterer.load(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+            self.telemetry.as_ref(),
         );
 
         for chunk in &mut traces {
@@ -696,7 +695,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
                 prepared.data,
                 prepared.headers,
                 prepared.chunk_count,
-                dropped_stats,
             )
             .await;
 

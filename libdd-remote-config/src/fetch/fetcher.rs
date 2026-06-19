@@ -183,11 +183,11 @@ impl<S> ConfigFetcherState<S> {
                     target_file.state.apply_error = "".to_string();
                 }
                 ConfigApplyState::Acknowledged => {
-                    target_file.state.apply_state = 1;
+                    target_file.state.apply_state = 2;
                     target_file.state.apply_error = "".to_string();
                 }
                 ConfigApplyState::Error(error) => {
-                    target_file.state.apply_state = 1;
+                    target_file.state.apply_state = 3;
                     target_file.state.apply_error = error;
                 }
             }

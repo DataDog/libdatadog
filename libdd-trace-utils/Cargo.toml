@@ -35,6 +35,7 @@ rand = "0.8.5"
 bytes = "1.11.1"
 rmpv = { version = "1.3.0", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
+rustc-hash = "2.1.1"
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.0.0" }
 libdd-common = { version = "4.2.0", path = "../libdd-common", default-features = false }
