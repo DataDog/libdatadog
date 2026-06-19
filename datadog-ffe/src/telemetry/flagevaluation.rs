@@ -30,15 +30,26 @@ use super::FfeTelemetryContext;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-// ── Aggregation caps (frozen contract §1) ────────────────────────────────────
+// ── Aggregation caps ────────────────────────────────────────────────────────
+pub const EVAL_SCALE_TARGET_FLAGS: usize = 2_500;
+pub const EVAL_SCALE_FULL_BUCKETS_PER_FLAG: usize = 50;
+pub const EVAL_SCALE_USERS_PER_FLAG: usize = 1_000;
+pub const EVAL_SCALE_PER_FLAG_HEADROOM_MULTIPLIER: usize = 10;
+pub const EVAL_SCALE_DEGRADED_BUCKETS_PER_FLAG: usize = 10;
+pub const EVAL_SCALE_FULL_BUCKET_TARGET: usize =
+    EVAL_SCALE_TARGET_FLAGS * EVAL_SCALE_FULL_BUCKETS_PER_FLAG;
+pub const EVAL_SCALE_PER_FLAG_BUCKET_TARGET: usize =
+    EVAL_SCALE_PER_FLAG_HEADROOM_MULTIPLIER * EVAL_SCALE_USERS_PER_FLAG;
+pub const EVAL_SCALE_DEGRADED_BUCKET_TARGET: usize =
+    EVAL_SCALE_TARGET_FLAGS * EVAL_SCALE_DEGRADED_BUCKETS_PER_FLAG;
 /// Maximum number of distinct full-tier buckets across all flags.
 pub const GLOBAL_CAP: usize = 131_072;
 /// Maximum number of full-tier buckets for a single flag.
-pub const PER_FLAG_CAP: usize = 10_000;
+pub const PER_FLAG_CAP: usize = EVAL_SCALE_PER_FLAG_BUCKET_TARGET;
 /// Maximum number of distinct degraded-tier buckets across all flags.
 pub const DEGRADED_CAP: usize = 32_768;
 
-// ── Context pruning bounds (reviewer concern #1 review:4477935835) ────────────
+// ── Context pruning bounds ───────────────────────────────────────────────────
 /// Maximum number of context fields to include in a full-tier event.
 pub const MAX_CONTEXT_FIELDS: usize = 256;
 /// Maximum byte length of a context field value string. Values exceeding this
@@ -71,7 +82,7 @@ pub struct FfeFlagEvaluationBatch {
 /// as `null`/`false` on the wire; the sidecar flusher
 /// (`ffe_flagevaluation_flusher::build_payload`) strips those null/empty
 /// placeholders before the EVP POST so the flageval-worker schema sees no null
-/// placeholders (reviewer concern #2 review:4477935835).
+/// placeholders.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FfeFlagEvaluationEvent {
     /// Unix timestamp of the aggregation window (milliseconds).
@@ -188,15 +199,13 @@ pub struct ContextDD {
 
 // ── Context pruning ──────────────────────────────────────────────────────────
 
-/// Prune evaluation context attributes to satisfy the frozen contract bounds:
+/// Prune evaluation context attributes to satisfy the flagevaluation bounds:
 /// - At most `MAX_CONTEXT_FIELDS` (256) entries are kept.
 /// - String values longer than `MAX_FIELD_LENGTH` (256 chars) are **skipped** (not truncated) to
 ///   avoid partial-data misattribution.
 /// - Non-string values (bool, number, null) are kept regardless of their display length.
 /// - Keys are iterated in sorted order for deterministic canonical-key stability; the returned
 ///   `BTreeMap` preserves that order.
-///
-/// This satisfies reviewer concern #1 (`review:4477935835`).
 pub fn prune_context(
     attrs: &BTreeMap<String, serde_json::Value>,
 ) -> BTreeMap<String, serde_json::Value> {
@@ -349,6 +358,16 @@ mod tests {
             v["runtime_default_used"], false,
             "runtime_default_used should serialize as false"
         );
+    }
+
+    #[test]
+    fn cap_sizing_constants_preserve_default_caps() {
+        assert_eq!(EVAL_SCALE_FULL_BUCKET_TARGET, 125_000);
+        assert_eq!(EVAL_SCALE_PER_FLAG_BUCKET_TARGET, 10_000);
+        assert_eq!(EVAL_SCALE_DEGRADED_BUCKET_TARGET, 25_000);
+        assert_eq!(GLOBAL_CAP, 131_072);
+        assert_eq!(PER_FLAG_CAP, 10_000);
+        assert_eq!(DEGRADED_CAP, 32_768);
     }
 
     // ── Test: bincode round-trip with mixed Some/None fields ──────────────────

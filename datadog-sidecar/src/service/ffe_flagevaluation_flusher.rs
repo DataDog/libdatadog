@@ -4,7 +4,7 @@
 //! Serializes and forwards FFE (Feature Flag Evaluation) flag evaluation
 //! batches to the Datadog Agent's EVP proxy.
 //!
-//! Protocol: `POST /evp_proxy/v2/api/v2/flagevaluations` with the header
+//! Protocol: `POST /evp_proxy/v2/api/v2/flagevaluation` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. Fire-and-forget: non-2xx
 //! responses are logged at `warn`, network errors at `debug`, and dropped
 //! (matches dd-trace-go behaviour). No agent capability gate.
@@ -23,7 +23,7 @@ use std::time::Duration;
 use tracing::{debug, warn};
 
 /// EVP proxy path for FFE flag evaluation intake.
-pub(crate) const EVP_FLAGEVALUATIONS_PATH: &str = "/evp_proxy/v2/api/v2/flagevaluations";
+pub(crate) const EVP_FLAGEVALUATION_PATH: &str = "/evp_proxy/v2/api/v2/flagevaluation";
 
 /// EVP subdomain that routes requests to event-platform intake.
 pub(crate) const EVP_SUBDOMAIN_HEADER: &str = "X-Datadog-EVP-Subdomain";
@@ -298,7 +298,7 @@ fn merge_event(existing: &mut FfeFlagEvaluationEvent, incoming: &FfeFlagEvaluati
 }
 
 /// Build the FFE flagevaluation endpoint from a session's agent base endpoint.
-/// Overrides only the path (`/evp_proxy/v2/api/v2/flagevaluations`), preserving
+/// Overrides only the path (`/evp_proxy/v2/api/v2/flagevaluation`), preserving
 /// scheme, authority, timeout, and test_token.
 /// Returns `None` for agentless mode because EVP proxy routing is agent-only.
 pub(crate) fn flagevaluation_endpoint(base: &Endpoint) -> Option<Endpoint> {
@@ -307,7 +307,7 @@ pub(crate) fn flagevaluation_endpoint(base: &Endpoint) -> Option<Endpoint> {
     }
 
     let mut parts = base.url.clone().into_parts();
-    parts.path_and_query = Some(PathAndQuery::from_static(EVP_FLAGEVALUATIONS_PATH));
+    parts.path_and_query = Some(PathAndQuery::from_static(EVP_FLAGEVALUATION_PATH));
     let url = http::Uri::from_parts(parts).ok()?;
     Some(Endpoint {
         url,
@@ -834,7 +834,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(httpmock::Method::POST)
-                    .path(EVP_FLAGEVALUATIONS_PATH)
+                    .path(EVP_FLAGEVALUATION_PATH)
                     .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
                     .header("content-type", "application/json");
                 then.status(202);
@@ -858,7 +858,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(httpmock::Method::POST)
-                    .path(EVP_FLAGEVALUATIONS_PATH)
+                    .path(EVP_FLAGEVALUATION_PATH)
                     .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
                     .header("content-type", "application/json");
                 then.status(202);
@@ -884,7 +884,7 @@ mod tests {
         let mock = server
             .mock_async(|when, then| {
                 when.method(httpmock::Method::POST)
-                    .path(EVP_FLAGEVALUATIONS_PATH)
+                    .path(EVP_FLAGEVALUATION_PATH)
                     .body_includes("\"evaluation_count\":10");
                 then.status(202);
             })
@@ -973,7 +973,7 @@ mod tests {
         let _mock = server
             .mock_async(|when, then| {
                 when.method(httpmock::Method::POST)
-                    .path(EVP_FLAGEVALUATIONS_PATH);
+                    .path(EVP_FLAGEVALUATION_PATH);
                 then.status(500).body("intake overloaded");
             })
             .await;
@@ -1006,7 +1006,7 @@ mod tests {
         let ep = flagevaluation_endpoint(&base).unwrap();
         assert_eq!(ep.url.scheme_str(), Some("http"));
         assert_eq!(ep.url.authority().unwrap().as_str(), "agent.internal:8126");
-        assert_eq!(ep.url.path(), EVP_FLAGEVALUATIONS_PATH);
+        assert_eq!(ep.url.path(), EVP_FLAGEVALUATION_PATH);
     }
 
     #[test]
