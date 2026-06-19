@@ -700,6 +700,9 @@ mod tests {
         ));
     }
 
+    // Builds a live agent exporter (spawns the agent_info worker, which makes real syscalls),
+    // so it can't run under miri.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_otlp_grpc_without_endpoint_still_builds() {
         // The protocol setting must stay inert when no OTLP endpoint is configured: a `grpc`
