@@ -162,9 +162,10 @@ impl FlagEvaluationCoalescer {
                 .unwrap_or(0);
 
             if state.full_bucket_count < GLOBAL_CAP && full_bucket_count_for_flag < PER_FLAG_CAP {
-                insert_pending_event(&mut state, &destination_key, key, event);
-                state.full_bucket_count += 1;
-                *state.full_bucket_count_by_flag.entry(flag_key).or_default() += 1;
+                if insert_pending_event(&mut state, &destination_key, key, event) {
+                    state.full_bucket_count += 1;
+                    *state.full_bucket_count_by_flag.entry(flag_key).or_default() += 1;
+                }
                 continue;
             }
 
@@ -182,8 +183,9 @@ impl FlagEvaluationCoalescer {
                 continue;
             }
 
-            insert_pending_event(&mut state, &destination_key, degraded_key, event);
-            state.degraded_bucket_count += 1;
+            if insert_pending_event(&mut state, &destination_key, degraded_key, event) {
+                state.degraded_bucket_count += 1;
+            }
         }
 
         if !state.flush_running {
@@ -261,10 +263,10 @@ fn merge_pending_event(
     key: &EventKey,
     event: &FfeFlagEvaluationEvent,
 ) -> bool {
-    let pending = state
-        .destinations
-        .get_mut(destination_key)
-        .expect("destination was inserted before event merge");
+    let Some(pending) = state.destinations.get_mut(destination_key) else {
+        return false;
+    };
+
     if let Some(existing) = pending.events.get_mut(key) {
         merge_event(existing, event);
         true
@@ -278,14 +280,15 @@ fn insert_pending_event(
     destination_key: &DestinationKey,
     key: EventKey,
     event: FfeFlagEvaluationEvent,
-) {
-    state
-        .destinations
-        .get_mut(destination_key)
-        .expect("destination was inserted before event insert")
-        .events
-        .insert(key, event);
+) -> bool {
+    let Some(pending) = state.destinations.get_mut(destination_key) else {
+        warn!("ffe_flagevaluation_flusher: missing pending destination; dropping event");
+        return false;
+    };
+
+    pending.events.insert(key, event);
     state.pending_bucket_count += 1;
+    true
 }
 
 fn merge_event(existing: &mut FfeFlagEvaluationEvent, incoming: &FfeFlagEvaluationEvent) {
