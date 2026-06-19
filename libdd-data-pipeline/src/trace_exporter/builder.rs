@@ -344,18 +344,6 @@ impl TraceExporterBuilder {
             ));
         }
 
-        // OTLP gRPC export is not implemented. Reject it here so a misconfigured exporter fails
-        // fast at build time with a clear `InvalidConfiguration` (FFI: `InvalidArgument`), matching
-        // the C FFI `set_otlp_protocol` setter, rather than erroring on every send. The send-time
-        // arm in `send_otlp_traces_inner` remains as a defensive guard.
-        if self.otlp_protocol == OtlpProtocol::Grpc {
-            return Err(TraceExporterError::Builder(
-                BuilderErrorKind::InvalidConfiguration(
-                    "OTLP gRPC export is not supported".to_string(),
-                ),
-            ));
-        }
-
         let shared_runtime = match self.shared_runtime {
             Some(rt) => rt,
             None => Self::new_shared_runtime()?,
@@ -453,31 +441,47 @@ impl TraceExporterBuilder {
             }
         };
 
-        let otlp_config = self.otlp_endpoint.map(|url| {
-            let mut headers = http::HeaderMap::new();
-            for (key, value) in self.otlp_headers {
-                match (
-                    http::HeaderName::from_bytes(key.as_bytes()),
-                    http::HeaderValue::from_str(&value),
-                ) {
-                    (Ok(name), Ok(val)) => {
-                        headers.insert(name, val);
-                    }
-                    _ => {
-                        tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
+        let otlp_config = match self.otlp_endpoint {
+            Some(url) => {
+                // OTLP gRPC export is not implemented. Reject it here — but only when OTLP export
+                // is actually enabled (an endpoint is configured) — so a `grpc` value resolved
+                // from the OTel-default `OTEL_EXPORTER_OTLP_PROTOCOL` stays inert for a normal
+                // Datadog-agent exporter rather than failing its build. Fails fast with the same
+                // `InvalidConfiguration` category (FFI: `InvalidArgument`) the C FFI setter uses;
+                // the send-time arm in `send_otlp_traces_inner` remains a defensive guard.
+                if self.otlp_protocol == OtlpProtocol::Grpc {
+                    return Err(TraceExporterError::Builder(
+                        BuilderErrorKind::InvalidConfiguration(
+                            "OTLP gRPC export is not supported".to_string(),
+                        ),
+                    ));
+                }
+                let mut headers = http::HeaderMap::new();
+                for (key, value) in self.otlp_headers {
+                    match (
+                        http::HeaderName::from_bytes(key.as_bytes()),
+                        http::HeaderValue::from_str(&value),
+                    ) {
+                        (Ok(name), Ok(val)) => {
+                            headers.insert(name, val);
+                        }
+                        _ => {
+                            tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
+                        }
                     }
                 }
+                Some(OtlpTraceConfig {
+                    endpoint_url: url,
+                    headers,
+                    timeout: self
+                        .connection_timeout
+                        .map(Duration::from_millis)
+                        .unwrap_or(DEFAULT_OTLP_TIMEOUT),
+                    protocol: self.otlp_protocol,
+                })
             }
-            OtlpTraceConfig {
-                endpoint_url: url,
-                headers,
-                timeout: self
-                    .connection_timeout
-                    .map(Duration::from_millis)
-                    .unwrap_or(DEFAULT_OTLP_TIMEOUT),
-                protocol: self.otlp_protocol,
-            }
-        });
+            None => None,
+        };
 
         Ok(TraceExporter {
             endpoint: Endpoint {
@@ -697,11 +701,28 @@ mod tests {
     }
 
     #[test]
-    fn test_otlp_grpc_protocol_rejected_at_build() {
-        // gRPC is unsupported and must fail fast at build time (not on the first send), with the
-        // same `InvalidConfiguration` category the C FFI setter uses.
+    fn test_otlp_grpc_without_endpoint_still_builds() {
+        // The protocol setting must stay inert when no OTLP endpoint is configured: a `grpc`
+        // value (e.g. resolved from the OTel-default `OTEL_EXPORTER_OTLP_PROTOCOL`) must NOT
+        // break a normal Datadog-agent exporter that does no OTLP export at all.
         let mut builder = TraceExporterBuilder::default();
         builder.set_otlp_protocol(crate::otlp::OtlpProtocol::Grpc);
+        let result = builder.build::<NativeCapabilities>();
+        assert!(
+            result.is_ok(),
+            "grpc protocol without an OTLP endpoint must still build the agent exporter"
+        );
+    }
+
+    #[test]
+    fn test_otlp_grpc_with_endpoint_rejected_at_build() {
+        // When OTLP export IS enabled (endpoint set), gRPC is unsupported and must fail fast at
+        // build time (not on the first send), with the same `InvalidConfiguration` category the
+        // C FFI setter uses.
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint("http://localhost:4318/v1/traces")
+            .set_otlp_protocol(crate::otlp::OtlpProtocol::Grpc);
         let result = builder.build::<NativeCapabilities>();
         assert!(matches!(
             result,
