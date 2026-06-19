@@ -37,6 +37,23 @@ where
     s.collect_seq(items.iter().map(wrap))
 }
 
+/// Serializes an OTLP id (`trace_id`/`span_id`/`parent_span_id`) as lowercase hex without
+/// allocating a `String`. OTLP ids are 8 or 16 bytes (16/32 hex chars); a 64-byte stack buffer
+/// covers them, with an allocating `hex::encode` fallback for any unexpectedly-long input.
+struct HexId<'a>(&'a [u8]);
+impl Serialize for HexId<'_> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut buf = [0u8; 64];
+        let n = self.0.len() * 2;
+        if n <= buf.len() && hex::encode_to_slice(self.0, &mut buf[..n]).is_ok() {
+            if let Ok(hex) = std::str::from_utf8(&buf[..n]) {
+                return s.serialize_str(hex);
+            }
+        }
+        s.serialize_str(&hex::encode(self.0))
+    }
+}
+
 impl Serialize for OtlpJson<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let mut m = s.serialize_map(Some(1))?;
@@ -144,10 +161,10 @@ impl Serialize for SpanJson<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let sp = self.0;
         let mut m = s.serialize_map(None)?;
-        m.serialize_entry("traceId", &hex::encode(&sp.trace_id))?;
-        m.serialize_entry("spanId", &hex::encode(&sp.span_id))?;
+        m.serialize_entry("traceId", &HexId(&sp.trace_id))?;
+        m.serialize_entry("spanId", &HexId(&sp.span_id))?;
         if !sp.parent_span_id.is_empty() {
-            m.serialize_entry("parentSpanId", &hex::encode(&sp.parent_span_id))?;
+            m.serialize_entry("parentSpanId", &HexId(&sp.parent_span_id))?;
         }
         if !sp.trace_state.is_empty() {
             m.serialize_entry("traceState", &sp.trace_state)?;
@@ -233,8 +250,8 @@ impl Serialize for LinkJson<'_> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let l = self.0;
         let mut m = s.serialize_map(None)?;
-        m.serialize_entry("traceId", &hex::encode(&l.trace_id))?;
-        m.serialize_entry("spanId", &hex::encode(&l.span_id))?;
+        m.serialize_entry("traceId", &HexId(&l.trace_id))?;
+        m.serialize_entry("spanId", &HexId(&l.span_id))?;
         if !l.trace_state.is_empty() {
             m.serialize_entry("traceState", &l.trace_state)?;
         }

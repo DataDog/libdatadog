@@ -143,7 +143,11 @@ fn collect_span_attributes<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
 ) -> (Vec<ProtoKeyValue>, usize) {
-    let mut attrs: Vec<ProtoKeyValue> = Vec::new();
+    // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
+    // attrs plus every meta/metrics/meta_struct entry, clamped to the per-span cap.
+    let capacity = (4 + span.meta.len() + span.metrics.len() + span.meta_struct.len())
+        .min(MAX_ATTRIBUTES_PER_SPAN);
+    let mut attrs: Vec<ProtoKeyValue> = Vec::with_capacity(capacity);
     let span_service = span.service.borrow();
     let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
     if has_per_span_service {
@@ -268,7 +272,9 @@ pub fn map_traces_to_otlp<T: TraceData>(
     resource_info: &OtlpResourceInfo,
 ) -> ProtoReq {
     let resource = build_resource(resource_info);
-    let mut all_spans: Vec<ProtoSpan> = Vec::new();
+    // Pre-size to the total span count so the per-span push loop never reallocates.
+    let total_spans: usize = trace_chunks.iter().map(|chunk| chunk.len()).sum();
+    let mut all_spans: Vec<ProtoSpan> = Vec::with_capacity(total_spans);
     for chunk in &trace_chunks {
         // Resolve the high 64 bits of the 128-bit trace ID once per chunk. For each span,
         // prefer the native u128 `trace_id` field (e.g. Python's native spans hold the full
