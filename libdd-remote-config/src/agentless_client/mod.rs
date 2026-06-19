@@ -142,17 +142,16 @@ pub fn make_agentless_configs_endpoint(e: &Endpoint) -> Option<Endpoint> {
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq, Default)]
 pub struct AgentlessConfig {
-    /// Hostname reported to the RC backend in `LatestConfigsRequest.hostname`.
-    /// Required (must be non-empty) in agentless mode; an empty value causes
+    /// Hostname reported to the RC backend
+    /// Must be non empty in agentless mode; an empty value causes
     /// `ConfigFetcherState::new` to downgrade to agent mode.
     pub hostname: String,
-    /// Optional path to a TUF config-repo root JSON to use instead of the
-    /// embedded one. Useful for staging/private deployments where the trust
-    /// chain differs from the published defaults.
+    /// Optional path to a TUF repo root JSON to use instead of the
+    /// embedded one
     pub config_root_override_path: Option<PathBuf>,
-    /// Optional path to a TUF director-repo root JSON to use instead of the
-    /// embedded one.
     pub director_root_override_path: Option<PathBuf>,
+    /// Override the `agent_uuid` field sent to the RC backend.
+    pub agent_uuid: Option<String>,
 }
 
 pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeHttpClient>;
@@ -166,6 +165,7 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     initial_config_root_version: u64,
     initial_director_root_version: u64,
     hostname: String,
+    agent_uuid_override: Option<String>,
     products: HashSet<String>,
     refresh_interval: Duration,
     /// Number of consecutive `fetch_config` failures. Reset to 0 on success.
@@ -276,6 +276,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             initial_config_root_version,
             initial_director_root_version,
             hostname: cfg.hostname,
+            agent_uuid_override: cfg.agent_uuid,
             products: HashSet::new(),
             target_cache: HashMap::new(),
 
@@ -443,7 +444,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             trace_agent_env: String::new(),
             org_uuid: String::new(),
             tags: vec![],
-            agent_uuid: String::new(),
+            agent_uuid: self
+                .agent_uuid_override
+                .as_deref()
+                .unwrap_or_else(|| libdd_common::machine_id::get_machine_id())
+                .to_owned(),
         };
         let response = match self.get_latest_config(request).await {
             Ok(r) => r,
