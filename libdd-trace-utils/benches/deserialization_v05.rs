@@ -18,30 +18,15 @@
 //!     behavior).
 
 use std::alloc::System;
-use std::collections::HashMap;
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion, Throughput};
 use libdd_common::bench_utils::{memory_allocated_measurement, AllocatedBytesMeasurement};
+use libdd_tinybytes::BytesString;
 use libdd_trace_utils::msgpack_decoder;
-
-/// A V05 span is a fixed 12-element tuple. String fields (service, name, resource, type, and the
-/// meta/metrics keys/values) are `u32` indices into the shared dictionary.
-type V05Span = (
-    u32,               // service (dict index)
-    u32,               // name (dict index)
-    u32,               // resource (dict index)
-    u64,               // trace_id
-    u64,               // span_id
-    u64,               // parent_id
-    i64,               // start
-    i64,               // duration
-    i32,               // error
-    HashMap<u32, u32>, // meta (dict index -> dict index)
-    HashMap<u32, f64>, // metrics (dict index -> value)
-    u32,               // type (dict index)
-);
-
-type V05Payload = (Vec<String>, Vec<Vec<V05Span>>);
+use libdd_trace_utils::span::v04::SpanBytes;
+use libdd_trace_utils::span::v05::{self, from_v04_span};
+use libdd_trace_utils::span::vec_map::VecMap;
+use libdd_trace_utils::span::SharedDictBytes;
 
 /// Number of meta tags per span. Picked to resemble a typical instrumented span (service/runtime
 /// metadata, a couple of resource attributes, thread info, etc.).
@@ -51,29 +36,21 @@ const METRICS_PER_SPAN: usize = 3;
 
 /// Builds a representative V05 payload.
 ///
+/// The payload is assembled as V04 spans and then run through the production `from_v04_span`
+/// interning path (the same logic `collect_trace_chunks` uses for `TraceEncoding::V05`), so the
+/// shared dictionary and the wire layout match what the encoder actually emits.
+///
 /// `unique_per_span` controls the string-sharing ratio:
-///   * `false` (high sharing): all spans draw their strings from a single small shared dictionary,
-///     mirroring real tracer traffic where service names and tag keys repeat heavily.
+///   * `false` (high sharing): all spans share the same string values, which `from_v04_span`
+///     collapses into a single small dictionary, mirroring real tracer traffic where service names
+///     and tag keys repeat heavily.
 ///   * `true` (low sharing): each span contributes its own unique strings, producing a large
 ///     dictionary with little reuse.
 ///
 /// Data is fully deterministic.
 fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span: bool) -> Vec<u8> {
-    let mut dict = Vec::new();
-    let intern = |s: String, dict: &mut Vec<String>| -> u32 {
-        let idx = dict.len() as u32;
-        dict.push(s);
-        idx
-    };
-
-    // Shared dictionary entries reused by every span in the "high sharing" scenario.
-    let shared_service = intern("test-service".to_string(), &mut dict);
-    let shared_name = intern("test-service.handler".to_string(), &mut dict);
-    let shared_resource = intern("GET /api/v1/resource".to_string(), &mut dict);
-    let shared_type = intern("web".to_string(), &mut dict);
-
-    // Shared meta keys/values (typical tag keys that repeat across all spans).
-    let shared_meta: Vec<(u32, u32)> = [
+    // Shared string values reused by every span in the "high sharing" scenario.
+    const SHARED_META: [(&str, &str); META_TAGS_PER_SPAN] = [
         ("env", "production"),
         ("version", "1.2.3"),
         ("runtime-id", "f0e1d2c3-b4a5-6789-0abc-def012345678"),
@@ -82,22 +59,9 @@ fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span:
         ("span.kind", "server"),
         ("http.method", "GET"),
         ("http.status_code", "200"),
-    ]
-    .iter()
-    .take(META_TAGS_PER_SPAN)
-    .map(|(k, v)| {
-        (
-            intern((*k).to_string(), &mut dict),
-            intern((*v).to_string(), &mut dict),
-        )
-    })
-    .collect();
-
-    let shared_metric_keys: Vec<_> = ["_sampling_priority_v1", "_dd.measured", "_dd.top_level"]
-        .iter()
-        .take(METRICS_PER_SPAN)
-        .map(|k| intern((*k).to_string(), &mut dict))
-        .collect();
+    ];
+    const SHARED_METRIC_KEYS: [&str; METRICS_PER_SPAN] =
+        ["_sampling_priority_v1", "_dd.measured", "_dd.top_level"];
 
     let mut traces = Vec::with_capacity(num_traces);
 
@@ -109,65 +73,91 @@ fn build_v05_payload(num_traces: usize, spans_per_trace: usize, unique_per_span:
             let span_id = root_span_id + span_idx as u64 + 1;
             let parent_id = if span_idx == 0 { 0 } else { root_span_id };
 
-            let (service, name, resource, ty, meta, metric_keys) = if unique_per_span {
-                // Low sharing: every span interns its own unique strings.
-                let service = intern(format!("service-{trace_idx}-{span_idx}"), &mut dict);
-                let name = intern(format!("op-{trace_idx}-{span_idx}"), &mut dict);
-                let resource = intern(format!("GET /api/{trace_idx}/{span_idx}"), &mut dict);
-                let ty = intern(format!("type-{}", span_idx % 4), &mut dict);
-
-                let meta: Vec<(u32, u32)> = (0..META_TAGS_PER_SPAN)
+            let (service, name, resource, ty, meta, metrics) = if unique_per_span {
+                // Low sharing: every span contributes its own unique strings.
+                let meta: VecMap<BytesString, BytesString> = (0..META_TAGS_PER_SPAN)
                     .map(|m| {
                         (
-                            intern(format!("tag.key.{trace_idx}.{span_idx}.{m}"), &mut dict),
-                            intern(format!("tag-value-{trace_idx}-{span_idx}-{m}"), &mut dict),
+                            BytesString::from(format!("tag.key.{trace_idx}.{span_idx}.{m}")),
+                            BytesString::from(format!("tag-value-{trace_idx}-{span_idx}-{m}")),
                         )
                     })
                     .collect();
-                let metric_keys: Vec<u32> = (0..METRICS_PER_SPAN)
-                    .map(|m| intern(format!("metric.{trace_idx}.{span_idx}.{m}"), &mut dict))
+                let metrics: VecMap<BytesString, f64> = (0..METRICS_PER_SPAN)
+                    .map(|m| {
+                        (
+                            BytesString::from(format!("metric.{trace_idx}.{span_idx}.{m}")),
+                            m as f64 + 1.0,
+                        )
+                    })
                     .collect();
 
-                (service, name, resource, ty, meta, metric_keys)
-            } else {
-                // High sharing: reuse the shared dictionary entries.
                 (
-                    shared_service,
-                    shared_name,
-                    shared_resource,
-                    shared_type,
-                    shared_meta.clone(),
-                    shared_metric_keys.clone(),
+                    BytesString::from(format!("service-{trace_idx}-{span_idx}")),
+                    BytesString::from(format!("op-{trace_idx}-{span_idx}")),
+                    BytesString::from(format!("GET /api/{trace_idx}/{span_idx}")),
+                    BytesString::from(format!("type-{}", span_idx % 4)),
+                    meta,
+                    metrics,
+                )
+            } else {
+                // High sharing: reuse the shared string values (typical tag keys that repeat
+                // across all spans).
+                let meta: VecMap<BytesString, BytesString> = SHARED_META
+                    .iter()
+                    .map(|(k, v)| (BytesString::from(*k), BytesString::from(*v)))
+                    .collect();
+                let metrics: VecMap<BytesString, f64> = SHARED_METRIC_KEYS
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| (BytesString::from(*k), i as f64 + 1.0))
+                    .collect();
+
+                (
+                    BytesString::from("test-service"),
+                    BytesString::from("test-service.handler"),
+                    BytesString::from("GET /api/v1/resource"),
+                    BytesString::from("web"),
+                    meta,
+                    metrics,
                 )
             };
 
-            let meta_map: HashMap<u32, u32> = meta.into_iter().collect();
-            let metrics_map: HashMap<u32, f64> = metric_keys
-                .into_iter()
-                .enumerate()
-                .map(|(i, k)| (k, i as f64 + 1.0))
-                .collect();
-
-            spans.push((
+            spans.push(SpanBytes {
                 service,
                 name,
                 resource,
-                100_000_000_000u64 + trace_idx as u64,
+                r#type: ty,
+                trace_id: 100_000_000_000u128 + trace_idx as u128,
                 span_id,
                 parent_id,
-                1_700_000_000_000_000_000i64,
-                123_456i64,
-                0i32,
-                meta_map,
-                metrics_map,
-                ty,
-            ));
+                start: 1_700_000_000_000_000_000,
+                duration: 123_456,
+                error: 0,
+                meta,
+                metrics,
+                meta_struct: VecMap::default(),
+                span_links: Vec::new(),
+                span_events: Vec::new(),
+            });
         }
         traces.push(spans);
     }
 
-    let payload: V05Payload = (dict, traces);
-    rmp_serde::to_vec(&payload).expect("Failed to serialize V05 test payload.")
+    // Intern every string into the shared dictionary via the production V05 conversion path.
+    let mut dict = SharedDictBytes::default();
+    let v05_traces: Vec<Vec<v05::Span>> = traces
+        .into_iter()
+        .map(|trace| {
+            trace
+                .into_iter()
+                .map(|span| from_v04_span(span, &mut dict))
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .collect::<anyhow::Result<Vec<_>>>()
+        .expect("Failed to convert V04 spans to V05.");
+
+    rmp_serde::to_vec(&(dict, v05_traces)).expect("Failed to serialize V05 test payload.")
 }
 
 /// Runs the V05 decode benchmark matrix against the given criterion harness, which lets us reuse
