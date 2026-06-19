@@ -3,97 +3,119 @@
 
 use std::path::Path;
 
-const ETC_MACHINE_ID: &str = "/etc/machine-id";
-const DBUS_MACHINE_ID: &str = "/var/lib/dbus/machine-id";
-
-/// Read and trim the contents of `path`, returning `None` on any I/O error or
-/// if the resulting string is empty.
-fn read_id(path: &Path) -> Option<String> {
-    let raw = std::fs::read_to_string(path).ok()?;
-    let trimmed = raw.trim().to_owned();
-    if trimmed.is_empty() {
+fn read_trimmed(path: &Path) -> Option<String> {
+    let s = std::fs::read_to_string(path).ok()?;
+    let s = s.trim().to_owned();
+    if s.is_empty() {
         None
     } else {
-        Some(trimmed)
+        Some(s)
     }
 }
 
-/// Return the machine ID from the given paths.
-///
-/// Tries `etc_path` first (mirrors `/etc/machine-id`), falls back to
-/// `dbus_path` (mirrors `/var/lib/dbus/machine-id`). Returns an empty
-/// `String` when both are unavailable, matching the Go agent's behaviour.
-///
-/// Accepts explicit paths so tests can inject temporary files without needing
-/// a feature flag.
-pub fn get_machine_id_impl_paths(etc_path: &Path, dbus_path: &Path) -> String {
-    read_id(etc_path)
-        .or_else(|| read_id(dbus_path))
-        .unwrap_or_default()
+pub fn get_machine_id_impl_paths(dmi_path: &Path, etc_path: &Path, boot_path: &Path) -> String {
+    if let Some(id) = read_trimmed(dmi_path) {
+        return id;
+    }
+    // agent compatibility:
+    // gopsutil only accepts /etc/machine-id when it's exactly 32 chars (bare hex)
+    if let Some(id) = read_trimmed(etc_path) {
+        if id.len() == 32 {
+            return id;
+        }
+    }
+    read_trimmed(boot_path).unwrap_or_default()
 }
 
-/// Return the machine ID using the standard system paths.
 pub fn get_machine_id_impl() -> String {
-    get_machine_id_impl_paths(Path::new(ETC_MACHINE_ID), Path::new(DBUS_MACHINE_ID))
+    get_machine_id_impl_paths(
+        Path::new("/sys/class/dmi/id/product_uuid"),
+        Path::new("/etc/machine-id"),
+        Path::new("/proc/sys/kernel/random/boot_id"),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
 
-    #[test]
-    fn prefers_etc_machine_id() {
-        let dir = tempfile::tempdir().unwrap();
-        let etc = dir.path().join("etc_machine_id");
-        let dbus = dir.path().join("dbus_machine_id");
-        std::fs::write(&etc, "aabbccdd\n").unwrap();
-        std::fs::write(&dbus, "11223344\n").unwrap();
-        assert_eq!(get_machine_id_impl_paths(&etc, &dbus), "aabbccdd");
+    fn write(path: &Path, content: &[u8]) {
+        std::fs::write(path, content).unwrap();
+    }
+
+    fn tmp_paths(
+        dir: &tempfile::TempDir,
+    ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        (
+            dir.path().join("product_uuid"),
+            dir.path().join("machine_id"),
+            dir.path().join("boot_id"),
+        )
     }
 
     #[test]
-    fn falls_back_to_dbus_when_etc_missing() {
+    fn level1_dmi_wins_when_present() {
         let dir = tempfile::tempdir().unwrap();
-        let dbus = dir.path().join("dbus_machine_id");
-        std::fs::write(&dbus, "11223344\n").unwrap();
+        let (dmi, etc, boot) = tmp_paths(&dir);
+        write(&dmi, b"B08FA8A2-B01A-4D2B-BD95-FEC7E30C5AEC\n");
+        write(&etc, b"aabbccddaabbccddaabbccddaabbccdd\n");
+        write(&boot, b"cccccccccccccccccccccccccccccccc\n");
         assert_eq!(
-            get_machine_id_impl_paths(Path::new("/nonexistent_etc_mid"), &dbus),
-            "11223344"
+            get_machine_id_impl_paths(&dmi, &etc, &boot),
+            "B08FA8A2-B01A-4D2B-BD95-FEC7E30C5AEC"
         );
     }
 
     #[test]
-    fn both_missing_returns_empty() {
+    fn level2_etc_used_when_dmi_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let (dmi, etc, boot) = tmp_paths(&dir);
+        write(&etc, b"aabbccddaabbccddaabbccddaabbccdd\n");
+        write(&boot, b"cccccccccccccccccccccccccccccccc\n");
         assert_eq!(
-            get_machine_id_impl_paths(
-                Path::new("/nonexistent_etc_mid"),
-                Path::new("/nonexistent_dbus_mid"),
-            ),
-            ""
+            get_machine_id_impl_paths(&dmi, &etc, &boot),
+            "aabbccddaabbccddaabbccddaabbccdd"
         );
     }
 
     #[test]
-    fn trims_whitespace_and_newlines() {
+    fn level2_skipped_when_etc_not_32_chars() {
         let dir = tempfile::tempdir().unwrap();
-        let etc = dir.path().join("etc_machine_id");
-        std::fs::write(&etc, "  deadbeef  \n").unwrap();
+        let (dmi, etc, boot) = tmp_paths(&dir);
+        write(&etc, b"aabbccdd-aabb-ccdd-aabb-ccddaabbccdd\n");
+        write(&boot, b"dddddddddddddddddddddddddddddddd\n");
         assert_eq!(
-            get_machine_id_impl_paths(&etc, Path::new("/nonexistent_dbus_mid")),
-            "deadbeef"
+            get_machine_id_impl_paths(&dmi, &etc, &boot),
+            "dddddddddddddddddddddddddddddddd"
         );
     }
 
     #[test]
-    fn empty_file_falls_back() {
+    fn level3_boot_id_as_last_resort() {
         let dir = tempfile::tempdir().unwrap();
-        let etc = dir.path().join("etc_machine_id");
-        let dbus = dir.path().join("dbus_machine_id");
-        // etc exists but is whitespace-only; should fall back to dbus
-        let mut f = std::fs::File::create(&etc).unwrap();
-        f.write_all(b"   \n").unwrap();
-        std::fs::write(&dbus, "fallback_id").unwrap();
-        assert_eq!(get_machine_id_impl_paths(&etc, &dbus), "fallback_id");
+        let (dmi, etc, boot) = tmp_paths(&dir);
+        write(&boot, b"cccccccccccccccccccccccccccccccc\n");
+        assert_eq!(
+            get_machine_id_impl_paths(&dmi, &etc, &boot),
+            "cccccccccccccccccccccccccccccccc"
+        );
+    }
+
+    #[test]
+    fn all_absent_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let (dmi, etc, boot) = tmp_paths(&dir);
+        assert_eq!(get_machine_id_impl_paths(&dmi, &etc, &boot), "");
+    }
+
+    #[test]
+    fn trims_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let (dmi, etc, boot) = tmp_paths(&dir);
+        write(&etc, b"  aabbccddaabbccddaabbccddaabbccdd  \n");
+        assert_eq!(
+            get_machine_id_impl_paths(&dmi, &etc, &boot),
+            "aabbccddaabbccddaabbccddaabbccdd"
+        );
     }
 }
