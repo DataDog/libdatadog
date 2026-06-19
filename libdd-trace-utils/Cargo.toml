@@ -94,9 +94,7 @@ test-utils = [
     "urlencoding",
 ]
 change-buffer = []
-# Opt-in switch for crate-internal microbenchmarks (e.g. `vec_map_bench`). Mirrors the
-# `bench-internals` feature in `libdd-sampling`; the bench targets it via `required-features` so
-# they are not built by default. Not intended for downstream consumers.
+# Opt-in switch for crate-internal microbenchmarks (e.g. `vec_map_bench`).
 bench-internals = []
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
