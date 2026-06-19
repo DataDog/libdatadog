@@ -3,7 +3,8 @@
 
 //! Step 0 baseline tool for the Windows lazy-commit arena work.
 //!
-//! It exercises the `ProfilesDictionary` arenas with a realistic workload and
+//! It exercises the `ProfilesDictionary` arenas with the realistic usage shape
+//! (one long-lived dictionary, lots of strings -- e.g. the .NET profiler) and
 //! prints this process's memory footprint, so the *same* binary can be run on
 //! `main` and on a feature branch and the deltas diffed. The headline number on
 //! Windows is the commit charge (`PROCESS_MEMORY_COUNTERS_EX.PrivateUsage`),
@@ -11,19 +12,29 @@
 //! expected to be identical (mmap overcommit), so it is reported only for
 //! completeness.
 //!
+//! The arenas use fixed ~1 MiB chunks per shard (16 string + 4 function + 2
+//! mapping shards), committed on demand as they fill. For a single dictionary
+//! the eager-commit *waste* is therefore bounded to the partially-filled top
+//! chunk per shard (~22 MiB worst case), regardless of how many strings are
+//! interned. This tool makes that relationship visible: as the unique-string
+//! count grows, committed memory should track the interned bytes plus a roughly
+//! constant slack.
+//!
 //! This file deliberately uses only the public `ProfilesDictionary` API plus
 //! the `WORDPRESS_STRINGS` corpus, with no internal/stats APIs, so the identical
 //! file compiles on both `main` and the branch.
 //!
 //! Usage:
 //!   cargo run --release --example arena_memory
-//!   cargo run --release --example arena_memory -- <sparse_dicts> <sparse_strings> <filled_dicts>
+//!   cargo run --release --example arena_memory -- <unique_strings> <checkpoints> <sparse_dicts>
 //!
-//! Defaults: sparse_dicts=200, sparse_strings=10, filled_dicts=20. Pass 0 for
-//! sparse_dicts or filled_dicts to skip that scenario.
+//! Defaults: unique_strings=300000, checkpoints=6, sparse_dicts=0. The
+//! sparse-dictionaries scenario (the eager-commit multiplier) only runs when
+//! sparse_dicts > 0, since it is an edge case rather than the .NET shape.
 
 use std::any::Any;
 use std::error::Error;
+use std::fmt::Write as _;
 
 use libdd_profiling::collections::string_table::wordpress_test_data::WORDPRESS_STRINGS;
 use libdd_profiling::profiles::datatypes::{Function2, Mapping2, ProfilesDictionary, StringId2};
@@ -109,37 +120,109 @@ fn human_delta(bytes: i128) -> String {
     format!("{:+.2} MiB", bytes as f64 / (1024.0 * 1024.0))
 }
 
+fn metric_delta(before: &MemSnapshot, after: &MemSnapshot, idx: usize) -> i128 {
+    let b = before.metrics.get(idx).map(|(_, v)| *v).unwrap_or(0);
+    let a = after.metrics.get(idx).map(|(_, v)| *v).unwrap_or(0);
+    a as i128 - b as i128
+}
+
 fn report(label: &str, before: &MemSnapshot, after: &MemSnapshot) {
     println!("== {label} ==");
     for (i, (name, after_val)) in after.metrics.iter().enumerate() {
         let before_val = before.metrics.get(i).map(|(_, v)| *v).unwrap_or(0);
-        let delta = *after_val as i128 - before_val as i128;
         println!(
             "  {name:<30} before={:>12}  after={:>12}  delta={:>13}",
             human(before_val),
             human(*after_val),
-            human_delta(delta),
+            human_delta(*after_val as i128 - before_val as i128),
         );
     }
     println!();
 }
 
-fn intern_all(dict: &ProfilesDictionary, strings: &[&str]) -> DynResult<Vec<StringId2>> {
+/// Generates a unique, realistic-looking string by reusing a corpus entry (so
+/// lengths/prefixes resemble real profiler data: method signatures, file paths)
+/// and appending a counter so it is not deduplicated.
+fn gen_unique(buf: &mut String, i: usize) {
+    let base = WORDPRESS_STRINGS[i % WORDPRESS_STRINGS.len()];
+    buf.clear();
+    let _ = write!(buf, "{base}#{i}");
+}
+
+/// Headline scenario: one dictionary, a growing number of unique strings. Prints
+/// the footprint at evenly spaced checkpoints so committed memory can be
+/// compared against the interned-byte total (the "used" lower bound). A light
+/// stream of derived functions/mappings keeps the 4 function and 2 mapping
+/// shards exercised too.
+fn scenario_scaling(total: usize, checkpoints: usize) -> DynResult<()> {
+    println!("== scenario: single dictionary, scaling to {total} unique strings ==");
+    println!(
+        "  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}",
+        "strings", "interned", "rss/private", "peak", "virt/ws"
+    );
+
+    let dict = ProfilesDictionary::try_new()?;
+    let start = read_memory();
+
+    let step = (total / checkpoints.max(1)).max(1);
+    let mut interned_bytes: u64 = 0;
+    let mut buf = String::new();
+    // A small ring of recent ids used to synthesize functions/mappings.
+    let mut recent = [StringId2::EMPTY; 4];
+
+    for i in 0..total {
+        gen_unique(&mut buf, i);
+        interned_bytes += buf.len() as u64;
+        let id = dict.try_insert_str2(&buf)?;
+        recent[i % recent.len()] = id;
+
+        // Touch the function/mapping shards occasionally without dominating.
+        if i % 8 == 0 {
+            dict.try_insert_function2(Function2 {
+                name: recent[0],
+                system_name: recent[1],
+                file_name: recent[2],
+            })?;
+            dict.try_insert_mapping2(Mapping2 {
+                memory_start: i as u64 * 0x1000,
+                memory_limit: i as u64 * 0x1000 + 0x800,
+                file_offset: 0,
+                filename: recent[3],
+                build_id: recent[0],
+            })?;
+        }
+
+        if (i + 1) % step == 0 || i + 1 == total {
+            let now = read_memory();
+            println!(
+                "  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}",
+                i + 1,
+                human(interned_bytes),
+                human_delta(metric_delta(&start, &now, 0)),
+                human_delta(metric_delta(&start, &now, 1)),
+                human_delta(metric_delta(&start, &now, 2)),
+            );
+        }
+    }
+    println!(
+        "  (interned unique-string bytes are the 'used' lower bound; the gap to \
+         rss/private is hash-table overhead + bounded per-shard chunk slack)\n"
+    );
+
+    // Keep the dictionary alive until after the final snapshot above.
+    drop(dict);
+    Ok(())
+}
+
+/// Builds a single dictionary populated with the given strings plus derived
+/// functions/mappings. Used by the edge-case many-dictionaries scenario.
+fn build_dict(strings: &[&str]) -> DynResult<ProfilesDictionary> {
+    let dict = ProfilesDictionary::try_new()?;
     let mut ids = Vec::with_capacity(strings.len());
     for s in strings {
         ids.push(dict.try_insert_str2(s)?);
     }
-    Ok(ids)
-}
-
-/// Derives functions and mappings from interned string ids so the workload
-/// also exercises the 4-shard function set and 2-shard mapping set, not just
-/// the 16-shard string set.
-fn add_funcs_and_mappings(dict: &ProfilesDictionary, ids: &[StringId2]) -> DynResult<()> {
     let n = ids.len();
-    if n == 0 {
-        return Ok(());
-    }
     for (i, &name) in ids.iter().enumerate() {
         dict.try_insert_function2(Function2 {
             name,
@@ -154,28 +237,29 @@ fn add_funcs_and_mappings(dict: &ProfilesDictionary, ids: &[StringId2]) -> DynRe
             build_id: ids[(i + 3) % n],
         })?;
     }
-    Ok(())
-}
-
-/// Builds a single dictionary populated with the given strings plus derived
-/// functions/mappings.
-fn build_dict(strings: &[&str]) -> DynResult<ProfilesDictionary> {
-    let dict = ProfilesDictionary::try_new()?;
-    let ids = intern_all(&dict, strings)?;
-    add_funcs_and_mappings(&dict, &ids)?;
     Ok(dict)
 }
 
-/// Measures the memory delta across building a workload. The live data is held
-/// until after the snapshot is taken, then dropped before returning.
-fn run_scenario<F>(label: &str, build: F) -> DynResult<()>
-where
-    F: FnOnce() -> DynResult<Box<dyn Any>>,
-{
+/// Edge case (NOT the .NET shape): many small dictionaries. Each dictionary
+/// eagerly commits ~1 MiB per touched shard regardless of how little it holds,
+/// so the footprint scales with the number of dictionaries. Only meaningful if
+/// many dictionaries are ever live at once.
+fn scenario_many_sparse(sparse_dicts: usize, sparse_strings: usize) -> DynResult<()> {
+    let slice = &WORDPRESS_STRINGS[..sparse_strings.min(WORDPRESS_STRINGS.len())];
     let before = read_memory();
-    let live = build()?;
+    let live: Box<dyn Any> = {
+        let mut dicts = Vec::with_capacity(sparse_dicts);
+        for _ in 0..sparse_dicts {
+            dicts.push(build_dict(slice)?);
+        }
+        Box::new(dicts)
+    };
     let after = read_memory();
-    report(label, &before, &after);
+    report(
+        &format!("EDGE scenario: {sparse_dicts} sparse dictionaries x {sparse_strings} strings"),
+        &before,
+        &after,
+    );
     drop(live);
     Ok(())
 }
@@ -187,16 +271,16 @@ fn main() -> DynResult<()> {
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(default)
     };
-    let sparse_dicts = arg(1, 200);
-    let sparse_strings = arg(2, 10).min(WORDPRESS_STRINGS.len());
-    let filled_dicts = arg(3, 20);
+    let unique_strings = arg(1, 300_000);
+    let checkpoints = arg(2, 6);
+    let sparse_dicts = arg(3, 0);
 
     println!(
-        "arena_memory: corpus={} strings | sparse={}x{} | filled={}\n",
+        "arena_memory: corpus={} strings | unique_strings={} checkpoints={} | sparse_dicts={}\n",
         WORDPRESS_STRINGS.len(),
+        unique_strings,
+        checkpoints,
         sparse_dicts,
-        sparse_strings,
-        filled_dicts,
     );
 
     let start = read_memory();
@@ -206,35 +290,10 @@ fn main() -> DynResult<()> {
     }
     println!();
 
-    run_scenario("scenario 1: single dictionary, full WordPress corpus", || {
-        Ok(Box::new(build_dict(&WORDPRESS_STRINGS)?) as Box<dyn Any>)
-    })?;
+    scenario_scaling(unique_strings, checkpoints)?;
 
     if sparse_dicts > 0 {
-        let slice = &WORDPRESS_STRINGS[..sparse_strings];
-        run_scenario(
-            &format!("scenario 2: {sparse_dicts} sparse dictionaries x {sparse_strings} strings"),
-            || {
-                let mut dicts = Vec::with_capacity(sparse_dicts);
-                for _ in 0..sparse_dicts {
-                    dicts.push(build_dict(slice)?);
-                }
-                Ok(Box::new(dicts) as Box<dyn Any>)
-            },
-        )?;
-    }
-
-    if filled_dicts > 0 {
-        run_scenario(
-            &format!("scenario 3: {filled_dicts} fully-filled dictionaries"),
-            || {
-                let mut dicts = Vec::with_capacity(filled_dicts);
-                for _ in 0..filled_dicts {
-                    dicts.push(build_dict(&WORDPRESS_STRINGS)?);
-                }
-                Ok(Box::new(dicts) as Box<dyn Any>)
-            },
-        )?;
+        scenario_many_sparse(sparse_dicts, 10)?;
     }
 
     let end = read_memory();
