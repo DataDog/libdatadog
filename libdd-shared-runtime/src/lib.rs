@@ -23,10 +23,6 @@
 //! - [`LocalRuntime`] *(wasm32 only)* — single-threaded local executor; spawns workers via
 //!   `wasm_bindgen_futures::spawn_local`. No fork protocol, no `block_on`, async-only.
 //!
-//! [`DefaultRuntime`] is a target-specific alias: [`ForkSafeRuntime`] on native and
-//! [`LocalRuntime`] on wasm32. Use it when you need a single field type that compiles on both
-//! targets.
-//!
 //! Components such as the trace exporter can share one runtime instead of each creating their
 //! own, reducing thread and resource overhead.
 
@@ -38,10 +34,10 @@ pub mod worker;
 #[cfg(not(target_arch = "wasm32"))]
 pub use shared_runtime::BasicRuntime;
 #[cfg(not(target_arch = "wasm32"))]
+pub use shared_runtime::BlockingRuntime;
+#[cfg(not(target_arch = "wasm32"))]
 pub use shared_runtime::ForkSafeRuntime;
 #[cfg(target_arch = "wasm32")]
 pub use shared_runtime::LocalRuntime;
-pub use shared_runtime::{
-    DefaultRuntime, SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError,
-};
+pub use shared_runtime::{SharedRuntime, SharedRuntimeError, WorkerHandle, WorkerHandleError};
 pub use worker::Worker;

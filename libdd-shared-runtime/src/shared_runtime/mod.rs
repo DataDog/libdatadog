@@ -20,21 +20,6 @@ pub use fork_safe::ForkSafeRuntime;
 #[cfg(target_arch = "wasm32")]
 pub use local::LocalRuntime;
 
-/// The runtime appropriate for the current target.
-///
-/// Resolves to [`ForkSafeRuntime`] on native — owns a multi-thread tokio runtime and
-/// exposes the fork protocol ([`ForkSafeRuntime::before_fork`] /
-/// [`ForkSafeRuntime::after_fork_parent`] / [`ForkSafeRuntime::after_fork_child`]) plus
-/// a synchronous [`ForkSafeRuntime::block_on`] and [`ForkSafeRuntime::shutdown`].
-///
-/// Resolves to [`LocalRuntime`] on wasm32 — single-threaded, async-only, no fork
-/// protocol. Methods like `block_on`, `before_fork`, and `after_fork_*` are native-only
-/// and are **not** available via this alias on wasm32.
-#[cfg(not(target_arch = "wasm32"))]
-pub type DefaultRuntime = ForkSafeRuntime;
-#[cfg(target_arch = "wasm32")]
-pub type DefaultRuntime = LocalRuntime;
-
 use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
 use libdd_common::MutexExt;
@@ -54,10 +39,20 @@ pub(crate) struct WorkerEntry {
 
 /// Common interface for all [`SharedRuntime`] implementations.
 ///
-/// Fork hooks and synchronous shutdown are inherent methods on [`ForkSafeRuntime`] only
-/// (native target). Not object-safe — use `impl SharedRuntime` generics rather than
+/// Fork hooks are inherent methods on [`ForkSafeRuntime`] only (native target). Synchronous
+/// `block_on` lives on the [`BlockingRuntime`] subtrait, which only the native runtimes
+/// implement. Not object-safe — use `impl SharedRuntime` generics rather than
 /// `dyn SharedRuntime`.
 pub trait SharedRuntime {
+    /// Creates a new instance of the runtime with default configuration.
+    ///
+    /// Used as a fallback by callers (e.g. [`crate::shared_runtime`] consumers) that want to
+    /// auto-construct a runtime when one was not supplied; concrete runtimes additionally
+    /// expose richer inherent constructors (e.g. `with_worker_threads`, `from_handle`).
+    fn new() -> Result<Self, SharedRuntimeError>
+    where
+        Self: Sized;
+
     /// Spawns a worker. `restart_on_fork = true` causes `ForkSafeRuntime::after_fork_child`
     /// to reset and restart it; `false` drops it without calling shutdown. [`BasicRuntime`]
     /// and [`LocalRuntime`] ignore this flag — they do not implement a fork protocol.
@@ -72,6 +67,22 @@ pub trait SharedRuntime {
     fn shutdown_async(&self) -> impl std::future::Future<Output = ()> + MaybeSend + '_
     where
         Self: Sync;
+}
+
+/// Native-only extension of [`SharedRuntime`] that can drive a future to completion
+/// synchronously.
+///
+/// This is the bound required by sync facades in higher layers (e.g. the trace exporter's
+/// `send` / `build` / `shutdown` methods) to block on async work without entering a tokio
+/// context themselves. Wasm targets do not implement this trait because there is no
+/// thread to block.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait BlockingRuntime: SharedRuntime {
+    /// Drives `f` to completion on the runtime's own executor, blocking the current thread.
+    ///
+    /// Returns an [`io::Error`] if a temporary executor must be built (e.g. in the
+    /// [`ForkSafeRuntime`] fork window) and construction fails.
+    fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error>;
 }
 
 /// Handle to a worker registered on a [`SharedRuntime`].

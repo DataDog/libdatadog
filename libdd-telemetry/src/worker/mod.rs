@@ -1796,7 +1796,7 @@ mod tests {
     fn test_channel_close_flushes_and_parks_via_shared_runtime() {
         use httpmock::prelude::*;
         use libdd_common::Endpoint;
-        use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
+        use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
         use std::time::Duration;
 
         const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";

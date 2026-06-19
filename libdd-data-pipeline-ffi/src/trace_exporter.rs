@@ -14,7 +14,10 @@ use libdd_data_pipeline::trace_exporter::{
     TraceExporterInputFormat, TraceExporterOutputFormat,
 };
 
-pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+// FFI pins the runtime parameter to `ForkSafeRuntime` for ABI stability. Rust callers that
+// don't need the fork protocol can use `TraceExporter<NativeCapabilities, BasicRuntime>`
+// directly.
+pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities, ForkSafeRuntime>;
 
 use libdd_shared_runtime::ForkSafeRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};

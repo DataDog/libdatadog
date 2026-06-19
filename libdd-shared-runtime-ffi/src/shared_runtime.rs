@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::catch_panic;
-use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntimeError};
+use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, SharedRuntimeError};
 use std::ffi::{c_char, CString};
 use std::ptr::NonNull;
 use std::sync::Arc;

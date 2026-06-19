@@ -12,7 +12,7 @@ use tracing::{debug, error};
 
 use super::{
     pausable_worker::{tokio_spawn_fn, PausableWorker},
-    BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle,
+    BlockingRuntime, BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle,
 };
 
 fn build_runtime(worker_threads: usize) -> Result<Runtime, io::Error> {
@@ -39,11 +39,6 @@ pub struct ForkSafeRuntime {
 }
 
 impl ForkSafeRuntime {
-    /// Creates a multi-thread runtime with 1 worker thread.
-    pub fn new() -> Result<Self, SharedRuntimeError> {
-        Self::with_worker_threads(1)
-    }
-
     /// Creates a `ForkSafeRuntime` with the given number of tokio worker threads.
     pub fn with_worker_threads(worker_threads: usize) -> Result<Self, SharedRuntimeError> {
         let runtime = Arc::new(build_runtime(worker_threads)?);
@@ -134,16 +129,6 @@ impl ForkSafeRuntime {
         Ok(())
     }
 
-    /// Blocks on the owned runtime. Falls back to a temporary current-thread runtime in the
-    /// fork window.
-    pub fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
-        let runtime = match self.runtime.lock_or_panic().as_ref() {
-            None => Arc::new(Builder::new_current_thread().enable_all().build()?),
-            Some(runtime) => runtime.clone(),
-        };
-        Ok(runtime.block_on(f))
-    }
-
     /// Shuts down all workers synchronously. Returns `ShutdownTimedOut` if `timeout` is
     /// exceeded.
     pub fn shutdown(&self, timeout: Option<std::time::Duration>) -> Result<(), SharedRuntimeError> {
@@ -187,6 +172,10 @@ impl ForkSafeRuntime {
 }
 
 impl SharedRuntime for ForkSafeRuntime {
+    fn new() -> Result<Self, SharedRuntimeError> {
+        Self::with_worker_threads(1)
+    }
+
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
@@ -228,6 +217,17 @@ impl SharedRuntime for ForkSafeRuntime {
             .collect();
 
         futures.collect::<()>().await;
+    }
+}
+
+impl BlockingRuntime for ForkSafeRuntime {
+    /// Falls back to a temporary current-thread runtime in the fork window.
+    fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
+        let runtime = match self.runtime.lock_or_panic().as_ref() {
+            None => Arc::new(Builder::new_current_thread().enable_all().build()?),
+            Some(runtime) => runtime.clone(),
+        };
+        Ok(runtime.block_on(f))
     }
 }
 

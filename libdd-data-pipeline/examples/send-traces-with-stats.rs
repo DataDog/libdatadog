@@ -9,7 +9,7 @@ use libdd_data_pipeline::trace_exporter::{
 use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
 };
-use libdd_shared_runtime::ForkSafeRuntime;
+use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
 use libdd_trace_protobuf::pb;
 use std::{
     collections::HashMap,
@@ -60,7 +60,7 @@ fn main() {
 
     let args = Args::parse();
     let telemetry_cfg = TelemetryConfig::default();
-    let mut builder = TraceExporter::<NativeCapabilities>::builder();
+    let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
     builder
         .set_url(&args.url)
         .set_hostname("test")

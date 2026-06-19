@@ -27,14 +27,6 @@ pub struct LocalRuntime {
 }
 
 impl LocalRuntime {
-    /// Creates a new `LocalRuntime`.
-    pub fn new() -> Result<Self, SharedRuntimeError> {
-        Ok(Self {
-            workers: Arc::new(Mutex::new(Vec::new())),
-            next_worker_id: AtomicU64::new(1),
-        })
-    }
-
     fn push_worker(
         &self,
         workers_guard: &mut std::sync::MutexGuard<Vec<WorkerEntry>>,
@@ -55,6 +47,13 @@ impl LocalRuntime {
 }
 
 impl SharedRuntime for LocalRuntime {
+    fn new() -> Result<Self, SharedRuntimeError> {
+        Ok(Self {
+            workers: Arc::new(Mutex::new(Vec::new())),
+            next_worker_id: AtomicU64::new(1),
+        })
+    }
+
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,

@@ -21,7 +21,9 @@ use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
-use libdd_shared_runtime::{DefaultRuntime, SharedRuntime};
+use libdd_shared_runtime::SharedRuntime;
+#[cfg(not(target_arch = "wasm32"))]
+use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,8 +31,8 @@ use std::time::Duration;
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
 #[allow(missing_docs)]
-#[derive(Debug, Default)]
-pub struct TraceExporterBuilder {
+#[derive(Debug)]
+pub struct TraceExporterBuilder<R: SharedRuntime> {
     url: Option<String>,
     hostname: String,
     env: String,
@@ -59,7 +61,7 @@ pub struct TraceExporterBuilder {
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
-    shared_runtime: Option<Arc<DefaultRuntime>>,
+    shared_runtime: Option<Arc<R>>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
@@ -68,7 +70,63 @@ pub struct TraceExporterBuilder {
     otlp_headers: Vec<(String, String)>,
 }
 
-impl TraceExporterBuilder {
+/// Default is impl'd for `R = ForkSafeRuntime` only so that bare
+/// `TraceExporterBuilder::default()` resolves unambiguously to the fork-safe variant on
+/// native. Builders parameterized with another runtime construct via
+/// [`TraceExporterBuilder::new`] explicitly.
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for TraceExporterBuilder<ForkSafeRuntime> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<R: SharedRuntime> TraceExporterBuilder<R> {
+    /// Construct a builder with all fields at their initial / `None` state.
+    ///
+    /// On native, `TraceExporterBuilder::<ForkSafeRuntime>::new()` and
+    /// `TraceExporterBuilder::default()` are equivalent; for other runtimes (e.g.
+    /// `BasicRuntime`, `LocalRuntime`) callers must use `new` directly.
+    pub fn new() -> Self {
+        Self {
+            url: None,
+            hostname: String::new(),
+            env: String::new(),
+            app_version: String::new(),
+            service: String::new(),
+            tracer_version: String::new(),
+            language: String::new(),
+            language_version: String::new(),
+            language_interpreter: String::new(),
+            language_interpreter_vendor: String::new(),
+            git_commit_sha: String::new(),
+            process_tags: String::new(),
+            input_format: TraceExporterInputFormat::default(),
+            output_format: TraceExporterOutputFormat::default(),
+            dogstatsd_url: None,
+            client_computed_stats: false,
+            client_computed_top_level: false,
+            stats_bucket_size: None,
+            peer_tags_aggregation: false,
+            compute_stats_by_span_kind: false,
+            peer_tags: Vec::new(),
+            #[cfg(feature = "stats-obfuscation")]
+            client_side_stats_obfuscation_enabled: false,
+            #[cfg(feature = "telemetry")]
+            telemetry: None,
+            telemetry_instrumentation_sessions: TelemetryInstrumentationSessions::default(),
+            shared_runtime: None,
+            health_metrics_enabled: false,
+            test_session_token: None,
+            agent_rates_payload_version_enabled: false,
+            connection_timeout: None,
+            otlp_endpoint: None,
+            otlp_headers: Vec::new(),
+        }
+    }
+}
+
+impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Sets the URL of the agent.
     ///
     /// The agent supports the following URL schemes:
@@ -253,14 +311,12 @@ impl TraceExporterBuilder {
 
     /// Set a shared runtime used by the exporter for background workers.
     ///
-    /// Accepts a [`DefaultRuntime`], which resolves to [`ForkSafeRuntime`] on native and
-    /// [`libdd_shared_runtime::LocalRuntime`] on wasm32. On native, the exporter calls
-    /// [`ForkSafeRuntime::block_on`] from its sync entry points and assumes the host wires
-    /// up the fork hooks (`before_fork` / `after_fork_*`) around `fork()` — a plain
-    /// `BasicRuntime` or a raw `tokio::runtime::Runtime` are not accepted here. On wasm32
-    /// the sync entry points do not exist and [`LocalRuntime`](libdd_shared_runtime::LocalRuntime)
-    /// is used for async spawning only.
-    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<DefaultRuntime>) -> &mut Self {
+    /// The runtime type is selected via the builder's `R` parameter — typically
+    /// [`libdd_shared_runtime::ForkSafeRuntime`] on native (when the host wants the fork
+    /// protocol), [`libdd_shared_runtime::BasicRuntime`] to wrap a caller-owned tokio
+    /// runtime, or [`libdd_shared_runtime::LocalRuntime`] on wasm. Sync entry points
+    /// (`build` / `send` / `shutdown`) additionally require `R: BlockingRuntime`.
+    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<R>) -> &mut Self {
         self.shared_runtime = Some(shared_runtime);
         self
     }
@@ -308,15 +364,23 @@ impl TraceExporterBuilder {
     /// Build the [`TraceExporter`] synchronously.
     ///
     /// Sync facade over [`Self::build_async`]; panics inside an existing tokio context.
-    /// Not available on wasm — use [`Self::build_async`] there.
+    /// Requires `R: BlockingRuntime` so the builder can drive setup on the runtime. Not
+    /// available on wasm — use [`Self::build_async`] there.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         mut self,
-    ) -> Result<TraceExporter<C>, TraceExporterError> {
+    ) -> Result<TraceExporter<C, R>, TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
         let shared_runtime = match self.shared_runtime.as_ref() {
             Some(rt) => rt.clone(),
             None => {
-                let rt = Self::new_shared_runtime()?;
+                let rt = Arc::new(R::new().map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?);
                 self.shared_runtime = Some(rt.clone());
                 rt
             }
@@ -327,12 +391,13 @@ impl TraceExporterBuilder {
     /// Build the [`TraceExporter`] asynchronously.
     ///
     /// Awaits all async setup (e.g. telemetry start-up). Safe to drive from any async
-    /// context.
+    /// context. If [`set_shared_runtime`](Self::set_shared_runtime) was not called, a new
+    /// runtime is constructed via [`SharedRuntime::new`].
     pub async fn build_async<
         C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     >(
         self,
-    ) -> Result<TraceExporter<C>, TraceExporterError> {
+    ) -> Result<TraceExporter<C, R>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -343,7 +408,9 @@ impl TraceExporterBuilder {
 
         let shared_runtime = match self.shared_runtime {
             Some(rt) => rt,
-            None => Self::new_shared_runtime()?,
+            None => Arc::new(R::new().map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?),
         };
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
@@ -524,12 +591,6 @@ impl TraceExporterBuilder {
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
-        })
-    }
-
-    fn new_shared_runtime() -> Result<Arc<DefaultRuntime>, TraceExporterError> {
-        DefaultRuntime::new().map(Arc::new).map_err(|e| {
-            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
         })
     }
 

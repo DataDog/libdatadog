@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::pausable_worker::{tokio_spawn_fn, PausableWorker};
-use super::{BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle};
+use super::{
+    BlockingRuntime, BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry, WorkerHandle,
+};
 use crate::worker::Worker;
 use futures::stream::{FuturesUnordered, StreamExt};
 use libdd_common::MutexExt;
+use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{debug, error, warn};
@@ -29,12 +32,6 @@ pub struct BasicRuntime {
 }
 
 impl BasicRuntime {
-    /// Creates a new `BasicRuntime` backed by a library-built multi-thread tokio runtime
-    /// with 1 worker thread.
-    pub fn new() -> Result<Self, SharedRuntimeError> {
-        Self::with_worker_threads(1)
-    }
-
     /// Creates a new `BasicRuntime` backed by a library-built multi-thread tokio runtime
     /// with the given number of worker threads.
     pub fn with_worker_threads(worker_threads: usize) -> Result<Self, SharedRuntimeError> {
@@ -76,6 +73,10 @@ impl BasicRuntime {
 }
 
 impl SharedRuntime for BasicRuntime {
+    fn new() -> Result<Self, SharedRuntimeError> {
+        Self::with_worker_threads(1)
+    }
+
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
@@ -119,6 +120,15 @@ impl SharedRuntime for BasicRuntime {
             .collect();
 
         futures.collect::<()>().await;
+    }
+}
+
+impl BlockingRuntime for BasicRuntime {
+    /// Forwards to the underlying tokio runtime. Infallible — the inner `Arc<Runtime>` is
+    /// kept alive for the lifetime of this struct, so there is no fork-window fallback to
+    /// build.
+    fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
+        Ok(self.runtime.block_on(f))
     }
 }
 
