@@ -41,17 +41,16 @@
               "fortify3"
             ];
 
-            packages =
-              [rust-toolchain]
-              ++ (with pkgs; [
-                rust-cbindgen
-                cargo-nextest
-                cmake
-                autoconf
-                automake
-                libtool
-                alejandra
-              ]);
+            packages = [
+              rust-toolchain
+              pkgs.rust-cbindgen
+              pkgs.cargo-nextest
+              pkgs.cmake
+              pkgs.autoconf
+              pkgs.automake
+              pkgs.libtool
+              pkgs.alejandra
+            ];
             env = {
               # Required by rust-analyzer
               RUST_SRC_PATH = "${rust-toolchain}/lib/rustlib/src/rust/library";
