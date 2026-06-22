@@ -30,7 +30,7 @@
 
         # A devshell for a given Rust toolchain (read from a toolchain file via
         # rust-overlay), with the rest of the build dependencies.
-        mkDevShell = rust: pkgs.stdenv.mkDerivation {
+        mkDevShell = rust: pkgs.mkShell {
           name = "libdatadog-devshell";
 
           # The stdenv cc-wrapper injects -D_FORTIFY_SOURCE, which glibc rejects
