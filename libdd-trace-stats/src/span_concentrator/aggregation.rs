@@ -282,6 +282,29 @@ impl<'a> BorrowedAggregationKey<'a> {
     }
 }
 
+impl OwnedAggregationKey {
+    /// Return the overflow sentinel key.
+    pub(super) fn overflow_key() -> Self {
+        OwnedAggregationKey {
+            fixed: FixedAggregationKey {
+                resource_name: TRACER_BLOCKED_VALUE.to_owned(),
+                service_name: TRACER_BLOCKED_VALUE.to_owned(),
+                operation_name: TRACER_BLOCKED_VALUE.to_owned(),
+                span_type: TRACER_BLOCKED_VALUE.to_owned(),
+                span_kind: TRACER_BLOCKED_VALUE.to_owned(),
+                http_method: TRACER_BLOCKED_VALUE.to_owned(),
+                http_endpoint: TRACER_BLOCKED_VALUE.to_owned(),
+                service_source: TRACER_BLOCKED_VALUE.to_owned(),
+                http_status_code: 0,
+                grpc_status_code: None,
+                is_synthetics_request: false,
+                is_trace_root: pb::Trilean::NotSet,
+            },
+            peer_tags: vec![],
+        }
+    }
+}
+
 impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
     fn from(value: pb::ClientGroupedStats) -> Self {
         Self {
@@ -358,19 +381,35 @@ impl GroupedStats {
 pub(super) struct StatsBucket {
     data: HashMap<OwnedAggregationKey, GroupedStats>,
     start: u64,
+    /// Maximum number of distinct aggregation keys this bucket will hold before collapsing new
+    /// ones into the overflow sentinel key.
+    max_entries: usize,
+    /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
+    collapsed_count: u64,
 }
 
 impl StatsBucket {
-    /// Return a new StatsBucket starting at the given timestamp
-    pub(super) fn new(start_timestamp: u64) -> Self {
+    /// Return a new StatsBucket starting at `start_timestamp`.
+    ///
+    /// `max_entries` is the maximum number of distinct aggregation keys the bucket will hold.
+    /// Once the limit is reached, new distinct keys are collapsed into the overflow sentinel key.
+    pub(super) fn new(start_timestamp: u64, max_entries: usize) -> Self {
         Self {
             data: HashMap::new(),
             start: start_timestamp,
+            max_entries,
+            collapsed_count: 0,
         }
     }
 
-    /// Insert a value as stats in the group corresponding to the aggregation key, if it does
-    /// not exist it creates it.
+    /// Return the number of spans collapsed into the overflow bucket.
+    pub(super) fn collapsed_count(&self) -> u64 {
+        self.collapsed_count
+    }
+
+    /// Insert a value as stats in the group corresponding to the aggregation key. If the key is new
+    /// and the `max_entries` limit has not been reached, a new entry is created, else the span is
+    /// instead merged into the overflow sentinel key.
     pub(super) fn insert(
         &mut self,
         key: BorrowedAggregationKey<'_>,
@@ -378,6 +417,14 @@ impl StatsBucket {
         is_error: bool,
         is_top_level: bool,
     ) {
+        if self.data.len() >= self.max_entries && !self.data.contains_key(&key) {
+            self.collapsed_count += 1;
+            self.data
+                .entry(OwnedAggregationKey::overflow_key())
+                .or_default()
+                .insert(duration, is_error, is_top_level);
+            return;
+        }
         self.data
             .entry_ref(&key)
             .or_default()

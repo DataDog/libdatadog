@@ -309,6 +309,7 @@ mod tests {
             SystemTime::now() - BUCKETS_DURATION * 3,
             vec![],
             vec![],
+            None,
             #[cfg(feature = "stats-obfuscation")]
             None,
         );
