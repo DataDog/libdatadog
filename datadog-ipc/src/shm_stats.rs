@@ -805,11 +805,7 @@ impl ShmSpanConcentrator {
             top_level_hits,
             span_kind: read_str!(f.span_kind),
             peer_tags,
-            is_trace_root: if f.is_trace_root {
-                pb::Trilean::True.into()
-            } else {
-                pb::Trilean::False.into()
-            },
+            is_trace_root: f.is_trace_root.into(),
             http_method: read_str!(f.http_method),
             http_endpoint: read_str!(f.http_endpoint),
             grpc_status_code: f
@@ -856,7 +852,7 @@ mod tests {
                 service_source: "",
                 http_status_code: 200,
                 is_synthetics_request: false,
-                is_trace_root: true,
+                is_trace_root: pb::Trilean::True,
                 grpc_status_code: None,
             },
             peer_tags: &[],

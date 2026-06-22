@@ -13,6 +13,9 @@ use std::borrow::{Borrow, Cow};
 
 use crate::span_concentrator::StatSpan;
 
+/// Sentinel value used for cardinality limiting.
+pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
+
 const TAG_STATUS_CODE: &str = "http.status_code";
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
@@ -47,7 +50,7 @@ pub struct FixedAggregationKey<T> {
     pub http_status_code: u32,
     pub grpc_status_code: Option<u8>,
     pub is_synthetics_request: bool,
-    pub is_trace_root: bool,
+    pub is_trace_root: pb::Trilean,
 }
 
 impl<T> FixedAggregationKey<T> {
@@ -268,7 +271,11 @@ impl<'a> BorrowedAggregationKey<'a> {
                 is_synthetics_request: span
                     .get_meta(TAG_ORIGIN)
                     .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
-                is_trace_root: span.is_trace_root(),
+                is_trace_root: if span.is_trace_root() {
+                    pb::Trilean::True
+                } else {
+                    pb::Trilean::False
+                },
             },
             peer_tags,
         }
@@ -290,7 +297,8 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
                 http_status_code: value.http_status_code,
                 grpc_status_code: value.grpc_status_code.parse().ok(),
                 is_synthetics_request: value.synthetics,
-                is_trace_root: value.is_trace_root == 1,
+                is_trace_root: pb::Trilean::try_from(value.is_trace_root)
+                    .unwrap_or(pb::Trilean::NotSet),
             },
             peer_tags: value
                 .peer_tags
@@ -419,11 +427,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .into_iter()
             .map(|(k, v)| format!("{k}:{v}"))
             .collect(),
-        is_trace_root: if f.is_trace_root {
-            pb::Trilean::True.into()
-        } else {
-            pb::Trilean::False.into()
-        },
+        is_trace_root: f.is_trace_root.into(),
         http_method: f.http_method,
         http_endpoint: f.http_endpoint,
         grpc_status_code: f
@@ -440,6 +444,7 @@ mod tests {
     use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
 
     use super::*;
+    use libdd_trace_protobuf::pb;
     use std::hash::Hash;
 
     fn get_hash(v: &impl Hash) -> u64 {
@@ -481,7 +486,7 @@ mod tests {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -502,7 +507,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -527,7 +532,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -554,7 +559,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -582,7 +587,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -603,7 +608,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: true,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -624,7 +629,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     http_status_code: 418,
                     ..Default::default()
                 }
@@ -646,7 +651,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -667,7 +672,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     http_status_code: 418,
                     ..Default::default()
                 }
@@ -695,7 +700,7 @@ mod tests {
                     http_method: "GET".into(),
                     http_endpoint: "/api/v1/users".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -723,7 +728,7 @@ mod tests {
                     http_method: "POST".into(),
                     http_endpoint: "/users/create2".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -736,7 +741,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(0),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -749,7 +754,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(14),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -762,7 +767,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(14),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -776,7 +781,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(7),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -789,7 +794,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(3),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -801,7 +806,7 @@ mod tests {
                     ..Default::default()
                 },
                 FixedAggregationKey {
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -821,7 +826,7 @@ mod tests {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "redis".into(),
                     ..Default::default()
                 }
@@ -842,7 +847,7 @@ mod tests {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "opt.split_by_tag".into(),
                     ..Default::default()
                 }
@@ -862,7 +867,7 @@ mod tests {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "".into(),
                     ..Default::default()
                 }
@@ -893,7 +898,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key_with_peers(vec![("aws.s3.bucket".into(), "bucket-a".into())]),
@@ -920,7 +925,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key_with_peers(vec![
@@ -952,7 +957,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
