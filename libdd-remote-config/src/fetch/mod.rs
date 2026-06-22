@@ -1,19 +1,19 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+mod agentless;
 mod fetcher;
 mod multitarget;
 mod shared;
 mod single;
-mod agentless;
 
 #[cfg(any(test, feature = "test"))]
 pub mod test_server;
 
+pub use agentless::*;
 #[allow(clippy::useless_attribute)] // different clippy versions are differently picky
 #[cfg_attr(test, allow(ambiguous_glob_reexports))] // ignore mod tests re-export
 pub use fetcher::*;
 pub use multitarget::*;
 pub use shared::*;
 pub use single::*;
-pub use agentless::*;

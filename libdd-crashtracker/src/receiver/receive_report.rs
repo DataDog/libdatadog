@@ -537,15 +537,6 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
-    builder.with_experimental_frame_count(
-        builder
-            .error
-            .stack
-            .as_ref()
-            .map(|s| s.frames.len())
-            .unwrap_or(0),
-    )?;
-
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {

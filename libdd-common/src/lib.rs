@@ -310,7 +310,7 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<http
     let path = hex::encode(path);
 
     parts.authority = uri::Authority::from_str(path.as_str()).ok();
-    parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
+    parts.path_and_query = Some(uri::PathAndQuery::from_static("/"));
     Ok(http::Uri::from_parts(parts)?)
 }
 
@@ -531,5 +531,24 @@ impl Endpoint {
         };
 
         Ok((builder, request_url))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_uri;
+
+    /// A scheme prefix with an empty path produces an empty (and therefore
+    /// dropped) authority. parsing must reject these as malformed rather
+    /// than accept them.
+    #[test]
+    fn empty_authority_uris_are_rejected() {
+        for input in ["unix://", "windows:", "file://"] {
+            let result = parse_uri(input);
+            assert!(
+                result.is_err(),
+                "expected {input:?} to be rejected, got {result:?}"
+            );
+        }
     }
 }

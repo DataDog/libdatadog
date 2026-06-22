@@ -14,13 +14,10 @@ use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
-use datadog_sidecar::agent_remote_config::{
-    new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
-};
+use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
-use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
@@ -221,7 +218,6 @@ fn ddog_agent_remote_config_read_generic<'a, T>(
 ) -> bool
 where
     T: FileBackedHandle + From<MappedMem<T>>,
-    OneWayShmReader<T, Option<AgentRemoteConfigEndpoint>>: ReaderOpener<T>,
 {
     let (new, contents) = reader.read();
     *data = CharSlice::from_bytes(contents);

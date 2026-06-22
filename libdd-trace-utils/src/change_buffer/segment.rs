@@ -3,8 +3,14 @@
 
 use crate::span::vec_map::VecMap;
 
+/// Per-segment state for a trace chunk.
+///
+/// A segment is an independent visit by a service to a distributed trace. Multiple
+/// segments may share the same `trace_id` (e.g. A → B → A creates two segments for
+/// service A). Each segment has its own isolated metadata so that trace-level operations
+/// on one segment do not affect another.
 #[derive(Default)]
-pub struct Trace<T> {
+pub struct Segment<T> {
     pub meta: VecMap<T, T>,
     pub metrics: VecMap<T, f64>,
     pub origin: Option<T>,
@@ -14,26 +20,26 @@ pub struct Trace<T> {
     pub span_count: usize,
 }
 
-/// A map optimized for the common case of 1 active trace.
+/// A map optimized for the common case of 1 active segment.
 ///
-/// In typical Node.js applications, there is usually only one active trace
+/// In typical Node.js applications, there is usually only one active segment
 /// at a time (single-threaded, one request in flight). This structure stores
-/// the first trace inline — no heap allocation, no hashing — and falls back
-/// to a `Vec` for the rare case of multiple concurrent traces. A `Vec` with
+/// the first segment inline — no heap allocation, no hashing — and falls back
+/// to a `Vec` for the rare case of multiple concurrent segments. A `Vec` with
 /// linear scan beats `FxHashMap` for small N (<~20) due to better cache
-/// locality and zero hashing overhead for u128 keys.
-pub struct SmallTraceMap<T> {
-    /// The first (and usually only) trace, stored inline.
-    inline_key: u128,
-    inline_val: Option<Trace<T>>,
-    /// Overflow storage for additional traces. Only allocated when there are
-    /// 2+ concurrent traces.
-    overflow: Vec<(u128, Trace<T>)>,
+/// locality and zero hashing overhead for u64 keys.
+pub struct SmallSegmentMap<T> {
+    /// The first (and usually only) segment, stored inline.
+    inline_key: u64,
+    inline_val: Option<Segment<T>>,
+    /// Overflow storage for additional segments. Only allocated when there are
+    /// 2+ concurrent segments.
+    overflow: Vec<(u64, Segment<T>)>,
 }
 
-impl<T> Default for SmallTraceMap<T> {
+impl<T> Default for SmallSegmentMap<T> {
     fn default() -> Self {
-        SmallTraceMap {
+        SmallSegmentMap {
             inline_key: 0,
             inline_val: None,
             overflow: Vec::new(),
@@ -41,15 +47,15 @@ impl<T> Default for SmallTraceMap<T> {
     }
 }
 
-impl<T> SmallTraceMap<T> {
-    /// Returns true if the map contains no traces.
+impl<T> SmallSegmentMap<T> {
+    /// Returns true if the map contains no segments.
     pub fn is_empty(&self) -> bool {
         self.inline_val.is_none()
     }
 
-    /// Get an immutable reference to a trace by ID.
+    /// Get an immutable reference to a segment by ID.
     #[inline]
-    pub fn get(&self, key: &u128) -> Option<&Trace<T>> {
+    pub fn get(&self, key: &u64) -> Option<&Segment<T>> {
         if let Some(ref val) = self.inline_val {
             if self.inline_key == *key {
                 return Some(val);
@@ -61,9 +67,9 @@ impl<T> SmallTraceMap<T> {
             .map(|(_, v)| v)
     }
 
-    /// Get a mutable reference to a trace by ID.
+    /// Get a mutable reference to a segment by ID.
     #[inline]
-    pub fn get_mut(&mut self, key: &u128) -> Option<&mut Trace<T>> {
+    pub fn get_mut(&mut self, key: &u64) -> Option<&mut Segment<T>> {
         if let Some(ref mut val) = self.inline_val {
             if self.inline_key == *key {
                 return Some(val);
@@ -75,17 +81,17 @@ impl<T> SmallTraceMap<T> {
             .map(|(_, v)| v)
     }
 
-    /// Get a mutable reference to a trace, inserting a default if not present.
+    /// Get a mutable reference to a segment, inserting a default if not present.
     /// This is the equivalent of `HashMap::entry(key).or_default()`.
     #[inline]
-    pub fn get_or_insert_default(&mut self, key: u128) -> &mut Trace<T>
+    pub fn get_or_insert_default(&mut self, key: u64) -> &mut Segment<T>
     where
         T: Default,
     {
         // Hot path: inline slot matches this key or is empty.
         if self.inline_key == key || self.inline_val.is_none() {
             self.inline_key = key;
-            return self.inline_val.get_or_insert_with(Trace::default);
+            return self.inline_val.get_or_insert_with(Segment::default);
         }
 
         // Slow path: linear scan overflow
@@ -93,15 +99,15 @@ impl<T> SmallTraceMap<T> {
         match pos {
             Some(i) => &mut self.overflow[i].1,
             None => {
-                self.overflow.push((key, Trace::default()));
+                self.overflow.push((key, Segment::default()));
                 let last = self.overflow.len() - 1;
                 &mut self.overflow[last].1
             }
         }
     }
 
-    /// Remove a trace by ID and return it.
-    pub fn remove(&mut self, key: &u128) -> Option<Trace<T>> {
+    /// Remove a segment by ID and return it.
+    pub fn remove(&mut self, key: &u64) -> Option<Segment<T>> {
         if self.inline_val.is_some() && self.inline_key == *key {
             let val = self.inline_val.take();
             // If there's overflow, promote the last entry to inline
