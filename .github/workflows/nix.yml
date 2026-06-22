@@ -15,6 +15,11 @@ on: # yamllint disable-line rule:truthy
       - "rust-toolchain.toml"
       - "nightly-toolchain.toml"
       - ".github/workflows/nix.yml"
+  # Nightly safeguard: catches devshell drift from changes that don't match the
+  # paths above (e.g. a dependency or build-script change that needs new native
+  # tooling). Scheduled runs only fire from the default branch, against its HEAD.
+  schedule:
+    - cron: "0 4 * * *" # daily at 04:00 UTC
 
 # Default permissions for all jobs
 permissions: {}
