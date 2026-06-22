@@ -14,8 +14,8 @@
 pub mod agent_info;
 mod health_metrics;
 pub(crate) mod otlp;
-/// The OTLP export protocol selector (`http/json` or `http/protobuf`) — the only public symbol
-/// from the otherwise-internal `otlp` module.
+// `OtlpProtocol` (documented on the enum itself) is the only public symbol from the otherwise
+// crate-internal `otlp` module; re-exported here so the FFI crate can name it.
 pub use otlp::OtlpProtocol;
 #[cfg(feature = "telemetry")]
 pub(crate) mod telemetry;

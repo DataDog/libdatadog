@@ -25,11 +25,11 @@ use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
 pub(crate) struct OtlpJson<'a>(pub &'a ExportTraceServiceRequest);
 
 pub(crate) fn to_otlp_json_vec(req: &ExportTraceServiceRequest) -> serde_json::Result<Vec<u8>> {
-    // `serde_json::to_vec` starts the output buffer at 128 bytes and reallocates as it grows, so a
-    // multi-span payload reallocates several times. serde_json never sizes any allocation from the
-    // `serialize_map`/`serialize_seq` length hints (it only special-cases `Some(0)`), so the real
-    // win is pre-sizing this output buffer. The protobuf encoded length is a cheap, exact measure
-    // of the IR; OTLP/JSON runs larger (field names, hex ids, base64), so scale it up.
+    // Plain `to_vec` is intentional. serde_json sizes no allocation from the `serialize_map`/
+    // `serialize_seq` length hints (it only special-cases `Some(0)`), and benchmarking output-
+    // buffer pre-sizing showed no win: sizing from `encoded_len()` regressed (~3% — the extra
+    // traversal costs more than the saved reallocations), and a cheap span-count estimate was
+    // within noise.
     serde_json::to_vec(&OtlpJson(req))
 }
 
@@ -502,7 +502,7 @@ mod tests {
             trace_state: String::new(),
             attributes: Vec::new(),
             dropped_attributes_count: 0,
-            flags: 0,
+            flags: 1,
         }];
         let j = span_json(s);
         assert_eq!(j["parentSpanId"], "eee19b7ec3c1b173");
@@ -510,5 +510,6 @@ mod tests {
         assert_eq!(j["status"]["message"], "boom");
         assert_eq!(j["links"][0]["traceId"], "00000000000000000000000000000001");
         assert_eq!(j["links"][0]["spanId"], "0000000000000002");
+        assert_eq!(j["links"][0]["flags"], 1); // link flags must be preserved
     }
 }

@@ -430,8 +430,9 @@ fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> ProtoLink {
             })
             .collect(),
         dropped_attributes_count: 0,
-        // `SpanLink` has no flags field; faithful value is 0.
-        flags: 0,
+        // W3C trace flags of the linked context (sampled bit, etc.); carry them through so OTLP
+        // consumers see the same link metadata the tracer recorded.
+        flags: link.flags,
     }
 }
 
@@ -910,6 +911,32 @@ mod tests {
         assert!(
             !resource_attrs.iter().any(|a| a.key == "_dd.stats_computed"),
             "_dd.stats_computed must not be emitted when client_computed_stats=false"
+        );
+    }
+
+    #[test]
+    fn span_link_flags_are_carried() {
+        // Regression: the mapper previously hardcoded `flags: 0`, dropping the linked context's
+        // W3C trace flags. They must survive into the OTLP `Link.flags` field.
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.span_links.push(SpanLink {
+            trace_id: 0x11,
+            span_id: 0x22,
+            flags: 1,
+            ..Default::default()
+        });
+        let req = map_traces_to_otlp(vec![vec![span]], &OtlpResourceInfo::default());
+        let link = &req.resource_spans[0].scope_spans[0].spans[0].links[0];
+        assert_eq!(
+            link.flags, 1,
+            "OTLP Link.flags must carry the span link's flags"
         );
     }
 

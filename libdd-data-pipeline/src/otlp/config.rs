@@ -38,16 +38,18 @@ impl std::str::FromStr for OtlpProtocol {
 }
 
 impl OtlpProtocol {
-    /// The HTTP `Content-Type` for this protocol's body encoding.
-    pub fn content_type(&self) -> http::HeaderValue {
+    /// The HTTP `Content-Type` for this protocol's body encoding. Crate-internal: the public type
+    /// is only constructed/selected by callers; encoding is the exporter's job.
+    pub(crate) fn content_type(&self) -> http::HeaderValue {
         match self {
             OtlpProtocol::HttpJson => libdd_common::header::APPLICATION_JSON,
             OtlpProtocol::HttpProtobuf => libdd_common::header::APPLICATION_PROTOBUF,
         }
     }
 
-    /// Encode the prost OTLP request to this protocol's wire format.
-    pub fn encode(
+    /// Encode the prost OTLP request to this protocol's wire format. Crate-internal so the
+    /// third-party `serde_json::Error` does not leak into the public API.
+    pub(crate) fn encode(
         &self,
         req: &libdd_trace_utils::otlp_encoder::ProtoExportTraceServiceRequest,
     ) -> Result<Vec<u8>, serde_json::Error> {
