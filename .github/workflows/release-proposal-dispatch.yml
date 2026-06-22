@@ -903,9 +903,13 @@ jobs:
           echo "PR body written to /tmp/pr-body.md (length: $(wc -c < /tmp/pr-body.md) bytes)"
 
           # NOTE: the PR title must start with 'chore(release): proposal for'. Downstream tooling matches on that prefix.
+          PR_TITLE="chore(release): proposal for ${{ needs.validate-inputs.outputs.crates_display }}"
+          if [ "${#PR_TITLE}" -gt 100 ]; then
+            PR_TITLE="${PR_TITLE:0:97}..."
+          fi
           gh pr create \
             --head "$BRANCH_NAME" \
-            --title "chore(release): proposal for ${{ needs.validate-inputs.outputs.crates_display }}" \
+            --title "$PR_TITLE" \
             --body-file /tmp/pr-body.md \
             --label "release-proposal" \
             --label "skip-metadata-check" \

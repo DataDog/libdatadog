@@ -8,6 +8,7 @@ authors.workspace = true
 description = "HTTP client library intended for use by other languages via FFI"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client"
+publish = false
 
 [lib]
 bench = false

@@ -9,8 +9,8 @@ use libdd_trace_protobuf::pb;
 use aggregation::StatsBucket;
 
 mod aggregation;
-use aggregation::BorrowedAggregationKey;
-pub use aggregation::FixedAggregationKey;
+use aggregation::{get_grpc_method, BorrowedAggregationKey};
+pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
 
 pub mod stat_span;
 pub use stat_span::StatSpan;
@@ -184,6 +184,7 @@ impl SpanConcentrator {
                 span.duration(),
                 span.is_error(),
                 span.has_top_level(),
+                get_grpc_method(span),
             );
     }
 
@@ -207,6 +208,22 @@ impl SpanConcentrator {
     /// Flush all stats bucket except for the `buffer_len` most recent. If `force` is true, flush
     /// all buckets.
     pub fn flush(&mut self, now: SystemTime, force: bool) -> Vec<pb::ClientStatsBucket> {
+        self.drain_due_buckets(now, force, StatsBucket::flush)
+    }
+
+    /// Like [`Self::flush`], but also emits exact per-cell scalars alongside each bucket for the
+    /// OTLP trace-metrics path. The protobuf bucket inside each [`OtlpStatsBucket`] is identical
+    /// to what [`Self::flush`] would produce, so the /v0.6/stats agent path is unaffected.
+    pub fn flush_with_otlp_exact(&mut self, now: SystemTime, force: bool) -> Vec<OtlpStatsBucket> {
+        self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact)
+    }
+
+    fn drain_due_buckets<T>(
+        &mut self,
+        now: SystemTime,
+        force: bool,
+        encode: impl Fn(StatsBucket, u64) -> T,
+    ) -> Vec<T> {
         // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
         let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
@@ -231,7 +248,7 @@ impl SpanConcentrator {
                     self.buckets.insert(timestamp, bucket);
                     return None;
                 }
-                Some(bucket.flush(self.bucket_size))
+                Some(encode(bucket, self.bucket_size))
             })
             .collect()
     }

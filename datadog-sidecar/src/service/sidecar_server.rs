@@ -1066,6 +1066,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 error!("Failed flushing traces: {e:?}");
             }
             flush_all_stats_now(&self.server.span_concentrators).await;
+            debug!("Finished executing flush() for traces and stats")
         }
         if options.telemetry {
             let workers: Vec<_> = {
