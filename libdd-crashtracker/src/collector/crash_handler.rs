@@ -490,10 +490,11 @@ pub fn report_unhandled_exception(
 
     // This allocates but that is okay because we are not in the signal handling path
     // Both error type and error message are user-controlled and may contain newlines or protocol
-    // sentinel strings (DD_CRASHTRACK_*). We need to escape newlines here, as the receiver treats new lines
-    // as separate sections in the crash report, and this allows consumers to potentially inject artitrary
-    // configuration and other sections into the crash report. emit_message adds a second sanitization pass
-    // as defense-in-depth at the protocol boundary.
+    // sentinel strings (DD_CRASHTRACK_*). We need to escape newlines here, as the receiver treats
+    // new lines as separate sections in the crash report, and this allows consumers to
+    // potentially inject artitrary configuration and other sections into the crash report.
+    // emit_message adds a second sanitization pass as defense-in-depth at the protocol
+    // boundary.
     let error_type_str = exception_type
         .unwrap_or("<unknown>")
         .replace('\n', "\\n")
