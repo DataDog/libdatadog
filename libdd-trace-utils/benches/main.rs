@@ -10,10 +10,13 @@ use libdd_common::bench_utils::ReportingAllocator;
 pub static GLOBAL: ReportingAllocator<System> = ReportingAllocator::new(System);
 
 mod deserialization;
+mod deserialization_v05;
 mod serialization;
 
 criterion_main!(
     serialization::serialize_benches,
     deserialization::deserialize_benches,
-    deserialization::deserialize_alloc_benches
+    deserialization::deserialize_alloc_benches,
+    deserialization_v05::deserialize_v05_benches,
+    deserialization_v05::deserialize_v05_alloc_benches
 );
