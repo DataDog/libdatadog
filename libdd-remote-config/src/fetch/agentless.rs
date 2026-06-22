@@ -123,7 +123,6 @@ type TUFClient = tuf::client::Client<tuf::interchange::Json, TUFRepo, TUFRepo>;
 // If the endpoint is not suitable (api key not set, not https), returns N
 pub fn make_agentless_configs_endpoint(e: &Endpoint) -> Option<Endpoint> {
     let e = e.clone();
-    dbg!(&e);
     if !(e.url.scheme_str().is_some_and(|s| s == "https")
         && e.url.authority().is_some()
         && e.api_key.is_some())
@@ -482,12 +481,10 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         &self,
         req: remoteconfig::LatestConfigsRequest,
     ) -> anyhow::Result<remoteconfig::LatestConfigsResponse> {
-        dbg!(&req);
         let path = PathAndQuery::from_static("/api/v0.1/configurations");
         let body = Bytes::from(req.encode_to_vec());
         let res = self.send_request(Method::POST, path, body).await?;
         let res = parse_rc_response(res)?;
-        dbg!(debug_latest_configs_response(&res));
         Ok(res)
     }
 
