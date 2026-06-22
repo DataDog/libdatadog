@@ -2,11 +2,71 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::span::v04::Span;
+use crate::span::v1::TracerPayload;
 use crate::span::TraceData;
 use libdd_common::ResultInfallibleExt;
 use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 
+const fn msp_string_encoding_len(s: &str) -> usize {
+    let length_marker_len = if s.len() < 32 {
+        1
+    } else if s.len() < 256 {
+        2
+    } else if s.len() <= (u16::MAX as usize) {
+        3
+    } else {
+        5
+    };
+    length_marker_len + s.len()
+}
+
+// Compute the encoding of a string to messagepack in a const manner
+const fn msp_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u8; ENCODING_LEN] {
+    // copy_to_slice is not const yet, so we make a helper
+    const fn copy_to_slice(dest: &mut [u8], src: &[u8], n: usize) {
+        let mut i = 0;
+        while i < n {
+            dest[i] = src[i];
+            i += 1;
+        }
+    }
+
+    let mut storage = [0; ENCODING_LEN];
+    let len = s.len() as u64;
+    let len_bytes = if len < 32 {
+        storage[0] = 0xa0 | (len as u8 & 0x1f);
+        0
+    } else if len < 256 {
+        storage[0] = 0xd9;
+        1
+    } else if len <= (u16::MAX as u64) {
+        storage[0] = 0xda;
+        2
+    } else {
+        storage[0] = 0xdb;
+        4
+    };
+    copy_to_slice(storage.split_at_mut(1).1, &len.to_be_bytes(), len_bytes);
+    copy_to_slice(storage.split_at_mut(1 + len_bytes).1, s.as_bytes(), s.len());
+    storage
+}
+
+// `super::` lets the macro body resolve the const helpers from any submodule of `v04/`
+// (`span.rs`, `span_v1_to_v04.rs`, …) without each one importing them explicitly.
+macro_rules! write_const_msg_pack_str {
+    ($writer:expr, $str:expr) => {{
+        use rmp::encode::ValueWriteError;
+        const STRING_ENCODING_LEN: usize = super::msp_string_encoding_len($str);
+        const STRING_ENCODING: [u8; STRING_ENCODING_LEN] = super::msp_const_string_encoding($str);
+
+        $writer
+            .write_bytes(&STRING_ENCODING)
+            .map_err(ValueWriteError::InvalidDataWrite)
+    }};
+}
+
 mod span;
+mod span_v1_to_v04;
 
 #[inline(always)]
 fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
@@ -166,5 +226,77 @@ pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u
     // `Ok`, so the error path here is unreachable today; should `CountLength` ever grow
     // a fallible code path, fuzz tests on the msgpack encoded length would catch it.
     let _ = to_writer(&mut counter, traces);
+    counter.0
+}
+
+/// Encodes a [`TracerPayload`] in the v0.4 wire format (downgrade path used when the agent
+/// does not advertise `/v1.0/traces`). The output is a msgpack array of traces, where each
+/// trace is itself a msgpack array of v0.4-shaped spans — matching the existing v0.4 wire
+/// format produced by [`to_vec`].
+fn encode_payload_v1_to_v04<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    payload: &TracerPayload<T>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    use span_v1_to_v04::{encode_span_v1_to_v04, ChunkContext};
+
+    write_array_len(writer, payload.chunks.len() as u32)?;
+    for chunk in &payload.chunks {
+        let ctx = ChunkContext {
+            trace_id: &chunk.trace_id,
+            priority: chunk.priority,
+            origin: &chunk.origin,
+            sampling_mechanism: chunk.sampling_mechanism,
+            attributes: &chunk.attributes,
+        };
+        write_array_len(writer, chunk.spans.len() as u32)?;
+        for span in &chunk.spans {
+            encode_span_v1_to_v04(writer, span, &ctx)?;
+        }
+    }
+    Ok(())
+}
+
+/// Serializes a [`TracerPayload`] (V1 data model) as a v0.4 msgpack payload.
+///
+/// Used by the trace exporter when the agent has not advertised `/v1.0/traces` via `/info`.
+/// The output is byte-compatible with [`to_vec`] for equivalent data — chunk-level fields are
+/// propagated to every span and typed attributes are bucketed into the v0.4 `meta` /
+/// `metrics` / `meta_struct` maps per [`span_v1_to_v04`]'s mapping table.
+pub fn to_vec_v1_to_v04<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
+    to_vec_v1_to_v04_with_capacity(payload, 0)
+}
+
+/// Serializes a [`TracerPayload`] as a v0.4 msgpack payload with a caller-supplied initial
+/// capacity. Use this when you can size the buffer up front (e.g. from
+/// [`to_encoded_byte_len_v1_to_v04`]) to avoid reallocations.
+pub fn to_vec_v1_to_v04_with_capacity<T: TraceData>(
+    payload: &TracerPayload<T>,
+    capacity: u32,
+) -> Vec<u8> {
+    let mut buf = ByteBuf::with_capacity(capacity as usize);
+    encode_payload_v1_to_v04(&mut buf, payload)
+        .map_err(super::flatten_value_write_infallible)
+        .unwrap_infallible();
+    buf.into_vec()
+}
+
+/// Encodes a [`TracerPayload`] as v0.4 msgpack into the provided slice. Useful for callers
+/// that own a pre-sized buffer (e.g. for FFI / zero-copy paths).
+///
+/// # Errors
+///
+/// Returns any [`ValueWriteError`] from the underlying writer (typically buffer-too-small).
+pub fn write_v1_to_v04_to_slice<T: TraceData>(
+    slice: &mut &mut [u8],
+    payload: &TracerPayload<T>,
+) -> Result<(), ValueWriteError> {
+    encode_payload_v1_to_v04(slice, payload)
+}
+
+/// Returns the exact number of bytes [`to_vec_v1_to_v04`] would write for `payload`. Walks
+/// the payload through a counting writer without allocating an output buffer.
+pub fn to_encoded_byte_len_v1_to_v04<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
+    let mut counter = super::CountLength(0);
+    let _ = encode_payload_v1_to_v04(&mut counter, payload);
     counter.0
 }

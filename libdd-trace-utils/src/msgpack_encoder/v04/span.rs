@@ -9,62 +9,6 @@ use rmp::encode::{
 };
 use std::borrow::Borrow;
 
-const fn msp_string_encoding_len(s: &str) -> usize {
-    let length_marker_len = if s.len() < 32 {
-        1
-    } else if s.len() < 256 {
-        2
-    } else if s.len() <= (u16::MAX as usize) {
-        3
-    } else {
-        5
-    };
-    length_marker_len + s.len()
-}
-
-// Compute the encoding of a string to messagepack in a const manner
-const fn msp_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u8; ENCODING_LEN] {
-    // copy_to_slice is not const yet, so we make a helper
-    const fn copy_to_slice(dest: &mut [u8], src: &[u8], n: usize) {
-        let mut i = 0;
-        while i < n {
-            dest[i] = src[i];
-            i += 1;
-        }
-    }
-
-    let mut storage = [0; ENCODING_LEN];
-    let len = s.len() as u64;
-    let len_bytes = if len < 32 {
-        storage[0] = 0xa0 | (len as u8 & 0x1f);
-        0
-    } else if len < 256 {
-        storage[0] = 0xd9;
-        1
-    } else if len <= (u16::MAX as u64) {
-        storage[0] = 0xda;
-        2
-    } else {
-        storage[0] = 0xdb;
-        4
-    };
-    copy_to_slice(storage.split_at_mut(1).1, &len.to_be_bytes(), len_bytes);
-    copy_to_slice(storage.split_at_mut(1 + len_bytes).1, s.as_bytes(), s.len());
-    storage
-}
-
-macro_rules! write_const_msg_pack_str {
-    ($writer:expr, $str:expr) => {{
-        use rmp::encode::ValueWriteError;
-        const STRING_ENCODING_LEN: usize = msp_string_encoding_len($str);
-        const STRING_ENCODING: [u8; STRING_ENCODING_LEN] = msp_const_string_encoding($str);
-
-        $writer
-            .write_bytes(&STRING_ENCODING)
-            .map_err(ValueWriteError::InvalidDataWrite)
-    }};
-}
-
 /// Encodes a `SpanLink` object into a slice of bytes.
 ///
 /// # Arguments
