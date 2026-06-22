@@ -26,9 +26,10 @@
 pub(crate) mod config;
 pub(crate) mod exporter;
 
-pub use config::{OtlpProtocol, OtlpTraceConfig};
-// Internal: the resolved wire encoding. Callers select via the user-facing `OtlpProtocol`; this
-// is derived from it at the send boundary and is not part of the crate's public API.
-pub(crate) use config::OtlpWireProtocol;
+// `OtlpProtocol` is the only public symbol: it is a parameter of the public
+// `TraceExporterBuilder::set_otlp_protocol`. Everything else here (the parsed config, the
+// resource-info/mapper helpers, the send entrypoint) is internal to this crate.
+pub use config::OtlpProtocol;
+pub(crate) use config::OtlpTraceConfig;
 pub(crate) use exporter::send_otlp_traces_http;
-pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
+pub(crate) use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};

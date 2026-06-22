@@ -13,42 +13,41 @@ use libdd_trace_utils::otlp_encoder::{
 use serde_json::{json, Value};
 
 /// A realistic OTLP-bound span: a handful of string `meta` tags and a couple of numeric
-/// `metrics`, so the per-span attribute work (the dominant cost) is exercised. The chunk root
-/// carries `_dd.p.tid` (the 128-bit trace-id high bits, resolved once per chunk).
+/// `metrics`, so the per-span attribute work (the dominant cost) is exercised.
 fn generate_spans(num_spans: usize, trace_id: u64) -> Vec<Value> {
-    let mut spans = Vec::with_capacity(num_spans);
     let root_span_id = 100_000_000_000 + (trace_id % 1_000_000);
-    for i in 0..num_spans {
-        let span_id = root_span_id + i as u64;
-        let is_root = i == 0;
-        let parent_id = if is_root { 0 } else { root_span_id };
-        let mut meta = json!({
-            "http.method": "GET",
-            "http.url": "https://example.com/api/v1/users/12345",
-            "http.status_code": "200",
-            "env": "production",
-            "version": "1.2.3",
-            "component": "net/http",
-        });
-        if is_root {
-            meta["_dd.p.tid"] = json!("5b8efff798038103");
-        }
-        spans.push(json!({
-            "service": "bench-service",
-            "name": "http.request",
-            "resource": "GET /api/v1/users",
-            "trace_id": trace_id,
-            "span_id": span_id,
-            "parent_id": parent_id,
-            "start": 1_544_712_660_000_000_000_i64 + i as i64,
-            "duration": 1_000_000,
-            "error": 0,
-            "meta": meta,
-            "metrics": { "_sampling_priority_v1": 1, "_dd.top_level": 1 },
-            "type": "web",
-        }));
-    }
-    spans
+    (0..num_spans)
+        .map(|i| {
+            let span_id = root_span_id + i as u64;
+            let is_root = i == 0;
+            let parent_id = if is_root { 0 } else { root_span_id };
+            let mut meta = json!({
+                "http.method": "GET",
+                "http.url": "https://example.com/api/v1/users/12345",
+                "http.status_code": "200",
+                "env": "production",
+                "version": "1.2.3",
+                "component": "net/http",
+            });
+            if is_root {
+                meta["_dd.p.tid"] = json!("5b8efff798038103");
+            }
+            json!({
+                "service": "bench-service",
+                "name": "http.request",
+                "resource": "GET /api/v1/users",
+                "trace_id": trace_id,
+                "span_id": span_id,
+                "parent_id": parent_id,
+                "start": 1_544_712_660_000_000_000_i64 + i as i64,
+                "duration": 1_000_000,
+                "error": 0,
+                "meta": meta,
+                "metrics": { "_sampling_priority_v1": 1, "_dd.top_level": 1 },
+                "type": "web",
+            })
+        })
+        .collect()
 }
 
 fn generate_trace_chunks(num_chunks: usize, num_spans: usize) -> Vec<Vec<Value>> {
@@ -78,7 +77,6 @@ pub fn otlp_encoding_benches(c: &mut Criterion) {
         let id = format!("{num_chunks}x{num_spans}");
         let bytes = rmp_serde::to_vec(&generate_trace_chunks(num_chunks, num_spans))
             .expect("serialize fixture");
-        // `spans` borrows `bytes`; both live for the rest of this iteration.
         let (spans, _) =
             msgpack_decoder::v04::from_slice(bytes.as_slice()).expect("decode fixture");
 

@@ -13,7 +13,10 @@
 
 pub mod agent_info;
 mod health_metrics;
-pub mod otlp;
+pub(crate) mod otlp;
+/// The OTLP export protocol selector (`http/json` or `http/protobuf`) — the only public symbol
+/// from the otherwise-internal `otlp` module.
+pub use otlp::OtlpProtocol;
 #[cfg(feature = "telemetry")]
 pub(crate) mod telemetry;
 #[cfg(not(target_arch = "wasm32"))]

@@ -15,9 +15,7 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::otlp::{
-    map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig, OtlpWireProtocol,
-};
+use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -531,7 +529,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
-    /// Sends trace chunks via OTLP HTTP/JSON when OTLP config is enabled.
+    /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
@@ -547,14 +545,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r.runtime_id = self.metadata.runtime_id.clone();
             r
         };
-        let wire = OtlpWireProtocol::try_from(config.protocol).map_err(|unsupported| {
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
-                "unsupported OTLP protocol for HTTP export: {unsupported:?}"
-            )))
-        })?;
-        // Single prost OTLP IR; each protocol encodes the same request to its wire format.
+        // Single prost OTLP IR; the configured protocol encodes the same request to its wire
+        // format (JSON or protobuf).
         let request = map_traces_to_otlp(traces, &resource_info);
-        let body = wire.encode(&request).map_err(|e| {
+        let body = config.protocol.encode(&request).map_err(|e| {
             error!("OTLP serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
                 "failed to encode OTLP request: {e}"
@@ -563,7 +557,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         send_otlp_traces_http(
             &self.capabilities,
             config,
-            wire,
             self.endpoint.test_token.as_deref(),
             body,
         )

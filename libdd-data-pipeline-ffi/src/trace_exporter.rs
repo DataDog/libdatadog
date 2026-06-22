@@ -9,11 +9,11 @@ use libdd_common_ffi::{
     CharSlice,
     {slice::AsBytes, slice::ByteSlice},
 };
-use libdd_data_pipeline::otlp::OtlpProtocol;
 use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
     TraceExporterInputFormat, TraceExporterOutputFormat,
 };
+use libdd_data_pipeline::OtlpProtocol;
 
 pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities>;
 
@@ -521,16 +521,15 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
                 Ok(s) => s,
                 Err(e) => return Some(e),
             };
-            // `FromStr` is the single source of truth for string -> OtlpProtocol. The OTLP trace
-            // exporter is HTTP-only, so we additionally reject `Grpc` here (it parses, but is
-            // unsupported) rather than storing a value the exporter would refuse at send time.
-            // The `_` arm also covers any future non_exhaustive variant.
+            // `FromStr` is the single source of truth for string -> OtlpProtocol. It accepts only
+            // the supported HTTP encodings (`http/json`, `http/protobuf`); `grpc` and any unknown
+            // value are rejected with an error, so an unsupported protocol can never be stored.
             match value.parse::<OtlpProtocol>() {
-                Ok(p @ (OtlpProtocol::HttpJson | OtlpProtocol::HttpProtobuf)) => {
+                Ok(p) => {
                     handle.otlp_protocol = Some(p);
                     None
                 }
-                _ => gen_error!(ErrorCode::InvalidArgument),
+                Err(_) => gen_error!(ErrorCode::InvalidArgument),
             }
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -1392,7 +1391,7 @@ mod tests {
 
     #[test]
     fn set_otlp_protocol_stores_parsed_enum() {
-        use libdd_data_pipeline::otlp::OtlpProtocol;
+        use libdd_data_pipeline::OtlpProtocol;
         let mut cfg = TraceExporterConfig::default();
         let err = unsafe {
             ddog_trace_exporter_config_set_otlp_protocol(

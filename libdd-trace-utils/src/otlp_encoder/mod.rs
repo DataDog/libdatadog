@@ -117,4 +117,16 @@ mod encode_tests {
         assert_eq!(jattr["value"]["stringValue"].as_str().unwrap(), pval);
         assert_eq!(jattr["value"]["stringValue"].as_str().unwrap(), "GET");
     }
+
+    #[test]
+    fn protobuf_round_trips_through_prost() {
+        // Round-trip the IR through the protobuf wire format: decoding the encoded bytes
+        // reproduces the original prost request, i.e. the encoding is lossless. (A JSON round-trip
+        // would need a deserializer mirroring `json_serializer`, which this crate doesn't ship;
+        // `json_and_protobuf_carry_same_span` guards that the JSON matches this same IR.)
+        let (chunks, info) = sample_native();
+        let req = map_traces_to_otlp(chunks, &info);
+        let decoded = ProtoReq::decode(encode_otlp_protobuf(&req).as_slice()).unwrap();
+        assert_eq!(decoded, req);
+    }
 }

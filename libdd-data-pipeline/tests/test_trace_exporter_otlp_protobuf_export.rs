@@ -63,7 +63,7 @@ mod otlp_protobuf_tests {
             let mut builder = TraceExporterBuilder::default();
             builder
                 .set_otlp_endpoint(&endpoint)
-                .set_otlp_protocol(libdd_data_pipeline::otlp::OtlpProtocol::HttpProtobuf)
+                .set_otlp_protocol(libdd_data_pipeline::OtlpProtocol::HttpProtobuf)
                 .set_language("test-lang")
                 .set_tracer_version("1.0")
                 .set_env("test_env")

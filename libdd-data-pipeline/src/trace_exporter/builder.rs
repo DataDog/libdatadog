@@ -287,12 +287,10 @@ impl TraceExporterBuilder {
         self
     }
 
-    /// Selects the OTLP export protocol. Accepts `OtlpProtocol::HttpJson` (default) or
-    /// `OtlpProtocol::HttpProtobuf`. The host language resolves this from
-    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`.
-    ///
-    /// `OtlpProtocol::Grpc` is not supported; selecting it makes [`build`](Self::build) /
-    /// [`build_async`](Self::build_async) fail with [`BuilderErrorKind::InvalidConfiguration`].
+    /// Selects the OTLP export protocol: [`OtlpProtocol::HttpJson`] (default) or
+    /// [`OtlpProtocol::HttpProtobuf`]. The host language resolves this from
+    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; a `grpc` value is
+    /// unsupported and is rejected when parsed into [`OtlpProtocol`], so it never reaches here.
     pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
         self.otlp_protocol = protocol;
         self
@@ -441,47 +439,33 @@ impl TraceExporterBuilder {
             }
         };
 
-        let otlp_config = match self.otlp_endpoint {
-            Some(url) => {
-                // OTLP gRPC export is not implemented. Reject it here — but only when OTLP export
-                // is actually enabled (an endpoint is configured) — so a `grpc` value resolved
-                // from the OTel-default `OTEL_EXPORTER_OTLP_PROTOCOL` stays inert for a normal
-                // Datadog-agent exporter rather than failing its build. Fails fast with the same
-                // `InvalidConfiguration` category (FFI: `InvalidArgument`) the C FFI setter uses;
-                // the send-time arm in `send_otlp_traces_inner` remains a defensive guard.
-                if self.otlp_protocol == OtlpProtocol::Grpc {
-                    return Err(TraceExporterError::Builder(
-                        BuilderErrorKind::InvalidConfiguration(
-                            "OTLP gRPC export is not supported".to_string(),
-                        ),
-                    ));
-                }
-                let mut headers = http::HeaderMap::new();
-                for (key, value) in self.otlp_headers {
-                    match (
-                        http::HeaderName::from_bytes(key.as_bytes()),
-                        http::HeaderValue::from_str(&value),
-                    ) {
-                        (Ok(name), Ok(val)) => {
-                            headers.insert(name, val);
-                        }
-                        _ => {
-                            tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
-                        }
+        // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
+        // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
+        let otlp_config = self.otlp_endpoint.map(|url| {
+            let mut headers = http::HeaderMap::new();
+            for (key, value) in self.otlp_headers {
+                match (
+                    http::HeaderName::from_bytes(key.as_bytes()),
+                    http::HeaderValue::from_str(&value),
+                ) {
+                    (Ok(name), Ok(val)) => {
+                        headers.insert(name, val);
+                    }
+                    _ => {
+                        tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
                     }
                 }
-                Some(OtlpTraceConfig {
-                    endpoint_url: url,
-                    headers,
-                    timeout: self
-                        .connection_timeout
-                        .map(Duration::from_millis)
-                        .unwrap_or(DEFAULT_OTLP_TIMEOUT),
-                    protocol: self.otlp_protocol,
-                })
             }
-            None => None,
-        };
+            OtlpTraceConfig {
+                endpoint_url: url,
+                headers,
+                timeout: self
+                    .connection_timeout
+                    .map(Duration::from_millis)
+                    .unwrap_or(DEFAULT_OTLP_TIMEOUT),
+                protocol: self.otlp_protocol,
+            }
+        });
 
         Ok(TraceExporter {
             endpoint: Endpoint {
@@ -691,41 +675,6 @@ mod tests {
         builder
             .set_input_format(TraceExporterInputFormat::V05)
             .set_output_format(TraceExporterOutputFormat::V1);
-        let result = builder.build::<NativeCapabilities>();
-        assert!(matches!(
-            result,
-            Err(TraceExporterError::Builder(
-                BuilderErrorKind::InvalidConfiguration(_)
-            ))
-        ));
-    }
-
-    // Builds a live agent exporter (spawns the agent_info worker, which makes real syscalls),
-    // so it can't run under miri.
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn test_otlp_grpc_without_endpoint_still_builds() {
-        // The protocol setting must stay inert when no OTLP endpoint is configured: a `grpc`
-        // value (e.g. resolved from the OTel-default `OTEL_EXPORTER_OTLP_PROTOCOL`) must NOT
-        // break a normal Datadog-agent exporter that does no OTLP export at all.
-        let mut builder = TraceExporterBuilder::default();
-        builder.set_otlp_protocol(crate::otlp::OtlpProtocol::Grpc);
-        let result = builder.build::<NativeCapabilities>();
-        assert!(
-            result.is_ok(),
-            "grpc protocol without an OTLP endpoint must still build the agent exporter"
-        );
-    }
-
-    #[test]
-    fn test_otlp_grpc_with_endpoint_rejected_at_build() {
-        // When OTLP export IS enabled (endpoint set), gRPC is unsupported and must fail fast at
-        // build time (not on the first send), with the same `InvalidConfiguration` category the
-        // C FFI setter uses.
-        let mut builder = TraceExporterBuilder::default();
-        builder
-            .set_otlp_endpoint("http://localhost:4318/v1/traces")
-            .set_otlp_protocol(crate::otlp::OtlpProtocol::Grpc);
         let result = builder.build::<NativeCapabilities>();
         assert!(matches!(
             result,

@@ -302,17 +302,16 @@ pub fn map_traces_to_otlp<T: TraceData>(
     }
 }
 
-fn push_str_attr(attrs: &mut Vec<ProtoKeyValue>, k: &str, v: &str) {
-    if !v.is_empty() {
-        attrs.push(proto_kv(
-            k.to_string(),
-            ProtoValue::StringValue(v.to_string()),
-        ));
-    }
-}
-
 fn build_resource(resource_info: &OtlpResourceInfo) -> ProtoResource {
-    let mut attributes: Vec<ProtoKeyValue> = Vec::new();
+    fn push_str_attr(attrs: &mut Vec<ProtoKeyValue>, k: &str, v: &str) {
+        if !v.is_empty() {
+            attrs.push(proto_kv(
+                k.to_string(),
+                ProtoValue::StringValue(v.to_string()),
+            ));
+        }
+    }
+    let mut attributes = Vec::new();
     push_str_attr(&mut attributes, "service.name", &resource_info.service);
     push_str_attr(
         &mut attributes,
@@ -366,7 +365,7 @@ fn map_span<T: TraceData>(
     let flags = span
         .metrics
         .get("_sampling_priority_v1")
-        .map(|p| if *p >= 1.0 { 1u32 } else { 0u32 })
+        .map(|p| (*p >= 1.0) as u32)
         .unwrap_or(0);
     let trace_state = span
         .meta
@@ -384,7 +383,7 @@ fn map_span<T: TraceData>(
         flags,
         name: span.resource.borrow().to_string(),
         kind: span_kind(span),
-        // Clamp negatives to 0 — matches the prior parse_u64 zero-fallback on negative input.
+        // OTLP timestamps are unsigned; clamp negatives to 0 so the `as u64` cast can't wrap.
         start_time_unix_nano: span.start.max(0) as u64,
         end_time_unix_nano: (span.start + span.duration).max(0) as u64,
         attributes,

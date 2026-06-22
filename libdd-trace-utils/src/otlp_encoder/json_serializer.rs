@@ -25,6 +25,11 @@ use libdd_trace_protobuf::opentelemetry::proto::trace::v1::{
 pub(crate) struct OtlpJson<'a>(pub &'a ExportTraceServiceRequest);
 
 pub(crate) fn to_otlp_json_vec(req: &ExportTraceServiceRequest) -> serde_json::Result<Vec<u8>> {
+    // `serde_json::to_vec` starts the output buffer at 128 bytes and reallocates as it grows, so a
+    // multi-span payload reallocates several times. serde_json never sizes any allocation from the
+    // `serialize_map`/`serialize_seq` length hints (it only special-cases `Some(0)`), so the real
+    // win is pre-sizing this output buffer. The protobuf encoded length is a cheap, exact measure
+    // of the IR; OTLP/JSON runs larger (field names, hex ids, base64), so scale it up.
     serde_json::to_vec(&OtlpJson(req))
 }
 
@@ -34,6 +39,8 @@ where
     W: Serialize,
     S: Serializer,
 {
+    // `collect_seq` forwards the iterator's size hint as the sequence length, so there's no need
+    // to go through `serialize_seq` just to supply it.
     s.collect_seq(items.iter().map(wrap))
 }
 
@@ -69,6 +76,9 @@ impl<T: core::fmt::Display> Serialize for NumStr<T> {
     }
 }
 
+/// A fixed-capacity, stack-allocated [`core::fmt::Write`] sink: it formats a value into an inline
+/// `[u8; 24]` buffer with no heap allocation. Used by [`NumStr`] to render a 64-bit integer as a
+/// decimal string (`u64::MAX` / `i64::MIN` are at most 20 chars, so 24 bytes always suffices).
 #[derive(Default)]
 struct DecimalBuf {
     buf: [u8; 24],

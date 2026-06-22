@@ -3,7 +3,7 @@
 
 //! OTLP HTTP trace exporter (JSON or protobuf).
 
-use super::config::{OtlpTraceConfig, OtlpWireProtocol};
+use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
@@ -18,7 +18,7 @@ const OTLP_RETRY_DELAY_MS: u64 = 100;
 
 /// Send an OTLP trace payload to the configured endpoint with retries.
 ///
-/// The `Content-Type` is derived from `wire`, which already selected the encoding.
+/// The `Content-Type` is derived from `config.protocol`, which also selected the body encoding.
 ///
 /// Uses [`send_with_retry`] for consistent retry behaviour and observability across exporters.
 ///
@@ -27,7 +27,6 @@ const OTLP_RETRY_DELAY_MS: u64 = 100;
 pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &OtlpTraceConfig,
-    wire: OtlpWireProtocol,
     test_token: Option<&str>,
     body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
@@ -44,10 +43,8 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
         ..Endpoint::default()
     };
 
-    let content_type = wire.content_type();
-
     let mut headers = config.headers.clone();
-    headers.insert(http::header::CONTENT_TYPE, content_type);
+    headers.insert(http::header::CONTENT_TYPE, config.protocol.content_type());
     if let Some(token) = test_token {
         if let Ok(val) = http::HeaderValue::from_str(token) {
             headers.insert(

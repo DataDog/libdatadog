@@ -6,18 +6,19 @@
 use http::HeaderMap;
 use std::time::Duration;
 
-/// OTLP trace export protocol.
+/// OTLP trace export protocol — selects the HTTP body encoding and `Content-Type`.
+///
+/// Only the HTTP encodings libdatadog actually supports are representable. A `grpc` value (e.g.
+/// resolved from the OTel-default `OTEL_EXPORTER_OTLP_PROTOCOL`) is rejected by
+/// [`FromStr`](std::str::FromStr) rather than represented here, so an unsupported protocol can
+/// never be constructed and silently mishandled downstream.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum OtlpProtocol {
-    /// HTTP with JSON body (Content-Type: application/json). Default for HTTP.
+    /// HTTP with a JSON body (`Content-Type: application/json`). The default.
     #[default]
     HttpJson,
-    /// HTTP with protobuf body (Content-Type: application/x-protobuf).
+    /// HTTP with a protobuf body (`Content-Type: application/x-protobuf`).
     HttpProtobuf,
-    /// gRPC. Parsed by `FromStr` so callers get a clean error, but rejected at export time
-    /// (unsupported).
-    Grpc,
 }
 
 impl std::str::FromStr for OtlpProtocol {
@@ -26,51 +27,33 @@ impl std::str::FromStr for OtlpProtocol {
         match s {
             "http/json" => Ok(OtlpProtocol::HttpJson),
             "http/protobuf" => Ok(OtlpProtocol::HttpProtobuf),
-            "grpc" => Ok(OtlpProtocol::Grpc),
+            // gRPC is a valid OTLP protocol in the OTel spec but is not implemented in
+            // libdatadog. Reject it explicitly so callers get a clean error at the parse
+            // boundary, rather than constructing an unsupported value that has to be guarded
+            // against everywhere downstream.
+            "grpc" => Err("OTLP gRPC export is not supported".to_string()),
             other => Err(format!("unknown OTLP protocol: {other}")),
         }
     }
 }
 
-/// The wire encoding actually used to send OTLP traces over HTTP. Internal, closed set: the
-/// only encodings the exporter supports. The user-facing [`OtlpProtocol`] (which also carries the
-/// unsupported `Grpc`) converts into this at the send boundary via `TryFrom`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OtlpWireProtocol {
-    Json,
-    Protobuf,
-}
-
-impl std::convert::TryFrom<OtlpProtocol> for OtlpWireProtocol {
-    type Error = OtlpProtocol;
-    /// Maps the user-facing protocol to a supported wire encoding. `Grpc` is unsupported and
-    /// returns `Err(Grpc)` so the caller surfaces a clean error instead of silently downgrading.
-    fn try_from(p: OtlpProtocol) -> Result<Self, Self::Error> {
-        match p {
-            OtlpProtocol::HttpJson => Ok(OtlpWireProtocol::Json),
-            OtlpProtocol::HttpProtobuf => Ok(OtlpWireProtocol::Protobuf),
-            other => Err(other),
-        }
-    }
-}
-
-impl OtlpWireProtocol {
-    /// The HTTP `Content-Type` for this encoding.
+impl OtlpProtocol {
+    /// The HTTP `Content-Type` for this protocol's body encoding.
     pub fn content_type(&self) -> http::HeaderValue {
         match self {
-            OtlpWireProtocol::Json => libdd_common::header::APPLICATION_JSON,
-            OtlpWireProtocol::Protobuf => libdd_common::header::APPLICATION_PROTOBUF,
+            OtlpProtocol::HttpJson => libdd_common::header::APPLICATION_JSON,
+            OtlpProtocol::HttpProtobuf => libdd_common::header::APPLICATION_PROTOBUF,
         }
     }
 
-    /// Encode the prost OTLP request to this wire format.
+    /// Encode the prost OTLP request to this protocol's wire format.
     pub fn encode(
         &self,
         req: &libdd_trace_utils::otlp_encoder::ProtoExportTraceServiceRequest,
     ) -> Result<Vec<u8>, serde_json::Error> {
         match self {
-            OtlpWireProtocol::Json => libdd_trace_utils::otlp_encoder::encode_otlp_json(req),
-            OtlpWireProtocol::Protobuf => {
+            OtlpProtocol::HttpJson => libdd_trace_utils::otlp_encoder::encode_otlp_json(req),
+            OtlpProtocol::HttpProtobuf => {
                 Ok(libdd_trace_utils::otlp_encoder::encode_otlp_protobuf(req))
             }
         }
@@ -107,32 +90,24 @@ mod tests {
             OtlpProtocol::from_str("http/protobuf").unwrap(),
             OtlpProtocol::HttpProtobuf
         );
-        assert_eq!(OtlpProtocol::from_str("grpc").unwrap(), OtlpProtocol::Grpc);
         assert!(OtlpProtocol::from_str("nonsense").is_err());
     }
 
     #[test]
-    fn wire_protocol_from_user_protocol() {
-        use std::convert::TryFrom;
-        assert_eq!(
-            OtlpWireProtocol::try_from(OtlpProtocol::HttpJson).unwrap(),
-            OtlpWireProtocol::Json
-        );
-        assert_eq!(
-            OtlpWireProtocol::try_from(OtlpProtocol::HttpProtobuf).unwrap(),
-            OtlpWireProtocol::Protobuf
-        );
-        assert!(OtlpWireProtocol::try_from(OtlpProtocol::Grpc).is_err());
+    fn grpc_is_rejected_at_parse() {
+        // gRPC is unsupported, so it must not parse into a protocol: an unsupported value can
+        // never be constructed.
+        assert!(OtlpProtocol::from_str("grpc").is_err());
     }
 
     #[test]
-    fn wire_protocol_content_types() {
+    fn protocol_content_types() {
         assert_eq!(
-            OtlpWireProtocol::Json.content_type(),
+            OtlpProtocol::HttpJson.content_type(),
             libdd_common::header::APPLICATION_JSON
         );
         assert_eq!(
-            OtlpWireProtocol::Protobuf.content_type(),
+            OtlpProtocol::HttpProtobuf.content_type(),
             libdd_common::header::APPLICATION_PROTOBUF
         );
     }
