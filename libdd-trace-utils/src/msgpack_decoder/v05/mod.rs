@@ -212,6 +212,12 @@ where
     span.metrics = read_metrics(data, dict)?;
     span.r#type = get_from_dict(data, dict)?;
 
+    // Decoded from msgpack maps (unique keys) or empty defaults: no duplicates, so mark deduped to
+    // skip the defensive dedup (and its warning) at encoding time. A later mutation re-dirties it.
+    span.meta.mark_deduped();
+    span.metrics.mark_deduped();
+    span.meta_struct.mark_deduped();
+
     Ok(span)
 }
 

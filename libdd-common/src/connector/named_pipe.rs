@@ -3,6 +3,20 @@
 
 use std::path::{Path, PathBuf};
 
+/// Security Quality of Service flags used when opening a Windows named pipe client.
+///
+/// We disable impersonation by requesting `SECURITY_ANONYMOUS`, mirroring the
+/// dd-trace-dotnet change that sets `TokenImpersonationLevel.Anonymous`. The pipe is
+/// only used as a byte transport to the agent, so the server end never needs to
+/// identify or impersonate the (potentially privileged) connecting client. Denying
+/// impersonation enforces least privilege and prevents a malicious/squatting pipe
+/// server from reading the client's identity or acting on its behalf.
+///
+/// `SECURITY_ANONYMOUS` has the value `0`; tokio's `ClientOptions::security_qos_flags`
+/// automatically ORs in `SECURITY_SQOS_PRESENT`.
+#[cfg(windows)]
+pub const ANONYMOUS_IMPERSONATION_QOS: u32 = 0; // SECURITY_ANONYMOUS
+
 /// Windows Named Pipe
 /// https://docs.microsoft.com/en-us/windows/win32/ipc/named-pipes
 ///
@@ -19,7 +33,7 @@ pub fn named_pipe_path_to_uri(path: &Path) -> Result<hyper::Uri, hyper::http::Er
     hyper::Uri::builder()
         .scheme("windows")
         .authority(path)
-        .path_and_query("")
+        .path_and_query("/")
         .build()
 }
 

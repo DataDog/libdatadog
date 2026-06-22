@@ -8,6 +8,9 @@
 //! and processing traces for stats collection.
 
 #[cfg(not(target_arch = "wasm32"))]
+use super::add_path;
+use super::TracerMetadata;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -22,14 +25,11 @@ use libdd_trace_stats::span_concentrator::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::{debug, error};
-
-#[cfg(not(target_arch = "wasm32"))]
-use super::add_path;
-use super::TracerMetadata;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
@@ -299,18 +299,26 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 }
 
 /// Process traces for stats computation and update header tags accordingly.
-/// Returns the number of P0 traces and spans that were dropped.
+///
+/// If a telemetry client is provided and stats are enabled, dropped P0 counts
+/// will be sent to telemetry.
 pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
-) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+    trace_filterer: &TraceFilterer,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))] telemetry: Option<
+        &crate::telemetry::TelemetryClient,
+    >,
+) {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
     } = &**status
     {
+        let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
+
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
                 libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
@@ -328,11 +336,15 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
         header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
 
-        dropped_p0_stats
-    } else {
-        libdd_trace_utils::span::trace_utils::DroppedP0Stats {
-            dropped_p0_traces: 0,
-            dropped_p0_spans: 0,
+        // Send dropped P0 stats directly to telemetry if available
+        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        if let Some(telemetry_client) = telemetry {
+            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+                dropped_p0_stats.dropped_p0_traces,
+                dropped_by_trace_filter,
+            ) {
+                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
+            }
         }
     }
 }

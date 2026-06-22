@@ -409,6 +409,31 @@ mod tests {
     }
 
     #[test]
+    fn test_decoded_span_maps_are_marked_deduped() {
+        // A decoded span's maps must be flagged deduped so the encoder skips the defensive dedup
+        // (and its warning) when re-encoding (e.g. in the sidecar).
+        let mut span = create_test_json_span(1, 2, 0, 0, false);
+        span["meta"] = json!({ "key": "value" });
+        span["metrics"] = json!({ "metric": 1.0 });
+        // No meta_struct on the wire: it stays at its empty `Span::default()` value.
+
+        let encoded_data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        let (decoded_traces, _) =
+            from_bytes(libdd_tinybytes::Bytes::from(encoded_data)).expect("Decoding failed");
+
+        let decoded_span = &decoded_traces[0][0];
+        assert!(decoded_span.meta.is_deduped(), "meta should be deduped");
+        assert!(
+            decoded_span.metrics.is_deduped(),
+            "metrics should be deduped"
+        );
+        assert!(
+            decoded_span.meta_struct.is_deduped(),
+            "empty meta_struct should be deduped"
+        );
+    }
+
+    #[test]
     fn test_decoder_span_link_success() {
         let expected_span_link = json!({
             "trace_id": 1,
