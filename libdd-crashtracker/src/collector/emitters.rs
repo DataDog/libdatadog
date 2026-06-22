@@ -795,7 +795,6 @@ mod tests {
     use std::str;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_complete_stacktrace() {
         // new_incomplete() starts with incomplete: true, which push_frame requires
         let mut stacktrace = StackTrace::new_incomplete();
@@ -827,7 +826,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_nullptr() {
         let mut buf = Vec::new();
         emit_message(&mut buf, std::ptr::null_mut()).expect("to work ;-)");
@@ -835,7 +833,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message() {
         let message = "test message";
         let message_ptr = Box::into_raw(Box::new(message.to_string()));
@@ -850,7 +847,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_empty_string() {
         let empty_message = String::new();
         let message_ptr = Box::into_raw(Box::new(empty_message));
@@ -865,7 +861,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_whitespace_only() {
         // Whitespace-only messages should not be emitted
         let whitespace_message = "   \n\t  ".to_string();
@@ -881,7 +876,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_with_leading_trailing_whitespace() {
         // Messages with content and whitespace should be emitted (with the whitespace)
         let message_with_whitespace = "  error message  ".to_string();
@@ -900,7 +894,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_with_newlines() {
         let message_with_newlines = "line1\nline2\nline3".to_string();
         let message_ptr = Box::into_raw(Box::new(message_with_newlines));
@@ -923,7 +916,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_unicode() {
         let unicode_message = "Hello 世界 🦀 Rust!".to_string();
         let message_ptr = Box::into_raw(Box::new(unicode_message.clone()));
@@ -939,7 +931,7 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
+    // #[cfg_attr(miri, ignore)]
     fn test_emit_procinfo() {
         let pid = unsafe { libc::getpid() };
         let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
@@ -955,7 +947,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_sentinel_injection_via_newline() {
         // An attacker-controlled error_type/message containing newlines and sentinel
         // strings could break out of the MESSAGE block and inject a CONFIG section
@@ -997,7 +988,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_content_starting_with_sentinel_prefix() {
         let sentinel_message = format!("{} extra data", DD_CRASHTRACK_END_MESSAGE);
         let message_ptr = Box::into_raw(Box::new(sentinel_message));
@@ -1019,7 +1009,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_write_sanitized_message_line_basic() {
         let mut buf = Vec::new();
         write_sanitized_message_line(&mut buf, "hello").unwrap();
@@ -1035,7 +1024,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_write_sanitized_message_line_sentinel_prefix() {
         let input = format!("{} injected", DD_CRASHTRACK_END_MESSAGE);
         let mut buf = Vec::new();
@@ -1046,7 +1034,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_very_long() {
         let long_message = "x".repeat(100000); // 100KB
         let message_ptr = Box::into_raw(Box::new(long_message.clone()));
@@ -1064,7 +1051,6 @@ mod tests {
     // The core unwinding logic is tested in the libunwind crate.
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_backtrace_via_libunwind_null_ucontext() {
         let mut buf = Vec::new();
         unsafe {
@@ -1102,7 +1088,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_null_pointer() {
         let mut buf = Vec::new();
         let result = emit_ucontext(&mut buf, std::ptr::null());
@@ -1114,7 +1099,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_linux_valid() {
         // Create a minimal valid ucontext_t with zeroed register values
         let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
