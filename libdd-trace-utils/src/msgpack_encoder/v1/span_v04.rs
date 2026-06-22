@@ -8,63 +8,8 @@ use rmp::encode::{
     ValueWriteError,
 };
 use std::borrow::Borrow;
-use std::time;
 
-use super::StringTable;
-
-/// Integer keys for V1 span fields.
-#[repr(u8)]
-pub(super) enum SpanKey {
-    Service = 1,
-    Name = 2,
-    Resource = 3,
-    SpanId = 4,
-    ParentId = 5,
-    Start = 6,
-    Duration = 7,
-    Error = 8,
-    Attributes = 9,
-    Type = 10,
-    SpanLinks = 11,
-    SpanEvents = 12,
-    Env = 13,
-    Version = 14,
-    Component = 15,
-    Kind = 16,
-}
-
-/// Integer keys for V1 span link fields.
-#[repr(u8)]
-pub(super) enum SpanLinkKey {
-    TraceId = 1,
-    SpanId = 2,
-    Attributes = 3,
-    TraceState = 4,
-    Flags = 5,
-}
-
-/// Integer keys for V1 span event fields.
-#[repr(u8)]
-pub(super) enum SpanEventKey {
-    Time = 1,
-    Name = 2,
-    Attributes = 3,
-}
-
-/// Type discriminants for attribute values.
-/// An attribute value is encoded as [type_uint8][actual_value].
-#[repr(u8)]
-pub(super) enum AnyValueKey {
-    String = 1,
-    Bool = 2,
-    Double = 3,
-    Int64 = 4,
-    Bytes = 5,
-    Array = 6,
-    /// Not used in V04→V1 conversion (V04 has no key-value list type), defined for completeness.
-    #[allow(dead_code)]
-    KeyValueList = 7,
-}
+use super::{normalize_span_start, AnyValueKey, SpanEventKey, SpanKey, SpanLinkKey, StringTable};
 
 /// Maps the `span.kind` string tag (from v0.4 meta) to the OTEL SpanKind uint32.
 ///
@@ -255,8 +200,14 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
             "env" | "version" | "component" | "span.kind" | "_dd.p.tid"
         )
     };
-    let non_promoted_meta = span.meta.iter().filter(|(k, _)| !is_promoted(k)).count() as u32;
-    let attr_count = non_promoted_meta + span.metrics.len() as u32 + span.meta_struct.len() as u32;
+    let meta_dd = span.meta.defensive_dedup();
+    let metrics_dd = span.metrics.defensive_dedup();
+    let meta_struct_dd = span.meta_struct.defensive_dedup();
+
+    let non_promoted_meta = meta_dd.iter().filter(|(k, _)| !is_promoted(k)).count() as u32;
+    let metrics_len = metrics_dd.len() as u32;
+    let meta_struct_len = meta_struct_dd.len() as u32;
+    let attr_count = non_promoted_meta + metrics_len + meta_struct_len;
     let has_attributes = attr_count > 0;
 
     let env = span.meta.get("env").map(|v| v.borrow());
@@ -301,18 +252,7 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     write_u64(writer, span.span_id)?;
 
     write_uint8(writer, SpanKey::Start as u8)?;
-    if span.start < 0 {
-        // Fall back to wall-clock now (UNIX nanos). Matches the agent's
-        // `validateAndFixStartTime` which substitutes `time.Now().UnixNano()`
-        // for invalid start values.
-        let now = time::SystemTime::now()
-            .duration_since(time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
-        write_u64(writer, now)?;
-    } else {
-        write_u64(writer, span.start as u64)?;
-    }
+    write_u64(writer, normalize_span_start(span.start))?;
 
     if is_parent {
         write_uint8(writer, SpanKey::ParentId as u8)?;
@@ -344,25 +284,25 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
         write_uint8(writer, SpanKey::Attributes as u8)?;
         rmp::encode::write_array_len(writer, attr_count * 3)?;
 
-        for (k, v) in span.meta.iter() {
+        for (k, v) in meta_dd.iter() {
             if is_promoted(k) {
                 continue;
             }
-            table.write_interned(writer, k.borrow())?;
+            table.write_interned(writer, (*k).borrow())?;
             write_uint8(writer, AnyValueKey::String as u8)?;
-            table.write_interned(writer, v.borrow())?;
+            table.write_interned(writer, (*v).borrow())?;
         }
 
-        for (k, v) in span.metrics.iter() {
-            table.write_interned(writer, k.borrow())?;
+        for (k, v) in metrics_dd.iter() {
+            table.write_interned(writer, (*k).borrow())?;
             write_uint8(writer, AnyValueKey::Double as u8)?;
             write_f64(writer, *v)?;
         }
 
-        for (k, v) in span.meta_struct.iter() {
-            table.write_interned(writer, k.borrow())?;
+        for (k, v) in meta_struct_dd.iter() {
+            table.write_interned(writer, (*k).borrow())?;
             write_uint8(writer, AnyValueKey::Bytes as u8)?;
-            write_bin(writer, v.borrow())?;
+            write_bin(writer, (*v).borrow())?;
         }
     }
 

@@ -183,6 +183,30 @@ impl<K, V> VecMap<K, V> {
     pub fn is_deduped(&self) -> bool {
         self.deduped
     }
+
+    /// Assert, without scanning, that this map holds no duplicate keys, setting the `deduped` flag.
+    ///
+    /// For builders whose source guarantees key uniqueness (e.g. msgpack decoding, where the wire
+    /// format is a map), to skip the [Self::dedup] pass. A later mutation re-dirties the flag.
+    ///
+    /// **Caution**: if the source can actually contain duplicate keys, prefer [Self::dedup].
+    #[inline]
+    pub fn mark_deduped(&mut self) {
+        self.deduped = true;
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.data.clear()
+    }
+
+    #[inline]
+    pub fn drain<R: std::ops::RangeBounds<usize>>(
+        &mut self,
+        range: R,
+    ) -> std::vec::Drain<'_, (K, V)> {
+        self.data.drain(range)
+    }
 }
 
 impl<K: Eq + Hash, V> VecMap<K, V> {
@@ -201,8 +225,7 @@ impl<K: Eq + Hash, V> VecMap<K, V> {
     /// This is a convenience wrapper around [Self::as_deduped_map] used in the msgpack encoder,
     /// where we expect the map to be deduped, but call `as_deduped_map` as a defensive measure. If
     /// the latter had to deduplicate and allocate a new vec, we log a warning (at most once).
-    #[allow(unused)]
-    pub(crate) fn defensive_dedup(&self) -> DedupedVecMap<'_, K, V> {
+    pub fn defensive_dedup(&self) -> DedupedVecMap<'_, K, V> {
         if !self.is_deduped() {
             static WARNED: AtomicBool = AtomicBool::new(false);
             if !WARNED.swap(true, Ordering::Relaxed) {

@@ -17,7 +17,7 @@ use std::{
     },
 };
 
-use datadog_remote_config::{
+use libdd_remote_config::{
     config::{agent_config::AgentConfigFile, agent_task::AgentTaskFile},
     RemoteConfigParsedData,
 };
@@ -25,13 +25,13 @@ use datadog_remote_config::{
 use crate::error::FlareError;
 #[cfg(feature = "listener")]
 use {
-    datadog_remote_config::{
+    libdd_common::Endpoint,
+    libdd_remote_config::{
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
         file_change_tracker::Change,
         file_storage::{ParsedFileStorage, RawFile},
         RemoteConfigParsed, RemoteConfigProduct, Target,
     },
-    libdd_common::Endpoint,
     std::ops::Deref,
     std::str::FromStr,
 };
@@ -520,7 +520,7 @@ mod tests {
     use crate::FlareAction;
     use crate::{FlareError, LogLevel, TracerFlareManager};
     #[cfg(feature = "listener")]
-    use datadog_remote_config::{
+    use libdd_remote_config::{
         config::{
             agent_config::{AgentConfig, AgentConfigFile},
             agent_task::{AgentTask, AgentTaskFile},
@@ -712,7 +712,7 @@ mod tests {
 
     #[test]
     fn test_remote_config_task_with_wrong_type_returns_none() {
-        use datadog_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
+        use libdd_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
         let data = AgentTaskFile {
             args: AgentTask {
                 case_id: "123".to_string(),
@@ -730,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_handle_remote_config_data_send_stops_collecting() {
-        use datadog_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
+        use libdd_remote_config::config::agent_task::{AgentTask, AgentTaskFile};
         use std::sync::atomic::Ordering;
         let tracer_flare = TracerFlareManager::new("http://localhost:8126", "rust");
         tracer_flare.collecting.store(true, Ordering::Relaxed);

@@ -14,15 +14,10 @@ use datadog_ipc::platform::{
     FileBackedHandle, MappedMem, NamedShmHandle, PlatformHandle, ShmHandle,
 };
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
-use datadog_remote_config::fetch::ConfigInvariants;
-use datadog_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
-use datadog_sidecar::agent_remote_config::{
-    new_reader, reader_from_shm, AgentRemoteConfigEndpoint, AgentRemoteConfigWriter,
-};
+use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
 use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
-use datadog_sidecar::one_way_shared_memory::{OneWayShmReader, ReaderOpener};
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
@@ -42,6 +37,8 @@ use libdd_common_ffi::{self as ffi, MaybeError};
 #[cfg(windows)]
 use libdd_crashtracker_ffi::Metadata;
 use libdd_dogstatsd_client::DogStatsDActionOwned;
+use libdd_remote_config::fetch::ConfigInvariants;
+use libdd_remote_config::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::{
@@ -221,7 +218,6 @@ fn ddog_agent_remote_config_read_generic<'a, T>(
 ) -> bool
 where
     T: FileBackedHandle + From<MappedMem<T>>,
-    OneWayShmReader<T, Option<AgentRemoteConfigEndpoint>>: ReaderOpener<T>,
 {
     let (new, contents) = reader.read();
     *data = CharSlice::from_bytes(contents);
@@ -323,6 +319,15 @@ pub extern "C" fn ddog_sidecar_connect(connection: &mut *mut SidecarTransport) -
     let cfg = datadog_sidecar::config::FromEnv::config();
 
     let stream = Box::new(try_c!(datadog_sidecar::start_or_connect_to_sidecar(cfg)));
+
+    // The daemon process hosts the crashtracker receiver socket. Register its
+    // PID so the crash handler can authenticate the socket peer before granting
+    // ptrace permission.
+    #[cfg(unix)]
+    if let Ok(pid) = stream.peer_pid() {
+        libdd_crashtracker::set_expected_receiver_pid(pid as i32);
+    }
+
     *connection = Box::into_raw(stream);
 
     MaybeError::None
@@ -631,6 +636,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
     language_version: ffi::CharSlice,
     tracer_version: ffi::CharSlice,
     flush_interval_milliseconds: u32,
+    retry_interval_milliseconds: u32,
     remote_config_poll_interval_millis: u32,
     telemetry_heartbeat_interval_millis: u32,
     telemetry_extended_heartbeat_interval_millis: u64,
@@ -709,6 +715,7 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_config(
         } else {
             Some(parent_session_id.to_utf8_lossy().into())
         },
+        retry_interval: Duration::from_millis(retry_interval_milliseconds as u64),
     };
     #[cfg(unix)]
     try_c!(blocking::set_session_config(
@@ -1677,6 +1684,12 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     );
 
     let mut mapped_shm = check!(shm.clone().map(), "Failed to map shared memory");
+
+    for chunk in traces.iter_mut() {
+        for span in chunk.iter_mut() {
+            span.dedup();
+        }
+    }
 
     // Write traces to the shared memory
     let mut shm_slice = mapped_shm.as_slice_mut();

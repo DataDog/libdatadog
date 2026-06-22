@@ -149,9 +149,12 @@ impl Allocation {
         };
 
         // Determine the reason for assignment
-        let reason = if !self.rules.is_empty() || self.start_at.is_some() || self.end_at.is_some() {
+        let has_time_bounds = self.start_at.is_some() || self.end_at.is_some();
+        let reason = if !self.rules.is_empty() {
             AssignmentReason::TargetingMatch
-        } else if self.splits.len() == 1 && self.splits[0].shards.is_empty() {
+        } else if has_time_bounds && self.splits.len() == 1 && split.shards.is_empty() {
+            AssignmentReason::Default
+        } else if self.splits.len() == 1 && !self.splits[0].has_shards {
             AssignmentReason::Static
         } else {
             AssignmentReason::Split

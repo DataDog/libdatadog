@@ -40,3 +40,20 @@ pub struct OtlpTraceConfig {
     //  `span.type`, `error.msg`, `error.message`, `span.kind`)
     pub otel_trace_semantics_enabled: bool,
 }
+
+/// Parsed OTLP trace-metrics exporter configuration.
+#[derive(Clone, Debug)]
+pub struct OtlpMetricsConfig {
+    /// Full URL to POST metrics to (e.g. `http://localhost:4318/v1/metrics`).
+    pub endpoint_url: String,
+    /// Pre-validated HTTP headers to include in each request.
+    pub headers: HeaderMap,
+    /// Request timeout.
+    pub timeout: Duration,
+    /// Protocol (for future use; currently only HttpJson is supported).
+    #[allow(dead_code)]
+    pub(crate) protocol: OtlpProtocol,
+    /// When `true`, emit only OTel attributes; omit `dd.*`/`_dd.*` ones
+    /// (`DD_TRACE_OTEL_SEMANTICS_ENABLED`).
+    pub otel_trace_semantics_enabled: bool,
+}
