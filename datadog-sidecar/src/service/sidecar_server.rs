@@ -1013,7 +1013,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             &self.server.remote_configs,
             &session,
             instance_id,
-            0u64,
+            !0u64, // no need for a notification here, just a config update
             notify_target,
             dynamic_instrumentation_state,
         );
