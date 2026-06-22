@@ -183,7 +183,7 @@ fn bench_v05_matrix<M: criterion::measurement::Measurement>(
             let data = build_v05_payload(NUM_TRACES, spans_per_trace, unique_per_span);
             let data_as_bytes = libdd_tinybytes::Bytes::copy_from_slice(&data);
 
-            group.throughput(Throughput::Bytes(data.len() as u64));
+            group.throughput(Throughput::Elements((spans_per_trace * NUM_TRACES) as u64));
             group.bench_with_input(
                 BenchmarkId::new(sharing_label, spans_per_trace * NUM_TRACES),
                 &data_as_bytes,
