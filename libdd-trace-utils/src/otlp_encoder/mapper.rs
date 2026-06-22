@@ -148,8 +148,7 @@ fn map_span<T: TraceData>(
         .unwrap_or_else(|| dd_type_to_otlp_kind(span.r#type.borrow()));
     let (attributes, dropped_attributes_count) =
         map_attributes(span, resource_service, otel_trace_semantics_enabled);
-    // DD tracers use either "error.msg" or "error.message".
-    // A span should only carry one of these, so the order of preference is arbitrary.
+    // A span carries at most one of these; error.message is used by all SDKs except .NET, which uses error.msg
     let error_msg = span
         .meta
         .get("error.msg")
@@ -389,25 +388,17 @@ fn map_attributes<T: TraceData>(
     } else {
         0
     };
-    let total = (if has_per_span_service && !otel_trace_semantics_enabled {
-        1
-    } else {
-        0
-    }) + (if has_operation_name && !otel_trace_semantics_enabled {
-        1
-    } else {
-        0
-    }) + (if has_span_type && !otel_trace_semantics_enabled {
-        1
-    } else {
-        0
-    }) + (if has_resource_name && !otel_trace_semantics_enabled {
-        1
-    } else {
-        0
-    }) + span.meta.len()
-        - excluded_compat_tags
-        + span.metrics.len()
+    let promoted = if otel_trace_semantics_enabled {                                                                                                                                                                                                                                      
+        0                                                                                                                                                                                                                                                                                 
+    } else {                                                                                                                                                                                                                                                                              
+        has_per_span_service as usize                                                                                                                                                                                                                                                     
+            + has_operation_name as usize                                                                                                                                                                                                                                                 
+            + has_span_type as usize                                                                                                                                                                                                                                                      
+            + has_resource_name as usize                                                                                                                                                                                                                                                  
+    };                                                                                                                                                                                                                                                                                    
+    let total = promoted                                                                                                                                                                                                                                                                  
+        + (span.meta.len() - excluded_compat_tags)                                                                                                                                                                                                                                        
+        + span.metrics.len()                                                                                                                                                                                                                                                              
         + span.meta_struct.len();
     let dropped = total.saturating_sub(attrs.len());
     (attrs, dropped)

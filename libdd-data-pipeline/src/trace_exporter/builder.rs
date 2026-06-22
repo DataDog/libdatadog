@@ -298,7 +298,8 @@ impl TraceExporterBuilder {
     }
 
     /// Enables OTel trace semantics, which does not add DD-specific per-span attributes
-    /// (`service.name`, `operation.name`, `resource.name`, `span.type`) to the OTLP payload.
+    /// (`service.name`, `operation.name`, `resource.name`, `span.type`, `error.msg`,
+    //  `error.message`, `span.kind`) to the OTLP payload.
     /// This is useful when exporting to a native OTel backend that does not expect Datadog
     /// semantics. The host language tracer is expected to observe this behavior by setting the
     /// `DD_TRACE_OTEL_SEMANTICS_ENABLED` environment variable to `true`.
