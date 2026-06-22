@@ -8,6 +8,9 @@
 //! and processing traces for stats collection.
 
 #[cfg(not(target_arch = "wasm32"))]
+use super::add_path;
+use super::TracerMetadata;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -22,14 +25,11 @@ use libdd_trace_stats::span_concentrator::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
+use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use tracing::{debug, error};
-
-#[cfg(not(target_arch = "wasm32"))]
-use super::add_path;
-use super::TracerMetadata;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
@@ -77,6 +77,21 @@ pub(crate) struct StatsComputationConfig {
     /// regardless of agent support.
     #[cfg(feature = "stats-obfuscation")]
     pub(crate) obfuscation_enabled: bool,
+}
+
+/// Return true if the agent supports client-side stats.
+///
+/// This requires:
+/// - `client_drop_p0s` to be enabled on the agent,
+/// - the `/v0.6/stats` endpoint to be advertised by the agent.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_stats_computation_supported(agent_info: &AgentInfo) -> bool {
+    agent_info.info.client_drop_p0s.is_some_and(|v| v)
+        && agent_info
+            .info
+            .endpoints
+            .as_ref()
+            .is_some_and(|endpoints| endpoints.iter().any(|e| e == STATS_ENDPOINT))
 }
 
 /// Return true if the agent's obfuscation version is supported by this tracer
@@ -196,7 +211,7 @@ pub(crate) fn handle_stats_disabled_by_agent<
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
 ) {
-    if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+    if is_stats_computation_supported(agent_info) {
         let status = start_stats_computation(
             ctx,
             get_span_kinds_for_stats(agent_info),
@@ -254,7 +269,7 @@ pub(crate) async fn handle_stats_enabled(
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     client_side_stats: &StatsComputationConfig,
 ) {
-    if agent_info.info.client_drop_p0s.is_some_and(|v| v) {
+    if is_stats_computation_supported(agent_info) {
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
@@ -284,18 +299,26 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 }
 
 /// Process traces for stats computation and update header tags accordingly.
-/// Returns the number of P0 traces and spans that were dropped.
+///
+/// If a telemetry client is provided and stats are enabled, dropped P0 counts
+/// will be sent to telemetry.
 pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
-) -> libdd_trace_utils::span::trace_utils::DroppedP0Stats {
+    trace_filterer: &TraceFilterer,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))] telemetry: Option<
+        &crate::telemetry::TelemetryClient,
+    >,
+) {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
         stats_concentrator, ..
     } = &**status
     {
+        let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
+
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
                 libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
@@ -313,11 +336,15 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
         header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
 
-        dropped_p0_stats
-    } else {
-        libdd_trace_utils::span::trace_utils::DroppedP0Stats {
-            dropped_p0_traces: 0,
-            dropped_p0_spans: 0,
+        // Send dropped P0 stats directly to telemetry if available
+        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        if let Some(telemetry_client) = telemetry {
+            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+                dropped_p0_stats.dropped_p0_traces,
+                dropped_by_trace_filter,
+            ) {
+                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
+            }
         }
     }
 }
@@ -345,5 +372,49 @@ mod tests {
             SUPPORTED_OBFUSCATION_VERSION.to_string(),
             SUPPORTED_OBFUSCATION_VERSION_STR
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod is_stats_computation_supported {
+        use crate::agent_info::schema::{AgentInfo, AgentInfoStruct};
+        use crate::trace_exporter::stats::{is_stats_computation_supported, STATS_ENDPOINT};
+
+        fn make_agent_info(
+            client_drop_p0s: Option<bool>,
+            endpoints: Option<Vec<&str>>,
+        ) -> AgentInfo {
+            AgentInfo {
+                state_hash: String::new(),
+                info: AgentInfoStruct {
+                    client_drop_p0s,
+                    endpoints: endpoints.map(|e| e.into_iter().map(String::from).collect()),
+                    ..Default::default()
+                },
+            }
+        }
+
+        #[test]
+        fn supported_when_all_requirements_met() {
+            let info = make_agent_info(Some(true), Some(vec!["/v0.4/traces", STATS_ENDPOINT]));
+            assert!(is_stats_computation_supported(&info));
+        }
+
+        #[test]
+        fn unsupported_when_client_drop_p0s_missing_or_false() {
+            let info = make_agent_info(None, Some(vec![STATS_ENDPOINT]));
+            assert!(!is_stats_computation_supported(&info));
+
+            let info = make_agent_info(Some(false), Some(vec![STATS_ENDPOINT]));
+            assert!(!is_stats_computation_supported(&info));
+        }
+
+        #[test]
+        fn unsupported_when_stats_endpoint_absent() {
+            let info = make_agent_info(Some(true), Some(vec!["/v0.4/traces"]));
+            assert!(!is_stats_computation_supported(&info));
+
+            let info = make_agent_info(Some(true), None);
+            assert!(!is_stats_computation_supported(&info));
+        }
     }
 }

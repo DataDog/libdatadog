@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::encode_payload;
-use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
+use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, VecMap};
 use crate::span::BytesData;
 use crate::tracer_metadata::TracerMetadata;
 use libdd_tinybytes::BytesString;
@@ -41,7 +41,7 @@ fn top_level_payload_shape_and_metadata() {
         parent_id: 0,
         start: 2_500_000_000,
         duration: 1_000_000,
-        metrics: HashMap::from_iter([("_top_level".into(), 1.0)]),
+        metrics: VecMap::from_iter([("_top_level".into(), 1.0)]),
         ..Default::default()
     };
     let bytes = encode_payload(&[vec![span]], &base_metadata()).unwrap();
@@ -223,7 +223,7 @@ fn top_level_only_for_first_span_when_parent_in_other_service() {
         parent_id: 0,
         start: 0,
         duration: 1,
-        metrics: HashMap::from_iter([("_top_level".into(), 1.0)]),
+        metrics: VecMap::from_iter([("_top_level".into(), 1.0)]),
         ..Default::default()
     };
     let child_same_service: Span<BytesData> = Span {
@@ -244,7 +244,7 @@ fn top_level_only_for_first_span_when_parent_in_other_service() {
         parent_id: 10,
         start: 0,
         duration: 1,
-        metrics: HashMap::from_iter([("_top_level".into(), 1.0)]),
+        metrics: VecMap::from_iter([("_top_level".into(), 1.0)]),
         ..Default::default()
     };
     let v = json_from_bytes(

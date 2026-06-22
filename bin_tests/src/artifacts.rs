@@ -39,6 +39,16 @@ pub fn crashing_app(profile: BuildProfile, panic_abort: bool) -> ArtifactsBuild 
     }
 }
 
+/// Creates an ArtifactsBuild for the Unix socket receiver binary (sidecar-style).
+pub fn crashtracker_unix_socket_receiver(profile: BuildProfile) -> ArtifactsBuild {
+    ArtifactsBuild {
+        name: "crashtracker_unix_socket_receiver".to_owned(),
+        build_profile: profile,
+        artifact_type: ArtifactType::Bin,
+        ..Default::default()
+    }
+}
+
 /// Creates an ArtifactsBuild for the test_the_tests binary.
 pub fn test_the_tests(profile: BuildProfile) -> ArtifactsBuild {
     ArtifactsBuild {
@@ -87,6 +97,7 @@ pub fn all_prebuild_artifacts() -> Vec<ArtifactsBuild> {
     for profile in [BuildProfile::Debug, BuildProfile::Release] {
         artifacts.push(crashtracker_bin_test(profile, false));
         artifacts.push(crashtracker_receiver(profile));
+        artifacts.push(crashtracker_unix_socket_receiver(profile));
         artifacts.push(test_the_tests(profile));
         artifacts.push(profiling_ffi(profile));
         artifacts.push(crashing_app(profile, false));

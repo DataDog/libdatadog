@@ -9,6 +9,7 @@ mod trace_serializer;
 
 // Re-export the builder
 pub use builder::TraceExporterBuilder;
+use libdd_trace_utils::trace_filter::TraceFilterer;
 
 use self::agent_response::AgentResponse;
 use self::metrics::MetricsEmitter;
@@ -31,7 +32,7 @@ use crate::{
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
-use arc_swap::ArcSwapOption;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
@@ -53,6 +54,7 @@ use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
 use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 const INFO_ENDPOINT: &str = "/info";
@@ -259,6 +261,12 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
     agentless_config: Option<AgentlessTraceConfig>,
+    trace_filterer: ArcSwap<TraceFilterer>,
+    /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
+    /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
+    /// skipped.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    otlp_stats_enabled: bool,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
@@ -394,9 +402,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 .map(|s| s.as_str())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn check_agent_info(&self) {
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
@@ -408,6 +416,19 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         if matches!(self.output_format, TraceExporterOutputFormat::V1) {
             self.refresh_v1_active(&agent_info);
         }
+
+        // OTLP trace metrics run the concentrator independently; skip stats enable/disable.
+        if self.otlp_stats_enabled {
+            return;
+        }
+
+        self.trace_filterer.store(Arc::new(TraceFilterer::new(
+            &agent_info.info.filter_tags.require,
+            &agent_info.info.filter_tags.reject,
+            &agent_info.info.filter_tags_regex.require,
+            &agent_info.info.filter_tags_regex.reject,
+            &agent_info.info.ignore_resources,
+        )));
 
         // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
         let status = self.client_side_stats.status.load_full();
@@ -524,14 +545,39 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// Send a list of trace chunks to the agent (or OTLP endpoint when configured).
     ///
     /// Sync facade over [`Self::send_trace_chunks_async`]; panics inside an existing
-    /// tokio context. Returns the agent response (or `Unchanged` for OTLP).
+    /// tokio context.
+    ///
+    /// # Arguments
+    /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
+    /// * cancellation_token: When provided, cancelling the token aborts the send while it is in
+    ///   progress. The send only observes a token that is cancelled while the request is in-flight;
+    ///   a token cancelled before this call returns immediately, and a token cancelled after the
+    ///   send has already finished has no effect. Cancelling an in-flight send may cause the trace
+    ///   chunks being sent to be lost.
+    ///
+    /// # Returns
+    /// * Ok(AgentResponse): The response from the agent (or Unchanged for OTLP)
+    /// * Err(TraceExporterError): An error detailing what went wrong in the process
     #[cfg(not(target_arch = "wasm32"))]
     pub fn send_trace_chunks<T: TraceData>(
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
+        cancellation_token: Option<&CancellationToken>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        self.shared_runtime
-            .block_on(self.send_trace_chunks_async(trace_chunks))?
+        self.shared_runtime.block_on(async {
+            match cancellation_token {
+                Some(token) => {
+                    tokio::select! {
+                        res = self.send_trace_chunks_async(trace_chunks) => res,
+                        _ = token.cancelled() => Err(TraceExporterError::Io(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "send cancelled via cancellation token",
+                        ))),
+                    }
+                }
+                None => self.send_trace_chunks_async(trace_chunks).await,
+            }
+        })?
     }
 
     /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
@@ -586,6 +632,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r.language = self.metadata.language.clone();
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
+            r.client_computed_stats = self.otlp_stats_enabled;
             r
         };
         let request = map_traces_to_otlp(traces, &resource_info);
@@ -593,9 +640,24 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             error!("OTLP JSON serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
+        // Also set the header: resource attributes survive Collector hops, headers don't.
+        let effective_config;
+        let config_to_use = if self.otlp_stats_enabled {
+            effective_config = {
+                let mut c = config.clone();
+                c.headers.insert(
+                    http::HeaderName::from_static("datadog-client-computed-stats"),
+                    http::HeaderValue::from_static("yes"),
+                );
+                c
+            };
+            &effective_config
+        } else {
+            config
+        };
         send_otlp_traces_http(
             &self.capabilities,
-            config,
+            config_to_use,
             self.endpoint.test_token.as_deref(),
             json_body,
         )
@@ -610,7 +672,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         mp_payload: Vec<u8>,
         headers: HeaderMap,
         chunks: usize,
-        #[cfg_attr(not(feature = "telemetry"), allow(unused_variables))] chunks_dropped_p0: usize,
     ) -> Result<AgentResponse, TraceExporterError> {
         let strategy = RetryStrategy::default();
         let payload_len = mp_payload.len();
@@ -631,7 +692,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 &result,
                 payload_len as u64,
                 chunks as u64,
-                chunks_dropped_p0 as u64,
             )) {
                 error!(?e, "Error sending telemetry");
             }
@@ -660,12 +720,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
-        let dropped_p0_stats = stats::process_traces_for_stats(
+        stats::process_traces_for_stats(
             &mut traces,
             &mut header_tags,
             &self.client_side_stats.status,
             self.client_computed_top_level,
+            &self.trace_filterer.load(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+            self.telemetry.as_ref(),
         );
+
+        for chunk in &mut traces {
+            for span in chunk.iter_mut() {
+                span.dedup();
+            }
+        }
 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
         // Unlike the agent path, there is no downstream agent to drop unsampled traces,
@@ -711,7 +780,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 prepared.data,
                 prepared.headers,
                 prepared.chunk_count,
-                dropped_p0_stats.dropped_p0_traces,
             )
             .await;
 

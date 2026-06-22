@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-utils"
-version = "6.0.1"
+version = "8.0.0"
 description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
@@ -16,6 +16,12 @@ bench = false
 name = "main"
 harness = false
 path = "benches/main.rs"
+
+[[bench]]
+name = "vec_map_bench"
+harness = false
+path = "benches/vec_map_bench.rs"
+required-features = ["bench-internals"]
 
 [dependencies]
 anyhow = "1.0"
@@ -35,9 +41,10 @@ rand = "0.8.5"
 bytes = "1.11.1"
 rmpv = { version = "1.3.0", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
+rustc-hash = "2.1.1"
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.0.0" }
-libdd-common = { version = "4.2.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "5.0.0", path = "../libdd-common", default-features = false }
 libdd-trace-normalization = { version = "2.0.0", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "3.0.2", path = "../libdd-trace-protobuf" }
 libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
@@ -45,6 +52,7 @@ libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "serialization",
 ] }
 indexmap = "2.11"
+thin-vec = "0.2"
 
 # Compression feature
 flate2 = { version = "1.0", optional = true }
@@ -71,7 +79,7 @@ bolero = "0.13"
 criterion = "0.5.1"
 httpmock = { version = "0.8.0-alpha.1" }
 serde_json = "1.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 libdd-trace-utils = { path = ".", features = ["test-utils"] }
 tempfile = "3.3.0"
 
@@ -86,6 +94,9 @@ test-utils = [
     "cargo-platform",
     "urlencoding",
 ]
+change-buffer = []
+# Opt-in switch for crate-internal microbenchmarks (e.g. `vec_map_bench`).
+bench-internals = []
 compression = ["zstd", "flate2"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]

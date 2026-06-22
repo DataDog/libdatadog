@@ -4,6 +4,7 @@
 use crate::span_concentrator::aggregation::OwnedAggregationKey;
 
 use super::*;
+use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
 use rand::{thread_rng, Rng};
 
@@ -72,7 +73,7 @@ fn get_test_span_with_meta<'a>(
     for (k, v) in meta {
         span.meta.insert(*k, *v);
     }
-    span.metrics = HashMap::new();
+    span.metrics = VecMap::new();
     for (k, v) in metrics {
         span.metrics.insert(*k, *v);
     }
@@ -1197,119 +1198,119 @@ fn test_compute_stats_for_span_kind() {
     let test_cases: Vec<(SpanSlice, bool)> = vec![
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "server")]),
+                meta: vec![("span.kind", "server")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "consumer")]),
+                meta: vec![("span.kind", "consumer")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "client")]),
+                meta: vec![("span.kind", "client")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "producer")]),
+                meta: vec![("span.kind", "producer")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "internal")]),
+                meta: vec![("span.kind", "internal")].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "SERVER")]),
+                meta: vec![("span.kind", "SERVER")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CONSUMER")]),
+                meta: vec![("span.kind", "CONSUMER")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CLIENT")]),
+                meta: vec![("span.kind", "CLIENT")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "PRODUCER")]),
+                meta: vec![("span.kind", "PRODUCER")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "INTERNAL")]),
+                meta: vec![("span.kind", "INTERNAL")].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "SerVER")]),
+                meta: vec![("span.kind", "SerVER")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "ConSUMeR")]),
+                meta: vec![("span.kind", "ConSUMeR")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "CLiENT")]),
+                meta: vec![("span.kind", "CLiENT")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "PROducER")]),
+                meta: vec![("span.kind", "PROducER")].into(),
                 ..Default::default()
             },
             true,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "INtERNAL")]),
+                meta: vec![("span.kind", "INtERNAL")].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([("span.kind", "")]),
+                meta: vec![("span.kind", "")].into(),
                 ..Default::default()
             },
             false,
         ),
         (
             SpanSlice {
-                meta: HashMap::from([]),
+                meta: vec![].into(),
                 ..Default::default()
             },
             false,
@@ -1567,4 +1568,57 @@ fn test_pb_span() {
     ];
 
     assert_counts_equal(expected_stats, bucket.stats.clone());
+}
+
+/// Verify the OTLP exact-scalar sidecar tracks per-cell (ok/error) duration/min/max in nanos
+/// independently and that ok_duration + error_duration matches the combined group duration
+/// (which the agent /v0.6/stats path uses).
+#[test]
+fn test_flush_with_otlp_exact_per_cell_scalars() {
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    // 3 ok spans (200, 300, 100 ns) and 2 error spans (700, 500 ns), all same agg key.
+    let mut spans = vec![
+        get_test_span(now, 1, 0, 200, 0, "svc", "res", 0),
+        get_test_span(now, 2, 0, 300, 0, "svc", "res", 0),
+        get_test_span(now, 3, 0, 100, 0, "svc", "res", 0),
+        get_test_span(now, 4, 0, 700, 0, "svc", "res", 1),
+        get_test_span(now, 5, 0, 500, 0, "svc", "res", 1),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+    for s in &spans {
+        concentrator.add_span(s);
+    }
+
+    let flushed = concentrator.flush_with_otlp_exact(now, true);
+    assert_eq!(flushed.len(), 1);
+    let b = &flushed[0];
+    assert_eq!(b.exact.len(), 1);
+    let exact = &b.exact[0];
+
+    assert_eq!(exact.ok.count, 3);
+    assert_eq!(exact.ok.duration_ns, 600);
+    assert_eq!(exact.ok.min_ns, 100);
+    assert_eq!(exact.ok.max_ns, 300);
+
+    assert_eq!(exact.error.count, 2);
+    assert_eq!(exact.error.duration_ns, 1200);
+    assert_eq!(exact.error.min_ns, 500);
+    assert_eq!(exact.error.max_ns, 700);
+
+    // ok_duration + error_duration equals the combined group.duration (agent path field).
+    let group = &b.bucket.stats[0];
+    assert_eq!(
+        group.duration,
+        exact.ok.duration_ns + exact.error.duration_ns
+    );
+    assert_eq!(group.hits, 5);
+    assert_eq!(group.errors, 2);
 }

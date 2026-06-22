@@ -24,6 +24,7 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
     "rpc.grpc.status.code",
     "grpc.status.code",
 ];
+const GRPC_METHOD_FIELD: &[&str] = &["grpc.method.name", "rpc.method"];
 
 /// Aggregation key fields shared across all concentrator implementations — everything
 /// **except** peer tags.
@@ -150,6 +151,17 @@ fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     }
 
     None
+}
+
+pub(super) fn get_grpc_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
+    for key in GRPC_METHOD_FIELD {
+        if let Some(val) = span.get_meta(key) {
+            if !val.is_empty() {
+                return val;
+            }
+        }
+    }
+    ""
 }
 
 fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
@@ -324,6 +336,17 @@ pub(super) struct GroupedStats {
     top_level_hits: u64,
     ok_summary: libdd_ddsketch::DDSketch,
     error_summary: libdd_ddsketch::DDSketch,
+    // Exact per-cell (ok/error) scalars used by the OTLP trace-metrics path. These are tracked
+    // separately from `duration` so the /v0.6/stats agent payload is byte-for-byte unchanged.
+    ok_duration: u64,
+    ok_min: u64,
+    ok_max: u64,
+    error_duration: u64,
+    error_min: u64,
+    error_max: u64,
+    // gRPC method for OTLP export only; not part of the aggregation key so agent stats are
+    // unaffected.
+    pub(super) grpc_method: String,
 }
 
 impl GroupedStats {
@@ -331,17 +354,58 @@ impl GroupedStats {
     fn insert(&mut self, duration: i64, is_error: bool, is_top_level: bool) {
         self.hits += 1;
         self.duration += duration as u64;
-
+        let d = duration as u64;
         if is_error {
             self.errors += 1;
             let _ = self.error_summary.add(duration as f64);
+            self.error_duration += d;
+            self.error_min = if self.errors == 1 {
+                d
+            } else {
+                self.error_min.min(d)
+            };
+            self.error_max = self.error_max.max(d);
         } else {
             let _ = self.ok_summary.add(duration as f64);
+            self.ok_duration += d;
+            let ok_count = self.hits - self.errors;
+            self.ok_min = if ok_count == 1 { d } else { self.ok_min.min(d) };
+            self.ok_max = self.ok_max.max(d);
         }
         if is_top_level {
             self.top_level_hits += 1;
         }
     }
+}
+
+/// Exact per-cell (ok or error) scalars for one aggregation group, surfaced to the OTLP
+/// trace-metrics path. `count` is exact; `duration_ns`/`min_ns`/`max_ns` are exact when
+/// `count > 0` and meaningless otherwise (the OTLP mapper suppresses empty cells).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OtlpExactCell {
+    pub count: u64,
+    pub duration_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+}
+
+/// Exact OK/ERROR cells for one aggregation group, in the same order as the `stats` vector
+/// of the accompanying [`pb::ClientStatsBucket`]. `grpc_method` is the group's gRPC method (DD
+/// schema `grpc.method.name`) carried out-of-band so it does not appear in the agent stats
+/// protobuf wire format.
+#[derive(Debug, Clone, Default)]
+pub struct OtlpExactGroup {
+    pub ok: OtlpExactCell,
+    pub error: OtlpExactCell,
+    pub grpc_method: String,
+}
+
+/// A bucket flushed for the OTLP trace-metrics path. `exact[i]` is the exact-scalar sidecar
+/// for `bucket.stats[i]`; the protobuf bucket itself is identical to what the agent path uses.
+#[derive(Debug, Clone)]
+pub struct OtlpStatsBucket {
+    pub bucket: pb::ClientStatsBucket,
+    pub exact: Vec<OtlpExactGroup>,
 }
 
 /// A time bucket used for stats aggregation. It stores a map of GroupedStats storing the stats of
@@ -369,26 +433,55 @@ impl StatsBucket {
         duration: i64,
         is_error: bool,
         is_top_level: bool,
+        grpc_method: &str,
     ) {
         self.data
             .entry_ref(&key)
-            .or_default()
+            .or_insert_with(|| GroupedStats {
+                grpc_method: grpc_method.to_owned(),
+                ..Default::default()
+            })
             .insert(duration, is_error, is_top_level);
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
     /// `bucket_duration` is the size of buckets for the concentrator containing the bucket.
     pub(super) fn flush(self, bucket_duration: u64) -> pb::ClientStatsBucket {
-        pb::ClientStatsBucket {
-            start: self.start,
-            duration: bucket_duration,
-            stats: self
-                .data
-                .into_iter()
-                .map(|(k, b)| encode_grouped_stats(k, b))
-                .collect(),
-            // Agent-only field
-            agent_time_shift: 0,
+        self.flush_with_otlp_exact(bucket_duration).bucket
+    }
+
+    /// Like [`Self::flush`], but additionally produces exact per-cell scalars for the OTLP
+    /// trace-metrics path. The `bucket` field is identical to what [`Self::flush`] returns.
+    pub(super) fn flush_with_otlp_exact(self, bucket_duration: u64) -> OtlpStatsBucket {
+        let mut stats = Vec::with_capacity(self.data.len());
+        let mut exact = Vec::with_capacity(self.data.len());
+        for (k, mut g) in self.data {
+            let grpc_method = std::mem::take(&mut g.grpc_method);
+            exact.push(OtlpExactGroup {
+                ok: OtlpExactCell {
+                    count: g.hits.saturating_sub(g.errors),
+                    duration_ns: g.ok_duration,
+                    min_ns: g.ok_min,
+                    max_ns: g.ok_max,
+                },
+                error: OtlpExactCell {
+                    count: g.errors,
+                    duration_ns: g.error_duration,
+                    min_ns: g.error_min,
+                    max_ns: g.error_max,
+                },
+                grpc_method,
+            });
+            stats.push(encode_grouped_stats(k, g));
+        }
+        OtlpStatsBucket {
+            bucket: pb::ClientStatsBucket {
+                start: self.start,
+                duration: bucket_duration,
+                stats,
+                agent_time_shift: 0,
+            },
+            exact,
         }
     }
 }
@@ -440,7 +533,7 @@ mod tests {
     use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
 
     use super::*;
-    use std::{collections::HashMap, hash::Hash};
+    use std::hash::Hash;
 
     fn get_hash(v: &impl Hash) -> u64 {
         use std::hash::Hasher;
@@ -494,7 +587,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind".into(), "client".into())]),
+                    meta: vec![("span.kind".into(), "client".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -515,10 +608,11 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "client".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -539,12 +633,13 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "producer".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
                         ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -566,12 +661,13 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "server".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
                         ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -592,7 +688,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.origin".into(), "synthetics-browser".into())]),
+                    meta: vec![("_dd.origin".into(), "synthetics-browser".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -613,7 +709,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "418".into())]),
+                    meta: vec![("http.status_code".into(), "418".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -635,7 +731,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "x".into())]),
+                    meta: vec![("http.status_code".into(), "x".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -656,7 +752,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    metrics: HashMap::from([("http.status_code".into(), 418.0)]),
+                    metrics: vec![("http.status_code".into(), 418.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -678,10 +774,11 @@ mod tests {
                     resource: "GET /api/v1/users".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("http.method".into(), "GET".into()),
                         ("http.route".into(), "/api/v1/users".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -704,11 +801,12 @@ mod tests {
                     resource: "POST /users/create".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("http.method".into(), "POST".into()),
                         ("http.route".into(), "/users/create".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -726,7 +824,7 @@ mod tests {
             // Span with grpc status from meta as named string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "OK".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "OK".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -736,10 +834,22 @@ mod tests {
                 }
                 .into_key(),
             ),
+            // grpc.method.name is carried in GroupedStats (for OTLP), not in the aggregation key.
+            (
+                SpanBytes {
+                    meta: vec![("grpc.method.name".into(), "/pkg.Svc/Method".into())].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    is_trace_root: true,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
             // Span with grpc status from meta as numeric string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "14".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "14".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -752,7 +862,7 @@ mod tests {
             // Span with grpc status from meta with StatusCode. prefix
             (
                 SpanBytes {
-                    meta: HashMap::from([("grpc.code".into(), "StatusCode.UNAVAILABLE".into())]),
+                    meta: vec![("grpc.code".into(), "StatusCode.UNAVAILABLE".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -765,11 +875,8 @@ mod tests {
             // Span with grpc status from metrics takes precedence over meta
             (
                 SpanBytes {
-                    meta: HashMap::from([(
-                        "rpc.grpc.status_code".into(),
-                        "PERMISSION_DENIED".into(),
-                    )]),
-                    metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
+                    meta: vec![("rpc.grpc.status_code".into(), "PERMISSION_DENIED".into())].into(),
+                    metrics: vec![("rpc.grpc.status_code".into(), 2.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -782,7 +889,7 @@ mod tests {
             // Span with grpc status from metrics via secondary key
             (
                 SpanBytes {
-                    metrics: HashMap::from([("grpc.code".into(), 3.0)]),
+                    metrics: vec![("grpc.code".into(), 3.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -795,7 +902,7 @@ mod tests {
             // Span with invalid grpc status string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "NOPE".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -812,7 +919,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "redis".into())]),
+                    meta: vec![("_dd.svc_src".into(), "redis".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -833,7 +940,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
+                    meta: vec![("_dd.svc_src".into(), "opt.split_by_tag".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -883,7 +990,7 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
+                    meta: vec![("span.kind", "client"), ("aws.s3.bucket", "bucket-a")].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -904,12 +1011,13 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind", "producer"),
                         ("aws.s3.bucket", "bucket-a"),
                         ("db.instance", "dynamo.test.us1"),
                         ("db.system", "dynamodb"),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -935,12 +1043,13 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind", "server"),
                         ("aws.s3.bucket", "bucket-a"),
                         ("db.instance", "dynamo.test.us1"),
                         ("db.system", "dynamodb"),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -989,11 +1098,12 @@ mod tests {
             resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([
+            meta: vec![
                 ("span.kind", "client"),
                 ("peer.hostname", "10.1.2.3"),
                 ("db.instance", "my-db"),
-            ]),
+            ]
+            .into(),
             ..Default::default()
         };
         let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys);
@@ -1016,10 +1126,11 @@ mod tests {
             resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([
+            meta: vec![
                 ("span.kind", "client"),
                 ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
-            ]),
+            ]
+            .into(),
             ..Default::default()
         };
         let ipv6_keys = vec!["peer.hostname".to_string()];
@@ -1040,7 +1151,7 @@ mod tests {
             resource: "res",
             span_id: 1,
             parent_id: 0,
-            meta: HashMap::from([("span.kind", "client"), ("db.instance", "dynamo.test.us1")]),
+            meta: vec![("span.kind", "client"), ("db.instance", "dynamo.test.us1")].into(),
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];

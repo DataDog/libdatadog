@@ -11,7 +11,6 @@
       "_dd.hostname": "my-host",
       "_dd.origin": "lambda",
       "_dd.p.dm": "-4",
-      "_dd.p.tid": "0x0",
       "component": "http",
       "env": "test-env",
       "runtime-id": "test-runtime-id-value",
@@ -35,8 +34,6 @@
        "parent_id": 1,
        "meta": {
          "_dd.origin": "lambda",
-         "_dd.p.dm": "-4",
-         "_dd.p.tid": "0x0",
          "env": "test-env",
          "runtime-id": "test-runtime-id-value",
          "service": "test-service",

@@ -288,8 +288,9 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 
     if !span.meta.is_empty() {
         write_const_msg_pack_str!(writer, "meta")?;
-        rmp::encode::write_map_len(writer, span.meta.len() as u32)?;
-        for (k, v) in span.meta.iter() {
+        let meta_dd = span.meta.defensive_dedup();
+        rmp::encode::write_map_len(writer, meta_dd.len() as u32)?;
+        for (k, v) in meta_dd.iter() {
             write_str(writer, k.borrow())?;
             write_str(writer, v.borrow())?;
         }
@@ -297,8 +298,9 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 
     if !span.metrics.is_empty() {
         write_const_msg_pack_str!(writer, "metrics")?;
-        rmp::encode::write_map_len(writer, span.metrics.len() as u32)?;
-        for (k, v) in span.metrics.iter() {
+        let metrics_dd = span.metrics.defensive_dedup();
+        rmp::encode::write_map_len(writer, metrics_dd.len() as u32)?;
+        for (k, v) in metrics_dd.iter() {
             write_str(writer, k.borrow())?;
             write_f64(writer, *v)?;
         }
@@ -311,8 +313,9 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
 
     if !span.meta_struct.is_empty() {
         write_const_msg_pack_str!(writer, "meta_struct")?;
-        rmp::encode::write_map_len(writer, span.meta_struct.len() as u32)?;
-        for (k, v) in span.meta_struct.iter() {
+        let meta_struct_dd = span.meta_struct.defensive_dedup();
+        rmp::encode::write_map_len(writer, meta_struct_dd.len() as u32)?;
+        for (k, v) in meta_struct_dd.iter() {
             write_str(writer, k.borrow())?;
             write_bin(writer, v.borrow())?;
         }

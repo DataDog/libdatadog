@@ -55,12 +55,6 @@ jobs:
           cargo llvm-cov --all-features --workspace --no-report nextest --no-tests=pass
           cargo llvm-cov --all-features --workspace --no-report --doc
           cargo llvm-cov report --doctests --lcov --output-path lcov.info
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7 # 5.5.1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: lcov.info
-          fail_ci_if_error: true
       - name: Upload coverage to Datadog
         if: always()
         continue-on-error: true

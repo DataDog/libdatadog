@@ -20,7 +20,7 @@ use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
 };
 use libdd_shared_runtime::SharedRuntime;
-use libdd_trace_utils::span::v04::{SpanBytes, SpanEvent, SpanLink};
+use libdd_trace_utils::span::v04::{SpanBytes, SpanEvent, SpanLink, VecMap};
 use rand::random;
 use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
 
@@ -36,7 +36,7 @@ fn get_span(now: i64, trace_id: u128, span_id: u64) -> SpanBytes {
         name: "agentless.example".into(),
         resource: "resource".into(),
         error: 0,
-        metrics: HashMap::from([("_sampling_priority_v1".into(), 1.0)]),
+        metrics: VecMap::from_iter([("_sampling_priority_v1".into(), 1.0)]),
         span_events: vec![SpanEvent {
             time_unix_nano: now as u64,
             name: "event".into(),
@@ -108,7 +108,7 @@ fn main() {
     let traces = vec![trace];
 
     exporter
-        .send_trace_chunks(traces)
+        .send_trace_chunks(traces, None)
         .expect("Failed to send traces");
     println!("Trace sent to agentless intake at {intake_url}");
 
