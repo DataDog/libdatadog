@@ -71,61 +71,60 @@ fn resource_info() -> OtlpResourceInfo {
 pub fn otlp_encoding_benches(c: &mut Criterion) {
     let info = resource_info();
 
-    // (chunks, spans_per_chunk): a single large trace (clean per-span signal) and many small
-    // traces (the typical agent payload shape). Both ~1000 spans total.
-    for (num_chunks, num_spans) in [(1usize, 1000usize), (100usize, 10usize)] {
-        let id = format!("{num_chunks}x{num_spans}");
-        let bytes = rmp_serde::to_vec(&generate_trace_chunks(num_chunks, num_spans))
-            .expect("serialize fixture");
-        let (spans, _) =
-            msgpack_decoder::v04::from_slice(bytes.as_slice()).expect("decode fixture");
+    // A single large trace of ~1000 spans gives a clean per-span signal. (A second "many small
+    // traces" 100x10 fixture was dropped to keep the shared benchmark suite within its CI time
+    // budget; both totalled ~1000 spans and gave similar signal.)
+    let (num_chunks, num_spans) = (1usize, 1000usize);
+    let id = format!("{num_chunks}x{num_spans}");
+    let bytes = rmp_serde::to_vec(&generate_trace_chunks(num_chunks, num_spans))
+        .expect("serialize fixture");
+    let (spans, _) = msgpack_decoder::v04::from_slice(bytes.as_slice()).expect("decode fixture");
 
-        // 1) native spans -> prost OTLP IR (the mapper).
-        c.bench_function(&format!("otlp/map_to_prost/{id}"), |b| {
-            b.iter_batched(
-                || spans.clone(),
-                |s| black_box(map_traces_to_otlp(black_box(s), &info)),
-                BatchSize::SmallInput,
-            )
-        });
+    // 1) native spans -> prost OTLP IR (the mapper).
+    c.bench_function(&format!("otlp/map_to_prost/{id}"), |b| {
+        b.iter_batched(
+            || spans.clone(),
+            |s| black_box(map_traces_to_otlp(black_box(s), &info)),
+            BatchSize::SmallInput,
+        )
+    });
 
-        // Pre-built IR for the encode-only benches (owned prost; no borrow of `bytes`).
-        let req = map_traces_to_otlp(spans.clone(), &info);
+    // Pre-built IR for the encode-only benches (owned prost; no borrow of `bytes`).
+    let req = map_traces_to_otlp(spans.clone(), &info);
 
-        // 2) prost IR -> HTTP/protobuf bytes.
-        c.bench_function(&format!("otlp/encode_protobuf/{id}"), |b| {
-            b.iter(|| black_box(encode_otlp_protobuf(black_box(&req))))
-        });
+    // 2) prost IR -> HTTP/protobuf bytes.
+    c.bench_function(&format!("otlp/encode_protobuf/{id}"), |b| {
+        b.iter(|| black_box(encode_otlp_protobuf(black_box(&req))))
+    });
 
-        // 3) prost IR -> OTLP/JSON bytes.
-        c.bench_function(&format!("otlp/encode_json/{id}"), |b| {
-            b.iter(|| black_box(encode_otlp_json(black_box(&req)).expect("json")))
-        });
+    // 3) prost IR -> OTLP/JSON bytes.
+    c.bench_function(&format!("otlp/encode_json/{id}"), |b| {
+        b.iter(|| black_box(encode_otlp_json(black_box(&req)).expect("json")))
+    });
 
-        // 4) end-to-end native spans -> protobuf wire (the real protobuf export path).
-        c.bench_function(&format!("otlp/e2e_protobuf/{id}"), |b| {
-            b.iter_batched(
-                || spans.clone(),
-                |s| {
-                    let req = map_traces_to_otlp(s, &info);
-                    black_box(encode_otlp_protobuf(&req))
-                },
-                BatchSize::SmallInput,
-            )
-        });
+    // 4) end-to-end native spans -> protobuf wire (the real protobuf export path).
+    c.bench_function(&format!("otlp/e2e_protobuf/{id}"), |b| {
+        b.iter_batched(
+            || spans.clone(),
+            |s| {
+                let req = map_traces_to_otlp(s, &info);
+                black_box(encode_otlp_protobuf(&req))
+            },
+            BatchSize::SmallInput,
+        )
+    });
 
-        // 5) end-to-end native spans -> JSON wire (the real JSON export path).
-        c.bench_function(&format!("otlp/e2e_json/{id}"), |b| {
-            b.iter_batched(
-                || spans.clone(),
-                |s| {
-                    let req = map_traces_to_otlp(s, &info);
-                    black_box(encode_otlp_json(&req).expect("json"))
-                },
-                BatchSize::SmallInput,
-            )
-        });
-    }
+    // 5) end-to-end native spans -> JSON wire (the real JSON export path).
+    c.bench_function(&format!("otlp/e2e_json/{id}"), |b| {
+        b.iter_batched(
+            || spans.clone(),
+            |s| {
+                let req = map_traces_to_otlp(s, &info);
+                black_box(encode_otlp_json(&req).expect("json"))
+            },
+            BatchSize::SmallInput,
+        )
+    });
 }
 
 criterion_group!(otlp_benches, otlp_encoding_benches);
