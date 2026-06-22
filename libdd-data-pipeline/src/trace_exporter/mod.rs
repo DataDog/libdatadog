@@ -566,7 +566,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r.client_computed_stats = self.otlp_stats_enabled;
             r
         };
-        let request = map_traces_to_otlp(traces, &resource_info);
+        let request =
+            map_traces_to_otlp(traces, &resource_info, config.otel_trace_semantics_enabled);
         let json_body = serde_json::to_vec(&request).map_err(|e| {
             error!("OTLP JSON serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
