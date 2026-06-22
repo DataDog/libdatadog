@@ -5,6 +5,8 @@ mod fetcher;
 mod multitarget;
 mod shared;
 mod single;
+mod agentless;
+
 #[cfg(any(test, feature = "test"))]
 pub mod test_server;
 
@@ -14,3 +16,4 @@ pub use fetcher::*;
 pub use multitarget::*;
 pub use shared::*;
 pub use single::*;
+pub use agentless::*;

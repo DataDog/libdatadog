@@ -7,8 +7,6 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-pub mod agentless_client;
-
 pub mod config;
 #[cfg(feature = "client")]
 pub mod fetch;

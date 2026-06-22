@@ -1,14 +1,14 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::agentless_client::{
-    self, make_agentless_configs_endpoint, AgentlessConfig, AgentlessFetcher,
+use super::agentless::{
+    make_agentless_configs_endpoint, AgentlessConfig, AgentlessFetcher, ClientTargetRef,
     NativeAgentlessFetcher,
 };
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet as HbHashSet};
 use http::uri::PathAndQuery;
 use http::StatusCode;
 use http_body_util::BodyExt;
@@ -66,12 +66,12 @@ impl ConfigInvariants {
     }
 }
 
-struct StoredTargetFile<S> {
-    hash: String,
-    handle: Arc<S>,
-    state: ConfigState,
-    meta: TargetFileMeta,
-    expiring: bool,
+pub(crate) struct StoredTargetFile<S> {
+    pub(crate) hash: String,
+    pub(crate) handle: Arc<S>,
+    pub(crate) state: ConfigState,
+    pub(crate) meta: TargetFileMeta,
+    pub(crate) expiring: bool,
 }
 
 pub enum ConfigApplyState {
@@ -118,7 +118,7 @@ impl ConfigProductCapabilities {
 }
 
 pub struct ConfigFetcherState<S> {
-    target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
+    pub(crate) target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
@@ -231,6 +231,150 @@ impl<S> ConfigFetcherState<S> {
         ConfigFetcherStateStats {
             active_files: self.target_files_by_path.lock_or_panic().len() as u32,
         }
+    }
+}
+
+pub(crate) struct NewTarget {
+    pub path: String,
+    pub version: u64,
+    /// Lowercase hex of the primary (sha256-preferred) hash.
+    pub primary_hash: String,
+    /// All `(algorithm_name, hex_hash)` pairs for the target.
+    pub hashes: Vec<(String, String)>,
+    pub content: Vec<u8>,
+}
+
+pub(crate) struct AgentlessTargetCache<'a, S: FileStorage> {
+    files: &'a Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S::StoredFile>>>,
+    storage: &'a S,
+    expire_unused_files: bool,
+}
+
+impl<'a, S: FileStorage> AgentlessTargetCache<'a, S> {
+    pub(crate) fn new(state: &'a ConfigFetcherState<S::StoredFile>, storage: &'a S) -> Self {
+        AgentlessTargetCache {
+            files: &state.target_files_by_path,
+            storage,
+            expire_unused_files: state.expire_unused_files,
+        }
+    }
+
+    /// Returns the TUF path strings whose `(primary_hash, len)` already matches the cache.
+    pub(crate) fn is_cached_batch<'b>(
+        &self,
+        candidates: impl IntoIterator<Item = (&'b str, &'b str, u64)>,
+    ) -> HbHashSet<&'b str> {
+        let files = self.files.lock_or_panic();
+        candidates
+            .into_iter()
+            .filter_map(|(path, primary_hash, len)| {
+                let parsed = RemoteConfigPath::try_parse(path).ok()?;
+                let stored = files.get(&parsed)?;
+                if stored.hash == primary_hash && stored.meta.length as u64 == len {
+                    Some(path)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn store_batch(
+        &self,
+        targets: impl IntoIterator<Item = NewTarget>,
+    ) -> anyhow::Result<()> {
+        let mut files = self.files.lock_or_panic();
+        for NewTarget {
+            path,
+            version,
+            primary_hash,
+            hashes,
+            content,
+        } in targets
+        {
+            let parsed_path = match RemoteConfigPath::try_parse(&path) {
+                Ok(p) => p,
+                Err(e) => {
+                    warn!("store_batch: failed to parse remote config path {path}: {e:?}");
+                    continue;
+                }
+            };
+            let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
+            let length = content.len() as i64;
+            let new_handle = if let Some(existing) = files.get(&parsed_path) {
+                self.storage
+                    .update(&existing.handle, version, content)
+                    .map(|()| existing.handle.clone())?
+            } else {
+                self.storage.store(version, parsed_path.clone(), content)?
+            };
+            files.insert(
+                parsed_path.clone(),
+                StoredTargetFile {
+                    hash: primary_hash,
+                    state: ConfigState {
+                        id: parsed_path.config_id.to_string(),
+                        version,
+                        product: parsed_path.product.to_string(),
+                        apply_state: 2, // Acknowledged
+                        apply_error: String::new(),
+                    },
+                    meta: TargetFileMeta {
+                        path,
+                        length,
+                        hashes: hashes
+                            .into_iter()
+                            .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
+                            .collect(),
+                    },
+                    handle: new_handle,
+                    expiring: false,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    /// Evict every entry whose TUF path is not in `active_paths`. No-op when
+    /// `expire_unused_files` is `false`.
+    pub(crate) fn retain_only(&self, active_paths: &HbHashSet<&str>) {
+        if !self.expire_unused_files {
+            return;
+        }
+        self.files
+            .lock_or_panic()
+            .retain(|_, stored| active_paths.contains(stored.meta.path.as_str()));
+    }
+
+    /// Collect `Arc<S::StoredFile>` handles for every target in `targets`, verifying
+    /// stored hash and length match, and marking each entry as non-expiring.
+    pub(crate) fn collect_handles(
+        &self,
+        targets: &[ClientTargetRef],
+    ) -> anyhow::Result<Vec<Arc<S::StoredFile>>> {
+        let mut files = self.files.lock_or_panic();
+        let mut handles = Vec::with_capacity(targets.len());
+        for target in targets {
+            let parsed = RemoteConfigPath::try_parse(&target.path).map_err(|e| {
+                anyhow::format_err!("collect_handles: bad path {}: {e:?}", target.path)
+            })?;
+            let stored = files.get_mut(&parsed).ok_or_else(|| {
+                anyhow::format_err!(
+                    "collect_handles: path {} not found in cache after fetch",
+                    target.path
+                )
+            })?;
+            if stored.hash != target.primary_hash || stored.meta.length as u64 != target.length {
+                anyhow::bail!(
+                    "collect_handles: cache mismatch for {}: stored hash={} len={}, expected hash={} len={}",
+                    target.path, stored.hash, stored.meta.length,
+                    target.primary_hash, target.length
+                );
+            }
+            stored.expiring = false;
+            handles.push(stored.handle.clone());
+        }
+        Ok(handles)
     }
 }
 
@@ -631,10 +775,10 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 let client = config_req.client.expect(
                     "RC ConfigFetcher::build_config_request should always return a `Some` client",
                 );
-                // Capture errors into `client_state.last_error` so the next
-                // call propagates `has_error` / `error` to the backend.
-                let res = match agentless_fetcher.fetch_config(client).await {
-                    Ok(res) => res,
+
+                let cache = AgentlessTargetCache::new(&self.state, &self.file_storage);
+                let res = match agentless_fetcher.fetch_config(client, &cache).await {
+                    Ok(r) => r,
                     Err(e) => {
                         client_state.last_error = Some(format!("{e:#}"));
                         // Surface the recommended backoff to the consumer of
@@ -652,129 +796,25 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 client_state.targets_version = res.target_version;
                 client_state.refresh_interval = Some(res.refresh_interval);
                 if res.opaque_backend_state != client_state.opaque_backend_state {
-                    client_state.opaque_backend_state = res.opaque_backend_state.to_vec();
+                    client_state.opaque_backend_state = res.opaque_backend_state.clone();
                 }
                 client_state.last_error = None;
 
-                let mut target_files = self.state.target_files_by_path.lock_or_panic();
-                let mut config_paths = HashSet::new();
-                for &agentless_client::ClientTargetResponse { path, .. } in &res.targets {
-                    match RemoteConfigPath::try_parse(path) {
+                let mut config_paths: HashSet<RemoteConfigPath> = HashSet::new();
+                for target_ref in &res.targets {
+                    match RemoteConfigPath::try_parse(&target_ref.path) {
                         Ok(parsed) => {
                             config_paths.insert(parsed.into());
                         }
-                        Err(e) => warn!("Failed parsing remote config path: {path} - {e:?}"),
+                        Err(e) => warn!(
+                            "Failed parsing remote config path: {} - {e:?}",
+                            target_ref.path
+                        ),
                     }
                 }
 
-                if self.state.expire_unused_files {
-                    target_files.retain(|k, _| config_paths.contains(k.as_ref()));
-                }
+                let configs = cache.collect_handles(&res.targets)?;
 
-                for agentless_client::ClientTargetResponse {
-                    path,
-                    content: target_file,
-                    version,
-                    hashes,
-                } in res.targets
-                {
-                    let parsed_path = match RemoteConfigPath::try_parse(path) {
-                        Ok(parsed_path) => parsed_path,
-                        Err(e) => {
-                            warn!("Failed parsing remote config path: {path} - {e:?}");
-                            continue;
-                        }
-                    };
-                    let Some((_, hash)) = hashes
-                        .iter()
-                        .find(|(h, _)| *h == &tuf::crypto::HashAlgorithm::Sha256)
-                        .or_else(|| {
-                            hashes
-                                .iter()
-                                .find(|(h, _)| *h == &tuf::crypto::HashAlgorithm::Sha512)
-                        })
-                    else {
-                        // todo no supported hash algorithm?
-                        continue;
-                    };
-                    let hash = hash.to_string();
-
-                    let handle = if let Some(StoredTargetFile {
-                        hash: old_hash,
-                        handle,
-                        ..
-                    }) = target_files.get(&parsed_path)
-                    {
-                        if old_hash == &hash {
-                            continue;
-                        }
-                        Some(handle.clone())
-                    } else {
-                        None
-                    };
-
-                    let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
-                    target_files.insert(
-                        parsed_path.clone(),
-                        StoredTargetFile {
-                            hash,
-                            state: ConfigState {
-                                id: parsed_path.config_id.to_string(),
-                                version,
-                                product: parsed_path.product.to_string(),
-                                apply_state: 2, // Acknowledged
-                                apply_error: "".to_string(),
-                            },
-                            meta: TargetFileMeta {
-                                path: path.to_string(),
-                                length: target_file.len() as i64,
-                                hashes: hashes
-                                    .iter()
-                                    .map(|(algorithm, hash)| {
-                                        Ok(TargetFileHash {
-                                            algorithm: match algorithm {
-                                                tuf::crypto::HashAlgorithm::Sha256 => {
-                                                    "sha256".to_string()
-                                                }
-                                                tuf::crypto::HashAlgorithm::Sha512 => {
-                                                    "sha512".to_string()
-                                                }
-                                                tuf::crypto::HashAlgorithm::Unknown(u) => u.clone(),
-                                                a => {
-                                                    anyhow::bail!("unhandled hash algorithm: {a:?}")
-                                                }
-                                            },
-                                            hash: hash.to_string(),
-                                        })
-                                    })
-                                    .collect::<Result<_, _>>()?,
-                            },
-                            handle: if let Some(handle) = handle {
-                                self.file_storage
-                                    .update(&handle, version, target_file.to_vec())?;
-                                handle
-                            } else {
-                                self.file_storage.store(
-                                    version,
-                                    parsed_path,
-                                    target_file.to_vec(),
-                                )?
-                            },
-                            expiring: false,
-                        },
-                    );
-                }
-                let mut configs = Vec::with_capacity(config_paths.len());
-                for config in config_paths.iter() {
-                    if let Some(target_file) = target_files.get_mut(config) {
-                        target_file.expiring = false;
-                        configs.push(target_file.handle.clone());
-                    } else {
-                        anyhow::bail!(
-                            "Found {config} in client_configs response, but it isn't stored."
-                        );
-                    }
-                }
                 client_state.last_config_paths = config_paths;
                 Ok(Some(configs))
             }

@@ -1,6 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::fetch::{AgentlessTargetCache, FileStorage, NewTarget};
+
 use std::{
     fmt,
     ops::RangeInclusive,
@@ -171,40 +173,38 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     /// Number of consecutive `fetch_config` failures. Reset to 0 on success.
     consecutive_failures: u32,
     endpoint: Endpoint,
-    // TODO: Not sure this is needed if the wrapped client already caches files?
-    target_cache: HashMap<tuf::metadata::TargetPath, CachedFile>,
 }
 
-struct CachedFile {
-    hashes: Vec<(&'static tuf::crypto::HashAlgorithm, tuf::crypto::HashValue)>,
-    target_file: Vec<u8>,
-    version: u64,
-}
-
-pub struct ClientTargetResponse<'a> {
-    pub path: &'a str,
+pub struct ClientTargetRef {
+    pub path: String,
     pub version: u64,
-    pub hashes: &'a [(&'static tuf::crypto::HashAlgorithm, tuf::crypto::HashValue)],
-    pub content: &'a [u8],
+    pub primary_hash: String,
+    pub length: u64,
 }
 
-pub struct ClientResponse<'a> {
+pub struct ClientResponse {
     pub root_version: u64,
     pub target_version: u64,
-    pub opaque_backend_state: &'a [u8],
-    pub targets: Vec<ClientTargetResponse<'a>>,
+    pub opaque_backend_state: Vec<u8>,
+    /// All currently active targets; content is already stored in the outer cache.
+    pub targets: Vec<ClientTargetRef>,
     pub refresh_interval: Duration,
 }
 
-struct BorrowedTufTarget<'a> {
-    pub path: &'a tuf::metadata::TargetPath,
-    pub desc: &'a tuf::metadata::TargetDescription,
+/// A trusted, unexpired TUF target. Produced by [`trusted_targets`].
+struct TrustedTarget<'a> {
+    path: &'a tuf::metadata::TargetPath,
+    length: u64,
+    version: u64,
+    all_hashes: Vec<(&'static tuf::crypto::HashAlgorithm, tuf::crypto::HashValue)>,
+    /// Lowercase hex of the first supported hash; used for cache-hit comparisons.
+    primary_hash: String,
 }
 
 const CUSTOM_METADATA_EXPIRY_PATH: &str = "expires";
 
-impl<'a> BorrowedTufTarget<'a> {
-    pub fn try_create(path: &'a TargetPath, desc: &'a TargetDescription) -> anyhow::Result<Self> {
+impl<'a> TrustedTarget<'a> {
+    fn try_create(path: &'a TargetPath, desc: &'a TargetDescription) -> anyhow::Result<Self> {
         if let Some(expiry) = desc.custom().get(CUSTOM_METADATA_EXPIRY_PATH) {
             let expiry_ts = expiry
                 .as_u64()
@@ -215,13 +215,23 @@ impl<'a> BorrowedTufTarget<'a> {
             }
         }
 
-        Ok(Self { path, desc })
-    }
-}
+        let all_hashes = tuf::crypto::retain_supported_hashes(desc.hashes());
+        if all_hashes.is_empty() {
+            bail!("no supported hash algorithm for target at path: {path}")
+        }
+        // retain_supported_hashes return order is deterministic.
+        let primary_hash = all_hashes[0].1.to_string();
 
-enum FetchTargetResult {
-    Cached,
-    New(CachedFile),
+        let version = desc.custom().get("v").and_then(|v| v.as_u64()).unwrap_or(0);
+
+        Ok(Self {
+            path,
+            length: desc.length(),
+            version,
+            all_hashes,
+            primary_hash,
+        })
+    }
 }
 
 impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
@@ -278,7 +288,6 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             hostname: cfg.hostname,
             agent_uuid_override: cfg.agent_uuid,
             products: HashSet::new(),
-            target_cache: HashMap::new(),
 
             opaque_backend_state: Vec::new(),
             refresh_interval: Duration::from_secs(60),
@@ -299,43 +308,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         compute_backoff(self.consecutive_failures)
     }
 
-    /// Return the value of a particular target , checking both its length and
-    /// hashes against the metadata in the config repo.
-    ///
-    /// If it is already in the cache, return `Cached`
-    async fn fetch_target(
-        &self,
-        target: &BorrowedTufTarget<'_>,
-    ) -> anyhow::Result<FetchTargetResult> {
-        let expected_hashes = tuf::crypto::retain_supported_hashes(target.desc.hashes());
-        if expected_hashes.is_empty() {
-            bail!("no supported hash for path: {}", target.path);
-        }
-        let (target_hash_algo, target_hash) = &expected_hashes[0];
+    async fn fetch_target(&self, target: &TrustedTarget<'_>) -> anyhow::Result<Vec<u8>> {
         let target_path = target.path;
 
-        let version = target
-            .desc
-            .custom()
-            .get("v")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-
-        if let Some(item) = self.target_cache.get(target_path) {
-            if item
-                .hashes
-                .iter()
-                .find(|(alg, _)| alg == target_hash_algo)
-                .is_some_and(|(_, h)| h == target_hash)
-                && item.target_file.len() as u64 == target.desc.length()
-            {
-                return Ok(FetchTargetResult::Cached);
-            }
-        }
-
-        // Fetch from the content from the remote __Unverified__ repo
-        // This is fine as we are comparing the (hash + len) with a validated
-        // target
+        // Fetch from the remote __unverified__ repo.
+        // This is fine because we compare the hash+len against TUF-validated metadata.
         let mut read = self
             .director_client
             .remote_repo()
@@ -344,43 +321,40 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         let mut buf = Vec::new();
         read.read_to_end(&mut buf).await?;
 
-        let expected_len = target.desc.length() as usize;
-        if buf.len() != expected_len {
+        if buf.len() as u64 != target.length {
             bail!("bad length for file at path: {}", target.path)
         }
 
-        {
-            let hash_algs = expected_hashes
-                .iter()
-                .map(|(alg, _val)| (*alg).clone())
-                .collect::<Vec<_>>();
-            let actual_hashes =
-                tuf::crypto::calculate_hashes_from_slice(&buf, hash_algs.as_slice())?;
-            let expected: HashMap<_, _> = expected_hashes
-                .iter()
-                .map(|(alg, val)| (alg, val))
-                .collect();
+        let hash_algs = target
+            .all_hashes
+            .iter()
+            .map(|(alg, _val)| (*alg).clone())
+            .collect::<Vec<_>>();
+        let actual_hashes = tuf::crypto::calculate_hashes_from_slice(&buf, hash_algs.as_slice())?;
+        let expected: HashMap<_, _> = target
+            .all_hashes
+            .iter()
+            .map(|(alg, val)| (alg, val))
+            .collect();
 
-            if !(actual_hashes.len() == expected.len()
-                && actual_hashes
-                    .iter()
-                    .all(|(k, v)| expected.get(&k).is_some_and(|e| *e == v)))
-            {
-                bail!("hash did not match: {}", target.path)
-            }
+        if !(actual_hashes.len() == expected.len()
+            && actual_hashes
+                .iter()
+                .all(|(k, v)| expected.get(&k).is_some_and(|e| *e == v)))
+        {
+            bail!("hash did not match: {}", target.path)
         }
 
-        Ok(FetchTargetResult::New(CachedFile {
-            hashes: expected_hashes,
-            target_file: buf,
-            version,
-        }))
+        Ok(buf)
     }
 
-    pub async fn fetch_config(
+    /// Fetch remote config. Newly-downloaded target content is written directly into
+    /// `cache` rather than buffered inside the agentless fetcher.
+    pub(crate) async fn fetch_config<S: FileStorage>(
         &mut self,
         c: remoteconfig::Client,
-    ) -> anyhow::Result<ClientResponse<'_>> {
+        cache: &AgentlessTargetCache<'_, S>,
+    ) -> anyhow::Result<ClientResponse> {
         let (
             current_config_snapshot_version,
             current_config_root_version,
@@ -459,17 +433,15 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         };
         self.consecutive_failures = 0;
 
-        self.apply(&response).await?;
-        if !self.initialized {
-            self.initialized = true;
-        }
+        let active_targets = self.apply(&response, cache).await?;
+        self.initialized = true;
         self.products = all_products;
 
         // TODO:
-        // In the future we will want to query configs for mutliple clients (for PHP, which can have
-        // many processes use the same rc client)
+        // In the future we will want to query configs for multiple clients (for PHP, which can have
+        // many processes use the same rc client).
         // This means we will need to dispatch the different files based on filter predicates
-        // which we currently do not parse
+        // which we currently do not parse.
 
         Ok(ClientResponse {
             root_version: u64::from(self.config_client.database().trusted_root().version()),
@@ -480,17 +452,8 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                     .ok_or(anyhow::anyhow!("Missing target data"))?
                     .version(),
             ),
-            opaque_backend_state: &self.opaque_backend_state,
-            targets: self
-                .target_cache
-                .iter()
-                .map(|(p, t)| ClientTargetResponse {
-                    path: p.as_str(),
-                    version: t.version,
-                    hashes: &t.hashes,
-                    content: t.target_file.as_slice(),
-                })
-                .collect(),
+            opaque_backend_state: self.opaque_backend_state.clone(),
+            targets: active_targets,
             refresh_interval: self.refresh_interval,
         })
     }
@@ -548,10 +511,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         Ok(self.http.request(req).await?)
     }
 
-    async fn apply(
+    async fn apply<S: FileStorage>(
         &mut self,
         response: &remoteconfig::LatestConfigsResponse,
-    ) -> anyhow::Result<()> {
+        cache: &AgentlessTargetCache<'_, S>,
+    ) -> anyhow::Result<Vec<ClientTargetRef>> {
         // At a high level,  we're populating the "remote" repos with the metadata
         // that we received from upstream (which does not validate it), and then using the clients'
         // `update` methods to synchronize that metadata to the "local" repos, during which
@@ -601,23 +565,50 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         self.config_client.update().await?;
         self.director_client.update().await?;
 
-        let mut new_target_path_set = HashSet::new();
-        for target in trusted_targets(&self.director_client)? {
-            new_target_path_set.insert(target.path);
-            match self.fetch_target(&target).await? {
-                FetchTargetResult::Cached => {}
-                FetchTargetResult::New(cached_target) => {
-                    self.target_cache.insert(target.path.clone(), cached_target);
-                }
-            }
-        }
-        self.target_cache
-            .retain(|key, _| new_target_path_set.contains(key));
+        let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?.collect();
 
-        // The Remote Config service uses a `custom` field at the top-level of the targets metadata
-        // to store this field which we are supposed to echo back to the server. That `custom` field
-        // is not explicitly part of the TUF spec, which is why we need to pull it out of the
-        // `additional_fields` catch-all here.
+        let cached_paths: hashbrown::HashSet<&str> = cache.is_cached_batch(
+            targets
+                .iter()
+                .map(|t| (t.path.as_str(), t.primary_hash.as_str(), t.length)),
+        );
+
+        let mut new_targets: Vec<NewTarget> = Vec::new();
+        for t in &targets {
+            if cached_paths.contains(t.path.as_str()) {
+                continue;
+            }
+            let content = self.fetch_target(t).await?;
+            new_targets.push(NewTarget {
+                path: t.path.as_str().to_owned(),
+                version: t.version,
+                primary_hash: t.primary_hash.clone(),
+                hashes: t
+                    .all_hashes
+                    .iter()
+                    .map(|(alg, hash)| (hash_algorithm_to_str(alg).to_owned(), hash.to_string()))
+                    .collect(),
+                content,
+            });
+        }
+        cache.store_batch(new_targets)?;
+
+        let active_path_strs: hashbrown::HashSet<&str> =
+            targets.iter().map(|t| t.path.as_str()).collect();
+        cache.retain_only(&active_path_strs);
+
+        let active_targets: Vec<ClientTargetRef> = targets
+            .iter()
+            .map(|t| ClientTargetRef {
+                path: t.path.as_str().to_owned(),
+                version: t.version,
+                primary_hash: t.primary_hash.clone(),
+                length: t.length,
+            })
+            .collect();
+
+        // The Remote Config service uses a `custom` field at the top-level of the targets
+        // metadata to store this field which we are supposed to echo back to the server.
         if let Some((opaque_backend_state, refresh_interval)) =
             get_director_custom(&self.director_client)
         {
@@ -629,7 +620,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             }
         }
 
-        Ok(())
+        Ok(active_targets)
     }
 }
 
@@ -719,11 +710,11 @@ fn now_unix_milli_ts() -> u64 {
     .unwrap_or(u64::MAX)
 }
 
-/// Return the available, unexpired target paths and their descriptions based on the current
-/// metadata.
+/// Return all currently trusted, unexpired targets.  Targets that are expired or that lack a
+/// supported hash algorithm are skipped with a debug log.
 fn trusted_targets(
     director_client: &TUFClient,
-) -> anyhow::Result<impl Iterator<Item = BorrowedTufTarget<'_>> + '_> {
+) -> anyhow::Result<impl Iterator<Item = TrustedTarget<'_>> + '_> {
     Ok(director_client
         .database()
         .trusted_targets()
@@ -731,7 +722,7 @@ fn trusted_targets(
         .targets()
         .iter()
         .filter_map(|(path, desc)| {
-            BorrowedTufTarget::try_create(path, desc)
+            TrustedTarget::try_create(path, desc)
                 .inspect_err(|e| {
                     debug!(%path, "Skipping target: error {}", e);
                 })
@@ -764,6 +755,15 @@ async fn store_noversion(
             .await?;
     }
     Ok(())
+}
+
+fn hash_algorithm_to_str(alg: &tuf::crypto::HashAlgorithm) -> &str {
+    match alg {
+        tuf::crypto::HashAlgorithm::Sha256 => "sha256",
+        tuf::crypto::HashAlgorithm::Sha512 => "sha512",
+        tuf::crypto::HashAlgorithm::Unknown(s) => s.as_str(),
+        _ => "unknown",
+    }
 }
 
 /// Strip the leading `<hash>.` prefix from the basename of a TUF target path.
