@@ -796,7 +796,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
         let kv = resource_attrs
             .iter()
@@ -823,7 +823,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
         assert!(
             !resource_attrs.iter().any(|a| a.key == "_dd.stats_computed"),
