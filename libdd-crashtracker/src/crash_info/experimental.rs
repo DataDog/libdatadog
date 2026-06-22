@@ -12,8 +12,6 @@ pub struct Experimental {
     pub additional_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_stack: Option<RuntimeStack>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub frame_count: Option<usize>,
 }
 
 impl Experimental {
@@ -30,18 +28,12 @@ impl Experimental {
         self.runtime_stack = Some(runtime_stack);
         self
     }
-
-    pub fn with_frame_count(mut self, frame_count: usize) -> Self {
-        self.frame_count = Some(frame_count);
-        self
-    }
 }
 
 impl UnknownValue for Experimental {
     fn unknown_value() -> Self {
         Self {
             additional_tags: vec![],
-            frame_count: None,
             runtime_stack: None,
         }
     }

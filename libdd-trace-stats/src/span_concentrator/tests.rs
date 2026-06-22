@@ -1569,3 +1569,56 @@ fn test_pb_span() {
 
     assert_counts_equal(expected_stats, bucket.stats.clone());
 }
+
+/// Verify the OTLP exact-scalar sidecar tracks per-cell (ok/error) duration/min/max in nanos
+/// independently and that ok_duration + error_duration matches the combined group duration
+/// (which the agent /v0.6/stats path uses).
+#[test]
+fn test_flush_with_otlp_exact_per_cell_scalars() {
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    // 3 ok spans (200, 300, 100 ns) and 2 error spans (700, 500 ns), all same agg key.
+    let mut spans = vec![
+        get_test_span(now, 1, 0, 200, 0, "svc", "res", 0),
+        get_test_span(now, 2, 0, 300, 0, "svc", "res", 0),
+        get_test_span(now, 3, 0, 100, 0, "svc", "res", 0),
+        get_test_span(now, 4, 0, 700, 0, "svc", "res", 1),
+        get_test_span(now, 5, 0, 500, 0, "svc", "res", 1),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+    for s in &spans {
+        concentrator.add_span(s);
+    }
+
+    let flushed = concentrator.flush_with_otlp_exact(now, true);
+    assert_eq!(flushed.len(), 1);
+    let b = &flushed[0];
+    assert_eq!(b.exact.len(), 1);
+    let exact = &b.exact[0];
+
+    assert_eq!(exact.ok.count, 3);
+    assert_eq!(exact.ok.duration_ns, 600);
+    assert_eq!(exact.ok.min_ns, 100);
+    assert_eq!(exact.ok.max_ns, 300);
+
+    assert_eq!(exact.error.count, 2);
+    assert_eq!(exact.error.duration_ns, 1200);
+    assert_eq!(exact.error.min_ns, 500);
+    assert_eq!(exact.error.max_ns, 700);
+
+    // ok_duration + error_duration equals the combined group.duration (agent path field).
+    let group = &b.bucket.stats[0];
+    assert_eq!(
+        group.duration,
+        exact.ok.duration_ns + exact.error.duration_ns
+    );
+    assert_eq!(group.hits, 5);
+    assert_eq!(group.errors, 2);
+}

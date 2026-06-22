@@ -39,8 +39,9 @@ mod span_kind {
     pub const CONSUMER: i32 = 5;
 }
 
-/// OTLP StatusCode enum values.
-mod status_code {
+/// OTLP StatusCode enum values. Public because the OTLP metrics exporter
+/// (`libdd-data-pipeline`) reuses these constants.
+pub mod status_code {
     pub const UNSET: i32 = 0;
     pub const ERROR: i32 = 2;
 }
@@ -338,6 +339,11 @@ fn build_resource(resource_info: &OtlpResourceInfo) -> ProtoResource {
         &resource_info.tracer_version,
     );
     push_str_attr(&mut attributes, "runtime-id", &resource_info.runtime_id);
+    // Tells Datadog Agent OTLP receivers to skip their concentrator; prevents double-counted
+    // APM metrics.
+    if resource_info.client_computed_stats {
+        push_str_attr(&mut attributes, "_dd.stats_computed", "true");
+    }
     // `entity_refs` is a profiling-signal-only field; explicit default.
     ProtoResource {
         attributes,
@@ -856,6 +862,55 @@ mod tests {
         assert_eq!(spans[0].trace_id, expected);
         assert_eq!(spans[1].trace_id, expected);
         assert_eq!(spans[2].trace_id, expected);
+    }
+
+    #[test]
+    fn test_stats_computed_resource_attr_set_when_enabled() {
+        let resource_info = OtlpResourceInfo {
+            client_computed_stats: true,
+            ..Default::default()
+        };
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
+        let kv = resource_attrs
+            .iter()
+            .find(|a| a.key == "_dd.stats_computed")
+            .expect("_dd.stats_computed must be present when client_computed_stats=true");
+        let val = match kv.value.as_ref().and_then(|v| v.value.as_ref()) {
+            Some(ProtoValue::StringValue(s)) => s.as_str(),
+            other => panic!("expected stringValue, got {other:?}"),
+        };
+        assert_eq!(val, "true");
+    }
+
+    #[test]
+    fn test_stats_computed_resource_attr_absent_when_disabled() {
+        let resource_info = OtlpResourceInfo {
+            client_computed_stats: false,
+            ..Default::default()
+        };
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
+        assert!(
+            !resource_attrs.iter().any(|a| a.key == "_dd.stats_computed"),
+            "_dd.stats_computed must not be emitted when client_computed_stats=false"
+        );
     }
 
     #[test]

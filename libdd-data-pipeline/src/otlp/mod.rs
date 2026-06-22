@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! OTLP trace export for libdatadog.
+//! OTLP trace and trace-metrics export for libdatadog.
 //!
 //! When an OTLP endpoint is configured via
 //! [`crate::trace_exporter::TraceExporterBuilder::set_otlp_endpoint`], the trace exporter sends
@@ -9,6 +9,10 @@
 //! (JSON or protobuf) is selected via [`OtlpProtocol`]. The host language is responsible for
 //! resolving the endpoint from its own configuration (e.g.
 //! `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`).
+//!
+//! With [`set_otlp_metrics_endpoint`](crate::trace_exporter::TraceExporterBuilder::set_otlp_metrics_endpoint),
+//! client-computed span stats ship as a `traces.span.sdk.metrics.duration` OTLP histogram
+//! instead of going to the agent `/v0.6/stats` endpoint.
 //!
 //! ## Sampling
 //!
@@ -23,13 +27,11 @@
 //! spans from a local trace are closed (i.e. send complete trace chunks). This crate does not
 //! buffer or flush partially—it exports whatever trace chunks it receives.
 
-pub(crate) mod config;
-pub(crate) mod exporter;
+pub mod config;
+pub mod exporter;
+pub mod metrics;
 
-// `OtlpProtocol` is the only public symbol: it is a parameter of the public
-// `TraceExporterBuilder::set_otlp_protocol`. Everything else here (the parsed config, the
-// resource-info/mapper helpers, the send entrypoint) is internal to this crate.
-pub use config::OtlpProtocol;
-pub(crate) use config::OtlpTraceConfig;
-pub(crate) use exporter::send_otlp_traces_http;
-pub(crate) use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
+pub use config::{OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};
+pub use exporter::send_otlp_traces_http;
+pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
+pub use metrics::OtlpStatsExporter;

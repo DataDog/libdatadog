@@ -537,15 +537,6 @@ pub(crate) async fn receive_report_from_stream(
         }
     }
 
-    builder.with_experimental_frame_count(
-        builder
-            .error
-            .stack
-            .as_ref()
-            .map(|s| s.frames.len())
-            .unwrap_or(0),
-    )?;
-
     let crash_info = builder.build()?;
 
     if crash_info.incomplete {
@@ -890,5 +881,55 @@ mod tests {
         assert_eq!(stack.frames.len(), 1);
         assert!(!stack.incomplete, "Stack should be marked complete");
         assert_eq!(stack.frames[0].ip, Some("0x1234".to_string()));
+    }
+
+    #[test]
+    fn test_message_with_escaped_sentinel_does_not_inject() {
+        // Simulates what emit_message produces after sanitize_message_for_wire:
+        // the sentinel strings are on a single escaped line, not separate lines.
+        let mut builder = CrashInfoBuilder::new();
+        let mut config = None;
+        let mut state = StdinState::Waiting;
+
+        // Enter message state
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_BEGIN_MESSAGE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Message));
+
+        // Feed the sanitized content (newlines escaped, so it's one line)
+        let sanitized_line = format!(
+            "Exception 'Evil'\\n{}\\n{}\\n{{}}\\n{}",
+            DD_CRASHTRACK_END_MESSAGE, DD_CRASHTRACK_BEGIN_CONFIG, DD_CRASHTRACK_END_CONFIG,
+        );
+        state = process_line(&mut builder, &mut config, &sanitized_line, state, &None).unwrap();
+        // Must still be in Message state. the escaped sentinels are just text
+        assert!(
+            matches!(state, StdinState::Message),
+            "escaped sentinels must not trigger state transitions"
+        );
+
+        // Now the real end sentinel
+        state = process_line(
+            &mut builder,
+            &mut config,
+            DD_CRASHTRACK_END_MESSAGE,
+            state,
+            &None,
+        )
+        .unwrap();
+        assert!(matches!(state, StdinState::Waiting));
+
+        // No config should have been injected
+        assert!(
+            config.is_none(),
+            "no config section should have been parsed"
+        );
+        assert!(builder.has_message());
     }
 }
