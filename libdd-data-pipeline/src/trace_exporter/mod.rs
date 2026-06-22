@@ -215,6 +215,11 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
     trace_filterer: ArcSwap<TraceFilterer>,
+    /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
+    /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
+    /// skipped.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    otlp_stats_enabled: bool,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
@@ -363,6 +368,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
 
         if matches!(self.output_format, TraceExporterOutputFormat::V1) {
             self.refresh_v1_active(&agent_info);
+        }
+
+        // OTLP trace metrics run the concentrator independently; skip stats enable/disable.
+        if self.otlp_stats_enabled {
+            return;
         }
 
         self.trace_filterer.store(Arc::new(TraceFilterer::new(
@@ -553,6 +563,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r.language = self.metadata.language.clone();
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
+            r.client_computed_stats = self.otlp_stats_enabled;
             r
         };
         let request = map_traces_to_otlp(traces, &resource_info);
@@ -560,9 +571,24 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             error!("OTLP JSON serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
         })?;
+        // Also set the header: resource attributes survive Collector hops, headers don't.
+        let effective_config;
+        let config_to_use = if self.otlp_stats_enabled {
+            effective_config = {
+                let mut c = config.clone();
+                c.headers.insert(
+                    http::HeaderName::from_static("datadog-client-computed-stats"),
+                    http::HeaderValue::from_static("yes"),
+                );
+                c
+            };
+            &effective_config
+        } else {
+            config
+        };
         send_otlp_traces_http(
             &self.capabilities,
-            config,
+            config_to_use,
             self.endpoint.test_token.as_deref(),
             json_body,
         )
