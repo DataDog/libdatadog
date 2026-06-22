@@ -998,10 +998,10 @@ mod tests {
 
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines.len(), 3);
-        // The content line shouldn't start with the sentinel prefix
+        // The content line shouldn't start with the sentinel
         assert!(
-            !lines[1].starts_with("DD_CRASHTRACK_"),
-            "content line must not start with sentinel prefix, got: {}",
+            !lines[1].starts_with(DD_CRASHTRACK_END_MESSAGE),
+            "content line must not start with DD_CRASHTRACK_END_MESSAGE, got: {}",
             lines[1]
         );
 
@@ -1029,7 +1029,7 @@ mod tests {
         let mut buf = Vec::new();
         write_sanitized_message_line(&mut buf, &input).unwrap();
         let out = str::from_utf8(&buf).unwrap();
-        assert!(!out.starts_with("DD_CRASHTRACK_"));
+        assert!(!out.starts_with(DD_CRASHTRACK_END_MESSAGE));
         assert!(out.starts_with(' '));
     }
 
