@@ -34,7 +34,7 @@ impl SpanKind {
 
 /// Typed V1 attribute value.
 /// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum AttributeValue<T: TraceData> {
     String(T::Text),
     Float(f64),
@@ -43,6 +43,33 @@ pub enum AttributeValue<T: TraceData> {
     Bytes(T::Bytes),
     KeyValue(VecMap<T::Text, AttributeValue<T>>),
     List(Vec<AttributeValue<T>>),
+}
+
+// `#[derive(PartialEq)]` only bounds the type parameter `T` itself, not the associated types
+// (`T::Text`, `T::Bytes`) actually used in the fields below, so it can't be used here.
+//
+// `VecMap`'s own `PartialEq` impl is cfg-gated to `test`/`test-utils` (it allocates two
+// `HashMap`s), so the `KeyValue` variant below can't just delegate to `VecMap::eq` — it
+// reimplements the same last-write-wins comparison directly instead.
+impl<T: TraceData> PartialEq for AttributeValue<T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::String(a), Self::String(b)) => a == b,
+            (Self::Float(a), Self::Float(b)) => a == b,
+            (Self::Int(a), Self::Int(b)) => a == b,
+            (Self::Bool(a), Self::Bool(b)) => a == b,
+            (Self::Bytes(a), Self::Bytes(b)) => a == b,
+            (Self::KeyValue(a), Self::KeyValue(b)) => {
+                let lhs: std::collections::HashMap<&T::Text, &AttributeValue<T>> =
+                    a.iter().map(|(k, v)| (k, v)).collect();
+                let rhs: std::collections::HashMap<&T::Text, &AttributeValue<T>> =
+                    b.iter().map(|(k, v)| (k, v)).collect();
+                lhs == rhs
+            }
+            (Self::List(a), Self::List(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 /// The generic representation of a V1 span.

@@ -295,6 +295,17 @@ fn metadata_matches_v1(
     dest: &v1::TracerPayload<BytesData>,
     src: &v1::TracerPayload<BytesData>,
 ) -> bool {
+    // `VecMap`'s `PartialEq` impl is cfg-gated to `test`/`test-utils` (it allocates two
+    // `HashMap`s), so `attributes` is compared here with the same last-write-wins logic instead
+    // of relying on `VecMap::eq` directly.
+    let attributes_match = {
+        let lhs: std::collections::HashMap<_, _> =
+            dest.attributes.iter().map(|(k, v)| (k, v)).collect();
+        let rhs: std::collections::HashMap<_, _> =
+            src.attributes.iter().map(|(k, v)| (k, v)).collect();
+        lhs == rhs
+    };
+
     let differing: Vec<&'static str> = [
         ("language_name", dest.language_name == src.language_name),
         (
@@ -306,7 +317,7 @@ fn metadata_matches_v1(
         ("env", dest.env == src.env),
         ("hostname", dest.hostname == src.hostname),
         ("app_version", dest.app_version == src.app_version),
-        ("attributes", dest.attributes == src.attributes),
+        ("attributes", attributes_match),
     ]
     .into_iter()
     .filter_map(|(label, eq)| (!eq).then_some(label))
