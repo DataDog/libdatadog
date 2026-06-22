@@ -668,6 +668,7 @@ pub struct ClientGroupedStats {
     >,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
+#[derive(Deserialize, Serialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum Trilean {
