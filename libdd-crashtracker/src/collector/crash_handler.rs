@@ -488,12 +488,16 @@ pub fn report_unhandled_exception(
     let pid = unsafe { libc::getpid() };
     let tid = libdd_common::threading::get_current_thread_id() as libc::pid_t;
 
-    let error_type_str = exception_type.unwrap_or("<unknown>");
-
-    // This allocates but this is okay because we are not in a signal handler.
-    // This is necessary, because user defined exception messages can have newlines
-    // and the receiver state machine parsing depends on newlines for different sections
-    // of the crash report.
+    // This allocates but that is okay because we are not in the signal handling path
+    // Both error type and error message are user-controlled and may contain newlines or protocol
+    // sentinel strings (DD_CRASHTRACK_*). We need to escape newlines here, as the receiver treats new lines
+    // as separate sections in the crash report, and this allows consumers to potentially inject artitrary
+    // configuration and other sections into the crash report. emit_message adds a second sanitization pass
+    // as defense-in-depth at the protocol boundary.
+    let error_type_str = exception_type
+        .unwrap_or("<unknown>")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
     let error_message_str = exception_message
         .unwrap_or("<no message>")
         .replace('\n', "\\n")
