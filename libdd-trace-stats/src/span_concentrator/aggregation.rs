@@ -45,11 +45,12 @@ pub struct FixedAggregationKey<T> {
     pub http_method: T,
     pub http_endpoint: T,
     pub service_source: T,
-    pub grpc_method: T,
     pub http_status_code: u32,
     pub grpc_status_code: Option<u8>,
     pub is_synthetics_request: bool,
     pub is_trace_root: bool,
+    // Appended last to preserve bincode field-order compatibility with existing IPC messages.
+    pub grpc_method: T,
 }
 
 impl<T> FixedAggregationKey<T> {
@@ -70,11 +71,11 @@ impl<T> FixedAggregationKey<T> {
             http_method: f(self.http_method.borrow()),
             http_endpoint: f(self.http_endpoint.borrow()),
             service_source: f(self.service_source.borrow()),
-            grpc_method: f(self.grpc_method.borrow()),
             http_status_code: self.http_status_code,
             grpc_status_code: self.grpc_status_code,
             is_synthetics_request: self.is_synthetics_request,
             is_trace_root: self.is_trace_root,
+            grpc_method: f(self.grpc_method.borrow()),
         }
     }
 }
