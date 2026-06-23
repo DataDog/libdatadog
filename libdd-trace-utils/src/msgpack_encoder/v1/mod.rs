@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-mod span_v04_to_v1;
+mod span_v04;
 mod span_v1;
 
 use crate::span::v04::Span;
@@ -440,7 +440,7 @@ fn encode_chunk_from_v04<W: RmpWrite, T: TraceData>(
     write_uint8(writer, chunk_key::SPANS)?;
     write_array_len(writer, spans.len() as u32)?;
     for span in spans {
-        span_v04_to_v1::encode_span(writer, span, table)?;
+        span_v04::encode_span(writer, span, table)?;
     }
 
     if let Some(origin) = attrs.origin {
