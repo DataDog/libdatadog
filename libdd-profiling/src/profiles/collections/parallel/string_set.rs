@@ -81,7 +81,7 @@ impl ParallelStringSet {
         Ok(StringRef(thin_slice.into()))
     }
 
-    /// Selects which shard a hash should go to (0-3 for 4 shards).
+    /// Selects which shard a hash should go to.
     pub fn select_shard(hash: u64) -> usize {
         ParallelSliceSet::<u8>::select_shard(hash)
     }
@@ -184,10 +184,9 @@ mod tests {
             shard_counts[shard] += 1;
         }
 
-        // Verify that distribution is not completely degenerate
-        // (both shards should get at least some strings)
-        assert!(shard_counts[0] > 0, "Shard 0 got no strings");
-        assert!(shard_counts[1] > 0, "Shard 1 got no strings");
+        // Verify that distribution is not completely degenerate.
+        assert!(shard_counts.iter().any(|&count| count > 0));
+        assert!(shard_counts.iter().filter(|&&count| count > 0).count() > 1);
 
         // Print distribution for manual inspection
         println!("Shard distribution: {:?}", shard_counts);
