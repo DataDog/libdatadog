@@ -103,9 +103,6 @@ impl ErrorDataBuilder {
     }
 
     pub fn with_thread(&mut self, thread: ThreadData) -> anyhow::Result<()> {
-        if thread.crashed {
-            return Ok(());
-        }
         self.threads.get_or_insert_with(Vec::new).push(thread);
         Ok(())
     }
