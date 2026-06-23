@@ -1,6 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+// Naming convention: parent module (`v1`) = output wire format, file suffix (`_v1`) = input span
+// type. This file encodes a [`crate::span::v1::Span`] into the V1 msgpack wire format (native).
+
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanLink};
 use crate::span::vec_map::VecMap;
 use crate::span::TraceData;

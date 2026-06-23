@@ -1,6 +1,10 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+// Naming convention: parent module (`v04`) = output wire format, file suffix (`_v1`) = input
+// span type. This file encodes a [`crate::span::v1::Span`] into the v0.4 msgpack wire format
+// (cross-format downgrade).
+
 //! Downgrade encoder: writes a [`crate::span::v1::Span`] in the v0.4 msgpack wire format.
 //!
 //! Used when the receiving agent does not advertise the `/v1.0/traces` endpoint and the tracer
@@ -296,10 +300,10 @@ pub(super) fn encode_span_v1_to_v04<W: RmpWrite, T: TraceData>(
     }
 
     if !span.span_links.is_empty() {
-        encode_span_links_v1_to_v04(writer, &span.span_links)?;
+        encode_span_links(writer, &span.span_links)?;
     }
     if !span.span_events.is_empty() {
-        encode_span_events_v1_to_v04(writer, &span.span_events)?;
+        encode_span_events(writer, &span.span_events)?;
     }
 
     Ok(())
@@ -331,7 +335,7 @@ fn write_meta_struct_entry<W: RmpWrite, T: TraceData>(
 /// `(trace_id, trace_id_high)` u64s. Typed link attributes are downgraded to strings (`String`
 /// passes through, `Bool` becomes `"true"` / `"false"`); non-string-coercible variants are
 /// dropped because v0.4 link attributes are `String → String` only.
-fn encode_span_links_v1_to_v04<W: RmpWrite, T: TraceData>(
+fn encode_span_links<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_links: &[SpanLink<T>],
 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -397,7 +401,7 @@ fn encode_span_links_v1_to_v04<W: RmpWrite, T: TraceData>(
 /// Converts v1 `SpanEvent`s to the v0.4 wire format. Typed attributes are downgraded to the
 /// v0.4 `{"type": <u8>, "<kind>_value": ...}` shape — see `write_event_attr_value`. `Bytes`
 /// and `KeyValue` have no v0.4 event-attribute equivalent and are dropped.
-fn encode_span_events_v1_to_v04<W: RmpWrite, T: TraceData>(
+fn encode_span_events<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_events: &[SpanEvent<T>],
 ) -> Result<(), ValueWriteError<W::Error>> {

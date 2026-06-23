@@ -65,8 +65,8 @@ macro_rules! write_const_msg_pack_str {
     }};
 }
 
-mod span;
-mod span_v1_to_v04;
+mod span_v04;
+mod span_v1;
 
 #[inline(always)]
 fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
@@ -77,7 +77,7 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     for trace in traces {
         write_array_len(writer, trace.as_ref().len() as u32)?;
         for span in trace.as_ref() {
-            span::encode_span(writer, span)?;
+            span_v04::encode_span(writer, span)?;
         }
     }
 
@@ -237,7 +237,7 @@ fn encode_payload_v1_to_v04<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
-    use span_v1_to_v04::{encode_span_v1_to_v04, ChunkContext};
+    use span_v1::{encode_span_v1_to_v04, ChunkContext};
 
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
