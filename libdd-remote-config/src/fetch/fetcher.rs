@@ -58,6 +58,8 @@ pub struct ConfigInvariants {
     /// Enables and configures agentless mode. If some the fetcher will
     /// talk directly to the RC backend
     pub agentless: Option<agentless::AgentlessConfig>,
+    #[cfg(not(feature = "agentless"))]
+    pub agentless: Option<std::convert::Infallible>,
 }
 
 impl ConfigInvariants {
@@ -879,7 +881,6 @@ pub mod tests {
             language: "php".to_string(),
             tracer_version: "1.2.3".to_string(),
             endpoint: server.endpoint.clone(),
-            #[cfg(feature = "agentless")]
             agentless: None,
         };
         let product_capabilities = ConfigProductCapabilities::new(

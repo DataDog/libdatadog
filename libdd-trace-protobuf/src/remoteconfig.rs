@@ -376,6 +376,7 @@ pub struct ClientGetConfigsResponse {
     #[serde(default)]
     pub client_configs: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(enumeration = "ConfigStatus", tag = "5")]
+    #[serde(default)]
     pub config_status: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]

@@ -3,9 +3,7 @@
 
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
-use libdd_remote_config::fetch::{
-    AgentlessConfig, ConfigInvariants, ConfigOptions, SingleChangesFetcher,
-};
+use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use libdd_remote_config::file_change_tracker::{Change, FilePath};
 use libdd_remote_config::file_storage::ParsedFileStorage;
 use libdd_remote_config::RemoteConfigProduct::ApmTracing;
@@ -37,16 +35,34 @@ async fn main() {
 
     let (endpoint, agentless) = match (dd_api_key, dd_site) {
         (Some(api_key), Some(site)) => {
-            println!("DD_API_KEY and DD_SITE are set — enabling agentless mode (site: {site})");
-            let endpoint = Endpoint::agentless(&site, api_key)
-                .expect("Failed to build agentless endpoint from DD_SITE");
-            (
-                endpoint,
-                Some(AgentlessConfig {
-                    hostname,
-                    ..Default::default()
-                }),
-            )
+            #[cfg(feature = "agentless")]
+            {
+                println!("DD_API_KEY and DD_SITE are set — enabling agentless mode (site: {site})");
+                let endpoint = Endpoint::agentless(&site, api_key)
+                    .expect("Failed to build agentless endpoint from DD_SITE");
+                (
+                    endpoint,
+                    Some(AgentlessConfig {
+                        hostname,
+                        ..Default::default()
+                    }),
+                )
+            }
+            #[cfg(not(feature = "agentless"))]
+            {
+                let _ = (api_key, site);
+                println!("DD_API_KEY and DD_SITE are set but agentless feature not enabled");
+                (
+                    Endpoint {
+                        url: http::Uri::from_static("http://localhost:8126"),
+                        api_key: None,
+                        timeout_ms: 5000, // custom timeout, defaults to 3 seconds
+                        test_token: None,
+                        ..Default::default()
+                    },
+                    None,
+                )
+            }
         }
         _ => {
             println!("DD_API_KEY / DD_SITE not set — connecting to local agent");
