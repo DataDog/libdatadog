@@ -30,6 +30,13 @@ const LOG_PREFIX: &str = "ffe_flagevaluation_flusher";
 const COALESCE_DELAY: Duration = Duration::from_millis(250);
 const MAX_PENDING_BUCKETS: usize = GLOBAL_CAP + DEGRADED_CAP;
 const MAX_EVENTS_PER_POST: usize = 512;
+const EVP_PAYLOAD_SIZE_LIMIT: usize = 5 * 1024 * 1024;
+
+#[derive(Default)]
+struct PayloadBuildResult {
+    payloads: Vec<String>,
+    dropped_oversized_events: u64,
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DestinationKey {
@@ -313,14 +320,32 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     endpoint: &Endpoint,
     batch: FfeFlagEvaluationBatch,
 ) {
-    for chunk in split_batch_for_post(batch) {
-        let payload = match build_payload(&chunk) {
-            Ok(p) => p,
-            Err(e) => {
-                debug!("ffe_flagevaluation_flusher: failed to encode batch payload: {e:?}");
-                return;
-            }
-        };
+    send_batch_with_limit(client, endpoint, batch, EVP_PAYLOAD_SIZE_LIMIT).await;
+}
+
+async fn send_batch_with_limit<C: HttpClientCapability + SleepCapability>(
+    client: &C,
+    endpoint: &Endpoint,
+    batch: FfeFlagEvaluationBatch,
+    payload_size_limit: usize,
+) {
+    let result = match build_payloads_for_post(batch, payload_size_limit) {
+        Ok(result) => result,
+        Err(e) => {
+            debug!("ffe_flagevaluation_flusher: failed to encode batch payload: {e:?}");
+            return;
+        }
+    };
+
+    if result.dropped_oversized_events > 0 {
+        warn!(
+            "ffe_flagevaluation_flusher: dropped {} flag evaluation event(s) because they exceeded the {} byte EVP payload limit after degradation",
+            result.dropped_oversized_events,
+            payload_size_limit
+        );
+    }
+
+    for payload in result.payloads {
         ffe_evp_proxy::send_payload(
             client,
             endpoint,
@@ -332,19 +357,128 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
     }
 }
 
-fn split_batch_for_post(batch: FfeFlagEvaluationBatch) -> Vec<FfeFlagEvaluationBatch> {
+fn build_payloads_for_post(
+    batch: FfeFlagEvaluationBatch,
+    payload_size_limit: usize,
+) -> Result<PayloadBuildResult, serde_json::Error> {
     let FfeFlagEvaluationBatch {
         context,
         flag_evaluations,
     } = batch;
 
-    flag_evaluations
-        .chunks(MAX_EVENTS_PER_POST)
-        .map(|chunk| FfeFlagEvaluationBatch {
-            context: context.clone(),
-            flag_evaluations: chunk.to_vec(),
-        })
-        .collect()
+    let context_json = build_context_payload(&context)?;
+    let payload_prefix = format!(r#"{{"context":{context_json},"flagEvaluations":["#);
+    let payload_suffix = "]}";
+    let base_payload_size = payload_prefix.len() + payload_suffix.len();
+
+    let mut result = PayloadBuildResult::default();
+    let mut current_events = Vec::new();
+    let mut current_size = base_payload_size;
+
+    for event in flag_evaluations {
+        if current_events.len() >= MAX_EVENTS_PER_POST {
+            push_payload(
+                &mut result.payloads,
+                &payload_prefix,
+                payload_suffix,
+                &mut current_events,
+            );
+            current_size = base_payload_size;
+        }
+
+        let mut encoded_event = build_event_payload(&event)?;
+        let mut event_size = encoded_event.len();
+        if !single_event_fits(base_payload_size, event_size, payload_size_limit) {
+            let Some(degraded_event) = degrade_event_for_payload_limit(&event) else {
+                result.dropped_oversized_events = result.dropped_oversized_events.saturating_add(1);
+                continue;
+            };
+
+            let degraded_encoded_event = build_event_payload(&degraded_event)?;
+            let degraded_event_size = degraded_encoded_event.len();
+            if !single_event_fits(base_payload_size, degraded_event_size, payload_size_limit) {
+                result.dropped_oversized_events = result.dropped_oversized_events.saturating_add(1);
+                continue;
+            }
+
+            encoded_event = degraded_encoded_event;
+            event_size = degraded_event_size;
+        }
+
+        let separator_size = usize::from(!current_events.is_empty());
+        if current_size + separator_size + event_size > payload_size_limit
+            && !current_events.is_empty()
+        {
+            push_payload(
+                &mut result.payloads,
+                &payload_prefix,
+                payload_suffix,
+                &mut current_events,
+            );
+            current_size = base_payload_size;
+        }
+
+        let separator_size = usize::from(!current_events.is_empty());
+        current_size += separator_size + event_size;
+        current_events.push(encoded_event);
+    }
+
+    push_payload(
+        &mut result.payloads,
+        &payload_prefix,
+        payload_suffix,
+        &mut current_events,
+    );
+
+    Ok(result)
+}
+
+fn single_event_fits(
+    base_payload_size: usize,
+    event_size: usize,
+    payload_size_limit: usize,
+) -> bool {
+    base_payload_size.saturating_add(event_size) <= payload_size_limit
+}
+
+fn push_payload(
+    payloads: &mut Vec<String>,
+    payload_prefix: &str,
+    payload_suffix: &str,
+    encoded_events: &mut Vec<String>,
+) {
+    if encoded_events.is_empty() {
+        return;
+    }
+
+    let events_size: usize = encoded_events.iter().map(String::len).sum();
+    let separators_size = encoded_events.len().saturating_sub(1);
+    let mut payload = String::with_capacity(
+        payload_prefix.len() + events_size + separators_size + payload_suffix.len(),
+    );
+    payload.push_str(payload_prefix);
+    for (idx, event) in encoded_events.iter().enumerate() {
+        if idx > 0 {
+            payload.push(',');
+        }
+        payload.push_str(event);
+    }
+    payload.push_str(payload_suffix);
+    payloads.push(payload);
+    encoded_events.clear();
+}
+
+fn degrade_event_for_payload_limit(
+    event: &FfeFlagEvaluationEvent,
+) -> Option<FfeFlagEvaluationEvent> {
+    if event.targeting_key.is_none() && event.context.is_none() {
+        return None;
+    }
+
+    let mut degraded = event.clone();
+    degraded.targeting_key = None;
+    degraded.context = None;
+    Some(degraded)
 }
 
 /// Build the EVP POST body from a batch.
@@ -368,40 +502,84 @@ fn split_batch_for_post(batch: FfeFlagEvaluationBatch) -> Vec<FfeFlagEvaluationB
 ///      optional-field placeholders. `context.evaluation` user values are preserved as-is; boolean
 ///      `false`, empty strings, empty objects, and empty arrays are valid context values. Numeric
 ///      zeros (timestamps/counts) are preserved — they are real data.
+#[cfg(test)]
 fn build_payload(batch: &FfeFlagEvaluationBatch) -> Result<String, serde_json::Error> {
-    let mut value = serde_json::to_value(batch)?;
-
-    if let Some(events) = value
-        .get_mut("flagEvaluations")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        for event in events {
-            let Some(context) = event.get_mut("context") else {
-                continue;
-            };
-            let Some(evaluation) = context.get_mut("evaluation") else {
-                continue;
-            };
-            if let Some(s) = evaluation.as_str() {
-                match serde_json::from_str::<serde_json::Value>(s) {
-                    // Re-expand the JSON-object string into an object in place.
-                    Ok(parsed) => *evaluation = parsed,
-                    // Unparseable string → drop the field gracefully (never panic).
-                    Err(_) => {
-                        if let Some(obj) = context.as_object_mut() {
-                            obj.remove("evaluation");
-                        }
-                    }
-                }
-            }
-        }
+    let context_json = build_context_payload(&batch.context)?;
+    let mut encoded_events = Vec::with_capacity(batch.flag_evaluations.len());
+    for event in &batch.flag_evaluations {
+        encoded_events.push(build_event_payload(event)?);
     }
+
+    Ok(build_payload_from_encoded_events(
+        &context_json,
+        &encoded_events,
+    ))
+}
+
+fn build_context_payload(context: &FfeTelemetryContext) -> Result<String, serde_json::Error> {
+    let mut value = serde_json::to_value(context)?;
+    strip_placeholders(&mut value);
+    serde_json::to_string(&value)
+}
+
+fn build_event_payload(event: &FfeFlagEvaluationEvent) -> Result<String, serde_json::Error> {
+    let mut value = serde_json::to_value(event)?;
+    expand_event_context(&mut value);
 
     // Strip null/empty placeholders so the EVP POST matches the flageval-worker
     // schema (which rejects null placeholders) — see the function doc comment.
     strip_placeholders(&mut value);
 
     serde_json::to_string(&value)
+}
+
+#[cfg(test)]
+fn build_payload_from_encoded_events(context_json: &str, encoded_events: &[String]) -> String {
+    let events_size: usize = encoded_events.iter().map(String::len).sum();
+    let separators_size = encoded_events.len().saturating_sub(1);
+    let mut payload = String::with_capacity(
+        r#"{"context":"#.len()
+            + context_json.len()
+            + r#","flagEvaluations":["#.len()
+            + events_size
+            + separators_size
+            + "]}".len(),
+    );
+
+    payload.push_str(r#"{"context":"#);
+    payload.push_str(context_json);
+    payload.push_str(r#","flagEvaluations":["#);
+    for (idx, event) in encoded_events.iter().enumerate() {
+        if idx > 0 {
+            payload.push(',');
+        }
+        payload.push_str(event);
+    }
+    payload.push_str("]}");
+    payload
+}
+
+fn expand_event_context(event: &mut serde_json::Value) {
+    let Some(context) = event.get_mut("context") else {
+        return;
+    };
+    let Some(evaluation) = context.get_mut("evaluation") else {
+        return;
+    };
+    let Some(s) = evaluation.as_str() else {
+        return;
+    };
+
+    match serde_json::from_str::<serde_json::Value>(s) {
+        // Re-expand the JSON-object string into an object in place.
+        Ok(parsed) => *evaluation = parsed,
+        // Unparseable string → drop the field gracefully (never panic).
+        Err(_) => {
+            if let Some(obj) = context.as_object_mut() {
+                obj.remove("evaluation");
+            }
+        }
+    }
 }
 
 /// Recursively remove placeholder entries from a JSON value so the EVP POST
@@ -767,6 +945,120 @@ mod tests {
         assert!(evaluation["empty_array"].is_array());
     }
 
+    #[test]
+    fn build_payloads_for_post_splits_by_encoded_byte_limit() {
+        let mut batch = batch();
+        let event = batch.flag_evaluations[0].clone();
+        batch.flag_evaluations = vec![event; 3];
+
+        let one_event_limit = build_payload(&FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![batch.flag_evaluations[0].clone()],
+        })
+        .unwrap()
+        .len();
+
+        let result =
+            build_payloads_for_post(batch, one_event_limit).expect("payload build must succeed");
+
+        assert_eq!(result.dropped_oversized_events, 0);
+        assert_eq!(
+            result.payloads.len(),
+            3,
+            "the byte limit should split before a second event is appended"
+        );
+        for payload in &result.payloads {
+            assert!(
+                payload.len() <= one_event_limit,
+                "payload length {} exceeded limit {}: {}",
+                payload.len(),
+                one_event_limit,
+                payload
+            );
+        }
+    }
+
+    #[test]
+    fn build_payloads_for_post_degrades_oversized_full_event_before_drop() {
+        let mut oversized = full_event();
+        oversized.context = Some(FlagEvalEventContext {
+            evaluation: Some(
+                serde_json::json!({
+                    "blob": "x".repeat(1024),
+                })
+                .to_string(),
+            ),
+            dd: Some(ContextDD {
+                service: "frontend".to_owned(),
+            }),
+        });
+
+        let degraded = degrade_event_for_payload_limit(&oversized)
+            .expect("full event should have a degraded form");
+        let degraded_limit = build_payload(&FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![degraded],
+        })
+        .unwrap()
+        .len();
+        let full_size = build_payload(&FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![oversized.clone()],
+        })
+        .unwrap()
+        .len();
+        assert!(
+            full_size > degraded_limit,
+            "test setup must make the full event exceed the degraded limit"
+        );
+
+        let result = build_payloads_for_post(
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: vec![oversized],
+            },
+            degraded_limit,
+        )
+        .expect("payload build must succeed");
+
+        assert_eq!(result.dropped_oversized_events, 0);
+        assert_eq!(result.payloads.len(), 1);
+        assert!(result.payloads[0].len() <= degraded_limit);
+
+        let v: serde_json::Value = serde_json::from_str(&result.payloads[0]).unwrap();
+        let ev = &v["flagEvaluations"][0];
+        assert!(
+            ev.get("targeting_key").is_none(),
+            "oversized full row must omit targeting_key after degradation"
+        );
+        assert!(
+            ev.get("context").is_none(),
+            "oversized full row must omit context after degradation"
+        );
+        assert_eq!(ev["variant"]["key"], "on");
+        assert_eq!(ev["allocation"]["key"], "alloc-a");
+        assert_eq!(ev["targeting_rule"]["key"], "rule-1");
+        assert_eq!(ev["error"]["message"], "boom");
+    }
+
+    #[test]
+    fn build_payloads_for_post_drops_oversized_degraded_event() {
+        let mut oversized = degraded_event();
+        oversized.flag.key = "x".repeat(1024);
+
+        let result = build_payloads_for_post(
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: vec![oversized],
+            },
+            128,
+        )
+        .expect("payload build must succeed");
+
+        assert!(result.payloads.is_empty());
+        assert_eq!(result.dropped_oversized_events, 1);
+    }
+
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
     async fn posts_to_evp_proxy() {
@@ -813,6 +1105,38 @@ mod tests {
         batch.flag_evaluations = vec![event; MAX_EVENTS_PER_POST * 2 + 1];
 
         send_batch(&client, &ep, batch).await;
+
+        mock.assert_calls_async(3).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn send_batch_splits_posts_by_encoded_byte_limit() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH)
+                    .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
+                    .header("content-type", "application/json");
+                then.status(202);
+            })
+            .await;
+
+        let base = endpoint_for(&server);
+        let ep = flagevaluation_endpoint(&base).unwrap();
+        let client = NativeCapabilities::new_client();
+        let mut batch = batch();
+        let event = batch.flag_evaluations[0].clone();
+        batch.flag_evaluations = vec![event; 3];
+        let one_event_limit = build_payload(&FfeFlagEvaluationBatch {
+            context: context(),
+            flag_evaluations: vec![batch.flag_evaluations[0].clone()],
+        })
+        .unwrap()
+        .len();
+
+        send_batch_with_limit(&client, &ep, batch, one_event_limit).await;
 
         mock.assert_calls_async(3).await;
     }
