@@ -491,6 +491,10 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         let writers = self.0.storage.storage.writers.lock_or_panic();
         if let Some(writer) = writers.get(&target) {
             if writer.current_generation() > remote_config_generation {
+                debug!(
+                    "Notify {:?} about newer remote config changes existing",
+                    notify_target
+                );
                 notify_target.notify();
             }
         }

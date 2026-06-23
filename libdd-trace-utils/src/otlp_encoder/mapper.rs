@@ -143,15 +143,19 @@ fn proto_kv(key: String, value: ProtoValue) -> ProtoKeyValue {
 fn collect_span_attributes<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
+    otel_trace_semantics_enabled: bool,
 ) -> (Vec<ProtoKeyValue>, usize) {
     // Pre-size to avoid reallocations as attributes accumulate. Upper bound is the 4 synthetic
     // attrs plus every meta/metrics/meta_struct entry, clamped to the per-span cap.
     let capacity = (4 + span.meta.len() + span.metrics.len() + span.meta_struct.len())
         .min(MAX_ATTRIBUTES_PER_SPAN);
     let mut attrs: Vec<ProtoKeyValue> = Vec::with_capacity(capacity);
+    // With OTel-semantics enabled the DD-specific attributes are omitted: the four promoted tags
+    // below, and the `error.*`/`span.kind` meta tags (that information lives in the OTLP Status
+    // and Span.kind fields instead).
     let span_service = span.service.borrow();
     let has_per_span_service = !span_service.is_empty() && span_service != resource_service;
-    if has_per_span_service {
+    if has_per_span_service && !otel_trace_semantics_enabled {
         attrs.push(proto_kv(
             "service.name".to_string(),
             ProtoValue::StringValue(span_service.to_string()),
@@ -159,7 +163,7 @@ fn collect_span_attributes<T: TraceData>(
     }
     let operation_name = span.name.borrow();
     let has_operation_name = !operation_name.is_empty();
-    if has_operation_name {
+    if has_operation_name && !otel_trace_semantics_enabled {
         attrs.push(proto_kv(
             "operation.name".to_string(),
             ProtoValue::StringValue(operation_name.to_string()),
@@ -167,7 +171,7 @@ fn collect_span_attributes<T: TraceData>(
     }
     let span_type = span.r#type.borrow();
     let has_span_type = !span_type.is_empty();
-    if has_span_type {
+    if has_span_type && !otel_trace_semantics_enabled {
         attrs.push(proto_kv(
             "span.type".to_string(),
             ProtoValue::StringValue(span_type.to_string()),
@@ -175,7 +179,7 @@ fn collect_span_attributes<T: TraceData>(
     }
     let resource_name = span.resource.borrow();
     let has_resource_name = !resource_name.is_empty();
-    if has_resource_name {
+    if has_resource_name && !otel_trace_semantics_enabled {
         attrs.push(proto_kv(
             "resource.name".to_string(),
             ProtoValue::StringValue(resource_name.to_string()),
@@ -185,8 +189,14 @@ fn collect_span_attributes<T: TraceData>(
         if attrs.len() >= MAX_ATTRIBUTES_PER_SPAN {
             break;
         }
+        let key = k.borrow();
+        if otel_trace_semantics_enabled
+            && (key == "error.msg" || key == "error.message" || key == "span.kind")
+        {
+            continue;
+        }
         attrs.push(proto_kv(
-            k.borrow().to_string(),
+            key.to_string(),
             ProtoValue::StringValue(v.borrow().to_string()),
         ));
     }
@@ -210,11 +220,26 @@ fn collect_span_attributes<T: TraceData>(
             ProtoValue::BytesValue(v.borrow().to_vec()),
         ));
     }
-    let total = (has_per_span_service as usize)
-        + (has_operation_name as usize)
-        + (has_span_type as usize)
-        + (has_resource_name as usize)
-        + span.meta.len()
+    // Dropped-count accounting must mirror what was actually emitted: with OTel-semantics on, the
+    // promoted tags aren't added and the excluded `error.*`/`span.kind` meta tags drop out of the
+    // meta total.
+    let excluded_compat_tags = if otel_trace_semantics_enabled {
+        span.meta.contains_key("error.msg") as usize
+            + span.meta.contains_key("error.message") as usize
+            + span.meta.contains_key("span.kind") as usize
+    } else {
+        0
+    };
+    let promoted = if otel_trace_semantics_enabled {
+        0
+    } else {
+        (has_per_span_service as usize)
+            + (has_operation_name as usize)
+            + (has_span_type as usize)
+            + (has_resource_name as usize)
+    };
+    let total = promoted
+        + (span.meta.len() - excluded_compat_tags)
         + span.metrics.len()
         + span.meta_struct.len();
     let dropped = total.saturating_sub(attrs.len());
@@ -271,6 +296,7 @@ fn collect_event_attributes<T: TraceData>(ev: &SpanEvent<T>) -> Vec<ProtoKeyValu
 pub fn map_traces_to_otlp<T: TraceData>(
     trace_chunks: Vec<Vec<Span<T>>>,
     resource_info: &OtlpResourceInfo,
+    otel_trace_semantics_enabled: bool,
 ) -> ProtoReq {
     let resource = build_resource(resource_info);
     // Pre-size to the total span count so the per-span push loop never reallocates.
@@ -282,7 +308,12 @@ pub fn map_traces_to_otlp<T: TraceData>(
         // 128-bit ID there) and fall back to its RFC #85 `_dd.p.tid` meta tag.
         let high = chunk_trace_id_high(chunk);
         for span in chunk {
-            all_spans.push(map_span(span, &resource_info.service, high));
+            all_spans.push(map_span(
+                span,
+                &resource_info.service,
+                high,
+                otel_trace_semantics_enabled,
+            ));
         }
     }
     ProtoReq {
@@ -356,6 +387,7 @@ fn map_span<T: TraceData>(
     span: &Span<T>,
     resource_service: &str,
     chunk_trace_id_high: u64,
+    otel_trace_semantics_enabled: bool,
 ) -> ProtoSpan {
     // Reconstruct the full 128-bit trace ID. The caller resolves the high 64 bits once per
     // chunk (from either the native u128 `trace_id` field or the "_dd.p.tid" meta tag).
@@ -366,7 +398,8 @@ fn map_span<T: TraceData>(
     } else {
         Vec::new()
     };
-    let (attributes, dropped_attributes_count) = collect_span_attributes(span, resource_service);
+    let (attributes, dropped_attributes_count) =
+        collect_span_attributes(span, resource_service, otel_trace_semantics_enabled);
     let (code, message) = span_status(span);
     let flags = span
         .metrics
@@ -479,7 +512,7 @@ mod tests {
         );
         span.metrics
             .insert(libdd_tinybytes::BytesString::from_static("count"), 42.0);
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.trace_id, 0xD269B633813FC60C_u128.to_be_bytes().to_vec());
         assert_eq!(s.span_id, 0xEEE19B7EC3C1B174u64.to_be_bytes().to_vec());
@@ -518,7 +551,7 @@ mod tests {
             duration: 1000000000,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(
             s.trace_id,
@@ -553,7 +586,7 @@ mod tests {
             duration: 0,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(
             s.start_time_unix_nano, 0,
@@ -581,7 +614,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("error.msg"),
             libdd_tinybytes::BytesString::from_static("something broke"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let status = s.status.as_ref().unwrap();
         assert_eq!(status.code, status_code::ERROR);
@@ -606,7 +639,7 @@ mod tests {
             libdd_tinybytes::BytesString::from_static("rate"),
             std::f64::consts::PI,
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let count = s.attributes.iter().find(|a| a.key == "count").unwrap();
         assert!(matches!(
@@ -637,7 +670,7 @@ mod tests {
             "_dd.p.tid".into(),
             libdd_tinybytes::BytesString::from_static("5b8efff798038103"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(
             s.trace_id,
@@ -672,7 +705,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![root, child]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![root, child]], &resource_info, false);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         let expected = full.to_be_bytes().to_vec();
         assert_eq!(spans[0].trace_id, expected);
@@ -692,7 +725,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.trace_id, 0xD269B633813FC60C_u128.to_be_bytes().to_vec());
     }
@@ -734,7 +767,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![root, child_a, child_b]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![root, child_a, child_b]], &resource_info, false);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert_eq!(spans.len(), 3);
         let expected = 0x5b8efff798038103_d269b633813fc60c_u128
@@ -797,6 +830,7 @@ mod tests {
         let req = map_traces_to_otlp(
             vec![vec![root_a, child_a], vec![root_b, child_b]],
             &resource_info,
+            false,
         );
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert_eq!(spans.len(), 4);
@@ -853,7 +887,11 @@ mod tests {
             "_dd.p.tid".into(),
             libdd_tinybytes::BytesString::from_static("dddddddddddddddd"),
         );
-        let req = map_traces_to_otlp(vec![vec![root, child_no_tag, child_valid]], &resource_info);
+        let req = map_traces_to_otlp(
+            vec![vec![root, child_no_tag, child_valid]],
+            &resource_info,
+            false,
+        );
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         // The chunk-level scan skips the malformed root and picks up child_valid's tag,
         // which is then applied to every span in the chunk.
@@ -879,7 +917,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
         let kv = resource_attrs
             .iter()
@@ -906,7 +944,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let resource_attrs = &req.resource_spans[0].resource.as_ref().unwrap().attributes;
         assert!(
             !resource_attrs.iter().any(|a| a.key == "_dd.stats_computed"),
@@ -932,7 +970,7 @@ mod tests {
             flags: 1,
             ..Default::default()
         });
-        let req = map_traces_to_otlp(vec![vec![span]], &OtlpResourceInfo::default());
+        let req = map_traces_to_otlp(vec![vec![span]], &OtlpResourceInfo::default(), false);
         let link = &req.resource_spans[0].scope_spans[0].spans[0].links[0];
         assert_eq!(
             link.flags, 1,
@@ -941,11 +979,60 @@ mod tests {
     }
 
     #[test]
+    fn test_otel_trace_semantics_enabled() {
+        // With OTel-semantics on, the DD-promoted attributes (service.name/operation.name/
+        // resource.name/span.type) and the error.*/span.kind meta tags are omitted; other
+        // (OTel-standard) meta tags remain.
+        let resource_info = OtlpResourceInfo {
+            service: "resource-svc".to_string(),
+            ..Default::default()
+        };
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("http.request"),
+            service: libdd_tinybytes::BytesString::from_static("span-svc"),
+            resource: libdd_tinybytes::BytesString::from_static("GET /api/users"),
+            r#type: libdd_tinybytes::BytesString::from_static("web"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("span.kind"),
+            libdd_tinybytes::BytesString::from_static("client"),
+        );
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("http.method"),
+            libdd_tinybytes::BytesString::from_static("GET"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, true);
+        let attrs = &req.resource_spans[0].scope_spans[0].spans[0].attributes;
+        let keys: Vec<&str> = attrs.iter().map(|kv| kv.key.as_str()).collect();
+        for omitted in [
+            "service.name",
+            "operation.name",
+            "resource.name",
+            "span.type",
+            "span.kind",
+        ] {
+            assert!(
+                !keys.contains(&omitted),
+                "OTel-semantics must omit {omitted}"
+            );
+        }
+        assert!(
+            keys.contains(&"http.method"),
+            "OTel-standard meta tags must remain"
+        );
+    }
+
+    #[test]
     fn empty_chunk_does_not_panic() {
         // Defensive: an empty chunk should produce no spans and not panic.
         let resource_info = OtlpResourceInfo::default();
         let empty: Vec<Vec<Span<BytesData>>> = vec![vec![]];
-        let req = map_traces_to_otlp(empty, &resource_info);
+        let req = map_traces_to_otlp(empty, &resource_info, false);
         let spans = &req.resource_spans[0].scope_spans[0].spans;
         assert!(spans.is_empty());
     }
@@ -965,7 +1052,7 @@ mod tests {
             "tracestate".into(),
             libdd_tinybytes::BytesString::from_static("vendor1=abc,rojo=00f067"),
         );
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.trace_state, "vendor1=abc,rojo=00f067");
     }
@@ -985,7 +1072,7 @@ mod tests {
         };
         span.meta_struct
             .insert("my_key".into(), Bytes::from(vec![1u8, 2, 3]));
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let kv = s
             .attributes
@@ -1010,7 +1097,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let kv = s
             .attributes
@@ -1036,7 +1123,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let kv = s
             .attributes
@@ -1062,7 +1149,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         // resource maps to the OTLP span name
         assert_eq!(s.name, "GET /api/users");
@@ -1091,7 +1178,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert!(
             !s.attributes.iter().any(|a| a.key == "resource.name"),
@@ -1117,7 +1204,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         };
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         let kv = s
             .attributes
@@ -1143,7 +1230,7 @@ mod tests {
             ..Default::default()
         };
         span.metrics.insert("_sampling_priority_v1".into(), 0.0);
-        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
         let s = &req.resource_spans[0].scope_spans[0].spans[0];
         assert_eq!(s.flags, 0);
     }

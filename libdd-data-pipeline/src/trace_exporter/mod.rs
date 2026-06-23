@@ -567,8 +567,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r
         };
         // Single prost OTLP IR; the configured protocol encodes the same request to its wire
-        // format (JSON or protobuf).
-        let request = map_traces_to_otlp(traces, &resource_info);
+        // format (JSON or protobuf). OTel-semantics gating (omit DD-specific attrs) happens in
+        // the mapper.
+        let request =
+            map_traces_to_otlp(traces, &resource_info, config.otel_trace_semantics_enabled);
         let body = config.protocol.encode(&request).map_err(|e| {
             error!("OTLP serialization error: {e}");
             TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(

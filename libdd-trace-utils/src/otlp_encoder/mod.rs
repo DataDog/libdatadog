@@ -83,7 +83,7 @@ mod encode_tests {
         // Decisive guard: JSON and protobuf are encoded from the *same* prost IR, so the two
         // wire formats cannot drift.
         let (chunks, info) = sample_native();
-        let req = map_traces_to_otlp(chunks, &info);
+        let req = map_traces_to_otlp(chunks, &info, false);
         let json = encode_otlp_json(&req).unwrap();
         let pb = encode_otlp_protobuf(&req);
 
@@ -130,7 +130,7 @@ mod encode_tests {
         // would need a deserializer mirroring `json_serializer`, which this crate doesn't ship;
         // `json_and_protobuf_carry_same_span` guards that the JSON matches this same IR.)
         let (chunks, info) = sample_native();
-        let req = map_traces_to_otlp(chunks, &info);
+        let req = map_traces_to_otlp(chunks, &info, false);
         let decoded = ProtoReq::decode(encode_otlp_protobuf(&req).as_slice()).unwrap();
         assert_eq!(decoded, req);
     }

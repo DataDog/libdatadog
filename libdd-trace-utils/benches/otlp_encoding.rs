@@ -84,13 +84,13 @@ pub fn otlp_encoding_benches(c: &mut Criterion) {
     c.bench_function(&format!("otlp/map_to_prost/{id}"), |b| {
         b.iter_batched(
             || spans.clone(),
-            |s| black_box(map_traces_to_otlp(black_box(s), &info)),
+            |s| black_box(map_traces_to_otlp(black_box(s), &info, false)),
             BatchSize::SmallInput,
         )
     });
 
     // Pre-built IR for the encode-only benches (owned prost; no borrow of `bytes`).
-    let req = map_traces_to_otlp(spans.clone(), &info);
+    let req = map_traces_to_otlp(spans.clone(), &info, false);
 
     // 2) prost IR -> HTTP/protobuf bytes.
     c.bench_function(&format!("otlp/encode_protobuf/{id}"), |b| {
@@ -107,7 +107,7 @@ pub fn otlp_encoding_benches(c: &mut Criterion) {
         b.iter_batched(
             || spans.clone(),
             |s| {
-                let req = map_traces_to_otlp(s, &info);
+                let req = map_traces_to_otlp(s, &info, false);
                 black_box(encode_otlp_protobuf(&req))
             },
             BatchSize::SmallInput,
@@ -119,7 +119,7 @@ pub fn otlp_encoding_benches(c: &mut Criterion) {
         b.iter_batched(
             || spans.clone(),
             |s| {
-                let req = map_traces_to_otlp(s, &info);
+                let req = map_traces_to_otlp(s, &info, false);
                 black_box(encode_otlp_json(&req).expect("json"))
             },
             BatchSize::SmallInput,
