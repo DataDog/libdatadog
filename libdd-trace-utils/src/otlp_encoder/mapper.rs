@@ -48,14 +48,19 @@ pub mod status_code {
 
 // ─── Scalar mapping helpers ──────────────────────────────────────────────────
 
-/// OTLP status (code, optional message) for a span. ERROR with `error.msg` when `span.error != 0`,
-/// otherwise UNSET.
+/// OTLP status (code, optional message) for a span. ERROR with the error message when
+/// `span.error != 0`, otherwise UNSET. A span carries at most one of `error.msg` / `error.message`
+/// (`error.message` is used by all SDKs except .NET, which uses `error.msg`), so promote whichever
+/// is present — under OTel-semantics `collect_span_attributes` drops both compat tags since the
+/// message now lives in `Status`.
 fn span_status<T: TraceData>(span: &Span<T>) -> (i32, Option<String>) {
     if span.error != 0 {
-        (
-            status_code::ERROR,
-            span.meta.get("error.msg").map(|v| v.borrow().to_string()),
-        )
+        let message = span
+            .meta
+            .get("error.msg")
+            .or_else(|| span.meta.get("error.message"))
+            .map(|v| v.borrow().to_string());
+        (status_code::ERROR, message)
     } else {
         (status_code::UNSET, None)
     }
@@ -1024,6 +1029,45 @@ mod tests {
         assert!(
             keys.contains(&"http.method"),
             "OTel-standard meta tags must remain"
+        );
+    }
+
+    #[test]
+    fn error_message_promoted_to_status_under_otel_semantics() {
+        // Regression: `error.message` (used by every SDK except .NET) must be promoted to the OTLP
+        // Status message even when OTel-semantics drops the compat meta tag — otherwise the error
+        // text is lost entirely (neither in Status nor in the attributes).
+        let resource_info = OtlpResourceInfo::default();
+        let mut span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("op"),
+            start: 0,
+            duration: 1,
+            error: 1,
+            ..Default::default()
+        };
+        span.meta.insert(
+            libdd_tinybytes::BytesString::from_static("error.message"),
+            libdd_tinybytes::BytesString::from_static("boom"),
+        );
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, true);
+        let otlp_span = &req.resource_spans[0].scope_spans[0].spans[0];
+        let status = otlp_span
+            .status
+            .as_ref()
+            .expect("status present on error span");
+        assert_eq!(status.code, status_code::ERROR);
+        assert_eq!(
+            status.message, "boom",
+            "error.message must be promoted to the OTLP Status message"
+        );
+        assert!(
+            !otlp_span
+                .attributes
+                .iter()
+                .any(|kv| kv.key == "error.message"),
+            "error.message compat attr must be omitted under OTel-semantics"
         );
     }
 
