@@ -19,6 +19,7 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -32,10 +33,80 @@ const MAX_PENDING_BUCKETS: usize = GLOBAL_CAP + DEGRADED_CAP;
 const MAX_EVENTS_PER_POST: usize = 512;
 const EVP_PAYLOAD_SIZE_LIMIT: usize = 5 * 1024 * 1024;
 
+pub(crate) const FLAG_EVALUATION_ROWS_DROPPED_METRIC: &str = "flagevaluation.rows.dropped";
+pub(crate) const FLAG_EVALUATION_ROWS_DEGRADED_METRIC: &str = "flagevaluation.rows.degraded";
+pub(crate) const FLAG_EVALUATION_PAYLOAD_SPLITS_METRIC: &str = "flagevaluation.payload.splits";
+
+pub(crate) const FLAG_EVALUATION_REASON_DEGRADED_CAP: &str = "degraded_cap";
+pub(crate) const FLAG_EVALUATION_REASON_CARDINALITY_CAP: &str = "cardinality_cap";
+pub(crate) const FLAG_EVALUATION_REASON_PAYLOAD_LIMIT: &str = "payload_limit";
+
 #[derive(Default)]
 struct PayloadBuildResult {
     payloads: Vec<String>,
-    dropped_oversized_events: u64,
+    dropped_oversized_rows: u64,
+    degraded_oversized_rows: u64,
+    payload_splits: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct FlagEvaluationTelemetryMetrics {
+    pub(crate) rows_dropped_degraded_cap: u64,
+    pub(crate) rows_dropped_payload_limit: u64,
+    pub(crate) rows_degraded_cardinality_cap: u64,
+    pub(crate) rows_degraded_payload_limit: u64,
+    pub(crate) payload_splits: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct FlagEvaluationTelemetryCounters {
+    rows_dropped_degraded_cap: AtomicU64,
+    rows_dropped_payload_limit: AtomicU64,
+    rows_degraded_cardinality_cap: AtomicU64,
+    rows_degraded_payload_limit: AtomicU64,
+    payload_splits: AtomicU64,
+}
+
+impl FlagEvaluationTelemetryCounters {
+    fn add_rows_dropped_degraded_cap(&self, count: u64) {
+        add_counter(&self.rows_dropped_degraded_cap, count);
+    }
+
+    fn add_rows_dropped_payload_limit(&self, count: u64) {
+        add_counter(&self.rows_dropped_payload_limit, count);
+    }
+
+    fn add_rows_degraded_cardinality_cap(&self, count: u64) {
+        add_counter(&self.rows_degraded_cardinality_cap, count);
+    }
+
+    fn add_rows_degraded_payload_limit(&self, count: u64) {
+        add_counter(&self.rows_degraded_payload_limit, count);
+    }
+
+    fn add_payload_splits(&self, count: u64) {
+        add_counter(&self.payload_splits, count);
+    }
+
+    pub(crate) fn collect_metrics(&self) -> FlagEvaluationTelemetryMetrics {
+        FlagEvaluationTelemetryMetrics {
+            rows_dropped_degraded_cap: self.rows_dropped_degraded_cap.swap(0, Ordering::Relaxed),
+            rows_dropped_payload_limit: self.rows_dropped_payload_limit.swap(0, Ordering::Relaxed),
+            rows_degraded_cardinality_cap: self
+                .rows_degraded_cardinality_cap
+                .swap(0, Ordering::Relaxed),
+            rows_degraded_payload_limit: self
+                .rows_degraded_payload_limit
+                .swap(0, Ordering::Relaxed),
+            payload_splits: self.payload_splits.swap(0, Ordering::Relaxed),
+        }
+    }
+}
+
+fn add_counter(counter: &AtomicU64, count: u64) {
+    if count > 0 {
+        counter.fetch_add(count, Ordering::Relaxed);
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -128,6 +199,7 @@ struct CoalescerState {
 #[derive(Clone, Default)]
 pub(crate) struct FlagEvaluationCoalescer {
     state: Arc<Mutex<CoalescerState>>,
+    metrics: Arc<FlagEvaluationTelemetryCounters>,
 }
 
 impl FlagEvaluationCoalescer {
@@ -175,20 +247,26 @@ impl FlagEvaluationCoalescer {
 
             event.targeting_key = None;
             event.context = None;
+            let evaluation_count = event.evaluation_count;
             let degraded_key = EventKey::degraded(&event);
             if merge_pending_event(&mut state, &destination_key, &degraded_key, &event) {
+                self.metrics
+                    .add_rows_degraded_cardinality_cap(evaluation_count);
                 continue;
             }
 
             if state.degraded_bucket_count >= DEGRADED_CAP
                 || state.pending_bucket_count >= MAX_PENDING_BUCKETS
             {
-                state.dropped_overflow = state.dropped_overflow.saturating_add(1);
+                state.dropped_overflow = state.dropped_overflow.saturating_add(evaluation_count);
+                self.metrics.add_rows_dropped_degraded_cap(evaluation_count);
                 continue;
             }
 
             if insert_pending_event(&mut state, &destination_key, degraded_key, event) {
                 state.degraded_bucket_count += 1;
+                self.metrics
+                    .add_rows_degraded_cardinality_cap(evaluation_count);
             }
         }
 
@@ -205,7 +283,8 @@ impl FlagEvaluationCoalescer {
         let batches = self.take_batches();
         futures::future::join_all(batches.into_iter().map(|(endpoint, batch)| {
             let client = client.clone();
-            async move { send_batch(&client, &endpoint, batch).await }
+            let metrics = Arc::clone(&self.metrics);
+            async move { send_batch_with_metrics(&client, &endpoint, batch, &metrics).await }
         }))
         .await;
     }
@@ -216,7 +295,8 @@ impl FlagEvaluationCoalescer {
             let batches = self.take_batches();
             futures::future::join_all(batches.into_iter().map(|(endpoint, batch)| {
                 let client = client.clone();
-                async move { send_batch(&client, &endpoint, batch).await }
+                let metrics = Arc::clone(&self.metrics);
+                async move { send_batch_with_metrics(&client, &endpoint, batch, &metrics).await }
             }))
             .await;
 
@@ -258,6 +338,10 @@ impl FlagEvaluationCoalescer {
                 ))
             })
             .collect()
+    }
+
+    pub(crate) fn collect_metrics(&self) -> FlagEvaluationTelemetryMetrics {
+        self.metrics.collect_metrics()
     }
 }
 
@@ -315,12 +399,29 @@ pub(crate) fn flagevaluation_endpoint(base: &Endpoint) -> Option<Endpoint> {
 /// POST a structured FFE flag evaluation batch to the agent EVP proxy.
 /// Fire-and-forget: non-2xx responses are logged at `warn`, network errors at
 /// `debug`, and dropped (matches dd-trace-go behaviour).
-pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
+#[cfg(test)]
+async fn send_batch<C: HttpClientCapability + SleepCapability>(
     client: &C,
     endpoint: &Endpoint,
     batch: FfeFlagEvaluationBatch,
 ) {
-    send_batch_with_limit(client, endpoint, batch, EVP_PAYLOAD_SIZE_LIMIT).await;
+    send_batch_with_limit(client, endpoint, batch, EVP_PAYLOAD_SIZE_LIMIT, None).await;
+}
+
+async fn send_batch_with_metrics<C: HttpClientCapability + SleepCapability>(
+    client: &C,
+    endpoint: &Endpoint,
+    batch: FfeFlagEvaluationBatch,
+    metrics: &FlagEvaluationTelemetryCounters,
+) {
+    send_batch_with_limit(
+        client,
+        endpoint,
+        batch,
+        EVP_PAYLOAD_SIZE_LIMIT,
+        Some(metrics),
+    )
+    .await;
 }
 
 async fn send_batch_with_limit<C: HttpClientCapability + SleepCapability>(
@@ -328,6 +429,7 @@ async fn send_batch_with_limit<C: HttpClientCapability + SleepCapability>(
     endpoint: &Endpoint,
     batch: FfeFlagEvaluationBatch,
     payload_size_limit: usize,
+    metrics: Option<&FlagEvaluationTelemetryCounters>,
 ) {
     let result = match build_payloads_for_post(batch, payload_size_limit) {
         Ok(result) => result,
@@ -337,10 +439,16 @@ async fn send_batch_with_limit<C: HttpClientCapability + SleepCapability>(
         }
     };
 
-    if result.dropped_oversized_events > 0 {
+    if let Some(metrics) = metrics {
+        metrics.add_rows_dropped_payload_limit(result.dropped_oversized_rows);
+        metrics.add_rows_degraded_payload_limit(result.degraded_oversized_rows);
+        metrics.add_payload_splits(result.payload_splits);
+    }
+
+    if result.dropped_oversized_rows > 0 {
         warn!(
-            "ffe_flagevaluation_flusher: dropped {} flag evaluation event(s) because they exceeded the {} byte EVP payload limit after degradation",
-            result.dropped_oversized_events,
+            "ffe_flagevaluation_flusher: dropped {} flag evaluation row(s) because they exceeded the {} byte EVP payload limit after degradation",
+            result.dropped_oversized_rows,
             payload_size_limit
         );
     }
@@ -390,19 +498,26 @@ fn build_payloads_for_post(
         let mut event_size = encoded_event.len();
         if !single_event_fits(base_payload_size, event_size, payload_size_limit) {
             let Some(degraded_event) = degrade_event_for_payload_limit(&event) else {
-                result.dropped_oversized_events = result.dropped_oversized_events.saturating_add(1);
+                result.dropped_oversized_rows = result
+                    .dropped_oversized_rows
+                    .saturating_add(event.evaluation_count);
                 continue;
             };
 
             let degraded_encoded_event = build_event_payload(&degraded_event)?;
             let degraded_event_size = degraded_encoded_event.len();
             if !single_event_fits(base_payload_size, degraded_event_size, payload_size_limit) {
-                result.dropped_oversized_events = result.dropped_oversized_events.saturating_add(1);
+                result.dropped_oversized_rows = result
+                    .dropped_oversized_rows
+                    .saturating_add(event.evaluation_count);
                 continue;
             }
 
             encoded_event = degraded_encoded_event;
             event_size = degraded_event_size;
+            result.degraded_oversized_rows = result
+                .degraded_oversized_rows
+                .saturating_add(degraded_event.evaluation_count);
         }
 
         let separator_size = usize::from(!current_events.is_empty());
@@ -416,6 +531,7 @@ fn build_payloads_for_post(
                 &mut current_events,
             );
             current_size = base_payload_size;
+            result.payload_splits = result.payload_splits.saturating_add(1);
         }
 
         let separator_size = usize::from(!current_events.is_empty());
@@ -429,6 +545,11 @@ fn build_payloads_for_post(
         payload_suffix,
         &mut current_events,
     );
+    if result.payloads.len() > 1 {
+        result.payload_splits = result
+            .payload_splits
+            .max(result.payloads.len().saturating_sub(1) as u64);
+    }
 
     Ok(result)
 }
@@ -961,7 +1082,9 @@ mod tests {
         let result =
             build_payloads_for_post(batch, one_event_limit).expect("payload build must succeed");
 
-        assert_eq!(result.dropped_oversized_events, 0);
+        assert_eq!(result.dropped_oversized_rows, 0);
+        assert_eq!(result.degraded_oversized_rows, 0);
+        assert_eq!(result.payload_splits, result.payloads.len() as u64 - 1);
         assert_eq!(
             result.payloads.len(),
             3,
@@ -1021,7 +1144,9 @@ mod tests {
         )
         .expect("payload build must succeed");
 
-        assert_eq!(result.dropped_oversized_events, 0);
+        assert_eq!(result.dropped_oversized_rows, 0);
+        assert_eq!(result.degraded_oversized_rows, 42);
+        assert_eq!(result.payload_splits, 0);
         assert_eq!(result.payloads.len(), 1);
         assert!(result.payloads[0].len() <= degraded_limit);
 
@@ -1056,7 +1181,9 @@ mod tests {
         .expect("payload build must succeed");
 
         assert!(result.payloads.is_empty());
-        assert_eq!(result.dropped_oversized_events, 1);
+        assert_eq!(result.dropped_oversized_rows, 7);
+        assert_eq!(result.degraded_oversized_rows, 0);
+        assert_eq!(result.payload_splits, 0);
     }
 
     #[tokio::test]
@@ -1136,7 +1263,7 @@ mod tests {
         .unwrap()
         .len();
 
-        send_batch_with_limit(&client, &ep, batch, one_event_limit).await;
+        send_batch_with_limit(&client, &ep, batch, one_event_limit, None).await;
 
         mock.assert_calls_async(3).await;
     }
@@ -1228,6 +1355,41 @@ mod tests {
                 .map(|rule| rule.key.as_str()),
             Some("rule-1")
         );
+
+        let metrics = coalescer.collect_metrics();
+        assert_eq!(metrics.rows_degraded_cardinality_cap, 50);
+        assert_eq!(metrics.rows_dropped_degraded_cap, 0);
+    }
+
+    #[test]
+    fn coalescer_counts_degraded_cap_drops_by_evaluation_count() {
+        let endpoint = Endpoint {
+            url: "http://agent:8126".parse().unwrap(),
+            ..Endpoint::default()
+        };
+        let ep = flagevaluation_endpoint(&endpoint).unwrap();
+        let coalescer = FlagEvaluationCoalescer::default();
+        {
+            let mut state = coalescer.state.lock().unwrap();
+            state.flush_running = true;
+            state.full_bucket_count = GLOBAL_CAP;
+            state.degraded_bucket_count = DEGRADED_CAP;
+        }
+        let mut event = full_event();
+        event.evaluation_count = 9;
+
+        coalescer.enqueue(
+            NativeCapabilities::new_client(),
+            ep,
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: vec![event],
+            },
+        );
+
+        let metrics = coalescer.collect_metrics();
+        assert_eq!(metrics.rows_dropped_degraded_cap, 9);
+        assert_eq!(metrics.rows_degraded_cardinality_cap, 0);
     }
 
     #[tokio::test]
