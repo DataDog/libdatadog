@@ -236,17 +236,58 @@ impl Config {
         self.endpoint.as_ref()
     }
 
-    pub fn set_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
-        self.endpoint = Some(endpoint_with_telemetry_path(
-            endpoint,
-            self.direct_submission_enabled,
-        )?);
+    /// Rewrites the endpoint path to the telemetry path appropriate for the
+    /// current scheme, API key and direct-submission setting. Called by the
+    /// setters that can affect it (URL and API key).
+    fn apply_telemetry_path(&mut self) -> anyhow::Result<()> {
+        if let Some(endpoint) = self.endpoint.take() {
+            self.endpoint = Some(endpoint_with_telemetry_path(
+                endpoint,
+                self.direct_submission_enabled,
+            )?);
+        }
         Ok(())
     }
 
+    /// Sets the endpoint URL from a string (`http(s)://`, `unix://`, `windows:`
+    /// or `file://`). Use [`Config::set_endpoint_uri`] if you already hold a
+    /// parsed [`Uri`] to avoid re-parsing.
+    pub fn set_endpoint_url(&mut self, url: &str) -> anyhow::Result<()> {
+        self.set_endpoint_uri(parse_uri(url)?)
+    }
+
+    /// Sets the endpoint URL from an already-parsed [`Uri`].
+    pub fn set_endpoint_uri(&mut self, uri: Uri) -> anyhow::Result<()> {
+        self.endpoint.get_or_insert_with(Endpoint::default).url = uri;
+        self.apply_telemetry_path()
+    }
+
+    /// Sets (or, with `None`, clears) the endpoint API key.
+    pub fn set_endpoint_api_key(&mut self, api_key: Option<&str>) -> anyhow::Result<()> {
+        self.endpoint.get_or_insert_with(Endpoint::default).api_key =
+            api_key.map(|key| Cow::Owned(key.to_string()));
+        self.apply_telemetry_path()
+    }
+
+    /// Sets the endpoint request timeout in milliseconds.
+    pub fn set_endpoint_timeout_ms(&mut self, timeout_ms: u64) {
+        if let Some(endpoint) = &mut self.endpoint {
+            endpoint.timeout_ms = timeout_ms;
+        }
+    }
+
+    /// Sets (or, with `None`, clears) the `X-Datadog-Test-Session-Token` header
+    /// sent with requests.
     pub fn set_endpoint_test_token<T: Into<Cow<'static, str>>>(&mut self, test_token: Option<T>) {
         if let Some(endpoint) = &mut self.endpoint {
-            endpoint.test_token = test_token.map(|t| t.into());
+            endpoint.test_token = test_token.map(|token| token.into());
+        }
+    }
+
+    /// Sets whether to use the system DNS resolver when building the HTTP client.
+    pub fn set_endpoint_use_system_resolver(&mut self, use_system_resolver: bool) {
+        if let Some(endpoint) = &mut self.endpoint {
+            endpoint.use_system_resolver = use_system_resolver;
         }
     }
 
@@ -266,14 +307,9 @@ impl Config {
             parent_session_id: None,
             root_session_id: None,
         };
-        if let Ok(url) = parse_uri(&trace_agent_url) {
-            let _res = this.set_endpoint(Endpoint {
-                url,
-                api_key,
-                ..Default::default()
-            });
-        }
 
+        _ = this.set_endpoint_api_key(api_key.as_deref());
+        _ = this.set_endpoint_url(&trace_agent_url);
         this
     }
 
@@ -294,12 +330,7 @@ impl Config {
     ///  If the host_url is http/https, any path will be ignored and replaced by the
     /// appropriate telemetry endpoint path
     pub fn set_host_from_url(&mut self, host_url: &str) -> anyhow::Result<()> {
-        let endpoint = self.endpoint.take().unwrap_or_default();
-
-        self.set_endpoint(Endpoint {
-            url: parse_uri(host_url)?,
-            ..endpoint
-        })
+        self.set_endpoint_url(host_url)
     }
 }
 

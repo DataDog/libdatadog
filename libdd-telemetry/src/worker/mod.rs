@@ -1307,7 +1307,7 @@ mod tests {
         LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
         TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
-    use libdd_common::{http_common, Endpoint};
+    use libdd_common::http_common;
     use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
@@ -1333,9 +1333,7 @@ mod tests {
             "1".into(),
             "tv".into(),
         );
-        b.config
-            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
-            .unwrap();
+        b.config.set_endpoint_url("http://127.0.0.1:1").unwrap();
         b.runtime_id = Some("rid".into());
         b.config.session_id = session_id;
         b.config.parent_session_id = parent_session_id;
@@ -1467,9 +1465,7 @@ mod tests {
             "1".into(),
             "tv".into(),
         );
-        b.config
-            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
-            .unwrap();
+        b.config.set_endpoint_url("http://127.0.0.1:1").unwrap();
         b.runtime_id = Some("rid".into());
         b.flavor = flavor;
         b.build_worker(Some(tokio::runtime::Handle::current())).1
@@ -1795,7 +1791,6 @@ mod tests {
     #[test]
     fn test_channel_close_flushes_and_parks_via_shared_runtime() {
         use httpmock::prelude::*;
-        use libdd_common::Endpoint;
         use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
         use std::time::Duration;
 
@@ -1814,10 +1809,7 @@ mod tests {
             "1".into(),
             "tv".into(),
         );
-        builder
-            .config
-            .set_endpoint(Endpoint::from_slice(&server.url("/")))
-            .unwrap();
+        builder.config.set_endpoint_url(&server.url("/")).unwrap();
         builder.runtime_id = Some("rid".into());
 
         let shared_runtime = ForkSafeRuntime::new().expect("ForkSafeRuntime::new");

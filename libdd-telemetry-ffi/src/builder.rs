@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ffi::slice::AsBytes;
-use libdd_common::Endpoint;
 use libdd_common_ffi as ffi;
 use libdd_telemetry::{
     data,
@@ -155,14 +154,60 @@ pub unsafe extern "C" fn ddog_telemetry_builder_run_metric_logs(
     MaybeError::None
 }
 
+/// Applies endpoint settings to the builder's telemetry config from primitive
+/// values, so `libdd_common::Endpoint` stays out of this crate's public API.
+///
+/// `api_key` and `test_token` are treated as unset when empty; a `timeout_ms` of
+/// 0 keeps the existing/default timeout.
+fn set_builder_endpoint(
+    telemetry_builder: &mut TelemetryWorkerBuilder,
+    url: ffi::CharSlice,
+    api_key: ffi::CharSlice,
+    timeout_ms: u64,
+    test_token: ffi::CharSlice,
+    use_system_resolver: bool,
+) -> ffi::MaybeError {
+    let url = try_c!(url.try_to_utf8());
+    let api_key = api_key.to_utf8_lossy();
+    let test_token = test_token.to_utf8_lossy();
+    let config = &mut telemetry_builder.config;
+    // Set the api key before the url so the telemetry path is resolved correctly.
+    if !api_key.is_empty() {
+        try_c!(config.set_endpoint_api_key(Some(api_key.as_ref())));
+    }
+    try_c!(config.set_endpoint_url(url));
+    if timeout_ms != 0 {
+        config.set_endpoint_timeout_ms(timeout_ms);
+    }
+    if !test_token.is_empty() {
+        config.set_endpoint_test_token(Some(test_token.into_owned()));
+    }
+    config.set_endpoint_use_system_resolver(use_system_resolver);
+    ffi::MaybeError::None
+}
+
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
+/// Sets the telemetry endpoint from its component parts.
+///
+/// * `api_key` / `test_token`: ignored when empty.
+/// * `timeout_ms`: pass 0 to keep the existing/default timeout.
 pub unsafe extern "C" fn ddog_telemetry_builder_with_endpoint_config_endpoint(
     telemetry_builder: &mut TelemetryWorkerBuilder,
-    endpoint: &Endpoint,
+    url: ffi::CharSlice,
+    api_key: ffi::CharSlice,
+    timeout_ms: u64,
+    test_token: ffi::CharSlice,
+    use_system_resolver: bool,
 ) -> ffi::MaybeError {
-    try_c!(telemetry_builder.config.set_endpoint(endpoint.clone()));
-    ffi::MaybeError::None
+    set_builder_endpoint(
+        telemetry_builder,
+        url,
+        api_key,
+        timeout_ms,
+        test_token,
+        use_system_resolver,
+    )
 }
 #[repr(C)]
 #[allow(dead_code)]
@@ -172,7 +217,7 @@ pub enum TelemetryWorkerBuilderEndpointProperty {
 
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-/// Sets a property from it's string value.
+/// Sets the endpoint property from its component parts.
 ///
 /// Available properties:
 ///
@@ -180,14 +225,24 @@ pub enum TelemetryWorkerBuilderEndpointProperty {
 pub unsafe extern "C" fn ddog_telemetry_builder_with_property_endpoint(
     telemetry_builder: &mut TelemetryWorkerBuilder,
     _property: TelemetryWorkerBuilderEndpointProperty,
-    endpoint: &Endpoint,
+    url: ffi::CharSlice,
+    api_key: ffi::CharSlice,
+    timeout_ms: u64,
+    test_token: ffi::CharSlice,
+    use_system_resolver: bool,
 ) -> ffi::MaybeError {
-    try_c!(telemetry_builder.config.set_endpoint(endpoint.clone()));
-    ffi::MaybeError::None
+    set_builder_endpoint(
+        telemetry_builder,
+        url,
+        api_key,
+        timeout_ms,
+        test_token,
+        use_system_resolver,
+    )
 }
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
-/// Sets a property from it's string value.
+/// Sets a named endpoint property from its component parts.
 ///
 /// Available properties:
 ///
@@ -195,15 +250,23 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_property_endpoint(
 pub unsafe extern "C" fn ddog_telemetry_builder_with_endpoint_named_property(
     telemetry_builder: &mut TelemetryWorkerBuilder,
     property: ffi::CharSlice,
-    endpoint: &Endpoint,
+    url: ffi::CharSlice,
+    api_key: ffi::CharSlice,
+    timeout_ms: u64,
+    test_token: ffi::CharSlice,
+    use_system_resolver: bool,
 ) -> ffi::MaybeError {
     let property = try_c!(property.try_to_utf8());
 
     match property {
-        "config . endpoint" => {
-            try_c!(telemetry_builder.config.set_endpoint(endpoint.clone()));
-        }
-        _ => return ffi::MaybeError::None,
+        "config . endpoint" => set_builder_endpoint(
+            telemetry_builder,
+            url,
+            api_key,
+            timeout_ms,
+            test_token,
+            use_system_resolver,
+        ),
+        _ => ffi::MaybeError::None,
     }
-    ffi::MaybeError::None
 }

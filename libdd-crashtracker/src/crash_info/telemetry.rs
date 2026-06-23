@@ -202,7 +202,12 @@ impl TelemetryCrashUploader {
                     .context("file path is not valid")?;
                 cfg.set_host_from_url(&format!("file://{}.telemetry", path.display()))
             } else {
-                cfg.set_endpoint(endpoint.clone())
+                cfg.set_endpoint_timeout_ms(endpoint.timeout_ms);
+                cfg.set_endpoint_test_token(endpoint.test_token.clone());
+                cfg.set_endpoint_use_system_resolver(endpoint.use_system_resolver);
+                // Set the api key before the uri so the telemetry path is resolved correctly.
+                cfg.set_endpoint_api_key(endpoint.api_key.as_deref())
+                    .and_then(|()| cfg.set_endpoint_uri(endpoint.url.clone()))
             };
         }
 

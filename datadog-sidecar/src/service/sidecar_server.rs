@@ -709,7 +709,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 libdd_telemetry::config::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
-            cfg.set_endpoint(endpoint).ok();
+            // Set the api key before the uri so the telemetry path is resolved correctly.
+            cfg.set_endpoint_api_key(endpoint.api_key.as_deref()).ok();
+            cfg.set_endpoint_uri(endpoint.url.clone()).ok();
+            cfg.set_endpoint_timeout_ms(endpoint.timeout_ms);
+            cfg.set_endpoint_test_token(endpoint.test_token.clone());
+            cfg.set_endpoint_use_system_resolver(endpoint.use_system_resolver);
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             cfg.telemetry_extended_heartbeat_interval =
                 config.telemetry_extended_heartbeat_interval;
