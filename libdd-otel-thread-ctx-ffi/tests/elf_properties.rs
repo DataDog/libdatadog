@@ -1,7 +1,10 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Verify ELF properties of the built cdylib on Linux.
+//! Verify ELF properties of the shared library built on Linux. Running the sanity check in
+//! [libdd_otel_thread_ctx] directly in a Rust test would exercise the static linking case. This
+//! test rather checks that the dynamic library is properly linked, which is why it lives within the
+//! FFI.
 //!
 //! Delegates to [`libdd_otel_thread_ctx::autocheck::check_tls_slot_in`] which
 //! checks that:
