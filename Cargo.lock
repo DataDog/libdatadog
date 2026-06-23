@@ -695,7 +695,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1386,7 +1386,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe-test-suite"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -1479,7 +1479,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1562,6 +1562,7 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-common-ffi",
+ "libdd-crashtracker",
  "libdd-crashtracker-ffi",
  "libdd-dogstatsd-client",
  "libdd-remote-config",
@@ -2432,7 +2433,6 @@ dependencies = [
  "hyper",
  "hyper-util",
  "rustls",
- "rustls-native-certs",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
@@ -2813,7 +2813,7 @@ checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libdd-agent-client"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2863,7 +2863,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "4.2.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2894,6 +2894,7 @@ dependencies = [
  "reqwest",
  "rustls",
  "rustls-native-certs",
+ "rustls-platform-verifier",
  "serde",
  "static_assertions",
  "tempfile",
@@ -2906,7 +2907,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2959,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3001,6 +3002,7 @@ dependencies = [
  "libdd-shared-runtime",
  "libdd-telemetry",
  "libdd-tinybytes",
+ "libdd-trace-normalization",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-stats",
@@ -3020,7 +3022,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3039,14 +3041,17 @@ dependencies = [
 name = "libdd-ddsketch"
 version = "1.0.1"
 dependencies = [
+ "criterion",
  "prost",
  "prost-build",
  "protoc-bin-vendored",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
 ]
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3068,7 +3073,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3139,7 +3144,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3249,12 +3254,13 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "futures",
  "futures-util",
+ "hashbrown 0.15.1",
  "http",
  "http-body-util",
  "hyper",
@@ -3267,6 +3273,8 @@ dependencies = [
  "serde_json",
  "serde_with",
  "sha2",
+ "strum",
+ "strum_macros",
  "thiserror 2.0.17",
  "time",
  "tokio",
@@ -3305,7 +3313,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3342,7 +3350,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3471,9 +3479,11 @@ dependencies = [
  "rmp",
  "rmp-serde",
  "rmpv",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tempfile",
+ "thin-vec",
  "tokio",
  "tracing",
  "urlencoding",
@@ -5605,7 +5615,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -5769,6 +5779,12 @@ dependencies = [
  "spawn_worker",
  "tempfile",
 ]
+
+[[package]]
+name = "thin-vec"
+version = "0.2.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0f7e269b48f0a7dd0146680fa24b50cc67fc0373f086a5b2f99bd084639b482"
 
 [[package]]
 name = "thiserror"
@@ -6047,7 +6063,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "35.0.0"
+version = "36.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

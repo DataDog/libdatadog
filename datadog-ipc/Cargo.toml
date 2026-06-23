@@ -68,3 +68,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(polyfill_glibc_memfd)'] }
 
 [features]
 tiny-bytes = ["libdd-tinybytes"]
+# Wake `OneWayShmReader::wait_for_change` via a futex on the generation word
+# (Linux only). Without this, the wait falls back to a timed poll.
+one_way_shm_futex = []

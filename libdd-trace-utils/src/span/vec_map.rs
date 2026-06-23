@@ -183,6 +183,30 @@ impl<K, V> VecMap<K, V> {
     pub fn is_deduped(&self) -> bool {
         self.deduped
     }
+
+    /// Assert, without scanning, that this map holds no duplicate keys, setting the `deduped` flag.
+    ///
+    /// For builders whose source guarantees key uniqueness (e.g. msgpack decoding, where the wire
+    /// format is a map), to skip the [Self::dedup] pass. A later mutation re-dirties the flag.
+    ///
+    /// **Caution**: if the source can actually contain duplicate keys, prefer [Self::dedup].
+    #[inline]
+    pub fn mark_deduped(&mut self) {
+        self.deduped = true;
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.data.clear()
+    }
+
+    #[inline]
+    pub fn drain<R: std::ops::RangeBounds<usize>>(
+        &mut self,
+        range: R,
+    ) -> std::vec::Drain<'_, (K, V)> {
+        self.data.drain(range)
+    }
 }
 
 impl<K: Eq + Hash, V> VecMap<K, V> {
