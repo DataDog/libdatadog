@@ -570,6 +570,7 @@ fn collect_and_add_thread_contexts(
 
     let incomplete = stream_thread_contexts(
         parent_pid,
+        crashing_tid,
         config.max_threads(),
         budget,
         config.resolve_frames(),

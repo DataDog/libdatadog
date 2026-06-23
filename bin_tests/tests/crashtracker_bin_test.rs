@@ -426,9 +426,9 @@ fn test_crash_tracking_thread_limit() {
             .expect("error.threads should be a JSON array of thread objects");
 
         assert!(
-            thread_array.len() > THREAD_COUNT,
-            "expected at least {} thread entries (1 crashed + {THREAD_COUNT} workers), got {}",
-            THREAD_COUNT + 1,
+            thread_array.len() == THREAD_COUNT,
+            "expected {} thread entries ({THREAD_COUNT} workers), got {}",
+            THREAD_COUNT,
             thread_array.len(),
         );
 

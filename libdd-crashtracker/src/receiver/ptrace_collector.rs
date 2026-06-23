@@ -374,6 +374,10 @@ const STOP_TIMEOUT_PER_THREAD: Duration = Duration::from_millis(50);
 /// For each thread in the process the callback receives the TID and an optional
 /// `CapturedThreadContext` (None if attachment or unwinding failed).
 ///
+/// The `crashing_tid` is always processed first (regardless of `/proc` iteration
+/// order) to guarantee it appears in the output even when the `max_threads` cap
+/// truncates collection.
+///
 /// Two deadlines bound collection:
 /// - An *overall* deadline derived from `timeout`, shared across all threads.
 /// - A *per-thread stop* deadline of at most `STOP_TIMEOUT_PER_THREAD` (capped at the overall
@@ -384,6 +388,7 @@ const STOP_TIMEOUT_PER_THREAD: Duration = Duration::from_millis(50);
 /// threads that were not visited.
 pub fn stream_thread_contexts<F>(
     parent_pid: libc::pid_t,
+    crashing_tid: libc::pid_t,
     max_threads: usize,
     timeout: Duration,
     resolve_frames: crate::StacktraceCollection,
@@ -405,7 +410,19 @@ where
         return Ok(true); // treat as incomplete; nothing was collected
     };
 
+    // Process the crashing thread first so it is never dropped by the cap.
+    if crashing_tid != 0 && tids.contains(&crashing_tid) {
+        let stop_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
+        let context =
+            capture_thread_context(crashing_tid, resolve_frames, addr_space, stop_deadline).ok();
+        callback(crashing_tid, context.as_ref());
+        processed += 1;
+    }
+
     for tid in tids {
+        if tid == crashing_tid {
+            continue;
+        }
         let now = Instant::now();
         if now >= overall_deadline || processed >= max_threads {
             break;
@@ -532,13 +549,15 @@ mod tests {
         let mut collected = 0usize;
         let _ = stream_thread_contexts(
             std::process::id() as libc::pid_t,
+            current_tid(),
             2,
             Duration::from_secs(5),
             crate::StacktraceCollection::Disabled,
             |_tid, _ctx| collected += 1,
         );
 
-        assert!(collected <= 2, "collected {collected}, expected <= 2");
+        // max_threads=2 but crashing_tid is always included, so up to 3
+        assert!(collected <= 3, "collected {collected}, expected <= 3");
         for h in handles {
             h.join().unwrap();
         }
@@ -563,6 +582,7 @@ mod tests {
         let self_tid = current_tid();
         let _ = stream_thread_contexts(
             std::process::id() as libc::pid_t,
+            self_tid,
             64,
             Duration::from_secs(5),
             crate::StacktraceCollection::Disabled,
