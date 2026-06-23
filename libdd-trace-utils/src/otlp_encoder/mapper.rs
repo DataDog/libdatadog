@@ -292,7 +292,7 @@ fn collect_event_attributes<T: TraceData>(ev: &SpanEvent<T>) -> Vec<ProtoKeyValu
 /// runtime-id). InstrumentationScope: present but empty (DD SDKs don't have a scope concept).
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
-/// meta["error.msg"].
+/// meta["error.msg"] or meta["error.message"].
 ///
 /// The high 64 bits of a 128-bit trace ID are carried in the trace_id field itself or (if not
 /// present) as the `_dd.p.tid` meta tag, which per RFC #85 is set on the chunk root only.
