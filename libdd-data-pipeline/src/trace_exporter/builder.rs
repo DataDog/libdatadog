@@ -83,6 +83,7 @@ pub struct TraceExporterBuilder {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    otlp_protocol: OtlpProtocol,
     otlp_metrics_endpoint: Option<String>,
     otlp_metrics_headers: Vec<(String, String)>,
     otel_trace_semantics_enabled: bool,
@@ -308,6 +309,15 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Selects the OTLP export protocol: [`OtlpProtocol::HttpJson`] (default) or
+    /// [`OtlpProtocol::HttpProtobuf`]. The host language resolves this from
+    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; a `grpc` value is
+    /// unsupported and is rejected when parsed into [`OtlpProtocol`], so it never reaches here.
+    pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
+        self.otlp_protocol = protocol;
+        self
+    }
+
     /// Sets additional HTTP headers to include in OTLP trace export requests.
     ///
     /// Headers should be provided as key-value pairs. The host language is responsible for
@@ -489,11 +499,13 @@ impl TraceExporterBuilder {
             .map(Duration::from_millis)
             .unwrap_or(DEFAULT_OTLP_TIMEOUT);
 
+        // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
+        // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
         let otlp_config = self.otlp_endpoint.map(|url| OtlpTraceConfig {
             endpoint_url: url,
             headers: build_otlp_header_map(self.otlp_headers),
             timeout: otlp_timeout,
-            protocol: OtlpProtocol::HttpJson,
+            protocol: self.otlp_protocol,
             otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 

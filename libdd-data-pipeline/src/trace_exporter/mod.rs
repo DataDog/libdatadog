@@ -549,7 +549,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
-    /// Sends trace chunks via OTLP HTTP/JSON when OTLP config is enabled.
+    /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
@@ -566,11 +566,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r.client_computed_stats = self.otlp_stats_enabled;
             r
         };
+        // Single prost OTLP IR; the configured protocol encodes the same request to its wire
+        // format (JSON or protobuf). OTel-semantics gating (omit DD-specific attrs) happens in
+        // the mapper.
         let request =
             map_traces_to_otlp(traces, &resource_info, config.otel_trace_semantics_enabled);
-        let json_body = serde_json::to_vec(&request).map_err(|e| {
-            error!("OTLP JSON serialization error: {e}");
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+        let body = config.protocol.encode(&request).map_err(|e| {
+            error!("OTLP serialization error: {e}");
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
+                "failed to encode OTLP request: {e}"
+            )))
         })?;
         // Also set the header: resource attributes survive Collector hops, headers don't.
         let effective_config;
@@ -591,7 +596,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             &self.capabilities,
             config_to_use,
             self.endpoint.test_token.as_deref(),
-            json_body,
+            body,
         )
         .await?;
         Ok(AgentResponse::Unchanged)
