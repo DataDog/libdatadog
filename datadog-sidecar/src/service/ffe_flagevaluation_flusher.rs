@@ -12,7 +12,8 @@
 use crate::service::ffe_evp_proxy;
 use crate::service::{FfeFlagEvaluationBatch, FfeFlagEvaluationEvent, FfeTelemetryContext};
 use datadog_ffe::telemetry::flagevaluation::{DEGRADED_CAP, GLOBAL_CAP, PER_FLAG_CAP};
-pub(crate) use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
+#[cfg(test)]
+use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;

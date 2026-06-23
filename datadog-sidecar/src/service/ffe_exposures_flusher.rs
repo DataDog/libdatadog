@@ -12,7 +12,8 @@ use crate::service::ffe_evp_proxy;
 use crate::service::FfeExposureBatch;
 use datadog_ffe::telemetry::exposures::encode_exposure_batch;
 pub(crate) use datadog_ffe::telemetry::exposures::ExposureDeduplicator;
-pub(crate) use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
+#[cfg(test)]
+use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use tracing::debug;
