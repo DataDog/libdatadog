@@ -1,14 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use super::agentless::{
-    make_agentless_configs_endpoint, AgentlessConfig, AgentlessFetcher, ClientTargetRef,
-    NativeAgentlessFetcher,
-};
+#[cfg(feature = "agentless")]
+use super::agentless;
+
 use crate::targets::{Root, TargetsList};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use base64::Engine;
-use hashbrown::{HashMap, HashSet as HbHashSet};
+use hashbrown::HashMap;
 use http::uri::PathAndQuery;
 use http::StatusCode;
 use http_body_util::BodyExt;
@@ -55,14 +54,22 @@ pub struct ConfigInvariants {
     pub language: String,
     pub tracer_version: String,
     pub endpoint: Endpoint,
+    #[cfg(feature = "agentless")]
     /// Enables and configures agentless mode. If some the fetcher will
     /// talk directly to the RC backend
-    pub agentless: Option<AgentlessConfig>,
+    pub agentless: Option<agentless::AgentlessConfig>,
 }
 
 impl ConfigInvariants {
     pub fn agentless_enabled(&self) -> bool {
-        self.agentless.is_some()
+        #[cfg(feature = "agentless")]
+        {
+            self.agentless.is_some()
+        }
+        #[cfg(not(feature = "agentless"))]
+        {
+            false
+        }
     }
 }
 
@@ -167,31 +174,44 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
 
 impl<S> ConfigFetcherState<S> {
     pub fn new(invariants: ConfigInvariants) -> Self {
-        let (endpoint, agentless) = match &invariants.agentless {
-            Some(agentless_cfg) => match (
-                make_agentless_configs_endpoint(&invariants.endpoint),
-                agentless_cfg.hostname.is_empty(),
-            ) {
-                (Some(e), false) => (e, Some(agentless_cfg.clone())),
-                (Some(_), true) => {
-                    warn!("rc_config_fetcher: agentless enabled but the hostname is empty. Downgrading to agent endpoint");
-                    (make_agent_configs_endpoint(&invariants.endpoint), None)
-                }
-                (None, _) => {
-                    warn!("rc_config_fetcher: agentless enabled but the endpoint is invalid. Downgrading to agent endpoint");
-                    (make_agent_configs_endpoint(&invariants.endpoint), None)
-                }
-            },
-            None => (make_agent_configs_endpoint(&invariants.endpoint), None),
-        };
-        ConfigFetcherState {
-            target_files_by_path: Default::default(),
-            endpoint,
-            invariants: ConfigInvariants {
-                agentless,
-                ..invariants
-            },
-            expire_unused_files: true,
+        #[cfg(feature = "agentless")]
+        {
+            use agentless::make_agentless_configs_endpoint;
+            let (endpoint, agentless) = match &invariants.agentless {
+                Some(agentless_cfg) => match (
+                    make_agentless_configs_endpoint(&invariants.endpoint),
+                    agentless_cfg.hostname.is_empty(),
+                ) {
+                    (Some(e), false) => (e, Some(agentless_cfg.clone())),
+                    (Some(_), true) => {
+                        warn!("rc_config_fetcher: agentless enabled but the hostname is empty. Downgrading to agent endpoint");
+                        (make_agent_configs_endpoint(&invariants.endpoint), None)
+                    }
+                    (None, _) => {
+                        warn!("rc_config_fetcher: agentless enabled but the endpoint is invalid. Downgrading to agent endpoint");
+                        (make_agent_configs_endpoint(&invariants.endpoint), None)
+                    }
+                },
+                None => (make_agent_configs_endpoint(&invariants.endpoint), None),
+            };
+            ConfigFetcherState {
+                target_files_by_path: Default::default(),
+                endpoint,
+                invariants: ConfigInvariants {
+                    agentless,
+                    ..invariants
+                },
+                expire_unused_files: true,
+            }
+        }
+        #[cfg(not(feature = "agentless"))]
+        {
+            ConfigFetcherState {
+                target_files_by_path: Default::default(),
+                endpoint: make_agent_configs_endpoint(&invariants.endpoint),
+                invariants: ConfigInvariants { ..invariants },
+                expire_unused_files: true,
+            }
         }
     }
 
@@ -234,154 +254,11 @@ impl<S> ConfigFetcherState<S> {
     }
 }
 
-pub(crate) struct NewTarget {
-    pub path: String,
-    pub version: u64,
-    /// Lowercase hex of the primary (sha256-preferred) hash.
-    pub primary_hash: String,
-    /// All `(algorithm_name, hex_hash)` pairs for the target.
-    pub hashes: Vec<(String, String)>,
-    pub content: Vec<u8>,
-}
-
-pub(crate) struct AgentlessTargetCache<'a, S: FileStorage> {
-    files: &'a Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S::StoredFile>>>,
-    storage: &'a S,
-    expire_unused_files: bool,
-}
-
-impl<'a, S: FileStorage> AgentlessTargetCache<'a, S> {
-    pub(crate) fn new(state: &'a ConfigFetcherState<S::StoredFile>, storage: &'a S) -> Self {
-        AgentlessTargetCache {
-            files: &state.target_files_by_path,
-            storage,
-            expire_unused_files: state.expire_unused_files,
-        }
-    }
-
-    /// Returns the TUF path strings whose `(primary_hash, len)` already matches the cache.
-    pub(crate) fn is_cached_batch<'b>(
-        &self,
-        candidates: impl IntoIterator<Item = (&'b str, &'b str, u64)>,
-    ) -> HbHashSet<&'b str> {
-        let files = self.files.lock_or_panic();
-        candidates
-            .into_iter()
-            .filter_map(|(path, primary_hash, len)| {
-                let parsed = RemoteConfigPath::try_parse(path).ok()?;
-                let stored = files.get(&parsed)?;
-                if stored.hash == primary_hash && stored.meta.length as u64 == len {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    pub(crate) fn store_batch(
-        &self,
-        targets: impl IntoIterator<Item = NewTarget>,
-    ) -> anyhow::Result<()> {
-        let mut files = self.files.lock_or_panic();
-        for NewTarget {
-            path,
-            version,
-            primary_hash,
-            hashes,
-            content,
-        } in targets
-        {
-            let parsed_path = match RemoteConfigPath::try_parse(&path) {
-                Ok(p) => p,
-                Err(e) => {
-                    warn!("store_batch: failed to parse remote config path {path}: {e:?}");
-                    continue;
-                }
-            };
-            let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
-            let length = content.len() as i64;
-            let new_handle = if let Some(existing) = files.get(&parsed_path) {
-                self.storage
-                    .update(&existing.handle, version, content)
-                    .map(|()| existing.handle.clone())?
-            } else {
-                self.storage.store(version, parsed_path.clone(), content)?
-            };
-            files.insert(
-                parsed_path.clone(),
-                StoredTargetFile {
-                    hash: primary_hash,
-                    state: ConfigState {
-                        id: parsed_path.config_id.to_string(),
-                        version,
-                        product: parsed_path.product.to_string(),
-                        apply_state: 2, // Acknowledged
-                        apply_error: String::new(),
-                    },
-                    meta: TargetFileMeta {
-                        path,
-                        length,
-                        hashes: hashes
-                            .into_iter()
-                            .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
-                            .collect(),
-                    },
-                    handle: new_handle,
-                    expiring: false,
-                },
-            );
-        }
-        Ok(())
-    }
-
-    /// Evict every entry whose TUF path is not in `active_paths`. No-op when
-    /// `expire_unused_files` is `false`.
-    pub(crate) fn retain_only(&self, active_paths: &HbHashSet<&str>) {
-        if !self.expire_unused_files {
-            return;
-        }
-        self.files
-            .lock_or_panic()
-            .retain(|_, stored| active_paths.contains(stored.meta.path.as_str()));
-    }
-
-    /// Collect `Arc<S::StoredFile>` handles for every target in `targets`, verifying
-    /// stored hash and length match, and marking each entry as non-expiring.
-    pub(crate) fn collect_handles(
-        &self,
-        targets: &[ClientTargetRef],
-    ) -> anyhow::Result<Vec<Arc<S::StoredFile>>> {
-        let mut files = self.files.lock_or_panic();
-        let mut handles = Vec::with_capacity(targets.len());
-        for target in targets {
-            let parsed = RemoteConfigPath::try_parse(&target.path).map_err(|e| {
-                anyhow::format_err!("collect_handles: bad path {}: {e:?}", target.path)
-            })?;
-            let stored = files.get_mut(&parsed).ok_or_else(|| {
-                anyhow::format_err!(
-                    "collect_handles: path {} not found in cache after fetch",
-                    target.path
-                )
-            })?;
-            if stored.hash != target.primary_hash || stored.meta.length as u64 != target.length {
-                anyhow::bail!(
-                    "collect_handles: cache mismatch for {}: stored hash={} len={}, expected hash={} len={}",
-                    target.path, stored.hash, stored.meta.length,
-                    target.primary_hash, target.length
-                );
-            }
-            stored.expiring = false;
-            handles.push(stored.handle.clone());
-        }
-        Ok(handles)
-    }
-}
-
 #[allow(clippy::large_enum_variant)]
 enum FetcherMode {
     Agent,
-    Agentless(NativeAgentlessFetcher),
+    #[cfg(feature = "agentless")]
+    Agentless(agentless::NativeAgentlessFetcher),
 }
 
 pub struct ConfigFetcher<S: FileStorage> {
@@ -435,12 +312,19 @@ impl<S: FileStorage> ConfigFetcher<S> {
         file_storage: S,
         state: Arc<ConfigFetcherState<S::StoredFile>>,
     ) -> anyhow::Result<Self> {
+        #[cfg(feature = "agentless")]
         let mode: FetcherMode = match &state.invariants.agentless {
             Some(agentless_cfg) => FetcherMode::Agentless(
-                AgentlessFetcher::new(agentless_cfg.clone(), state.endpoint.clone()).await?,
+                agentless::NativeAgentlessFetcher::new(
+                    agentless_cfg.clone(),
+                    state.endpoint.clone(),
+                )
+                .await?,
             ),
             None => FetcherMode::Agent,
         };
+        #[cfg(not(feature = "agentless"))]
+        let mode: FetcherMode = FetcherMode::Agent;
 
         Ok(ConfigFetcher {
             file_storage,
@@ -770,13 +654,14 @@ impl<S: FileStorage> ConfigFetcher<S> {
         );
         match &mut self.mode {
             FetcherMode::Agent => self.fetch_agent(config_req, target, client_state).await,
+            #[cfg(feature = "agentless")]
             FetcherMode::Agentless(agentless_fetcher) => {
                 #[allow(clippy::expect_used)]
                 let client = config_req.client.expect(
                     "RC ConfigFetcher::build_config_request should always return a `Some` client",
                 );
 
-                let cache = AgentlessTargetCache::new(&self.state, &self.file_storage);
+                let cache = agentless::TargetCache::new(&self.state, &self.file_storage);
                 let res = match agentless_fetcher.fetch_config(client, &cache).await {
                     Ok(r) => r,
                     Err(e) => {
@@ -994,6 +879,7 @@ pub mod tests {
             language: "php".to_string(),
             tracer_version: "1.2.3".to_string(),
             endpoint: server.endpoint.clone(),
+            #[cfg(feature = "agentless")]
             agentless: None,
         };
         let product_capabilities = ConfigProductCapabilities::new(

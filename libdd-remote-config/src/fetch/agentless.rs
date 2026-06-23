@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::fetch::{AgentlessTargetCache, FileStorage, NewTarget};
+use crate::fetch::FileStorage;
 
 use std::{
     fmt,
@@ -349,10 +349,10 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
 
     /// Fetch remote config. Newly-downloaded target content is written directly into
     /// `cache` rather than buffered inside the agentless fetcher.
-    pub(crate) async fn fetch_config<S: FileStorage>(
+    pub(crate) async fn fetch_config<Storage: FileStorage>(
         &mut self,
         c: remoteconfig::Client,
-        cache: &AgentlessTargetCache<'_, S>,
+        cache: &TargetCache<'_, Storage>,
     ) -> anyhow::Result<ClientResponse> {
         let (
             current_config_snapshot_version,
@@ -511,7 +511,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     async fn apply<S: FileStorage>(
         &mut self,
         response: &remoteconfig::LatestConfigsResponse,
-        cache: &AgentlessTargetCache<'_, S>,
+        cache: &TargetCache<'_, S>,
     ) -> anyhow::Result<Vec<ClientTargetRef>> {
         // At a high level,  we're populating the "remote" repos with the metadata
         // that we received from upstream (which does not validate it), and then using the clients'
@@ -780,6 +780,168 @@ fn trim_hash_target_path(target_path: &str) -> anyhow::Result<String> {
     let basename_trimmed = basename.split_once('.').map_or(basename, |(_, rest)| rest);
 
     Ok(format!("{parent}/{basename_trimmed}"))
+}
+
+pub(crate) struct NewTarget {
+    pub path: String,
+    pub version: u64,
+    /// Lowercase hex of the primary (sha256-preferred) hash.
+    pub primary_hash: String,
+    /// All `(algorithm_name, hex_hash)` pairs for the target.
+    pub hashes: Vec<(String, String)>,
+    pub content: Vec<u8>,
+}
+
+pub(crate) use cache::TargetCache;
+
+mod cache {
+    use std::sync::Arc;
+
+    use hashbrown::HashMap;
+    use libdd_common::MutexExt as _;
+    use libdd_trace_protobuf::remoteconfig::{ConfigState, TargetFileHash, TargetFileMeta};
+    use std::sync::Mutex;
+    use tracing::warn;
+
+    use crate::{
+        fetch::{ClientTargetRef, ConfigFetcherState, FileStorage, NewTarget, StoredTargetFile},
+        RemoteConfigPath,
+    };
+
+    pub(crate) struct TargetCache<'a, Storage: FileStorage> {
+        files: &'a Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<Storage::StoredFile>>>,
+        storage: &'a Storage,
+        expire_unused_files: bool,
+    }
+
+    impl<'a, S: FileStorage> TargetCache<'a, S> {
+        pub(crate) fn new(state: &'a ConfigFetcherState<S::StoredFile>, storage: &'a S) -> Self {
+            TargetCache {
+                files: &state.target_files_by_path,
+                storage,
+                expire_unused_files: state.expire_unused_files,
+            }
+        }
+
+        /// Returns the TUF path strings whose `(primary_hash, len)` already matches the cache.
+        pub(crate) fn is_cached_batch<'b>(
+            &self,
+            candidates: impl IntoIterator<Item = (&'b str, &'b str, u64)>,
+        ) -> hashbrown::HashSet<&'b str> {
+            let files = self.files.lock_or_panic();
+            candidates
+                .into_iter()
+                .filter_map(|(path, primary_hash, len)| {
+                    let parsed = RemoteConfigPath::try_parse(path).ok()?;
+                    let stored = files.get(&parsed)?;
+                    if stored.hash == primary_hash && stored.meta.length as u64 == len {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        }
+
+        pub(crate) fn store_batch(
+            &self,
+            targets: impl IntoIterator<Item = NewTarget>,
+        ) -> anyhow::Result<()> {
+            let mut files = self.files.lock_or_panic();
+            for NewTarget {
+                path,
+                version,
+                primary_hash,
+                hashes,
+                content,
+            } in targets
+            {
+                let parsed_path = match RemoteConfigPath::try_parse(&path) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        warn!("store_batch: failed to parse remote config path {path}: {e:?}");
+                        continue;
+                    }
+                };
+                let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
+                let length = content.len() as i64;
+                let new_handle = if let Some(existing) = files.get(&parsed_path) {
+                    self.storage
+                        .update(&existing.handle, version, content)
+                        .map(|()| existing.handle.clone())?
+                } else {
+                    self.storage.store(version, parsed_path.clone(), content)?
+                };
+                files.insert(
+                    parsed_path.clone(),
+                    StoredTargetFile {
+                        hash: primary_hash,
+                        state: ConfigState {
+                            id: parsed_path.config_id.to_string(),
+                            version,
+                            product: parsed_path.product.to_string(),
+                            apply_state: 2, // Acknowledged
+                            apply_error: String::new(),
+                        },
+                        meta: TargetFileMeta {
+                            path,
+                            length,
+                            hashes: hashes
+                                .into_iter()
+                                .map(|(algorithm, hash)| TargetFileHash { algorithm, hash })
+                                .collect(),
+                        },
+                        handle: new_handle,
+                        expiring: false,
+                    },
+                );
+            }
+            Ok(())
+        }
+
+        /// Evict every entry whose TUF path is not in `active_paths`. No-op when
+        /// `expire_unused_files` is `false`.
+        pub(crate) fn retain_only(&self, active_paths: &hashbrown::HashSet<&str>) {
+            if !self.expire_unused_files {
+                return;
+            }
+            self.files
+                .lock_or_panic()
+                .retain(|_, stored| active_paths.contains(stored.meta.path.as_str()));
+        }
+
+        /// Collect `Arc<S::StoredFile>` handles for every target in `targets`, verifying
+        /// stored hash and length match, and marking each entry as non-expiring.
+        pub(crate) fn collect_handles(
+            &self,
+            targets: &[ClientTargetRef],
+        ) -> anyhow::Result<Vec<Arc<S::StoredFile>>> {
+            let mut files = self.files.lock_or_panic();
+            let mut handles = Vec::with_capacity(targets.len());
+            for target in targets {
+                let parsed = RemoteConfigPath::try_parse(&target.path).map_err(|e| {
+                    anyhow::format_err!("collect_handles: bad path {}: {e:?}", target.path)
+                })?;
+                let stored = files.get_mut(&parsed).ok_or_else(|| {
+                    anyhow::format_err!(
+                        "collect_handles: path {} not found in cache after fetch",
+                        target.path
+                    )
+                })?;
+                if stored.hash != target.primary_hash || stored.meta.length as u64 != target.length
+                {
+                    anyhow::bail!(
+                    "collect_handles: cache mismatch for {}: stored hash={} len={}, expected hash={} len={}",
+                    target.path, stored.hash, stored.meta.length,
+                    target.primary_hash, target.length
+                );
+                }
+                stored.expiring = false;
+                handles.push(stored.handle.clone());
+            }
+            Ok(handles)
+        }
+    }
 }
 
 // ── Debug helpers: render `raw: Vec<u8>` fields as JSON ────────────────────

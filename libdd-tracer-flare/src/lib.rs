@@ -181,6 +181,7 @@ impl TracerFlareManager {
                 language,
                 tracer_version,
                 endpoint: remote_config_endpoint,
+                #[cfg(feature = "agentless")]
                 agentless: None,
             },
             products: vec![
