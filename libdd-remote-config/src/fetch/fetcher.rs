@@ -64,14 +64,7 @@ pub struct ConfigInvariants {
 
 impl ConfigInvariants {
     pub fn agentless_enabled(&self) -> bool {
-        #[cfg(feature = "agentless")]
-        {
-            self.agentless.is_some()
-        }
-        #[cfg(not(feature = "agentless"))]
-        {
-            false
-        }
+        self.agentless.is_some()
     }
 }
 
@@ -176,12 +169,11 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
 
 impl<S> ConfigFetcherState<S> {
     pub fn new(invariants: ConfigInvariants) -> Self {
-        #[cfg(feature = "agentless")]
-        {
-            use agentless::make_agentless_configs_endpoint;
-            let (endpoint, agentless) = match &invariants.agentless {
-                Some(agentless_cfg) => match (
-                    make_agentless_configs_endpoint(&invariants.endpoint),
+        let (endpoint, agentless) = match &invariants.agentless {
+            Some(agentless_cfg) => {
+                #[cfg(feature = "agentless")]
+                match (
+                    agentless::make_agentless_configs_endpoint(&invariants.endpoint),
                     agentless_cfg.hostname.is_empty(),
                 ) {
                     (Some(e), false) => (e, Some(agentless_cfg.clone())),
@@ -193,27 +185,21 @@ impl<S> ConfigFetcherState<S> {
                         warn!("rc_config_fetcher: agentless enabled but the endpoint is invalid. Downgrading to agent endpoint");
                         (make_agent_configs_endpoint(&invariants.endpoint), None)
                     }
-                },
-                None => (make_agent_configs_endpoint(&invariants.endpoint), None),
-            };
-            ConfigFetcherState {
-                target_files_by_path: Default::default(),
-                endpoint,
-                invariants: ConfigInvariants {
-                    agentless,
-                    ..invariants
-                },
-                expire_unused_files: true,
+                }
+
+                #[cfg(not(feature = "agentless"))]
+                match *agentless_cfg {}
             }
-        }
-        #[cfg(not(feature = "agentless"))]
-        {
-            ConfigFetcherState {
-                target_files_by_path: Default::default(),
-                endpoint: make_agent_configs_endpoint(&invariants.endpoint),
-                invariants: ConfigInvariants { ..invariants },
-                expire_unused_files: true,
-            }
+            None => (make_agent_configs_endpoint(&invariants.endpoint), None),
+        };
+        ConfigFetcherState {
+            target_files_by_path: Default::default(),
+            endpoint,
+            invariants: ConfigInvariants {
+                agentless,
+                ..invariants
+            },
+            expire_unused_files: true,
         }
     }
 
