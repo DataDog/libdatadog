@@ -9,7 +9,7 @@
 //! responses are logged at `warn`, network errors at `debug`, and dropped
 //! (matches dd-trace-go behaviour). No agent capability gate.
 
-use crate::service::ffe_evp_proxy;
+use crate::service::{evp_proxy, ffe_evp_proxy};
 use crate::service::{FfeFlagEvaluationBatch, FfeFlagEvaluationEvent, FfeTelemetryContext};
 use datadog_ffe::telemetry::flagevaluation::{DEGRADED_CAP, GLOBAL_CAP, PER_FLAG_CAP};
 #[cfg(test)]
@@ -31,7 +31,6 @@ const LOG_PREFIX: &str = "ffe_flagevaluation_flusher";
 const COALESCE_DELAY: Duration = Duration::from_millis(250);
 const MAX_PENDING_BUCKETS: usize = GLOBAL_CAP + DEGRADED_CAP;
 const MAX_EVENTS_PER_POST: usize = 512;
-const EVP_PAYLOAD_SIZE_LIMIT: usize = 5 * 1024 * 1024;
 
 pub(crate) const FLAG_EVALUATION_ROWS_DROPPED_METRIC: &str = "flagevaluation.rows.dropped";
 pub(crate) const FLAG_EVALUATION_ROWS_DEGRADED_METRIC: &str = "flagevaluation.rows.degraded";
@@ -405,7 +404,7 @@ async fn send_batch<C: HttpClientCapability + SleepCapability>(
     endpoint: &Endpoint,
     batch: FfeFlagEvaluationBatch,
 ) {
-    send_batch_with_limit(client, endpoint, batch, EVP_PAYLOAD_SIZE_LIMIT, None).await;
+    send_batch_with_limit(client, endpoint, batch, evp_proxy::PAYLOAD_SIZE_LIMIT, None).await;
 }
 
 async fn send_batch_with_metrics<C: HttpClientCapability + SleepCapability>(
@@ -418,7 +417,7 @@ async fn send_batch_with_metrics<C: HttpClientCapability + SleepCapability>(
         client,
         endpoint,
         batch,
-        EVP_PAYLOAD_SIZE_LIMIT,
+        evp_proxy::PAYLOAD_SIZE_LIMIT,
         Some(metrics),
     )
     .await;

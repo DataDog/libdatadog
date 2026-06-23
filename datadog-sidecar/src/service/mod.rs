@@ -34,6 +34,7 @@ pub(crate) use sidecar_interface::SidecarInterface;
 pub mod agent_info;
 pub mod blocking;
 mod debugger_diagnostics_bookkeeper;
+pub(crate) mod evp_proxy;
 pub mod exception_hash_rate_limiter;
 pub(crate) mod ffe_evp_proxy;
 pub(crate) mod ffe_exposures_flusher;

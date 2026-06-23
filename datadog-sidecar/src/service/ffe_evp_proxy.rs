@@ -7,6 +7,7 @@
 //! are forwarded through the Agent EVP proxy with the same endpoint derivation,
 //! subdomain header, timeout behavior, and fire-and-forget error handling.
 
+use crate::service::evp_proxy;
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
@@ -14,9 +15,8 @@ use libdd_common::Endpoint;
 use std::time::Duration;
 use tracing::{debug, warn};
 
-/// EVP subdomain that routes requests to event-platform intake.
-pub(crate) const EVP_SUBDOMAIN_HEADER: &str = "X-Datadog-EVP-Subdomain";
-pub(crate) const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
+pub(crate) use evp_proxy::EVENT_PLATFORM_INTAKE_SUBDOMAIN as EVP_SUBDOMAIN_VALUE;
+pub(crate) use evp_proxy::SUBDOMAIN_HEADER as EVP_SUBDOMAIN_HEADER;
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
 
