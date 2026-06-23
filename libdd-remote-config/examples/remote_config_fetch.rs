@@ -37,6 +37,7 @@ async fn main() {
         (Some(api_key), Some(site)) => {
             #[cfg(feature = "agentless")]
             {
+                use libdd_remote_config::fetch::AgentlessConfig;
                 println!("DD_API_KEY and DD_SITE are set — enabling agentless mode (site: {site})");
                 let endpoint = Endpoint::agentless(&site, api_key)
                     .expect("Failed to build agentless endpoint from DD_SITE");
