@@ -3064,9 +3064,11 @@ name = "libdd-dogstatsd-client"
 version = "3.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "cadence",
  "http",
  "libdd-common",
+ "libdd-shared-runtime",
  "serde",
  "tokio",
  "tracing",
