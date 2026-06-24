@@ -2169,7 +2169,7 @@ mod tests {
         };
 
         // Encode to msgpack — this is the raw bytes a tracer hands to send().
-        let payload = msgpack_encoder::v04::to_vec(&vec![vec![span]]);
+        let payload = msgpack_encoder::v04::to_vec(&[vec![span]]);
 
         // --- Old (broken) path: from_slice → SpanSlice → &str → no-op truncation ---
         let (mut old_traces, _) = msgpack_decoder::v04::from_slice(&payload).unwrap();
