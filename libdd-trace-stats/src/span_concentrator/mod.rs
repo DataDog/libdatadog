@@ -6,6 +6,7 @@ use std::time::{self, Duration, SystemTime};
 use tracing::debug;
 
 use libdd_trace_protobuf::pb;
+use tracing::warn;
 
 use aggregation::StatsBucket;
 
@@ -15,6 +16,26 @@ pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpSt
 
 pub mod stat_span;
 pub use stat_span::StatSpan;
+
+const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
+const DEFAULT_ADDITIONAL_METRIC_TAGS_MAX_ENTRIES: usize = 100;
+
+/// Deduplicate, sort alphabetically, and cap `keys` using [`ADDITIONAL_METRIC_TAGS_MAX_KEYS`].
+/// Excess keys are dropped and logged as a one time warning.
+fn normalize_additional_metric_tag_keys(mut keys: Vec<String>) -> Vec<String> {
+    keys.sort_unstable();
+    keys.dedup();
+    if keys.len() > ADDITIONAL_METRIC_TAGS_MAX_KEYS {
+        let dropped = keys.split_off(ADDITIONAL_METRIC_TAGS_MAX_KEYS);
+        warn!(
+            "additional_metric_tag_keys: {} additional metric tag keys exceed the cap of {}; dropping: {:?}",
+            dropped.len() + ADDITIONAL_METRIC_TAGS_MAX_KEYS,
+            ADDITIONAL_METRIC_TAGS_MAX_KEYS,
+            dropped,
+        );
+    }
+    keys
+}
 
 /// Result of flushing a concentrator.
 ///
@@ -136,6 +157,10 @@ pub struct SpanConcentrator {
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
     peer_tag_keys: Vec<String>,
+    /// keys for additional tags on trace stats
+    additional_metric_tag_keys: Vec<String>,
+    /// limit on distinct stat entries with additional metric tags per flush bucket
+    additional_metric_tags_max_entries: usize,
     #[cfg(feature = "stats-obfuscation")]
     obfuscation_config: SharedStatsComputationObfuscationConfig,
 }
@@ -145,9 +170,10 @@ impl SpanConcentrator {
     /// - `bucket_size` is the size of the time buckets
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
-    /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
+    /// - `peer_tag_keys` list of keys considered as peer tags for aggregation
     /// - `override_max_entries_per_bucket` maximum distinct aggregation keys per time bucket before
     ///   cardinality limiting applies. Pass `None` to use [`DEFAULT_MAX_ENTRIES_PER_BUCKET`].
+    /// - `additional_metric_tag_keys` list of keys considered as addtional tags for aggregation
     /// - `obfuscation_config` optional and updatable config for resource key obfuscation
     pub fn new(
         bucket_size: Duration,
@@ -155,6 +181,7 @@ impl SpanConcentrator {
         span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
         override_max_entries_per_bucket: Option<usize>,
+        additional_metric_tag_keys: Vec<String>,
         #[cfg(feature = "stats-obfuscation")] obfuscation_config: Option<
             SharedStatsComputationObfuscationConfig,
         >,
@@ -171,6 +198,10 @@ impl SpanConcentrator {
                 .unwrap_or(DEFAULT_MAX_ENTRIES_PER_BUCKET),
             span_kinds_stats_computed,
             peer_tag_keys,
+            additional_metric_tag_keys: normalize_additional_metric_tag_keys(
+                additional_metric_tag_keys,
+            ),
+            additional_metric_tags_max_entries: DEFAULT_ADDITIONAL_METRIC_TAGS_MAX_ENTRIES,
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config: obfuscation_config.unwrap_or_default(),
         }
@@ -196,6 +227,35 @@ impl SpanConcentrator {
         self.peer_tag_keys = peer_tags;
     }
 
+    /// Return the list of keys considered as additional_metric_tag_keys for aggregation
+    pub fn additional_metric_tag_keys(&self) -> &[String] {
+        &self.additional_metric_tag_keys
+    }
+
+    /// Set the list of keys considered as additional_metric_tag_keys for aggregation
+    pub fn set_additional_metric_tag_keys(&mut self, tag_keys: Vec<String>) {
+        self.additional_metric_tag_keys = normalize_additional_metric_tag_keys(tag_keys);
+    }
+
+    /// Return the per-bucket limit on distinct stat entries that include additional metric tags
+    pub fn additional_metric_tags_max_entries(&self) -> usize {
+        self.additional_metric_tags_max_entries
+    }
+
+    /// Set the per-bucket limit on distinct stat entries that include additional metric tags.
+    /// Values less than or equal to 0 are rejected and the existing limit is preserved with a
+    /// warning.
+    pub fn set_additional_metric_tags_max_entries(&mut self, limit: usize) {
+        if limit == 0 {
+            warn!(
+                "DD_TRACE_STATS_ADDITIONAL_TAGS_CARDINALITY_LIMIT must be > 0; keeping default of {}",
+                self.additional_metric_tags_max_entries,
+            );
+            return;
+        }
+        self.additional_metric_tags_max_entries = limit;
+    }
+
     /// Return the bucket size used for aggregation
     pub fn get_bucket_size(&self) -> Duration {
         Duration::from_nanos(self.bucket_size)
@@ -219,6 +279,7 @@ impl SpanConcentrator {
             StatsBucket::new(
                 bucket_timestamp,
                 self.max_entries_per_bucket,
+                self.additional_metric_tags_max_entries,
                 #[cfg(feature = "stats-obfuscation")]
                 self.obfuscation_config.load().enabled,
             )
@@ -236,8 +297,13 @@ impl SpanConcentrator {
                 res,
                 span,
                 self.peer_tag_keys.as_slice(),
+                self.additional_metric_tag_keys.as_slice(),
             ),
-            None => BorrowedAggregationKey::from_span(span, self.peer_tag_keys.as_slice()),
+            None => BorrowedAggregationKey::from_span(
+                span,
+                self.peer_tag_keys.as_slice(),
+                self.additional_metric_tag_keys.as_slice(),
+            ),
         };
         target_bucket.insert(
             agg_key,

@@ -143,6 +143,7 @@ pub(crate) fn start_stats_computation<
             span_kinds,
             peer_tags,
             ctx.stats_cardinality_limit,
+            vec![],
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),
         )));

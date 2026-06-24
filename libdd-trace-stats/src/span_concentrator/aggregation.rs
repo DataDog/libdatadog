@@ -10,6 +10,7 @@ use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
 use std::borrow::{Borrow, Cow};
+use tracing::warn;
 
 use crate::span_concentrator::StatSpan;
 
@@ -17,6 +18,7 @@ use crate::span_concentrator::StatSpan;
 pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
 
 const TAG_STATUS_CODE: &str = "http.status_code";
+const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -84,6 +86,7 @@ impl<T> FixedAggregationKey<T> {
 pub(super) struct BorrowedAggregationKey<'a> {
     fixed: FixedAggregationKey<&'a str>,
     peer_tags: Vec<(&'a str, Cow<'a, str>)>,
+    additional_metric_tags: Vec<(&'a str, &'a str)>,
 }
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
@@ -95,6 +98,12 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
                 .peer_tags
                 .iter()
                 .zip(other.peer_tags.iter())
+                .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
+            && self.additional_metric_tags.len() == other.additional_metric_tags.len()
+            && self
+                .additional_metric_tags
+                .iter()
+                .zip(other.additional_metric_tags.iter())
                 .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
     }
 }
@@ -110,6 +119,7 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
 pub(super) struct OwnedAggregationKey {
     fixed: FixedAggregationKey<String>,
     peer_tags: Vec<(String, String)>,
+    additional_metric_tags: Vec<(String, String)>,
 }
 
 impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
@@ -118,6 +128,11 @@ impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
             fixed: value.fixed.convert(str::to_owned),
             peer_tags: value
                 .peer_tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            additional_metric_tags: value
+                .additional_metric_tags
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
@@ -203,16 +218,28 @@ fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
 impl<'a> BorrowedAggregationKey<'a> {
     /// Return an AggregationKey matching the given span.
     ///
-    /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
+    /// If `peer_tag_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub(super) fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
-        Self::from_obfuscated_span(span.resource(), span, peer_tag_keys)
+    /// If `additional_metric_tags` is not empty then matching span tags keys are included in the
+    /// key.
+    pub(super) fn from_span<T: StatSpan<'a>>(
+        span: &'a T,
+        peer_tag_keys: &'a [String],
+        additional_metric_tag_keys: &'a [String],
+    ) -> Self {
+        Self::from_obfuscated_span(
+            span.resource(),
+            span,
+            peer_tag_keys,
+            additional_metric_tag_keys,
+        )
     }
 
     pub(crate) fn from_obfuscated_span<'b, T>(
         resource_name: &'a str,
         span: &'b T,
         peer_tag_keys: &'b [String],
+        additional_metric_tag_keys: &'b [String],
     ) -> BorrowedAggregationKey<'a>
     where
         T: StatSpan<'b>,
@@ -255,6 +282,24 @@ impl<'a> BorrowedAggregationKey<'a> {
         let grpc_status_code = get_grpc_status_code(span);
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
 
+        let additional_metric_tags: Vec<(&'a str, &'a str)> = additional_metric_tag_keys
+            .iter()
+            .filter_map(|key| match span.get_meta(key.as_str()) {
+                Some(v) if !v.is_empty() => {
+                    if v.len() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN {
+                        warn!(
+                            "additional_metric_tags: value for key '{}' exceeds {} characters; substituting tracer_blocked_value",
+                            key, ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN,
+                        );
+                        Some((key.as_str(), TRACER_BLOCKED_VALUE))
+                    } else {
+                        Some((key.as_str(), v))
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
         Self {
             fixed: FixedAggregationKey {
                 resource_name,
@@ -277,6 +322,26 @@ impl<'a> BorrowedAggregationKey<'a> {
                 },
             },
             peer_tags,
+            additional_metric_tags,
+        }
+    }
+
+    /// Return an owned copy of this key with all additional metric tag values replaced by
+    /// `TRACER_BLOCKED_VALUE`. Used when the per-bucket additional-metric-tags cardinality limit
+    /// is exceeded.
+    pub(super) fn into_masked_owned(self) -> OwnedAggregationKey {
+        OwnedAggregationKey {
+            fixed: self.fixed.convert(str::to_owned),
+            peer_tags: self
+                .peer_tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            additional_metric_tags: self
+                .additional_metric_tags
+                .iter()
+                .map(|(k, _)| (k.to_string(), TRACER_BLOCKED_VALUE.to_string()))
+                .collect(),
         }
     }
 }
@@ -300,6 +365,7 @@ impl OwnedAggregationKey {
                 is_trace_root: pb::Trilean::NotSet,
             },
             peer_tags: vec![],
+            additional_metric_tags: vec![],
         }
     }
 }
@@ -324,6 +390,14 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
             },
             peer_tags: value
                 .peer_tags
+                .into_iter()
+                .filter_map(|t| {
+                    let (key, value) = t.split_once(':')?;
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect(),
+            additional_metric_tags: value
+                .additional_metric_tags
                 .into_iter()
                 .filter_map(|t| {
                     let (key, value) = t.split_once(':')?;
@@ -435,6 +509,10 @@ pub(super) struct StatsBucket {
     /// constant per bucket
     #[cfg(feature = "stats-obfuscation")]
     pub(super) obfuscated: bool,
+    /// Number of distinct entries with additional metric tags admitted this bucket.
+    additional_metric_tags_entry_count: usize,
+    /// Maximum distinct entries with additional metric tags per bucket.
+    additional_metric_tags_max_entries: usize,
 }
 
 impl StatsBucket {
@@ -442,10 +520,17 @@ impl StatsBucket {
     ///
     /// `max_entries` is the maximum number of distinct aggregation keys the bucket will hold.
     /// Once the limit is reached, new distinct keys are collapsed into the overflow sentinel key.
+    /// `additional_metric_tags_max_entries` is the maximum number of distinct aggregation keys
+    /// with additional metric tags the bucket will hold. Once the limit is reached, new distinct
+    /// keys have their additional metric tag values masked to `TRACER_BLOCKED_VALUE` before being
+    /// subject to the `max_entries` check.
     pub(super) fn new(
+        
         start_timestamp: u64,
+       
         max_entries: usize,
         #[cfg(feature = "stats-obfuscation")] obfuscation_enabled: bool,
+        additional_metric_tags_max_entries: usize,
     ) -> Self {
         Self {
             data: HashMap::new(),
@@ -454,6 +539,8 @@ impl StatsBucket {
             collapsed_count: 0,
             #[cfg(feature = "stats-obfuscation")]
             obfuscated: obfuscation_enabled,
+            additional_metric_tags_entry_count: 0,
+            additional_metric_tags_max_entries,
         }
     }
 
@@ -462,9 +549,14 @@ impl StatsBucket {
         self.collapsed_count
     }
 
-    /// Insert a value as stats in the group corresponding to the aggregation key. If the key is new
-    /// and the `max_entries` limit has not been reached, a new entry is created, else the span is
-    /// instead merged into the overflow sentinel key.
+    /// Insert a value as stats in the group corresponding to the aggregation key, if it does not
+    /// exist it creates it.
+    ///
+    /// Keys that already exist in this bucket always merge normally. A new key that carries
+    /// additional metric tags and would exceed the `additional_metric_tags_max_entries` has its
+    /// additional tag values masked to `TRACER_BLOCKED_VALUE` before insertion. Any new key,
+    /// masked or otherwise, is then subject to the `max_entries` limit, which collapses it into
+    /// the overflow sentinel key.
     pub(super) fn insert(
         &mut self,
         key: BorrowedAggregationKey<'_>,
@@ -472,18 +564,80 @@ impl StatsBucket {
         is_error: bool,
         is_top_level: bool,
     ) {
-        if self.data.len() >= self.max_entries && !self.data.contains_key(&key) {
-            self.collapsed_count += 1;
-            self.data
-                .entry(OwnedAggregationKey::overflow_key())
-                .or_default()
-                .insert(duration, is_error, is_top_level);
-            return;
+        let has_additional_tags = !key.additional_metric_tags.is_empty();
+        // The map can't change size before the entry below is resolved, so this single read
+        // covers the `max_entries` check in either vacant branch without a further lookup.
+        let len_before_insert = self.data.len();
+
+        match self.data.entry_ref(&key) {
+            // Existing key, merge
+            hashbrown::hash_map::EntryRef::Occupied(mut e) => {
+                e.get_mut().insert(duration, is_error, is_top_level);
+            }
+            hashbrown::hash_map::EntryRef::Vacant(e) => {
+                // New key over the additional-metric-tags max entry limit, mask its tag values and
+                // re-resolve under the possibly different masked identity.
+                if has_additional_tags
+                    && self.additional_metric_tags_entry_count
+                        >= self.additional_metric_tags_max_entries
+                {
+                    let masked = key.into_masked_owned();
+                    self.insert_masked(masked, len_before_insert, duration, is_error, is_top_level);
+                    return;
+                }
+                // New key over the max entry limit, collapse into the overflow
+                // sentinel.
+                if len_before_insert >= self.max_entries {
+                    self.collapsed_count += 1;
+                    self.data
+                        .entry(OwnedAggregationKey::overflow_key())
+                        .or_default()
+                        .insert(duration, is_error, is_top_level);
+                    return;
+                }
+                // Within the max entry and additional-metric-tag limits, admit key as a new
+                // distinct entry.
+                if has_additional_tags {
+                    self.additional_metric_tags_entry_count += 1;
+                }
+                e.insert(GroupedStats::default())
+                    .insert(duration, is_error, is_top_level);
+            }
         }
-        self.data
-            .entry_ref(&key)
-            .or_default()
-            .insert(duration, is_error, is_top_level);
+    }
+
+    /// Insert an already masked owned key produced when the additional-metric-tags limit was
+    /// exceeded. The key identity changed from the original, so it needs its own lookup rather than
+    /// reusing the caller's entry.
+    fn insert_masked(
+        &mut self,
+        key: OwnedAggregationKey,
+        len_before_insert: usize,
+        duration: i64,
+        is_error: bool,
+        is_top_level: bool,
+    ) {
+        match self.data.entry(key) {
+            // Existing key, merge
+            hashbrown::hash_map::Entry::Occupied(mut e) => {
+                e.get_mut().insert(duration, is_error, is_top_level);
+            }
+            hashbrown::hash_map::Entry::Vacant(e) => {
+                // New masked key over the max entry limit, collapse into the
+                // overflow sentinel.
+                if len_before_insert >= self.max_entries {
+                    self.collapsed_count += 1;
+                    self.data
+                        .entry(OwnedAggregationKey::overflow_key())
+                        .or_default()
+                        .insert(duration, is_error, is_top_level);
+                    return;
+                }
+                // Within the max entry limit, admit the masked key as a new distinct entry.
+                e.insert(GroupedStats::default())
+                    .insert(duration, is_error, is_top_level);
+            }
+        }
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
@@ -561,7 +715,11 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .unwrap_or_default(),
         service_source: f.service_source,
         span_derived_primary_tags: vec![],
-        additional_metric_tags: vec![],
+        additional_metric_tags: key
+            .additional_metric_tags
+            .into_iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect(),
     }
 }
 
@@ -585,12 +743,14 @@ mod tests {
             OwnedAggregationKey {
                 fixed: self,
                 peer_tags: vec![],
+                additional_metric_tags: vec![],
             }
         }
         fn into_key_with_peers(self, peer_tags: Vec<(String, String)>) -> OwnedAggregationKey {
             OwnedAggregationKey {
                 fixed: self,
                 peer_tags,
+                additional_metric_tags: vec![],
             }
         }
     }
@@ -1103,7 +1263,7 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[]);
+            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[], &[]);
             assert_eq!(
                 OwnedAggregationKey::from(&borrowed_key),
                 expected_key,
@@ -1116,7 +1276,8 @@ mod tests {
         }
 
         for (span, expected_key) in test_cases_with_peer_tags {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice());
+            let borrowed_key =
+                BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice(), &[]);
             assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
             assert_eq!(
                 get_hash(&borrowed_key),
@@ -1144,7 +1305,7 @@ mod tests {
             .into(),
             ..Default::default()
         };
-        let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys);
+        let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys, &[]);
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,
@@ -1172,7 +1333,7 @@ mod tests {
             ..Default::default()
         };
         let ipv6_keys = vec!["peer.hostname".to_string()];
-        let key = BorrowedAggregationKey::from_span(&span_ipv6, &ipv6_keys);
+        let key = BorrowedAggregationKey::from_span(&span_ipv6, &ipv6_keys, &[]);
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,
@@ -1193,7 +1354,7 @@ mod tests {
             ..Default::default()
         };
         let non_ip_keys = vec!["db.instance".to_string()];
-        let key = BorrowedAggregationKey::from_span(&span_non_ip, &non_ip_keys);
+        let key = BorrowedAggregationKey::from_span(&span_non_ip, &non_ip_keys, &[]);
         let owned = OwnedAggregationKey::from(&key);
         assert_eq!(
             owned.peer_tags,
