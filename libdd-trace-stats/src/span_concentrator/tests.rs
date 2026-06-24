@@ -106,6 +106,7 @@ fn test_concentrator_oldest_timestamp_cold() {
         vec![],
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -163,6 +164,7 @@ fn test_concentrator_oldest_timestamp_hot() {
         vec![],
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -243,6 +245,7 @@ fn test_concentrator_stats_totals() {
         vec![],
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -310,6 +313,7 @@ fn test_concentrator_stats_counts() {
         vec![],
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -608,6 +612,7 @@ fn test_span_should_be_included_in_stats() {
         get_span_kinds(),
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -689,6 +694,7 @@ fn test_ignore_partial_spans() {
         get_span_kinds(),
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -715,6 +721,7 @@ fn test_force_flush() {
         get_span_kinds(),
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -799,6 +806,7 @@ fn test_peer_tags_aggregation() {
         get_span_kinds(),
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -808,6 +816,7 @@ fn test_peer_tags_aggregation() {
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -992,6 +1001,7 @@ fn test_peer_tags_quantization_aggregation() {
             "peer.hostname".to_string(),
         ],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -1119,6 +1129,7 @@ fn test_base_service_peer_tag() {
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -1197,6 +1208,133 @@ fn test_base_service_peer_tag() {
     assert_counts_equal(
         expected,
         stats
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+}
+
+/// Test the additional metric tags aggregation
+#[test]
+fn test_additional_metric_tags_aggregation() {
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "A1",
+            "GET /objects",
+            0,
+            &[("custom.primary", "a")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "A1",
+            "GET /objects",
+            0,
+            &[("custom.primary", "b")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator_without_additional_metric_tags = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    let mut concentrator_with_additional_metric_tags = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["custom.primary".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    for span in &spans {
+        concentrator_without_additional_metric_tags.add_span(span);
+        concentrator_with_additional_metric_tags.add_span(span);
+    }
+
+    let flushtime = now
+        + Duration::from_nanos(
+            concentrator_with_additional_metric_tags.bucket_size
+                * concentrator_with_additional_metric_tags.buffer_len as u64,
+        );
+
+    let expected_without_additional_metric_tags = vec![pb::ClientGroupedStats {
+        service: "A1".to_string(),
+        resource: "GET /objects".to_string(),
+        r#type: "db".to_string(),
+        name: "query".to_string(),
+        duration: 200,
+        hits: 2,
+        top_level_hits: 2,
+        errors: 0,
+        is_trace_root: pb::Trilean::True.into(),
+        ..Default::default()
+    }];
+
+    let expected_with_additional_metric_tags = vec![
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /objects".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            additional_metric_tags: vec!["custom.primary:a".to_string()],
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+        pb::ClientGroupedStats {
+            service: "A1".to_string(),
+            resource: "GET /objects".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            additional_metric_tags: vec!["custom.primary:b".to_string()],
+            duration: 100,
+            hits: 1,
+            top_level_hits: 1,
+            errors: 0,
+            is_trace_root: pb::Trilean::True.into(),
+            ..Default::default()
+        },
+    ];
+
+    assert_counts_equal(
+        expected_without_additional_metric_tags,
+        concentrator_without_additional_metric_tags
+            .flush(flushtime, false)
+            .0
+            .first()
+            .expect("There should be at least one time bucket")
+            .stats
+            .clone(),
+    );
+    assert_counts_equal(
+        expected_with_additional_metric_tags,
+        concentrator_with_additional_metric_tags
+            .flush(flushtime, false)
+            .0
             .first()
             .expect("There should be at least one time bucket")
             .stats
@@ -1342,6 +1480,7 @@ fn test_pb_span() {
         get_span_kinds(),
         vec!["db.instance".to_string(), "db.system".to_string()],
         None,
+        vec!["custom.primary".to_string()],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -1461,6 +1600,32 @@ fn test_pb_span() {
                 span_events: vec![],
             }
         },
+        // Span with measured flag and additional metric tags
+        {
+            let mut meta = std::collections::HashMap::new();
+            meta.insert("custom.primary".to_string(), "val".to_string());
+
+            let mut metrics = std::collections::HashMap::new();
+            metrics.insert("_dd.measured".to_string(), 1.0);
+
+            pb::Span {
+                service: "service1".to_string(),
+                name: "query".to_string(),
+                resource: "database_query".to_string(),
+                trace_id: 1,
+                span_id: 6,
+                parent_id: 1,
+                start: (aligned_now - BUCKET_SIZE + 40) as i64,
+                duration: 150,
+                error: 1,
+                r#type: "db".to_string(),
+                meta,
+                metrics,
+                meta_struct: std::collections::HashMap::new(),
+                span_links: vec![],
+                span_events: vec![],
+            }
+        },
         // Grpc span
         {
             let mut meta = std::collections::HashMap::new();
@@ -1563,6 +1728,20 @@ fn test_pb_span() {
             is_trace_root: pb::Trilean::False.into(),
             ..Default::default()
         },
+        // Measured span with additional metric tags
+        pb::ClientGroupedStats {
+            service: "service1".to_string(),
+            resource: "database_query".to_string(),
+            r#type: "db".to_string(),
+            name: "query".to_string(),
+            duration: 150,
+            hits: 1,
+            top_level_hits: 0,
+            errors: 1,
+            is_trace_root: pb::Trilean::False.into(),
+            additional_metric_tags: vec!["custom.primary:val".to_string()],
+            ..Default::default()
+        },
         pb::ClientGroupedStats {
             service: "service1".to_string(),
             name: "rpc.grpc".to_string(),
@@ -1594,6 +1773,7 @@ fn test_flush_with_otlp_exact_per_cell_scalars() {
         get_span_kinds(),
         vec![],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );
@@ -1645,6 +1825,7 @@ fn make_cardinality_concentrator(max_entries: usize) -> SpanConcentrator {
         get_span_kinds(),
         vec![],
         Some(max_entries),
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     )
@@ -1895,4 +2076,116 @@ fn test_overflow_bucket_key_sentinel_values() {
         .expect("normal group must exist");
     assert_eq!(normal.service, "my-service");
     assert_eq!(normal.resource, "my-resource");
+}
+
+#[test]
+fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
+    let now = SystemTime::now();
+    let long_value = "x".repeat(201);
+    let meta = [("region", long_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets.0[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &["region:tracer_blocked_value"]);
+}
+
+#[test]
+fn test_additional_metric_tag_value_at_length_cap_passes_through() {
+    let now = SystemTime::now();
+    let ok_value = "x".repeat(200);
+    let meta = [("region", ok_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets.0[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &[format!("region:{ok_value}")]);
+}
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_sort() {
+    let keys = vec![
+        "region".to_string(),
+        "env".to_string(),
+        "tenant".to_string(),
+    ];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["env", "region", "tenant"]);
+}
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_dedup() {
+    let keys = vec![
+        "region".to_string(),
+        "region".to_string(),
+        "tenant".to_string(),
+    ];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["region", "tenant"]);
+}
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_cap() {
+    let keys = vec![
+        "aaa".to_string(),
+        "bbb".to_string(),
+        "ccc".to_string(),
+        "ddd".to_string(),
+        "eee".to_string(),
+    ];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["aaa", "bbb", "ccc", "ddd"]);
+    assert_eq!(result.len(), 4);
 }
