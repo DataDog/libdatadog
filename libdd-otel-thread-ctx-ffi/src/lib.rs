@@ -11,19 +11,18 @@ pub use linux::*;
 #[cfg(target_os = "linux")]
 mod linux {
     use libdd_common_ffi::slice::{AsBytes, CharSlice};
+    pub use libdd_otel_thread_ctx::linux::ThreadContextRecord;
     use libdd_otel_thread_ctx::linux::{
         ThreadContext, ThreadContextHandle as InternalThreadContextHandle,
-        ThreadContextRecord as InternalThreadContextRecord,
     };
     use std::{mem, ptr::NonNull, slice};
 
     /// Opaque handle to an owned thread context record. Used to allow the FFI to convert
     /// [ThreadContext] to and from raw pointers without exposing Rust ownership details.
     ///
-    /// This intentionally mirrors, rather than re-exports,
-    /// `libdd_otel_thread_ctx::linux::ThreadContextHandle`: cbindgen only sees this crate and must
-    /// emit a self-contained C header.
-    #[repr(C)]
+    /// This is intentionally not `repr(C)`: C only ever sees pointers to this token, and cbindgen
+    /// emits it as an opaque forward declaration. The public cross-process layout is
+    /// `ThreadContextRecord`, not this ownership handle.
     pub struct ThreadContextHandle {}
 
     #[repr(C)]
@@ -67,68 +66,9 @@ mod linux {
         "MAX_ATTRS_DATA_SIZE out of sync with libdd-otel-thread-ctx"
     );
 
-    /// In-memory layout of a thread-level context.
-    ///
-    /// This is the C-facing mirror of `libdd_otel_thread_ctx::linux::ThreadContextRecord`.
-    /// cbindgen must not emit the internal Rust type directly: the Rust implementation owns the
-    /// synchronization details, while C consumers need the exact OTel ABI layout as primitive
-    /// fields. The const assertions below keep this mirror tied to the internal record layout.
-    ///
-    /// **CAUTION**: The structure MUST match exactly the OTel thread-level context specification.
-    /// It is read by external, out-of-process code. Do not re-order fields or modify in any way,
-    /// unless you know exactly what you're doing.
-    ///
-    /// # Synchronization
-    ///
-    /// Readers are async-signal handlers. The writer is always stopped while a reader runs.
-    /// Sharing memory with a signal handler still requires some form of synchronization, which is
-    /// achieved through atomics and compiler fence in the Rust implementation, using `valid` and/or
-    /// the TLS slot as synchronization points.
-    ///
-    /// - The writer stores `valid = 0` *before* modifying fields in-place, guarded by a fence.
-    /// - The writer stores `valid = 1` *after* all fields are populated, guarded by a fence.
-    /// - `valid` starts at `1` on construction and is never set to `0` except during an in-place
-    ///   update.
-    #[repr(C)]
-    pub struct ThreadContextRecord {
-        /// Trace identifier; all-zeroes means "no trace".
-        pub trace_id: [u8; 16],
-        /// Span identifier, stored with the exact byte representation provided by the caller.
-        pub span_id: u64,
-        /// Whether the record is ready/consistent. Always set to `1` except during in-place update
-        /// of the current record.
-        pub valid: u8,
-        pub _reserved: u8,
-        /// Number of populated bytes in `attrs_data`.
-        pub attrs_data_size: u16,
-        /// Packed variable-length key-value records.
-        ///
-        /// It's a contiguous list of blocks with layout:
-        ///
-        /// 1. 1-byte `key_index`
-        /// 2. 1-byte `val_len`
-        /// 3. `val_len` bytes of a string value.
-        ///
-        /// # Size
-        ///
-        /// Currently, we always allocate the max recommended size. This potentially wastes a few
-        /// hundred bytes per thread, but it guarantees that we can modify the context in-place
-        /// without (re)allocation in the hot path.
-        pub attrs_data: [u8; MAX_ATTRS_DATA_SIZE],
-    }
-
     const _: () = {
-        assert!(size_of::<ThreadContextRecord>() == size_of::<InternalThreadContextRecord>());
-        assert!(
-            mem::align_of::<ThreadContextRecord>()
-                == mem::align_of::<InternalThreadContextRecord>()
-        );
-        assert!(mem::offset_of!(ThreadContextRecord, trace_id) == 0);
-        assert!(mem::offset_of!(ThreadContextRecord, span_id) == 16);
-        assert!(mem::offset_of!(ThreadContextRecord, valid) == 24);
-        assert!(mem::offset_of!(ThreadContextRecord, _reserved) == 25);
-        assert!(mem::offset_of!(ThreadContextRecord, attrs_data_size) == 26);
-        assert!(mem::offset_of!(ThreadContextRecord, attrs_data) == 28);
+        assert!(size_of::<ThreadContextRecord>() == 640);
+        assert!(mem::align_of::<ThreadContextRecord>() == 2);
     };
 
     /// Allocate and initialise a new thread context.
@@ -169,7 +109,7 @@ mod linux {
         attrs: *const OtelThreadContextAttribute<'_>,
         attrs_len: usize,
     ) -> bool {
-        let Some(ctx) = ctx.cast::<InternalThreadContextRecord>().as_mut() else {
+        let Some(ctx) = ctx.as_mut() else {
             return false;
         };
         let attrs = attrs_from_raw(attrs, attrs_len);
@@ -181,7 +121,7 @@ mod linux {
         ctx: *mut ThreadContextRecord,
         span_id: &[u8; 8],
     ) -> bool {
-        let Some(ctx) = ctx.cast::<InternalThreadContextRecord>().as_mut() else {
+        let Some(ctx) = ctx.as_mut() else {
             return false;
         };
         ctx.update_span_id(*span_id);
@@ -227,7 +167,7 @@ mod linux {
     /// `ctx` must point to a live record that remains allocated until it is detached.
     #[no_mangle]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_attach_record(ctx: *mut ThreadContextRecord) {
-        let Some(ctx) = NonNull::new(ctx.cast::<InternalThreadContextRecord>()) else {
+        let Some(ctx) = NonNull::new(ctx) else {
             return;
         };
         ThreadContext::attach_record(ctx);

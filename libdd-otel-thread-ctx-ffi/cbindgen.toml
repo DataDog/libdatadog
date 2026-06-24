@@ -11,14 +11,18 @@ include_guard = "DDOG_OTEL_THREAD_CTX_H"
 style = "both"
 pragma_once = true
 no_includes = true
+includes = ["common.h"]
 sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
+
+[defines]
+"target_os = linux" = "__linux__"
 
 [parse]
 parse_deps = true
-# Do not parse libdd-otel-thread-ctx here. Its Rust record is an implementation detail of the
-# writer, while the public C ABI must expose the spec layout as primitive integer fields. lib.rs
-# defines explicit FFI mirror types and asserts that they match the internal layout.
-include = ["libdd-common-ffi"]
+# Parse the canonical thread-context crate so cbindgen emits the exact `ThreadContextRecord`
+# layout used by the Rust writer. The FFI crate re-exports that type instead of maintaining a
+# C-facing mirror.
+include = ["libdd-common-ffi", "libdd-otel-thread-ctx"]
 
 [export]
 prefix = "ddog_"

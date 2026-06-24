@@ -57,12 +57,11 @@
 //!
 //! ## Synchronization
 //!
-//! Readers are constrained to the same thread as the writer and operate like async-signal
-//! handlers: the writer thread is always stopped while a reader runs. There is thus no
-//! cross-thread synchronization concerns. The only hazard is compiler reordering, which is
-//! handled by making `valid` atomic and using compiler-only fences (equivalent to C's
-//! `atomic_signal_fence`) to keep field writes boxed between the `valid = 0` and `valid = 1`
-//! stores during in-place updates.
+//! Readers operate like async-signal handlers: the target writer thread is stopped while a
+//! reader observes its record. There are thus no CPU memory-ordering concerns. The remaining
+//! hazard is compiler reordering, which is handled by making `valid` atomic and using
+//! compiler-only fences (equivalent to C's `atomic_signal_fence`) to keep field writes boxed
+//! between the `valid = 0` and `valid = 1` stores during in-place updates.
 
 #[cfg(target_os = "linux")]
 pub mod linux {
@@ -70,7 +69,7 @@ pub mod linux {
         ffi::c_void,
         mem,
         ptr::{self, NonNull},
-        sync::atomic::{compiler_fence, AtomicPtr, AtomicU64, AtomicU8, Ordering},
+        sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
     };
 
     /// Run `f` with an atomic view of the current thread's TLS slot.
@@ -135,16 +134,15 @@ pub mod linux {
     /// - `valid` starts at `1` on construction and is never set to `0` except during an in-place
     ///   update.
     // Note: we don't need to make this struct packed, because it's already designed to avoid
-    // padding. Moreover, doing so would make it 1-aligned, potentially making access to
-    // `span_id` and `attrs_data_size` unaligned and thus slower, and prevent us from using an
-    // atomic view of `span_id`. We use const assertions below to verify size and offsets at
-    // compile time.
+    // padding. Moreover, doing so would make it 1-aligned, while the OTEP requires records to
+    // start on at least a 2-byte boundary. We use const assertions below to verify size, offsets
+    // and the minimum alignment at compile time.
     #[repr(C)]
     pub struct ThreadContextRecord {
         /// Trace identifier; all-zeroes means "no trace".
         trace_id: [u8; 16],
         /// Span identifier, stored with the exact byte representation provided by the caller.
-        span_id: u64,
+        span_id: [u8; 8],
         /// Whether the record is ready/consistent. Always set to `1` except during in-place update
         /// of the current record.
         valid: u8,
@@ -170,7 +168,7 @@ pub mod linux {
 
     const _: () = {
         assert!(size_of::<ThreadContextRecord>() == 640);
-        assert!(mem::align_of::<ThreadContextRecord>() == 8);
+        assert!(mem::align_of::<ThreadContextRecord>() == 2);
         assert!(mem::offset_of!(ThreadContextRecord, trace_id) == 0);
         assert!(mem::offset_of!(ThreadContextRecord, span_id) == 16);
         assert!(mem::offset_of!(ThreadContextRecord, valid) == 24);
@@ -195,18 +193,11 @@ pub mod linux {
         {
             let mut record = Self {
                 trace_id,
-                span_id: u64::from_ne_bytes(span_id),
+                span_id,
                 ..Default::default()
             };
             record.set_attrs(local_root_span_id, attrs);
             record
-        }
-
-        fn span_id_atomic(&mut self) -> &AtomicU64 {
-            // Safety: `span_id` has the same size and alignment as `AtomicU64`. The record layout
-            // is asserted above, and all atomic access to this field goes through this
-            // method.
-            unsafe { AtomicU64::from_ptr(ptr::addr_of_mut!(self.span_id)) }
         }
 
         fn valid_atomic(&mut self) -> &AtomicU8 {
@@ -303,8 +294,7 @@ pub mod linux {
             compiler_fence(Ordering::SeqCst);
 
             self.trace_id = trace_id;
-            self.span_id_atomic()
-                .store(u64::from_ne_bytes(span_id), Ordering::Relaxed);
+            self.span_id = span_id;
             let fully_encoded = self.set_attrs(local_root_span_id, attrs);
 
             compiler_fence(Ordering::SeqCst);
@@ -313,13 +303,17 @@ pub mod linux {
             fully_encoded
         }
 
-        /// Update only the current span id with a single atomic store.
-        ///
-        /// This intentionally does not toggle `valid`: readers may observe either the previous
-        /// span id or the new span id, and both are consistent with the rest of the record.
+        /// Update only the current span id using the async-signal-safe `valid` protocol.
+        /// This avoids rebuilding attributes, but still keeps the byte-packed span id aligned with
+        /// the OTEP's 2-byte minimum record alignment requirement.
         pub fn update_span_id(&mut self, span_id: [u8; 8]) {
-            self.span_id_atomic()
-                .store(u64::from_ne_bytes(span_id), Ordering::Relaxed);
+            self.valid_atomic().store(0, Ordering::Relaxed);
+            compiler_fence(Ordering::SeqCst);
+
+            self.span_id = span_id;
+
+            compiler_fence(Ordering::SeqCst);
+            self.valid_atomic().store(1, Ordering::Relaxed);
         }
     }
 
@@ -327,7 +321,7 @@ pub mod linux {
         fn default() -> Self {
             Self {
                 trace_id: [0u8; 16],
-                span_id: 0,
+                span_id: [0u8; 8],
                 // We only ever set `valid` to `0` during in-place update of an attached context.
                 valid: 1,
                 _reserved: 0,
@@ -351,6 +345,8 @@ pub mod linux {
     /// to and from raw pointers without exposing [ThreadContextRecord], as the latter needs extra
     /// care to be manipulated (async-signal-safety, seq-lock-like modification protocol through
     /// [ThreadContextRecord::valid], etc.)
+    ///
+    /// cbindgen:ignore
     #[repr(C)]
     pub struct ThreadContextHandle {}
 
@@ -588,7 +584,7 @@ pub mod linux {
         }
 
         fn span_id_bytes(record: &ThreadContextRecord) -> [u8; 8] {
-            record.span_id.to_ne_bytes()
+            record.span_id
         }
 
         #[test]
@@ -799,7 +795,7 @@ pub mod linux {
         }
 
         #[test]
-        fn span_id_update_is_atomic_and_does_not_toggle_valid() {
+        fn span_id_update_uses_valid_protocol_without_rebuilding_attrs() {
             let mut record = ThreadContextRecord::new(
                 [1u8; 16],
                 [2u8; 8],
