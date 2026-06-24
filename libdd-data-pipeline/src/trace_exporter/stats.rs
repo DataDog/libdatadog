@@ -166,6 +166,9 @@ fn create_and_start_stats_worker<
         client_side_stats.obfuscation_config.clone(),
         #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
+        #[cfg(feature = "telemetry")]
+        None,
+        None,
     );
     let worker_handle = ctx
         .shared_runtime
