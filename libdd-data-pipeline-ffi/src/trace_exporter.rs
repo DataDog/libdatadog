@@ -15,9 +15,12 @@ use libdd_data_pipeline::trace_exporter::{
 };
 use libdd_data_pipeline::OtlpProtocol;
 
-pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+// FFI pins the runtime parameter to `ForkSafeRuntime` for ABI stability. Rust callers that
+// don't need the fork protocol can use `TraceExporter<NativeCapabilities, BasicRuntime>`
+// directly.
+pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities, ForkSafeRuntime>;
 
-use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::ForkSafeRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
 
@@ -82,7 +85,7 @@ pub struct TraceExporterConfig {
     process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
-    shared_runtime: Option<Arc<SharedRuntime>>,
+    shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
     otlp_protocol: Option<OtlpProtocol>,
 }
@@ -458,7 +461,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
-    handle: Option<NonNull<SharedRuntime>>,
+    handle: Option<NonNull<ForkSafeRuntime>>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         match (config, handle) {
