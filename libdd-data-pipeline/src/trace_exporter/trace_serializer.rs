@@ -17,7 +17,7 @@ use libdd_trace_utils::msgpack_encoder;
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::{self, TracerHeaderTags};
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
-use libdd_trace_utils::tracer_payload::{self, TraceEncoding};
+use libdd_trace_utils::tracer_payload::{self};
 
 /// Minimal capacity of fresh buffers allocated to encode traces, in bytes.
 const MIN_BUFFER_CAPACITY: usize = 1024;
@@ -79,11 +79,9 @@ impl TraceSerializer {
         };
         match output_format {
             TraceExporterOutputFormat::V1 => Ok(tracer_payload::TraceChunks::V1(traces)),
-            TraceExporterOutputFormat::V04 => {
-                trace_utils::collect_trace_chunks(traces, TraceEncoding::V04).map_err(map_err)
-            }
+            TraceExporterOutputFormat::V04 => Ok(tracer_payload::TraceChunks::V04(traces)),
             TraceExporterOutputFormat::V05 => {
-                trace_utils::collect_trace_chunks(traces, TraceEncoding::V05).map_err(map_err)
+                trace_utils::convert_trace_chunks_v04_to_v05(traces).map_err(map_err)
             }
         }
     }

@@ -1109,6 +1109,52 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     MaybeError::None
 }
 
+/// Sends a v0.4-encoded trace to the sidecar via shared memory; the sidecar will re-encode
+/// it as a V1 msgpack payload before forwarding to the agent.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    shm_handle: Box<ShmHandle>,
+    len: usize,
+    tracer_header_tags: &TracerHeaderTags,
+) -> MaybeError {
+    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+
+    try_c!(blocking::send_trace_v1_shm(
+        transport,
+        instance_id,
+        *shm_handle,
+        len,
+        tracer_header_tags,
+    ));
+
+    MaybeError::None
+}
+
+/// Sends a v0.4-encoded trace as bytes to the sidecar; the sidecar will re-encode it as a
+/// V1 msgpack payload before forwarding to the agent.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    data: ffi::CharSlice,
+    tracer_header_tags: &TracerHeaderTags,
+) -> MaybeError {
+    let tracer_header_tags = try_c!(tracer_header_tags.try_into());
+
+    try_c!(blocking::send_trace_v1_bytes(
+        transport,
+        instance_id,
+        data.as_bytes().to_vec(),
+        tracer_header_tags,
+    ));
+
+    MaybeError::None
+}
+
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 #[allow(improper_ctypes_definitions)] // DebuggerPayload is just a pointer, we hide its internals

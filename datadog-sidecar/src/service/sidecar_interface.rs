@@ -129,6 +129,38 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
 
+    /// Sends a v0.4-encoded trace via shared memory; the sidecar re-encodes it as a V1
+    /// msgpack payload before forwarding to the agent. Use this when the upstream SDK only
+    /// speaks v0.4 but the agent advertises `/v1.0/traces`.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `handle` - The handle to the shared memory.
+    /// * `len` - The size of the shared memory data.
+    /// * `headers` - The serialized headers from the tracer.
+    async fn send_trace_v1_shm(
+        instance_id: InstanceId,
+        #[SerializedHandle] handle: ShmHandle,
+        len: usize,
+        headers: SerializedTracerHeaderTags,
+    );
+
+    /// Sends a v0.4-encoded trace as bytes; the sidecar re-encodes it as a V1 msgpack payload
+    /// before forwarding to the agent. Use this when the upstream SDK only speaks v0.4 but
+    /// the agent advertises `/v1.0/traces`.
+    ///
+    /// # Arguments
+    ///
+    /// * `instance_id` - The ID of the instance.
+    /// * `data` - The v0.4 trace data serialized as bytes.
+    /// * `headers` - The serialized headers from the tracer.
+    async fn send_trace_v1_bytes(
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: SerializedTracerHeaderTags,
+    );
+
     /// Transfers raw data to a live-debugger endpoint.
     ///
     /// # Arguments

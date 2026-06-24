@@ -294,6 +294,30 @@ pub fn send_trace_v04_shm(
     Ok(())
 }
 
+/// Sends a v0.4-encoded trace as bytes; the sidecar re-encodes it as V1 before forwarding.
+pub fn send_trace_v1_bytes(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    data: Vec<u8>,
+    headers: SerializedTracerHeaderTags,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_bytes(instance_id.clone(), data, headers);
+    Ok(())
+}
+
+/// Sends a v0.4-encoded trace via shared memory; the sidecar re-encodes it as V1 before
+/// forwarding.
+pub fn send_trace_v1_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    handle: ShmHandle,
+    len: usize,
+    headers: SerializedTracerHeaderTags,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_shm(instance_id.clone(), handle, len, headers);
+    Ok(())
+}
+
 /// Sends raw data from shared memory to the debugger endpoint.
 pub fn send_debugger_data_shm(
     transport: &mut SidecarTransport,
