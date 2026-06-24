@@ -75,6 +75,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     peer_tags_aggregation: bool,
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
+    stats_cardinality_limit: Option<usize>,
     #[cfg(feature = "stats-obfuscation")]
     client_side_stats_obfuscation_enabled: bool,
     #[cfg(feature = "telemetry")]
@@ -142,6 +143,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             peer_tags_aggregation: false,
             compute_stats_by_span_kind: false,
             peer_tags: Vec::new(),
+            stats_cardinality_limit: None,
             #[cfg(feature = "stats-obfuscation")]
             client_side_stats_obfuscation_enabled: false,
             #[cfg(feature = "telemetry")]
@@ -321,6 +323,18 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// enabled)
     pub fn enable_compute_stats_by_span_kind(&mut self) -> &mut Self {
         self.compute_stats_by_span_kind = true;
+        self
+    }
+
+    /// Sets the cardinality limit for client-side stats computation.
+    ///
+    /// When the number of distinct stats groups exceeds `limit`, additional groups are
+    /// aggregated into a sentinel key instead of being tracked individually.
+    /// This bounds memory usage when the trace population has very high cardinality.
+    ///
+    /// Has no effect unless stats computation is enabled.
+    pub fn set_stats_cardinality_limit(&mut self, cardinality_limit: usize) -> &mut Self {
+        self.stats_cardinality_limit = Some(cardinality_limit);
         self
     }
 
@@ -561,10 +575,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             })?),
         };
 
-        let dogstatsd = self.dogstatsd_url.and_then(|u| {
-            new(Endpoint::from_slice(&u)).ok() // If we couldn't set the endpoint return
-                                               // None
-        });
+        let dogstatsd = self
+            .dogstatsd_url
+            .and_then(|u| new(Endpoint::from_slice(&u)).ok().map(Arc::new));
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
 
@@ -807,6 +820,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: StatsComputationConfig {
                 status: ArcSwap::new(stats.into()),
+                stats_cardinality_limit: self.stats_cardinality_limit,
                 #[cfg(feature = "stats-obfuscation")]
                 obfuscation_config: Arc::new(ArcSwap::from_pointee(
                     StatsComputationObfuscationConfig::default(),
