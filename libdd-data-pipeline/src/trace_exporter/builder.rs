@@ -311,11 +311,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
     /// Set a shared runtime used by the exporter for background workers.
     ///
-    /// The runtime type is selected via the builder's `R` parameter — typically
-    /// [`libdd_shared_runtime::ForkSafeRuntime`] on native (when the host wants the fork
-    /// protocol), [`libdd_shared_runtime::BasicRuntime`] to wrap a caller-owned tokio
-    /// runtime, or [`libdd_shared_runtime::LocalRuntime`] on wasm. Sync entry points
-    /// (`build` / `send` / `shutdown`) additionally require `R: BlockingRuntime`.
+    /// See [`libdd_shared_runtime::SharedRuntime`] for guidance on choosing an implementation.
     pub fn set_shared_runtime(&mut self, shared_runtime: Arc<R>) -> &mut Self {
         self.shared_runtime = Some(shared_runtime);
         self

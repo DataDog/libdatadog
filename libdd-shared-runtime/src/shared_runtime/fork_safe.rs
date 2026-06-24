@@ -27,12 +27,10 @@ fn build_runtime(worker_threads: usize) -> Result<Runtime, io::Error> {
 /// Supports the full fork protocol ([`before_fork`](Self::before_fork) /
 /// [`after_fork_parent`](Self::after_fork_parent) /
 /// [`after_fork_child`](Self::after_fork_child)) and synchronous [`shutdown`](Self::shutdown).
-///
-/// # Mutex lock order
-/// `runtime` → `workers`.
 #[derive(Debug)]
 pub struct ForkSafeRuntime {
     worker_threads: usize,
+    // Lock order: `runtime` must be acquired before `workers`.
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
     workers: Arc<Mutex<Vec<WorkerEntry>>>,
     next_worker_id: AtomicU64,

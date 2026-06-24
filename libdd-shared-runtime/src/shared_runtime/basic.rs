@@ -124,9 +124,6 @@ impl SharedRuntime for BasicRuntime {
 }
 
 impl BlockingRuntime for BasicRuntime {
-    /// Forwards to the underlying tokio runtime. Infallible — the inner `Arc<Runtime>` is
-    /// kept alive for the lifetime of this struct, so there is no fork-window fallback to
-    /// build.
     fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
         Ok(self.runtime.block_on(f))
     }

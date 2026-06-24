@@ -184,12 +184,8 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
 /// `C` is the capabilities bundle (HTTP, sleep). Leaf crates pin it to a concrete type
 /// (`NativeCapabilities` or `WasmCapabilities`).
 ///
-/// `R` is the [`SharedRuntime`] used to host background workers. There is no cross-target
-/// default — callers spell the concrete runtime they want
-/// ([`libdd_shared_runtime::ForkSafeRuntime`] for the fork protocol,
-/// [`libdd_shared_runtime::BasicRuntime`] to wrap a caller-owned tokio runtime,
-/// [`libdd_shared_runtime::LocalRuntime`] on wasm). Sync facades such as
-/// [`Self::send`] / [`Self::shutdown`] additionally require `R: BlockingRuntime`.
+/// `R` is the [`SharedRuntime`] used to host background workers. See
+/// [`libdd_shared_runtime::SharedRuntime`] for guidance on choosing an implementation.
 #[derive(Debug)]
 pub struct TraceExporter<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,

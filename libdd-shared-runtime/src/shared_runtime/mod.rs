@@ -39,10 +39,16 @@ pub(crate) struct WorkerEntry {
 
 /// Common interface for all [`SharedRuntime`] implementations.
 ///
-/// Fork hooks are inherent methods on [`ForkSafeRuntime`] only (native target). Synchronous
-/// `block_on` lives on the [`BlockingRuntime`] subtrait, which only the native runtimes
-/// implement. Not object-safe — use `impl SharedRuntime` generics rather than
-/// `dyn SharedRuntime`.
+/// # Choosing an implementation
+///
+/// | Situation | Runtime |
+/// |-----------|---------|
+/// | Native, host process may call `fork(2)` | [`ForkSafeRuntime`] |
+/// | Native, caller owns a tokio runtime and wants to share it | [`BasicRuntime`] |
+/// | Wasm / single-threaded JS event loop | [`LocalRuntime`] |
+///
+/// Sync entry points (e.g. a blocking `build` or `send`) additionally require
+/// `R: `[`BlockingRuntime`], which only the native implementations satisfy.
 pub trait SharedRuntime {
     /// Creates a new instance of the runtime with default configuration.
     ///
@@ -69,19 +75,12 @@ pub trait SharedRuntime {
         Self: Sync;
 }
 
-/// Native-only extension of [`SharedRuntime`] that can drive a future to completion
-/// synchronously.
-///
-/// This is the bound required by sync facades in higher layers (e.g. the trace exporter's
-/// `send` / `build` / `shutdown` methods) to block on async work without entering a tokio
-/// context themselves. Wasm targets do not implement this trait because there is no
-/// thread to block.
+/// Extension of [`SharedRuntime`] for runtimes that can block the current thread on a future.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait BlockingRuntime: SharedRuntime {
-    /// Drives `f` to completion on the runtime's own executor, blocking the current thread.
+    /// Drives `f` to completion, blocking the current thread.
     ///
-    /// Returns an [`io::Error`] if a temporary executor must be built (e.g. in the
-    /// [`ForkSafeRuntime`] fork window) and construction fails.
+    /// Returns an [`io::Error`] if the executor cannot be accessed or constructed.
     fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error>;
 }
 

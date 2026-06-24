@@ -20,7 +20,8 @@
 //! | [`LocalRuntime`]    | wasm32 | single  | n/a                 | no         | WebAssembly; spawns via `wasm_bindgen_futures::spawn_local`.                                                                                |
 //!
 //! \* [`BasicRuntime::new`] and [`BasicRuntime::with_worker_threads`] build a multi-thread runtime;
-//! [`BasicRuntime::from_handle`] accepts any `Arc<tokio::runtime::Runtime>`, including single-thread ones.
+//! [`BasicRuntime::from_handle`] accepts any `Arc<tokio::runtime::Runtime>`, including
+//! single-thread ones.
 //!
 //! ## Fork protocol ([`ForkSafeRuntime`] only)
 //!
