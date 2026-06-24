@@ -1013,7 +1013,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             &self.server.remote_configs,
             &session,
             instance_id,
-            0u64,
+            !0u64, // no need for a notification here, just a config update
             notify_target,
             dynamic_instrumentation_state,
         );
@@ -1066,6 +1066,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 error!("Failed flushing traces: {e:?}");
             }
             flush_all_stats_now(&self.server.span_concentrators).await;
+            debug!("Finished executing flush() for traces and stats")
         }
         if options.telemetry {
             let workers: Vec<_> = {

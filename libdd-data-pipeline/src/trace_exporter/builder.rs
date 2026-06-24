@@ -3,7 +3,7 @@
 
 use crate::agent_info::AgentInfoFetcher;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
-use crate::otlp::OtlpTraceConfig;
+use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -29,6 +29,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
+
+/// Build an [`http::HeaderMap`] from key/value pairs, skipping malformed entries.
+fn build_otlp_header_map(headers: Vec<(String, String)>) -> http::HeaderMap {
+    let mut out = http::HeaderMap::new();
+    for (k, v) in headers {
+        match (
+            http::HeaderName::from_bytes(k.as_bytes()),
+            http::HeaderValue::from_str(&v),
+        ) {
+            (Ok(n), Ok(vv)) => {
+                out.insert(n, vv);
+            }
+            _ => tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", k, v),
+        }
+    }
+    out
+}
 
 #[allow(missing_docs)]
 #[derive(Debug)]
@@ -68,6 +85,11 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    otlp_protocol: OtlpProtocol,
+    otlp_metrics_endpoint: Option<String>,
+    otlp_metrics_headers: Vec<(String, String)>,
+    otel_trace_semantics_enabled: bool,
+    runtime_id: Option<String>,
 }
 
 /// Default is impl'd for `R = ForkSafeRuntime` only so that bare
@@ -122,6 +144,11 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             connection_timeout: None,
             otlp_endpoint: None,
             otlp_headers: Vec::new(),
+            otlp_protocol: OtlpProtocol::default(),
+            otlp_metrics_endpoint: None,
+            otlp_metrics_headers: Vec::new(),
+            otel_trace_semantics_enabled: false,
+            runtime_id: None,
         }
     }
 }
@@ -347,6 +374,15 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
+    /// Selects the OTLP export protocol: [`OtlpProtocol::HttpJson`] (default) or
+    /// [`OtlpProtocol::HttpProtobuf`]. The host language resolves this from
+    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; a `grpc` value is
+    /// unsupported and is rejected when parsed into [`OtlpProtocol`], so it never reaches here.
+    pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
+        self.otlp_protocol = protocol;
+        self
+    }
+
     /// Sets additional HTTP headers to include in OTLP trace export requests.
     ///
     /// Headers should be provided as key-value pairs. The host language is responsible for
@@ -354,6 +390,39 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// before calling this method.
     pub fn set_otlp_headers(&mut self, headers: Vec<(String, String)>) -> &mut Self {
         self.otlp_headers = headers;
+        self
+    }
+
+    /// Enable OTLP HTTP/JSON trace-metrics export to `url` (e.g. `.../v1/metrics`).
+    pub fn set_otlp_metrics_endpoint(&mut self, url: &str) -> &mut Self {
+        self.otlp_metrics_endpoint = Some(url.to_owned());
+        self
+    }
+
+    /// Additional HTTP headers for OTLP trace-metrics requests.
+    pub fn set_otlp_metrics_headers(&mut self, headers: Vec<(String, String)>) -> &mut Self {
+        self.otlp_metrics_headers = headers;
+        self
+    }
+
+    /// Enables OTel trace semantics, which does not add DD-specific per-span attributes
+    /// (`service.name`, `operation.name`, `resource.name`, `span.type`, `error.msg`,
+    ///  `error.message`, `span.kind`) to the OTLP payload.
+    /// Also strips Datadog-specific `dd.*`/`_dd.*` data-point attributes from the exported
+    /// histogram. This is useful when exporting to a native OTel backend that does not expect
+    /// Datadog semantics. The host language tracer is expected to observe this behavior by
+    /// setting the `DD_TRACE_OTEL_SEMANTICS_ENABLED` environment variable to `true`.
+    pub fn enable_otel_trace_semantics(&mut self) -> &mut Self {
+        self.otel_trace_semantics_enabled = true;
+        self
+    }
+
+    /// Set the runtime identifier supplied by the language tracer.
+    ///
+    /// When set, this ID is reused for both OTLP trace exports and OTLP trace-metrics so that all
+    /// signals can be correlated by the backend. If not set, a fresh UUID is generated.
+    pub fn set_runtime_id(&mut self, id: &str) -> &mut Self {
+        self.runtime_id = Some(id.to_owned());
         self
     }
 
@@ -501,31 +570,82 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             }
         };
 
-        let otlp_config = self.otlp_endpoint.map(|url| {
-            let mut headers = http::HeaderMap::new();
-            for (key, value) in self.otlp_headers {
-                match (
-                    http::HeaderName::from_bytes(key.as_bytes()),
-                    http::HeaderValue::from_str(&value),
-                ) {
-                    (Ok(name), Ok(val)) => {
-                        headers.insert(name, val);
-                    }
-                    _ => {
-                        tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
-                    }
-                }
-            }
-            OtlpTraceConfig {
-                endpoint_url: url,
-                headers,
-                timeout: self
-                    .connection_timeout
-                    .map(Duration::from_millis)
-                    .unwrap_or(DEFAULT_OTLP_TIMEOUT),
-                protocol: OtlpProtocol::HttpJson,
-            }
+        let otlp_timeout = self
+            .connection_timeout
+            .map(Duration::from_millis)
+            .unwrap_or(DEFAULT_OTLP_TIMEOUT);
+
+        // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
+        // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
+        let otlp_config = self.otlp_endpoint.map(|url| OtlpTraceConfig {
+            endpoint_url: url,
+            headers: build_otlp_header_map(self.otlp_headers),
+            timeout: otlp_timeout,
+            protocol: self.otlp_protocol,
+            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
+
+        let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
+            endpoint_url: url,
+            headers: build_otlp_header_map(self.otlp_metrics_headers),
+            timeout: otlp_timeout,
+            protocol: OtlpProtocol::HttpJson,
+            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+        });
+
+        let runtime_id = self
+            .runtime_id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        // OTLP metrics + stats bucket size: start the concentrator unconditionally (bypass the
+        // agent gate) so `check_agent_info` cannot later disable stats.
+        #[allow(unused_mut)]
+        let mut otlp_stats_enabled = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(metrics_config), Some(bucket_size)) =
+            (otlp_metrics_config.clone(), self.stats_bucket_size)
+        {
+            use crate::otlp::OtlpStatsExporter;
+            use libdd_trace_stats::span_concentrator::SpanConcentrator;
+            use std::sync::Mutex;
+            let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
+                bucket_size,
+                std::time::SystemTime::now(),
+                span_kinds,
+                self.peer_tags.clone(),
+                #[cfg(feature = "stats-obfuscation")]
+                None,
+            )));
+            let mut resource = OtlpResourceInfo::default();
+            resource.service = self.service.clone();
+            resource.env = self.env.clone();
+            resource.app_version = self.app_version.clone();
+            resource.language = self.language.clone();
+            resource.tracer_version = self.tracer_version.clone();
+            resource.runtime_id = runtime_id.clone();
+            resource.hostname = self.hostname.clone();
+            resource.process_tags = self.process_tags.clone();
+            let worker = OtlpStatsExporter {
+                flush_interval: bucket_size,
+                concentrator: concentrator.clone(),
+                config: metrics_config,
+                resource,
+                test_token: self.test_session_token.clone(),
+                capabilities: capabilities.clone(),
+            };
+            let worker_handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?;
+            stats = StatsComputationStatus::Enabled {
+                stats_concentrator: concentrator,
+                worker_handle,
+            };
+            otlp_stats_enabled = true;
+        }
 
         Ok(TraceExporter {
             endpoint: Endpoint {
@@ -549,7 +669,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 hostname: self.hostname,
                 env: self.env,
                 app_version: self.app_version,
-                runtime_id: uuid::Uuid::new_v4().to_string(),
+                runtime_id,
                 service: self.service,
             },
             input_format: self.input_format,
@@ -587,6 +707,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
+            otlp_stats_enabled,
         })
     }
 
