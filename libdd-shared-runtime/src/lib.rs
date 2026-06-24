@@ -8,23 +8,28 @@
 
 //! A shared tokio runtime for running background workers across multiple components.
 //!
-//! This crate provides three implementations of [`SharedRuntime`], distinguished by their
-//! threading model and fork-safety guarantees:
-//!
-//! - [`ForkSafeRuntime`] *(native only)* — owns a multi-thread tokio runtime and exposes the full
-//!   fork protocol ([`ForkSafeRuntime::before_fork`] / [`ForkSafeRuntime::after_fork_parent`] /
-//!   [`ForkSafeRuntime::after_fork_child`]) that pauses and restarts workers around `fork()` calls,
-//!   preventing deadlocks in child processes. Also provides synchronous
-//!   [`ForkSafeRuntime::block_on`] and [`ForkSafeRuntime::shutdown`].
-//! - [`BasicRuntime`] *(native only)* — the regular (non-fork-safe) variant. Its internal tokio
-//!   runtime can be library-built ([`BasicRuntime::new`] / [`BasicRuntime::with_worker_threads`])
-//!   or supplied by the caller as an `Arc<tokio::runtime::Runtime>`
-//!   ([`BasicRuntime::from_handle`]).
-//! - [`LocalRuntime`] *(wasm32 only)* — single-threaded local executor; spawns workers via
-//!   `wasm_bindgen_futures::spawn_local`. No fork protocol, no `block_on`, async-only.
-//!
 //! Components such as the trace exporter can share one runtime instead of each creating their
 //! own, reducing thread and resource overhead.
+//!
+//! # Choosing a runtime
+//!
+//! | Runtime             | Target | Threads | Fork-safe           | `block_on` | When to use                                                                                                                                 |
+//! |---------------------|--------|---------|---------------------|------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+//! | [`ForkSafeRuntime`] | native | multi   | yes — full protocol | yes        | Default for native code that may run in a forking process (e.g. Ruby, Python runtimes).                                                     |
+//! | [`BasicRuntime`]    | native | multi*  | no                  | yes        | Native code where `fork()` is not a concern; optionally share an existing `Arc<tokio::runtime::Runtime>` via [`BasicRuntime::from_handle`]. |
+//! | [`LocalRuntime`]    | wasm32 | single  | n/a                 | no         | WebAssembly; spawns via `wasm_bindgen_futures::spawn_local`.                                                                                |
+//!
+//! \* [`BasicRuntime::new`] and [`BasicRuntime::with_worker_threads`] build a multi-thread runtime;
+//! [`BasicRuntime::from_handle`] accepts any `Arc<tokio::runtime::Runtime>`, including single-thread ones.
+//!
+//! ## Fork protocol ([`ForkSafeRuntime`] only)
+//!
+//! Call these around every `fork()` to prevent deadlocks in child processes:
+//!
+//! 1. [`ForkSafeRuntime::before_fork`] — pauses workers
+//! 2. `fork()`
+//! 3. parent: [`ForkSafeRuntime::after_fork_parent`] — resumes workers
+//! 4. child: [`ForkSafeRuntime::after_fork_child`] — restarts workers on a fresh runtime
 
 pub mod shared_runtime;
 mod weak_waker;
