@@ -69,7 +69,7 @@ compute_semver_results() {
     DETAILS=""
     REASON=""
 
-    SEMVER_OUTPUT=$(cargo semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
+    SEMVER_OUTPUT=$(cargo +stable semver-checks -p "$crate" --color=never --all-features --baseline-rev "$baseline" 2>&1)
     SEMVER_EXIT_CODE=$?
 
     if [[ $SEMVER_EXIT_CODE -eq 0 ]]; then
