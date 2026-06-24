@@ -566,18 +566,13 @@ fn collect_and_add_thread_contexts(
     let crashing_tid = crashing_tid.unwrap_or(0) as i32;
     let parent_pid = parent_pid as i32;
 
-    // Use the remaining receiver budget
-    // When this expires, stream_thread_contexts stops and returns the threads
-    // collected so far, which are still emitted in the report.
-    let context_timeout = budget;
-
     let mut collected_threads = Vec::new();
 
     let incomplete = stream_thread_contexts(
         parent_pid,
         crashing_tid,
         config.max_threads(),
-        context_timeout,
+        budget,
         config.resolve_frames(),
         |tid, captured_context| {
             let (name, state) = read_thread_stat(parent_pid, tid);
@@ -589,7 +584,7 @@ fn collect_and_add_thread_contexts(
             };
 
             collected_threads.push(ThreadData {
-                crashed: false,
+                crashed: tid == crashing_tid,
                 name,
                 stack,
                 state,
