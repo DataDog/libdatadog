@@ -30,20 +30,21 @@ pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
     /// return `self` unchanged.
     ///
     /// Implementations that cannot allocate (e.g. `&str`) return `self` unmodified.
-    fn maybe_truncate(self, max_chars: usize, result_chars: usize, suffix: &str) -> Self;
+    fn maybe_truncate(self, max_chars: usize, result_chars: usize, suffix: &str) -> Self {
+        // Default: no allocation possible, so return unchanged.
+        // Implementations that own their storage (e.g. `BytesString`) should override this.
+        let _ = (max_chars, result_chars, suffix);
+        self
+    }
 }
 
 impl SpanText for &str {
     fn from_static_str(value: &'static str) -> Self {
         value
     }
-
-    fn maybe_truncate(self, _max_chars: usize, _result_chars: usize, _suffix: &str) -> Self {
-        // &str is borrowed; allocation is impossible, so truncation is silently skipped.
-        // The only path that produces &str spans is the zero-copy msgpack decoder
-        // (SpanSlice / SliceData), whose callers must already enforce length limits upstream.
-        self
-    }
+    // maybe_truncate uses the default (no-op): &str is borrowed and cannot allocate.
+    // The only path that produces &str spans is the zero-copy msgpack decoder
+    // (SpanSlice / SliceData), whose callers enforce length limits upstream.
 }
 
 impl SpanText for BytesString {
@@ -58,7 +59,8 @@ impl SpanText for BytesString {
             return self;
         }
         // Single pass: find the byte offset of char `keep_chars` and count total chars together,
-        // avoiding a separate O(n) `chars().count()` scan followed by another `char_indices()` walk.
+        // avoiding a separate O(n) `chars().count()` scan followed by another `char_indices()`
+        // walk.
         let suffix_chars = suffix.chars().count();
         debug_assert!(
             result_chars >= suffix_chars,
