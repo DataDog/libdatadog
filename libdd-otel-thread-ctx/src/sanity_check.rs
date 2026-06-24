@@ -9,9 +9,9 @@
 //! that the binary was linked with the correct option:
 //!
 //! - `otel_thread_ctx_v1` is exported as TLS GLOBAL in the dynamic symbol table.
-//! - `otel_thread_ctx_v1` follows the TLSDESC model: there's either no relocation in `.rela.dyn`
-//!   (Local Exec), or a TLSDESC one. All other TLS relocation types (DTPMOD, DTPOFF, TPOFF,
-//!   GOTTPOFF, etc.) are rejected.
+//! - `otel_thread_ctx_v1` has no non-TLSDESC TLS relocations in `.rela.dyn`. The linker may pick
+//!   TLSDESC or Local Exec depending on optimization; both are acceptable. All other TLS relocation
+//!   types (DTPMOD, DTPOFF, TPOFF, GOTTPOFF, etc.) are rejected.
 //!
 //! This module is only available on Linux (the only platform that supports the TLSDESC dialect used
 //! by this crate) and only when the `sanity-check` feature is enabled.
@@ -51,15 +51,26 @@ fn own_elf_path() -> anyhow::Result<PathBuf> {
         std::fs::read_to_string("/proc/self/maps").context("failed to read /proc/self/maps")?;
     for line in maps.lines() {
         // Format: address perms offset dev inode [pathname]
-        let fields: Vec<&str> = line.split_whitespace().collect();
-        if fields.len() < 6 {
-            continue;
+        // Skip the first 5 whitespace-delimited tokens then take the rest verbatim
+        // as the path, so that pathnames containing spaces are preserved intact.
+        let mut rest = line;
+
+        for _ in 0..5 {
+            rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+            rest = rest.trim_start_matches(|c: char| !c.is_ascii_whitespace());
         }
-        let path = fields[5];
+
+        let path = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+
         if !path.starts_with('/') {
             continue;
         }
-        if let Some((start_str, end_str)) = fields[0].split_once('-') {
+
+        if let Some((start_str, end_str)) = line
+            .split_whitespace()
+            .next()
+            .and_then(|f| f.split_once('-'))
+        {
             let start = usize::from_str_radix(start_str, 16).unwrap_or(0);
             let end = usize::from_str_radix(end_str, 16).unwrap_or(0);
             if addr >= start && addr < end {
