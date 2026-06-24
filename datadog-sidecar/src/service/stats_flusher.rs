@@ -118,6 +118,8 @@ fn make_exporter(
         )),
         #[cfg(feature = "stats-obfuscation")]
         "0",
+        None,
+        None,
     )
 }
 

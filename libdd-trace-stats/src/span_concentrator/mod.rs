@@ -20,11 +20,13 @@ pub use stat_span::StatSpan;
 /// `StatsExporter` is generic over `C: FlushableConcentrator` so it can work with
 /// both the in-process [`SpanConcentrator`] and the SHM-backed `ShmSpanConcentrator`.
 pub trait FlushableConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket>;
+    /// Flush time buckets and return them together with the number of spans that were
+    /// collapsed into the overflow sentinel bucket due to cardinality limiting.
+    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64);
 }
 
 impl FlushableConcentrator for SpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket> {
+    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64) {
         self.flush(SystemTime::now(), force)
     }
 }
@@ -221,7 +223,11 @@ impl SpanConcentrator {
 
     /// Flush all stats bucket except for the `buffer_len` most recent. If `force` is true, flush
     /// all buckets.
-    pub fn flush(&mut self, now: SystemTime, force: bool) -> Vec<pb::ClientStatsBucket> {
+    ///
+    /// Returns a tuple of `(buckets, collapsed_spans)` where `collapsed_spans` is the total number
+    /// of spans that were collapsed into the overflow sentinel bucket due to cardinality limiting
+    /// across all flushed time buckets.
+    pub fn flush(&mut self, now: SystemTime, force: bool) -> (Vec<pb::ClientStatsBucket>, u64) {
         // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
         let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
@@ -251,8 +257,7 @@ impl SpanConcentrator {
                 Some(bucket.flush(self.bucket_size))
             })
             .collect();
-        //TODO send telemetry
-        buckets_pb
+        (buckets_pb, total_collapsed)
     }
 }
 

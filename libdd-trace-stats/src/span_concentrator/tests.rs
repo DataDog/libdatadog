@@ -126,12 +126,12 @@ fn test_concentrator_oldest_timestamp_cold() {
 
     // Assert we didn't insert spans in older buckets
     for _ in 0..concentrator.buffer_len {
-        let stats = concentrator.flush(flushtime, false);
+        let (stats, _) = concentrator.flush(flushtime, false);
         assert_eq!(stats.len(), 0, "We should get 0 time buckets");
         flushtime += Duration::from_nanos(concentrator.bucket_size);
     }
 
-    let stats = concentrator.flush(flushtime, false);
+    let (stats, _) = concentrator.flush(flushtime, false);
 
     assert_eq!(stats.len(), 1, "We should get exactly one time bucket");
 
@@ -188,12 +188,12 @@ fn test_concentrator_oldest_timestamp_hot() {
     }
 
     for _ in 0..(concentrator.buffer_len - 1) {
-        let stats = concentrator.flush(flushtime, false);
+        let (stats, _) = concentrator.flush(flushtime, false);
         assert!(stats.is_empty(), "We should get 0 time buckets");
         flushtime += Duration::from_nanos(concentrator.bucket_size);
     }
 
-    let stats = concentrator.flush(flushtime, false);
+    let (stats, _) = concentrator.flush(flushtime, false);
     assert_eq!(stats.len(), 1, "We should get exactly one time bucket");
 
     // First oldest bucket aggregates, it should have it all except the
@@ -213,7 +213,7 @@ fn test_concentrator_oldest_timestamp_hot() {
     assert_counts_equal(expected, stats.first().unwrap().stats.clone());
 
     flushtime += Duration::from_nanos(concentrator.bucket_size);
-    let stats = concentrator.flush(flushtime, false);
+    let (stats, _) = concentrator.flush(flushtime, false);
     assert_eq!(stats.len(), 1, "We should get exactly one time bucket");
 
     // Stats of the last four spans.
@@ -278,7 +278,7 @@ fn test_concentrator_stats_totals() {
     let mut flushtime = now;
 
     for _ in 0..=concentrator.buffer_len {
-        let stats = concentrator.flush(flushtime, false);
+        let (stats, _) = concentrator.flush(flushtime, false);
         if stats.is_empty() {
             continue;
         }
@@ -528,7 +528,7 @@ fn test_concentrator_stats_counts() {
     let mut flushtime = now;
 
     for _ in 0..=concentrator.buffer_len + 2 {
-        let stats = concentrator.flush(flushtime, false);
+        let (stats, _) = concentrator.flush(flushtime, false);
         let expected_flushed_timestamps = align_timestamp(
             system_time_to_unix_duration(flushtime).as_nanos() as u64,
             concentrator.bucket_size,
@@ -553,7 +553,7 @@ fn test_concentrator_stats_counts() {
             stats.first().unwrap().stats.clone(),
         );
 
-        let stats = concentrator.flush(flushtime, false);
+        let (stats, _) = concentrator.flush(flushtime, false);
         assert_eq!(
             stats.len(),
             0,
@@ -658,7 +658,7 @@ fn test_span_should_be_included_in_stats() {
         },
     ];
 
-    let stats = concentrator.flush(
+    let (stats, _) = concentrator.flush(
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64),
         false,
     );
@@ -696,7 +696,7 @@ fn test_ignore_partial_spans() {
         concentrator.add_span(span);
     }
 
-    let stats = concentrator.flush(
+    let (stats, _) = concentrator.flush(
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64),
         false,
     );
@@ -727,10 +727,10 @@ fn test_force_flush() {
     let flushtime = now - Duration::from_secs(3600);
 
     // Bucket should not be flushed without force flush
-    let stats = concentrator.flush(flushtime, false);
+    let (stats, _) = concentrator.flush(flushtime, false);
     assert_eq!(0, stats.len());
 
-    let stats = concentrator.flush(flushtime, true);
+    let (stats, _) = concentrator.flush(flushtime, true);
     assert_eq!(1, stats.len());
 }
 
@@ -900,7 +900,7 @@ fn test_peer_tags_aggregation() {
         },
     ];
 
-    let stats_with_peer_tags = concentrator_with_peer_tags.flush(flushtime, false);
+    let (stats_with_peer_tags, _) = concentrator_with_peer_tags.flush(flushtime, false);
     assert_counts_equal(
         expected_with_peer_tags,
         stats_with_peer_tags
@@ -910,7 +910,7 @@ fn test_peer_tags_aggregation() {
             .clone(),
     );
 
-    let stats_without_peer_tags = concentrator_without_peer_tags.flush(flushtime, false);
+    let (stats_without_peer_tags, _) = concentrator_without_peer_tags.flush(flushtime, false);
     assert_counts_equal(
         expected_without_peer_tags,
         stats_without_peer_tags
@@ -1023,7 +1023,7 @@ fn test_peer_tags_quantization_aggregation() {
         ..Default::default()
     }];
 
-    let stats_with_peer_tags = concentrator_with_peer_tags.flush(flushtime, false);
+    let (stats_with_peer_tags, _) = concentrator_with_peer_tags.flush(flushtime, false);
     assert_counts_equal(
         expected_with_peer_tags,
         stats_with_peer_tags
@@ -1193,7 +1193,7 @@ fn test_base_service_peer_tag() {
         },
     ];
 
-    let stats = concentrator.flush(flushtime, false);
+    let (stats, _) = concentrator.flush(flushtime, false);
     assert_counts_equal(
         expected,
         stats
@@ -1497,7 +1497,7 @@ fn test_pb_span() {
     // Flush and get stats
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
-    let stats = concentrator.flush(flushtime, false);
+    let (stats, _) = concentrator.flush(flushtime, false);
 
     assert_eq!(stats.len(), 1, "Should get exactly one time bucket");
     let bucket = &stats[0];
@@ -1622,7 +1622,7 @@ fn test_cardinality_limit_collapse() {
         concentrator.add_span(&span);
     }
 
-    let buckets = concentrator.flush(SystemTime::now(), true);
+    let (buckets, _) = concentrator.flush(SystemTime::now(), true);
     assert!(!buckets.is_empty(), "should get at least one time bucket");
 
     let stats = &buckets[0].stats;
@@ -1680,7 +1680,7 @@ fn test_overflow_bucket_counts() {
         concentrator.add_span(&span);
     }
 
-    let buckets = concentrator.flush(SystemTime::now(), true);
+    let (buckets, _) = concentrator.flush(SystemTime::now(), true);
     assert!(!buckets.is_empty());
     let stats = &buckets[0].stats;
 
@@ -1729,7 +1729,7 @@ fn test_no_collapse_within_limit() {
         concentrator.add_span(&span);
     }
 
-    let buckets = concentrator.flush(SystemTime::now(), true);
+    let (buckets, _) = concentrator.flush(SystemTime::now(), true);
     assert!(!buckets.is_empty());
     let stats = &buckets[0].stats;
 
@@ -1781,7 +1781,7 @@ fn test_overflow_bucket_key_sentinel_values() {
     concentrator.add_span(&first);
     concentrator.add_span(&second);
 
-    let buckets = concentrator.flush(SystemTime::now(), true);
+    let (buckets, _) = concentrator.flush(SystemTime::now(), true);
     assert!(!buckets.is_empty());
     let stats = &buckets[0].stats;
 
