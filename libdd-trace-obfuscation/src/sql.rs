@@ -2276,7 +2276,7 @@ fn normalize_plan_sql(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
-    use std::fmt::Write;
+    use core::fmt::Write;
 
     #[test]
     fn test_sql_obfuscation() {

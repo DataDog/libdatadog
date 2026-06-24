@@ -31,7 +31,7 @@ macro_rules! cstr {
         }
 
         $crate::cstr::validate_cstr_contents(bytes);
-        unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(bytes) }
+        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked(bytes) }
     }};
 }
 
@@ -39,7 +39,7 @@ macro_rules! cstr {
 macro_rules! cstr_u8 {
     ($s:literal) => {{
         $crate::cstr::validate_cstr_contents($s);
-        unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked($s as &[u8]) }
+        unsafe { core::ffi::CStr::from_bytes_with_nul_unchecked($s as &[u8]) }
     }};
 }
 

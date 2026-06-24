@@ -3,7 +3,7 @@
 
 use crate::Error;
 use anyhow::Context;
-use std::{ffi::c_void, ptr::NonNull};
+use core::{ffi::c_void, ptr::NonNull};
 
 #[derive(Debug)]
 #[repr(C)]
@@ -300,11 +300,11 @@ pub unsafe extern "C" fn ddog_ArrayQueue_capacity(queue_ptr: &ArrayQueue) -> Arr
 mod tests {
     use super::*;
     use bolero::TypeGenerator;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     unsafe extern "C" fn drop_item(item: *mut c_void) -> c_void {
         _ = Box::from_raw(item as *mut i32);
-        std::mem::zeroed()
+        core::mem::zeroed()
     }
 
     #[test]
@@ -313,7 +313,7 @@ mod tests {
         assert!(matches!(queue_new_result, ArrayQueueNewResult::Ok(_)));
         let queue_ptr = match queue_new_result {
             ArrayQueueNewResult::Ok(ptr) => ptr.as_ptr(),
-            _ => std::ptr::null_mut(),
+            _ => core::ptr::null_mut(),
         };
         let item = Box::new(1i32);
         let item_ptr = Box::into_raw(item);
@@ -335,7 +335,7 @@ mod tests {
             );
             let item_ptr = match result {
                 ArrayQueuePopResult::Ok(ptr) => ptr,
-                _ => std::ptr::null_mut(),
+                _ => core::ptr::null_mut(),
             };
             drop(Box::from_raw(item_ptr as *mut i32));
             let result = ddog_ArrayQueue_push(queue, item3_ptr as *mut c_void);
@@ -438,7 +438,7 @@ mod tests {
                 assert!(matches!(queue_new_result, ArrayQueueNewResult::Ok(_)));
                 let queue_ptr = match queue_new_result {
                     ArrayQueueNewResult::Ok(ptr) => ptr.as_ptr(),
-                    _ => std::ptr::null_mut(),
+                    _ => core::ptr::null_mut(),
                 };
                 let queue = unsafe { &*queue_ptr };
 

@@ -1,8 +1,11 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::ffi::{CString as AllocCString, NulError};
+use alloc::vec::Vec;
+use core::ffi::CStr as CoreCStr;
 use core::fmt;
-use std::{
+use core::{
     ffi::c_char,
     marker::PhantomData,
     mem::{self, ManuallyDrop},
@@ -17,21 +20,21 @@ pub struct CStr<'a> {
     ptr: ptr::NonNull<c_char>,
     /// Length of the array, not counting the null-terminator
     length: usize,
-    _lifetime_marker: std::marker::PhantomData<&'a c_char>,
+    _lifetime_marker: core::marker::PhantomData<&'a c_char>,
 }
 
 impl<'a> CStr<'a> {
-    pub fn from_std(s: &'a std::ffi::CStr) -> Self {
+    pub fn from_std(s: &'a CoreCStr) -> Self {
         Self {
             ptr: unsafe { ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) },
             length: s.to_bytes().len(),
-            _lifetime_marker: std::marker::PhantomData,
+            _lifetime_marker: core::marker::PhantomData,
         }
     }
 
-    pub fn into_std(&self) -> &'a std::ffi::CStr {
+    pub fn into_std(&self) -> &'a CoreCStr {
         unsafe {
-            std::ffi::CStr::from_bytes_with_nul_unchecked(std::slice::from_raw_parts(
+            CoreCStr::from_bytes_with_nul_unchecked(core::slice::from_raw_parts(
                 self.ptr.as_ptr().cast_const().cast(),
                 self.length + 1,
             ))
@@ -56,8 +59,8 @@ impl fmt::Debug for CString {
 }
 
 impl CString {
-    pub fn new<T: Into<Vec<u8>>>(t: T) -> Result<Self, std::ffi::NulError> {
-        Ok(Self::from_std(std::ffi::CString::new(t)?))
+    pub fn new<T: Into<Vec<u8>>>(t: T) -> Result<Self, NulError> {
+        Ok(Self::from_std(AllocCString::new(t)?))
     }
 
     /// Creates a new `CString` from the given input, or returns an empty `CString`
@@ -99,7 +102,7 @@ impl CString {
         }
     }
 
-    pub fn from_std(s: std::ffi::CString) -> Self {
+    pub fn from_std(s: AllocCString) -> Self {
         let length = s.to_bytes().len();
         Self {
             ptr: unsafe { ptr::NonNull::new_unchecked(s.into_raw()) },
@@ -107,10 +110,10 @@ impl CString {
         }
     }
 
-    pub fn into_std(self) -> std::ffi::CString {
+    pub fn into_std(self) -> AllocCString {
         let s = ManuallyDrop::new(self);
         unsafe {
-            std::ffi::CString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
+            AllocCString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
                 s.ptr.as_ptr().cast(),
                 s.length + 1, // +1 for the null terminator
                 s.length + 1, // +1 for the null terminator
@@ -123,7 +126,7 @@ impl Drop for CString {
     fn drop(&mut self) {
         let ptr = mem::replace(&mut self.ptr, NonNull::dangling());
         drop(unsafe {
-            std::ffi::CString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
+            AllocCString::from_vec_with_nul_unchecked(Vec::from_raw_parts(
                 ptr.as_ptr().cast(),
                 self.length + 1,
                 self.length + 1,
@@ -138,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_cstr() {
-        let s = std::ffi::CString::new("hello").unwrap();
+        let s = AllocCString::new("hello").unwrap();
         let cstr = CStr::from_std(&s);
         assert_eq!(cstr.into_std().to_str().unwrap(), "hello");
     }

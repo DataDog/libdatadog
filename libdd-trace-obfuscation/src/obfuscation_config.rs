@@ -106,7 +106,7 @@ impl ObfuscationConfig {
     /// # Errors
     ///
     /// Returns an error if one of the regular expressions used by the config cannot be compiled.
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() -> Result<Self, Box<dyn core::error::Error>> {
         let tag_replace_rules: Option<Vec<ReplaceRule>> = match env::var("DD_APM_REPLACE_TAGS") {
             Ok(replace_rules_str) => match replacer::parse_rules_from_string(&replace_rules_str) {
                 Ok(res) => {

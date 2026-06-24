@@ -5,10 +5,10 @@ use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper_util::client::legacy::connect;
 
-use std::future::Future;
-use std::pin::Pin;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 use std::sync::LazyLock;
-use std::task::{Context, Poll};
 
 #[cfg(unix)]
 pub mod uds;

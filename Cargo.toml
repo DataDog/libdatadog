@@ -136,6 +136,8 @@ todo = "warn"
 unimplemented = "warn"
 unreachable = "warn"
 panic_in_result_fn = "warn"
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"
 # TODO: Re-enable once every crate defines package keywords and categories.
 cargo_common_metadata = "allow"
 # TODO: Re-enable once the workspace dependency graph is deduplicated.

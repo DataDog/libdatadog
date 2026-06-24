@@ -1,8 +1,8 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::hint::black_box;
-use std::time::Duration;
+use core::hint::black_box;
+use core::time::Duration;
 
 use criterion::Throughput::Elements;
 use criterion::{criterion_group, BatchSize, BenchmarkId, Criterion};
