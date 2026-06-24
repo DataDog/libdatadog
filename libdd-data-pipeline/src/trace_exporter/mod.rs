@@ -329,9 +329,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
 
         let format: DeserInputFormat = self.input_format.into();
 
+        // Decode into owned SpanBytes (BytesString) rather than borrowed SpanSlice (&str) so
+        // that the truncate_span_strings call inside send_trace_chunks_inner can actually
+        // shorten over-long fields.  copy_from_slice performs one allocation for the whole
+        // payload; all decoded string fields are zero-copy subslices of that buffer.
+        let owned = libdd_tinybytes::Bytes::copy_from_slice(data);
         let (traces, _) = match format {
-            DeserInputFormat::V04 => msgpack_decoder::v04::from_slice(data),
-            DeserInputFormat::V05 => msgpack_decoder::v05::from_slice(data),
+            DeserInputFormat::V04 => msgpack_decoder::v04::from_bytes(owned),
+            DeserInputFormat::V05 => msgpack_decoder::v05::from_bytes(owned),
         }
         .map_err(|e| {
             error!("Error deserializing trace from request body: {e}");
@@ -2129,6 +2134,66 @@ mod tests {
             result.err()
         );
         mock_otlp.assert();
+    }
+
+    // -----------------------------------------------------------------------
+    // Truncation regression test for the send/send_async (msgpack-decode) path
+    // -----------------------------------------------------------------------
+
+    /// Verifies that decoding via `from_bytes` (what `send_async` now uses)
+    /// yields owned `SpanBytes` so that `truncate_span_strings` actually fires.
+    ///
+    /// Previously `send_async` used `from_slice`, which produced `SpanSlice`
+    /// spans (`T::Text = &str`).  Because `&str` inherits the no-op default
+    /// for `maybe_truncate`, the truncation call was silently skipped and
+    /// over-25k fields were forwarded to the agent unchanged.
+    #[test]
+    fn test_send_async_path_truncates_over_long_fields() {
+        use libdd_trace_utils::msgpack_decoder;
+        use libdd_trace_utils::msgpack_encoder;
+        use libdd_trace_utils::span::trace_utils::{
+            truncate_span_strings, MAX_SPAN_STRING_LEN, TRUNCATED_SPAN_STRING_LEN,
+        };
+
+        // Build a span with a resource one code point over the threshold.
+        let long_resource: String = std::iter::repeat_n('b', MAX_SPAN_STRING_LEN + 1).collect();
+        let span = SpanBytes {
+            resource: BytesString::from_string(long_resource),
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_slice(b"svc").unwrap(),
+            span_id: 1,
+            trace_id: 1,
+            start: 1_000_000,
+            duration: 1_000,
+            ..Default::default()
+        };
+
+        // Encode to msgpack — this is the raw bytes a tracer hands to send().
+        let payload = msgpack_encoder::v04::to_vec(&vec![vec![span]]);
+
+        // --- Old (broken) path: from_slice → SpanSlice → &str → no-op truncation ---
+        let (mut old_traces, _) = msgpack_decoder::v04::from_slice(&payload).unwrap();
+        truncate_span_strings(&mut old_traces);
+        assert_eq!(
+            old_traces[0][0].resource.chars().count(),
+            MAX_SPAN_STRING_LEN + 1,
+            "from_slice path cannot truncate (expected: still over-limit)"
+        );
+
+        // --- New (fixed) path: from_bytes → SpanBytes → BytesString → real truncation ---
+        let owned = libdd_tinybytes::Bytes::copy_from_slice(&payload);
+        let (mut new_traces, _) = msgpack_decoder::v04::from_bytes(owned).unwrap();
+        truncate_span_strings(&mut new_traces);
+        let resource = new_traces[0][0].resource.as_str();
+        assert_eq!(
+            resource.chars().count(),
+            TRUNCATED_SPAN_STRING_LEN,
+            "from_bytes path must truncate to {TRUNCATED_SPAN_STRING_LEN} code points"
+        );
+        assert!(
+            resource.ends_with("<truncated>..."),
+            "truncated resource must end with the suffix"
+        );
     }
 }
 
