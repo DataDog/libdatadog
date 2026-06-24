@@ -70,7 +70,7 @@ pub mod linux {
         ffi::c_void,
         mem,
         ptr::{self, NonNull},
-        sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
+        sync::atomic::{compiler_fence, AtomicPtr, AtomicU64, AtomicU8, Ordering},
     };
 
     /// Run `f` with an atomic view of the current thread's TLS slot.
@@ -136,17 +136,18 @@ pub mod linux {
     ///   update.
     // Note: we don't need to make this struct packed, because it's already designed to avoid
     // padding. Moreover, doing so would make it 1-aligned, potentially making access to
-    // `attrs_data_size` unaligned and thus slower, and prevent us from using `AtomicU8` for
-    // `valid`. We use const assertions below to verify size and offsets at compile time.
+    // `span_id` and `attrs_data_size` unaligned and thus slower, and prevent us from using an
+    // atomic view of `span_id`. We use const assertions below to verify size and offsets at
+    // compile time.
     #[repr(C)]
-    struct ThreadContextRecord {
+    pub struct ThreadContextRecord {
         /// Trace identifier; all-zeroes means "no trace".
         trace_id: [u8; 16],
-        /// Span identifier.
-        span_id: [u8; 8],
+        /// Span identifier, stored with the exact byte representation provided by the caller.
+        span_id: u64,
         /// Whether the record is ready/consistent. Always set to `1` except during in-place update
         /// of the current record.
-        valid: AtomicU8,
+        valid: u8,
         _reserved: u8,
         /// Number of populated bytes in `attrs_data`.
         attrs_data_size: u16,
@@ -169,6 +170,7 @@ pub mod linux {
 
     const _: () = {
         assert!(size_of::<ThreadContextRecord>() == 640);
+        assert!(mem::align_of::<ThreadContextRecord>() == 8);
         assert!(mem::offset_of!(ThreadContextRecord, trace_id) == 0);
         assert!(mem::offset_of!(ThreadContextRecord, span_id) == 16);
         assert!(mem::offset_of!(ThreadContextRecord, valid) == 24);
@@ -181,19 +183,36 @@ pub mod linux {
         /// Build a record with the given trace id, span id and attributes. The
         /// `local_root_span_id` is a distinguished attribute with special handling for
         /// convenience, but it ends up as other attributes in `attrs_data`.
-        fn new(
+        fn new<I, S>(
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
-            attrs: &[(u8, &str)],
-        ) -> Self {
+            attrs: I,
+        ) -> Self
+        where
+            I: IntoIterator<Item = (u8, S)>,
+            S: AsRef<str>,
+        {
             let mut record = Self {
                 trace_id,
-                span_id,
+                span_id: u64::from_ne_bytes(span_id),
                 ..Default::default()
             };
             record.set_attrs(local_root_span_id, attrs);
             record
+        }
+
+        fn span_id_atomic(&mut self) -> &AtomicU64 {
+            // Safety: `span_id` has the same size and alignment as `AtomicU64`. The record layout
+            // is asserted above, and all atomic access to this field goes through this
+            // method.
+            unsafe { AtomicU64::from_ptr(ptr::addr_of_mut!(self.span_id)) }
+        }
+
+        fn valid_atomic(&mut self) -> &AtomicU8 {
+            // Safety: `valid` has the same size and alignment as `AtomicU8`. The record layout is
+            // asserted above, and all atomic access to this field goes through this method.
+            unsafe { AtomicU8::from_ptr(ptr::addr_of_mut!(self.valid)) }
         }
 
         /// Encode `attributes` into `self.attrs_data` as packed key-value records. Existing data
@@ -217,7 +236,11 @@ pub mod linux {
         /// recovery would require us to be able to rollback to the previous attributes which would
         /// hurt the happy path, or leave the record in an inconsistent state. Another possibility
         /// would be to error out and reset the record in that situation.
-        fn set_attrs(&mut self, local_root_span_id: [u8; 8], attributes: &[(u8, &str)]) -> bool {
+        fn set_attrs<I, S>(&mut self, local_root_span_id: [u8; 8], attributes: I) -> bool
+        where
+            I: IntoIterator<Item = (u8, S)>,
+            S: AsRef<str>,
+        {
             let mut fully_encoded = true;
 
             const { assert!(MAX_ATTRS_DATA_SIZE >= 18) }
@@ -237,8 +260,8 @@ pub mod linux {
 
             let mut offset = 18;
 
-            for &(key_index, val) in attributes {
-                let val_bytes = val.as_bytes();
+            for (key_index, val) in attributes {
+                let val_bytes = val.as_ref().as_bytes();
                 let val_len = u8::try_from(val_bytes.len()).unwrap_or_else(|_| {
                     fully_encoded = false;
                     u8::MAX
@@ -263,15 +286,50 @@ pub mod linux {
             self.attrs_data_size = offset as u16;
             fully_encoded
         }
+
+        /// Update this record in place using the async-signal-safe `valid` protocol.
+        pub fn update<I, S>(
+            &mut self,
+            trace_id: [u8; 16],
+            span_id: [u8; 8],
+            local_root_span_id: [u8; 8],
+            attrs: I,
+        ) -> bool
+        where
+            I: IntoIterator<Item = (u8, S)>,
+            S: AsRef<str>,
+        {
+            self.valid_atomic().store(0, Ordering::Relaxed);
+            compiler_fence(Ordering::SeqCst);
+
+            self.trace_id = trace_id;
+            self.span_id_atomic()
+                .store(u64::from_ne_bytes(span_id), Ordering::Relaxed);
+            let fully_encoded = self.set_attrs(local_root_span_id, attrs);
+
+            compiler_fence(Ordering::SeqCst);
+            self.valid_atomic().store(1, Ordering::Relaxed);
+
+            fully_encoded
+        }
+
+        /// Update only the current span id with a single atomic store.
+        ///
+        /// This intentionally does not toggle `valid`: readers may observe either the previous
+        /// span id or the new span id, and both are consistent with the rest of the record.
+        pub fn update_span_id(&mut self, span_id: [u8; 8]) {
+            self.span_id_atomic()
+                .store(u64::from_ne_bytes(span_id), Ordering::Relaxed);
+        }
     }
 
     impl Default for ThreadContextRecord {
         fn default() -> Self {
             Self {
                 trace_id: [0u8; 16],
-                span_id: [0u8; 8],
+                span_id: 0,
                 // We only ever set `valid` to `0` during in-place update of an attached context.
-                valid: AtomicU8::new(1),
+                valid: 1,
                 _reserved: 0,
                 attrs_data_size: 0,
                 attrs_data: [0u8; MAX_ATTRS_DATA_SIZE],
@@ -304,6 +362,20 @@ pub mod linux {
             local_root_span_id: [u8; 8],
             attrs: &[(u8, &str)],
         ) -> Self {
+            Self::new_with_attrs(trace_id, span_id, local_root_span_id, attrs.iter().copied())
+        }
+
+        /// Create a new thread context with the given trace/span IDs and encoded attributes.
+        pub fn new_with_attrs<I, S>(
+            trace_id: [u8; 16],
+            span_id: [u8; 8],
+            local_root_span_id: [u8; 8],
+            attrs: I,
+        ) -> Self
+        where
+            I: IntoIterator<Item = (u8, S)>,
+            S: AsRef<str>,
+        {
             Self::from(ThreadContextRecord::new(
                 trace_id,
                 span_id,
@@ -401,6 +473,44 @@ pub mod linux {
             with_tls_slot(|slot| Self::swap(slot, self.into_ptr().as_ptr()))
         }
 
+        /// Publish an externally owned thread context record by writing its pointer into the TLS
+        /// slot. Ownership is not transferred and the previously attached pointer is not returned.
+        ///
+        /// # Safety
+        ///
+        /// `record` must remain valid while attached to the current thread. The caller must detach
+        /// the record before it can be freed.
+        pub unsafe fn attach_record(record: NonNull<ThreadContextRecord>) {
+            compiler_fence(Ordering::Release);
+            with_tls_slot(|slot| {
+                slot.store(record.as_ptr(), Ordering::Relaxed);
+            });
+        }
+
+        /// Clear the TLS slot without taking ownership of the previously attached record.
+        pub fn detach_record() {
+            with_tls_slot(|slot| {
+                slot.store(ptr::null_mut(), Ordering::Relaxed);
+            });
+        }
+
+        /// Clear the TLS slot if it currently points to `record`.
+        ///
+        /// # Safety
+        ///
+        /// `record` must be a pointer to a live thread-context record.
+        pub unsafe fn detach_record_if_current(record: NonNull<ThreadContextRecord>) -> bool {
+            with_tls_slot(|slot| {
+                slot.compare_exchange(
+                    record.as_ptr(),
+                    ptr::null_mut(),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            })
+        }
+
         /// Update the currently attached record in-place. Sets `valid = 0` before the update and
         /// `valid = 1` after, so a reader that fires between the two writes sees an inconsistent
         /// record and skips it. Compiler fences prevent the compiler from reordering field writes
@@ -414,24 +524,30 @@ pub mod linux {
             local_root_span_id: [u8; 8],
             attrs: &[(u8, &str)],
         ) {
+            Self::update_with_attrs(trace_id, span_id, local_root_span_id, attrs.iter().copied());
+        }
+
+        /// Update the currently attached record in-place with borrowed attribute data.
+        pub fn update_with_attrs<I, S>(
+            trace_id: [u8; 16],
+            span_id: [u8; 8],
+            local_root_span_id: [u8; 8],
+            attrs: I,
+        ) where
+            I: IntoIterator<Item = (u8, S)>,
+            S: AsRef<str>,
+        {
             with_tls_slot(|slot| {
                 // Safety: a non-null value in the slot came from `into_ptr` (i.e. `Box::into_raw`),
                 // and only this thread ever writes to the slot, so the pointer is valid and not
                 // accessed for the duration of this closure.
                 if let Some(current) = unsafe { slot.load(Ordering::Relaxed).as_mut() } {
-                    current.valid.store(0, Ordering::Relaxed);
-                    compiler_fence(Ordering::SeqCst);
-
-                    current.trace_id = trace_id;
-                    current.span_id = span_id;
-                    current.set_attrs(local_root_span_id, attrs);
-
-                    compiler_fence(Ordering::SeqCst);
-                    current.valid.store(1, Ordering::Relaxed);
+                    current.update(trace_id, span_id, local_root_span_id, attrs);
                 } else {
-                    let ctxt = ThreadContext::new(trace_id, span_id, local_root_span_id, attrs)
-                        .into_ptr()
-                        .as_ptr();
+                    let ctxt =
+                        ThreadContext::new_with_attrs(trace_id, span_id, local_root_span_id, attrs)
+                            .into_ptr()
+                            .as_ptr();
                     // No need for `AcqRel`, see [^tls-slot-ordering].
                     compiler_fence(Ordering::Release);
                     // `ThreadContext::new` already initialises `valid = 1`.
@@ -462,12 +578,17 @@ pub mod linux {
     // The tests are set to be ignored by Miri, since accessing the TLS through C isn't supported.
     mod tests {
         use super::{ThreadContext, ThreadContextRecord};
+        use std::ptr::NonNull;
         use std::sync::atomic::Ordering;
 
         /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the
         /// address of the slot itself).
         fn read_tls_context_ptr() -> *const ThreadContextRecord {
             super::with_tls_slot(|slot| slot.load(Ordering::Relaxed))
+        }
+
+        fn span_id_bytes(record: &ThreadContextRecord) -> [u8; 8] {
+            record.span_id.to_ne_bytes()
         }
 
         #[test]
@@ -495,7 +616,7 @@ pub mod linux {
                     "got back a different trace_id than attached"
                 );
                 assert!(
-                    prev.0.as_ref().span_id == span_id,
+                    span_id_bytes(prev.0.as_ref()) == span_id,
                     "got back a different span_id than attached"
                 );
             }
@@ -521,8 +642,8 @@ pub mod linux {
             // Safety: context is still live.
             let record = unsafe { &*ptr };
             assert_eq!(record.trace_id, trace_id);
-            assert_eq!(record.span_id, span_id);
-            assert_eq!(record.valid.load(Ordering::Relaxed), 1);
+            assert_eq!(span_id_bytes(record), span_id);
+            assert_eq!(record.valid, 1);
             // 1 (key) + 1 (len) + 16 (root_span_id hex chars) = 18
             assert_eq!(record.attrs_data_size, 18);
 
@@ -605,8 +726,8 @@ pub mod linux {
             assert!(!ptr_before.is_null());
             let record = unsafe { &*ptr_before };
             assert_eq!(record.trace_id, trace_id1);
-            assert_eq!(record.span_id, span_id1);
-            assert_eq!(record.valid.load(Ordering::Relaxed), 1);
+            assert_eq!(span_id_bytes(record), span_id1);
+            assert_eq!(record.valid, 1);
             assert_eq!(record.attrs_data[0], 0);
             assert_eq!(record.attrs_data[1], 16);
             assert_eq!(&record.attrs_data[2..18], b"78797a7b7c7d7e7f");
@@ -624,8 +745,8 @@ pub mod linux {
 
             let record = unsafe { &*ptr_after };
             assert_eq!(record.trace_id, trace_id2);
-            assert_eq!(record.span_id, span_id2);
-            assert_eq!(record.valid.load(Ordering::Relaxed), 1);
+            assert_eq!(span_id_bytes(record), span_id2);
+            assert_eq!(record.valid, 1);
             assert_eq!(record.attrs_data[0], 0);
             assert_eq!(record.attrs_data[1], 16);
             assert_eq!(&record.attrs_data[2..18], b"797a7b7c7d7e7f80");
@@ -649,6 +770,50 @@ pub mod linux {
             // Calling detach again is safe (no-op, returns None).
             let _ = ThreadContext::detach();
             assert!(read_tls_context_ptr().is_null());
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn externally_owned_record_can_be_attached_and_detached_without_ownership_transfer() {
+            let mut record = ThreadContextRecord::default();
+            let record_ptr = NonNull::from(&mut record);
+
+            record.update([1u8; 16], [2u8; 8], [3u8; 8], [(1, "service")]);
+            unsafe {
+                ThreadContext::attach_record(record_ptr);
+            }
+
+            assert_eq!(
+                read_tls_context_ptr(),
+                &record as *const ThreadContextRecord
+            );
+            assert_eq!(record.trace_id, [1u8; 16]);
+            assert_eq!(span_id_bytes(&record), [2u8; 8]);
+            assert_eq!(record.valid, 1);
+            assert_eq!(record.attrs_data[18], 1);
+            assert_eq!(record.attrs_data[19], 7);
+            assert_eq!(&record.attrs_data[20..27], b"service");
+
+            assert!(unsafe { ThreadContext::detach_record_if_current(record_ptr) });
+            assert!(read_tls_context_ptr().is_null());
+        }
+
+        #[test]
+        fn span_id_update_is_atomic_and_does_not_toggle_valid() {
+            let mut record = ThreadContextRecord::new(
+                [1u8; 16],
+                [2u8; 8],
+                [3u8; 8],
+                std::iter::empty::<(u8, &str)>(),
+            );
+            assert_eq!(record.valid, 1);
+
+            record.update_span_id([4u8; 8]);
+
+            assert_eq!(span_id_bytes(&record), [4u8; 8]);
+            assert_eq!(record.valid, 1);
+            assert_eq!(record.trace_id, [1u8; 16]);
+            assert_eq!(record.attrs_data_size, 18);
         }
 
         #[test]
@@ -699,7 +864,7 @@ pub mod linux {
                 assert!(!ptr.is_null(), "spawned thread TLS must still be set");
                 let record = unsafe { &*ptr };
                 assert_eq!(record.trace_id, spawned_trace_id);
-                assert_eq!(record.span_id, spawned_span_id);
+                assert_eq!(span_id_bytes(record), spawned_span_id);
                 assert_eq!(&record.attrs_data[2..18], b"efdecdbcab9a8978");
 
                 let _ = ThreadContext::detach();
@@ -720,7 +885,7 @@ pub mod linux {
             assert!(!ptr.is_null(), "main thread TLS must be set");
             let record = unsafe { &*ptr };
             assert_eq!(record.trace_id, main_trace_id);
-            assert_eq!(record.span_id, main_span_id);
+            assert_eq!(span_id_bytes(record), main_span_id);
             assert_eq!(&record.attrs_data[2..18], b"33445566778899aa");
 
             barrier.wait();

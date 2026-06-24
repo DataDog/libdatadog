@@ -15,7 +15,10 @@ sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 
 [parse]
 parse_deps = true
-include = ["libdd-common-ffi", "libdd-otel-thread-ctx"]
+# Do not parse libdd-otel-thread-ctx here. Its Rust record is an implementation detail of the
+# writer, while the public C ABI must expose the spec layout as primitive integer fields. lib.rs
+# defines explicit FFI mirror types and asserts that they match the internal layout.
+include = ["libdd-common-ffi"]
 
 [export]
 prefix = "ddog_"
