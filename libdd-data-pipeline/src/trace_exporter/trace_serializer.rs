@@ -460,4 +460,174 @@ mod tests {
         assert!(!headers.contains_key("datadog-client-computed-stats"));
         assert!(headers.contains_key("datadog-client-computed-top-level"));
     }
+
+    // -----------------------------------------------------------------------
+    // Truncation end-to-end regression tests
+    //
+    // These tests verify that over-long string fields survive the full
+    // truncate → encode → decode round-trip correctly.  They mirror the
+    // dd-trace-py snapshot tests for
+    // `test_encode_span_with_large_string_attributes` (ASCII) and
+    // `test_encode_span_with_large_unicode_string_attributes` (multi-byte).
+    // -----------------------------------------------------------------------
+
+    use libdd_trace_utils::span::trace_utils::{
+        truncate_span_strings, MAX_SPAN_STRING_LEN, TRUNCATED_SPAN_STRING_LEN,
+    };
+
+    const TRUNCATION_SUFFIX: &str = "<truncated>...";
+
+    fn long_bytes_string(c: char, n: usize) -> BytesString {
+        BytesString::from_string(std::iter::repeat_n(c, n).collect())
+    }
+
+    /// Build a span whose `resource`, one meta key, and one meta value are
+    /// each at interesting boundary lengths, matching the dd-trace-py snapshot
+    /// test fixture:
+    ///   - name:       25 000 'a' chars   → exactly at the limit → NOT truncated
+    ///   - resource:   25 001 'b' chars   → one over the limit   → truncated to 2 500
+    ///   - meta key:   25 001 'c' chars   → truncated to 2 500
+    ///   - meta value:  2 000 'd' chars   → well under limit     → unchanged
+    fn create_large_string_span() -> SpanBytes {
+        SpanBytes {
+            name: long_bytes_string('a', MAX_SPAN_STRING_LEN),
+            resource: long_bytes_string('b', MAX_SPAN_STRING_LEN + 1),
+            service: BytesString::from_slice(b"svc").unwrap(),
+            meta: vec![(
+                long_bytes_string('c', MAX_SPAN_STRING_LEN + 1),
+                long_bytes_string('d', 2_000),
+            )]
+            .into(),
+            span_id: 1,
+            trace_id: 1,
+            start: 1_000_000,
+            duration: 1_000,
+            ..Default::default()
+        }
+    }
+
+    fn assert_truncation_invariants(span: &libdd_trace_utils::span::v04::SpanBytes) {
+        // name at exactly the limit — must be unchanged
+        assert_eq!(
+            span.name.as_str().chars().count(),
+            MAX_SPAN_STRING_LEN,
+            "name should not be truncated"
+        );
+
+        // resource one over the limit — must be truncated
+        assert_eq!(
+            span.resource.as_str().chars().count(),
+            TRUNCATED_SPAN_STRING_LEN,
+            "resource should be truncated to {TRUNCATED_SPAN_STRING_LEN}"
+        );
+        assert!(
+            span.resource.as_str().ends_with(TRUNCATION_SUFFIX),
+            "truncated resource must end with the suffix"
+        );
+
+        // meta: key was over the limit, value was under
+        let (k, v) = span.meta.iter().next().expect("meta should be non-empty");
+        assert_eq!(
+            k.as_str().chars().count(),
+            TRUNCATED_SPAN_STRING_LEN,
+            "meta key should be truncated"
+        );
+        assert!(k.as_str().ends_with(TRUNCATION_SUFFIX));
+        assert_eq!(
+            v.as_str().chars().count(),
+            2_000,
+            "meta value under limit must be unchanged"
+        );
+    }
+
+    #[test]
+    fn test_truncation_survives_v04_encode_decode_round_trip() {
+        let serializer = TraceSerializer::new();
+        let mut traces = vec![vec![create_large_string_span()]];
+
+        truncate_span_strings(&mut traces);
+
+        let payload = serializer
+            .collect_and_process_traces(traces, TraceExporterOutputFormat::V04)
+            .unwrap();
+        let serialized = serializer
+            .serialize_payload(&payload, &TracerMetadata::default())
+            .unwrap();
+
+        let (decoded, _) =
+            libdd_trace_utils::msgpack_decoder::v04::from_slice(&serialized).unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].len(), 1);
+
+        // Decoded spans use &str (SliceData); re-check lengths via char count.
+        let span = &decoded[0][0];
+        assert_eq!(span.name.chars().count(), MAX_SPAN_STRING_LEN);
+        assert_eq!(span.resource.chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert!(span.resource.ends_with(TRUNCATION_SUFFIX));
+        let (k, v) = span.meta.iter().next().unwrap();
+        assert_eq!(k.chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert_eq!(v.chars().count(), 2_000);
+    }
+
+    #[test]
+    fn test_truncation_survives_v05_encode_decode_round_trip() {
+        let serializer = TraceSerializer::new();
+        let mut traces = vec![vec![create_large_string_span()]];
+
+        truncate_span_strings(&mut traces);
+
+        // Verify truncation happened in memory before we encode.
+        assert_truncation_invariants(&traces[0][0]);
+
+        let payload = serializer
+            .collect_and_process_traces(traces, TraceExporterOutputFormat::V05)
+            .unwrap();
+        let serialized = serializer
+            .serialize_payload(&payload, &TracerMetadata::default())
+            .unwrap();
+
+        let (decoded, _) =
+            libdd_trace_utils::msgpack_decoder::v05::from_slice(&serialized).unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].len(), 1);
+
+        let span = &decoded[0][0];
+        assert_eq!(span.name.chars().count(), MAX_SPAN_STRING_LEN);
+        assert_eq!(span.resource.chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert!(span.resource.ends_with(TRUNCATION_SUFFIX));
+        let (k, v) = span.meta.iter().next().unwrap();
+        assert_eq!(k.chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert_eq!(v.chars().count(), 2_000);
+    }
+
+    #[test]
+    fn test_truncation_unicode_survives_v04_encode_decode_round_trip() {
+        // Each '€' is 3 bytes; 25 001 euros → truncated to 2 500 code points.
+        let serializer = TraceSerializer::new();
+        let mut traces = vec![vec![SpanBytes {
+            name: long_bytes_string('€', MAX_SPAN_STRING_LEN + 1),
+            resource: BytesString::from_slice(b"r").unwrap(),
+            service: BytesString::from_slice(b"svc").unwrap(),
+            span_id: 1,
+            trace_id: 1,
+            start: 1_000_000,
+            duration: 1_000,
+            ..Default::default()
+        }]];
+
+        truncate_span_strings(&mut traces);
+
+        let payload = serializer
+            .collect_and_process_traces(traces, TraceExporterOutputFormat::V04)
+            .unwrap();
+        let serialized = serializer
+            .serialize_payload(&payload, &TracerMetadata::default())
+            .unwrap();
+
+        let (decoded, _) =
+            libdd_trace_utils::msgpack_decoder::v04::from_slice(&serialized).unwrap();
+        let name = decoded[0][0].name;
+        assert_eq!(name.chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert!(name.ends_with(TRUNCATION_SUFFIX));
+    }
 }

@@ -643,6 +643,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
 
+        // Truncate over-long string fields before any downstream processing so that stats,
+        // serialization, and the OTLP path all operate on the same normalized payload.
+        libdd_trace_utils::span::trace_utils::truncate_span_strings(&mut traces);
+
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
         stats::process_traces_for_stats(
