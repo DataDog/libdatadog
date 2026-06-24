@@ -40,6 +40,8 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
+#[cfg(not(target_arch = "wasm32"))]
+use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
@@ -179,11 +181,16 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
     }
 }
 
-/// `C` is the capabilities bundle (HTTP, sleep). Leaf crates
-/// pin it to a concrete type (`NativeCapabilities` or `WasmCapabilities`).
-/// Task spawning is handled internally by `SharedRuntime`.
+/// `C` is the capabilities bundle (HTTP, sleep). Leaf crates pin it to a concrete type
+/// (`NativeCapabilities` or `WasmCapabilities`).
+///
+/// `R` is the [`SharedRuntime`] used to host background workers. See
+/// [`libdd_shared_runtime::SharedRuntime`] for guidance on choosing an implementation.
 #[derive(Debug)]
-pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
+pub struct TraceExporter<
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+> {
     endpoint: Endpoint,
     metadata: TracerMetadata,
     input_format: TraceExporterInputFormat,
@@ -196,7 +203,7 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     /// poll or stay silent and leave SDK authors without a signal.
     v1_unavailable_logged: Once,
     serializer: TraceSerializer,
-    shared_runtime: Arc<SharedRuntime>,
+    shared_runtime: Arc<R>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Client>,
     common_stats_tags: Vec<Tag>,
@@ -222,22 +229,27 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     otlp_stats_enabled: bool,
 }
 
-impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: SharedRuntime>
+    TraceExporter<C, R>
+{
     #[allow(missing_docs)]
-    pub fn builder() -> TraceExporterBuilder {
-        TraceExporterBuilder::default()
+    pub fn builder() -> TraceExporterBuilder<R> {
+        TraceExporterBuilder::new()
     }
 
     /// Stop the background workers owned by this exporter.
     ///
     /// Sync facade over [`Self::shutdown_async`]; panics inside an existing tokio context.
-    /// Workers from other components on the same [`SharedRuntime`] are unaffected.
+    /// Workers from other components sharing the same `R` runtime are unaffected.
     ///
     /// # Errors
     /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
     /// given and elapsed before all workers finished.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
+    pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
         let runtime = self.shared_runtime.clone();
         runtime.block_on(self.shutdown_async(timeout))?
     }
@@ -301,7 +313,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
     /// `data` must be encoded per the `input_format` given to the builder. Returns the
     /// agent response on success.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
+    pub fn send(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
         self.shared_runtime.block_on(self.send_async(data))?
     }
 
@@ -391,7 +406,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 let ctx = stats::StatsContext {
                     metadata: &self.metadata,
                     endpoint_url: &self.endpoint.url,
-                    shared_runtime: &self.shared_runtime,
+                    shared_runtime: &*self.shared_runtime,
                 };
                 stats::handle_stats_disabled_by_agent(
                     &ctx,
@@ -516,7 +531,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
         cancellation_token: Option<&CancellationToken>,
-    ) -> Result<AgentResponse, TraceExporterError> {
+    ) -> Result<AgentResponse, TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
         self.shared_runtime.block_on(async {
             match cancellation_token {
                 Some(token) => {
@@ -962,6 +980,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
@@ -1176,7 +1195,7 @@ mod tests {
         output: TraceExporterOutputFormat,
         enable_telemetry: bool,
         enable_health_metrics: bool,
-    ) -> TraceExporter<NativeCapabilities> {
+    ) -> TraceExporter<NativeCapabilities, ForkSafeRuntime> {
         let mut builder = TraceExporterBuilder::default();
         builder
             .set_url(&url)
@@ -1596,7 +1615,7 @@ mod tests {
                 );
         });
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1638,7 +1657,7 @@ mod tests {
                 .body(r#"{ "error": "Unavailable" }"#);
         });
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1673,7 +1692,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1727,7 +1746,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1835,7 +1854,7 @@ mod tests {
                 .body("");
         });
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("foo")
@@ -1887,7 +1906,7 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder.set_url(&server.url("/"));
         let exporter = builder.build::<NativeCapabilities>().unwrap();
         let traces = vec![0x90];
@@ -1922,7 +1941,7 @@ mod tests {
                 .body(response_body);
         });
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .enable_agent_rates_payload_version();
@@ -2014,7 +2033,7 @@ mod tests {
             then.delay(delay).status(status).body(response);
         });
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -2048,14 +2067,14 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_connection_timeout() {
-        let exporter = TraceExporter::<NativeCapabilities>::builder()
+        let exporter = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder()
             .build::<NativeCapabilities>()
             .unwrap();
 
         assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
 
         let timeout = Some(42);
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder.set_connection_timeout(timeout);
 
         let exporter = builder.build::<NativeCapabilities>().unwrap();
@@ -2120,6 +2139,7 @@ mod single_threaded_tests {
     use crate::agent_info;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
 
@@ -2155,9 +2175,9 @@ mod single_threaded_tests {
                 ));
         });
 
-        let runtime = Arc::new(SharedRuntime::new().unwrap());
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -2252,9 +2272,9 @@ mod single_threaded_tests {
                 ));
         });
 
-        let runtime = Arc::new(SharedRuntime::new().unwrap());
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
@@ -2308,10 +2328,10 @@ mod single_threaded_tests {
     #[cfg(feature = "stats-obfuscation")]
     fn build_obfuscation_test_exporter(
         url: String,
-        runtime: Arc<SharedRuntime>,
+        runtime: Arc<ForkSafeRuntime>,
         opt_in: bool,
-    ) -> TraceExporter<NativeCapabilities> {
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+    ) -> TraceExporter<NativeCapabilities, ForkSafeRuntime> {
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&url)
             .set_service("test")
@@ -2366,7 +2386,7 @@ mod single_threaded_tests {
                 .body(info_body);
         });
 
-        let runtime = Arc::new(SharedRuntime::new().unwrap());
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
         let exporter = build_obfuscation_test_exporter(server.url("/"), runtime.clone(), opt_in);
 
         while agent_info::get_agent_info().is_none() {
@@ -2456,9 +2476,9 @@ mod single_threaded_tests {
                 ));
         });
 
-        let runtime = Arc::new(SharedRuntime::new().unwrap());
+        let runtime = Arc::new(ForkSafeRuntime::new().unwrap());
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .set_url(&server.url("/"))
             .set_service("test")
