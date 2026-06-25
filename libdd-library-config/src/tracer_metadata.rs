@@ -3,6 +3,18 @@
 use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 use std::default::Default;
 
+/// Value of an additional OTel process-context attribute. Mirrors the small subset of
+/// `opentelemetry::proto::common::v1::AnyValue` variants we support for caller-supplied threadlocal
+/// extras — string and 64-bit integer, since the only consumers so far are textual schema
+/// identifiers and small numeric layout constants (e.g. struct offsets, pointer widths).
+#[cfg(feature = "otel-thread-ctx")]
+#[derive(serde::Serialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "snake_case", tag = "type", content = "value")]
+pub enum ProcessContextAttrValue {
+    String(String),
+    Int(i64),
+}
+
 /// This struct MUST be backward compatible.
 #[derive(serde::Serialize, Debug, PartialEq, Eq, Hash)]
 pub struct TracerMetadata {
@@ -48,6 +60,25 @@ pub struct TracerMetadata {
     #[cfg(feature = "otel-thread-ctx")]
     #[serde(skip)]
     pub threadlocal_attribute_keys: Option<Vec<String>>,
+
+    /// Value of the `threadlocal.schema_version` attribute emitted in the OTel process context.
+    /// Identifies the on-the-wire record schema the writer publishes (e.g. `"tlsdesc_v1_dev"` for
+    /// libdatadog's own TLSDESC-based writer, `"nodejs_v1_dev"` for a Node.js writer). Defaults to
+    /// `"tlsdesc_v1_dev"` when `None`.
+    ///
+    /// Only emitted when `threadlocal_attribute_keys` is `Some`. Ignored for (de)serialization.
+    #[cfg(feature = "otel-thread-ctx")]
+    #[serde(skip)]
+    pub threadlocal_schema_version: Option<String>,
+
+    /// Extra OTel process-context attributes the threadlocal writer wants to publish alongside the
+    /// key map (e.g. language-runtime layout constants that the reader needs to walk from a
+    /// discovery TLS symbol into the record). Each entry is emitted verbatim as a KeyValue.
+    ///
+    /// Only emitted when `threadlocal_attribute_keys` is `Some`. Ignored for (de)serialization.
+    #[cfg(feature = "otel-thread-ctx")]
+    #[serde(skip)]
+    pub threadlocal_extra_attributes: Vec<(String, ProcessContextAttrValue)>,
 }
 
 impl Default for TracerMetadata {
@@ -65,6 +96,10 @@ impl Default for TracerMetadata {
             container_id: None,
             #[cfg(feature = "otel-thread-ctx")]
             threadlocal_attribute_keys: None,
+            #[cfg(feature = "otel-thread-ctx")]
+            threadlocal_schema_version: None,
+            #[cfg(feature = "otel-thread-ctx")]
+            threadlocal_extra_attributes: Vec::new(),
         }
     }
 }
@@ -113,6 +148,10 @@ impl TracerMetadata {
             container_id,
             #[cfg(feature = "otel-thread-ctx")]
             threadlocal_attribute_keys,
+            #[cfg(feature = "otel-thread-ctx")]
+            threadlocal_schema_version,
+            #[cfg(feature = "otel-thread-ctx")]
+            threadlocal_extra_attributes,
         } = self;
 
         #[cfg_attr(not(feature = "otel-thread-ctx"), allow(unused_mut))]
@@ -132,7 +171,9 @@ impl TracerMetadata {
         if let Some(threadlocal_attribute_keys) = threadlocal_attribute_keys.as_ref() {
             attributes.push(key_value(
                 "threadlocal.schema_version",
-                "tlsdesc_v1_dev".to_owned(),
+                threadlocal_schema_version
+                    .clone()
+                    .unwrap_or_else(|| "tlsdesc_v1_dev".to_owned()),
             ));
 
             attributes.push(KeyValue {
@@ -152,6 +193,18 @@ impl TracerMetadata {
                 }),
                 key_ref: 0,
             });
+
+            for (k, v) in threadlocal_extra_attributes {
+                let value = match v {
+                    ProcessContextAttrValue::String(s) => any_value::Value::StringValue(s.clone()),
+                    ProcessContextAttrValue::Int(i) => any_value::Value::IntValue(*i),
+                };
+                attributes.push(KeyValue {
+                    key: k.clone(),
+                    value: Some(AnyValue { value: Some(value) }),
+                    key_ref: 0,
+                });
+            }
         }
 
         ProcessContext {
@@ -319,5 +372,80 @@ mod tests {
                 "custom.key"
             ]
         );
+    }
+
+    #[cfg(feature = "otel-thread-ctx")]
+    #[test]
+    fn threadlocal_schema_version_override() {
+        let ctx = TracerMetadata {
+            threadlocal_attribute_keys: Some(vec![]),
+            threadlocal_schema_version: Some("nodejs_v1_dev".to_owned()),
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+
+        let schema_version = find_attr(&ctx, "threadlocal.schema_version")
+            .expect("threadlocal.schema_version should be present");
+        assert_eq!(
+            schema_version.value,
+            Some(any_value::Value::StringValue("nodejs_v1_dev".to_owned()))
+        );
+    }
+
+    #[cfg(feature = "otel-thread-ctx")]
+    #[test]
+    fn threadlocal_extra_attributes_are_emitted() {
+        let ctx = TracerMetadata {
+            threadlocal_attribute_keys: Some(vec!["k".to_owned()]),
+            threadlocal_extra_attributes: vec![
+                (
+                    "threadlocal.wrapped_object_offset".to_owned(),
+                    ProcessContextAttrValue::Int(24),
+                ),
+                (
+                    "threadlocal.tagged_size".to_owned(),
+                    ProcessContextAttrValue::Int(8),
+                ),
+                (
+                    "threadlocal.runtime.name".to_owned(),
+                    ProcessContextAttrValue::String("nodejs".to_owned()),
+                ),
+            ],
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+
+        assert_eq!(
+            find_attr(&ctx, "threadlocal.wrapped_object_offset").and_then(|v| v.value.clone()),
+            Some(any_value::Value::IntValue(24))
+        );
+        assert_eq!(
+            find_attr(&ctx, "threadlocal.tagged_size").and_then(|v| v.value.clone()),
+            Some(any_value::Value::IntValue(8))
+        );
+        assert_eq!(
+            find_attr(&ctx, "threadlocal.runtime.name").and_then(|v| v.value.clone()),
+            Some(any_value::Value::StringValue("nodejs".to_owned()))
+        );
+    }
+
+    #[cfg(feature = "otel-thread-ctx")]
+    #[test]
+    fn threadlocal_schema_and_extras_ignored_without_key_map() {
+        // Without threadlocal_attribute_keys, no threadlocal block is emitted at all — neither the
+        // schema override nor any extras leak out on their own.
+        let ctx = TracerMetadata {
+            threadlocal_attribute_keys: None,
+            threadlocal_schema_version: Some("nodejs_v1_dev".to_owned()),
+            threadlocal_extra_attributes: vec![(
+                "threadlocal.wrapped_object_offset".to_owned(),
+                ProcessContextAttrValue::Int(24),
+            )],
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+
+        assert!(find_attr(&ctx, "threadlocal.schema_version").is_none());
+        assert!(find_attr(&ctx, "threadlocal.wrapped_object_offset").is_none());
     }
 }
