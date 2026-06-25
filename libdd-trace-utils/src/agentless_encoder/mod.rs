@@ -246,12 +246,11 @@ fn encode_span<T: TraceData, S: Serializer>(
         map.serialize_entry(
             "meta_struct",
             &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>| {
-                let mut ms = ser.serialize_map(Some(span.meta_struct.len()))?;
+                let mut ms = ser.serialize_map(None)?;
                 for (k, v) in span.meta_struct.iter() {
                     let key: &str = k.borrow();
                     let bytes: &[u8] = v.borrow();
-                    // Encode as a JSON array of u8 (default serde behavior for &[u8]).
-                    ms.serialize_entry(key, bytes)?;
+                    ms.serialize_entry(key, &MsgpackAsJson(bytes))?;
                 }
                 ms.end()
             }),
@@ -383,6 +382,20 @@ fn serialize_scalar<S: serde::Serializer, T: TraceData>(
                 ser.serialize_unit()
             }
         }
+    }
+}
+
+/// `serde::Serialize` adapter that interprets `bytes` as a self-describing
+/// msgpack value and transcodes it into the destination serializer.
+///
+/// Used to inline `meta_struct` values (which are stored as msgpack-encoded
+/// bytes) into the agentless JSON payload as real JSON objects.
+struct MsgpackAsJson<'a>(&'a [u8]);
+
+impl serde::Serialize for MsgpackAsJson<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut de = rmp_serde::Deserializer::from_read_ref(self.0);
+        serde_transcode::transcode(&mut de, serializer)
     }
 }
 

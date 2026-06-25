@@ -5,7 +5,7 @@ use super::encode_payload;
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink, VecMap};
 use crate::span::BytesData;
 use crate::tracer_metadata::TracerMetadata;
-use libdd_tinybytes::BytesString;
+use libdd_tinybytes::{Bytes, BytesString};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -268,4 +268,88 @@ fn top_level_only_for_first_span_when_parent_in_other_service() {
     assert_eq!(spans[0]["meta"]["_dd.compute_stats"], "1");
     assert!(spans[1]["meta"].get("_dd.compute_stats").is_none());
     assert!(spans[2]["meta"].get("_dd.compute_stats").is_none());
+}
+
+#[test]
+fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
+    // `meta_struct` values are msgpack-encoded objects in memory. On the
+    // agentless wire they must appear as real JSON objects (not byte arrays).
+    #[derive(serde::Serialize)]
+    struct AppSec<'a> {
+        rule_id: &'a str,
+        nested: Nested<'a>,
+        list: Vec<i32>,
+    }
+    #[derive(serde::Serialize)]
+    struct Nested<'a> {
+        kind: &'a str,
+        count: u32,
+    }
+    let payload = rmp_serde::to_vec_named(&AppSec {
+        rule_id: "crs-913-110",
+        nested: Nested {
+            kind: "sqli",
+            count: 3,
+        },
+        list: vec![1, 2, 3],
+    })
+    .unwrap();
+
+    // A bogus second entry: not valid msgpack — must be silently skipped.
+    let malformed = vec![0xc1_u8, 0xff, 0xff];
+
+    let mut span: Span<BytesData> = Span {
+        service: bs("svc"),
+        name: bs("op"),
+        trace_id: 1,
+        span_id: 1,
+        parent_id: 0,
+        start: 0,
+        duration: 1,
+        ..Default::default()
+    };
+    span.meta_struct
+        .insert(bs("_dd.appsec.json"), Bytes::from(payload));
+    span.meta_struct
+        .insert(bs("broken"), Bytes::from(malformed));
+
+    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata()).unwrap());
+    let s = &v["traces"][0]["spans"][0];
+    let ms = s["meta_struct"]
+        .as_object()
+        .expect("meta_struct must be a JSON object");
+    // Malformed entry is dropped.
+    assert!(
+        !ms.contains_key("broken"),
+        "malformed msgpack entries must be skipped, got {:?}",
+        ms
+    );
+    // Well-formed entry is inlined as a JSON object.
+    let inlined = ms
+        .get("_dd.appsec.json")
+        .expect("valid entry must be present")
+        .as_object()
+        .expect("valid entry must be a JSON object, not a byte array");
+    assert_eq!(inlined["rule_id"], "crs-913-110");
+    assert_eq!(inlined["nested"]["kind"], "sqli");
+    assert_eq!(inlined["nested"]["count"], 3);
+    assert_eq!(inlined["list"], serde_json::json!([1, 2, 3]));
+}
+
+#[test]
+fn meta_struct_field_omitted_when_empty() {
+    // No meta_struct entries -> the field is not emitted at all.
+    let span: Span<BytesData> = Span {
+        service: bs("svc"),
+        name: bs("op"),
+        trace_id: 1,
+        span_id: 1,
+        parent_id: 0,
+        start: 0,
+        duration: 1,
+        ..Default::default()
+    };
+    let v = json_from_bytes(&encode_payload(&[vec![span]], &base_metadata()).unwrap());
+    let s = &v["traces"][0]["spans"][0];
+    assert!(s.get("meta_struct").is_none());
 }
