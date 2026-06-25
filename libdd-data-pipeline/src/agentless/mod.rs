@@ -16,7 +16,7 @@
 //!   the exporter reads no environment variables.
 //! - **Encoding**: JSON (see [`libdd_trace_utils::agentless_encoder`]) instead of msgpack v04. See
 //!   that module for the payload-shape differences.
-//! - **Retries**: up to 3 attempts with exponential backoff starting at 1 s and no cap (the agent
+//! - **Retries**: up to 2 retries with exponential backoff starting at 1 s and no cap (the agent
 //!   path uses its own strategy).
 //! - **Mutual exclusion with OTLP**: if both an OTLP and an agentless endpoint are configured on
 //!   the builder, OTLP wins and the agentless config is silently dropped with a warning at build
