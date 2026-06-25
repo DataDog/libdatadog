@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Reusable EVP flagevaluation payload, coalescing, and serialization
+//! Reusable EVP flagevaluation payload, coalescing, serialization, and sender
 //! primitives for the `flageval-worker` ingestion schema.
 //!
 //! Crate-naming note: this workspace uses `libdd-remote-config` (not
@@ -9,8 +9,9 @@
 //! (e.g. `dd-trace-php`) must use `libdd-remote-config` in any import paths.
 //!
 //! Two-tier aggregation (full → degraded → drop-counted), context pruning,
-//! payload-limit degradation, and JSON POST encoding live here so native FFE
-//! consumers can share the same behavior independent of sidecar transport.
+//! payload-limit degradation, JSON POST encoding, and Agent EVP proxy sending
+//! live here so native FFE consumers can share the same behavior independent of
+//! sidecar dispatch.
 //!
 //! Serialization note (bincode wire vs EVP POST): these types cross the
 //! worker→sidecar IPC boundary, which is encoded with **bincode** — a
@@ -32,6 +33,12 @@ use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+mod sender;
+pub use sender::{
+    flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch, FlagEvaluationEvpSendConfig,
+    EVP_FLAGEVALUATION_PATH, EVP_PAYLOAD_SIZE_LIMIT, EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE,
+};
 
 // ── Aggregation caps ────────────────────────────────────────────────────────
 pub const EVAL_SCALE_TARGET_FLAGS: usize = 2_500;

@@ -1357,6 +1357,10 @@ dependencies = [
  "chrono",
  "derive_more",
  "faststr",
+ "http",
+ "httpmock",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-remote-config",
  "libdd-trace-protobuf",
@@ -1371,6 +1375,7 @@ dependencies = [
  "serde_json",
  "serde_with",
  "thiserror 2.0.17",
+ "tokio",
  "url",
 ]
 

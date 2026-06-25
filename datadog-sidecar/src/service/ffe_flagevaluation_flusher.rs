@@ -1,32 +1,25 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Serializes and forwards FFE (Feature Flag Evaluation) flag evaluation
-//! batches to the Datadog Agent's EVP proxy.
+//! Coalesces sidecar FFE (Feature Flag Evaluation) flag evaluation batches and
+//! dispatches them through the shared `datadog-ffe` EVP sender.
 //!
 //! Protocol: `POST /evp_proxy/v2/api/v2/flagevaluation` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. Fire-and-forget: non-2xx
 //! responses are logged at `warn`, network errors at `debug`, and dropped
 //! (matches dd-trace-go behaviour). No agent capability gate.
 
-use crate::service::{evp_proxy, ffe_evp_proxy};
 use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
-pub(crate) use datadog_ffe::telemetry::flagevaluation::FlagEvaluationEvpWriterStats;
 use datadog_ffe::telemetry::flagevaluation::{
-    encode_flag_evaluation_payloads, FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer,
+    flagevaluation_agent_proxy_endpoint, send_flag_evaluation_batch,
+    FlagEvaluationEvpCoalescer as CommonFlagEvaluationEvpCoalescer, FlagEvaluationEvpSendConfig,
+    FlagEvaluationEvpWriterStats,
 };
-#[cfg(test)]
-use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
-use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use std::time::Duration;
-use tracing::{debug, warn};
 
-/// EVP proxy path for FFE flag evaluation intake.
-pub(crate) const EVP_FLAGEVALUATION_PATH: &str = "/evp_proxy/v2/api/v2/flagevaluation";
-
-const LOG_PREFIX: &str = "ffe_flagevaluation_flusher";
+const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
 const COALESCE_DELAY: Duration = Duration::from_millis(250);
 
 pub(crate) const FLAG_EVALUATION_ROWS_DROPPED_METRIC: &str = "flagevaluation.rows.dropped";
@@ -116,73 +109,18 @@ impl FlagEvaluationCoalescer {
 /// scheme, authority, timeout, and test_token.
 /// Returns `None` for agentless mode because EVP proxy routing is agent-only.
 pub(crate) fn flagevaluation_endpoint(base: &Endpoint) -> Option<Endpoint> {
-    ffe_evp_proxy::endpoint(base, EVP_FLAGEVALUATION_PATH)
+    flagevaluation_agent_proxy_endpoint(base)
 }
 
-/// POST a structured FFE flag evaluation batch to the agent EVP proxy.
-/// Fire-and-forget: non-2xx responses are logged at `warn`, network errors at
-/// `debug`, and dropped (matches dd-trace-go behaviour).
-#[cfg(test)]
-async fn send_batch<C: HttpClientCapability + SleepCapability>(
-    client: &C,
-    endpoint: &Endpoint,
-    batch: FfeFlagEvaluationBatch,
-) {
-    send_batch_with_limit(client, endpoint, batch, evp_proxy::PAYLOAD_SIZE_LIMIT, None).await;
-}
-
-async fn send_batch_with_writer_stats<C: HttpClientCapability + SleepCapability>(
-    client: &C,
+async fn send_batch_with_writer_stats(
+    client: &NativeCapabilities,
     endpoint: &Endpoint,
     batch: FfeFlagEvaluationBatch,
     coalescer: &CommonFlagEvaluationEvpCoalescer<DestinationKey>,
 ) {
-    send_batch_with_limit(
-        client,
-        endpoint,
-        batch,
-        evp_proxy::PAYLOAD_SIZE_LIMIT,
-        Some(coalescer),
-    )
-    .await;
-}
-
-async fn send_batch_with_limit<C: HttpClientCapability + SleepCapability>(
-    client: &C,
-    endpoint: &Endpoint,
-    batch: FfeFlagEvaluationBatch,
-    payload_size_limit: usize,
-    coalescer: Option<&CommonFlagEvaluationEvpCoalescer<DestinationKey>>,
-) {
-    let result = match encode_flag_evaluation_payloads(batch, payload_size_limit) {
-        Ok(result) => result,
-        Err(e) => {
-            debug!("ffe_flagevaluation_flusher: failed to encode batch payload: {e:?}");
-            return;
-        }
-    };
-
-    if let Some(coalescer) = coalescer {
+    let config = FlagEvaluationEvpSendConfig::new(USER_AGENT);
+    if let Some(result) = send_flag_evaluation_batch(client, endpoint, batch, &config).await {
         coalescer.record_payload_build_result(&result);
-    }
-
-    if result.dropped_oversized_rows > 0 {
-        warn!(
-            "ffe_flagevaluation_flusher: dropped {} flag evaluation row(s) because they exceeded the {} byte EVP payload limit after degradation",
-            result.dropped_oversized_rows,
-            payload_size_limit
-        );
-    }
-
-    for payload in result.payloads {
-        ffe_evp_proxy::send_payload(
-            client,
-            endpoint,
-            payload,
-            LOG_PREFIX,
-            "flag evaluation batch",
-        )
-        .await;
     }
 }
 
@@ -191,13 +129,12 @@ mod tests {
     use super::*;
     use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
     use datadog_ffe::telemetry::flagevaluation::{
-        FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey, MAX_EVENTS_PER_POST,
+        FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey, EVP_FLAGEVALUATION_PATH,
     };
     use httpmock::MockServer;
-    use libdd_capabilities::{Bytes, HttpError, MaybeSend};
+    use libdd_capabilities::HttpClientCapability;
     use libdd_capabilities_impl::NativeCapabilities;
     use std::collections::BTreeMap;
-    use std::future;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
         Endpoint {
@@ -254,95 +191,6 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn posts_to_evp_proxy() {
-        let server = MockServer::start_async().await;
-        let mock = server
-            .mock_async(|when, then| {
-                when.method(httpmock::Method::POST)
-                    .path(EVP_FLAGEVALUATION_PATH)
-                    .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
-                    .header("content-type", "application/json");
-                then.status(202);
-            })
-            .await;
-
-        let base = endpoint_for(&server);
-        let ep = flagevaluation_endpoint(&base).unwrap();
-        let client = NativeCapabilities::new_client();
-
-        send_batch(&client, &ep, batch()).await;
-
-        mock.assert_async().await;
-        assert_eq!(mock.calls_async().await, 1);
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn splits_large_batches_before_posting() {
-        let server = MockServer::start_async().await;
-        let mock = server
-            .mock_async(|when, then| {
-                when.method(httpmock::Method::POST)
-                    .path(EVP_FLAGEVALUATION_PATH)
-                    .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
-                    .header("content-type", "application/json");
-                then.status(202);
-            })
-            .await;
-
-        let base = endpoint_for(&server);
-        let ep = flagevaluation_endpoint(&base).unwrap();
-        let client = NativeCapabilities::new_client();
-        let mut batch = batch();
-        let event = batch.flag_evaluations[0].clone();
-        batch.flag_evaluations = vec![event; MAX_EVENTS_PER_POST * 2 + 1];
-
-        send_batch(&client, &ep, batch).await;
-
-        mock.assert_calls_async(3).await;
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn send_batch_splits_posts_by_encoded_byte_limit() {
-        let server = MockServer::start_async().await;
-        let mock = server
-            .mock_async(|when, then| {
-                when.method(httpmock::Method::POST)
-                    .path(EVP_FLAGEVALUATION_PATH)
-                    .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
-                    .header("content-type", "application/json");
-                then.status(202);
-            })
-            .await;
-
-        let base = endpoint_for(&server);
-        let ep = flagevaluation_endpoint(&base).unwrap();
-        let client = NativeCapabilities::new_client();
-        let mut batch = batch();
-        let event = batch.flag_evaluations[0].clone();
-        batch.flag_evaluations = vec![event; 3];
-        let one_event_limit = encode_flag_evaluation_payloads(
-            FfeFlagEvaluationBatch {
-                context: context(),
-                flag_evaluations: vec![batch.flag_evaluations[0].clone()],
-            },
-            usize::MAX,
-        )
-        .unwrap()
-        .payloads
-        .into_iter()
-        .next()
-        .unwrap()
-        .len();
-
-        send_batch_with_limit(&client, &ep, batch, one_event_limit, None).await;
-
-        mock.assert_calls_async(3).await;
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
     async fn coalesces_identical_batches_before_posting() {
         let server = MockServer::start_async().await;
         let mock = server
@@ -372,37 +220,6 @@ mod tests {
         mock.assert_calls_async(1).await;
     }
 
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn non_2xx_does_not_panic() {
-        let server = MockServer::start_async().await;
-        let _mock = server
-            .mock_async(|when, then| {
-                when.method(httpmock::Method::POST)
-                    .path(EVP_FLAGEVALUATION_PATH);
-                then.status(500).body("intake overloaded");
-            })
-            .await;
-
-        let base = endpoint_for(&server);
-        let ep = flagevaluation_endpoint(&base).unwrap();
-        let client = NativeCapabilities::new_client();
-        send_batch(&client, &ep, batch()).await;
-        // Test passes if no panic occurs.
-    }
-
-    #[tokio::test]
-    async fn timeout_returns_without_waiting_for_http_response() {
-        let ep = Endpoint {
-            url: "http://localhost:8126".parse().unwrap(),
-            timeout_ms: 1,
-            ..Endpoint::default()
-        };
-
-        send_batch(&HangingCapabilities, &ep, batch()).await;
-        // Test passes if function returns before the pending HTTP future resolves.
-    }
-
     #[test]
     fn endpoint_preserves_authority_overrides_path() {
         let base = Endpoint {
@@ -425,30 +242,5 @@ mod tests {
             ..Endpoint::default()
         };
         assert!(flagevaluation_endpoint(&base).is_none());
-    }
-
-    #[derive(Clone, Debug)]
-    struct HangingCapabilities;
-
-    impl HttpClientCapability for HangingCapabilities {
-        fn new_client() -> Self {
-            Self
-        }
-
-        fn request(
-            &self,
-            _req: http::Request<Bytes>,
-        ) -> impl future::Future<Output = Result<http::Response<Bytes>, HttpError>> + MaybeSend
-        {
-            future::pending()
-        }
-    }
-
-    impl SleepCapability for HangingCapabilities {
-        fn new() -> Self {
-            Self
-        }
-
-        async fn sleep(&self, _duration: Duration) {}
     }
 }
