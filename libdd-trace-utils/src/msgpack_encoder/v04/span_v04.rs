@@ -13,7 +13,8 @@ use rmp::encode::{
 };
 use std::borrow::Borrow;
 
-/// Encodes a `SpanLink` object into a slice of bytes.
+/// Encodes a [`v04::SpanLink`](crate::span::v04::SpanLink) into the v0.4 msgpack wire format
+/// (native encoding: input span shape and output wire format are both v0.4).
 ///
 /// # Arguments
 ///
@@ -74,7 +75,8 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a `SpanEvent` object into a slice of bytes.
+/// Encodes a [`v04::SpanEvent`](crate::span::v04::SpanEvent) into the v0.4 msgpack wire format
+/// (native encoding: v0.4 input → v0.4 output).
 ///
 /// # Arguments
 ///
@@ -172,7 +174,8 @@ pub fn encode_span_events<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a `Span` object into a slice of bytes.
+/// Encodes a [`v04::Span`](crate::span::v04::Span) into the v0.4 msgpack wire format
+/// (native encoding: v0.4 input → v0.4 output).
 ///
 /// # Arguments
 ///

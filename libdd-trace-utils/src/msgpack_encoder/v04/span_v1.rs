@@ -91,8 +91,10 @@ impl BucketCounts {
     }
 }
 
-/// Encodes a `Span` in the v0.4 wire format, injecting chunk-level context into the span's
-/// `meta` / `metrics` / `meta_struct` maps.
+/// Encodes a [`v1::Span`](crate::span::v1::Span) into the v0.4 msgpack wire format
+/// (downgrade: v1 input → v0.4 output). Chunk-level context (`trace_id`, `origin`, `priority`,
+/// `sampling_mechanism`, chunk attributes) is injected into the span's `meta` / `metrics` /
+/// `meta_struct` maps since v0.4 has no chunk concept.
 ///
 /// # Arguments
 ///
@@ -109,7 +111,7 @@ impl BucketCounts {
 /// # Errors
 ///
 /// This function will return any error emitted by the writer.
-pub(super) fn encode_span_v1_to_v04<W: RmpWrite, T: TraceData>(
+pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span: &Span<T>,
     chunk: &ChunkContext<'_, T>,
@@ -331,7 +333,8 @@ fn write_meta_struct_entry<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Converts v1 `SpanLink`s to the v0.4 wire format. The 128-bit `trace_id` is split into
+/// Encodes [`v1::SpanLink`](crate::span::v1::SpanLink)s into the v0.4 msgpack wire format
+/// (downgrade: v1 input → v0.4 output). The 128-bit `trace_id` is split into
 /// `(trace_id, trace_id_high)` u64s. Typed link attributes are downgraded to strings (`String`
 /// passes through, `Bool` becomes `"true"` / `"false"`); non-string-coercible variants are
 /// dropped because v0.4 link attributes are `String → String` only.
@@ -398,9 +401,10 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Converts v1 `SpanEvent`s to the v0.4 wire format. Typed attributes are downgraded to the
-/// v0.4 `{"type": <u8>, "<kind>_value": ...}` shape — see `write_event_attr_value`. `Bytes`
-/// and `KeyValue` have no v0.4 event-attribute equivalent and are dropped.
+/// Encodes [`v1::SpanEvent`](crate::span::v1::SpanEvent)s into the v0.4 msgpack wire format
+/// (downgrade: v1 input → v0.4 output). Typed attributes are downgraded to the v0.4
+/// `{"type": <u8>, "<kind>_value": ...}` shape — see `write_event_attr_value`. `Bytes` and
+/// `KeyValue` have no v0.4 event-attribute equivalent and are dropped.
 fn encode_span_events<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_events: &[SpanEvent<T>],
@@ -571,7 +575,7 @@ fn write_event_array_element<W: RmpWrite, T: TraceData>(
 #[cfg(test)]
 mod tests {
     //! Unit tests for the v1::Span → v0.4 downgrade encoder. Each test encodes a small
-    //! `TracerPayload` via [`super::super::to_vec_v1_to_v04`] and decodes the bytes with
+    //! `TracerPayload` via [`super::super::to_vec_v1`] and decodes the bytes with
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output
     //! is also valid msgpack consumable by any standard v0.4 decoder (test-agent, agent, etc.).
     use crate::span::v1::{
@@ -590,7 +594,7 @@ mod tests {
     /// Encodes `payload` and decodes back into `rmpv::Value`. The top level of v0.4 is an
     /// array of traces; this helper returns it as a `Vec<Value>` so tests can index in.
     fn encode_and_decode(payload: &TracerPayloadBytes) -> Vec<Value> {
-        let bytes = super::super::to_vec_v1_to_v04(payload);
+        let bytes = super::super::to_vec_v1(payload);
         let value = rmpv::decode::read_value(&mut &bytes[..]).expect("decode failed");
         match value {
             Value::Array(traces) => traces,

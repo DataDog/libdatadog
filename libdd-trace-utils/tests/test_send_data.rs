@@ -556,7 +556,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_and_v1_encoders_snapshot_test() {
-        use libdd_trace_utils::msgpack_encoder::v1::{to_vec, to_vec_from_payload_v1};
+        use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_payload_v1, to_vec_v04};
         use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
         use libdd_trace_utils::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
@@ -619,7 +619,7 @@ mod tracing_integration_tests {
         };
 
         // ── POST both into the same session ────────────────────────────────────────
-        let bytes_v04 = to_vec(&v04_traces, &metadata);
+        let bytes_v04 = to_vec_v04(&v04_traces, &metadata);
         let bytes_v1 = to_vec_from_payload_v1(&v1_payload);
         post_msgpack_traces(uri.clone(), bytes_v04).await;
         post_msgpack_traces(uri, bytes_v1).await;
@@ -630,7 +630,7 @@ mod tracing_integration_tests {
     }
 
     /// Round-trip: the v1::Span → v0.4 downgrade encoder
-    /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec_v1_to_v04`]) must produce a v0.4
+    /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec_v1`]) must produce a v0.4
     /// payload that decodes to the same canonical form as the native v0.4 encoder
     /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec`]) when fed equivalent input.
     ///
@@ -640,8 +640,8 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_native_and_v1_to_v04_encoders_snapshot_test() {
-        use libdd_trace_utils::msgpack_encoder::v04::to_vec as to_vec_v04_native;
-        use libdd_trace_utils::msgpack_encoder::v04::to_vec_v1_to_v04;
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_v04 as to_vec_v04_native;
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_v1;
         use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
         use libdd_trace_utils::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
@@ -706,7 +706,7 @@ mod tracing_integration_tests {
 
         // ── Encode each via its respective encoder and POST both ───────────────────
         let bytes_v04 = to_vec_v04_native(&v04_traces);
-        let bytes_v1_to_v04 = to_vec_v1_to_v04(&v1_payload);
+        let bytes_v1_to_v04 = to_vec_v1(&v1_payload);
         post_msgpack_traces(uri.clone(), bytes_v04).await;
         post_msgpack_traces(uri, bytes_v1_to_v04).await;
 
