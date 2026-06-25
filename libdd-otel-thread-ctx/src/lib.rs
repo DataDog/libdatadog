@@ -21,15 +21,18 @@
 //! # #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 //! # fn main() {
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
+//! use libdd_otel_thread_ctx::linux::OwnedThreadContext;
 //!
 //! let trace_id = [0u8; 16];
 //! let span_id = [1u8; 8];
 //! let local_root_span_id = [2u8; 8];
 //!
 //! // First call allocates a record and attaches it.
-//! ThreadContext::new(trace_id, span_id, 1, local_root_span_id, &[(0, "first")]).attach();
-//! ThreadContext::update(trace_id, span_id, 1, local_root_span_id, &[(0, "second")]);
-//! ThreadContext::detach();
+//! OwnedThreadContext::new(trace_id, span_id, 1, local_root_span_id, &[(0, "first")]).attach();
+//! // Second call update the attached record in place.
+//! OwnedThreadContext::update(trace_id, span_id, 1, local_root_span_id, &[(0, "second")]);
+//! // Detach and drop.
+//! let _ = OwnedThreadContext::detach();
 //! # }
 //! # #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
 //! # fn main() {}
@@ -44,7 +47,7 @@
 //! ```rust
 //! # #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
 //! # fn main() {
-//! use libdd_otel_thread_ctx::linux::ThreadContext;
+//! use libdd_otel_thread_ctx::linux::OwnedThreadContext;
 //!
 //! let trace_id = [0u8; 16];
 //! let span_id = [1u8; 8];
@@ -52,7 +55,7 @@
 //! let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
 //!
 //! // Publish a new context and save the previously attached one (if any).
-//! let ctx = ThreadContext::new(trace_id, span_id, 1, local_root_span_id, attrs);
+//! let ctx = OwnedThreadContext::new(trace_id, span_id, 1, local_root_span_id, attrs);
 //! let previous = ctx.attach();
 //!
 //! // ... do work inside the span ...
@@ -102,7 +105,10 @@ pub mod linux {
     use std::{
         mem,
         ptr::{self, NonNull},
-        sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
+        sync::{
+            atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
+            Arc,
+        },
     };
 
     // Define the thread-local pointer that external readers (e.g. the eBPF profiler) discover via
@@ -187,7 +193,7 @@ pub mod linux {
     ///
     /// The slot is read by an async signal handler. Atomic operations should in general use
     /// [Ordering::Relaxed], but modifications to the record might need additional compiler-only
-    /// fences (see [ThreadContext::update] for an example).
+    /// fences (see [`ThreadContext::update`] for an example).
     fn with_tls_slot<F, R>(f: F) -> R
     where
         F: FnOnce(&AtomicPtr<ThreadContextRecord>) -> R,
@@ -391,6 +397,27 @@ pub mod linux {
             self.attrs_data_size = offset as u16;
             fully_encoded
         }
+
+        /// Update this record in-place. Sets `valid = 0` before the update and `valid = 1` after,
+        /// so a reader that fires between the two writes sees an inconsistent record and skips it.
+        /// Compiler fences prevent the compiler from reordering field writes outside that window.
+        fn update(
+            &mut self,
+            trace_id: [u8; 16],
+            span_id: [u8; 8],
+            local_root_span_id: [u8; 8],
+            attrs: &[(u8, &str)],
+        ) {
+            self.valid.store(0, Ordering::Relaxed);
+            compiler_fence(Ordering::SeqCst);
+
+            self.trace_id = trace_id;
+            self.span_id = span_id;
+            self.set_attrs(local_root_span_id, attrs);
+
+            compiler_fence(Ordering::SeqCst);
+            self.valid.store(1, Ordering::Relaxed);
+        }
     }
 
     impl Default for ThreadContextRecord {
@@ -407,15 +434,57 @@ pub mod linux {
         }
     }
 
+    /// A thread-level context.
+    ///
+    /// This is the public, value-level view of a thread context. It is a thin, transparent
+    /// wrapper around the internal record layout, intentionally hiding the underlying structure
+    /// (which requires care to manipulate: async-signal-safety, the seq-lock-like update
+    /// protocol, etc.).
+    #[repr(transparent)]
+    #[derive(Default)]
+    pub struct ThreadContext(ThreadContextRecord);
+
+    impl ThreadContext {
+        /// Create a new thread context with the given trace/span IDs and encoded attributes.
+        pub fn new(
+            trace_id: [u8; 16],
+            span_id: [u8; 8],
+            local_root_span_id: [u8; 8],
+            attrs: &[(u8, &str)],
+        ) -> Self {
+            Self(ThreadContextRecord::new(
+                trace_id,
+                span_id,
+                local_root_span_id,
+                attrs,
+            ))
+        }
+
+        /// Update this context in-place. Sets `valid = 0` before the update and `valid = 1` after,
+        /// so a reader that fires between the two writes sees an inconsistent record and skips it.
+        /// Compiler fences prevent the compiler from reordering field writes outside that window.
+        pub fn update(
+            &mut self,
+            trace_id: [u8; 16],
+            span_id: [u8; 8],
+            local_root_span_id: [u8; 8],
+            attrs: &[(u8, &str)],
+        ) {
+            self.0.update(trace_id, span_id, local_root_span_id, attrs);
+        }
+    }
+
     /// An owned (and non-moving) thread context record allocation.
     ///
     /// We don't use `Box` under the hood because it precludes aliasing, while we share the context
     /// to readers through thread-level context and through the FFI. But it is a boxed
     /// `ThreadContextRecord` for all intent and purpose.
     ///
-    /// The context is `!Send` and `!Sync`; it is supposed to stay on the same thread and is thus
+    /// Since an owned context can be modified in place, it is `!Send` and `!Sync`. Readers rely on
+    /// the fact that their can't be any writer while they interrupt the current thread, but this
+    /// wouldn't be true anymore if we moved `OwnedThreadContext` to a different thread. It is thus
     /// not thread-safe.
-    pub struct ThreadContext(NonNull<ThreadContextRecord>);
+    pub struct OwnedThreadContext(NonNull<ThreadContextRecord>);
 
     /// Opaque handle to a thread context record. Used to allow the FFI to convert [ThreadContext]
     /// to and from raw pointers without exposing [ThreadContextRecord], as the latter needs extra
@@ -424,7 +493,7 @@ pub mod linux {
     #[repr(C)]
     pub struct ThreadContextHandle {}
 
-    impl ThreadContext {
+    impl OwnedThreadContext {
         /// Create a new thread context with the given trace/span IDs, W3C trace-flags byte, and
         /// encoded attributes.
         pub fn new(
@@ -443,7 +512,7 @@ pub mod linux {
             ))
         }
 
-        /// Turn this thread context into a pointer to the underlying [ThreadContextRecord].
+        /// Turn this thread context into a pointer to the underlying [`ThreadContextRecord`].
         /// The pointer must be reconstructed through [`Self::from_ptr`] in order to be properly
         /// dropped, or the record will leak.
         fn into_ptr(self) -> NonNull<ThreadContextRecord> {
@@ -451,66 +520,72 @@ pub mod linux {
             mdrop.0
         }
 
-        /// Turn this thread context into an opaque pointer to the underlying [ThreadContextRecord].
+        /// Turn this thread context into an opaque pointer to the underlying [`ThreadContext`].
         /// The pointer must be reconstructed through [`Self::from_opaque_ptr`] in order to be
         /// properly dropped, or the record will leak.
-        pub fn into_opaque_ptr(self) -> NonNull<ThreadContextHandle> {
+        pub fn into_opaque_ptr(self) -> NonNull<ThreadContext> {
             let mdrop = mem::ManuallyDrop::new(self);
             mdrop.0.cast()
         }
 
-        /// Reconstruct a [ThreadContextRecord] from a pointer that comes
-        /// from [`Self::into_ptr`].
+        /// Reconstruct an [`OwnedThreadContext`] from a pointer that comes from
+        /// [`Self::into_ptr`].
         ///
         /// # Safety
         ///
         /// - `ptr` must come from a prior call to [`Self::into_ptr`].
         /// - if `ptr` is aliased, accesses through aliases must not be interleaved with method
-        ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
+        ///   calls on the returned [`OwnedThreadContext`]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
         unsafe fn from_ptr(ptr: NonNull<ThreadContextRecord>) -> Self {
             Self(ptr)
         }
 
-        /// Reconstruct an [OpaqueThreadContextRecord] from a pointer that comes from
+        /// Reconstruct an [`OwnedThreadContext`] from a pointer that comes from
         /// [`Self::into_opaque_ptr`].
         ///
         /// # Safety
         ///
         /// - `ptr` must come from a prior call to [`Self::into_opaque_ptr`].
         /// - if `ptr` is aliased, accesses through aliases must not be interleaved with method
-        ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
+        ///   calls on the returned [`OwnedThreadContext`]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
-        pub unsafe fn from_opaque_ptr(ptr: NonNull<ThreadContextHandle>) -> Self {
+        pub unsafe fn from_opaque_ptr(ptr: NonNull<ThreadContext>) -> Self {
             Self(ptr.cast())
         }
     }
 
-    impl Default for ThreadContext {
+    impl Default for OwnedThreadContext {
         fn default() -> Self {
             Self::from(ThreadContextRecord::default())
         }
     }
 
-    impl From<ThreadContextRecord> for ThreadContext {
+    impl From<ThreadContextRecord> for OwnedThreadContext {
         fn from(record: ThreadContextRecord) -> Self {
             // Safety: `Box::into_raw` returns a non-null pointer
             unsafe { Self(NonNull::new_unchecked(Box::into_raw(Box::new(record)))) }
         }
     }
 
-    impl ThreadContext {
+    impl From<ThreadContext> for OwnedThreadContext {
+        fn from(ctx: ThreadContext) -> Self {
+            Self::from(ctx.0)
+        }
+    }
+
+    impl OwnedThreadContext {
         /// Atomically swap the current context with a pointer value. Return the previously
         /// attached context, if any.
         fn swap(
             slot: &AtomicPtr<ThreadContextRecord>,
             tgt: *mut ThreadContextRecord,
-        ) -> Option<ThreadContext> {
+        ) -> Option<OwnedThreadContext> {
             // Safety: a non-null value in the slot came from a prior `into_ptr` call.
             NonNull::new(slot.swap(tgt, Ordering::Relaxed))
-                .map(|ptr| unsafe { ThreadContext::from_ptr(ptr) })
+                .map(|ptr| unsafe { OwnedThreadContext::from_ptr(ptr) })
         }
 
         /// Publish a new (or previously detached) thread context record by writing its pointer
@@ -518,7 +593,7 @@ pub mod linux {
         ///
         /// `valid` is already `1` since construction, so any reader that observes the new pointer
         /// also observes `valid = 1`.
-        pub fn attach(self) -> Option<ThreadContext> {
+        pub fn attach(self) -> Option<OwnedThreadContext> {
             // [^tls-slot-ordering]: since we get back the previous context, we should in principle
             // use an `Acquire` (thus combining into an `AcqRel`) compiler fence to make sure we
             // don't get back a not-yet-initialized record.
@@ -585,7 +660,7 @@ pub mod linux {
         ///
         /// If there's currently no attached context, `update` will create one, and is in this case
         /// equivalent to
-        /// `ThreadContext::new(trace_id, span_id, trace_flags, local_root_span_id,
+        /// `OwnedThreadContext::new(trace_id, span_id, trace_flags, local_root_span_id,
         /// attrs).attach()`.
         pub fn update(
             trace_id: [u8; 16],
@@ -607,7 +682,7 @@ pub mod linux {
                         attrs,
                     );
                 } else {
-                    let ctxt = ThreadContext::new(
+                    let ctxt = OwnedThreadContext::new(
                         trace_id,
                         span_id,
                         trace_flags,
@@ -618,7 +693,7 @@ pub mod linux {
                     .as_ptr();
                     // No need for `AcqRel`, see [^tls-slot-ordering].
                     compiler_fence(Ordering::Release);
-                    // `ThreadContext::new` already initialises `valid = 1`.
+                    // `OwnedThreadContext::new` already initialises `valid = 1`.
                     let _ = Self::swap(slot, ctxt);
                 }
             })
@@ -626,15 +701,15 @@ pub mod linux {
 
         /// Detach the current record from the TLS slot. Writes null to the slot and returns the
         /// detached record.
-        pub fn detach() -> Option<ThreadContext> {
+        pub fn detach() -> Option<OwnedThreadContext> {
             // We don't need any fence here, see [^tls-slot-ordering].
             with_tls_slot(|slot| Self::swap(slot, ptr::null_mut()))
         }
     }
 
-    impl Drop for ThreadContext {
+    impl Drop for OwnedThreadContext {
         fn drop(&mut self) {
-            // Safety: `self.0` was obtained from a `Box::new`, and `ThreadContext` represents
+            // Safety: `self.0` was obtained from a `Box::new`, and `OwnedThreadContext` represents
             // ownership of the underlying memory.
             unsafe {
                 let _ = Box::from_raw(self.0.as_ptr());
@@ -642,11 +717,105 @@ pub mod linux {
         }
     }
 
+    /// A thread-level context shared immutably across threads.
+    ///
+    /// Unlike [`OwnedThreadContext`], a shared context holds its record behind an
+    /// `Arc<ThreadContext>`. The record can't be mutated in place (there is no `update` method).
+    /// Attaching and detaching only publish or retract the record pointer in the current thread's
+    /// TLS slot while updating the `Arc` pointer to ensure the record stays alive for exactly as
+    /// long as it is attached somewhere.
+    ///
+    /// Since attaching is an atomic swap, and a shared context is immutable once created, it can be
+    /// moved freely between threads. Several threads can also attach the same shared context
+    /// concurrently and their readers can observe it at the same time. The type is therefore `Send`
+    /// and `Sync`, in contrast with [`OwnedThreadContext`].
+    ///
+    /// The wrapped `Arc<ThreadContext>` is recoverable through the [`From`] conversions in both
+    /// directions, so callers can build, store, clone or share the context through their own
+    /// machinery.
+    ///
+    /// # Mixing with [`OwnedThreadContext`]
+    ///
+    /// The TLS slot is untyped, it only holds a record pointer. [`Self::detach`] (and the previous
+    /// context returned by [`Self::attach`]) assumes the attached record, if any, is a shared one
+    /// and reconstructs an `Arc` from it. A single thread must therefore not interleave owned and
+    /// shared attaches on the same slot, or detaching would misinterpret the pointer. Similarly,
+    /// one should not call [OwnedThreadContext::update] after installing a shared context.
+    ///
+    /// TODO: statically prevent this situation.
+    pub struct SharedThreadContext(Arc<ThreadContext>);
+
+    impl From<Arc<ThreadContext>> for SharedThreadContext {
+        fn from(inner: Arc<ThreadContext>) -> Self {
+            Self(inner)
+        }
+    }
+
+    impl From<SharedThreadContext> for Arc<ThreadContext> {
+        fn from(ctx: SharedThreadContext) -> Self {
+            ctx.0
+        }
+    }
+
+    impl SharedThreadContext {
+        /// Reconstruct a [`SharedThreadContext`] from the record pointer stored in the TLS slot,
+        /// reclaiming the strong reference that [`Self::attach`] moved into the slot.
+        ///
+        /// # Safety
+        ///
+        /// `ptr` must originate from a prior [`Self::attach`] (i.e. it is the record pointer of an
+        /// `Arc<ThreadContext>` whose strong reference was moved into the slot), and that reference
+        /// must not have been reclaimed yet.
+        unsafe fn from_record_ptr(ptr: NonNull<ThreadContextRecord>) -> Self {
+            // `ThreadContext` is `repr(transparent)` over `ThreadContextRecord`, so the record
+            // pointer is exactly the `*const ThreadContext` that `Arc::into_raw` produced.
+            Self(Arc::from_raw(ptr.as_ptr() as *const ThreadContext))
+        }
+
+        /// Publish this shared context by writing its record pointer into the current thread's TLS
+        /// slot, cloning the `Arc` into the slot so the record stays alive for as long as it is
+        /// attached. Returns the previously attached shared context, if any.
+        pub fn attach(self) -> Option<SharedThreadContext> {
+            // Move the strong reference into the TLS slot; it stays alive until detached.
+            // `ThreadContext` is `repr(transparent)` over `ThreadContextRecord`, so the data
+            // pointer is also the record pointer readers expect.
+            let record_ptr = Arc::into_raw(self.0) as *mut ThreadContextRecord;
+
+            // No need for `AcqRel`, see [^tls-slot-ordering]. Though our `SharedThreadContext`
+            // might actually come from a different thread now, it's wrapped in an `Arc` that
+            // handles drop safety by synchronizing on the reference count.
+            //
+            // The release fence still prevents the record from being exposed to a reader before it
+            // is fully written. The record is already `valid = 1` and, being shared, immutable.
+            compiler_fence(Ordering::Release);
+            with_tls_slot(|slot| {
+                // Safety: a non-null value in the slot came from a prior `attach` of a shared
+                // context (see the type-level note on not mixing owned and shared attaches).
+                NonNull::new(slot.swap(record_ptr, Ordering::Relaxed))
+                    .map(|ptr| unsafe { Self::from_record_ptr(ptr) })
+            })
+        }
+
+        /// Detach the currently attached shared context from the TLS slot and return it. Dropping
+        /// the returned value decrements the strong count that [`Self::attach`] moved into the
+        /// slot. Returns `None` if the slot was empty.
+        pub fn detach() -> Option<SharedThreadContext> {
+            // We don't need any fence here, see [^tls-slot-ordering].
+            with_tls_slot(|slot| {
+                // Safety: a non-null value in the slot came from a prior `attach` of a shared
+                // context (see the type-level note on not mixing owned and shared attaches).
+                NonNull::new(slot.swap(ptr::null_mut(), Ordering::Relaxed))
+                    .map(|ptr| unsafe { Self::from_record_ptr(ptr) })
+            })
+        }
+    }
+
     #[cfg(test)]
     // The tests are set to be ignored by Miri, since the inline-asm TLSDESC access isn't supported.
     mod tests {
-        use super::{ThreadContext, ThreadContextRecord};
+        use super::{OwnedThreadContext, SharedThreadContext, ThreadContext, ThreadContextRecord};
         use std::sync::atomic::Ordering;
+        use std::sync::Arc;
 
         const NO_TRACE_FLAGS: u8 = 0;
 
@@ -667,13 +836,13 @@ pub mod linux {
                 read_tls_context_ptr().is_null(),
                 "TLS must be null initially"
             );
-            ThreadContext::new(trace_id, span_id, NO_TRACE_FLAGS, root_span_id, &[]).attach();
+            OwnedThreadContext::new(trace_id, span_id, NO_TRACE_FLAGS, root_span_id, &[]).attach();
             assert!(
                 !read_tls_context_ptr().is_null(),
                 "TLS must not be null after attach"
             );
 
-            let prev = ThreadContext::detach().unwrap();
+            let prev = OwnedThreadContext::detach().unwrap();
 
             unsafe {
                 assert!(
@@ -699,7 +868,7 @@ pub mod linux {
             let span_id = [2u8; 8];
             let root_span_id = [3u8; 8];
 
-            ThreadContext::new(trace_id, span_id, NO_TRACE_FLAGS, root_span_id, &[]).attach();
+            OwnedThreadContext::new(trace_id, span_id, NO_TRACE_FLAGS, root_span_id, &[]).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null(), "TLS must be non-null after attach");
@@ -712,14 +881,14 @@ pub mod linux {
             // 1 (key) + 1 (len) + 16 (root_span_id hex chars) = 18
             assert_eq!(record.attrs_data_size, 18);
 
-            let _ = ThreadContext::detach();
+            let _ = OwnedThreadContext::detach();
         }
 
         #[test]
         #[cfg_attr(miri, ignore)]
         fn attribute_encoding_basic() {
             let attrs: &[(u8, &str)] = &[(1, "GET"), (2, "/api/v1")];
-            ThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs).attach();
+            OwnedThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
@@ -737,7 +906,7 @@ pub mod linux {
             assert_eq!(record.attrs_data[24], 7);
             assert_eq!(&record.attrs_data[25..32], b"/api/v1");
 
-            let _ = ThreadContext::detach();
+            let _ = OwnedThreadContext::detach();
         }
 
         #[test]
@@ -759,7 +928,7 @@ pub mod linux {
                 (3, val_c.as_str()),
             ];
 
-            ThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs).attach();
+            OwnedThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
@@ -771,7 +940,7 @@ pub mod linux {
             assert_eq!(record.attrs_data[275], 2);
             assert_eq!(record.attrs_data[276], 255);
 
-            let _ = ThreadContext::detach();
+            let _ = OwnedThreadContext::detach();
         }
 
         #[test]
@@ -785,7 +954,7 @@ pub mod linux {
             let root_span_id2 = [0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F, 0x80];
 
             // Updating before any context is attached should be equivalent to `attach()`
-            ThreadContext::update(trace_id1, span_id1, 0xA5, root_span_id1, &[(0, "v1")]);
+            OwnedThreadContext::update(trace_id1, span_id1, 0xA5, root_span_id1, &[(0, "v1")]);
 
             let ptr_before = read_tls_context_ptr();
             assert!(!ptr_before.is_null());
@@ -801,7 +970,7 @@ pub mod linux {
             assert_eq!(record.attrs_data[19], 2);
             assert_eq!(&record.attrs_data[20..22], b"v1");
 
-            ThreadContext::update(trace_id2, span_id2, 1, root_span_id2, &[(0, "v2")]);
+            OwnedThreadContext::update(trace_id2, span_id2, 1, root_span_id2, &[(0, "v2")]);
 
             let ptr_after = read_tls_context_ptr();
             assert_eq!(
@@ -821,7 +990,7 @@ pub mod linux {
             assert_eq!(record.attrs_data[19], 2);
             assert_eq!(&record.attrs_data[20..22], b"v2");
 
-            let _ = ThreadContext::detach();
+            let _ = OwnedThreadContext::detach();
             assert!(read_tls_context_ptr().is_null());
         }
 
@@ -976,14 +1145,14 @@ pub mod linux {
         #[test]
         #[cfg_attr(miri, ignore)]
         fn explicit_detach_nulls_tls() {
-            ThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], &[]).attach();
+            OwnedThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], &[]).attach();
             assert!(!read_tls_context_ptr().is_null());
 
-            let _ = ThreadContext::detach();
+            let _ = OwnedThreadContext::detach();
             assert!(read_tls_context_ptr().is_null());
 
             // Calling detach again is safe (no-op, returns None).
-            let _ = ThreadContext::detach();
+            let _ = OwnedThreadContext::detach();
             assert!(read_tls_context_ptr().is_null());
         }
 
@@ -991,7 +1160,7 @@ pub mod linux {
         #[cfg_attr(miri, ignore)]
         fn long_value_capped_at_255_bytes() {
             let long_val = "a".repeat(300);
-            ThreadContext::new(
+            OwnedThreadContext::new(
                 [0u8; 16],
                 [0u8; 8],
                 NO_TRACE_FLAGS,
@@ -1009,7 +1178,7 @@ pub mod linux {
             assert_eq!(val_len, 255, "value must be capped at 255 bytes");
             assert_eq!(record.attrs_data_size, 2 + 16 + 2 + 255);
 
-            let _ = ThreadContext::detach();
+            let _ = OwnedThreadContext::detach();
         }
 
         // Make sure the TLSDESC accessor is indeed providing a thread-local address.
@@ -1029,7 +1198,7 @@ pub mod linux {
             let main_root_span_id = [0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA];
 
             let handle = std::thread::spawn(move || {
-                ThreadContext::new(
+                OwnedThreadContext::new(
                     spawned_trace_id,
                     spawned_span_id,
                     0,
@@ -1051,7 +1220,7 @@ pub mod linux {
                 assert_eq!(record.span_id, spawned_span_id);
                 assert_eq!(&record.attrs_data[2..18], b"efdecdbcab9a8978");
 
-                let _ = ThreadContext::detach();
+                let _ = OwnedThreadContext::detach();
                 assert!(read_tls_context_ptr().is_null());
             });
 
@@ -1063,7 +1232,7 @@ pub mod linux {
                 "main thread should see a null pointer and not another thread's context"
             );
 
-            ThreadContext::new(main_trace_id, main_span_id, 0, main_root_span_id, &[]).attach();
+            OwnedThreadContext::new(main_trace_id, main_span_id, 0, main_root_span_id, &[]).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null(), "main thread TLS must be set");
@@ -1074,10 +1243,100 @@ pub mod linux {
 
             barrier.wait();
 
-            let _ = ThreadContext::detach();
+            let _ = OwnedThreadContext::detach();
             assert!(read_tls_context_ptr().is_null());
 
             handle.join().unwrap();
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn shared_attach_detach_lifecycle() {
+            let trace_id = [4u8; 16];
+            let span_id = [5u8; 8];
+            let root_span_id = [6u8; 8];
+
+            let cell: Arc<ThreadContext> =
+                Arc::new(ThreadContext::new(trace_id, span_id, root_span_id, &[]));
+
+            assert!(read_tls_context_ptr().is_null());
+            assert_eq!(Arc::strong_count(&cell), 1);
+
+            // Attaching moves a (cloned) strong reference into the slot and publishes the record.
+            let prev = SharedThreadContext::from(Arc::clone(&cell)).attach();
+            assert!(prev.is_none(), "nothing was attached before");
+            assert_eq!(
+                Arc::strong_count(&cell),
+                2,
+                "attach must keep a strong reference alive in the slot"
+            );
+
+            let ptr = read_tls_context_ptr();
+            assert!(!ptr.is_null(), "TLS must be set after attach");
+            let record = unsafe { &*ptr };
+            assert_eq!(record.trace_id, trace_id);
+            assert_eq!(record.span_id, span_id);
+            assert_eq!(record.valid.load(Ordering::Relaxed), 1);
+
+            // Detaching gives the shared context back and clears the slot.
+            let detached = SharedThreadContext::detach().expect("a context must be attached");
+            assert!(
+                read_tls_context_ptr().is_null(),
+                "TLS must be null after detach"
+            );
+            // `detached` still holds the reference that was in the slot: cell + detached = 2.
+            assert_eq!(Arc::strong_count(&cell), 2);
+
+            drop(detached);
+            assert_eq!(
+                Arc::strong_count(&cell),
+                1,
+                "dropping the detached context must release the bumped reference"
+            );
+
+            // Detaching again is a no-op.
+            assert!(SharedThreadContext::detach().is_none());
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn shared_attach_replaces_previous() {
+            let first: Arc<ThreadContext> =
+                Arc::new(ThreadContext::new([7u8; 16], [8u8; 8], [9u8; 8], &[]));
+            let second: Arc<ThreadContext> =
+                Arc::new(ThreadContext::new([0xAu8; 16], [0xBu8; 8], [0xCu8; 8], &[]));
+
+            let prev = SharedThreadContext::from(Arc::clone(&first)).attach();
+            assert!(prev.is_none(), "nothing was attached before");
+
+            // Attaching a second context returns the first one and publishes the second.
+            let prev = SharedThreadContext::from(Arc::clone(&second))
+                .attach()
+                .expect("must return the previously attached context");
+            let record = unsafe { &*read_tls_context_ptr() };
+            assert_eq!(record.trace_id, [0xAu8; 16]);
+            assert_eq!(Arc::strong_count(&second), 2, "second is now in the slot");
+
+            // The returned previous context still holds `first`'s slot reference.
+            assert_eq!(Arc::strong_count(&first), 2);
+            drop(prev);
+            assert_eq!(Arc::strong_count(&first), 1);
+
+            let _ = SharedThreadContext::detach();
+            assert!(read_tls_context_ptr().is_null());
+            assert_eq!(Arc::strong_count(&second), 1);
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn shared_arc_round_trip() {
+            let cell: Arc<ThreadContext> = Arc::new(ThreadContext::default());
+            let shared = SharedThreadContext::from(Arc::clone(&cell));
+            let back: Arc<ThreadContext> = shared.into();
+            assert!(
+                Arc::ptr_eq(&cell, &back),
+                "round-trip must preserve the allocation"
+            );
         }
     }
 }
