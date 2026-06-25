@@ -1,10 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use windows_sys::Win32::Foundation::{ERROR_SUCCESS, HKEY};
+use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY,
-    REG_SZ,
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
+    KEY_WOW64_64KEY, REG_SZ,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, IsWow64Process};
 
@@ -28,16 +28,9 @@ pub fn get_machine_id_impl() -> String {
     let mut hkey: HKEY = 0;
     // SAFETY: all pointers are valid.
     let subkey = to_wide_null("SOFTWARE\\Microsoft\\Cryptography");
-    let status = unsafe {
-        RegOpenKeyExW(
-            HKEY_LOCAL_MACHINE,
-            subkey.as_ptr(),
-            0,
-            access,
-            &mut hkey,
-        )
-    };
-    if status != ERROR_SUCCESS as i32 {
+    let status =
+        unsafe { RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey.as_ptr(), 0, access, &mut hkey) };
+    if status != ERROR_SUCCESS {
         return String::new();
     }
 
@@ -56,7 +49,7 @@ pub fn get_machine_id_impl() -> String {
             &mut data_len,
         )
     };
-    if status != ERROR_SUCCESS as i32 || data_type != REG_SZ {
+    if status != ERROR_SUCCESS || data_type != REG_SZ {
         // SAFETY: hkey is a valid open handle.
         unsafe { RegCloseKey(hkey) };
         return String::new();
