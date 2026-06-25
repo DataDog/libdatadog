@@ -12,7 +12,7 @@ benchmarks:
     - if: $CI_COMMIT_BRANCH == "main"
       interruptible: false
     - interruptible: true
-  timeout: 1h
+  timeout: 80m
   script:
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
     - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform

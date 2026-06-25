@@ -13,10 +13,14 @@ use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
     TraceExporterInputFormat, TraceExporterOutputFormat,
 };
+use libdd_data_pipeline::OtlpProtocol;
 
-pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+// FFI pins the runtime parameter to `ForkSafeRuntime` for ABI stability. Rust callers that
+// don't need the fork protocol can use `TraceExporter<NativeCapabilities, BasicRuntime>`
+// directly.
+pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities, ForkSafeRuntime>;
 
-use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::ForkSafeRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
 
@@ -81,8 +85,9 @@ pub struct TraceExporterConfig {
     process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
-    shared_runtime: Option<Arc<SharedRuntime>>,
+    shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
+    otlp_protocol: Option<OtlpProtocol>,
 }
 
 #[no_mangle]
@@ -456,7 +461,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
-    handle: Option<NonNull<SharedRuntime>>,
+    handle: Option<NonNull<ForkSafeRuntime>>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         match (config, handle) {
@@ -498,12 +503,50 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     )
 }
 
+/// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default) or
+/// `http/protobuf`; `grpc` is rejected as not yet supported. The host language resolves the value
+/// (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
+///
+/// Has no effect unless an OTLP endpoint is also configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
+/// Datadog agent and this protocol selection is ignored.
+///
+/// Returns `None` on success, `ErrorCode::InvalidArgument` for a null config or an unaccepted
+/// value, and `ErrorCode::InvalidInput` for a non-UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
+    config: Option<&mut TraceExporterConfig>,
+    protocol: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let value = match sanitize_string(protocol) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            // `FromStr` is the single source of truth for string -> OtlpProtocol. It accepts only
+            // the supported HTTP encodings (`http/json`, `http/protobuf`); `grpc` and any unknown
+            // value are rejected with an error, so an unsupported protocol can never be stored.
+            match value.parse::<OtlpProtocol>() {
+                Ok(p) => {
+                    handle.otlp_protocol = Some(p);
+                    None
+                }
+                Err(_) => gen_error!(ErrorCode::InvalidArgument),
+            }
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
 ///
-/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
-/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
-/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
-/// OTLP when OTLP is enabled.
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces to
+/// that endpoint in OTLP over HTTP — JSON or protobuf per the configured protocol — instead of
+/// to the Datadog agent. The same payload (e.g. MessagePack) is passed to
+/// `ddog_trace_exporter_send`; the library decodes and converts it to OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///
@@ -565,6 +608,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);
+                if let Some(protocol) = config.otlp_protocol {
+                    builder.set_otlp_protocol(protocol);
+                }
             }
 
             match builder.build() {
@@ -1280,6 +1326,95 @@ mod tests {
             ddog_trace_exporter_free(exporter);
             // It should receive 1 metrics payload (excluding heartbeats)
             mock_metrics.assert_calls(1);
+        }
+    }
+
+    #[test]
+    fn config_otlp_protocol_test() {
+        unsafe {
+            // Null config → InvalidArgument
+            let error =
+                ddog_trace_exporter_config_set_otlp_protocol(None, CharSlice::from("http/json"));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // "http/json" → success, stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("http/json"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::HttpJson)
+            );
+
+            // "http/protobuf" → success, stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("http/protobuf"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::HttpProtobuf)
+            );
+
+            // "grpc" → InvalidArgument
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("grpc"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Garbage value → InvalidArgument
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("nonsense"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Non-UTF-8 input → InvalidInput
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+        }
+    }
+
+    #[test]
+    fn set_otlp_protocol_stores_parsed_enum() {
+        use libdd_data_pipeline::OtlpProtocol;
+        let mut cfg = TraceExporterConfig::default();
+        let err = unsafe {
+            ddog_trace_exporter_config_set_otlp_protocol(
+                Some(&mut cfg),
+                CharSlice::from("http/protobuf"),
+            )
+        };
+        assert!(err.is_none());
+        assert_eq!(cfg.otlp_protocol, Some(OtlpProtocol::HttpProtobuf));
+    }
+
+    #[test]
+    fn set_otlp_protocol_rejects_grpc_and_unknown() {
+        let mut cfg = TraceExporterConfig::default();
+        for bad in ["grpc", "nonsense"] {
+            let err = unsafe {
+                ddog_trace_exporter_config_set_otlp_protocol(Some(&mut cfg), CharSlice::from(bad))
+            };
+            assert!(err.is_some(), "expected error for {bad}");
+            assert_eq!(cfg.otlp_protocol, None, "{bad} must not be stored");
         }
     }
 
