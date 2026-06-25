@@ -16,6 +16,8 @@
 pub mod linux {
     use std::{
         ffi::{c_void, CStr},
+        fs::File,
+        io::{BufRead, BufReader},
         mem::ManuallyDrop,
         os::fd::{AsRawFd, FromRawFd, OwnedFd},
         ptr::{self, addr_of_mut},
@@ -28,7 +30,9 @@ pub mod linux {
 
     use anyhow::Context;
 
-    use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
+        any_value, AnyValue, KeyValue, ProcessContext,
+    };
     use prost::Message;
 
     /// Current version of the process context format
@@ -393,6 +397,145 @@ pub mod linux {
         })
     }
 
+    /// Parses the start address from a /proc/self/maps line.
+    fn parse_mapping_start(line: &str) -> Option<usize> {
+        usize::from_str_radix(line.split('-').next()?, 16).ok()
+    }
+
+    /// Checks if a mapping line refers to the OTEL_CTX mapping.
+    fn is_named_otel_mapping(line: &str) -> bool {
+        let trimmed = line.trim_end();
+
+        // The name of the mapping is the 6th column. The separator changes (both ' ' and '\t')
+        // but `split_whitespace()` takes care of that.
+        let Some(name) = trimmed.split_whitespace().nth(5) else {
+            return false;
+        };
+
+        name.starts_with("/memfd:OTEL_CTX")
+            || name.starts_with("[anon_shmem:OTEL_CTX]")
+            || name.starts_with("[anon:OTEL_CTX]")
+    }
+
+    /// Find the OTEL_CTX mapping in /proc/self/maps.
+    fn find_otel_mapping() -> anyhow::Result<usize> {
+        let file = File::open("/proc/self/maps")?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line = line?;
+
+            if is_named_otel_mapping(&line) {
+                if let Some(addr) = parse_mapping_start(&line) {
+                    return Ok(addr);
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "couldn't find the mapping of the process context"
+        ))
+    }
+
+    /// Reads and decodes the current process's OTel process context.
+    pub fn read() -> anyhow::Result<ProcessContext> {
+        let mapping_addr = find_otel_mapping()?;
+        let header: *mut MappingHeader = ptr::with_exposed_provenance_mut(mapping_addr);
+
+        // Safety: we're reading from our own process memory at an address we found in
+        // /proc/self/maps. The mapping must be readable if it is listed as the OTel context.
+        let published_at = unsafe {
+            AtomicU64::from_ptr(addr_of_mut!((*header).monotonic_published_at_ns))
+                .load(Ordering::Relaxed)
+        };
+        anyhow::ensure!(
+            published_at != 0,
+            "process context is currently being updated"
+        );
+        fence(Ordering::SeqCst);
+
+        // Safety: a non-zero published timestamp means the header is initialized.
+        let (signature, version, payload_size, payload_ptr) = unsafe {
+            anyhow::ensure!(!header.is_null(), "null process context header");
+            (
+                ptr::addr_of!((*header).signature).read_unaligned(),
+                ptr::addr_of!((*header).version).read_unaligned(),
+                ptr::addr_of!((*header).payload_size).read_unaligned(),
+                ptr::addr_of!((*header).payload_ptr).read_unaligned(),
+            )
+        };
+
+        anyhow::ensure!(
+            signature == *SIGNATURE,
+            "invalid signature in process context mapping"
+        );
+        anyhow::ensure!(
+            version == PROCESS_CTX_VERSION,
+            "unsupported process context version {version}"
+        );
+        anyhow::ensure!(
+            !payload_ptr.is_null(),
+            "process context payload pointer is null"
+        );
+
+        // Safety: the publisher stores a pointer to `payload_size` initialized bytes and keeps that
+        // allocation alive until the next update. The timestamp check below detects concurrent
+        // updates and discards the read.
+        let payload = unsafe { std::slice::from_raw_parts(payload_ptr, payload_size as usize) };
+        let context = ProcessContext::decode(payload)?;
+
+        fence(Ordering::SeqCst);
+        let published_at_after = unsafe {
+            AtomicU64::from_ptr(addr_of_mut!((*header).monotonic_published_at_ns))
+                .load(Ordering::Relaxed)
+        };
+        anyhow::ensure!(
+            published_at == published_at_after,
+            "process context changed while being read"
+        );
+
+        Ok(context)
+    }
+
+    fn string_array(value: &AnyValue) -> Option<Vec<String>> {
+        let any_value::Value::ArrayValue(array) = value.value.as_ref()? else {
+            return None;
+        };
+
+        array
+            .values
+            .iter()
+            .map(|value| match value.value.as_ref()? {
+                any_value::Value::StringValue(value) => Some(value.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn find_attr<'a>(attrs: &'a [KeyValue], key: &str) -> Option<&'a AnyValue> {
+        attrs
+            .iter()
+            .find(|attr| attr.key == key)
+            .and_then(|attr| attr.value.as_ref())
+    }
+
+    /// Returns the thread-local attribute key map from a decoded process context.
+    pub fn threadlocal_attribute_key_map(context: &ProcessContext) -> Option<Vec<String>> {
+        let key = "threadlocal.attribute_key_map";
+
+        context
+            .resource
+            .as_ref()
+            .and_then(|resource| find_attr(&resource.attributes, key))
+            .or_else(|| find_attr(&context.extra_attributes, key))
+            .and_then(string_array)
+    }
+
+    /// Reads the current process context and returns its thread-local attribute key map.
+    pub fn read_threadlocal_attribute_key_map() -> anyhow::Result<Option<Vec<String>>> {
+        Ok(threadlocal_attribute_key_map(&read()?))
+    }
+
     /// Publishes or updates the process context for it to be visible by external readers.
     ///
     /// If any of the following condition holds:
@@ -465,81 +608,6 @@ pub mod linux {
     #[serial_test::serial]
     mod tests {
         use super::MappingHeader;
-        use anyhow::ensure;
-        use std::{
-            fs::File,
-            io::{BufRead, BufReader},
-            ptr::{self, addr_of_mut},
-            sync::atomic::{fence, AtomicU64, Ordering},
-        };
-
-        /// Parses the start address from a /proc/self/maps line
-        fn parse_mapping_start(line: &str) -> Option<usize> {
-            usize::from_str_radix(line.split('-').next()?, 16).ok()
-        }
-
-        /// Checks if a mapping line refers to the OTEL_CTX mapping.
-        fn is_named_otel_mapping(line: &str) -> bool {
-            let trimmed = line.trim_end();
-
-            // The name of the mapping is the 6th column. The separator changes (both ' ' and '\t')
-            // but `split_whitespace()` takes care of that.
-            let Some(name) = trimmed.split_whitespace().nth(5) else {
-                return false;
-            };
-
-            name.starts_with("/memfd:OTEL_CTX")
-                || name.starts_with("[anon_shmem:OTEL_CTX]")
-                || name.starts_with("[anon:OTEL_CTX]")
-        }
-
-        /// Establishes proper synchronization/memory ordering with the writer, checking that
-        /// `monotonic_published_at` is not zero and that the signature is correct. Returns a
-        /// pointer to the initialized header in case of success.
-        fn verify_mapping_at(addr: usize) -> anyhow::Result<*const MappingHeader> {
-            let header: *mut MappingHeader = ptr::with_exposed_provenance_mut(addr);
-            // Safety: we're reading from our own process memory at an address we found in
-            // /proc/self/maps. This should be safe as long as the mapping exists and has read
-            // permissions.
-            //
-            // For the alignment constraint of `AtomicU64`, see [^atomic-u64-alignment].
-            let published_at = unsafe {
-                AtomicU64::from_ptr(addr_of_mut!((*header).monotonic_published_at_ns))
-                    .load(Ordering::Relaxed)
-            };
-            ensure!(published_at != 0, "monotonic_published_at_ns is zero: couldn't read an initialized header in the candidate mapping");
-            fence(Ordering::SeqCst);
-
-            // Safety: if `monotonic_published_at_ns` is non-zero, the header is properly
-            // initialized and thus readable.
-            let signature = unsafe { &header.as_ref().unwrap().signature };
-            ensure!(
-                signature == super::SIGNATURE,
-                "invalid signature in the candidate mapping"
-            );
-
-            Ok(header)
-        }
-
-        /// Find the OTEL_CTX mapping in /proc/self/maps
-        fn find_otel_mapping() -> anyhow::Result<usize> {
-            let file = File::open("/proc/self/maps")?;
-            let reader = BufReader::new(file);
-
-            for line in reader.lines() {
-                let line = line?;
-
-                if is_named_otel_mapping(&line) {
-                    if let Some(addr) = parse_mapping_start(&line) {
-                        return Ok(addr);
-                    }
-                }
-            }
-
-            Err(anyhow::anyhow!(
-                "couldn't find the mapping of the process context"
-            ))
-        }
 
         /// Read the process context from the current process.
         ///
@@ -550,9 +618,9 @@ pub mod linux {
         /// concurrent writers after reading the header, because we know they can't be). Do not
         /// extract or use as it is as a generic Rust OTel process context reader.
         fn read_process_context() -> anyhow::Result<MappingHeader> {
-            let mapping_addr = find_otel_mapping()?;
-            let header_ptr = verify_mapping_at(mapping_addr)?;
-            // Safety: the pointer returned by `verify_mapping_at` points to an initialized header
+            let mapping_addr = super::find_otel_mapping()?;
+            let header_ptr: *const MappingHeader = std::ptr::with_exposed_provenance(mapping_addr);
+            // Safety: the mapping was published by this test before being read.
             Ok(unsafe { std::ptr::read(header_ptr) })
         }
 
@@ -628,13 +696,13 @@ pub mod linux {
                 .expect("couldn't publish the process context");
 
             // The mapping must be discoverable right after publishing
-            find_otel_mapping().expect("couldn't find the otel mapping after publishing");
+            super::find_otel_mapping().expect("couldn't find the otel mapping after publishing");
 
             super::unpublish().expect("couldn't unpublish the context");
 
             // After unpublishing the name must no longer appear in /proc/self/maps
             assert!(
-                find_otel_mapping().is_err(),
+                super::find_otel_mapping().is_err(),
                 "otel mapping should not be visible after unpublish"
             );
         }
