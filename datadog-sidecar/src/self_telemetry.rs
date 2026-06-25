@@ -50,7 +50,10 @@ impl MetricData<'_> {
 
     async fn collect_and_send(&self) {
         let trace_metrics = self.server.trace_flusher.collect_metrics();
-        let flagevaluation_metrics = self.server.ffe_flagevaluation_coalescer.collect_metrics();
+        let flagevaluation_writer_stats = self
+            .server
+            .ffe_flagevaluation_coalescer
+            .collect_writer_stats();
 
         let submitted_payloads_delta = {
             let mut counters = self.server.connection_counters.lock_or_panic();
@@ -163,38 +166,38 @@ impl MetricData<'_> {
                 ],
             ));
         }
-        if flagevaluation_metrics.rows_dropped_degraded_cap > 0 {
+        if flagevaluation_writer_stats.rows_dropped_degraded_cap > 0 {
             futures.push(self.send(
                 self.flagevaluation_rows_dropped,
-                flagevaluation_metrics.rows_dropped_degraded_cap as f64,
+                flagevaluation_writer_stats.rows_dropped_degraded_cap as f64,
                 vec![tag!("reason", FLAG_EVALUATION_REASON_DEGRADED_CAP)],
             ));
         }
-        if flagevaluation_metrics.rows_dropped_payload_limit > 0 {
+        if flagevaluation_writer_stats.rows_dropped_payload_limit > 0 {
             futures.push(self.send(
                 self.flagevaluation_rows_dropped,
-                flagevaluation_metrics.rows_dropped_payload_limit as f64,
+                flagevaluation_writer_stats.rows_dropped_payload_limit as f64,
                 vec![tag!("reason", FLAG_EVALUATION_REASON_PAYLOAD_LIMIT)],
             ));
         }
-        if flagevaluation_metrics.rows_degraded_cardinality_cap > 0 {
+        if flagevaluation_writer_stats.rows_degraded_cardinality_cap > 0 {
             futures.push(self.send(
                 self.flagevaluation_rows_degraded,
-                flagevaluation_metrics.rows_degraded_cardinality_cap as f64,
+                flagevaluation_writer_stats.rows_degraded_cardinality_cap as f64,
                 vec![tag!("reason", FLAG_EVALUATION_REASON_CARDINALITY_CAP)],
             ));
         }
-        if flagevaluation_metrics.rows_degraded_payload_limit > 0 {
+        if flagevaluation_writer_stats.rows_degraded_payload_limit > 0 {
             futures.push(self.send(
                 self.flagevaluation_rows_degraded,
-                flagevaluation_metrics.rows_degraded_payload_limit as f64,
+                flagevaluation_writer_stats.rows_degraded_payload_limit as f64,
                 vec![tag!("reason", FLAG_EVALUATION_REASON_PAYLOAD_LIMIT)],
             ));
         }
-        if flagevaluation_metrics.payload_splits > 0 {
+        if flagevaluation_writer_stats.payload_splits > 0 {
             futures.push(self.send(
                 self.flagevaluation_payload_splits,
-                flagevaluation_metrics.payload_splits as f64,
+                flagevaluation_writer_stats.payload_splits as f64,
                 vec![],
             ));
         }
