@@ -24,7 +24,7 @@ pub extern "C" fn ddog_otel_thread_ctx_sanity_check() -> libdd_common_ffi::VoidR
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use libdd_otel_thread_ctx::linux::{ThreadContext, ThreadContextHandle};
+    use libdd_otel_thread_ctx::linux::{OwnedThreadContext, ThreadContext};
     use std::ptr::NonNull;
 
     /// Maximum size in bytes of the `attrs_data` field of a thread context record.
@@ -49,8 +49,8 @@ mod linux {
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
         local_root_span_id: &[u8; 8],
-    ) -> NonNull<ThreadContextHandle> {
-        ThreadContext::new(*trace_id, *span_id, *local_root_span_id, &[]).into_opaque_ptr()
+    ) -> NonNull<ThreadContext> {
+        OwnedThreadContext::new(*trace_id, *span_id, *local_root_span_id, &[]).into_opaque_ptr()
     }
 
     /// Free an owned thread context.
@@ -61,9 +61,9 @@ mod linux {
     /// `ddog_otel_thread_ctx_detach`, and must not be used after this call. In particular, `ctx`
     /// must not be currently attached to a thread.
     #[no_mangle]
-    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContextHandle) {
+    pub unsafe extern "C" fn ddog_otel_thread_ctx_free(ctx: *mut ThreadContext) {
         if let Some(ctx) = NonNull::new(ctx) {
-            let _ = ThreadContext::from_opaque_ptr(ctx);
+            let _ = OwnedThreadContext::from_opaque_ptr(ctx);
         }
     }
 
@@ -77,11 +77,11 @@ mod linux {
     /// attached.
     #[no_mangle]
     pub unsafe extern "C" fn ddog_otel_thread_ctx_attach(
-        ctx: *mut ThreadContextHandle,
-    ) -> Option<NonNull<ThreadContextHandle>> {
-        ThreadContext::from_opaque_ptr(NonNull::new(ctx)?)
+        ctx: *mut ThreadContext,
+    ) -> Option<NonNull<ThreadContext>> {
+        OwnedThreadContext::from_opaque_ptr(NonNull::new(ctx)?)
             .attach()
-            .map(ThreadContext::into_opaque_ptr)
+            .map(OwnedThreadContext::into_opaque_ptr)
     }
 
     /// Remove the currently attached context from the TLS slot.
@@ -89,8 +89,8 @@ mod linux {
     /// Returns the detached context (caller now owns it and must release it with
     /// `ddog_otel_thread_ctx_free`), or null if the slot was empty.
     #[no_mangle]
-    pub extern "C" fn ddog_otel_thread_ctx_detach() -> Option<NonNull<ThreadContextHandle>> {
-        ThreadContext::detach().map(ThreadContext::into_opaque_ptr)
+    pub extern "C" fn ddog_otel_thread_ctx_detach() -> Option<NonNull<ThreadContext>> {
+        OwnedThreadContext::detach().map(OwnedThreadContext::into_opaque_ptr)
     }
 
     /// Update the currently attached context in-place.
@@ -103,6 +103,6 @@ mod linux {
         span_id: &[u8; 8],
         local_root_span_id: &[u8; 8],
     ) {
-        ThreadContext::update(*trace_id, *span_id, *local_root_span_id, &[]);
+        OwnedThreadContext::update(*trace_id, *span_id, *local_root_span_id, &[]);
     }
 }
