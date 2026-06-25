@@ -71,7 +71,7 @@ pub fn get_machine_id_impl() -> String {
     // SAFETY: hkey is a valid open handle.
     unsafe { RegCloseKey(hkey) };
 
-    if status != ERROR_SUCCESS as i32 {
+    if status != ERROR_SUCCESS {
         return String::new();
     }
 
