@@ -36,6 +36,12 @@ fn generate_protobuf() {
 
     config.out_dir(output_path.clone());
 
+    // The vendored OpenTelemetry proto doc comments are kept (generated onto the prost structs).
+    // The one comment with an indented example block (`Span.attributes` in trace.proto) is fenced
+    // as a ```text block in the vendored `.proto`, so rustdoc renders it as text rather than
+    // compiling it as a Rust doctest. Keep new vendored comments doctest-safe (fence example
+    // blocks) rather than re-adding a blanket `disable_comments`.
+
     // The following prost_build config changes modify the protobuf generated structs in
     // in the following ways:
 
@@ -62,9 +68,14 @@ fn generate_protobuf() {
     config.field_attribute(".pb.SpanLink.tracestate", "#[serde(default)]");
     config.field_attribute(".pb.SpanLink.flags", "#[serde(default)]");
 
-    config.type_attribute("Span", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("pb.Span", "#[derive(Deserialize, Serialize)]");
     config.type_attribute(
-        "Span",
+        "pb.Span",
+        r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
+    );
+    config.type_attribute("pb.idx.Span", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute(
+        "pb.idx.Span",
         r#"#[cfg_attr(feature = "fuzzing", derive(bolero::TypeGenerator))]"#,
     );
     config.field_attribute(
@@ -328,6 +339,8 @@ fn generate_protobuf() {
                 "src/pb/stats.proto",
                 "src/pb/remoteconfig.proto",
                 "src/pb/opentelemetry/proto/common/v1/process_context.proto",
+                "src/pb/opentelemetry/proto/trace/v1/trace.proto",
+                "src/pb/opentelemetry/proto/collector/trace/v1/trace_service.proto",
                 "src/pb/idx/tracer_payload.proto",
                 "src/pb/idx/span.proto",
             ],
@@ -371,6 +384,14 @@ fn generate_protobuf() {
     prepend_to_file(
         otel_license,
         &output_path.join("opentelemetry.proto.common.v1.rs"),
+    );
+    prepend_to_file(
+        otel_license,
+        &output_path.join("opentelemetry.proto.trace.v1.rs"),
+    );
+    prepend_to_file(
+        otel_license,
+        &output_path.join("opentelemetry.proto.collector.trace.v1.rs"),
     );
 }
 

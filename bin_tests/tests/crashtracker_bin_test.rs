@@ -159,6 +159,115 @@ fn test_crash_tracking_bin_unhandled_exception() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Tests that when `collect_all_threads` is enabled and the crash is reported via
+/// `report_unhandled_exception`, the crash report contains entries in `error.threads`
+/// for background threads with valid stack traces.
+///
+/// This verifies that `PR_SET_PTRACER` is correctly called in the unhandled exception
+/// path so the receiver can ptrace the still-alive parent process.
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::UnhandledExceptionMultiThread,
+        CrashType::UnhandledException,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        PayloadValidator::new(payload)
+            .validate_error_kind("UnhandledException")?
+            .validate_error_message_contains(
+                "Process was terminated due to an unhandled exception of type 'RuntimeException'",
+            )?;
+
+        let all_threads = payload["error"]["threads"]
+            .as_array()
+            .expect("error.threads should be a JSON array of thread objects");
+
+        assert!(
+            all_threads.len() >= 3,
+            "error.threads should contain at least 3 threads (1 crashed + 2 workers); got {} in payload: {}",
+            all_threads.len(),
+            serde_json::to_string_pretty(payload).unwrap_or_default()
+        );
+
+        let thread_names: Vec<&str> = all_threads
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or("<none>"))
+            .collect();
+
+        let crashed_threads: Vec<_> = all_threads
+            .iter()
+            .filter(|t| t["crashed"].as_bool() == Some(true))
+            .collect();
+        assert_eq!(
+            crashed_threads.len(),
+            1,
+            "exactly one thread should have crashed=true; got: {crashed_threads:?}"
+        );
+
+        for thread in all_threads {
+            assert!(
+                thread["name"].is_string(),
+                "thread entry missing 'name': {thread:?}"
+            );
+            assert!(
+                thread["crashed"].is_boolean(),
+                "thread entry missing 'crashed': {thread:?}"
+            );
+            assert!(
+                thread["stack"].is_object(),
+                "thread entry missing 'stack': {thread:?}"
+            );
+        }
+
+        for expected in ["ct_worker_0", "ct_worker_1"] {
+            assert!(
+                thread_names.contains(&expected),
+                "Expected worker thread '{expected}' in error.threads; got: {thread_names:?}"
+            );
+
+            let worker = all_threads
+                .iter()
+                .find(|t| t["name"].as_str() == Some(expected))
+                .unwrap_or_else(|| panic!("{expected} should be in threads"));
+
+            let frames = worker["stack"]["frames"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{expected} stack.frames should be an array"));
+
+            assert!(
+                !frames.is_empty(),
+                "{expected} should have non-empty stack frames (ptrace should succeed with PR_SET_PTRACER)"
+            );
+
+            let worker_fn = if expected == "ct_worker_0" {
+                "worker_fn_0"
+            } else {
+                "worker_fn_1"
+            };
+            let has_worker_frame = frames.iter().any(|f| {
+                f["function"]
+                    .as_str()
+                    .map(|name| name.contains(worker_fn))
+                    .unwrap_or(false)
+            });
+            assert!(
+                has_worker_frame,
+                "{expected} stack should contain a frame for '{worker_fn}' but got: {frames:?}"
+            );
+        }
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame() {
@@ -189,7 +298,7 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 }
 
 /// Tests that when `collect_all_threads` is enabled, the crash report contains
-/// entries in `error.threads` for background threads beyond the crashing thread.
+/// entries in `error.threads` for all threads including the crashing thread.
 ///
 /// The behavior (test_017_multi_thread_collection.rs) enables `collect_all_threads`,
 /// spawns two named sleeping worker threads in `post()`, and then crashes the main thread.
@@ -200,8 +309,8 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 ///
 /// We verify:
 ///   - `error.threads` is a non-empty array of thread objects.
-///   - Each thread entry is well-formed: `crashed=false`, `name`, and `stack` present.
-///   - The crashing thread stack is in `error.stack`, not `error.threads`.
+///   - Each thread entry is well-formed: `crashed`, `name`, and `stack` present.
+///   - Exactly one thread has `crashed=true` (the crashing thread).
 ///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
 ///   - Each worker has their work frame in the stack trace.
 #[test]
@@ -220,10 +329,9 @@ fn test_crash_tracking_multi_thread_collection() {
         let all_threads = payload["error"]["threads"]
             .as_array()
             .expect("error.threads should be a JSON array of thread objects");
-
         assert!(
-            all_threads.len() >= 2,
-            "error.threads should be non-empty when collect_all_threads is enabled; got payload: {}",
+            all_threads.len() >= 3,
+            "error.threads should contain at least 3 threads (1 crashed + 2 workers); got payload: {}",
             serde_json::to_string_pretty(payload).unwrap_or_default()
         );
 
@@ -231,6 +339,16 @@ fn test_crash_tracking_multi_thread_collection() {
             .iter()
             .map(|t| t["name"].as_str().unwrap_or("<none>"))
             .collect();
+
+        let crashed_threads: Vec<_> = all_threads
+            .iter()
+            .filter(|t| t["crashed"].as_bool() == Some(true))
+            .collect();
+        assert_eq!(
+            crashed_threads.len(),
+            1,
+            "exactly one thread should have crashed=true; got: {crashed_threads:?}"
+        );
 
         for thread in all_threads {
             assert!(
@@ -244,10 +362,6 @@ fn test_crash_tracking_multi_thread_collection() {
             assert!(
                 thread["stack"].is_object(),
                 "thread entry missing 'stack': {thread:?}"
-            );
-            assert!(
-                !thread["crashed"].as_bool().unwrap_or(true),
-                "threads in error.threads must have crashed=false: {thread:?}"
             );
         }
 
@@ -312,9 +426,20 @@ fn test_crash_tracking_thread_limit() {
             .expect("error.threads should be a JSON array of thread objects");
 
         assert!(
-            thread_array.len() >= THREAD_COUNT,
-            "expected at least {THREAD_COUNT} thread entries, got {}",
+            thread_array.len() == THREAD_COUNT,
+            "expected {} thread entries ({THREAD_COUNT} workers), got {}",
+            THREAD_COUNT,
             thread_array.len(),
+        );
+
+        let crashed_threads: Vec<_> = thread_array
+            .iter()
+            .filter(|t| t["crashed"].as_bool() == Some(true))
+            .collect();
+        assert_eq!(
+            crashed_threads.len(),
+            1,
+            "exactly one thread should have crashed=true; got: {crashed_threads:?}"
         );
 
         for thread in thread_array {
@@ -329,10 +454,6 @@ fn test_crash_tracking_thread_limit() {
             assert!(
                 thread["stack"].is_object(),
                 "thread entry missing 'stack': {thread:?}"
-            );
-            assert!(
-                !thread["crashed"].as_bool().unwrap_or(true),
-                "threads in error.threads must have crashed=false: {thread:?}"
             );
         }
 
@@ -529,8 +650,8 @@ fn test_crash_tracking_sidecar_multi_thread_collection() {
     let all_threads = all_threads.unwrap();
 
     assert!(
-        all_threads.len() >= 2,
-        "error.threads should have at least 2 entries (sidecar multi-thread); got {}: {}",
+        all_threads.len() >= 3,
+        "error.threads should have at least 3 entries (1 crashed + 2 workers, sidecar multi-thread); got {}: {}",
         all_threads.len(),
         serde_json::to_string_pretty(&crash_payload).unwrap_or_default()
     );
