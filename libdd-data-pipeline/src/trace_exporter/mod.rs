@@ -350,9 +350,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
             None,
         );
 
-        let res = self
-            .send_trace_chunks_inner(traces, false)
-            .await?;
+        let res = self.send_trace_chunks_inner(traces, false).await?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
@@ -574,8 +572,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info().await;
-        self.send_trace_chunks_inner(trace_chunks, true)
-            .await
+        self.send_trace_chunks_inner(trace_chunks, true).await
     }
 
     /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
