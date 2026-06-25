@@ -6,7 +6,7 @@ use super::{
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceRequest};
+use crate::service::sidecar_interface::SidecarInterfaceChannel;
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
 use datadog_ipc::SeqpacketConn;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
@@ -220,32 +220,6 @@ pub fn enqueue_actions(
 ) -> io::Result<()> {
     lock_sender(transport)?.enqueue_actions(instance_id.clone(), *queue_id, actions);
     Ok(())
-}
-
-/// Reliably enqueues a list of actions to be performed.
-///
-/// Unlike [`enqueue_actions`], this uses the checked, blocking channel path with
-/// no load-shedding and no silent drop: the `io::Result` from the send
-/// propagates to the caller. On a broken pipe / connection reset /
-/// not-connected error the transport reconnects and retries the exact same
-/// pre-encoded request bytes once on the fresh connection.
-///
-/// Intended for one-shot, non-replayed payloads (for example FFE
-/// flagevaluation batches) that must not be silently lost under transient
-/// backpressure or a broken pipe.
-pub fn enqueue_actions_reliable(
-    transport: &mut SidecarTransport,
-    instance_id: &InstanceId,
-    queue_id: &QueueId,
-    actions: Vec<SidecarAction>,
-) -> io::Result<()> {
-    let req = SidecarInterfaceRequest::EnqueueActions {
-        instance_id: instance_id.clone(),
-        queue_id: *queue_id,
-        actions,
-    };
-    let data = datadog_ipc::codec::encode(&req);
-    transport.with_retry(|sender| sender.drain_and_send_raw_blocking(&data))
 }
 
 /// Removes the application entry for the given queue ID from the instance.

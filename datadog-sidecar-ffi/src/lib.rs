@@ -1322,7 +1322,7 @@ fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
         return MaybeError::None;
     }
 
-    try_c!(blocking::enqueue_actions_reliable(
+    try_c!(blocking::enqueue_actions(
         transport,
         instance_id,
         queue_id,
