@@ -505,7 +505,16 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             .uri(url_with_path(self.endpoint.url.clone(), path)?)
             .method(method)
             .body(body)?;
-        Ok(self.http.request(req).await?)
+        let timeout = Duration::from_millis(self.endpoint.timeout_ms);
+        let response = tokio::time::timeout(timeout, self.http.request(req))
+            .await
+            .map_err(|_| {
+                format_err!(
+                    "Remote config request timed out after {}ms",
+                    self.endpoint.timeout_ms,
+                )
+            })??;
+        Ok(response)
     }
 
     async fn apply<S: FileStorage>(
