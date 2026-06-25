@@ -27,10 +27,11 @@ pub fn get_machine_id_impl() -> String {
 
     let mut hkey: HKEY = 0;
     // SAFETY: all pointers are valid.
+    let subkey = to_wide_null("SOFTWARE\\Microsoft\\Cryptography");
     let status = unsafe {
         RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
-            to_wide_null("SOFTWARE\\Microsoft\\Cryptography").as_ptr(),
+            subkey.as_ptr(),
             0,
             access,
             &mut hkey,
