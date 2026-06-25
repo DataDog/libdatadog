@@ -49,7 +49,6 @@ pub struct FixedAggregationKey<T> {
     pub grpc_status_code: Option<u8>,
     pub is_synthetics_request: bool,
     pub is_trace_root: bool,
-    // Appended last to preserve bincode field-order compatibility with existing IPC messages.
     pub grpc_method: T,
 }
 
@@ -831,7 +830,6 @@ mod tests {
                 }
                 .into_key(),
             ),
-            // grpc.method.name is part of the aggregation key.
             (
                 SpanBytes {
                     meta: vec![("grpc.method.name".into(), "/pkg.Svc/Method".into())].into(),
