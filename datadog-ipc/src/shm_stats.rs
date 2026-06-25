@@ -854,7 +854,6 @@ mod tests {
                 http_method: "GET",
                 http_endpoint: "/",
                 service_source: "",
-                grpc_method: "",
                 http_status_code: 200,
                 is_synthetics_request: false,
                 is_trace_root: true,

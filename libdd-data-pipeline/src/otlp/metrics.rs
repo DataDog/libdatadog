@@ -58,7 +58,7 @@ pub fn map_stats_to_otlp_metrics(
                     continue;
                 };
                 data_points.push(json!({
-                    "attributes": build_attributes(group, &exact.grpc_method, is_error, resource_info, otel_trace_semantics_enabled),
+                    "attributes": build_attributes(group, is_error, resource_info, otel_trace_semantics_enabled),
                     "startTimeUnixNano": b.bucket.start.to_string(),
                     "timeUnixNano": end.to_string(),
                     "count": cell.count.to_string(),
@@ -120,7 +120,6 @@ fn sketch_bucket_counts(sketch: &DDSketch) -> Vec<String> {
 
 fn build_attributes(
     group: &pb::ClientGroupedStats,
-    grpc_method: &str,
     is_error: bool,
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
@@ -146,7 +145,6 @@ fn build_attributes(
     push("span.kind", &group.span_kind);
     push("http.request.method", &group.http_method);
     push("http.route", &group.http_endpoint);
-    push("rpc.method", grpc_method);
     push("rpc.response.status_code", &group.grpc_status_code);
     for tag in &group.peer_tags {
         if let Some((k, v)) = tag.split_once(':') {
@@ -346,20 +344,8 @@ mod tests {
             OtlpExactGroup {
                 ok: cell(ok_ns),
                 error: cell(err_ns),
-                grpc_method: String::new(),
             },
         )
-    }
-
-    fn group_pair_with_grpc(
-        ok_ns: &[u64],
-        err_ns: &[u64],
-        grpc_method: &str,
-        customize: impl FnOnce(&mut pb::ClientGroupedStats),
-    ) -> (pb::ClientGroupedStats, OtlpExactGroup) {
-        let (g, mut e) = group_with_exact(ok_ns, err_ns, customize);
-        e.grpc_method = grpc_method.into();
-        (g, e)
     }
 
     fn buckets(groups: Vec<(pb::ClientGroupedStats, OtlpExactGroup)>) -> Vec<OtlpStatsBucket> {
@@ -443,7 +429,7 @@ mod tests {
 
     #[test]
     fn data_point_attributes_and_otel_strip() {
-        let g_pair = group_pair_with_grpc(&[1_000_000_000], &[], "/pkg.Svc/Method", |g| {
+        let g_pair = group_with_exact(&[1_000_000_000], &[], |g| {
             g.http_status_code = 404;
             g.http_method = "POST".into();
             g.http_endpoint = "/users/:id".into();
@@ -466,7 +452,6 @@ mod tests {
         assert_eq!(str_at(a, "http.request.method"), Some("POST"));
         assert_eq!(str_at(a, "http.route"), Some("/users/:id"));
         assert!(a.iter().any(|kv| kv["key"] == "http.response.status_code"));
-        assert_eq!(str_at(a, "rpc.method"), Some("/pkg.Svc/Method"));
         assert_eq!(str_at(a, "datadog.operation.name"), Some("test.op"));
         assert_eq!(str_at(a, "datadog.span.type"), Some("web"));
         assert_eq!(str_at(a, "datadog.origin"), Some("synthetics"));

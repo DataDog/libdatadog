@@ -24,7 +24,6 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
     "rpc.grpc.status.code",
     "grpc.status.code",
 ];
-const GRPC_METHOD_FIELD: &[&str] = &["grpc.method.name", "rpc.method"];
 
 /// Aggregation key fields shared across all concentrator implementations — everything
 /// **except** peer tags.
@@ -49,7 +48,6 @@ pub struct FixedAggregationKey<T> {
     pub grpc_status_code: Option<u8>,
     pub is_synthetics_request: bool,
     pub is_trace_root: bool,
-    pub grpc_method: T,
 }
 
 impl<T> FixedAggregationKey<T> {
@@ -74,7 +72,6 @@ impl<T> FixedAggregationKey<T> {
             grpc_status_code: self.grpc_status_code,
             is_synthetics_request: self.is_synthetics_request,
             is_trace_root: self.is_trace_root,
-            grpc_method: f(self.grpc_method.borrow()),
         }
     }
 }
@@ -153,17 +150,6 @@ fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     }
 
     None
-}
-
-fn get_grpc_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
-    for key in GRPC_METHOD_FIELD {
-        if let Some(val) = span.get_meta(key) {
-            if !val.is_empty() {
-                return val;
-            }
-        }
-    }
-    ""
 }
 
 fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
@@ -264,8 +250,6 @@ impl<'a> BorrowedAggregationKey<'a> {
         };
 
         let grpc_status_code = get_grpc_status_code(span);
-        let grpc_method = get_grpc_method(span);
-
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
 
         Self {
@@ -278,7 +262,6 @@ impl<'a> BorrowedAggregationKey<'a> {
                 http_method,
                 http_endpoint,
                 service_source,
-                grpc_method,
                 http_status_code: status_code,
                 grpc_status_code,
                 is_synthetics_request: span
@@ -303,7 +286,6 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
                 http_method: value.http_method,
                 http_endpoint: value.http_endpoint,
                 service_source: value.service_source,
-                grpc_method: String::new(),
                 http_status_code: value.http_status_code,
                 grpc_status_code: value.grpc_status_code.parse().ok(),
                 is_synthetics_request: value.synthetics,
@@ -392,13 +374,11 @@ pub struct OtlpExactCell {
 }
 
 /// Exact OK/ERROR cells for one aggregation group, in the same order as the `stats` vector
-/// of the accompanying [`pb::ClientStatsBucket`]. `grpc_method` mirrors the aggregation key
-/// field; it is not in the agent stats protobuf so it is surfaced here for OTLP export.
+/// of the accompanying [`pb::ClientStatsBucket`].
 #[derive(Debug, Clone, Default)]
 pub struct OtlpExactGroup {
     pub ok: OtlpExactCell,
     pub error: OtlpExactCell,
-    pub grpc_method: String,
 }
 
 /// A bucket flushed for the OTLP trace-metrics path. `exact[i]` is the exact-scalar sidecar
@@ -454,7 +434,6 @@ impl StatsBucket {
         let mut exact = Vec::with_capacity(self.data.len());
         for (k, g) in self.data {
             exact.push(OtlpExactGroup {
-                grpc_method: k.fixed.grpc_method.clone(),
                 ok: OtlpExactCell {
                     count: g.hits.saturating_sub(g.errors),
                     duration_ns: g.ok_duration,
@@ -825,18 +804,6 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(0),
-                    is_trace_root: true,
-                    ..Default::default()
-                }
-                .into_key(),
-            ),
-            (
-                SpanBytes {
-                    meta: vec![("grpc.method.name".into(), "/pkg.Svc/Method".into())].into(),
-                    ..Default::default()
-                },
-                FixedAggregationKey {
-                    grpc_method: "/pkg.Svc/Method".into(),
                     is_trace_root: true,
                     ..Default::default()
                 }
