@@ -34,6 +34,15 @@ use rmp::encode::{
 };
 use std::borrow::Borrow;
 
+/// Writes a `bool` as the v0.4 string representation (`"true"` / `"false"`). Used wherever a
+/// typed V1 `Bool` attribute is downgraded into v0.4 `meta` (which is `String → String` only).
+fn write_bool_as_str<W: RmpWrite>(
+    writer: &mut W,
+    b: bool,
+) -> Result<(), ValueWriteError<W::Error>> {
+    write_str(writer, if b { "true" } else { "false" })
+}
+
 /// Chunk-level context propagated into every span when downgrading to v0.4. Built once per
 /// chunk by the top-level encoder and passed by reference to `encode_span_v1_to_v04`.
 pub(super) struct ChunkContext<'a, T: TraceData> {
@@ -56,8 +65,8 @@ fn span_kind_to_meta(kind: SpanKind) -> Option<&'static str> {
     }
 }
 
-/// Splits a 128-bit big-endian trace_id into `(low_64, high_64)`. The low half maps to v0.4's
-/// `trace_id` field; the high half goes to `meta["_dd.p.tid"]` as hex when non-zero.
+/// Splits a 128-bit big-endian trace_id into big-endian `(low_64, high_64)`. The low half maps to
+/// v0.4's `trace_id` field; the high half goes to `meta["_dd.p.tid"]` as hex when non-zero.
 #[inline]
 fn split_trace_id(trace_id: &[u8; 16]) -> (u64, u64) {
     let mut high_bytes = [0u8; 8];
@@ -228,7 +237,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
                 }
                 AttributeValue::Bool(b) => {
                     write_str(writer, k.borrow())?;
-                    write_str(writer, if *b { "true" } else { "false" })?;
+                    write_bool_as_str(writer, *b)?;
                 }
                 _ => {}
             }
@@ -241,7 +250,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
                 }
                 AttributeValue::Bool(b) => {
                     write_str(writer, k.borrow())?;
-                    write_str(writer, if *b { "true" } else { "false" })?;
+                    write_bool_as_str(writer, *b)?;
                 }
                 _ => {}
             }
@@ -326,7 +335,7 @@ fn write_meta_struct_entry<W: RmpWrite, T: TraceData>(
         }
         AttributeValue::KeyValue(_) | AttributeValue::List(_) => {
             write_str(writer, k.borrow())?;
-            write_bin(writer, &[])?;
+            write_bin(writer, todo!())?;
         }
         _ => {}
     }
@@ -335,9 +344,9 @@ fn write_meta_struct_entry<W: RmpWrite, T: TraceData>(
 
 /// Encodes [`v1::SpanLink`](crate::span::v1::SpanLink)s into the v0.4 msgpack wire format
 /// (downgrade: v1 input → v0.4 output). The 128-bit `trace_id` is split into
-/// `(trace_id, trace_id_high)` u64s. Typed link attributes are downgraded to strings (`String`
-/// passes through, `Bool` becomes `"true"` / `"false"`); non-string-coercible variants are
-/// dropped because v0.4 link attributes are `String → String` only.
+/// `(trace_id, trace_id_high)` u64s. Typed link attributes are downgraded to strings;
+/// non-string-coercible variants are dropped because v0.4 link attributes are `String → String`
+/// only.
 fn encode_span_links<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_links: &[SpanLink<T>],
@@ -380,7 +389,7 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
                     }
                     AttributeValue::Bool(b) => {
                         write_str(writer, k.borrow())?;
-                        write_str(writer, if *b { "true" } else { "false" })?;
+                        write_bool_as_str(writer, *b)?;
                     }
                     _ => {}
                 }
