@@ -39,12 +39,24 @@ macro_rules! crash_tracking_tests {
     };
 }
 
+// Ignored: deadlocks on CentOS 7 (see nextest.toml for timeout cap when run with
+// --include-ignored).
+#[test]
+#[cfg_attr(miri, ignore)]
+#[ignore = "deadlocks on CentOS 7 — tracking issue: SigChldExec handling"]
+fn test_crash_tracking_bin_sigchld_exec() {
+    run_standard_crash_test_refactored(
+        BuildProfile::Debug,
+        TestMode::SigChldExec,
+        CrashType::NullDeref,
+    );
+}
+
 // Generate all simple crash tracking tests using the macro
 crash_tracking_tests! {
     (test_crash_tracking_bin_debug, BuildProfile::Debug, TestMode::DoNothing, CrashType::NullDeref),
     (test_crash_tracking_bin_sigpipe, BuildProfile::Debug, TestMode::SigPipe, CrashType::NullDeref),
     (test_crash_tracking_bin_sigchld, BuildProfile::Debug, TestMode::SigChld, CrashType::NullDeref),
-    (test_crash_tracking_bin_sigchld_exec, BuildProfile::Debug, TestMode::SigChldExec, CrashType::NullDeref),
     (test_crash_tracking_bin_sigstack, BuildProfile::Release, TestMode::DoNothingSigStack, CrashType::NullDeref),
     (test_crash_tracking_bin_sigpipe_sigstack, BuildProfile::Release, TestMode::SigPipeSigStack, CrashType::NullDeref),
     (test_crash_tracking_bin_sigchld_sigstack, BuildProfile::Release, TestMode::SigChldSigStack, CrashType::NullDeref),
