@@ -13,7 +13,7 @@ use libdd_trace_utils::send_with_retry::{
 };
 use tracing::error;
 
-const AGENTLESS_MAX_ATTEMPTS: u32 = 3;
+const AGENTLESS_MAX_RETRIES: u32 = 2;
 const AGENTLESS_RETRY_DELAY_MS: u64 = 1000;
 
 /// Send an agentless trace payload (JSON bytes) to the configured intake with retries.
