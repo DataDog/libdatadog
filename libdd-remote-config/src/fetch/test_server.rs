@@ -155,6 +155,7 @@ impl RemoteConfigServer {
                         })
                         .collect(),
                     client_configs: applied_files.keys().map(|k| k.to_string()).collect(),
+                    config_status: 0,
                 };
                 Response::new(http_common::Body::from(
                     serde_json::to_vec(&response).unwrap(),
