@@ -31,6 +31,10 @@ use tracing::warn;
 /// gRPC path for the OTLP trace export RPC.
 const GRPC_EXPORT_PATH: &str = "/opentelemetry.proto.collector.trace.v1.TraceService/Export";
 
+/// Metadata header signalling that the client already computed APM stats, so the
+/// agent does not recompute them. Attached per-request when stats are enabled.
+const CLIENT_COMPUTED_STATS_HEADER: &str = "datadog-client-computed-stats";
+
 // ---------------------------------------------------------------------------
 // Prost codec implementation — tonic 0.14 removed ProstCodec from its public
 // API; we provide a minimal replacement that satisfies tonic::codec::Codec.
@@ -161,8 +165,9 @@ pub(crate) fn build_grpc_channel(
 /// Send an OTLP trace export request over gRPC.
 ///
 /// Uses the `transport.channel` tonic channel with [`ProstCodecImpl`] for
-/// encoding/decoding. Custom metadata headers and the test session token
-/// are attached to the request metadata.
+/// encoding/decoding. Custom metadata headers, the test session token, and
+/// (when `client_computed_stats` is set) the client-computed-stats header are
+/// attached to the request metadata.
 ///
 /// # Errors
 ///
@@ -171,12 +176,18 @@ pub(crate) fn build_grpc_channel(
 pub(crate) async fn send_otlp_traces_grpc(
     transport: &OtlpGrpcTransport,
     test_token: Option<&str>,
+    client_computed_stats: bool,
     request: ExportTraceServiceRequest,
 ) -> Result<(), TraceExporterError> {
     let mut client = Grpc::new(transport.channel.clone());
 
     let mut req = Request::new(request);
-    attach_metadata(&mut req, &transport.config.headers, test_token);
+    attach_metadata(
+        &mut req,
+        &transport.config.headers,
+        test_token,
+        client_computed_stats,
+    );
 
     let path = http::uri::PathAndQuery::from_static(GRPC_EXPORT_PATH);
     let codec = ProstCodecImpl::<ExportTraceServiceRequest, ExportTraceServiceResponse>::default();
@@ -200,11 +211,16 @@ pub(crate) async fn send_otlp_traces_grpc(
     .map_err(|_| TraceExporterError::Io(std::io::Error::from(std::io::ErrorKind::TimedOut)))?
 }
 
-/// Attach `headers` and the optional test-session token to gRPC request metadata.
+/// Attach `headers`, the optional test-session token, and the optional
+/// client-computed-stats marker to gRPC request metadata.
+///
+/// Invalid custom headers are skipped with a warning rather than failing the
+/// export — a single malformed user-supplied header should not drop the batch.
 fn attach_metadata(
     req: &mut Request<ExportTraceServiceRequest>,
     headers: &[(String, String)],
     test_token: Option<&str>,
+    client_computed_stats: bool,
 ) {
     for (k, v) in headers {
         match (
@@ -227,6 +243,12 @@ fn attach_metadata(
             }
             Err(_) => warn!("Skipping invalid test-session token: {token:?}"),
         }
+    }
+    if client_computed_stats {
+        req.metadata_mut().insert(
+            AsciiMetadataKey::from_static(CLIENT_COMPUTED_STATS_HEADER),
+            AsciiMetadataValue::from_static("yes"),
+        );
     }
 }
 
@@ -278,6 +300,67 @@ mod tests {
     fn build_grpc_channel_rejects_malformed_url() {
         let err = build_grpc_channel("not a url", Duration::from_secs(10));
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn grpc_status_unavailable_and_deadline_map_to_io() {
+        for status in [
+            Status::unavailable("backend down"),
+            Status::deadline_exceeded("too slow"),
+        ] {
+            assert!(
+                matches!(grpc_status_to_error(status), TraceExporterError::Io(_)),
+                "transient transport status should map to Io"
+            );
+        }
+    }
+
+    #[test]
+    fn grpc_status_application_errors_map_to_request() {
+        for status in [
+            Status::internal("boom"),
+            Status::invalid_argument("bad"),
+            Status::resource_exhausted("quota"),
+        ] {
+            assert!(
+                matches!(grpc_status_to_error(status), TraceExporterError::Request(_)),
+                "non-transient status should map to Request"
+            );
+        }
+    }
+
+    #[test]
+    fn attach_metadata_inserts_valid_header_and_token() {
+        let mut req = Request::new(ExportTraceServiceRequest::default());
+        let headers = vec![("x-custom-key".to_string(), "val".to_string())];
+        attach_metadata(&mut req, &headers, Some("tok123"), false);
+        let md = req.metadata();
+        assert_eq!(md.get("x-custom-key").unwrap(), "val");
+        assert_eq!(md.get("x-datadog-test-session-token").unwrap(), "tok123");
+        assert!(md.get(CLIENT_COMPUTED_STATS_HEADER).is_none());
+    }
+
+    #[test]
+    fn attach_metadata_skips_invalid_header_keeps_valid() {
+        let mut req = Request::new(ExportTraceServiceRequest::default());
+        // A space in the key is not a valid HTTP/2 header name, so it is skipped.
+        let headers = vec![
+            ("bad key".to_string(), "v".to_string()),
+            ("good-key".to_string(), "ok".to_string()),
+        ];
+        attach_metadata(&mut req, &headers, None, false);
+        assert_eq!(req.metadata().get("good-key").unwrap(), "ok");
+        assert_eq!(req.metadata().len(), 1, "only the valid header is attached");
+    }
+
+    #[test]
+    fn attach_metadata_adds_client_computed_stats_when_enabled() {
+        let mut req = Request::new(ExportTraceServiceRequest::default());
+        attach_metadata(&mut req, &[], None, true);
+        assert_eq!(
+            req.metadata().get(CLIENT_COMPUTED_STATS_HEADER).unwrap(),
+            "yes"
+        );
     }
 
     /// `connect_lazy()` requires a Tokio runtime — wrap in `#[tokio::test]`.

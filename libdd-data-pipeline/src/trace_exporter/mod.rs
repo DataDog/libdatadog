@@ -663,25 +663,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
             transport.config.otel_trace_semantics_enabled,
         );
 
-        // Optionally inject the client-computed-stats metadata header.
-        let effective_transport;
-        let transport_to_use = if self.otlp_stats_enabled {
-            effective_transport = {
-                let mut c = transport.clone();
-                c.config.headers.push((
-                    "datadog-client-computed-stats".to_string(),
-                    "yes".to_string(),
-                ));
-                c
-            };
-            &effective_transport
-        } else {
-            transport
-        };
-
+        // The client-computed-stats marker is attached as request metadata
+        // inside `send_otlp_traces_grpc`, avoiding a per-export clone of the
+        // transport (and its header `Vec`) on the hot path.
         send_otlp_traces_grpc(
-            transport_to_use,
+            transport,
             self.endpoint.test_token.as_deref(),
+            self.otlp_stats_enabled,
             proto_request,
         )
         .await?;

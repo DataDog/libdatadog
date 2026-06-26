@@ -70,6 +70,11 @@ name = "trace_buffer"
 harness = false
 path = "benches/trace_buffer.rs"
 
+[[bench]]
+name = "otlp_grpc_export"
+harness = false
+path = "benches/otlp_grpc_export.rs"
+
 [dev-dependencies]
 libdd-capabilities-impl = { version = "2.0.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
