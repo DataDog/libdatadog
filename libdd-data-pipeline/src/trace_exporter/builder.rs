@@ -541,6 +541,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
+        // TODO(APMSP-3609): consolidate per-mode worker gating (info-fetcher, telemetry,
+        // stats concentrator) off the selected export destination in one place.
         // In log-export mode there is no agent to poll; skip spawning the worker
         // entirely so we don't make repeated failing `/info` calls (e.g. in Lambda).
         let info_fetcher_handle = if self.output_to_log {

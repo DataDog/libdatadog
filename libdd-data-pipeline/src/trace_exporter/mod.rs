@@ -701,6 +701,8 @@ impl<
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here.
+        // The builder should reject conflicting destinations at build time instead.
         if let Some(max_line_size) = self.log_output {
             return self.send_trace_chunks_to_log(&traces, max_line_size);
         }
