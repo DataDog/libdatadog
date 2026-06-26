@@ -16,10 +16,10 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::otlp::{
-    map_traces_to_otlp, send_otlp_traces_grpc, send_otlp_traces_http, OtlpGrpcTransport,
-    OtlpResourceInfo, OtlpTraceConfig,
-};
+use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
+// gRPC OTLP export depends on tonic, which does not build for wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{send_otlp_traces_grpc, OtlpGrpcTransport};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -69,7 +69,8 @@ use tracing::{debug, error, warn};
 pub(crate) enum OtlpExportMode {
     /// OTLP over HTTP/1.1 (JSON or protobuf body).
     Http(OtlpTraceConfig),
-    /// OTLP over HTTP/2 via gRPC.
+    /// OTLP over HTTP/2 via gRPC. Unavailable on wasm32 (tonic does not build there).
+    #[cfg(not(target_arch = "wasm32"))]
     Grpc(OtlpGrpcTransport),
 }
 
@@ -636,6 +637,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
     }
 
     /// Sends trace chunks via OTLP gRPC when a gRPC transport is configured.
+    #[cfg(not(target_arch = "wasm32"))]
     async fn send_otlp_grpc_inner<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
@@ -757,6 +759,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
                 }
                 return self.send_otlp_traces_inner(traces, config).await;
             }
+            #[cfg(not(target_arch = "wasm32"))]
             Some(OtlpExportMode::Grpc(transport)) => {
                 libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
                 if traces.is_empty() {

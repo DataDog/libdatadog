@@ -106,6 +106,9 @@ mod grpc_export_tests {
             builder
                 .set_otlp_endpoint(&endpoint)
                 .set_otlp_protocol(OtlpProtocol::Grpc)
+                // Generous per-request timeout so the heavily instrumented coverage
+                // build does not time out the in-process gRPC round trip.
+                .set_connection_timeout(Some(60_000))
                 .set_language("test-lang")
                 .set_tracer_version("1.0")
                 .set_env("grpc-test-env")

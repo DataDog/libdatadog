@@ -3,10 +3,10 @@
 
 use crate::agent_info::AgentInfoFetcher;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
-use crate::otlp::{
-    build_grpc_channel, OtlpGrpcTraceConfig, OtlpGrpcTransport, OtlpMetricsConfig,
-    OtlpResourceInfo, OtlpTraceConfig,
-};
+use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
+// gRPC OTLP export depends on tonic, which does not build for wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{build_grpc_channel, OtlpGrpcTraceConfig, OtlpGrpcTransport};
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -579,6 +579,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             .unwrap_or(DEFAULT_OTLP_TIMEOUT);
 
         let otlp = match self.otlp_endpoint {
+            #[cfg(not(target_arch = "wasm32"))]
             Some(ref url) if self.otlp_protocol == OtlpProtocol::Grpc => {
                 let channel = build_grpc_channel(url, otlp_timeout)?;
                 Some(OtlpExportMode::Grpc(OtlpGrpcTransport {
@@ -933,6 +934,8 @@ mod tests {
         );
     }
 
+    // build() spins up the shared runtime, whose worker hits a syscall Miri can't execute.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn build_with_grpc_https_endpoint_rejected() {
         let mut builder = TraceExporterBuilder::default();
