@@ -13,9 +13,9 @@ use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
-    TracerMetadata, INFO_ENDPOINT,
+    add_path, OtlpExportMode, StatsComputationStatus, TelemetryInstrumentationSessions,
+    TraceExporter, TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TraceSerializer, TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -577,12 +577,14 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
         // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
         // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
-        let otlp_config = self.otlp_endpoint.map(|url| OtlpTraceConfig {
-            endpoint_url: url,
-            headers: build_otlp_header_map(self.otlp_headers),
-            timeout: otlp_timeout,
-            protocol: self.otlp_protocol,
-            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+        let otlp = self.otlp_endpoint.map(|url| {
+            OtlpExportMode::Http(OtlpTraceConfig {
+                endpoint_url: url,
+                headers: build_otlp_header_map(self.otlp_headers),
+                timeout: otlp_timeout,
+                protocol: self.otlp_protocol,
+                otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+            })
         });
 
         let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
@@ -705,7 +707,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
-            otlp_config,
+            otlp,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
         })

@@ -16,7 +16,10 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
-use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
+use crate::otlp::{
+    map_traces_to_otlp, send_otlp_traces_grpc, send_otlp_traces_http, OtlpGrpcTransport,
+    OtlpResourceInfo, OtlpTraceConfig,
+};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
@@ -57,6 +60,20 @@ use std::{borrow::Borrow, str::FromStr};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
+
+/// Selects the OTLP export transport for a [] instance.
+///
+/// Only one variant is active per instance; mutual exclusivity is enforced at
+/// build time.
+// The Grpc variant is constructed in the builder (Task 5); allow dead_code until then.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) enum OtlpExportMode {
+    /// OTLP over HTTP/1.1 (JSON or protobuf body).
+    Http(OtlpTraceConfig),
+    /// OTLP over HTTP/2 via gRPC.
+    Grpc(OtlpGrpcTransport),
+}
 
 const INFO_ENDPOINT: &str = "/info";
 const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
@@ -219,8 +236,8 @@ pub struct TraceExporter<
     #[cfg(not(target_arch = "wasm32"))]
     workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
-    otlp_config: Option<OtlpTraceConfig>,
+    /// When set, traces are exported via OTLP (HTTP or gRPC) instead of the Datadog agent.
+    otlp: Option<OtlpExportMode>,
     trace_filterer: ArcSwap<TraceFilterer>,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
@@ -620,6 +637,58 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         Ok(AgentResponse::Unchanged)
     }
 
+    /// Sends trace chunks via OTLP gRPC when a gRPC transport is configured.
+    async fn send_otlp_grpc_inner<T: TraceData>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+        transport: &OtlpGrpcTransport,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let resource_info = {
+            let mut r = OtlpResourceInfo::default();
+            r.service = self.metadata.service.clone();
+            r.env = self.metadata.env.clone();
+            r.app_version = self.metadata.app_version.clone();
+            r.language = self.metadata.language.clone();
+            r.tracer_version = self.metadata.tracer_version.clone();
+            r.runtime_id = self.metadata.runtime_id.clone();
+            r.client_computed_stats = self.otlp_stats_enabled;
+            r
+        };
+
+        // map_traces_to_otlp returns the prost ExportTraceServiceRequest directly —
+        // the same type expected by send_otlp_traces_grpc; no conversion needed.
+        let proto_request = map_traces_to_otlp(
+            traces,
+            &resource_info,
+            transport.config.otel_trace_semantics_enabled,
+        );
+
+        // Optionally inject the client-computed-stats metadata header.
+        let effective_transport;
+        let transport_to_use = if self.otlp_stats_enabled {
+            effective_transport = {
+                let mut c = transport.clone();
+                c.config.headers.push((
+                    "datadog-client-computed-stats".to_string(),
+                    "yes".to_string(),
+                ));
+                c
+            };
+            &effective_transport
+        } else {
+            transport
+        };
+
+        send_otlp_traces_grpc(
+            transport_to_use,
+            self.endpoint.test_token.as_deref(),
+            proto_request,
+        )
+        .await?;
+
+        Ok(AgentResponse::Unchanged)
+    }
+
     /// Send traces payload to agent with retry and telemetry reporting
     async fn send_traces_with_telemetry(
         &self,
@@ -682,12 +751,22 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
         // Unlike the agent path, there is no downstream agent to drop unsampled traces,
         // so drop_chunks is always called here regardless of whether stats are enabled.
-        if let Some(ref config) = self.otlp_config {
-            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
-            if traces.is_empty() {
-                return Ok(AgentResponse::Unchanged);
+        match &self.otlp {
+            Some(OtlpExportMode::Http(config)) => {
+                libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+                if traces.is_empty() {
+                    return Ok(AgentResponse::Unchanged);
+                }
+                return self.send_otlp_traces_inner(traces, config).await;
             }
-            return self.send_otlp_traces_inner(traces, config).await;
+            Some(OtlpExportMode::Grpc(transport)) => {
+                libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+                if traces.is_empty() {
+                    return Ok(AgentResponse::Unchanged);
+                }
+                return self.send_otlp_grpc_inner(traces, transport).await;
+            }
+            None => {}
         }
 
         // Snapshot the effective format once so the serializer and the URL agree even if
