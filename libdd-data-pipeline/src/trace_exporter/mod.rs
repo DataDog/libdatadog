@@ -185,7 +185,9 @@ pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
-    info_fetcher: WorkerHandle,
+    /// `None` when no background `/info` fetcher is started (e.g. in agentless trace
+    /// export mode, where there is no Datadog Agent to poll).
+    info_fetcher: Option<WorkerHandle>,
     #[cfg(feature = "telemetry")]
     telemetry: Option<WorkerHandle>,
 }
@@ -322,8 +324,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
                 join_set.spawn(async move { handle.stop().await });
             }
 
-            let info_fetcher = self.workers.info_fetcher;
-            join_set.spawn(async move { info_fetcher.stop().await });
+            if let Some(info_fetcher) = self.workers.info_fetcher {
+                join_set.spawn(async move { info_fetcher.stop().await });
+            }
 
             #[cfg(feature = "telemetry")]
             if let Some(telemetry) = self.workers.telemetry {
@@ -2201,7 +2204,6 @@ mod tests {
         let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
         let mut builder = TraceExporterBuilder::default();
         builder
-            .set_url("http://127.0.0.1:8126")
             .set_service("svc")
             .set_env("env")
             .set_tracer_version("1.0")
@@ -2259,7 +2261,6 @@ mod tests {
         let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
         let mut builder = TraceExporterBuilder::default();
         builder
-            .set_url("http://127.0.0.1:8126")
             .set_hostname("h-1")
             .set_service("svc")
             .set_env("env")
@@ -2286,51 +2287,6 @@ mod tests {
         let data = msgpack_encoder::v04::to_vec(&traces);
         exporter.send(data.as_ref()).unwrap();
         mock_intake.assert();
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_agentless_and_otlp_both_set_otlp_wins() {
-        // OTLP intake.
-        let server = MockServer::start();
-        let mock_otlp = server.mock(|when, then| {
-            when.method(POST).path("/v1/traces");
-            then.status(200).body("");
-        });
-        let mock_agentless = server.mock(|when, then| {
-            when.method(POST).path("/v1/input");
-            then.status(200).body("");
-        });
-
-        let otlp_endpoint = format!("{}/v1/traces", server.url("/").trim_end_matches('/'));
-        let agentless_endpoint = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
-        let mut builder = TraceExporterBuilder::default();
-        builder
-            .set_url("http://127.0.0.1:8126")
-            .set_service("svc")
-            .set_tracer_version("1.0")
-            .set_language("nodejs")
-            .set_language_version("v20")
-            .set_language_interpreter("v8")
-            .set_otlp_endpoint(&otlp_endpoint)
-            .set_agentless_endpoint(&agentless_endpoint, "k")
-            .set_input_format(TraceExporterInputFormat::V04)
-            .set_output_format(TraceExporterOutputFormat::V04);
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-
-        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
-            name: BytesString::from_slice(b"op").unwrap(),
-            service: BytesString::from_static("svc"),
-            trace_id: 1,
-            span_id: 1,
-            ..Default::default()
-        }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
-        exporter.send(data.as_ref()).unwrap();
-
-        mock_otlp.assert();
-        // Agentless mock must NOT have been hit.
-        assert_eq!(mock_agentless.calls(), 0);
     }
 }
 

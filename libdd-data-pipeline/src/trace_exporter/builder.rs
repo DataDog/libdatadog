@@ -454,17 +454,25 @@ impl TraceExporterBuilder {
 
         use crate::trace_exporter::stats::StatsComputationConfig;
 
+        // Agentless mode has no Datadog Agent to poll, so we skip
+        // starting the `/info` fetcher
+        let agentless_enabled = self.agentless_endpoint.is_some();
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
-        let info_fetcher_handle =
-            shared_runtime
-                .spawn_worker(info_fetcher, false)
-                .map_err(|e| {
-                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                        e.to_string(),
-                    ))
-                })?;
+        let info_fetcher_handle = if agentless_enabled {
+            None
+        } else {
+            Some(
+                shared_runtime
+                    .spawn_worker(info_fetcher, false)
+                    .map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?,
+            )
+        };
         // The handle is currently only tracked for shutdown on native; on wasm
         // it is dropped here (the worker keeps running on the JS event loop
         // until the page/module is torn down).
@@ -481,31 +489,38 @@ impl TraceExporterBuilder {
         #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
         let (telemetry_client, telemetry_handle) = {
             let sessions = self.telemetry_instrumentation_sessions;
-            let telemetry = self.telemetry.map(|telemetry_config| {
-                let mut builder = TelemetryClientBuilder::default()
-                    .set_language(&self.language)
-                    .set_language_version(&self.language_version)
-                    .set_service_name(&self.service)
-                    .set_service_version(&self.app_version)
-                    .set_env(&self.env)
-                    .set_tracer_version(&self.tracer_version)
-                    .set_heartbeat(telemetry_config.heartbeat)
-                    .set_url(base_url)
-                    .set_debug_enabled(telemetry_config.debug_enabled);
-                if let Some(id) = telemetry_config.runtime_id {
-                    builder = builder.set_runtime_id(&id);
-                }
-                if let Some(ref id) = sessions.session_id {
-                    builder = builder.set_session_id(id);
-                }
-                if let Some(ref id) = sessions.root_session_id {
-                    builder = builder.set_root_session_id(id);
-                }
-                if let Some(ref id) = sessions.parent_session_id {
-                    builder = builder.set_parent_session_id(id);
-                }
-                Ok(builder.build())
-            });
+            let telemetry = self
+                .telemetry
+                .filter(|_| {
+                    // Agentless mode has no agent endpoint to talk to, so we skip the
+                    // telemetry worker
+                    !agentless_enabled
+                })
+                .map(|telemetry_config| {
+                    let mut builder = TelemetryClientBuilder::default()
+                        .set_language(&self.language)
+                        .set_language_version(&self.language_version)
+                        .set_service_name(&self.service)
+                        .set_service_version(&self.app_version)
+                        .set_env(&self.env)
+                        .set_tracer_version(&self.tracer_version)
+                        .set_heartbeat(telemetry_config.heartbeat)
+                        .set_url(base_url)
+                        .set_debug_enabled(telemetry_config.debug_enabled);
+                    if let Some(id) = telemetry_config.runtime_id {
+                        builder = builder.set_runtime_id(&id);
+                    }
+                    if let Some(ref id) = sessions.session_id {
+                        builder = builder.set_session_id(id);
+                    }
+                    if let Some(ref id) = sessions.root_session_id {
+                        builder = builder.set_root_session_id(id);
+                    }
+                    if let Some(ref id) = sessions.parent_session_id {
+                        builder = builder.set_parent_session_id(id);
+                    }
+                    Ok(builder.build())
+                });
             match telemetry {
                 Some(Ok((client_tel, worker))) => {
                     let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
@@ -934,6 +949,31 @@ mod tests {
             msg.contains("agentless timeout"),
             "unexpected error message: {msg}"
         );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_agentless_skips_info_fetcher_and_telemetry() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_agentless_endpoint(
+                "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
+                "api-key",
+            )
+            .enable_telemetry(TelemetryConfig {
+                heartbeat: 1000,
+                runtime_id: None,
+                debug_enabled: false,
+            });
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        // No `/info` poller is started when there is no agent to poll.
+        assert!(exporter.workers.info_fetcher.is_none());
+        // Telemetry talks to the agent base URL and is also skipped.
+        assert!(exporter.workers.telemetry.is_none());
+        assert!(exporter.telemetry.is_none());
+        // Sanity: the agentless transport is actually configured.
+        assert!(exporter.agentless_config.is_some());
     }
 
     #[cfg_attr(miri, ignore)]
