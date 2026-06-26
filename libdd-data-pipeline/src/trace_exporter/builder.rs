@@ -306,6 +306,13 @@ impl TraceExporterBuilder {
     /// Datadog agent. The host language is responsible for resolving the endpoint from its
     /// configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) before calling this method.
     ///
+    /// OTLP trace export is mutually exclusive with agentless trace export
+    /// ([`Self::set_agentless_endpoint`]); configuring both causes
+    /// [`Self::build`]/[`Self::build_async`] to return
+    /// [`BuilderErrorKind::InvalidConfiguration`]. Setting an agent URL via
+    /// [`Self::set_url`] alongside OTLP is allowed; the agent URL is still used for
+    /// auxiliary endpoints (e.g. agent info / stats).
+    ///
     /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
     pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
         self.otlp_endpoint = Some(url.to_owned());
@@ -330,8 +337,10 @@ impl TraceExporterBuilder {
     /// `https://public-trace-http-intake.logs.{DD_SITE}` or a custom override) and the API key
     /// from its configuration. This crate does not read environment variables.
     ///
-    /// If OTLP is also configured via [`Self::set_otlp_endpoint`], OTLP takes precedence and a
-    /// warning is logged at build time; the agentless configuration is dropped.
+    /// Agentless trace export is mutually exclusive with both OTLP trace export
+    /// ([`Self::set_otlp_endpoint`]) and a configured agent URL ([`Self::set_url`]);
+    /// combining either with this method causes [`Self::build`]/[`Self::build_async`]
+    /// to return [`BuilderErrorKind::InvalidConfiguration`].
     ///
     /// Example: `set_agentless_endpoint("https://public-trace-http-intake.logs.datadoghq.com/v1/input", "<api-key>")`
     pub fn set_agentless_endpoint(&mut self, url: &str, api_key: &str) -> &mut Self {
@@ -342,7 +351,9 @@ impl TraceExporterBuilder {
 
     /// Sets the request timeout used by the agentless intake transport.
     ///
-    /// Defaults to 15 seconds when not set.
+    /// Defaults to 15 seconds when not set. Calling this method without also calling
+    /// [`Self::set_agentless_endpoint`] causes [`Self::build`]/[`Self::build_async`] to
+    /// return [`BuilderErrorKind::InvalidConfiguration`].
     pub fn set_agentless_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.agentless_timeout = Some(timeout);
         self
@@ -410,6 +421,8 @@ impl TraceExporterBuilder {
                 ),
             ));
         }
+
+        self.validate_export_targets()?;
 
         let shared_runtime = match self.shared_runtime {
             Some(rt) => rt,
@@ -508,24 +521,13 @@ impl TraceExporterBuilder {
             }
         };
 
-        // Resolve transport selection: OTLP takes precedence over agentless when both are set.
-        let (otlp_endpoint, agentless_endpoint, agentless_api_key) = match (
-            self.otlp_endpoint.as_ref(),
-            self.agentless_endpoint.as_ref(),
-        ) {
-            (Some(_), Some(_)) => {
-                tracing::warn!(
-                    "Both OTLP and agentless trace export are configured; OTLP takes \
-                     precedence and the agentless configuration will be ignored."
-                );
-                (self.otlp_endpoint, None, None)
-            }
-            _ => (
-                self.otlp_endpoint,
-                self.agentless_endpoint,
-                self.agentless_api_key,
-            ),
-        };
+        // Transport selection: agentless is mutually exclusive with both OTLP and a
+        // user-supplied agent URL; OTLP and the agent URL may coexist. All exclusion
+        // rules are enforced by `validate_export_targets` above, so we can just move the
+        // fields out here.
+        let otlp_endpoint = self.otlp_endpoint;
+        let agentless_endpoint = self.agentless_endpoint;
+        let agentless_api_key = self.agentless_api_key;
 
         let agentless_config = match (agentless_endpoint, agentless_api_key) {
             (Some(url), Some(api_key)) => Some(AgentlessTraceConfig {
@@ -681,6 +683,54 @@ impl TraceExporterBuilder {
         })
     }
 
+    /// Reject configurations that combine mutually exclusive trace export targets.
+    ///
+    /// Trace export uses exactly one of three transports:
+    /// - the Datadog Agent (via [`Self::set_url`], the default when no transport is set),
+    /// - an OTLP HTTP/JSON endpoint (via [`Self::set_otlp_endpoint`]), or
+    /// - the agentless intake (via [`Self::set_agentless_endpoint`]).
+    ///
+    /// Exclusion rules enforced here:
+    /// - OTLP and agentless cannot both be configured.
+    /// - Agentless cannot be combined with a caller-supplied agent URL.
+    /// - [`Self::set_agentless_timeout`] requires [`Self::set_agentless_endpoint`].
+    ///
+    /// OTLP and an agent URL may coexist: the agent URL is still useful for auxiliary
+    /// agent endpoints (info, stats) even when trace payloads are routed to OTLP.
+    fn validate_export_targets(&self) -> Result<(), TraceExporterError> {
+        let otlp_set = self.otlp_endpoint.is_some();
+        let agentless_set = self.agentless_endpoint.is_some();
+        let agent_url_set = self.url.is_some();
+
+        if otlp_set && agentless_set {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "OTLP and agentless trace export cannot both be enabled".to_string(),
+                ),
+            ));
+        }
+
+        if agentless_set && agent_url_set {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "trace agent URL cannot be set when agentless trace export is enabled"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        if !agentless_set && self.agentless_timeout.is_some() {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "agentless timeout was set but no agentless trace endpoint is configured"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        Ok(())
+    }
+
     fn is_inputs_outputs_formats_compatible(
         input: TraceExporterInputFormat,
         output: TraceExporterOutputFormat,
@@ -828,6 +878,73 @@ mod tests {
                 BuilderErrorKind::InvalidConfiguration(_)
             ))
         ));
+    }
+
+    fn assert_invalid_config(
+        result: Result<TraceExporter<NativeCapabilities>, TraceExporterError>,
+    ) -> String {
+        match result {
+            Err(TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(msg))) => msg,
+            Err(other) => panic!("expected InvalidConfiguration, got {other:?}"),
+            Ok(_) => panic!("expected InvalidConfiguration, got Ok"),
+        }
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_otlp_and_agentless_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint("http://localhost:4318/v1/traces")
+            .set_agentless_endpoint(
+                "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
+                "api-key",
+            );
+        let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
+        assert!(
+            msg.contains("OTLP") && msg.contains("agentless"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_agentless_and_agent_url_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://localhost:8126")
+            .set_agentless_endpoint(
+                "https://public-trace-http-intake.logs.datadoghq.com/v1/input",
+                "api-key",
+            );
+        let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
+        assert!(
+            msg.contains("agent URL") && msg.contains("agentless"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_agentless_timeout_without_endpoint_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_agentless_timeout(Duration::from_secs(5));
+        let msg = assert_invalid_config(builder.build::<NativeCapabilities>());
+        assert!(
+            msg.contains("agentless timeout"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_otlp_with_agent_url_allowed() {
+        // OTLP + agent URL must coexist (only agentless conflicts with the agent URL).
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://localhost:8126")
+            .set_otlp_endpoint("http://localhost:4318/v1/traces");
+        assert!(builder.build::<NativeCapabilities>().is_ok());
     }
 
     #[cfg_attr(miri, ignore)]

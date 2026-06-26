@@ -516,10 +516,16 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         if let Some(config) = config {
-            // let config = &*ptr;
             let mut builder = TraceExporter::builder();
+            // Only forward the agent URL when one was explicitly provided. Calling
+            // `set_url("")` would mark the agent URL as configured and conflict with
+            // agentless trace export, which rejects any caller-supplied agent URL at build
+            // time. Leaving `url` unset lets the builder fall back to its default agent URL
+            // when no transport override is configured.
+            if let Some(url) = config.url.as_ref() {
+                builder.set_url(url);
+            }
             builder
-                .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
                 .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
                 .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
                 .set_language_version(config.language_version.as_ref().unwrap_or(&"".to_string()))
