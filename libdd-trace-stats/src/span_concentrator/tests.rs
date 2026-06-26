@@ -1796,6 +1796,76 @@ fn test_flush_with_otlp_exact_per_cell_scalars() {
 }
 
 #[test]
+fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
+    let now = SystemTime::now();
+    let long_value = "x".repeat(201);
+    let meta = [("region", long_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        vec!["region".to_string()],
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime = now
+        + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &["region:tracer_blocked_value"]);
+}
+
+#[test]
+fn test_additional_metric_tag_value_at_length_cap_passes_through() {
+    let now = SystemTime::now();
+    let ok_value = "x".repeat(200);
+    let meta = [("region", ok_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        vec!["region".to_string()],
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime = now
+        + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &[format!("region:{ok_value}")]);
+}
+
+#[test]
 fn test_normalize_additional_metric_tag_keys_sort() {
     let keys = vec!["region".to_string(), "env".to_string(), "tenant".to_string()];
     let result = normalize_additional_metric_tag_keys(keys);

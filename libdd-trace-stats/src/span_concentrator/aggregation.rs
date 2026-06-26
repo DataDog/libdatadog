@@ -10,10 +10,13 @@ use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
 use std::borrow::{Borrow, Cow};
+use tracing::warn;
 
 use crate::span_concentrator::StatSpan;
 
 const TAG_STATUS_CODE: &str = "http.status_code";
+const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
+const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -279,7 +282,17 @@ impl<'a> BorrowedAggregationKey<'a> {
         let additional_metric_tags: Vec<(&'a str, &'a str)> = additional_metric_tag_keys
             .iter()
             .filter_map(|key| match span.get_meta(key.as_str()) {
-                Some(v) if !v.is_empty() => Some((key.as_str(), v)),
+                Some(v) if !v.is_empty() => {
+                    if v.len() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN {
+                        warn!(
+                            "additional_metric_tags: value for key '{}' exceeds {} characters; substituting tracer_blocked_value",
+                            key, ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN,
+                        );
+                        Some((key.as_str(), TRACER_BLOCKED_VALUE))
+                    } else {
+                        Some((key.as_str(), v))
+                    }
+                }
                 _ => None,
             })
             .collect();
