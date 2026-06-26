@@ -23,7 +23,9 @@ build_common = { path = "../build-common" }
 [dependencies]
 anyhow = "1.0.93"
 datadog-ffe = { path = "../datadog-ffe", version = "=1.0.0" }
+libdd-http-client = { path = "../libdd-http-client", default-features = false, features = ["https", "reqwest-backend"] }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 function_name = "0.3.0"
+tokio = { version = "1.23", features = ["rt", "time"] }
 
 [dev-dependencies]

@@ -1382,6 +1382,8 @@ dependencies = [
  "datadog-ffe",
  "function_name",
  "libdd-common-ffi",
+ "libdd-http-client",
+ "tokio",
 ]
 
 [[package]]

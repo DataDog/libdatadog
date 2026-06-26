@@ -16,8 +16,10 @@ mod assignment;
 mod configuration;
 mod evaluation_context;
 mod handle;
+mod source_delivery;
 
 pub use assignment::*;
 pub use configuration::*;
 pub use evaluation_context::*;
 pub use handle::*;
+pub use source_delivery::*;
