@@ -97,8 +97,8 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
     /// Start the worker using the given spawn function.
     ///
     /// The worker's main loop will be spawned via the provided closure.
-    /// `SharedRuntime` constructs the appropriate platform-specific closure
-    /// (tokio on native, spawn_local on wasm).
+    /// `SharedRuntime` implementations construct the appropriate platform-specific
+    /// closure (tokio on native, spawn_local on wasm).
     pub fn start(
         &mut self,
         spawn_fn: impl FnOnce(WorkerFuture<T>) -> WorkerJoinHandle<T>,

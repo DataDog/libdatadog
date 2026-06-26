@@ -12,7 +12,7 @@ use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{OtlpStatsBucket, SpanConcentrator};
-use libdd_trace_utils::otlp_encoder::json_types::status_code;
+use libdd_trace_utils::otlp_encoder::mapper::status_code;
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -247,6 +247,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
             &self.config.headers,
             self.config.timeout,
             self.test_token.as_deref(),
+            libdd_common::header::APPLICATION_JSON,
             serde_json::to_vec(&request)?,
             max_retries,
         )
