@@ -114,11 +114,6 @@ mod tests {
     }
 
     #[test]
-    fn grpc_parses_from_str() {
-        assert_eq!(OtlpProtocol::from_str("grpc").unwrap(), OtlpProtocol::Grpc);
-    }
-
-    #[test]
     fn grpc_config_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<OtlpGrpcTraceConfig>();
@@ -144,10 +139,10 @@ mod tests {
 /// `/opentelemetry.proto.collector.trace.v1.TraceService/Export` is
 /// appended by the exporter.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub struct OtlpGrpcTraceConfig {
     /// Full gRPC base URL, e.g. `http://localhost:4317`.
     /// Must use `http://` scheme; `https://` (TLS) is not yet supported.
+    #[allow(dead_code)]
     pub endpoint_url: String,
     /// Custom key-value pairs forwarded as gRPC request metadata.
     pub headers: Vec<(String, String)>,

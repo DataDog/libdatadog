@@ -61,12 +61,10 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-/// Selects the OTLP export transport for a [] instance.
+/// Selects the OTLP export transport for a [`TraceExporter`] instance.
 ///
 /// Only one variant is active per instance; mutual exclusivity is enforced at
 /// build time.
-// The Grpc variant is constructed in the builder (Task 5); allow dead_code until then.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum OtlpExportMode {
     /// OTLP over HTTP/1.1 (JSON or protobuf body).

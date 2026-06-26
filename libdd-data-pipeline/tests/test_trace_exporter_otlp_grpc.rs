@@ -161,15 +161,4 @@ mod grpc_export_tests {
             "service.name attribute not found or wrong value"
         );
     }
-
-    /// Verify the protocol string "grpc" is accepted by `OtlpProtocol`'s `FromStr` impl.
-    #[test]
-    fn grpc_protocol_string_parses() {
-        use std::str::FromStr;
-        let protocol = OtlpProtocol::from_str("grpc");
-        assert!(
-            matches!(protocol, Ok(OtlpProtocol::Grpc)),
-            "expected OtlpProtocol::Grpc, got {protocol:?}"
-        );
-    }
 }

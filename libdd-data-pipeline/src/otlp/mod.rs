@@ -32,11 +32,9 @@ pub mod exporter;
 pub(crate) mod grpc_exporter;
 pub mod metrics;
 
-#[allow(unused_imports)]
 pub use config::{OtlpGrpcTraceConfig, OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};
 pub use exporter::send_otlp_traces_http;
 pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
 pub use metrics::OtlpStatsExporter;
 
-#[allow(unused_imports)]
 pub(crate) use grpc_exporter::{build_grpc_channel, send_otlp_traces_grpc, OtlpGrpcTransport};
