@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
 
 use libdd_trace_protobuf::pb;
+use tracing::warn;
 
 use aggregation::StatsBucket;
 
@@ -14,6 +15,25 @@ pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpSt
 
 pub mod stat_span;
 pub use stat_span::StatSpan;
+
+const ADDITIONAL_METRIC_TAG_KEYS_CAP: usize = 4;
+
+/// Deduplicate, sort alphabetically, and cap `keys` at [`ADDITIONAL_METRIC_TAG_KEYS_CAP`].
+/// Excess keys are dropped and logged as a one-time warning.
+fn normalize_additional_metric_tag_keys(mut keys: Vec<String>) -> Vec<String> {
+    keys.sort_unstable();
+    keys.dedup();
+    if keys.len() > ADDITIONAL_METRIC_TAG_KEYS_CAP {
+        let dropped = keys.split_off(ADDITIONAL_METRIC_TAG_KEYS_CAP);
+        warn!(
+            "additional_metric_tag_keys: {} additional metric tag keys exceed the cap of {}; dropping: {:?}",
+            dropped.len() + ADDITIONAL_METRIC_TAG_KEYS_CAP,
+            ADDITIONAL_METRIC_TAG_KEYS_CAP,
+            dropped,
+        );
+    }
+    keys
+}
 
 /// Concentrators that can provide raw time buckets for export implement this trait.
 ///
@@ -128,7 +148,9 @@ impl SpanConcentrator {
             buffer_len: 2,
             span_kinds_stats_computed,
             peer_tag_keys,
-            additional_metric_tag_keys,
+            additional_metric_tag_keys: normalize_additional_metric_tag_keys(
+                additional_metric_tag_keys,
+            ),
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config: obfuscation_config.unwrap_or_default(),
         }
@@ -161,7 +183,7 @@ impl SpanConcentrator {
 
     /// Set the list of keys considered as additional_metric_tag_keys for aggregation
     pub fn set_additional_metric_tag_keys(&mut self, tag_keys: Vec<String>) {
-        self.additional_metric_tag_keys = tag_keys;
+        self.additional_metric_tag_keys = normalize_additional_metric_tag_keys(tag_keys);
     }
 
     /// Return the bucket size used for aggregation

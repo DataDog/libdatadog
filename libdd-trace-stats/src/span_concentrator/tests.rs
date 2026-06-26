@@ -1794,3 +1794,35 @@ fn test_flush_with_otlp_exact_per_cell_scalars() {
     assert_eq!(group.hits, 5);
     assert_eq!(group.errors, 2);
 }
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_sort() {
+    let keys = vec!["region".to_string(), "env".to_string(), "tenant".to_string()];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["env", "region", "tenant"]);
+}
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_dedup() {
+    let keys = vec![
+        "region".to_string(),
+        "region".to_string(),
+        "tenant".to_string(),
+    ];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["region", "tenant"]);
+}
+
+#[test]
+fn test_normalize_additional_metric_tag_keys_cap() {
+    let keys = vec![
+        "aaa".to_string(),
+        "bbb".to_string(),
+        "ccc".to_string(),
+        "ddd".to_string(),
+        "eee".to_string(),
+    ];
+    let result = normalize_additional_metric_tag_keys(keys);
+    assert_eq!(result, vec!["aaa", "bbb", "ccc", "ddd"]);
+    assert_eq!(result.len(), 4);
+}
