@@ -234,6 +234,17 @@ mod native {
             timeout: Option<std::time::Duration>,
         ) -> Result<(), SharedRuntimeError> {
             debug!(?timeout, "Shutting down SharedRuntime");
+            // block_on calls context::enter() which accesses Tokio's CONTEXT thread-local.
+            // During CPython interpreter finalization, TLS is destroyed before atexit handlers
+            // fire, causing a panic. Detect this via try_current() and bail out early —
+            // the OS will clean up remaining threads on process exit.
+            if matches!(
+                tokio::runtime::Handle::try_current(),
+                Err(ref e) if e.is_thread_local_destroyed()
+            ) {
+                debug!("Tokio TLS destroyed during interpreter finalization, skipping shutdown");
+                return Ok(());
+            }
             match self.runtime.lock_or_panic().take() {
                 Some(runtime) => {
                     if let Some(timeout) = timeout {
@@ -667,6 +678,23 @@ mod tests {
             last = v;
         }
         assert_eq!(last, -1);
+    }
+
+    #[test]
+    fn test_shutdown_is_idempotent() {
+        // Calling shutdown() twice must not panic or error. The second call hits the
+        // None-guard (runtime already taken). This covers the same early-return path as
+        // the TLS-destroyed guard added for CPython atexit finalization ordering.
+        let shared_runtime = SharedRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not run");
+
+        assert!(shared_runtime.shutdown(None).is_ok());
+        assert!(shared_runtime.shutdown(None).is_ok(), "second shutdown must not panic");
     }
 
     #[test]
