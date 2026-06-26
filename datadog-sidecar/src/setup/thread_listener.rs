@@ -195,7 +195,6 @@ fn run_listener(pid: u32, _config: Config, shutdown_rx: oneshot::Receiver<()>) -
     let cancel = || {};
     let loop_config = MainLoopConfig {
         enable_ctrl_c_handler: false,
-        enable_crashtracker: false,
         external_shutdown_rx: None,
         // Defer SHM init to first connection so we can fchown using the worker's UID.
         init_shm_eagerly: false,

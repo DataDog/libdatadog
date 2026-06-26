@@ -139,7 +139,6 @@ fn run_listener_windows(
 
     let loop_config = MainLoopConfig {
         enable_ctrl_c_handler: false,
-        enable_crashtracker: false,
         external_shutdown_rx: None,
         init_shm_eagerly: true,
     };

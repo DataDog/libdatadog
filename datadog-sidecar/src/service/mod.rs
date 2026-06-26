@@ -26,6 +26,7 @@ pub(crate) use sidecar_server::SidecarServer;
 use runtime_info::RuntimeInfo;
 use session_info::SessionInfo;
 pub(crate) use sidecar_interface::SidecarInterface;
+pub(crate) use sidecar_interface::SidecarInterfaceRequest;
 
 pub mod agent_info;
 pub mod blocking;

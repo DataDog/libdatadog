@@ -32,6 +32,9 @@ serde_json = "1.0"
 
 [target.'cfg(unix)'.dependencies]
 libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false, features = ["collector"] }
+# Used for the ddog_crasht_Config/Metadata FFI types + their conversions in
+# ddog_sidecar_crashtracker_init_external (the thread-mode host's own-crash subprocess receiver).
+libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, features = ["collector"] }
 
 [target.'cfg(windows)'.dependencies]
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["collector", "collector_windows"] }
