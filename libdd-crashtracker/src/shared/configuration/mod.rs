@@ -26,6 +26,10 @@ pub enum StacktraceCollection {
     EnabledWithSymbolsInReceiver,
 }
 
+// The derived `PartialEq` compares `unix_socket_connector`, a fn pointer. Comparing fn pointers is
+// unreliable (the lint), but harmless here: nothing compares whole `CrashtrackerConfiguration`
+// values, and the connector is process-local plumbing (also `#[serde(skip)]`).
+#[allow(unpredictable_function_pointer_comparisons)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
@@ -42,11 +46,38 @@ pub struct CrashtrackerConfiguration {
     signals: Vec<i32>,
     timeout: Duration,
     unix_socket_path: Option<String>,
+    #[serde(skip, default = "default_unix_socket_connector_value")]
+    unix_socket_connector: fn(&str) -> std::os::fd::RawFd,
     use_alt_stack: bool,
 }
 
 pub const fn default_max_threads() -> usize {
     256
+}
+
+pub fn default_unix_socket_connector(unix_socket_path: &str) -> std::os::fd::RawFd {
+    use std::os::fd::IntoRawFd;
+    use std::os::unix::net::UnixStream;
+    #[cfg(target_os = "linux")]
+    let stream = if unix_socket_path.starts_with(['.', '/']) {
+        UnixStream::connect(unix_socket_path)
+    } else {
+        use std::os::linux::net::SocketAddrExt;
+        match std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path) {
+            Ok(addr) => UnixStream::connect_addr(&addr),
+            Err(e) => Err(e),
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let stream = UnixStream::connect(unix_socket_path);
+    match stream {
+        Ok(s) => s.into_raw_fd(),
+        Err(_) => -1,
+    }
+}
+
+fn default_unix_socket_connector_value() -> fn(&str) -> std::os::fd::RawFd {
+    default_unix_socket_connector
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -128,6 +159,10 @@ impl CrashtrackerConfiguration {
         &self.unix_socket_path
     }
 
+    pub fn unix_socket_connector(&self) -> fn(&str) -> std::os::fd::RawFd {
+        self.unix_socket_connector
+    }
+
     pub fn demangle_names(&self) -> bool {
         self.demangle_names
     }
@@ -160,6 +195,10 @@ impl CrashtrackerConfiguration {
 
     pub fn set_unix_socket_path(&mut self, path: String) {
         self.unix_socket_path = Some(path);
+    }
+
+    pub fn set_unix_socket_connector(&mut self, connector: fn(&str) -> std::os::fd::RawFd) {
+        self.unix_socket_connector = connector;
     }
 }
 

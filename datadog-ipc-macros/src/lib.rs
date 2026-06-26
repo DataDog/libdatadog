@@ -210,7 +210,6 @@ fn gen_handler_trait(
             quote! {
                 fn #name(
                     &self,
-                    peer: datadog_ipc::PeerCredentials,
                     #(#params),*
                 ) -> impl ::std::future::Future<Output = #ret> + Send + '_;
             }
@@ -222,6 +221,9 @@ fn gen_handler_trait(
             /// Returns the counter incremented on each received IPC message.
             /// The serve loop uses this to track received payloads.
             fn recv_counter(&self) -> &::std::sync::atomic::AtomicU64;
+
+            /// Storage for the connection to read from.
+            fn connection(&self) -> &datadog_ipc::ipc_server::OwnedServerConn;
 
             #(#handler_methods)*
         }
@@ -260,29 +262,29 @@ fn gen_serve_fn(
                 quote! {
                     #[cfg(target_os = "linux")]
                     if __pending_acks > 0 {
-                        datadog_ipc::send_acks_async(&async_fd, __pending_acks).await;
+                        datadog_ipc::send_acks_async(handler.connection().async_conn(), __pending_acks).await;
                         __pending_acks = 0;
                     }
-                    let result = handler.#name(peer, #(#field_names),*).await;
+                    let result = handler.#name(#(#field_names),*).await;
                     let __resp_data = datadog_ipc::codec::encode(&result);
-                    datadog_ipc::send_raw_async(&async_fd, &__resp_data).await.ok();
+                    datadog_ipc::send_raw_async(handler.connection().async_conn(), &__resp_data).await.ok();
                 }
             } else {
                 // On Linux, buffer up to 20 acks and flush in a single
                 // sendmmsg(2) syscall; on other platforms send each ack immediately.
                 quote! {
-                    handler.#name(peer, #(#field_names),*).await;
+                    handler.#name(#(#field_names),*).await;
                     #[cfg(target_os = "linux")]
                     {
                         __pending_acks += 1;
                         if #force_flush || __pending_acks >= datadog_ipc::ACK_BUFFER_SIZE {
-                            datadog_ipc::send_acks_async(&async_fd, __pending_acks).await;
+                            datadog_ipc::send_acks_async(handler.connection().async_conn(), __pending_acks).await;
                             __pending_acks = 0;
                         }
                     }
                     #[cfg(not(target_os = "linux"))]
                     // 1-byte ack: distinguishable from EOF (0 bytes from recvmsg on closed socket).
-                    datadog_ipc::send_raw_async(&async_fd, &[0u8]).await.ok();
+                    datadog_ipc::send_raw_async(handler.connection().async_conn(), &[0u8]).await.ok();
                 }
             };
 
@@ -296,23 +298,14 @@ fn gen_serve_fn(
 
     quote! {
         pub async fn #serve_fn<H: #trait_name>(
-            conn: datadog_ipc::SeqpacketConn,
             handler: ::std::sync::Arc<H>,
         ) {
-            let peer = conn.peer_credentials().unwrap_or_default();
-            let async_fd = match conn.into_async_conn() {
-                Ok(fd) => fd,
-                Err(e) => {
-                    ::tracing::error!("IPC serve: into_async_conn failed: {e}");
-                    return;
-                }
-            };
             // Pending 1-byte acks for fire-and-forget methods, flushed via sendmmsg(2) on Linux.
             #[cfg(target_os = "linux")]
             let mut __pending_acks: u32 = 0;
             loop {
                 let (mut req, fds) = match datadog_ipc::recv_raw_async(
-                    &async_fd,
+                    &handler.connection().async_conn(),
                     |buf| datadog_ipc::codec::decode::<#enum_name>(buf),
                 ).await {
                     Ok((Ok(req), fds)) => (req, fds),
@@ -334,7 +327,7 @@ fn gen_serve_fn(
                     break;
                 }
                 let recv_counter = handler.recv_counter().load(::std::sync::atomic::Ordering::Relaxed) + 1;
-                ::tracing::trace!(recv_counter, ?req, pid = peer.pid, "IPC recv");
+                ::tracing::trace!(recv_counter, ?req, pid = handler.connection().peer().pid, "IPC recv");
 
                 match req {
                     #(#match_arms)*

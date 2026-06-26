@@ -48,6 +48,15 @@ impl SidecarTransport {
         Ok(creds.pid)
     }
 
+    #[cfg(unix)]
+    pub fn as_raw_fd(&mut self) -> std::os::fd::RawFd {
+        let sender = match self.inner.get_mut() {
+            Ok(s) => s,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        sender.channel.0.conn.as_raw_fd()
+    }
+
     pub fn reconnect<F>(&mut self, factory: F)
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
