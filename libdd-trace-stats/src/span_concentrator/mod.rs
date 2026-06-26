@@ -17,6 +17,7 @@ pub mod stat_span;
 pub use stat_span::StatSpan;
 
 const ADDITIONAL_METRIC_TAG_KEYS_CAP: usize = 4;
+const DEFAULT_ADDITIONAL_METRIC_TAGS_CARDINALITY_LIMIT: usize = 100;
 
 /// Deduplicate, sort alphabetically, and cap `keys` at [`ADDITIONAL_METRIC_TAG_KEYS_CAP`].
 /// Excess keys are dropped and logged as a one-time warning.
@@ -116,6 +117,8 @@ pub struct SpanConcentrator {
     peer_tag_keys: Vec<String>,
     /// keys for additional tags on trace stats
     additional_metric_tag_keys: Vec<String>,
+    /// limit on distinct stat entries with additional metric tags per flush bucket
+    additional_metric_tags_cardinality_limit: usize,
     #[cfg(feature = "stats-obfuscation")]
     obfuscation_config: SharedStatsComputationObfuscationConfig,
 }
@@ -151,6 +154,7 @@ impl SpanConcentrator {
             additional_metric_tag_keys: normalize_additional_metric_tag_keys(
                 additional_metric_tag_keys,
             ),
+            additional_metric_tags_cardinality_limit: DEFAULT_ADDITIONAL_METRIC_TAGS_CARDINALITY_LIMIT,
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config: obfuscation_config.unwrap_or_default(),
         }
@@ -184,6 +188,24 @@ impl SpanConcentrator {
     /// Set the list of keys considered as additional_metric_tag_keys for aggregation
     pub fn set_additional_metric_tag_keys(&mut self, tag_keys: Vec<String>) {
         self.additional_metric_tag_keys = normalize_additional_metric_tag_keys(tag_keys);
+    }
+
+    /// Return the per-bucket limit on distinct stat entries that include additional metric tags
+    pub fn additional_metric_tags_cardinality_limit(&self) -> usize {
+        self.additional_metric_tags_cardinality_limit
+    }
+
+    /// Set the per-bucket limit on distinct stat entries that include additional metric tags.
+    /// Values less than or equal to 0 are rejected and the existing limit is preserved with a warning.
+    pub fn set_additional_metric_tags_cardinality_limit(&mut self, limit: usize) {
+        if limit == 0 {
+            warn!(
+                "DD_TRACE_STATS_ADDITIONAL_TAGS_CARDINALITY_LIMIT must be > 0; keeping default of {}",
+                self.additional_metric_tags_cardinality_limit,
+            );
+            return;
+        }
+        self.additional_metric_tags_cardinality_limit = limit;
     }
 
     /// Return the bucket size used for aggregation
@@ -220,7 +242,7 @@ impl SpanConcentrator {
         };
         self.buckets
             .entry(bucket_timestamp)
-            .or_insert(StatsBucket::new(bucket_timestamp))
+            .or_insert(StatsBucket::new(bucket_timestamp, self.additional_metric_tags_cardinality_limit))
             .insert(
                 agg_key,
                 span.duration(),

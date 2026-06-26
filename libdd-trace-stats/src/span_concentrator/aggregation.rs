@@ -318,6 +318,24 @@ impl<'a> BorrowedAggregationKey<'a> {
             additional_metric_tags,
         }
     }
+
+    /// Return an owned copy of this key with all additional metric tag values replaced by
+    /// `TRACER_BLOCKED_VALUE`. Used when the per-bucket stat-entry limit is exceeded.
+    pub(super) fn into_masked_owned(self) -> OwnedAggregationKey {
+        OwnedAggregationKey {
+            fixed: self.fixed.convert(str::to_owned),
+            peer_tags: self
+                .peer_tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            additional_metric_tags: self
+                .additional_metric_tags
+                .iter()
+                .map(|(k, _)| (k.to_string(), TRACER_BLOCKED_VALUE.to_string()))
+                .collect(),
+        }
+    }
 }
 
 impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
@@ -449,19 +467,31 @@ pub struct OtlpStatsBucket {
 pub(super) struct StatsBucket {
     data: HashMap<OwnedAggregationKey, GroupedStats>,
     start: u64,
+    /// Number of distinct entries with additional metric tags admitted this bucket.
+    additional_metric_tags_entry_count: usize,
+    /// Maximum distinct entries with additional metric tags per bucket.
+    additional_metric_tags_cardinality_limit: usize,
 }
 
 impl StatsBucket {
-    /// Return a new StatsBucket starting at the given timestamp
-    pub(super) fn new(start_timestamp: u64) -> Self {
+    /// Return a new StatsBucket starting at the given timestamp.
+    /// `additional_metric_tags_cardinality_limit` limits the number of distinct aggregation keys that include
+    /// additional metric tags; overflow entries have their tag values masked to TRACER_BLOCKED_VALUE.
+    pub(super) fn new(start_timestamp: u64, additional_metric_tags_cardinality_limit: usize) -> Self {
         Self {
             data: HashMap::new(),
             start: start_timestamp,
+            additional_metric_tags_entry_count: 0,
+            additional_metric_tags_cardinality_limit,
         }
     }
 
     /// Insert a value as stats in the group corresponding to the aggregation key, if it does
     /// not exist it creates it.
+    ///
+    /// If the key has additional metric tags and would create a new entry beyond the limit, all
+    /// additional tag values are replaced with `TRACER_BLOCKED_VALUE` before insertion. Keys that
+    /// already exist in this bucket always merge normally regardless of the limit.
     pub(super) fn insert(
         &mut self,
         key: BorrowedAggregationKey<'_>,
@@ -469,10 +499,38 @@ impl StatsBucket {
         is_error: bool,
         is_top_level: bool,
     ) {
-        self.data
-            .entry_ref(&key)
-            .or_default()
-            .insert(duration, is_error, is_top_level);
+        if key.additional_metric_tags.is_empty() {
+            self.data
+                .entry_ref(&key)
+                .or_default()
+                .insert(duration, is_error, is_top_level);
+            return;
+        }
+
+        // Key has additional metric tags: check existence before applying the limit.
+        match self.data.entry_ref(&key) {
+            hashbrown::hash_map::EntryRef::Occupied(mut e) => {
+                // Already exists — merge normally, no limit check needed.
+                e.get_mut().insert(duration, is_error, is_top_level);
+            }
+            hashbrown::hash_map::EntryRef::Vacant(e) => {
+                if self.additional_metric_tags_entry_count < self.additional_metric_tags_cardinality_limit {
+                    // Under limit — admit new entry.
+                    self.additional_metric_tags_entry_count += 1;
+                    e.insert(GroupedStats::default())
+                    .insert(duration, is_error, is_top_level);
+                } else {
+                    // Cap exceeded — mask tag values and merge into the overflow entry.
+                    // Drop the vacant entry to release the mutable borrow before re-entering.
+                    drop(e);
+                    let masked = key.into_masked_owned();
+                    self.data
+                        .entry(masked)
+                        .or_default()
+                        .insert(duration, is_error, is_top_level);
+                }
+            }
+        }
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
