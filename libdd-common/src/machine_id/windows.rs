@@ -30,11 +30,7 @@ fn is_wow64() -> bool {
 pub fn get_machine_id_impl() -> String {
     // MachineGuid is in the 64-bit view; a 32-bit process under WOW64 is
     // redirected to WOW6432Node by default, so force the 64-bit view there.
-    let access = if cfg!(target_pointer_width = "32") && is_wow64() {
-        KEY_READ | KEY_WOW64_64KEY
-    } else {
-        KEY_READ
-    };
+    let access = KEY_READ | KEY_WOW64_64KEY;
 
     let mut hkey: HKEY = 0;
     // SAFETY: all pointers are valid.
