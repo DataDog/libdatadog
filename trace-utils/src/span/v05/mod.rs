@@ -4,7 +4,7 @@
 pub mod dict;
 
 use crate::span::v05::dict::SharedDict;
-use crate::span::{AttributeArrayValue, SpanBytes, SpanEventBytes};
+use crate::span::{AttributeArrayValue, SpanBytes, SpanEventBytes, SpanLinkBytes};
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -34,15 +34,15 @@ pub struct Span {
 
 ///This structure is a wrapper around a slice of span events
 ///
-/// It is meant to overrdide the default serialization, so we can serialize attributes
+/// It is meant to override the default serialization, so we can serialize attributes
 /// differently from the original impl.
 /// Span events are serialized to JSON and added to "meta" when serializing to v0.5
 ///
-/// The main difference with messagepacck serialization is that attributes with any types
+/// The main difference with messagepack serialization is that attributes with any types
 /// are supposed to be mapped to their natural JSON representation.
 ///
-/// Sadly, I haven't found a good way of overriding the default Serialize behavior, other
-/// than just doing it for the whole data structures that embed it.
+/// There is no good way of overriding the default Serialize behavior other than doing it
+/// for the whole data structures that embed it.
 struct SpanEventsSerializerV05<'a>(&'a [SpanEventBytes]);
 struct SpanEventSerializerV05<'a>(&'a SpanEventBytes);
 struct SpanEventAttributesSerializerV05<'a>(&'a HashMap<BytesString, AttributeAnyValueBytes>);
@@ -103,7 +103,7 @@ impl serde::Serialize for AttributeAnyValueV05<'_> {
             AttributeAnyValueBytes::SingleValue(v) => {
                 AttributeArrayValueV05::from_inner(v).serialize(serializer)
             }
-            super::AttributeAnyValue::Array(attribute_array_values) => {
+            AttributeAnyValueBytes::Array(attribute_array_values) => {
                 let mut seq = serializer.serialize_seq(Some(attribute_array_values.len()))?;
                 for value in attribute_array_values {
                     seq.serialize_element(&AttributeArrayValueV05::from_inner(value))?;
@@ -116,11 +116,73 @@ impl serde::Serialize for AttributeAnyValueV05<'_> {
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum AttributeArrayValueV05<'a> {
+enum AttributeArrayValueV05<'a> {
     String(&'a BytesString),
     Boolean(bool),
     Integer(i64),
     Double(f64),
+}
+
+/// Wrappers that serialize span links into the JSON form the Datadog agent/backend
+/// expects under the `_dd.span_links` meta key.
+///
+/// This must match the agent's `transform.MarshalLinks`
+/// (datadog-agent `pkg/trace/transform/transform.go`), which is the canonical producer
+/// of `_dd.span_links`. In particular:
+/// - `trace_id` is the full 128-bit id, hex-encoded as 32 lowercase chars (high 64 bits first, then
+///   low 64 bits).
+/// - `span_id` is the 64-bit id, hex-encoded as 16 lowercase chars.
+/// - `tracestate` and `attributes` are only emitted when non-empty.
+/// - The v0.4 `flags` field is intentionally not emitted: it is not part of the `_dd.span_links`
+///   contract (the agent's OTLP path drops it too).
+struct SpanLinksSerializerV05<'a>(&'a [SpanLinkBytes]);
+struct SpanLinkSerializerV05<'a>(&'a SpanLinkBytes);
+
+impl serde::Serialize for SpanLinksSerializerV05<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for span_link in self.0 {
+            seq.serialize_element(&SpanLinkSerializerV05(span_link))?;
+        }
+        seq.end()
+    }
+}
+
+impl serde::Serialize for SpanLinkSerializerV05<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let link = self.0;
+        // trace_id and span_id are always present; tracestate and attributes are
+        // conditional, matching the agent's MarshalLinks output.
+        let mut len = 2;
+        if !link.tracestate.as_str().is_empty() {
+            len += 1;
+        }
+        if !link.attributes.is_empty() {
+            len += 1;
+        }
+        let mut map = serializer.serialize_map(Some(len))?;
+        // 128-bit trace id: high 64 bits first, then low 64 bits, hex-encoded.
+        map.serialize_entry(
+            "trace_id",
+            &format!("{:016x}{:016x}", link.trace_id_high, link.trace_id),
+        )?;
+        map.serialize_entry("span_id", &format!("{:016x}", link.span_id))?;
+        if !link.tracestate.as_str().is_empty() {
+            map.serialize_entry("tracestate", &link.tracestate)?;
+        }
+        if !link.attributes.is_empty() {
+            map.serialize_entry("attributes", &link.attributes)?;
+        }
+        map.end()
+    }
 }
 
 impl<'a> AttributeArrayValueV05<'a> {
@@ -147,9 +209,10 @@ pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> 
         },
     )?;
     if !span.span_links.is_empty() {
-        let serialized_span_links = serde_json::to_string(&span.span_links)?;
+        let serialized_span_links =
+            serde_json::to_string(&SpanLinksSerializerV05(&span.span_links))?;
         meta.insert(
-            dict.get_or_insert(&tinybytes::BytesString::from("span_links"))?,
+            dict.get_or_insert(&tinybytes::BytesString::from("_dd.span_links"))?,
             dict.get_or_insert(&tinybytes::BytesString::from(serialized_span_links))?,
         );
     }
@@ -299,6 +362,10 @@ mod tests {
         meta.sort();
         assert_eq!(meta, &[
             (
+                "_dd.span_links",
+                "[{\"trace_id\":\"00000000000109320000000000003039\",\"span_id\":\"000000000000d431\",\"tracestate\":\"tracestate_value\",\"attributes\":{\"key\":\"val\"}}]",
+            ),
+            (
                 "events",
                 "[{\"time_unix_nano\":123,\"name\":\"ev1\",\"attributes\":{\"str_attr\":\"val\"}},{\"time_unix_nano\":456,\"name\":\"ev2\",\"attributes\":{\"bool_attr\":true}},{\"time_unix_nano\":789,\"name\":\"ev3\",\"attributes\":{\"list_attr\":[\"val1\",\"val2\"]}}]",
             ),
@@ -306,10 +373,263 @@ mod tests {
                 "meta_field",
                 "meta_value",
             ),
-            (
-                "span_links",
-                "[{\"trace_id\":12345,\"trace_id_high\":67890,\"span_id\":54321,\"attributes\":{\"key\":\"val\"},\"tracestate\":\"tracestate_value\",\"flags\":1}]",
-            ),
         ]);
+    }
+
+    /// Empty span_links / span_events must not add any `_dd.span_links` / `events`
+    /// meta keys (matches the agent, which only writes them when non-empty).
+    #[test]
+    fn from_span_bytes_empty_links_and_events_test() {
+        let span = SpanBytes {
+            service: BytesString::from("service"),
+            name: BytesString::from("name"),
+            resource: BytesString::from("resource"),
+            r#type: BytesString::from("type"),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 1,
+            duration: 111,
+            error: 0,
+            meta: HashMap::from([(
+                BytesString::from("meta_field"),
+                BytesString::from("meta_value"),
+            )]),
+            metrics: HashMap::new(),
+            meta_struct: HashMap::new(),
+            span_links: vec![],
+            span_events: vec![],
+        };
+
+        let mut dict = SharedDict::default();
+        let v05_span = from_span_bytes(&span, &mut dict).unwrap();
+        let dict = dict.dict();
+
+        let keys: Vec<&str> = v05_span
+            .meta
+            .keys()
+            .map(|k| dict[*k as usize].as_str())
+            .collect();
+        assert_eq!(v05_span.meta.len(), 1);
+        assert!(keys.contains(&"meta_field"));
+        assert!(!keys.contains(&"_dd.span_links"));
+        assert!(!keys.contains(&"events"));
+    }
+
+    /// A span link with no tracestate and no attributes serializes only `trace_id`
+    /// and `span_id`, both hex-encoded.
+    #[test]
+    fn span_link_minimal_serialization_test() {
+        let links = vec![SpanLinkBytes {
+            trace_id: 0xdead_beef,
+            trace_id_high: 0,
+            span_id: 0xfeed,
+            attributes: HashMap::new(),
+            tracestate: BytesString::from(""),
+            flags: 7,
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05(&links)).unwrap();
+        // No tracestate, no attributes, and `flags` is intentionally dropped.
+        assert_eq!(
+            json,
+            "[{\"trace_id\":\"000000000000000000000000deadbeef\",\"span_id\":\"000000000000feed\"}]"
+        );
+    }
+
+    /// Span event attributes of every scalar type, plus arrays of non-string scalars,
+    /// must render as their natural JSON representation.
+    #[test]
+    fn span_event_attribute_types_serialization_test() {
+        let events = vec![SpanEventBytes {
+            time_unix_nano: 42,
+            name: BytesString::from("ev"),
+            attributes: HashMap::from([
+                (
+                    BytesString::from("int_attr"),
+                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Integer(-7)),
+                ),
+                (
+                    BytesString::from("dbl_attr"),
+                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Double(2.5)),
+                ),
+            ]),
+        }];
+        let json = serde_json::to_string(&SpanEventsSerializerV05(&events)).unwrap();
+        // HashMap ordering is non-deterministic, so parse and assert on the structure.
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let attrs = &parsed[0]["attributes"];
+        assert_eq!(attrs["int_attr"], serde_json::json!(-7));
+        assert_eq!(attrs["dbl_attr"], serde_json::json!(2.5));
+        assert_eq!(parsed[0]["time_unix_nano"], serde_json::json!(42));
+        assert_eq!(parsed[0]["name"], serde_json::json!("ev"));
+    }
+
+    /// Arrays of non-string scalars (bool/int/double) must serialize as natural JSON arrays.
+    #[test]
+    fn span_event_non_string_array_serialization_test() {
+        let events = vec![SpanEventBytes {
+            time_unix_nano: 1,
+            name: BytesString::from("ev"),
+            attributes: HashMap::from([(
+                BytesString::from("arr"),
+                AttributeAnyValueBytes::Array(vec![
+                    AttributeArrayValueBytes::Integer(1),
+                    AttributeArrayValueBytes::Boolean(true),
+                    AttributeArrayValueBytes::Double(3.5),
+                ]),
+            )]),
+        }];
+        let json = serde_json::to_string(&SpanEventsSerializerV05(&events)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed[0]["attributes"]["arr"],
+            serde_json::json!([1, true, 3.5])
+        );
+    }
+
+    /// Multi-attribute events serialize correctly; HashMap order is non-deterministic so
+    /// the JSON is compared structurally rather than by exact string.
+    #[test]
+    fn span_event_multi_attribute_serialization_test() {
+        let events = vec![SpanEventBytes {
+            time_unix_nano: 9,
+            name: BytesString::from("multi"),
+            attributes: HashMap::from([
+                (
+                    BytesString::from("a"),
+                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::String(
+                        BytesString::from("x"),
+                    )),
+                ),
+                (
+                    BytesString::from("b"),
+                    AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Boolean(false)),
+                ),
+            ]),
+        }];
+        let json = serde_json::to_string(&SpanEventsSerializerV05(&events)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["attributes"]["a"], serde_json::json!("x"));
+        assert_eq!(parsed[0]["attributes"]["b"], serde_json::json!(false));
+    }
+
+    /// `meta_struct` has no representation in the v0.5 format and must be dropped: the
+    /// conversion succeeds and produces no extra meta keys (locks in the documented
+    /// contract on `from_span_bytes`).
+    #[test]
+    fn from_span_bytes_drops_meta_struct_test() {
+        let span = SpanBytes {
+            service: BytesString::from("service"),
+            name: BytesString::from("name"),
+            resource: BytesString::from("resource"),
+            r#type: BytesString::from("type"),
+            trace_id: 1,
+            span_id: 1,
+            parent_id: 0,
+            start: 1,
+            duration: 111,
+            error: 0,
+            meta: HashMap::from([(
+                BytesString::from("meta_field"),
+                BytesString::from("meta_value"),
+            )]),
+            metrics: HashMap::new(),
+            meta_struct: HashMap::from([(
+                BytesString::from("appsec"),
+                tinybytes::Bytes::from(vec![0x01u8, 0x02, 0x03]),
+            )]),
+            span_links: vec![],
+            span_events: vec![],
+        };
+
+        let mut dict = SharedDict::default();
+        let v05_span = from_span_bytes(&span, &mut dict).unwrap();
+        let dict = dict.dict();
+
+        let keys: Vec<&str> = v05_span
+            .meta
+            .keys()
+            .map(|k| dict[*k as usize].as_str())
+            .collect();
+        // Only the original meta entry survives; nothing derived from meta_struct.
+        assert_eq!(v05_span.meta.len(), 1);
+        assert!(keys.contains(&"meta_field"));
+        assert!(!keys.contains(&"appsec"));
+        assert!(!keys.contains(&"meta_struct"));
+    }
+
+    /// Multiple span links serialize as an ordered JSON array preserving input order.
+    #[test]
+    fn span_links_multiple_serialization_test() {
+        let links = vec![
+            SpanLinkBytes {
+                trace_id: 0x11,
+                trace_id_high: 0,
+                span_id: 0x22,
+                attributes: HashMap::new(),
+                tracestate: BytesString::from(""),
+                flags: 0,
+            },
+            SpanLinkBytes {
+                trace_id: 0x33,
+                trace_id_high: 0,
+                span_id: 0x44,
+                attributes: HashMap::new(),
+                tracestate: BytesString::from(""),
+                flags: 0,
+            },
+        ];
+        let json = serde_json::to_string(&SpanLinksSerializerV05(&links)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+        assert_eq!(parsed[0]["span_id"], serde_json::json!("0000000000000022"));
+        assert_eq!(parsed[1]["span_id"], serde_json::json!("0000000000000044"));
+    }
+
+    /// A link with tracestate but no attributes emits `tracestate` and omits `attributes`.
+    #[test]
+    fn span_link_only_tracestate_serialization_test() {
+        let links = vec![SpanLinkBytes {
+            trace_id: 1,
+            trace_id_high: 0,
+            span_id: 2,
+            attributes: HashMap::new(),
+            tracestate: BytesString::from("ts"),
+            flags: 0,
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05(&links)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["tracestate"], serde_json::json!("ts"));
+        assert!(parsed[0].get("attributes").is_none());
+    }
+
+    /// A link with attributes but no tracestate emits `attributes` and omits `tracestate`.
+    #[test]
+    fn span_link_only_attributes_serialization_test() {
+        let links = vec![SpanLinkBytes {
+            trace_id: 1,
+            trace_id_high: 0,
+            span_id: 2,
+            attributes: HashMap::from([(BytesString::from("k"), BytesString::from("v"))]),
+            tracestate: BytesString::from(""),
+            flags: 0,
+        }];
+        let json = serde_json::to_string(&SpanLinksSerializerV05(&links)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["attributes"]["k"], serde_json::json!("v"));
+        assert!(parsed[0].get("tracestate").is_none());
+    }
+
+    /// A span event with an empty attributes map renders `"attributes":{}`.
+    #[test]
+    fn span_event_empty_attributes_serialization_test() {
+        let events = vec![SpanEventBytes {
+            time_unix_nano: 1,
+            name: BytesString::from("ev"),
+            attributes: HashMap::new(),
+        }];
+        let json = serde_json::to_string(&SpanEventsSerializerV05(&events)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed[0]["attributes"], serde_json::json!({}));
     }
 }
