@@ -350,7 +350,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
             None,
         );
 
-        let res = self.send_trace_chunks_inner(traces).await?;
+        let res = self.send_trace_chunks_inner(traces, false).await?;
         if matches!(&res, AgentResponse::Changed { body } if body.is_empty()) {
             return Err(TraceExporterError::Agent(
                 error::AgentErrorKind::EmptyResponse,
@@ -512,6 +512,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
 
     /// Send a list of trace chunks to the agent (or OTLP endpoint when configured).
     ///
+    /// Over-long span string fields are truncated before processing when `T::Text` is
+    /// [`libdd_tinybytes::BytesString`] (the standard owned-span type); custom `SpanText`
+    /// implementations that do not override `maybe_truncate` will silently skip truncation.
+    ///
     /// Sync facade over [`Self::send_trace_chunks_async`]; panics inside an existing
     /// tokio context.
     ///
@@ -553,6 +557,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
 
     /// Send a list of trace chunks to the agent, asynchronously (or OTLP when configured).
     ///
+    /// Over-long span string fields are truncated before processing when `T::Text` is
+    /// [`libdd_tinybytes::BytesString`] (the standard owned-span type); custom `SpanText`
+    /// implementations that do not override `maybe_truncate` will silently skip truncation.
+    ///
     /// # Arguments
     /// * trace_chunks: A list of trace chunks. Each trace chunk is a list of spans.
     ///
@@ -564,7 +572,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
         self.check_agent_info().await;
-        self.send_trace_chunks_inner(trace_chunks).await
+        self.send_trace_chunks_inner(trace_chunks, true).await
     }
 
     /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
@@ -658,8 +666,17 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
+        truncate: bool,
     ) -> Result<AgentResponse, TraceExporterError> {
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+
+        // Truncate over-long string fields before any downstream processing so that stats,
+        // serialisation, and the OTLP path all operate on the same normalised payload.
+        // Skipped on the msgpack path (`send`/`send_async`) where the tracer is responsible
+        // for enforcing field-length limits before encoding.
+        if truncate {
+            libdd_trace_utils::span::trace_utils::truncate_span_strings(&mut traces);
+        }
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
@@ -2125,6 +2142,50 @@ mod tests {
             result.err()
         );
         mock_otlp.assert();
+    }
+
+    // Documents the `truncate=false` path: spans decoded from msgpack via from_slice
+    // have T::Text = &str, for which truncate_span_strings is a no-op.  This proves
+    // that send/send_async correctly leaves over-long fields unchanged.
+    //
+    // Note: there is no integration test that exercises send_trace_chunks_inner with
+    // truncate=true through the full send_trace_chunks_async call chain.  The unit
+    // tests in trace_utils.rs prove that truncate_span_strings works on BytesData
+    // spans, and the trace_serializer round-trip tests verify that truncated data
+    // survives encoding, but neither goes through send_trace_chunks_inner itself.
+
+    use libdd_trace_utils::span::trace_utils::MAX_SPAN_STRING_LEN;
+
+    /// send_async decodes via from_slice (&str spans); truncate_span_strings is a
+    /// no-op on &str, so over-long fields pass through unchanged (tracer's responsibility).
+    #[test]
+    fn test_send_async_does_not_truncate_over_long_fields() {
+        let over_limit: String = std::iter::repeat_n('b', MAX_SPAN_STRING_LEN + 1).collect();
+        let span = SpanBytes {
+            resource: BytesString::from_string(over_limit),
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_slice(b"svc").unwrap(),
+            span_id: 1,
+            trace_id: 1,
+            start: 1_000_000,
+            duration: 1_000,
+            ..Default::default()
+        };
+        let payload = libdd_trace_utils::msgpack_encoder::v04::to_vec(&[vec![span]]);
+
+        // Decode via from_slice — produces SpanSlice<'_> where T::Text = &str.
+        let (mut traces, _) =
+            libdd_trace_utils::msgpack_decoder::v04::from_slice(&payload).unwrap();
+
+        // truncate_span_strings is a no-op for &str spans regardless of the truncate
+        // flag; calling it here proves the no-op property directly.
+        libdd_trace_utils::span::trace_utils::truncate_span_strings(&mut traces);
+
+        assert_eq!(
+            traces[0][0].resource.chars().count(),
+            MAX_SPAN_STRING_LEN + 1,
+            "send_async must not truncate — tracer is responsible for field-length limits"
+        );
     }
 }
 

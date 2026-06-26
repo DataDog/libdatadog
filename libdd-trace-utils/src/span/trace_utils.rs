@@ -5,8 +5,119 @@
 
 use tracing::debug;
 
-use super::{v04::Span, SpanText, TraceData};
+use super::{
+    v04::{AttributeAnyValue, AttributeArrayValue, Span},
+    SpanText, TraceData,
+};
 use std::collections::{HashMap, HashSet};
+
+/// Fields whose Unicode code-point count exceeds this threshold are truncated.
+pub const MAX_SPAN_STRING_LEN: usize = 25_000;
+/// Length (in Unicode code points) to which over-long fields are truncated, including the suffix.
+pub const TRUNCATED_SPAN_STRING_LEN: usize = 2_500;
+/// Suffix appended to every truncated field.
+const TRUNCATION_SUFFIX: &str = "<truncated>...";
+
+/// Truncate all text fields in every span across all trace chunks.
+///
+/// Any field whose Unicode code-point count exceeds [`MAX_SPAN_STRING_LEN`] is replaced with
+/// the first `TRUNCATED_SPAN_STRING_LEN - 14` code points followed by `"<truncated>..."`,
+/// giving a total of [`TRUNCATED_SPAN_STRING_LEN`] code points.  Numeric fields and
+/// `meta_struct` bytes are left untouched.
+pub fn truncate_span_strings<T: TraceData>(traces: &mut [Vec<Span<T>>]) {
+    for chunk in traces.iter_mut() {
+        for span in chunk.iter_mut() {
+            truncate_span(span);
+        }
+    }
+}
+
+fn trunc<S: SpanText>(v: S) -> S {
+    v.maybe_truncate(
+        MAX_SPAN_STRING_LEN,
+        TRUNCATED_SPAN_STRING_LEN,
+        TRUNCATION_SUFFIX,
+    )
+}
+
+fn trunc_in_place<S: SpanText>(field: &mut S) {
+    *field = trunc(std::mem::take(field));
+}
+
+fn truncate_attribute_value<T: TraceData>(v: AttributeAnyValue<T>) -> AttributeAnyValue<T> {
+    match v {
+        AttributeAnyValue::SingleValue(AttributeArrayValue::String(s)) => {
+            AttributeAnyValue::SingleValue(AttributeArrayValue::String(trunc(s)))
+        }
+        AttributeAnyValue::Array(vec) => AttributeAnyValue::Array(
+            vec.into_iter()
+                .map(|item| match item {
+                    AttributeArrayValue::String(s) => AttributeArrayValue::String(trunc(s)),
+                    other => other,
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn truncate_span<T: TraceData>(span: &mut Span<T>) {
+    trunc_in_place(&mut span.service);
+    trunc_in_place(&mut span.name);
+    trunc_in_place(&mut span.resource);
+    trunc_in_place(&mut span.r#type);
+
+    // If truncation makes two keys identical, the downstream span.dedup() call keeps the
+    // last original entry (VecMap dedup semantics). This mirrors the backend's own behavior
+    // when a tracer submits a span with duplicate keys.
+    for (key, value) in span.meta.iter_mut() {
+        trunc_in_place(key);
+        trunc_in_place(value);
+    }
+
+    for (key, _value) in span.metrics.iter_mut() {
+        trunc_in_place(key);
+    }
+
+    for (key, _value) in span.meta_struct.iter_mut() {
+        trunc_in_place(key);
+    }
+
+    if !span.span_links.is_empty() {
+        span.span_links = std::mem::take(&mut span.span_links)
+            .into_iter()
+            .map(|mut link| {
+                trunc_in_place(&mut link.tracestate);
+                // Use entry API so that if truncation maps two originally-distinct keys to the
+                // same string, the first entry's value is kept and the second is dropped without
+                // allocating a truncated value for it.
+                let mut new_attrs = HashMap::with_capacity(link.attributes.len());
+                for (k, v) in std::mem::take(&mut link.attributes) {
+                    new_attrs.entry(trunc(k)).or_insert_with(|| trunc(v));
+                }
+                link.attributes = new_attrs;
+                link
+            })
+            .collect();
+    }
+
+    if !span.span_events.is_empty() {
+        span.span_events = std::mem::take(&mut span.span_events)
+            .into_iter()
+            .map(|mut event| {
+                trunc_in_place(&mut event.name);
+                let mut new_attrs = HashMap::with_capacity(event.attributes.len());
+                for (k, v) in std::mem::take(&mut event.attributes) {
+                    new_attrs
+                        .entry(trunc(k))
+                        .or_insert_with(|| truncate_attribute_value(v));
+                }
+                event.attributes = new_attrs;
+                event
+            })
+            .collect();
+    }
+}
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -205,7 +316,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::{SpanBytes, VecMap};
+    use crate::span::v04::{
+        AttributeAnyValue, AttributeArrayValue, SpanBytes, SpanEvent, SpanLink, VecMap,
+    };
+    use std::collections::HashMap;
 
     fn create_test_span(
         trace_id: u64,
@@ -436,5 +550,168 @@ mod tests {
                 assert_eq!(traces[0].len(), expected_count);
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // truncate_span_strings tests
+    // -----------------------------------------------------------------------
+
+    fn long_str(c: char, n: usize) -> String {
+        std::iter::repeat_n(c, n).collect()
+    }
+
+    fn bs(s: &str) -> libdd_tinybytes::BytesString {
+        libdd_tinybytes::BytesString::from_string(s.to_string())
+    }
+
+    fn make_span(name: &str, resource: &str, meta_key: &str, meta_val: &str) -> SpanBytes {
+        SpanBytes {
+            name: bs(name),
+            resource: bs(resource),
+            meta: vec![(bs(meta_key), bs(meta_val))].into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_no_truncation_at_limit() {
+        // Exactly 25_000 chars — should NOT be truncated.
+        let name = long_str('a', MAX_SPAN_STRING_LEN);
+        let mut traces = vec![vec![make_span(&name, "r", "k", "v")]];
+        truncate_span_strings(&mut traces);
+        assert_eq!(
+            traces[0][0].name.as_str().chars().count(),
+            MAX_SPAN_STRING_LEN
+        );
+    }
+
+    #[test]
+    fn test_truncation_over_limit() {
+        // 25_001 chars — should be truncated to 2_500.
+        let resource = long_str('b', MAX_SPAN_STRING_LEN + 1);
+        let mut traces = vec![vec![make_span("n", &resource, "k", "v")]];
+        truncate_span_strings(&mut traces);
+        let result = traces[0][0].resource.as_str();
+        assert_eq!(result.chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert!(result.ends_with(TRUNCATION_SUFFIX));
+    }
+
+    #[test]
+    fn test_meta_key_and_value_truncated() {
+        let long_key = long_str('c', MAX_SPAN_STRING_LEN + 1);
+        let short_val = long_str('d', 2_000); // under limit — unchanged
+        let mut traces = vec![vec![make_span("n", "r", &long_key, &short_val)]];
+        truncate_span_strings(&mut traces);
+        let (k, v) = traces[0][0].meta.iter().next().unwrap();
+        assert_eq!(k.as_str().chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert!(k.as_str().ends_with(TRUNCATION_SUFFIX));
+        assert_eq!(v.as_str().chars().count(), 2_000); // unchanged
+    }
+
+    #[test]
+    fn test_unicode_truncation_by_code_points() {
+        // Each '€' is 3 bytes; 25_001 euros exceed the threshold.
+        let s = long_str('€', MAX_SPAN_STRING_LEN + 1);
+        let mut traces = vec![vec![make_span(&s, "r", "k", "v")]];
+        truncate_span_strings(&mut traces);
+        let result = traces[0][0].name.as_str();
+        // Result must be exactly TRUNCATED_SPAN_STRING_LEN code points.
+        assert_eq!(result.chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert!(result.ends_with(TRUNCATION_SUFFIX));
+    }
+
+    #[test]
+    fn test_span_link_fields_truncated() {
+        let long_tracestate = long_str('x', MAX_SPAN_STRING_LEN + 1);
+        let long_attr_key = long_str('y', MAX_SPAN_STRING_LEN + 1);
+        let long_attr_val = long_str('z', MAX_SPAN_STRING_LEN + 1);
+        let mut traces = vec![vec![SpanBytes {
+            span_links: vec![SpanLink {
+                tracestate: long_tracestate.into(),
+                attributes: HashMap::from([(long_attr_key.into(), long_attr_val.into())]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }]];
+        truncate_span_strings(&mut traces);
+        let link = &traces[0][0].span_links[0];
+        assert_eq!(
+            link.tracestate.as_str().chars().count(),
+            TRUNCATED_SPAN_STRING_LEN
+        );
+        let (k, v) = link.attributes.iter().next().unwrap();
+        assert_eq!(k.as_str().chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert_eq!(v.as_str().chars().count(), TRUNCATED_SPAN_STRING_LEN);
+    }
+
+    #[test]
+    fn test_span_event_name_and_string_attribute_truncated() {
+        let long_name = long_str('e', MAX_SPAN_STRING_LEN + 1);
+        let long_str_attr = long_str('f', MAX_SPAN_STRING_LEN + 1);
+        let mut traces = vec![vec![SpanBytes {
+            span_events: vec![SpanEvent {
+                name: long_name.into(),
+                attributes: HashMap::from([
+                    (
+                        "str_attr".into(),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::String(
+                            long_str_attr.into(),
+                        )),
+                    ),
+                    (
+                        "int_attr".into(),
+                        AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(42)),
+                    ),
+                ]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }]];
+        truncate_span_strings(&mut traces);
+        let event = &traces[0][0].span_events[0];
+        assert_eq!(
+            event.name.as_str().chars().count(),
+            TRUNCATED_SPAN_STRING_LEN
+        );
+        match event.attributes.get("str_attr").unwrap() {
+            AttributeAnyValue::SingleValue(AttributeArrayValue::String(s)) => {
+                assert_eq!(s.as_str().chars().count(), TRUNCATED_SPAN_STRING_LEN);
+            }
+            _ => panic!("expected string attribute"),
+        }
+        // Integer attribute untouched
+        match event.attributes.get("int_attr").unwrap() {
+            AttributeAnyValue::SingleValue(AttributeArrayValue::Integer(42)) => {}
+            _ => panic!("expected integer attribute"),
+        }
+    }
+
+    #[test]
+    fn test_metric_key_truncated() {
+        let long_key = long_str('g', MAX_SPAN_STRING_LEN + 1);
+        let mut traces = vec![vec![SpanBytes {
+            metrics: vec![(bs(&long_key), 1.0_f64)].into(),
+            ..Default::default()
+        }]];
+        truncate_span_strings(&mut traces);
+        let (k, v) = traces[0][0].metrics.iter().next().unwrap();
+        assert_eq!(k.as_str().chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert!(k.as_str().ends_with(TRUNCATION_SUFFIX));
+        assert_eq!(*v, 1.0_f64);
+    }
+
+    #[test]
+    fn test_meta_struct_key_truncated() {
+        use libdd_tinybytes::Bytes;
+        let long_key = long_str('h', MAX_SPAN_STRING_LEN + 1);
+        let payload = Bytes::from_static(b"some bytes");
+        let mut traces = vec![vec![SpanBytes {
+            meta_struct: vec![(bs(&long_key), payload)].into(),
+            ..Default::default()
+        }]];
+        truncate_span_strings(&mut traces);
+        let (k, v) = traces[0][0].meta_struct.iter().next().unwrap();
+        assert_eq!(k.as_str().chars().count(), TRUNCATED_SPAN_STRING_LEN);
+        assert_eq!(v.as_ref(), b"some bytes"); // value unchanged
     }
 }

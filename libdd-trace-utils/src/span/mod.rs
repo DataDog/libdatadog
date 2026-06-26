@@ -24,17 +24,68 @@ use std::{fmt, ptr};
 /// from a static str and check if the string is empty.
 pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
     fn from_static_str(value: &'static str) -> Self;
+
+    /// If `self` exceeds `max_chars` Unicode code points, return a new value consisting of the
+    /// first `result_chars - suffix.chars().count()` code points followed by `suffix`; otherwise
+    /// return `self` unchanged.
+    ///
+    /// Implementations that cannot allocate (e.g. `&str`) return `self` unmodified.
+    fn maybe_truncate(self, max_chars: usize, result_chars: usize, suffix: &str) -> Self {
+        // Default: no allocation possible, so return unchanged.
+        // Implementations that own their storage (e.g. `BytesString`) should override this.
+        let _ = (max_chars, result_chars, suffix);
+        self
+    }
 }
 
 impl SpanText for &str {
     fn from_static_str(value: &'static str) -> Self {
         value
     }
+    // maybe_truncate uses the default (no-op): &str is borrowed and cannot allocate.
+    // The only path that produces &str spans is the zero-copy msgpack decoder
+    // (SpanSlice / SliceData), whose callers enforce length limits upstream.
 }
 
 impl SpanText for BytesString {
     fn from_static_str(value: &'static str) -> Self {
         BytesString::from_static(value)
+    }
+
+    fn maybe_truncate(self, max_chars: usize, result_chars: usize, suffix: &str) -> Self {
+        let s = self.as_str();
+        // Fast path: UTF-8 byte length >= char count, so byte length within limit ⇒ chars fit.
+        if s.len() <= max_chars {
+            return self;
+        }
+        // Single pass: find the byte offset of char `keep_chars` and count total chars together,
+        // avoiding a separate O(n) `chars().count()` scan followed by another `char_indices()`
+        // walk.
+        let suffix_chars = suffix.chars().count();
+        debug_assert!(
+            result_chars >= suffix_chars,
+            "result_chars ({result_chars}) must be >= suffix length ({suffix_chars})"
+        );
+        let keep_chars = result_chars.saturating_sub(suffix_chars);
+        let mut keep_byte_end = None;
+        let mut total_chars = 0usize;
+        for (byte_pos, _) in s.char_indices() {
+            if total_chars == keep_chars {
+                keep_byte_end = Some(byte_pos);
+            }
+            total_chars += 1;
+            if total_chars > max_chars {
+                break;
+            }
+        }
+        if total_chars <= max_chars {
+            return self;
+        }
+        let end = keep_byte_end.unwrap_or(s.len());
+        let mut truncated = String::with_capacity(end + suffix.len());
+        truncated.push_str(&s[..end]);
+        truncated.push_str(suffix);
+        BytesString::from_string(truncated)
     }
 }
 
