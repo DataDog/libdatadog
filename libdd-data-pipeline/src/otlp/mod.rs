@@ -29,6 +29,7 @@
 
 pub mod config;
 pub mod exporter;
+pub(crate) mod grpc_exporter;
 pub mod metrics;
 
 pub use config::{OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};

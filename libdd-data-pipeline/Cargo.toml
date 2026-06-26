@@ -46,6 +46,7 @@ libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
+prost = "0.14.1"
 tonic = { version = "0.14", default-features = false, features = [
     "transport",  # Channel, Endpoint, Server
     "codegen",    # Grpc<T> client, tonic::client::Grpc
@@ -85,6 +86,7 @@ tokio = { version = "1.23", features = [
     "rt",
     "time",
     "test-util",
+    "macros",
 ], default-features = false }
 duplicate = "2.0.1"
 h2 = "0.4"
