@@ -11,10 +11,6 @@
 //! the 5-byte frame prefix, protobuf encoding, and gRPC trailer parsing
 //! automatically, using [`prost`] for message encoding/decoding.
 
-// These items are pub(crate) but not yet consumed by the trace exporter dispatch
-// path — wired up in the next task.
-#![allow(dead_code)]
-
 use super::config::OtlpGrpcTraceConfig;
 use crate::trace_exporter::error::{BuilderErrorKind, RequestError, TraceExporterError};
 use libdd_trace_protobuf::opentelemetry::proto::collector::trace::v1::{
@@ -185,11 +181,23 @@ pub(crate) async fn send_otlp_traces_grpc(
     let path = http::uri::PathAndQuery::from_static(GRPC_EXPORT_PATH);
     let codec = ProstCodecImpl::<ExportTraceServiceRequest, ExportTraceServiceResponse>::default();
 
-    tokio::time::timeout(transport.config.timeout, client.unary(req, path, codec))
-        .await
-        .map_err(|_| TraceExporterError::Io(std::io::Error::from(std::io::ErrorKind::TimedOut)))?
-        .map(|_response| ())
-        .map_err(grpc_status_to_error)
+    // Tower's `Buffer` service (used inside tonic's `Channel`) requires
+    // `poll_ready` to be called and return `Ready` before `call`. tonic's
+    // `Grpc::ready()` drives that poll loop for us.
+    tokio::time::timeout(transport.config.timeout, async {
+        client.ready().await.map_err(|e| {
+            TraceExporterError::Io(std::io::Error::other(format!(
+                "gRPC channel not ready: {e}"
+            )))
+        })?;
+        client
+            .unary(req, path, codec)
+            .await
+            .map(|_response| ())
+            .map_err(grpc_status_to_error)
+    })
+    .await
+    .map_err(|_| TraceExporterError::Io(std::io::Error::from(std::io::ErrorKind::TimedOut)))?
 }
 
 /// Attach `headers` and the optional test-session token to gRPC request metadata.
