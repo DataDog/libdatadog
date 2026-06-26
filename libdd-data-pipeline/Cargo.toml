@@ -46,6 +46,10 @@ libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
+tonic = { version = "0.14", default-features = false, features = [
+    "transport",  # Channel, Endpoint, Server
+    "codegen",    # Grpc<T> client, tonic::client::Grpc
+] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
@@ -83,6 +87,8 @@ tokio = { version = "1.23", features = [
     "test-util",
 ], default-features = false }
 duplicate = "2.0.1"
+h2 = "0.4"
+tokio-stream = { version = "0.1", features = ["net"] }
 
 [features]
 default = ["https", "telemetry"]

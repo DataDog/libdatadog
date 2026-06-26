@@ -2990,6 +2990,7 @@ dependencies = [
  "duplicate 2.0.1",
  "either",
  "getrandom 0.2.15",
+ "h2",
  "http",
  "http-body-util",
  "httpmock",
@@ -3016,7 +3017,9 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tokio-util",
+ "tonic",
  "tracing",
  "uuid",
 ]
