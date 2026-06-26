@@ -584,13 +584,23 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 let channel = build_grpc_channel(url, otlp_timeout)?;
                 Some(OtlpExportMode::Grpc(OtlpGrpcTransport {
                     config: OtlpGrpcTraceConfig {
-                        endpoint_url: url.clone(),
                         headers: self.otlp_headers.clone(),
                         timeout: otlp_timeout,
                         otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
                     },
                     channel,
                 }))
+            }
+            // gRPC export is unavailable on wasm32 (tonic does not build there). Reject it
+            // explicitly instead of falling through to the HTTP arm, which would store
+            // `OtlpProtocol::Grpc` in `OtlpTraceConfig` and panic at `encode()` on send.
+            #[cfg(target_arch = "wasm32")]
+            Some(_) if self.otlp_protocol == OtlpProtocol::Grpc => {
+                return Err(TraceExporterError::Builder(
+                    BuilderErrorKind::InvalidConfiguration(
+                        "OTLP gRPC export is not supported on wasm32 targets".to_string(),
+                    ),
+                ));
             }
             Some(ref url) => Some(OtlpExportMode::Http(OtlpTraceConfig {
                 endpoint_url: url.clone(),

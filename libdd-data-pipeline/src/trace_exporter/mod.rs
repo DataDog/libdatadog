@@ -583,23 +583,26 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         self.send_trace_chunks_inner(trace_chunks).await
     }
 
+    /// Build the OTLP `resource` info shared by the HTTP and gRPC export paths.
+    fn build_otlp_resource_info(&self) -> OtlpResourceInfo {
+        let mut r = OtlpResourceInfo::default();
+        r.service = self.metadata.service.clone();
+        r.env = self.metadata.env.clone();
+        r.app_version = self.metadata.app_version.clone();
+        r.language = self.metadata.language.clone();
+        r.tracer_version = self.metadata.tracer_version.clone();
+        r.runtime_id = self.metadata.runtime_id.clone();
+        r.client_computed_stats = self.otlp_stats_enabled;
+        r
+    }
+
     /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
     async fn send_otlp_traces_inner<T: TraceData>(
         &self,
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let resource_info = {
-            let mut r = OtlpResourceInfo::default();
-            r.service = self.metadata.service.clone();
-            r.env = self.metadata.env.clone();
-            r.app_version = self.metadata.app_version.clone();
-            r.language = self.metadata.language.clone();
-            r.tracer_version = self.metadata.tracer_version.clone();
-            r.runtime_id = self.metadata.runtime_id.clone();
-            r.client_computed_stats = self.otlp_stats_enabled;
-            r
-        };
+        let resource_info = self.build_otlp_resource_info();
         // Single prost OTLP IR; the configured protocol encodes the same request to its wire
         // format (JSON or protobuf). OTel-semantics gating (omit DD-specific attrs) happens in
         // the mapper.
@@ -643,17 +646,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         traces: Vec<Vec<Span<T>>>,
         transport: &OtlpGrpcTransport,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let resource_info = {
-            let mut r = OtlpResourceInfo::default();
-            r.service = self.metadata.service.clone();
-            r.env = self.metadata.env.clone();
-            r.app_version = self.metadata.app_version.clone();
-            r.language = self.metadata.language.clone();
-            r.tracer_version = self.metadata.tracer_version.clone();
-            r.runtime_id = self.metadata.runtime_id.clone();
-            r.client_computed_stats = self.otlp_stats_enabled;
-            r
-        };
+        let resource_info = self.build_otlp_resource_info();
 
         // map_traces_to_otlp returns the prost ExportTraceServiceRequest directly —
         // the same type expected by send_otlp_traces_grpc; no conversion needed.
@@ -739,20 +732,18 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
         // Unlike the agent path, there is no downstream agent to drop unsampled traces,
         // so drop_chunks is always called here regardless of whether stats are enabled.
+        if self.otlp.is_some() {
+            libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
+            if traces.is_empty() {
+                return Ok(AgentResponse::Unchanged);
+            }
+        }
         match &self.otlp {
             Some(OtlpExportMode::Http(config)) => {
-                libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
-                if traces.is_empty() {
-                    return Ok(AgentResponse::Unchanged);
-                }
                 return self.send_otlp_traces_inner(traces, config).await;
             }
             #[cfg(not(target_arch = "wasm32"))]
             Some(OtlpExportMode::Grpc(transport)) => {
-                libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
-                if traces.is_empty() {
-                    return Ok(AgentResponse::Unchanged);
-                }
                 return self.send_otlp_grpc_inner(traces, transport).await;
             }
             None => {}

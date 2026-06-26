@@ -88,9 +88,10 @@ impl<T: ProstMessage + Default> Decoder for ProstDecoder<T> {
 
     fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<Self::Item>, Self::Error> {
         use bytes::Buf as _;
-        let mut buf = bytes::BytesMut::with_capacity(src.remaining());
-        buf.extend_from_slice(src.chunk());
-        src.advance(src.remaining());
+        // `copy_to_bytes` drains the whole buffer correctly even if `DecodeBuf`'s
+        // backing store is ever non-contiguous (`chunk()` only returns the first
+        // contiguous segment, so the old chunk()+advance() form could truncate).
+        let buf = src.copy_to_bytes(src.remaining());
         match T::decode(buf) {
             Ok(msg) => Ok(Some(msg)),
             Err(e) => Err(Status::internal(format!(
@@ -261,8 +262,14 @@ fn grpc_status_to_error(status: Status) -> TraceExporterError {
                 "gRPC Ok status reached error handler (unexpected)",
             ))
         }
-        Code::Unavailable | Code::DeadlineExceeded => TraceExporterError::Io(std::io::Error::new(
+        // Server temporarily unreachable / overloaded.
+        Code::Unavailable => TraceExporterError::Io(std::io::Error::new(
             std::io::ErrorKind::ConnectionRefused,
+            status.message(),
+        )),
+        // Server-side deadline fired — a timeout, not a refused connection.
+        Code::DeadlineExceeded => TraceExporterError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
             status.message(),
         )),
         _ => TraceExporterError::Request(RequestError::new(
@@ -303,15 +310,22 @@ mod tests {
     }
 
     #[test]
-    fn grpc_status_unavailable_and_deadline_map_to_io() {
-        for status in [
-            Status::unavailable("backend down"),
-            Status::deadline_exceeded("too slow"),
+    fn grpc_status_transient_map_to_io_with_correct_kind() {
+        // Unavailable → ConnectionRefused; DeadlineExceeded → TimedOut (not refused).
+        for (status, want) in [
+            (
+                Status::unavailable("backend down"),
+                std::io::ErrorKind::ConnectionRefused,
+            ),
+            (
+                Status::deadline_exceeded("too slow"),
+                std::io::ErrorKind::TimedOut,
+            ),
         ] {
-            assert!(
-                matches!(grpc_status_to_error(status), TraceExporterError::Io(_)),
-                "transient transport status should map to Io"
-            );
+            match grpc_status_to_error(status) {
+                TraceExporterError::Io(e) => assert_eq!(e.kind(), want),
+                other => panic!("expected Io, got {other:?}"),
+            }
         }
     }
 
@@ -370,7 +384,6 @@ mod tests {
             .expect("http channel must build");
         let transport = OtlpGrpcTransport {
             config: OtlpGrpcTraceConfig {
-                endpoint_url: "http://localhost:4317".to_string(),
                 headers: vec![],
                 timeout: Duration::from_secs(5),
                 otel_trace_semantics_enabled: false,

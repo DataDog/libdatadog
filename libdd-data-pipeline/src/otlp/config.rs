@@ -134,16 +134,11 @@ mod tests {
 
 /// Parsed OTLP gRPC trace exporter configuration.
 ///
-/// The gRPC endpoint URL contains only scheme + host + port (e.g.
-/// `http://localhost:4317`). The service path
-/// `/opentelemetry.proto.collector.trace.v1.TraceService/Export` is
-/// appended by the exporter.
+/// The endpoint URL is consumed at build time to construct the tonic
+/// [`Channel`](tonic::transport::Channel); only the per-request settings below
+/// are retained here.
 #[derive(Clone, Debug)]
 pub struct OtlpGrpcTraceConfig {
-    /// Full gRPC base URL, e.g. `http://localhost:4317`.
-    /// Must use `http://` scheme; `https://` (TLS) is not yet supported.
-    #[allow(dead_code)]
-    pub endpoint_url: String,
     /// Custom key-value pairs forwarded as gRPC request metadata.
     pub headers: Vec<(String, String)>,
     /// Per-request timeout (applied via [`tokio::time::timeout`]).
