@@ -21,12 +21,6 @@ fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0u16)).collect()
 }
 
-fn is_wow64() -> bool {
-    let mut result: i32 = 0;
-    let ok = unsafe { IsWow64Process(GetCurrentProcess(), &mut result) };
-    ok != 0 && result != 0
-}
-
 pub fn get_machine_id_impl() -> String {
     // MachineGuid is in the 64-bit view; a 32-bit process under WOW64 is
     // redirected to WOW6432Node by default, so force the 64-bit view there.
