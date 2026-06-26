@@ -197,6 +197,21 @@ impl<'a> AttributeArrayValueV05<'a> {
     }
 }
 
+/// Converts a v0.4 [`SpanBytes`] into its v0.5 dictionary-encoded representation.
+///
+/// The v0.5 format is a fixed 12-element positional array (service, name, resource,
+/// trace_id, span_id, parent_id, start, duration, error, meta, metrics, type — see the
+/// agent's `UnmarshalMsgDictionary` decoder). It predates `span_links`, `span_events`,
+/// and `meta_struct`, none of which have a dedicated slot.
+///
+/// `span_links` and `span_events` are carried in `meta` as JSON strings under the
+/// `_dd.span_links` and `events` keys respectively, matching the keys/shapes the Datadog
+/// agent and backend understand (the agent's OTLP `MarshalLinks` / `MarshalEvents`).
+///
+/// `meta_struct` is intentionally dropped: it carries arbitrary binary (msgpack) blobs,
+/// the v0.5 `meta` map is string->string only, and there is no agent-side meta-key
+/// convention for reconstructing `meta_struct` from a v0.5 payload. Callers that need to
+/// preserve `meta_struct` must use the v0.4 output format.
 pub fn from_span_bytes(span: &SpanBytes, dict: &mut SharedDict) -> Result<Span> {
     let service = dict.get_or_insert(&span.service)?;
     let name = dict.get_or_insert(&span.name)?;
