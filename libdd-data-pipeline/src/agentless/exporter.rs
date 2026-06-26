@@ -40,7 +40,7 @@ pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapabilit
     };
 
     let retry_strategy = RetryStrategy::new(
-        AGENTLESS_MAX_ATTEMPTS,
+        AGENTLESS_MAX_RETRIES,
         AGENTLESS_RETRY_DELAY_MS,
         RetryBackoffType::Exponential,
         None,
