@@ -1,6 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Linux host machine id, mirroring gopsutil's fallback order:
+//! `/sys/class/dmi/id/product_uuid` (root-only, usually empty otherwise) =>
+//! `/etc/machine-id` => `/proc/sys/kernel/random/boot_id`.
+//!
+//! Note that boot_id changes is re-generated boot time. This is regretable
+//! but aligned with the agent
+
 use std::path::Path;
 
 fn read_trimmed(path: &Path) -> Option<String> {
@@ -13,6 +20,7 @@ fn read_trimmed(path: &Path) -> Option<String> {
     }
 }
 
+/// Resolves the id from the three candidate paths in priority order
 pub fn get_machine_id_impl_paths(dmi_path: &Path, etc_path: &Path, boot_path: &Path) -> String {
     if let Some(id) = read_trimmed(dmi_path) {
         return id;
