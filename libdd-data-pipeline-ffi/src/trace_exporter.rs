@@ -503,15 +503,17 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     )
 }
 
-/// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default) or
-/// `http/protobuf`; `grpc` is rejected as not yet supported. The host language resolves the value
-/// (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
+/// Sets the OTLP export protocol. Accepts all three OTel-standard values:
+/// - `http/json` (default) — OTLP over HTTP with JSON body
+/// - `http/protobuf` — OTLP over HTTP with protobuf body
+/// - `grpc` — OTLP over HTTP/2 (plaintext only; `https://` is not yet supported)
 ///
-/// Has no effect unless an OTLP endpoint is also configured via
-/// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
-/// Datadog agent and this protocol selection is ignored.
+/// The host language resolves the value (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
 ///
-/// Returns `None` on success, `ErrorCode::InvalidArgument` for a null config or an unaccepted
+/// Has no effect unless an OTLP endpoint is configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`.
+///
+/// Returns `None` on success, `ErrorCode::InvalidArgument` for a null config or an unrecognized
 /// value, and `ErrorCode::InvalidInput` for a non-UTF-8 string.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
@@ -524,9 +526,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
                 Ok(s) => s,
                 Err(e) => return Some(e),
             };
-            // `FromStr` is the single source of truth for string -> OtlpProtocol. It accepts only
-            // the supported HTTP encodings (`http/json`, `http/protobuf`); `grpc` and any unknown
-            // value are rejected with an error, so an unsupported protocol can never be stored.
+            // `FromStr` is the single source of truth for string -> OtlpProtocol. It accepts all
+            // three OTel-standard encodings (`http/json`, `http/protobuf`, `grpc`); any unknown
+            // value is rejected with an error, so an unsupported protocol can never be stored.
             match value.parse::<OtlpProtocol>() {
                 Ok(p) => {
                     handle.otlp_protocol = Some(p);
@@ -1362,14 +1364,17 @@ mod tests {
                 Some(OtlpProtocol::HttpProtobuf)
             );
 
-            // "grpc" → InvalidArgument
+            // "grpc" → success (gRPC is now supported)
             let mut config = Some(TraceExporterConfig::default());
             let error = ddog_trace_exporter_config_set_otlp_protocol(
                 config.as_mut(),
                 CharSlice::from("grpc"),
             );
-            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
-            ddog_trace_exporter_error_free(error);
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::Grpc)
+            );
 
             // Garbage value → InvalidArgument
             let mut config = Some(TraceExporterConfig::default());
@@ -1407,15 +1412,37 @@ mod tests {
     }
 
     #[test]
-    fn set_otlp_protocol_rejects_grpc_and_unknown() {
-        let mut cfg = TraceExporterConfig::default();
-        for bad in ["grpc", "nonsense"] {
+    fn set_otlp_protocol_accepts_all_three_protocols() {
+        use libdd_data_pipeline::OtlpProtocol;
+        for (input, expected) in [
+            ("http/json", OtlpProtocol::HttpJson),
+            ("http/protobuf", OtlpProtocol::HttpProtobuf),
+            ("grpc", OtlpProtocol::Grpc),
+        ] {
+            let mut cfg = TraceExporterConfig::default();
             let err = unsafe {
-                ddog_trace_exporter_config_set_otlp_protocol(Some(&mut cfg), CharSlice::from(bad))
+                ddog_trace_exporter_config_set_otlp_protocol(Some(&mut cfg), CharSlice::from(input))
             };
-            assert!(err.is_some(), "expected error for {bad}");
-            assert_eq!(cfg.otlp_protocol, None, "{bad} must not be stored");
+            assert!(err.is_none(), "expected success for {input}: {err:?}");
+            assert_eq!(
+                cfg.otlp_protocol,
+                Some(expected),
+                "wrong protocol for {input}"
+            );
         }
+    }
+
+    #[test]
+    fn set_otlp_protocol_rejects_unknown() {
+        let mut cfg = TraceExporterConfig::default();
+        let err = unsafe {
+            ddog_trace_exporter_config_set_otlp_protocol(
+                Some(&mut cfg),
+                CharSlice::from("nonsense"),
+            )
+        };
+        assert!(err.is_some(), "expected error for unknown protocol");
+        assert_eq!(cfg.otlp_protocol, None, "must not be stored on error");
     }
 
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
