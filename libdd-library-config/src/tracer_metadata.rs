@@ -3,20 +3,8 @@
 use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
 use std::default::Default;
 
-/// Value of an additional OTel process-context attribute. Mirrors the small subset of
-/// `opentelemetry::proto::common::v1::AnyValue` variants we support for caller-supplied threadlocal
-/// extras — string and 64-bit integer, since the only consumers so far are textual schema
-/// identifiers and small numeric layout constants (e.g. struct offsets, pointer widths).
-#[cfg(feature = "otel-thread-ctx")]
-#[derive(serde::Serialize, Debug, PartialEq, Eq, Hash, Clone)]
-#[serde(rename_all = "snake_case", tag = "type", content = "value")]
-pub enum ProcessContextAttrValue {
-    String(String),
-    Int(i64),
-}
-
 /// This struct MUST be backward compatible.
-#[derive(serde::Serialize, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, Debug, PartialEq)]
 pub struct TracerMetadata {
     /// Version of the schema.
     pub schema_version: u8,
@@ -76,7 +64,7 @@ pub struct TracerMetadata {
     /// Only emitted when `threadlocal_attribute_keys` is `Some`. Ignored for (de)serialization.
     #[cfg(feature = "otel-thread-ctx")]
     #[serde(skip)]
-    pub threadlocal_extra_attributes: Vec<(String, ProcessContextAttrValue)>,
+    pub threadlocal_extra_attributes: Vec<(String, otel_proto::common::v1::any_value::Value)>,
 }
 
 impl Default for TracerMetadata {
@@ -193,13 +181,11 @@ impl TracerMetadata {
             });
 
             for (k, v) in threadlocal_extra_attributes {
-                let value = match v {
-                    ProcessContextAttrValue::String(s) => any_value::Value::StringValue(s.clone()),
-                    ProcessContextAttrValue::Int(i) => any_value::Value::IntValue(*i),
-                };
                 attributes.push(KeyValue {
                     key: k.clone(),
-                    value: Some(AnyValue { value: Some(value) }),
+                    value: Some(AnyValue {
+                        value: Some(v.clone()),
+                    }),
                     key_ref: 0,
                 });
             }
@@ -398,15 +384,15 @@ mod tests {
             threadlocal_extra_attributes: vec![
                 (
                     "threadlocal.wrapped_object_offset".to_owned(),
-                    ProcessContextAttrValue::Int(24),
+                    any_value::Value::IntValue(24),
                 ),
                 (
                     "threadlocal.tagged_size".to_owned(),
-                    ProcessContextAttrValue::Int(8),
+                    any_value::Value::IntValue(8),
                 ),
                 (
                     "threadlocal.runtime.name".to_owned(),
-                    ProcessContextAttrValue::String("nodejs".to_owned()),
+                    any_value::Value::StringValue("nodejs".to_owned()),
                 ),
             ],
             ..Default::default()
@@ -437,7 +423,7 @@ mod tests {
             threadlocal_schema_version: Some("nodejs_v1_dev".to_owned()),
             threadlocal_extra_attributes: vec![(
                 "threadlocal.wrapped_object_offset".to_owned(),
-                ProcessContextAttrValue::Int(24),
+                any_value::Value::IntValue(24),
             )],
             ..Default::default()
         }
