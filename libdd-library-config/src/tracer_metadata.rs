@@ -71,8 +71,7 @@ pub struct TracerMetadata {
     pub threadlocal_schema_version: Option<String>,
 
     /// Extra OTel process-context attributes the threadlocal writer wants to publish alongside the
-    /// key map (e.g. language-runtime layout constants that the reader needs to walk from a
-    /// discovery TLS symbol into the record). Each entry is emitted verbatim as a KeyValue.
+    /// key map (e.g. language-runtime layout constants that the reader needs to know about). Each entry is emitted verbatim as a KeyValue.
     ///
     /// Only emitted when `threadlocal_attribute_keys` is `Some`. Ignored for (de)serialization.
     #[cfg(feature = "otel-thread-ctx")]
