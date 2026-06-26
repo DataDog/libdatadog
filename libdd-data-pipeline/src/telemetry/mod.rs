@@ -72,7 +72,12 @@ impl TelemetryClientBuilder {
 
     /// Sets the url where the metrics will be sent.
     pub fn set_url(mut self, url: &str) -> Self {
-        let _ = self.config.set_endpoint_url(url);
+        let _ = self
+            .config
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(url.to_owned()),
+                ..Default::default()
+            });
         self
     }
 

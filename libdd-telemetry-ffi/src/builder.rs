@@ -4,7 +4,7 @@
 use ffi::slice::AsBytes;
 use libdd_common_ffi as ffi;
 use libdd_telemetry::{
-    data,
+    config, data,
     worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor, TelemetryWorkerHandle},
 };
 use std::ptr::NonNull;
@@ -154,35 +154,51 @@ pub unsafe extern "C" fn ddog_telemetry_builder_run_metric_logs(
     MaybeError::None
 }
 
-/// Applies endpoint settings to the builder's telemetry config from primitive
-/// values, so `libdd_common::Endpoint` stays out of this crate's public API.
+/// C-facing companion to [`libdd_telemetry::config::TelemetryEndpoint`]: the same
+/// shape, but with caller-owned [`ffi::CharSlice`] strings instead of `String`s,
+/// so `libdd_common::Endpoint` stays out of this crate's public API.
 ///
-/// `api_key` and `test_token` are treated as unset when empty; a `timeout_ms` of
-/// 0 keeps the existing/default timeout.
+/// Empty `url`/`api_key`/`test_token` slices are treated as unset (leave the
+/// existing value unchanged); a `timeout_ms` of 0 keeps the existing/default
+/// timeout. `use_system_resolver` is always applied.
+#[repr(C)]
+pub struct TelemetryEndpoint<'a> {
+    pub url: ffi::CharSlice<'a>,
+    pub api_key: ffi::CharSlice<'a>,
+    pub timeout_ms: u64,
+    pub test_token: ffi::CharSlice<'a>,
+    pub use_system_resolver: bool,
+}
+
+impl TelemetryEndpoint<'_> {
+    /// Copies the caller-owned slices into an owned, `'static`
+    /// [`config::TelemetryEndpoint`]. The copy is mandatory: the slices point at
+    /// memory the C caller may free, so it cannot be borrowed into the config.
+    ///
+    /// An inherent method rather than a `From` impl because the orphan rule
+    /// forbids implementing `From<Self> for` the foreign `config::TelemetryEndpoint`.
+    fn into_config(self) -> config::TelemetryEndpoint {
+        fn owned(slice: ffi::CharSlice) -> Option<String> {
+            (!slice.is_empty()).then(|| slice.to_utf8_lossy().into_owned())
+        }
+        config::TelemetryEndpoint {
+            url: owned(self.url),
+            api_key: owned(self.api_key),
+            test_token: owned(self.test_token),
+            timeout_ms: self.timeout_ms,
+            use_system_resolver: self.use_system_resolver,
+        }
+    }
+}
+
+/// Applies endpoint settings to the builder's telemetry config.
 fn set_builder_endpoint(
     telemetry_builder: &mut TelemetryWorkerBuilder,
-    url: ffi::CharSlice,
-    api_key: ffi::CharSlice,
-    timeout_ms: u64,
-    test_token: ffi::CharSlice,
-    use_system_resolver: bool,
+    endpoint: TelemetryEndpoint,
 ) -> ffi::MaybeError {
-    let url = try_c!(url.try_to_utf8());
-    let api_key = api_key.to_utf8_lossy();
-    let test_token = test_token.to_utf8_lossy();
-    let config = &mut telemetry_builder.config;
-    // Set the api key before the url so the telemetry path is resolved correctly.
-    if !api_key.is_empty() {
-        try_c!(config.set_endpoint_api_key(Some(api_key.as_ref())));
-    }
-    try_c!(config.set_endpoint_url(url));
-    if timeout_ms != 0 {
-        config.set_endpoint_timeout_ms(timeout_ms);
-    }
-    if !test_token.is_empty() {
-        config.set_endpoint_test_token(Some(test_token.into_owned()));
-    }
-    config.set_endpoint_use_system_resolver(use_system_resolver);
+    try_c!(telemetry_builder
+        .config
+        .set_endpoint(endpoint.into_config()));
     ffi::MaybeError::None
 }
 
@@ -202,11 +218,13 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_endpoint_config_endpoint(
 ) -> ffi::MaybeError {
     set_builder_endpoint(
         telemetry_builder,
-        url,
-        api_key,
-        timeout_ms,
-        test_token,
-        use_system_resolver,
+        TelemetryEndpoint {
+            url,
+            api_key,
+            timeout_ms,
+            test_token,
+            use_system_resolver,
+        },
     )
 }
 #[repr(C)]
@@ -233,11 +251,13 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_property_endpoint(
 ) -> ffi::MaybeError {
     set_builder_endpoint(
         telemetry_builder,
-        url,
-        api_key,
-        timeout_ms,
-        test_token,
-        use_system_resolver,
+        TelemetryEndpoint {
+            url,
+            api_key,
+            timeout_ms,
+            test_token,
+            use_system_resolver,
+        },
     )
 }
 #[no_mangle]
@@ -261,11 +281,13 @@ pub unsafe extern "C" fn ddog_telemetry_builder_with_endpoint_named_property(
     match property {
         "config . endpoint" => set_builder_endpoint(
             telemetry_builder,
-            url,
-            api_key,
-            timeout_ms,
-            test_token,
-            use_system_resolver,
+            TelemetryEndpoint {
+                url,
+                api_key,
+                timeout_ms,
+                test_token,
+                use_system_resolver,
+            },
         ),
         _ => ffi::MaybeError::None,
     }

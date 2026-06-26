@@ -1299,6 +1299,7 @@ impl TelemetryWorkerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::TelemetryEndpoint;
     use crate::data::Payload;
     use crate::worker::http_client::header::{
         DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
@@ -1333,7 +1334,12 @@ mod tests {
             "1".into(),
             "tv".into(),
         );
-        b.config.set_endpoint_url("http://127.0.0.1:1").unwrap();
+        b.config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("http://127.0.0.1:1".to_owned()),
+                ..Default::default()
+            })
+            .unwrap();
         b.runtime_id = Some("rid".into());
         b.config.session_id = session_id;
         b.config.parent_session_id = parent_session_id;
@@ -1465,7 +1471,12 @@ mod tests {
             "1".into(),
             "tv".into(),
         );
-        b.config.set_endpoint_url("http://127.0.0.1:1").unwrap();
+        b.config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("http://127.0.0.1:1".to_owned()),
+                ..Default::default()
+            })
+            .unwrap();
         b.runtime_id = Some("rid".into());
         b.flavor = flavor;
         b.build_worker(Some(tokio::runtime::Handle::current())).1
@@ -1809,7 +1820,13 @@ mod tests {
             "1".into(),
             "tv".into(),
         );
-        builder.config.set_endpoint_url(&server.url("/")).unwrap();
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(server.url("/")),
+                ..Default::default()
+            })
+            .unwrap();
         builder.runtime_id = Some("rid".into());
 
         let shared_runtime = ForkSafeRuntime::new().expect("ForkSafeRuntime::new");

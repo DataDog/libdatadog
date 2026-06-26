@@ -197,18 +197,23 @@ impl TelemetryCrashUploader {
             // But do we want to support direct submission to the intake?
 
             // ignore result because what are we going to do?
-            let _ = if endpoint.url.scheme_str() == Some("file") {
+            let telemetry_endpoint = if endpoint.url.scheme_str() == Some("file") {
                 let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
-                cfg.set_host_from_url(&format!("file://{}.telemetry", path.display()))
+                libdd_telemetry::config::TelemetryEndpoint {
+                    url: Some(format!("file://{}.telemetry", path.display())),
+                    ..Default::default()
+                }
             } else {
-                cfg.set_endpoint_timeout_ms(endpoint.timeout_ms);
-                cfg.set_endpoint_test_token(endpoint.test_token.clone());
-                cfg.set_endpoint_use_system_resolver(endpoint.use_system_resolver);
-                // Set the api key before the uri so the telemetry path is resolved correctly.
-                cfg.set_endpoint_api_key(endpoint.api_key.as_deref())
-                    .and_then(|()| cfg.set_endpoint_uri(endpoint.url.clone()))
+                libdd_telemetry::config::TelemetryEndpoint {
+                    url: Some(endpoint.url.to_string()),
+                    api_key: endpoint.api_key.as_deref().map(str::to_owned),
+                    test_token: endpoint.test_token.as_deref().map(str::to_owned),
+                    timeout_ms: endpoint.timeout_ms,
+                    use_system_resolver: endpoint.use_system_resolver,
+                }
             };
+            let _ = cfg.set_endpoint(telemetry_endpoint);
         }
 
         parse_tags!(
@@ -524,7 +529,10 @@ mod tests {
             new_test_uploader_with_process_tags(seed, "entrypoint.name:cli,entrypoint.type:script");
 
         t.cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })
             .unwrap();
         let test_instance = super::CrashInfo::test_instance(seed);
 
@@ -590,7 +598,10 @@ mod tests {
         let mut t = new_test_uploader(seed);
 
         t.cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })
             .unwrap();
 
         let sig_info = crate::SigInfo::test_instance(42);
@@ -666,7 +677,10 @@ mod tests {
         let mut t = new_test_uploader(seed);
 
         t.cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })
             .unwrap();
 
         let sig_info = crate::SigInfo::test_instance(123);
@@ -776,10 +790,13 @@ mod tests {
         let mut uploader = TelemetryCrashUploader::new(&metadata, &endpoint)?;
         uploader
             .cfg
-            .set_host_from_url(&format!(
-                "file://{}.telemetry",
-                output_filename.to_str().unwrap()
-            ))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!(
+                    "file://{}.telemetry",
+                    output_filename.to_str().unwrap()
+                )),
+                ..Default::default()
+            })
             .unwrap();
 
         uploader.upload_crash_ping(&crash_ping).await?;
@@ -936,7 +953,10 @@ mod tests {
 
         uploader
             .cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })
             .unwrap();
 
         let sig_info = crate::SigInfo::test_instance(150);
@@ -1011,7 +1031,10 @@ mod tests {
         let mut uploader = new_test_uploader(7);
         uploader
             .cfg
-            .set_host_from_url(&format!("file://{}", output_filename.to_str().unwrap()))?;
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(format!("file://{}", output_filename.to_str().unwrap())),
+                ..Default::default()
+            })?;
 
         uploader
             .upload_general_log(

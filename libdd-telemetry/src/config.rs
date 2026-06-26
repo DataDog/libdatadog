@@ -18,6 +18,23 @@ const TRACE_SOCKET_PATH: &str = "/var/run/datadog/apm.socket";
 const DEFAULT_AGENT_HOST: &str = "localhost";
 const DEFAULT_AGENT_PORT: u16 = 8126;
 
+/// Partial endpoint configuration applied through [`Config::set_endpoint`].
+///
+/// A `None` (or, for `timeout_ms`, `0`) field leaves the corresponding endpoint
+/// value untouched, so the struct doubles as a patch. `use_system_resolver` is
+/// always applied.
+#[derive(Debug, Default)]
+pub struct TelemetryEndpoint {
+    pub url: Option<String>,
+    pub api_key: Option<String>,
+    pub timeout_ms: u64,
+    /// Sets X-Datadog-Test-Session-Token header on any request
+    pub test_token: Option<String>,
+    /// Use the system DNS resolver when building the HTTP client. If false, the default
+    /// in-process resolver is used.
+    pub use_system_resolver: bool,
+}
+
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Config {
     /// Endpoint to send the data to
@@ -237,8 +254,8 @@ impl Config {
     }
 
     /// Rewrites the endpoint path to the telemetry path appropriate for the
-    /// current scheme, API key and direct-submission setting. Called by the
-    /// setters that can affect it (URL and API key).
+    /// current scheme, API key and direct-submission setting. Called by
+    /// [`Config::set_endpoint`] after the endpoint fields have been updated.
     fn apply_telemetry_path(&mut self) -> anyhow::Result<()> {
         if let Some(endpoint) = self.endpoint.take() {
             self.endpoint = Some(endpoint_with_telemetry_path(
@@ -249,45 +266,46 @@ impl Config {
         Ok(())
     }
 
-    /// Sets the endpoint URL from a string (`http(s)://`, `unix://`, `windows:`
-    /// or `file://`). Use [`Config::set_endpoint_uri`] if you already hold a
-    /// parsed [`Uri`] to avoid re-parsing.
-    pub fn set_endpoint_url(&mut self, url: &str) -> anyhow::Result<()> {
-        self.set_endpoint_uri(parse_uri(url)?)
-    }
+    /// Applies a [`TelemetryEndpoint`] patch to the endpoint, then rewrites the
+    /// path to the telemetry path appropriate for the resulting scheme and API
+    /// key. This is the single entry point for endpoint configuration so the URL
+    /// path invariant always holds.
+    pub fn set_endpoint(&mut self, endpoint: TelemetryEndpoint) -> anyhow::Result<()> {
+        // Parse the URL before touching `self.endpoint` so a parse error leaves
+        // the existing endpoint untouched.
+        let url = endpoint.url.as_deref().map(parse_uri).transpose()?;
 
-    /// Sets the endpoint URL from an already-parsed [`Uri`].
-    pub fn set_endpoint_uri(&mut self, uri: Uri) -> anyhow::Result<()> {
-        self.endpoint.get_or_insert_with(Endpoint::default).url = uri;
-        self.apply_telemetry_path()
-    }
-
-    /// Sets (or, with `None`, clears) the endpoint API key.
-    pub fn set_endpoint_api_key(&mut self, api_key: Option<&str>) -> anyhow::Result<()> {
-        self.endpoint.get_or_insert_with(Endpoint::default).api_key =
-            api_key.map(|key| Cow::Owned(key.to_string()));
-        self.apply_telemetry_path()
-    }
-
-    /// Sets the endpoint request timeout in milliseconds.
-    pub fn set_endpoint_timeout_ms(&mut self, timeout_ms: u64) {
-        if let Some(endpoint) = &mut self.endpoint {
-            endpoint.timeout_ms = timeout_ms;
+        let inner = self.endpoint.get_or_insert_with(Endpoint::default);
+        if let Some(url) = url {
+            inner.url = url;
         }
+
+        // Move the owned Strings into the `Cow<'static, str>` fields — `Cow::from(String)`
+        // yields `Cow::Owned`, so no copy happens.
+        if let Some(api_key) = endpoint.api_key {
+            inner.api_key = Some(Cow::from(api_key));
+        }
+
+        if let Some(test_token) = endpoint.test_token {
+            inner.test_token = Some(Cow::from(test_token));
+        }
+
+        if endpoint.timeout_ms != 0 {
+            inner.timeout_ms = endpoint.timeout_ms;
+        }
+
+        inner.use_system_resolver = endpoint.use_system_resolver;
+
+        self.apply_telemetry_path()
     }
 
     /// Sets (or, with `None`, clears) the `X-Datadog-Test-Session-Token` header
-    /// sent with requests.
+    /// sent with requests. Unlike [`Config::set_endpoint`], `None` clears the
+    /// token rather than leaving it unchanged, and an absent endpoint is left
+    /// absent (no default is inserted).
     pub fn set_endpoint_test_token<T: Into<Cow<'static, str>>>(&mut self, test_token: Option<T>) {
         if let Some(endpoint) = &mut self.endpoint {
             endpoint.test_token = test_token.map(|token| token.into());
-        }
-    }
-
-    /// Sets whether to use the system DNS resolver when building the HTTP client.
-    pub fn set_endpoint_use_system_resolver(&mut self, use_system_resolver: bool) {
-        if let Some(endpoint) = &mut self.endpoint {
-            endpoint.use_system_resolver = use_system_resolver;
         }
     }
 
@@ -308,8 +326,11 @@ impl Config {
             root_session_id: None,
         };
 
-        _ = this.set_endpoint_api_key(api_key.as_deref());
-        _ = this.set_endpoint_url(&trace_agent_url);
+        _ = this.set_endpoint(TelemetryEndpoint {
+            url: Some(trace_agent_url),
+            api_key: api_key.map(Cow::into_owned),
+            ..Default::default()
+        });
         this
     }
 
@@ -317,20 +338,6 @@ impl Config {
     pub fn from_env() -> Self {
         let settings = Settings::from_env();
         Self::from_settings(&settings)
-    }
-
-    /// set_host sets the host telemetry should connect to.
-    ///
-    /// It handles the following schemes
-    /// * http/https
-    /// * unix sockets unix://\<path to the socket>
-    /// * windows pipes of the format windows:\<pipe name>
-    /// * files, with the format file://\<path to the file>
-    ///
-    ///  If the host_url is http/https, any path will be ignored and replaced by the
-    /// appropriate telemetry endpoint path
-    pub fn set_host_from_url(&mut self, host_url: &str) -> anyhow::Result<()> {
-        self.set_endpoint_url(host_url)
     }
 }
 
@@ -343,7 +350,16 @@ mod tests {
 
     use libdd_common::connector::named_pipe;
 
-    use super::{Config, Settings};
+    use super::{Config, Settings, TelemetryEndpoint};
+
+    /// Test helper mirroring the old `set_host_from_url`: set only the URL and
+    /// let `set_endpoint` resolve the telemetry path.
+    fn set_host_from_url(cfg: &mut Config, host_url: &str) -> anyhow::Result<()> {
+        cfg.set_endpoint(TelemetryEndpoint {
+            url: Some(host_url.to_owned()),
+            ..Default::default()
+        })
+    }
 
     #[test]
     fn test_agent_host_detection_trace_agent_url_should_take_precedence() {
@@ -444,8 +460,7 @@ mod tests {
     fn test_config_set_url() {
         let mut cfg = Config::default();
 
-        cfg.set_host_from_url("http://example.com/any_path_will_be_ignored")
-            .unwrap();
+        set_host_from_url(&mut cfg, "http://example.com/any_path_will_be_ignored").unwrap();
 
         assert_eq!(
             "http://example.com/telemetry/proxy/api/v2/apmtelemetry",
@@ -467,7 +482,7 @@ mod tests {
 
         for (input, expected) in cases {
             let mut cfg = Config::default();
-            cfg.set_host_from_url(input).unwrap();
+            set_host_from_url(&mut cfg, input).unwrap();
 
             assert_eq!(
                 "file",
@@ -491,7 +506,7 @@ mod tests {
     fn test_config_set_url_unix_socket() {
         let mut cfg = Config::default();
 
-        cfg.set_host_from_url("unix:///compatiliby/path").unwrap();
+        set_host_from_url(&mut cfg, "unix:///compatiliby/path").unwrap();
         assert_eq!(
             "unix://2f636f6d706174696c6962792f70617468/telemetry/proxy/api/v2/apmtelemetry",
             cfg.clone().endpoint.unwrap().url.to_string()
@@ -508,7 +523,7 @@ mod tests {
     fn test_config_set_url_windows_pipe() {
         let mut cfg = Config::default();
 
-        cfg.set_host_from_url("windows:C:\\system32\\foo").unwrap();
+        set_host_from_url(&mut cfg, "windows:C:\\system32\\foo").unwrap();
         assert_eq!(
             "windows://433a5c73797374656d33325c666f6f/telemetry/proxy/api/v2/apmtelemetry",
             cfg.clone().endpoint.unwrap().url.to_string()

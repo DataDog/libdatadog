@@ -110,9 +110,12 @@ async fn async_main() {
     config.direct_submission_enabled = true;
     config.debug_enabled = true;
     let api_key = std::env::var("DD_API_KEY").unwrap();
-    config.set_endpoint_api_key(Some(&api_key)).unwrap();
     config
-        .set_endpoint_url("https://instrumentation-telemetry-intake.datad0g.com")
+        .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+            url: Some("https://instrumentation-telemetry-intake.datad0g.com".to_owned()),
+            api_key: Some(api_key),
+            ..Default::default()
+        })
         .unwrap();
     push_telemetry(&config, &req).await.unwrap();
 }

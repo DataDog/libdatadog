@@ -39,7 +39,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     builder.config = libdd_telemetry::config::Config::from_env();
     builder
         .config
-        .set_endpoint_url("file://./tm-worker-test.output")
+        .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+            url: Some("file://./tm-worker-test.output".to_owned()),
+            ..Default::default()
+        })
         .unwrap();
     builder.config.telemetry_heartbeat_interval = Duration::from_secs(1);
 

@@ -50,7 +50,7 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
-use libdd_telemetry::config::Config;
+use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
 
@@ -709,12 +709,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 libdd_telemetry::config::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
-            // Set the api key before the uri so the telemetry path is resolved correctly.
-            cfg.set_endpoint_api_key(endpoint.api_key.as_deref()).ok();
-            cfg.set_endpoint_uri(endpoint.url.clone()).ok();
-            cfg.set_endpoint_timeout_ms(endpoint.timeout_ms);
-            cfg.set_endpoint_test_token(endpoint.test_token.clone());
-            cfg.set_endpoint_use_system_resolver(endpoint.use_system_resolver);
+            cfg.set_endpoint(TelemetryEndpoint {
+                url: Some(endpoint.url.to_string()),
+                api_key: endpoint.api_key.as_deref().map(str::to_owned),
+                test_token: endpoint.test_token.as_deref().map(str::to_owned),
+                timeout_ms: endpoint.timeout_ms,
+                use_system_resolver: endpoint.use_system_resolver,
+            })
+            .ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             cfg.telemetry_extended_heartbeat_interval =
                 config.telemetry_extended_heartbeat_interval;
