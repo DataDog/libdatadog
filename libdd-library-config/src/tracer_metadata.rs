@@ -61,9 +61,8 @@ pub struct TracerMetadata {
     #[serde(skip)]
     pub threadlocal_attribute_keys: Option<Vec<String>>,
 
-    /// Value of the `threadlocal.schema_version` attribute emitted in the OTel process context.
-    /// Identifies the on-the-wire record schema the writer publishes (e.g. `"tlsdesc_v1_dev"` for
-    /// libdatadog's own TLSDESC-based writer, `"nodejs_v1_dev"` for a Node.js writer). Defaults to
+    /// Identifies the record schema the writer publishes (e.g. `"tlsdesc_v1_dev"` for
+    /// libdatadog's own writer, `"nodejs_v1_dev"` for a Node.js writer). Defaults to
     /// `"tlsdesc_v1_dev"` when `None`.
     ///
     /// Only emitted when `threadlocal_attribute_keys` is `Some`. Ignored for (de)serialization.
