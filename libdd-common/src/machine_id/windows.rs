@@ -15,7 +15,6 @@ use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
     KEY_WOW64_64KEY, REG_SZ,
 };
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, IsWow64Process};
 
 fn to_wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0u16)).collect()
