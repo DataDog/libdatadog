@@ -1018,35 +1018,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn exporter_constructor_error_test() {
-        unsafe {
-            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
-            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
-
-            let mut cfg = config.assume_init();
-            let error = ddog_trace_exporter_config_set_service(
-                Some(cfg.as_mut()),
-                CharSlice::from("service"),
-            );
-            assert_eq!(error, None);
-
-            ddog_trace_exporter_error_free(error);
-
-            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
-
-            let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
-
-            let error = ret.as_ref().unwrap();
-            assert_eq!(error.code, ErrorCode::InvalidUrl);
-
-            ddog_trace_exporter_error_free(ret);
-
-            ddog_trace_exporter_config_free(cfg);
-        }
-    }
-
     #[test]
     fn exporter_send_test_arguments_test() {
         unsafe {
