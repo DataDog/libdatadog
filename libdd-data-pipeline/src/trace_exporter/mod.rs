@@ -672,27 +672,37 @@ impl<
         self.handle_send_result(result, chunks, payload_len).await
     }
 
+    /// Synchronous log-export path: encode every span to newline-delimited
+    /// Forwarder JSON and write it through the log-output capability (stdout on
+    /// native; host/JS on wasm). No agent, stats, OTLP, or telemetry is involved.
+    ///
+    /// Unlike the OTLP path, spans are emitted as-is and unsampled (p0) chunks are
+    /// NOT dropped here: the reference log exporters (JS/Go/Py/Java) write every
+    /// span they are handed and defer sampling to the trace intake behind the
+    /// Datadog Forwarder.
+    ///
+    /// Returns [`AgentResponse::Unchanged`] as there is no agent response to relay.
+    fn send_trace_chunks_to_log<T: TraceData>(
+        &self,
+        traces: &[Vec<Span<T>>],
+        max_line_size: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let stats = write_log_traces(&self.capabilities, traces, max_line_size)
+            .map_err(TraceExporterError::Io)?;
+        debug!(
+            spans_written = stats.spans_written,
+            spans_dropped = stats.spans_dropped,
+            "Wrote traces to log exporter"
+        );
+        Ok(AgentResponse::Unchanged)
+    }
+
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        // Log-export path: write traces as newline-delimited JSON through the
-        // log-output capability (stdout on native; host/JS on wasm) for the Datadog
-        // Forwarder. No agent, stats, OTLP, or telemetry involved.
-        //
-        // We emit all spans as-is and do NOT drop unsampled (p0) chunks here
-        // (unlike the OTLP path): the reference log exporters (JS/Go/Py/Java) write
-        // every span they are handed and defer sampling to the trace intake behind
-        // the Datadog Forwarder.
         if let Some(max_line_size) = self.log_output {
-            let stats = write_log_traces(&self.capabilities, &traces, max_line_size)
-                .map_err(TraceExporterError::Io)?;
-            debug!(
-                spans_written = stats.spans_written,
-                spans_dropped = stats.spans_dropped,
-                "Wrote traces to log exporter"
-            );
-            return Ok(AgentResponse::Unchanged);
+            return self.send_trace_chunks_to_log(&traces, max_line_size);
         }
 
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
