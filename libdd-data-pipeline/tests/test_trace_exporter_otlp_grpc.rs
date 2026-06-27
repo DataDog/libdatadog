@@ -80,9 +80,14 @@ mod grpc_export_tests {
             send_stream.send_trailers(trailers).unwrap();
         }
 
-        // Drive the connection to completion so the client receives all frames
-        // before the TCP socket closes.
-        while h2_conn.accept().await.is_some() {}
+        // Briefly drive the connection so the client receives the response frames
+        // (including the grpc-status trailer) before the socket closes. Bounded so
+        // the server task can never loop forever waiting on a pooled client
+        // connection that never closes.
+        let _ = tokio::time::timeout(Duration::from_secs(10), async {
+            while h2_conn.accept().await.is_some() {}
+        })
+        .await;
     }
 
     #[cfg_attr(miri, ignore)]
@@ -96,15 +101,23 @@ mod grpc_export_tests {
         let (port_tx, port_rx) = mpsc::channel::<u16>();
         let (req_tx, req_rx) = mpsc::channel::<ExportTraceServiceRequest>();
 
-        let server = std::thread::spawn(move || {
+        // The server thread is detached and time-bounded end to end (60s ceiling):
+        // if the client never connects, the bound fires and the thread exits rather
+        // than lingering or blocking. The test never joins it — verification comes
+        // from `send` returning Ok (the client received grpc-status:0) plus the
+        // decoded request delivered on `req_rx`.
+        std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
             rt.block_on(async move {
-                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-                port_tx.send(listener.local_addr().unwrap().port()).unwrap();
-                run_grpc_test_server(listener, req_tx).await;
+                let _ = tokio::time::timeout(Duration::from_secs(60), async move {
+                    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                    port_tx.send(listener.local_addr().unwrap().port()).unwrap();
+                    run_grpc_test_server(listener, req_tx).await;
+                })
+                .await;
             });
         });
 
@@ -137,7 +150,6 @@ mod grpc_export_tests {
         let received = req_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("server did not receive a decodable request within 10s");
-        server.join().ok();
 
         // Validate the decoded request contains the expected span.
         assert!(
