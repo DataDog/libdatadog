@@ -25,80 +25,80 @@ mod grpc_export_tests {
     use std::time::Duration;
     use tokio::net::TcpListener;
 
-    /// Runs the in-process h2 server loop: accept one connection, decode the first
-    /// Export request, forward it on `req_tx`, and return a gRPC success response.
+    /// Runs the in-process h2 server: accept connections and handle each Export
+    /// stream in a spawned task.
+    ///
+    /// The `accept()` loop must keep running for the lifetime of the connection —
+    /// polling the [`server::Connection`] is what reads incoming frames and routes
+    /// DATA to an open stream's body, and what flushes our queued response frames.
+    /// Reading a request body inline (without looping `accept()`) would stall: a
+    /// DATA frame that lands after `accept()` returns the stream would never be
+    /// read, hanging `body.data()` until the client's request timeout.
     async fn run_grpc_test_server(
         listener: TcpListener,
         req_tx: mpsc::Sender<ExportTraceServiceRequest>,
     ) {
         let (socket, _) = listener.accept().await.unwrap();
         let mut h2_conn = server::handshake(socket).await.unwrap();
-
-        if let Some(result) = h2_conn.accept().await {
-            let (request, mut respond) = result.unwrap();
-
-            // Collect the full request body. The chunk length must be captured
-            // before `extend_from_slice` consumes it to satisfy the borrow checker.
-            let mut body = request.into_body();
-            let mut frame_data: Vec<u8> = Vec::new();
-            while let Some(chunk) = body.data().await {
-                let chunk = chunk.unwrap();
-                let len = chunk.len();
-                frame_data.extend_from_slice(&chunk);
-                body.flow_control().release_capacity(len).ok();
+        while let Some(result) = h2_conn.accept().await {
+            if let Ok((request, respond)) = result {
+                tokio::spawn(handle_export_stream(request, respond, req_tx.clone()));
             }
-
-            // Decode the gRPC frame: skip the 5-byte prefix (1 compression flag + 4 length).
-            let decoded = if frame_data.len() > 5 {
-                ExportTraceServiceRequest::decode(&frame_data[5..]).ok()
-            } else {
-                None
-            };
-            if let Some(req) = decoded {
-                let _ = req_tx.send(req);
-            }
-
-            // Send gRPC success response: 200 headers + protobuf body + grpc-status trailer.
-            let response_proto = ExportTraceServiceResponse::default();
-            let proto_bytes = response_proto.encode_to_vec();
-            let mut frame = Vec::with_capacity(5 + proto_bytes.len());
-            frame.push(0u8); // no compression
-            frame.extend_from_slice(&(proto_bytes.len() as u32).to_be_bytes());
-            frame.extend_from_slice(&proto_bytes);
-
-            let response = http::Response::builder()
-                .status(200)
-                .header("content-type", "application/grpc")
-                .body(())
-                .unwrap();
-            let mut send_stream = respond.send_response(response, false).unwrap();
-            send_stream.send_data(Bytes::from(frame), false).unwrap();
-
-            // gRPC-status trailer (trailing HEADERS frame with END_STREAM).
-            let mut trailers = http::HeaderMap::new();
-            trailers.insert("grpc-status", "0".parse().unwrap());
-            send_stream.send_trailers(trailers).unwrap();
         }
-
-        // Briefly drive the connection so the client receives the response frames
-        // (including the grpc-status trailer) before the socket closes. Bounded so
-        // the server task can never loop forever waiting on a pooled client
-        // connection that never closes.
-        let _ = tokio::time::timeout(Duration::from_secs(10), async {
-            while h2_conn.accept().await.is_some() {}
-        })
-        .await;
     }
 
-    // Ignored in normal CI: the in-process exporter<->h2-server round trip is
-    // timing-fragile on heavily contended runners — the client `send` has hit its
-    // request timeout on macos-15 (GitHub) and the alpine/arm release-build matrix
-    // (GitLab) even though it passes locally and on less-loaded runners. The gRPC
-    // path is covered without it by this crate's unit tests (codec, status mapping,
-    // metadata, channel build, builder dispatch) and by live backend verification
-    // (DataDog/libdatadog#2171). Run it explicitly with:
-    //   cargo nextest run -p libdd-data-pipeline --run-ignored all grpc_export
-    #[ignore = "timing-fragile in-process round trip on contended CI; run with --run-ignored all"]
+    /// Decode one gRPC Export request and reply with a success response + trailer.
+    async fn handle_export_stream(
+        request: http::Request<h2::RecvStream>,
+        mut respond: h2::server::SendResponse<Bytes>,
+        req_tx: mpsc::Sender<ExportTraceServiceRequest>,
+    ) {
+        // Collect the full request body. The chunk length must be captured before
+        // `extend_from_slice` consumes it to satisfy the borrow checker.
+        let mut body = request.into_body();
+        let mut frame_data: Vec<u8> = Vec::new();
+        while let Some(chunk) = body.data().await {
+            let Ok(chunk) = chunk else { return };
+            let len = chunk.len();
+            frame_data.extend_from_slice(&chunk);
+            body.flow_control().release_capacity(len).ok();
+        }
+
+        // Decode the gRPC frame: skip the 5-byte prefix (1 compression flag + 4 length).
+        let decoded = if frame_data.len() > 5 {
+            ExportTraceServiceRequest::decode(&frame_data[5..]).ok()
+        } else {
+            None
+        };
+        if let Some(req) = decoded {
+            let _ = req_tx.send(req);
+        }
+
+        // Send gRPC success response: 200 headers + protobuf body + grpc-status trailer.
+        let response_proto = ExportTraceServiceResponse::default();
+        let proto_bytes = response_proto.encode_to_vec();
+        let mut frame = Vec::with_capacity(5 + proto_bytes.len());
+        frame.push(0u8); // no compression
+        frame.extend_from_slice(&(proto_bytes.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&proto_bytes);
+
+        let response = http::Response::builder()
+            .status(200)
+            .header("content-type", "application/grpc")
+            .body(())
+            .unwrap();
+        let Ok(mut send_stream) = respond.send_response(response, false) else {
+            return;
+        };
+        let _ = send_stream.send_data(Bytes::from(frame), false);
+
+        // gRPC-status trailer (trailing HEADERS frame with END_STREAM).
+        let mut trailers = http::HeaderMap::new();
+        trailers.insert("grpc-status", "0".parse().unwrap());
+        let _ = send_stream.send_trailers(trailers);
+    }
+
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn grpc_export_sends_decodable_request() {
         // The h2 server runs on its own OS thread + runtime, and the exporter
