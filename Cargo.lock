@@ -45,6 +45,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "allocator-api2"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c880a97d28a3681c0267bd29cff89621202715b065127cd445fa0f0fe0aa2880"
+
+[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2182,7 +2188,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 dependencies = [
  "ahash",
- "allocator-api2",
+ "allocator-api2 0.2.21",
 ]
 
 [[package]]
@@ -2191,7 +2197,7 @@ version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a9bfc1af68b1726ea47d3d5109de126281def866b33970e10fbab11b5dafab3"
 dependencies = [
- "allocator-api2",
+ "allocator-api2 0.2.21",
  "equivalent",
  "foldhash 0.1.5",
 ]
@@ -2202,7 +2208,7 @@ version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
- "allocator-api2",
+ "allocator-api2 0.2.21",
  "equivalent",
  "foldhash 0.2.0",
 ]
@@ -2839,7 +2845,7 @@ dependencies = [
 name = "libdd-alloc"
 version = "1.0.0"
 dependencies = [
- "allocator-api2",
+ "allocator-api2 0.4.0",
  "bolero",
  "libc",
  "windows-sys 0.52.0",
@@ -2865,6 +2871,13 @@ dependencies = [
  "libdd-capabilities",
  "libdd-common",
  "tokio",
+]
+
+[[package]]
+name = "libdd-collections"
+version = "1.0.0"
+dependencies = [
+ "allocator-api2 0.4.0",
 ]
 
 [[package]]
@@ -3182,7 +3195,7 @@ dependencies = [
 name = "libdd-profiling"
 version = "1.0.0"
 dependencies = [
- "allocator-api2",
+ "allocator-api2 0.4.0",
  "anyhow",
  "bitmaps",
  "bolero",
@@ -3228,7 +3241,7 @@ dependencies = [
 name = "libdd-profiling-ffi"
 version = "1.0.0"
 dependencies = [
- "allocator-api2",
+ "allocator-api2 0.4.0",
  "anyhow",
  "build_common",
  "datadog-ffe-ffi",

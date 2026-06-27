@@ -81,7 +81,7 @@ impl<T, A: Allocator> Arc<T, A> {
             data: CachePadded::new(data),
         };
         let boxed = Box::try_new_in(inner, alloc)?;
-        let (ptr, alloc) = Box::into_non_null(boxed);
+        let (ptr, alloc) = Box::into_non_null_with_allocator(boxed);
         Ok(Arc {
             ptr,
             alloc,

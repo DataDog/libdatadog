@@ -1,0 +1,26 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-collections"
+version = "1.0.0"
+description = "Panic-free collection types for constrained and FFI-sensitive code paths"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-collections"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-collections"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = []
+alloc = ["allocator-api2/alloc"]
+std = ["alloc", "allocator-api2/std"]
+
+[dependencies]
+allocator-api2 = { version = "0.4", default-features = false }
+
+[dev-dependencies]
+allocator-api2 = { version = "0.4", default-features = false, features = ["alloc"] }
+
+[lib]
+bench = false
