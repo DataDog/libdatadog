@@ -21,118 +21,123 @@ mod grpc_export_tests {
     use libdd_trace_utils::test_utils::create_test_json_span;
     use prost::Message;
     use serde_json::json;
+    use std::sync::mpsc;
+    use std::time::Duration;
     use tokio::net::TcpListener;
-    use tokio::sync::oneshot;
-    use tokio::task;
 
-    /// Starts a minimal HTTP/2 gRPC server that accepts exactly one Export call.
-    ///
-    /// Returns `(port, rx)` where `rx` receives the decoded
-    /// `ExportTraceServiceRequest` after the server handles the first request.
-    async fn start_grpc_test_server() -> (u16, oneshot::Receiver<ExportTraceServiceRequest>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let (tx, rx) = oneshot::channel::<ExportTraceServiceRequest>();
+    /// Runs the in-process h2 server loop: accept one connection, decode the first
+    /// Export request, forward it on `req_tx`, and return a gRPC success response.
+    async fn run_grpc_test_server(
+        listener: TcpListener,
+        req_tx: mpsc::Sender<ExportTraceServiceRequest>,
+    ) {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut h2_conn = server::handshake(socket).await.unwrap();
 
-        tokio::spawn(async move {
-            let (socket, _) = listener.accept().await.unwrap();
-            let mut h2_conn = server::handshake(socket).await.unwrap();
+        if let Some(result) = h2_conn.accept().await {
+            let (request, mut respond) = result.unwrap();
 
-            if let Some(result) = h2_conn.accept().await {
-                let (request, mut respond) = result.unwrap();
-
-                // Collect the full request body. The chunk length must be captured
-                // before `extend_from_slice` consumes it to satisfy the borrow checker.
-                let mut body = request.into_body();
-                let mut frame_data: Vec<u8> = Vec::new();
-                while let Some(chunk) = body.data().await {
-                    let chunk = chunk.unwrap();
-                    let len = chunk.len();
-                    frame_data.extend_from_slice(&chunk);
-                    body.flow_control().release_capacity(len).ok();
-                }
-
-                // Decode the gRPC frame: skip the 5-byte prefix (1 compression flag + 4 length).
-                let decoded = if frame_data.len() > 5 {
-                    ExportTraceServiceRequest::decode(&frame_data[5..]).ok()
-                } else {
-                    None
-                };
-                if let Some(req) = decoded {
-                    let _ = tx.send(req);
-                }
-
-                // Send gRPC success response: 200 headers + protobuf body + grpc-status trailer.
-                let response_proto = ExportTraceServiceResponse::default();
-                let proto_bytes = response_proto.encode_to_vec();
-                let mut frame = Vec::with_capacity(5 + proto_bytes.len());
-                frame.push(0u8); // no compression
-                frame.extend_from_slice(&(proto_bytes.len() as u32).to_be_bytes());
-                frame.extend_from_slice(&proto_bytes);
-
-                let response = http::Response::builder()
-                    .status(200)
-                    .header("content-type", "application/grpc")
-                    .body(())
-                    .unwrap();
-                let mut send_stream = respond.send_response(response, false).unwrap();
-                send_stream.send_data(Bytes::from(frame), false).unwrap();
-
-                // gRPC-status trailer (trailing HEADERS frame with END_STREAM).
-                let mut trailers = http::HeaderMap::new();
-                trailers.insert("grpc-status", "0".parse().unwrap());
-                send_stream.send_trailers(trailers).unwrap();
+            // Collect the full request body. The chunk length must be captured
+            // before `extend_from_slice` consumes it to satisfy the borrow checker.
+            let mut body = request.into_body();
+            let mut frame_data: Vec<u8> = Vec::new();
+            while let Some(chunk) = body.data().await {
+                let chunk = chunk.unwrap();
+                let len = chunk.len();
+                frame_data.extend_from_slice(&chunk);
+                body.flow_control().release_capacity(len).ok();
             }
 
-            // Drive the connection to completion so the client receives all frames
-            // before the TCP socket closes.
-            while h2_conn.accept().await.is_some() {}
-        });
+            // Decode the gRPC frame: skip the 5-byte prefix (1 compression flag + 4 length).
+            let decoded = if frame_data.len() > 5 {
+                ExportTraceServiceRequest::decode(&frame_data[5..]).ok()
+            } else {
+                None
+            };
+            if let Some(req) = decoded {
+                let _ = req_tx.send(req);
+            }
 
-        (port, rx)
+            // Send gRPC success response: 200 headers + protobuf body + grpc-status trailer.
+            let response_proto = ExportTraceServiceResponse::default();
+            let proto_bytes = response_proto.encode_to_vec();
+            let mut frame = Vec::with_capacity(5 + proto_bytes.len());
+            frame.push(0u8); // no compression
+            frame.extend_from_slice(&(proto_bytes.len() as u32).to_be_bytes());
+            frame.extend_from_slice(&proto_bytes);
+
+            let response = http::Response::builder()
+                .status(200)
+                .header("content-type", "application/grpc")
+                .body(())
+                .unwrap();
+            let mut send_stream = respond.send_response(response, false).unwrap();
+            send_stream.send_data(Bytes::from(frame), false).unwrap();
+
+            // gRPC-status trailer (trailing HEADERS frame with END_STREAM).
+            let mut trailers = http::HeaderMap::new();
+            trailers.insert("grpc-status", "0".parse().unwrap());
+            send_stream.send_trailers(trailers).unwrap();
+        }
+
+        // Drive the connection to completion so the client receives all frames
+        // before the TCP socket closes.
+        while h2_conn.accept().await.is_some() {}
     }
 
     #[cfg_attr(miri, ignore)]
-    #[tokio::test]
-    async fn grpc_export_sends_decodable_request() {
-        let (port, rx) = start_grpc_test_server().await;
+    #[test]
+    fn grpc_export_sends_decodable_request() {
+        // The h2 server runs on its own OS thread + runtime, and the exporter
+        // drives its own runtime via `send` on this thread. Keeping them on
+        // separate threads (rather than one shared test runtime) means neither
+        // can starve the other under parallel CI load — the previous
+        // `#[tokio::test]` current-thread setup could deadlock the server task.
+        let (port_tx, port_rx) = mpsc::channel::<u16>();
+        let (req_tx, req_rx) = mpsc::channel::<ExportTraceServiceRequest>();
 
+        let server = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async move {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                port_tx.send(listener.local_addr().unwrap().port()).unwrap();
+                run_grpc_test_server(listener, req_tx).await;
+            });
+        });
+
+        let port = port_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("server did not bind within 10s");
         let endpoint = format!("http://127.0.0.1:{port}");
 
-        // TraceExporter::send internally drives a tokio runtime; use spawn_blocking
-        // so it does not block the test's async runtime.
-        let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporterBuilder::default();
-            builder
-                .set_otlp_endpoint(&endpoint)
-                .set_otlp_protocol(OtlpProtocol::Grpc)
-                // Generous per-request timeout so the heavily instrumented coverage
-                // build does not time out the in-process gRPC round trip.
-                .set_connection_timeout(Some(60_000))
-                .set_language("test-lang")
-                .set_tracer_version("1.0")
-                .set_env("grpc-test-env")
-                .set_service("grpc-test-svc");
-            let exporter = builder.build::<NativeCapabilities>().expect("build");
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint(&endpoint)
+            .set_otlp_protocol(OtlpProtocol::Grpc)
+            .set_connection_timeout(Some(30_000))
+            .set_language("test-lang")
+            .set_tracer_version("1.0")
+            .set_env("grpc-test-env")
+            .set_service("grpc-test-svc");
+        let exporter = builder.build::<NativeCapabilities>().expect("build");
 
-            let mut span = create_test_json_span(1234, 12342, 12341, 1, false);
-            span["service"] = json!("grpc-test-svc");
-            span["name"] = json!("grpc_span");
-            let data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
-            exporter.send(data.as_ref()).expect("send ok");
-        })
-        .await;
+        let mut span = create_test_json_span(1234, 12342, 12341, 1, false);
+        span["service"] = json!("grpc-test-svc");
+        span["name"] = json!("grpc_span");
+        let data = rmp_serde::to_vec_named(&vec![vec![span]]).unwrap();
+        // No ambient async runtime on this thread, so the exporter's internal
+        // `block_on` runs directly without `spawn_blocking`.
+        exporter.send(data.as_ref()).expect("send ok");
 
-        assert!(
-            task_result.is_ok(),
-            "exporter task panicked: {task_result:?}"
-        );
-
-        // Wait for the server to receive and decode the request (5 second timeout).
-        let received = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
-            .await
-            .expect("server did not receive request within 5s")
-            .expect("server channel closed without sending");
+        // The server decodes and forwards the request before responding, so it is
+        // already available once `send` returns.
+        let received = req_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("server did not receive a decodable request within 10s");
+        server.join().ok();
 
         // Validate the decoded request contains the expected span.
         assert!(
