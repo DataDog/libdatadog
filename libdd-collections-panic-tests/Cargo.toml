@@ -1,0 +1,28 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-collections-panic-tests"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.87.0"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+# Keep the artifact name free of "panic" and "unwind" so symbol scans do not
+# match the crate name itself.
+name = "dd_collections_symbol_tests"
+crate-type = ["staticlib", "cdylib"]
+bench = false
+
+[dependencies]
+libdd-collections = { path = "../libdd-collections", default-features = false }
+panic-never = "0.1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+panic = "abort"
+strip = false

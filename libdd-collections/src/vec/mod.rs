@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Unlike [`std::vec::Vec`], this [`Vec`] is panic-free in release builds as
-//! long as used operations on `T` are panic-free (mostly, `T::drop`).
+//! long as the operations it invokes are panic-free: `T::clone`, `T::drop`,
+//! closure callbacks, allocator methods, and similar user-provided code.
 //! It also exposes only a safe API, even if this means it's less efficient.
 //!
 //! This guarantee applies to the operations provided directly by this type. If
@@ -20,7 +21,7 @@
 mod tests;
 
 use crate::alloc::{Allocator, Layout};
-use crate::collections::{TryReserveError, TryReserveErrorKind};
+use crate::{TryReserveError, TryReserveErrorKind};
 use core::borrow::{Borrow, BorrowMut};
 use core::fmt;
 use core::hash::{Hash, Hasher};
