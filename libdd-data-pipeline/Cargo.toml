@@ -46,6 +46,8 @@ libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
+# Cross-platform `SystemTime` for client-side stats; `std::time` panics on wasm32.
+web-time = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }

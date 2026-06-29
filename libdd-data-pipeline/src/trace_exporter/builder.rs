@@ -611,9 +611,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         // The handle is stored in TraceExporterWorkers on both native and wasm so
         // that shutdown_async can stop the worker symmetrically on both targets.
 
-        #[allow(unused_mut)]
         let mut stats = StatsComputationStatus::Disabled;
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(bucket_size) = self.stats_bucket_size {
             stats = StatsComputationStatus::DisabledByAgent { bucket_size };
         }
@@ -717,9 +715,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
         // OTLP metrics + stats bucket size: start the concentrator unconditionally (bypass the
         // agent gate) so `check_agent_info` cannot later disable stats.
-        #[allow(unused_mut)]
         let mut otlp_stats_enabled = false;
-        #[cfg(not(target_arch = "wasm32"))]
         if let (Some(metrics_config), Some(bucket_size)) =
             (otlp_metrics_config.clone(), self.stats_bucket_size)
         {
@@ -732,7 +728,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .collect();
             let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
                 bucket_size,
-                std::time::SystemTime::now(),
+                web_time::SystemTime::now(),
                 span_kinds,
                 self.peer_tags.clone(),
                 None,
