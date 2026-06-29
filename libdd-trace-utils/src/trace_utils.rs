@@ -332,6 +332,7 @@ pub(crate) fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayloa
         .then(a.runtime_id.cmp(&b.runtime_id))
         .then(a.env.cmp(&b.env))
         .then(a.app_version.cmp(&b.app_version))
+        .then(a.container_debug.cmp(&b.container_debug))
 }
 
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {

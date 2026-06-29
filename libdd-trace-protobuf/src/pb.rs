@@ -432,7 +432,7 @@ pub struct TracerPayload {
     pub container_debug: ::core::option::Option<ContainerDebug>,
 }
 /// ContainerDebug holds debug information about the container tags resolution process.
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, PartialOrd, Ord)]
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ContainerDebug {
     /// error specifies any error that occurred during container tag resolution.
