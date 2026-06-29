@@ -65,15 +65,6 @@ const PROMOTED_ATTR_KEYS: &[&str] = &[
     "_sampling_priority_v1",
 ];
 
-/// Writes a `bool` as the v0.4 string representation (`"true"` / `"false"`). Used wherever a
-/// typed V1 `Bool` attribute is downgraded into v0.4 `meta` (which is `String → String` only).
-fn write_bool_as_str<W: RmpWrite>(
-    writer: &mut W,
-    b: bool,
-) -> Result<(), ValueWriteError<W::Error>> {
-    write_str(writer, if b { "true" } else { "false" })
-}
-
 /// Chunk-level context propagated into every span when downgrading to v0.4. Built once per
 /// chunk by the top-level encoder and passed by reference to `encode_span_v1_to_v04`. Also
 /// carries payload-level fields (`payload_env`, `payload_app_version`, `payload_attributes`),
@@ -453,31 +444,6 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-<<<<<<< HEAD
-=======
-/// Writes a single `meta_struct` entry. `Bytes` goes through as msgpack `bin`; structural
-/// `KeyValue` / `List` would need a recursive msgpack re-encoding — stubbed as empty `bin` for
-/// now (TODO: implement structural serialization).
-fn write_meta_struct_entry<W: RmpWrite, T: TraceData>(
-    writer: &mut W,
-    k: &T::Text,
-    v: &AttributeValue<T>,
-) -> Result<(), ValueWriteError<W::Error>> {
-    match v {
-        AttributeValue::Bytes(b) => {
-            write_str(writer, k.borrow())?;
-            write_bin(writer, b.borrow())?;
-        }
-        AttributeValue::KeyValue(_) | AttributeValue::List(_) => {
-            write_str(writer, k.borrow())?;
-            write_bin(writer, todo!())?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
->>>>>>> 22c104454 (fix: apply comments)
 /// Encodes [`v1::SpanLink`](crate::span::v1::SpanLink)s into the v0.4 msgpack wire format
 /// (downgrade: v1 input → v0.4 output). The 128-bit `trace_id` is split into
 /// `(trace_id, trace_id_high)` u64s. Typed link attributes are downgraded to strings;
