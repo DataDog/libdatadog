@@ -271,6 +271,22 @@ pub fn set_session_process_tags(
     Ok(())
 }
 
+pub fn set_session_default_service_name(
+    transport: &mut SidecarTransport,
+    name: Option<String>,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_default_service_name(name);
+    Ok(())
+}
+
+pub fn set_session_user_service_defined(
+    transport: &mut SidecarTransport,
+    is_defined: bool,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_user_service_defined(is_defined);
+    Ok(())
+}
+
 /// Sends a trace as bytes.
 pub fn send_trace_v04_bytes(
     transport: &mut SidecarTransport,

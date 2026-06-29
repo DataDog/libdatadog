@@ -1,9 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! macOS host machine id via `gethostuuid(3)`, returning `IOPlatformUUID`.
+
 /// Returns `IOPlatformUUID` via `gethostuuid(3)`, which avoids a fork+exec of `ioreg`.
 pub fn get_machine_id_impl() -> String {
     let mut uuid = [0u8; 16];
+    // Zero timeout: the host UUID is static, so there's nothing to wait for.
     let wait = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -12,6 +15,7 @@ pub fn get_machine_id_impl() -> String {
     if rc != 0 {
         return String::new();
     }
+    // Assemble the 16 raw bytes into the canonical 8-4-4-4-12 hyphenated UUID.
     format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         uuid[0], uuid[1], uuid[2], uuid[3],

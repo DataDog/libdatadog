@@ -8,6 +8,7 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
 pub mod config_utils;
+pub mod json_log_encoder;
 pub mod msgpack_decoder;
 pub mod msgpack_encoder;
 pub mod otlp_encoder;

@@ -24,7 +24,6 @@ const GRPC_STATUS_CODE_FIELD: &[&str] = &[
     "rpc.grpc.status.code",
     "grpc.status.code",
 ];
-const GRPC_METHOD_FIELD: &[&str] = &["grpc.method.name", "rpc.method"];
 
 /// Aggregation key fields shared across all concentrator implementations — everything
 /// **except** peer tags.
@@ -153,17 +152,6 @@ fn get_grpc_status_code<'a>(span: &'a impl StatSpan<'a>) -> Option<u8> {
     None
 }
 
-pub(super) fn get_grpc_method<'a>(span: &'a impl StatSpan<'a>) -> &'a str {
-    for key in GRPC_METHOD_FIELD {
-        if let Some(val) = span.get_meta(key) {
-            if !val.is_empty() {
-                return val;
-            }
-        }
-    }
-    ""
-}
-
 fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
     if let Ok(status) = v.parse() {
         return Some(status);
@@ -262,7 +250,6 @@ impl<'a> BorrowedAggregationKey<'a> {
         };
 
         let grpc_status_code = get_grpc_status_code(span);
-
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
 
         Self {
@@ -344,9 +331,6 @@ pub(super) struct GroupedStats {
     error_duration: u64,
     error_min: u64,
     error_max: u64,
-    // gRPC method for OTLP export only; not part of the aggregation key so agent stats are
-    // unaffected.
-    pub(super) grpc_method: String,
 }
 
 impl GroupedStats {
@@ -390,14 +374,11 @@ pub struct OtlpExactCell {
 }
 
 /// Exact OK/ERROR cells for one aggregation group, in the same order as the `stats` vector
-/// of the accompanying [`pb::ClientStatsBucket`]. `grpc_method` is the group's gRPC method (DD
-/// schema `grpc.method.name`) carried out-of-band so it does not appear in the agent stats
-/// protobuf wire format.
+/// of the accompanying [`pb::ClientStatsBucket`].
 #[derive(Debug, Clone, Default)]
 pub struct OtlpExactGroup {
     pub ok: OtlpExactCell,
     pub error: OtlpExactCell,
-    pub grpc_method: String,
 }
 
 /// A bucket flushed for the OTLP trace-metrics path. `exact[i]` is the exact-scalar sidecar
@@ -433,14 +414,10 @@ impl StatsBucket {
         duration: i64,
         is_error: bool,
         is_top_level: bool,
-        grpc_method: &str,
     ) {
         self.data
             .entry_ref(&key)
-            .or_insert_with(|| GroupedStats {
-                grpc_method: grpc_method.to_owned(),
-                ..Default::default()
-            })
+            .or_default()
             .insert(duration, is_error, is_top_level);
     }
 
@@ -455,8 +432,7 @@ impl StatsBucket {
     pub(super) fn flush_with_otlp_exact(self, bucket_duration: u64) -> OtlpStatsBucket {
         let mut stats = Vec::with_capacity(self.data.len());
         let mut exact = Vec::with_capacity(self.data.len());
-        for (k, mut g) in self.data {
-            let grpc_method = std::mem::take(&mut g.grpc_method);
+        for (k, g) in self.data {
             exact.push(OtlpExactGroup {
                 ok: OtlpExactCell {
                     count: g.hits.saturating_sub(g.errors),
@@ -470,7 +446,6 @@ impl StatsBucket {
                     min_ns: g.error_min,
                     max_ns: g.error_max,
                 },
-                grpc_method,
             });
             stats.push(encode_grouped_stats(k, g));
         }
@@ -829,18 +804,6 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(0),
-                    is_trace_root: true,
-                    ..Default::default()
-                }
-                .into_key(),
-            ),
-            // grpc.method.name is carried in GroupedStats (for OTLP), not in the aggregation key.
-            (
-                SpanBytes {
-                    meta: vec![("grpc.method.name".into(), "/pkg.Svc/Method".into())].into(),
-                    ..Default::default()
-                },
-                FixedAggregationKey {
                     is_trace_root: true,
                     ..Default::default()
                 }
