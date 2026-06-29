@@ -60,7 +60,7 @@ use libdd_trace_stats::span_concentrator::{FixedAggregationKey, FlushableConcent
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 
-const SHM_VERSION: u32 = 1;
+const SHM_VERSION: u32 = 2;
 
 /// Maximum peer-tag (key, value) pairs per aggregation slot.
 pub const MAX_PEER_TAGS: usize = 16;

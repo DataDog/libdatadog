@@ -88,6 +88,8 @@ pub struct TraceExporterConfig {
     shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
     otlp_protocol: Option<OtlpProtocol>,
+    output_to_log: bool,
+    log_max_line_size: Option<usize>,
 }
 
 #[no_mangle]
@@ -541,6 +543,37 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
     )
 }
 
+/// Configure the exporter to write traces as newline-delimited JSON to stdout (the Datadog
+/// Forwarder "log exporter" path) instead of sending them to a Datadog agent. Used in serverless
+/// environments (e.g. AWS Lambda) when no agent is reachable.
+///
+/// `max_line_size` overrides the per-line byte cap; pass `0` to use the default (256 KiB, the AWS
+/// CloudWatch Logs limit). When enabled, agent-specific behavior (agent-info polling, client-side
+/// stats, V1 negotiation) is bypassed.
+///
+/// In this mode each span's `meta` is serialized to process stdout (and thus captured by CloudWatch
+/// Logs in Lambda); `meta_struct` is excluded because it holds raw msgpack the log intake cannot
+/// interpret.
+///
+/// Writes are synchronous/blocking on stdout, so this mode targets single-threaded / current-thread
+/// serverless runtimes (e.g. AWS Lambda) where a blocking write won't stall a shared async reactor.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_output_to_log(
+    config: Option<&mut TraceExporterConfig>,
+    max_line_size: usize,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.output_to_log = true;
+            handle.log_max_line_size = (max_line_size != 0).then_some(max_line_size);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces to
@@ -617,6 +650,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 if let Some(protocol) = config.otlp_protocol {
                     builder.set_otlp_protocol(protocol);
                 }
+            }
+
+            if config.output_to_log {
+                builder.set_output_to_log(config.log_max_line_size);
             }
 
             match builder.build() {
@@ -714,8 +751,34 @@ mod tests {
             assert!(cfg.process_tags.is_none());
             assert!(cfg.test_session_token.is_none());
             assert!(cfg.connection_timeout.is_none());
+            assert!(!cfg.output_to_log);
+            assert_eq!(cfg.log_max_line_size, None);
 
             ddog_trace_exporter_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn config_output_to_log_test() {
+        unsafe {
+            // Null config handle -> InvalidArgument.
+            let error = ddog_trace_exporter_config_set_output_to_log(None, 0);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // 0 is a sentinel for "use the default cap" -> None.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_output_to_log(config.as_mut(), 0);
+            assert_eq!(error, None);
+            let cfg = config.unwrap();
+            assert!(cfg.output_to_log);
+            assert_eq!(cfg.log_max_line_size, None);
+
+            // Non-zero cap is stored as-is.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_output_to_log(config.as_mut(), 4096);
+            assert_eq!(error, None);
+            assert_eq!(config.unwrap().log_max_line_size, Some(4096));
         }
     }
 

@@ -9,6 +9,7 @@ use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
+use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
@@ -19,7 +20,7 @@ use crate::trace_exporter::{
     TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
 use libdd_shared_runtime::SharedRuntime;
@@ -94,6 +95,11 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     otlp_metrics_headers: Vec<(String, String)>,
     otel_trace_semantics_enabled: bool,
     runtime_id: Option<String>,
+    /// When true, traces are written as newline-delimited JSON to stdout (the
+    /// Datadog Forwarder "log exporter" path) instead of being sent to an agent.
+    output_to_log: bool,
+    /// Optional override for the maximum size of a single emitted log line.
+    log_max_line_size: Option<usize>,
 }
 
 /// Default is impl'd for `R = ForkSafeRuntime` only so that bare
@@ -156,6 +162,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agentless_endpoint: None,
             agentless_api_key: None,
             agentless_timeout: None,
+            output_to_log: false,
+            log_max_line_size: None,
         }
     }
 }
@@ -469,6 +477,31 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self.runtime_id = Some(id.to_owned());
         self
     }
+    /// Configure the exporter to write traces as newline-delimited JSON to stdout
+    /// (the Datadog Forwarder "log exporter" path) instead of sending them to a
+    /// Datadog agent. This is the transport used in serverless environments (e.g.
+    /// AWS Lambda) when no agent is reachable.
+    ///
+    /// `max_line_size` overrides the per-line byte cap; `None` (or `Some(0)`,
+    /// which is coerced to the default) uses the default of 256 KiB, the AWS
+    /// CloudWatch Logs per-event limit. When this is set, agent-specific behavior
+    /// (agent-info polling, client-side stats, V1 negotiation) is bypassed.
+    ///
+    /// In this mode each span's `meta` is serialized to process stdout (and thus
+    /// captured by CloudWatch Logs in Lambda); `meta_struct` is excluded because
+    /// it holds raw msgpack the log intake cannot interpret. Writes are
+    /// synchronous/blocking, so this mode targets single-threaded serverless
+    /// runtimes where blocking stdout writes do not stall a shared async reactor.
+    ///
+    /// Takes precedence over an OTLP endpoint: if both this and `set_otlp_endpoint`
+    /// are configured, traces are written to the log output and not sent via OTLP.
+    pub fn set_output_to_log(&mut self, max_line_size: Option<usize>) -> &mut Self {
+        self.output_to_log = true;
+        // Treat `Some(0)` as "use the default" (a 0 cap would drop every span);
+        // keeps parity with the FFI setter's 0-sentinel.
+        self.log_max_line_size = max_line_size.filter(|&n| n != 0);
+        self
+    }
 
     /// Build the [`TraceExporter`] synchronously.
     ///
@@ -476,7 +509,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Requires `R: BlockingRuntime` so the builder can drive setup on the runtime. Not
     /// available on wasm — use [`Self::build_async`] there.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+    pub fn build<
+        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    >(
         mut self,
     ) -> Result<TraceExporter<C, R>, TraceExporterError>
     where
@@ -503,7 +538,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// context. If [`set_shared_runtime`](Self::set_shared_runtime) was not called, a new
     /// runtime is constructed via [`SharedRuntime::new`].
     pub async fn build_async<
-        C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
     >(
         self,
     ) -> Result<TraceExporter<C, R>, TraceExporterError> {
@@ -555,7 +590,11 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
-        let info_fetcher_handle = if agentless_enabled {
+        // TODO(APMSP-3609): consolidate per-mode worker gating (info-fetcher, telemetry,
+        // stats concentrator) off the selected export destination in one place.
+        // In log-export mode there is no agent to poll; skip spawning the worker
+        // entirely so we don't make repeated failing `/info` calls (e.g. in Lambda).
+        let info_fetcher_handle = if self.output_to_log || agentless_enabled {
             None
         } else {
             Some(
@@ -572,7 +611,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         // it is dropped here (the worker keeps running on the JS event loop
         // until the page/module is torn down).
         #[cfg(target_arch = "wasm32")]
-        let _ = info_fetcher_handle;
+        drop(info_fetcher_handle);
 
         #[allow(unused_mut)]
         let mut stats = StatsComputationStatus::Disabled;
@@ -587,9 +626,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             let telemetry = self
                 .telemetry
                 .filter(|_| {
-                    // Agentless mode has no agent endpoint to talk to, so we skip the
+                    // no agent endpoint to talk to, so we skip the
                     // telemetry worker
-                    !agentless_enabled
+                    !(agentless_enabled || self.output_to_log)
                 })
                 .map(|telemetry_config| {
                     let mut builder = TelemetryClientBuilder::default()
@@ -725,6 +764,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otlp_stats_enabled = true;
         }
 
+        let log_output = self
+            .output_to_log
+            .then(|| self.log_max_line_size.unwrap_or(DEFAULT_LOG_MAX_LINE_SIZE));
+
         Ok(TraceExporter {
             endpoint: Endpoint {
                 url: agent_url,
@@ -787,6 +830,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agentless_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
+            log_output,
         })
     }
 
@@ -800,6 +844,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Exclusion rules enforced here:
     /// - OTLP and agentless cannot both be configured.
     /// - Agentless cannot be combined with a caller-supplied agent URL.
+    /// - Log output cannot be combined with OTLP or agentless trace export.
     /// - [`Self::set_agentless_timeout`] requires [`Self::set_agentless_endpoint`].
     ///
     /// OTLP and an agent URL may coexist: the agent URL is still useful for auxiliary
@@ -808,6 +853,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         let otlp_set = self.otlp_endpoint.is_some();
         let agentless_set = self.agentless_endpoint.is_some();
         let agent_url_set = self.url.is_some();
+        let log_output_set = self.output_to_log;
 
         if otlp_set && agentless_set {
             return Err(TraceExporterError::Builder(
@@ -822,6 +868,22 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 BuilderErrorKind::InvalidConfiguration(
                     "trace agent URL cannot be set when agentless trace export is enabled"
                         .to_string(),
+                ),
+            ));
+        }
+
+        if log_output_set && otlp_set {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "log trace export cannot be combined with OTLP trace export".to_string(),
+                ),
+            ));
+        }
+
+        if log_output_set && agentless_set {
+            return Err(TraceExporterError::Builder(
+                BuilderErrorKind::InvalidConfiguration(
+                    "log trace export cannot be combined with agentless trace export".to_string(),
                 ),
             ));
         }
@@ -860,6 +922,38 @@ mod tests {
     use crate::trace_exporter::error::BuilderErrorKind;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::ForkSafeRuntime;
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_log_output_mode() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("test")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_to_log(None);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        // Log-output mode is enabled and the agent-info worker is not spawned.
+        // (End-to-end send -> bytes is covered by the capability-injecting test in
+        // `mod.rs` and the `log_writer` unit tests.)
+        assert!(
+            exporter.log_output.is_some(),
+            "log_output should be set in log-output mode"
+        );
+        assert!(
+            exporter.workers.info_fetcher.is_none(),
+            "no agent-info worker should be spawned in log mode"
+        );
+    }
+
+    #[test]
+    fn set_output_to_log_some_zero_uses_default() {
+        // `Some(0)` is coerced to "use the default cap" (a 0 cap would drop every
+        // span), which is represented as `None` on the builder field.
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_output_to_log(Some(0));
+        assert!(builder.output_to_log);
+        assert_eq!(builder.log_max_line_size, None);
+    }
 
     #[cfg_attr(miri, ignore)]
     #[test]
