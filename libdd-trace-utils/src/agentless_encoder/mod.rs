@@ -39,22 +39,47 @@ const MAX_META_VALUE_LEN: usize = 25_000;
 /// Suffix appended when a `meta` value is truncated.
 const TRUNCATION_SUFFIX: &str = "...";
 
+/// # Why are we doing this?
+///
+/// The JSON agentless format is different from the in-memory model of v04 spans (and to v03/v04/v05
+/// on-the-wire schemas) In order to not have to copy to intermediary structs, we have to write a
+/// manual encoder. For JSON there is no widely available JSON emitter in rust other than serde
+/// JSON. But serde does not let us drive serialization other than through the serde::Serialize
+/// trait.
+///
+/// Defining structs implementing serde::Serialize for every nested object in the span is heavy,
+///
+/// This macro captures parameters from the environment and creates a local struct implementing
+/// serde::Serialize, with a custom implementation.
+///
+/// # Usage
+///
+/// The shape of the input of the macro is made to look like a closure
+/// Contrary to a closure, the names of the types have to be named in full
+/// ```ignore
+///        Optional generic| serializer|
+///            parameter   |.  |               Captured variables from env       
+///         --------------  --- ---------------------------------------------------------
+/// ser_fn!(<T: TraceData> |ser, traces: &'a [Vec<Span<T>>], metadata: &'a TracerMetadata| {
+///     // Body of the closure
+/// }
+/// ```
 macro_rules! ser_fn {
     ($(<$generic:ident $(: $bound:ident )?>)? |$serializer:ident , $($captured:ident : $ty:ty),+ $(,)?| { $($body:tt)* }) => {
         {
-            struct SerializeClosure<'a, $($generic $(: $bound + 'a)? ,)? F: Fn() -> ($(&'a $ty ,)*)>(F);
+            struct SerializeClosure<'a, $($generic $(: $bound + 'a)? ,)?>(($(&'a $ty ,)*));
 
-            impl <'a, $($generic $(: $bound + 'a)?,)? F: Fn() -> ($(&'a $ty ,)*)> serde::Serialize for SerializeClosure<'a, $($generic,)? F> {
+            impl <'a, $($generic $(: $bound + 'a)?,)?> serde::Serialize for SerializeClosure<'a, $($generic,)?> {
                 #[inline]
                 fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                    let captured = (self.0)();
+                    let captured = self.0;
                     (|$serializer: S , ($(& $captured, )*) : ($(&'a $ty ,)*)| {
                         $($body)*
                     })(serializer, captured)
                 }
             }
 
-            SerializeClosure(|| ($(& $captured ,)*))
+            SerializeClosure(($(& $captured ,)*))
         }
     }
 }
