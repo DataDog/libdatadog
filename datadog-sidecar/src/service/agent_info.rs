@@ -8,10 +8,10 @@
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
-use crate::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use crate::primary_sidecar_identifier;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
+use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::Shared;
 use futures::FutureExt;
@@ -188,7 +188,9 @@ impl AgentInfoReader {
     pub fn new(endpoint: &Endpoint) -> AgentInfoReader {
         let path = info_path(endpoint);
         AgentInfoReader {
-            reader: OneWayShmReader::new(open_named_shm(&path).ok(), path),
+            reader: OneWayShmReader::new_with_opener(open_named_shm(&path).ok(), path, |path| {
+                open_named_shm(path).ok()
+            }),
             info: None,
         }
     }

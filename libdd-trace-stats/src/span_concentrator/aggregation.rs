@@ -250,7 +250,6 @@ impl<'a> BorrowedAggregationKey<'a> {
         };
 
         let grpc_status_code = get_grpc_status_code(span);
-
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
 
         Self {
@@ -324,6 +323,14 @@ pub(super) struct GroupedStats {
     top_level_hits: u64,
     ok_summary: libdd_ddsketch::DDSketch,
     error_summary: libdd_ddsketch::DDSketch,
+    // Exact per-cell (ok/error) scalars used by the OTLP trace-metrics path. These are tracked
+    // separately from `duration` so the /v0.6/stats agent payload is byte-for-byte unchanged.
+    ok_duration: u64,
+    ok_min: u64,
+    ok_max: u64,
+    error_duration: u64,
+    error_min: u64,
+    error_max: u64,
 }
 
 impl GroupedStats {
@@ -331,17 +338,55 @@ impl GroupedStats {
     fn insert(&mut self, duration: i64, is_error: bool, is_top_level: bool) {
         self.hits += 1;
         self.duration += duration as u64;
-
+        let d = duration as u64;
         if is_error {
             self.errors += 1;
             let _ = self.error_summary.add(duration as f64);
+            self.error_duration += d;
+            self.error_min = if self.errors == 1 {
+                d
+            } else {
+                self.error_min.min(d)
+            };
+            self.error_max = self.error_max.max(d);
         } else {
             let _ = self.ok_summary.add(duration as f64);
+            self.ok_duration += d;
+            let ok_count = self.hits - self.errors;
+            self.ok_min = if ok_count == 1 { d } else { self.ok_min.min(d) };
+            self.ok_max = self.ok_max.max(d);
         }
         if is_top_level {
             self.top_level_hits += 1;
         }
     }
+}
+
+/// Exact per-cell (ok or error) scalars for one aggregation group, surfaced to the OTLP
+/// trace-metrics path. `count` is exact; `duration_ns`/`min_ns`/`max_ns` are exact when
+/// `count > 0` and meaningless otherwise (the OTLP mapper suppresses empty cells).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OtlpExactCell {
+    pub count: u64,
+    pub duration_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+}
+
+/// Exact OK/ERROR cells for one aggregation group, in the same order as the `stats` vector
+/// of the accompanying [`pb::ClientStatsBucket`].
+#[derive(Debug, Clone, Default)]
+pub struct OtlpExactGroup {
+    pub ok: OtlpExactCell,
+    pub error: OtlpExactCell,
+}
+
+/// A bucket flushed for the OTLP trace-metrics path. `exact[i]` is the exact-scalar sidecar
+/// for `bucket.stats[i]`; the protobuf bucket itself is identical to what the agent path uses.
+#[derive(Debug, Clone)]
+pub struct OtlpStatsBucket {
+    pub bucket: pb::ClientStatsBucket,
+    pub exact: Vec<OtlpExactGroup>,
 }
 
 /// A time bucket used for stats aggregation. It stores a map of GroupedStats storing the stats of
@@ -379,16 +424,39 @@ impl StatsBucket {
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
     /// `bucket_duration` is the size of buckets for the concentrator containing the bucket.
     pub(super) fn flush(self, bucket_duration: u64) -> pb::ClientStatsBucket {
-        pb::ClientStatsBucket {
-            start: self.start,
-            duration: bucket_duration,
-            stats: self
-                .data
-                .into_iter()
-                .map(|(k, b)| encode_grouped_stats(k, b))
-                .collect(),
-            // Agent-only field
-            agent_time_shift: 0,
+        self.flush_with_otlp_exact(bucket_duration).bucket
+    }
+
+    /// Like [`Self::flush`], but additionally produces exact per-cell scalars for the OTLP
+    /// trace-metrics path. The `bucket` field is identical to what [`Self::flush`] returns.
+    pub(super) fn flush_with_otlp_exact(self, bucket_duration: u64) -> OtlpStatsBucket {
+        let mut stats = Vec::with_capacity(self.data.len());
+        let mut exact = Vec::with_capacity(self.data.len());
+        for (k, g) in self.data {
+            exact.push(OtlpExactGroup {
+                ok: OtlpExactCell {
+                    count: g.hits.saturating_sub(g.errors),
+                    duration_ns: g.ok_duration,
+                    min_ns: g.ok_min,
+                    max_ns: g.ok_max,
+                },
+                error: OtlpExactCell {
+                    count: g.errors,
+                    duration_ns: g.error_duration,
+                    min_ns: g.error_min,
+                    max_ns: g.error_max,
+                },
+            });
+            stats.push(encode_grouped_stats(k, g));
+        }
+        OtlpStatsBucket {
+            bucket: pb::ClientStatsBucket {
+                start: self.start,
+                duration: bucket_duration,
+                stats,
+                agent_time_shift: 0,
+            },
+            exact,
         }
     }
 }

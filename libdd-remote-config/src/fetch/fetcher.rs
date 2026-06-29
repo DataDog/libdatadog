@@ -183,11 +183,11 @@ impl<S> ConfigFetcherState<S> {
                     target_file.state.apply_error = "".to_string();
                 }
                 ConfigApplyState::Acknowledged => {
-                    target_file.state.apply_state = 1;
+                    target_file.state.apply_state = 2;
                     target_file.state.apply_error = "".to_string();
                 }
                 ConfigApplyState::Error(error) => {
-                    target_file.state.apply_state = 1;
+                    target_file.state.apply_state = 3;
                     target_file.state.apply_error = error;
                 }
             }
@@ -317,6 +317,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 client_agent: None,
                 last_seen: 0,
                 capabilities: product_capabilities.encoded_capabilities.clone(),
+                is_updater: false,
+                client_updater: None,
             }),
             cached_target_files,
         }

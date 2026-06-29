@@ -1,15 +1,13 @@
 // Unless explicitly stated otherwise all files in this repository are licensed under the Apache
 // License Version 2.0. This product includes software developed at Datadog (https://www.datadoghq.com/). Copyright 2021-Present Datadog, Inc.
 
-use crate::one_way_shared_memory::{
-    open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
-};
 use crate::primary_sidecar_identifier;
 use crate::service::{DynamicInstrumentationConfigState, InstanceId};
 use crate::tracer::SHM_LIMITER;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
-use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
+use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
+use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
 use datadog_live_debugger::LiveDebuggingData;
 use libdd_common::{tag::Tag, MutexExt};
@@ -106,14 +104,19 @@ pub fn path_for_remote_config(id: &ConfigInvariants, target: &Arc<Target>) -> CS
 impl RemoteConfigReader {
     pub fn new(id: &ConfigInvariants, target: &Arc<Target>) -> RemoteConfigReader {
         let path = path_for_remote_config(id, target);
-        RemoteConfigReader(OneWayShmReader::new(open_named_shm(&path).ok(), path))
+        RemoteConfigReader(OneWayShmReader::new_with_opener(
+            open_named_shm(&path).ok(),
+            path,
+            |path| open_named_shm(path).ok(),
+        ))
     }
 
     pub fn from_path(path: &CStr) -> Self {
         #[allow(clippy::unwrap_used)]
-        RemoteConfigReader(OneWayShmReader::new(
+        RemoteConfigReader(OneWayShmReader::new_with_opener(
             open_named_shm(path).ok(),
             CString::new(path.to_bytes()).unwrap(),
+            |path| open_named_shm(path).ok(),
         ))
     }
 
@@ -140,12 +143,6 @@ impl RemoteConfigWriter {
 
     pub fn current_generation(&self) -> u64 {
         self.writer.current_generation()
-    }
-}
-
-impl ReaderOpener<NamedShmHandle> for OneWayShmReader<NamedShmHandle, CString> {
-    fn open(&self) -> Option<MappedMem<NamedShmHandle>> {
-        open_named_shm(&self.extra).ok()
     }
 }
 
@@ -494,6 +491,10 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         let writers = self.0.storage.storage.writers.lock_or_panic();
         if let Some(writer) = writers.get(&target) {
             if writer.current_generation() > remote_config_generation {
+                debug!(
+                    "Notify {:?} about newer remote config changes existing",
+                    notify_target
+                );
                 notify_target.notify();
             }
         }

@@ -3,11 +3,12 @@
 
 use crate::agent_info::AgentInfoFetcher;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
-use crate::otlp::OtlpTraceConfig;
+use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
+use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
@@ -18,19 +19,38 @@ use crate::trace_exporter::{
     TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
 use libdd_shared_runtime::SharedRuntime;
+#[cfg(not(target_arch = "wasm32"))]
+use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
+/// Build an [`http::HeaderMap`] from key/value pairs, skipping malformed entries.
+fn build_otlp_header_map(headers: Vec<(String, String)>) -> http::HeaderMap {
+    let mut out = http::HeaderMap::new();
+    for (k, v) in headers {
+        match (
+            http::HeaderName::from_bytes(k.as_bytes()),
+            http::HeaderValue::from_str(&v),
+        ) {
+            (Ok(n), Ok(vv)) => {
+                out.insert(n, vv);
+            }
+            _ => tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", k, v),
+        }
+    }
+    out
+}
+
 #[allow(missing_docs)]
-#[derive(Debug, Default)]
-pub struct TraceExporterBuilder {
+#[derive(Debug)]
+pub struct TraceExporterBuilder<R: SharedRuntime> {
     url: Option<String>,
     hostname: String,
     env: String,
@@ -59,16 +79,89 @@ pub struct TraceExporterBuilder {
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
-    shared_runtime: Option<Arc<SharedRuntime>>,
+    shared_runtime: Option<Arc<R>>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
+    otlp_protocol: OtlpProtocol,
+    otlp_metrics_endpoint: Option<String>,
+    otlp_metrics_headers: Vec<(String, String)>,
+    otel_trace_semantics_enabled: bool,
+    runtime_id: Option<String>,
+    /// When true, traces are written as newline-delimited JSON to stdout (the
+    /// Datadog Forwarder "log exporter" path) instead of being sent to an agent.
+    output_to_log: bool,
+    /// Optional override for the maximum size of a single emitted log line.
+    log_max_line_size: Option<usize>,
 }
 
-impl TraceExporterBuilder {
+/// Default is impl'd for `R = ForkSafeRuntime` only so that bare
+/// `TraceExporterBuilder::default()` resolves unambiguously to the fork-safe variant on
+/// native. Builders parameterized with another runtime construct via
+/// [`TraceExporterBuilder::new`] explicitly.
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for TraceExporterBuilder<ForkSafeRuntime> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<R: SharedRuntime> TraceExporterBuilder<R> {
+    /// Construct a builder with all fields at their initial / `None` state.
+    ///
+    /// On native, `TraceExporterBuilder::<ForkSafeRuntime>::new()` and
+    /// `TraceExporterBuilder::default()` are equivalent; for other runtimes (e.g.
+    /// `BasicRuntime`, `LocalRuntime`) callers must use `new` directly.
+    pub fn new() -> Self {
+        Self {
+            url: None,
+            hostname: String::new(),
+            env: String::new(),
+            app_version: String::new(),
+            service: String::new(),
+            tracer_version: String::new(),
+            language: String::new(),
+            language_version: String::new(),
+            language_interpreter: String::new(),
+            language_interpreter_vendor: String::new(),
+            git_commit_sha: String::new(),
+            process_tags: String::new(),
+            input_format: TraceExporterInputFormat::default(),
+            output_format: TraceExporterOutputFormat::default(),
+            dogstatsd_url: None,
+            client_computed_stats: false,
+            client_computed_top_level: false,
+            stats_bucket_size: None,
+            peer_tags_aggregation: false,
+            compute_stats_by_span_kind: false,
+            peer_tags: Vec::new(),
+            #[cfg(feature = "stats-obfuscation")]
+            client_side_stats_obfuscation_enabled: false,
+            #[cfg(feature = "telemetry")]
+            telemetry: None,
+            telemetry_instrumentation_sessions: TelemetryInstrumentationSessions::default(),
+            shared_runtime: None,
+            health_metrics_enabled: false,
+            test_session_token: None,
+            agent_rates_payload_version_enabled: false,
+            connection_timeout: None,
+            otlp_endpoint: None,
+            otlp_headers: Vec::new(),
+            otlp_protocol: OtlpProtocol::default(),
+            otlp_metrics_endpoint: None,
+            otlp_metrics_headers: Vec::new(),
+            otel_trace_semantics_enabled: false,
+            runtime_id: None,
+            output_to_log: false,
+            log_max_line_size: None,
+        }
+    }
+}
+
+impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Sets the URL of the agent.
     ///
     /// The agent supports the following URL schemes:
@@ -252,7 +345,9 @@ impl TraceExporterBuilder {
     }
 
     /// Set a shared runtime used by the exporter for background workers.
-    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<SharedRuntime>) -> &mut Self {
+    ///
+    /// See [`libdd_shared_runtime::SharedRuntime`] for guidance on choosing an implementation.
+    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<R>) -> &mut Self {
         self.shared_runtime = Some(shared_runtime);
         self
     }
@@ -287,6 +382,15 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Selects the OTLP export protocol: [`OtlpProtocol::HttpJson`] (default) or
+    /// [`OtlpProtocol::HttpProtobuf`]. The host language resolves this from
+    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; a `grpc` value is
+    /// unsupported and is rejected when parsed into [`OtlpProtocol`], so it never reaches here.
+    pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
+        self.otlp_protocol = protocol;
+        self
+    }
+
     /// Sets additional HTTP headers to include in OTLP trace export requests.
     ///
     /// Headers should be provided as key-value pairs. The host language is responsible for
@@ -297,18 +401,86 @@ impl TraceExporterBuilder {
         self
     }
 
+    /// Enable OTLP HTTP/JSON trace-metrics export to `url` (e.g. `.../v1/metrics`).
+    pub fn set_otlp_metrics_endpoint(&mut self, url: &str) -> &mut Self {
+        self.otlp_metrics_endpoint = Some(url.to_owned());
+        self
+    }
+
+    /// Additional HTTP headers for OTLP trace-metrics requests.
+    pub fn set_otlp_metrics_headers(&mut self, headers: Vec<(String, String)>) -> &mut Self {
+        self.otlp_metrics_headers = headers;
+        self
+    }
+
+    /// Enables OTel trace semantics, which does not add DD-specific per-span attributes
+    /// (`service.name`, `operation.name`, `resource.name`, `span.type`, `error.msg`,
+    ///  `error.message`, `span.kind`) to the OTLP payload.
+    /// Also strips Datadog-specific `dd.*`/`_dd.*` data-point attributes from the exported
+    /// histogram. This is useful when exporting to a native OTel backend that does not expect
+    /// Datadog semantics. The host language tracer is expected to observe this behavior by
+    /// setting the `DD_TRACE_OTEL_SEMANTICS_ENABLED` environment variable to `true`.
+    pub fn enable_otel_trace_semantics(&mut self) -> &mut Self {
+        self.otel_trace_semantics_enabled = true;
+        self
+    }
+
+    /// Set the runtime identifier supplied by the language tracer.
+    ///
+    /// When set, this ID is reused for both OTLP trace exports and OTLP trace-metrics so that all
+    /// signals can be correlated by the backend. If not set, a fresh UUID is generated.
+    pub fn set_runtime_id(&mut self, id: &str) -> &mut Self {
+        self.runtime_id = Some(id.to_owned());
+        self
+    }
+    /// Configure the exporter to write traces as newline-delimited JSON to stdout
+    /// (the Datadog Forwarder "log exporter" path) instead of sending them to a
+    /// Datadog agent. This is the transport used in serverless environments (e.g.
+    /// AWS Lambda) when no agent is reachable.
+    ///
+    /// `max_line_size` overrides the per-line byte cap; `None` (or `Some(0)`,
+    /// which is coerced to the default) uses the default of 256 KiB, the AWS
+    /// CloudWatch Logs per-event limit. When this is set, agent-specific behavior
+    /// (agent-info polling, client-side stats, V1 negotiation) is bypassed.
+    ///
+    /// In this mode each span's `meta` is serialized to process stdout (and thus
+    /// captured by CloudWatch Logs in Lambda); `meta_struct` is excluded because
+    /// it holds raw msgpack the log intake cannot interpret. Writes are
+    /// synchronous/blocking, so this mode targets single-threaded serverless
+    /// runtimes where blocking stdout writes do not stall a shared async reactor.
+    ///
+    /// Takes precedence over an OTLP endpoint: if both this and `set_otlp_endpoint`
+    /// are configured, traces are written to the log output and not sent via OTLP.
+    pub fn set_output_to_log(&mut self, max_line_size: Option<usize>) -> &mut Self {
+        self.output_to_log = true;
+        // Treat `Some(0)` as "use the default" (a 0 cap would drop every span);
+        // keeps parity with the FFI setter's 0-sentinel.
+        self.log_max_line_size = max_line_size.filter(|&n| n != 0);
+        self
+    }
+
     /// Build the [`TraceExporter`] synchronously.
     ///
     /// Sync facade over [`Self::build_async`]; panics inside an existing tokio context.
-    /// Not available on wasm — use [`Self::build_async`] there.
+    /// Requires `R: BlockingRuntime` so the builder can drive setup on the runtime. Not
+    /// available on wasm — use [`Self::build_async`] there.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+    pub fn build<
+        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    >(
         mut self,
-    ) -> Result<TraceExporter<C>, TraceExporterError> {
+    ) -> Result<TraceExporter<C, R>, TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
         let shared_runtime = match self.shared_runtime.as_ref() {
             Some(rt) => rt.clone(),
             None => {
-                let rt = Self::new_shared_runtime()?;
+                let rt = Arc::new(R::new().map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?);
                 self.shared_runtime = Some(rt.clone());
                 rt
             }
@@ -319,12 +491,13 @@ impl TraceExporterBuilder {
     /// Build the [`TraceExporter`] asynchronously.
     ///
     /// Awaits all async setup (e.g. telemetry start-up). Safe to drive from any async
-    /// context.
+    /// context. If [`set_shared_runtime`](Self::set_shared_runtime) was not called, a new
+    /// runtime is constructed via [`SharedRuntime::new`].
     pub async fn build_async<
-        C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
     >(
         self,
-    ) -> Result<TraceExporter<C>, TraceExporterError> {
+    ) -> Result<TraceExporter<C, R>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -335,7 +508,9 @@ impl TraceExporterBuilder {
 
         let shared_runtime = match self.shared_runtime {
             Some(rt) => rt,
-            None => Self::new_shared_runtime()?,
+            None => Arc::new(R::new().map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?),
         };
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
@@ -366,19 +541,28 @@ impl TraceExporterBuilder {
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
             AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
-        let info_fetcher_handle =
-            shared_runtime
-                .spawn_worker(info_fetcher, false)
-                .map_err(|e| {
-                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                        e.to_string(),
-                    ))
-                })?;
-        // The handle is currently only tracked for shutdown on native; on wasm
-        // it is dropped here (the worker keeps running on the JS event loop
-        // until the page/module is torn down).
+        // TODO(APMSP-3609): consolidate per-mode worker gating (info-fetcher, telemetry,
+        // stats concentrator) off the selected export destination in one place.
+        // In log-export mode there is no agent to poll; skip spawning the worker
+        // entirely so we don't make repeated failing `/info` calls (e.g. in Lambda).
+        let info_fetcher_handle = if self.output_to_log {
+            None
+        } else {
+            Some(
+                shared_runtime
+                    .spawn_worker(info_fetcher, false)
+                    .map_err(|e| {
+                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                            e.to_string(),
+                        ))
+                    })?,
+            )
+        };
+        // The handle is only tracked for shutdown on native; on wasm the `workers`
+        // field is cfg'd out, so drop it here (the worker keeps running on the JS
+        // event loop until the page/module is torn down).
         #[cfg(target_arch = "wasm32")]
-        let _ = info_fetcher_handle;
+        drop(info_fetcher_handle);
 
         #[allow(unused_mut)]
         let mut stats = StatsComputationStatus::Disabled;
@@ -390,7 +574,13 @@ impl TraceExporterBuilder {
         #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
         let (telemetry_client, telemetry_handle) = {
             let sessions = self.telemetry_instrumentation_sessions;
-            let telemetry = self.telemetry.map(|telemetry_config| {
+            // Telemetry talks to the agent; disable it in log-export mode.
+            let telemetry = if self.output_to_log {
+                None
+            } else {
+                self.telemetry
+            }
+            .map(|telemetry_config| {
                 let mut builder = TelemetryClientBuilder::default()
                     .set_language(&self.language)
                     .set_language_version(&self.language_version)
@@ -430,31 +620,86 @@ impl TraceExporterBuilder {
             }
         };
 
-        let otlp_config = self.otlp_endpoint.map(|url| {
-            let mut headers = http::HeaderMap::new();
-            for (key, value) in self.otlp_headers {
-                match (
-                    http::HeaderName::from_bytes(key.as_bytes()),
-                    http::HeaderValue::from_str(&value),
-                ) {
-                    (Ok(name), Ok(val)) => {
-                        headers.insert(name, val);
-                    }
-                    _ => {
-                        tracing::warn!("Skipping invalid OTLP header: {:?}={:?}", key, value);
-                    }
-                }
-            }
-            OtlpTraceConfig {
-                endpoint_url: url,
-                headers,
-                timeout: self
-                    .connection_timeout
-                    .map(Duration::from_millis)
-                    .unwrap_or(DEFAULT_OTLP_TIMEOUT),
-                protocol: OtlpProtocol::HttpJson,
-            }
+        let otlp_timeout = self
+            .connection_timeout
+            .map(Duration::from_millis)
+            .unwrap_or(DEFAULT_OTLP_TIMEOUT);
+
+        // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
+        // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
+        let otlp_config = self.otlp_endpoint.map(|url| OtlpTraceConfig {
+            endpoint_url: url,
+            headers: build_otlp_header_map(self.otlp_headers),
+            timeout: otlp_timeout,
+            protocol: self.otlp_protocol,
+            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
+
+        let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
+            endpoint_url: url,
+            headers: build_otlp_header_map(self.otlp_metrics_headers),
+            timeout: otlp_timeout,
+            protocol: OtlpProtocol::HttpJson,
+            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+        });
+
+        let runtime_id = self
+            .runtime_id
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        // OTLP metrics + stats bucket size: start the concentrator unconditionally (bypass the
+        // agent gate) so `check_agent_info` cannot later disable stats.
+        #[allow(unused_mut)]
+        let mut otlp_stats_enabled = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let (Some(metrics_config), Some(bucket_size)) =
+            (otlp_metrics_config.clone(), self.stats_bucket_size)
+        {
+            use crate::otlp::OtlpStatsExporter;
+            use libdd_trace_stats::span_concentrator::SpanConcentrator;
+            use std::sync::Mutex;
+            let span_kinds = crate::trace_exporter::stats::DEFAULT_STATS_ELIGIBLE_SPAN_KINDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
+                bucket_size,
+                std::time::SystemTime::now(),
+                span_kinds,
+                self.peer_tags.clone(),
+                #[cfg(feature = "stats-obfuscation")]
+                None,
+            )));
+            let mut resource = OtlpResourceInfo::default();
+            resource.service = self.service.clone();
+            resource.env = self.env.clone();
+            resource.app_version = self.app_version.clone();
+            resource.language = self.language.clone();
+            resource.tracer_version = self.tracer_version.clone();
+            resource.runtime_id = runtime_id.clone();
+            resource.hostname = self.hostname.clone();
+            resource.process_tags = self.process_tags.clone();
+            let worker = OtlpStatsExporter {
+                flush_interval: bucket_size,
+                concentrator: concentrator.clone(),
+                config: metrics_config,
+                resource,
+                test_token: self.test_session_token.clone(),
+                capabilities: capabilities.clone(),
+            };
+            let worker_handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?;
+            stats = StatsComputationStatus::Enabled {
+                stats_concentrator: concentrator,
+                worker_handle,
+            };
+            otlp_stats_enabled = true;
+        }
+
+        let log_output = self
+            .output_to_log
+            .then(|| self.log_max_line_size.unwrap_or(DEFAULT_LOG_MAX_LINE_SIZE));
 
         Ok(TraceExporter {
             endpoint: Endpoint {
@@ -478,7 +723,7 @@ impl TraceExporterBuilder {
                 hostname: self.hostname,
                 env: self.env,
                 app_version: self.app_version,
-                runtime_id: uuid::Uuid::new_v4().to_string(),
+                runtime_id,
                 service: self.service,
             },
             input_format: self.input_format,
@@ -516,12 +761,8 @@ impl TraceExporterBuilder {
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
-        })
-    }
-
-    fn new_shared_runtime() -> Result<Arc<SharedRuntime>, TraceExporterError> {
-        SharedRuntime::new().map(Arc::new).map_err(|e| {
-            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            otlp_stats_enabled,
+            log_output,
         })
     }
 
@@ -546,6 +787,39 @@ mod tests {
     use super::*;
     use crate::trace_exporter::error::BuilderErrorKind;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::ForkSafeRuntime;
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_log_output_mode() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("test")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_to_log(None);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        // Log-output mode is enabled and the agent-info worker is not spawned.
+        // (End-to-end send -> bytes is covered by the capability-injecting test in
+        // `mod.rs` and the `log_writer` unit tests.)
+        assert!(
+            exporter.log_output.is_some(),
+            "log_output should be set in log-output mode"
+        );
+        assert!(
+            exporter.workers.info_fetcher.is_none(),
+            "no agent-info worker should be spawned in log mode"
+        );
+    }
+
+    #[test]
+    fn set_output_to_log_some_zero_uses_default() {
+        // `Some(0)` is coerced to "use the default cap" (a 0 cap would drop every
+        // span), which is represented as `None` on the builder field.
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_output_to_log(Some(0));
+        assert!(builder.output_to_log);
+        assert_eq!(builder.log_max_line_size, None);
+    }
 
     #[cfg_attr(miri, ignore)]
     #[test]
@@ -613,7 +887,7 @@ mod tests {
     #[test]
     fn test_set_shared_runtime() {
         let mut builder = TraceExporterBuilder::default();
-        let shared_runtime = Arc::new(SharedRuntime::new().unwrap());
+        let shared_runtime = Arc::new(ForkSafeRuntime::new().unwrap());
         builder.set_shared_runtime(shared_runtime.clone());
 
         let exporter = builder.build::<NativeCapabilities>().unwrap();
