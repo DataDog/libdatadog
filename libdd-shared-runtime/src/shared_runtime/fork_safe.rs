@@ -447,6 +447,9 @@ mod tests {
             .expect("worker did not run");
 
         assert!(shared_runtime.shutdown(None).is_ok());
-        assert!(shared_runtime.shutdown(None).is_ok(), "second shutdown must not panic");
+        assert!(
+            shared_runtime.shutdown(None).is_ok(),
+            "second shutdown must not panic"
+        );
     }
 }
