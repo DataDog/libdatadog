@@ -56,6 +56,7 @@ fn generate_protobuf() {
     //   intake expects the name ContainerID rather than the PascalCase ContainerId
 
     config.type_attribute("TracerPayload", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("ContainerDebug", "#[derive(Deserialize, Serialize)]");
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
@@ -214,6 +215,10 @@ fn generate_protobuf() {
     config.field_attribute("ClientGroupedStats.service_source", "#[serde(default)]");
     config.field_attribute(
         "ClientGroupedStats.span_derived_primary_tags",
+        "#[serde(default)]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.additional_metric_tags",
         "#[serde(default)]",
     );
 
