@@ -318,6 +318,15 @@ fn generate_protobuf() {
         "ClientGetConfigsResponse.client_configs",
         "#[serde(default)]",
     );
+    config.field_attribute(
+        "ClientGetConfigsResponse.config_status",
+        "#[serde(default)]",
+    );
+
+    config.type_attribute("ClientUpdater", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("PackageState", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("PackageStateTask", "#[derive(Deserialize, Serialize)]");
+    config.type_attribute("TaskError", "#[derive(Deserialize, Serialize)]");
 
     config.include_file("_includes.rs");
 

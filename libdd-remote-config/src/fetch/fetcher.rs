@@ -317,6 +317,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 client_agent: None,
                 last_seen: 0,
                 capabilities: product_capabilities.encoded_capabilities.clone(),
+                is_updater: false,
+                client_updater: None,
             }),
             cached_target_files,
         }
