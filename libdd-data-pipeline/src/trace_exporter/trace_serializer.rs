@@ -130,8 +130,8 @@ impl TraceSerializer {
             (tracer_payload::TraceChunks::V04(p), TraceExporterOutputFormat::V04) => {
                 msgpack_encoder::v04::to_vec_with_capacity_from_v04(p, capacity as u32)
             }
-            // v0.4 spans cross-encoded as V1 on the wire — used when the agent advertises
-            // /v1.0/traces. Same in-memory shape as the v0.4 native path, different encoder.
+            // v0.4 spans cross-encoded as V1 on the wire (used when the agent advertises
+            // /v1.0/traces).
             (tracer_payload::TraceChunks::V04(p), TraceExporterOutputFormat::V1) => {
                 msgpack_encoder::v1::to_vec_with_capacity_from_v04(p, capacity as u32, metadata)
             }
@@ -145,8 +145,9 @@ impl TraceSerializer {
             // `msgpack_encoder::v1::to_vec_from_v1` on the carried
             // `v1::TracerPayload`. Not yet reachable: `collect_and_process_traces`
             // never produces `TraceChunks::V1` in the current data-pipeline path.
+            #[allow(clippy::unimplemented)]
             (tracer_payload::TraceChunks::V1(_), TraceExporterOutputFormat::V1) => {
-                todo!("Native V1 input serialization not yet implemented (APMSP-2812)")
+                unimplemented!("Native V1 input serialization not yet implemented (APMSP-2812)")
             }
             // `collect_and_process_traces` only produces (V04, V04|V1), (V05, V05),
             // or (V1, V1) — any other combination here is a programming error.
