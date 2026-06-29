@@ -64,6 +64,11 @@ fn generate_protobuf() {
         "ContainerDebug",
         "#[derive(Deserialize, Serialize, PartialOrd, Ord)]",
     );
+    config.field_attribute("ContainerDebug.error", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.latencyMs", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.wasBuffered", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.bufferMs", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.bufferEvictionReason", "#[serde(default)]");
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");

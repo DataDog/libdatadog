@@ -439,22 +439,27 @@ pub struct ContainerDebug {
     /// error specifies any error that occurred during container tag resolution.
     /// @gotags: json:"error,omitempty" msg:"error,omitempty"
     #[prost(string, tag = "1")]
+    #[serde(default)]
     pub error: ::prost::alloc::string::String,
     /// latencyMs specifies the latency in milliseconds of the container tag resolution.
     /// @gotags: json:"latency_ms,omitempty" msg:"latency_ms,omitempty"
     #[prost(int64, tag = "2")]
+    #[serde(default)]
     pub latency_ms: i64,
     /// wasBuffered specifies whether the payload was buffered while waiting for container tags.
     /// @gotags: json:"was_buffered,omitempty" msg:"was_buffered,omitempty"
     #[prost(bool, tag = "3")]
+    #[serde(default)]
     pub was_buffered: bool,
     /// bufferMs specifies how long the payload was buffered in milliseconds.
     /// @gotags: json:"buffer_ms,omitempty" msg:"buffer_ms,omitempty"
     #[prost(int64, tag = "4")]
+    #[serde(default)]
     pub buffer_ms: i64,
     /// bufferEvictionReason specifies why the payload was evicted from the buffer.
     /// @gotags: json:"buffer_eviction_reason,omitempty" msg:"buffer_eviction_reason,omitempty"
     #[prost(string, tag = "5")]
+    #[serde(default)]
     pub buffer_eviction_reason: ::prost::alloc::string::String,
 }
 /// AgentPayload represents payload the agent sends to the intake.

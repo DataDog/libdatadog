@@ -286,17 +286,22 @@ pub struct TracerPayload {
 pub struct ContainerDebug {
     /// error specifies any error that occurred during container tag resolution.
     #[prost(string, tag = "1")]
+    #[serde(default)]
     pub error: ::prost::alloc::string::String,
     /// latencyMs specifies the latency in milliseconds of the container tag resolution.
     #[prost(int64, tag = "2")]
+    #[serde(default)]
     pub latency_ms: i64,
     /// wasBuffered specifies whether the payload was buffered while waiting for container tags.
     #[prost(bool, tag = "3")]
+    #[serde(default)]
     pub was_buffered: bool,
     /// bufferMs specifies how long the payload was buffered in milliseconds.
     #[prost(int64, tag = "4")]
+    #[serde(default)]
     pub buffer_ms: i64,
     /// bufferEvictionReason specifies why the payload was evicted from the buffer.
     #[prost(string, tag = "5")]
+    #[serde(default)]
     pub buffer_eviction_reason: ::prost::alloc::string::String,
 }
