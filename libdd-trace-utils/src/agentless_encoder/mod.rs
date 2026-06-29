@@ -263,7 +263,10 @@ fn encode_span<T: TraceData, S: Serializer>(
                 for (k, v) in span.meta_struct.iter() {
                     let key: &str = k.borrow();
                     let bytes: &[u8] = v.borrow();
-                    ms.serialize_entry(key, &MsgpackAsJson(bytes))?;
+                    // malformed msgpack entries skipped
+                    if let Ok(value) = rmp_serde::from_slice::<serde_json::Value>(bytes) {
+                        ms.serialize_entry(key, &value)?;
+                    }
                 }
                 ms.end()
             }),
