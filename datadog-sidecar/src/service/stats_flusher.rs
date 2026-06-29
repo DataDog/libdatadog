@@ -9,6 +9,7 @@
 //! automatically once idle: an empty drain sets the `please_reload` bit (telling PHP workers
 //! to stop writing), and the subsequent flush performs a final drain before removal.
 
+use crate::service::{InstanceId, RuntimeMetadata};
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::shm_stats::{
@@ -18,6 +19,8 @@ use futures::{future::join_all, TryFutureExt};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
+use libdd_telemetry::config::Config;
+use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -104,6 +107,7 @@ fn make_exporter(
     s: &SpanConcentratorState,
     endpoint: Endpoint,
     flush_interval: Duration,
+    telemetry: Option<TelemetryWorkerHandle>,
 ) -> StatsExporter<NativeCapabilities, ShmSpanConcentrator> {
     StatsExporter::new(
         flush_interval,
@@ -119,7 +123,7 @@ fn make_exporter(
         )),
         #[cfg(feature = "stats-obfuscation")]
         "0",
-        None,
+        telemetry,
         None,
     )
 }
@@ -135,6 +139,7 @@ pub async fn run_stats_flush_loop(
     states: Weak<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
     map_key: ConcentratorKey,
     flush_interval: Duration,
+    telemetry: Option<TelemetryWorkerHandle>,
 ) {
     let Some(arc) = states.upgrade() else {
         return;
@@ -146,7 +151,13 @@ pub async fn run_stats_flush_loop(
     let Some(state) = state else {
         return;
     };
-    let exporter = make_exporter(&state, state.endpoint.clone(), flush_interval);
+
+    let exporter = make_exporter(
+        &state,
+        state.endpoint.clone(),
+        flush_interval,
+        telemetry.clone(),
+    );
 
     loop {
         tokio::time::sleep(flush_interval).await;
@@ -191,7 +202,11 @@ pub async fn run_stats_flush_loop(
                         guard.remove(&map_key);
                     }
                 }
-                if let Err(e) = exporter.send(true).await {
+                if let Err(e) =
+                    make_exporter(&state, state.endpoint.clone(), flush_interval, telemetry)
+                        .send(true)
+                        .await
+                {
                     warn!("Failed final stats flush: {e}");
                 }
                 break;
@@ -210,6 +225,7 @@ pub async fn run_stats_flush_loop(
 /// Returns `None` when stats config is not available (agentless or not yet configured).
 pub(crate) fn get_or_create_concentrator(
     concentrators: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
+    telemetry_clients: &crate::service::telemetry::TelemetryCachedClientSet,
     env: &str,
     version: &str,
     runtime_id: &str,
@@ -270,8 +286,46 @@ pub(crate) fn get_or_create_concentrator(
             guard.insert(map_key.clone(), state.clone());
             let weak = Arc::downgrade(concentrators);
             let flush_interval = config.flush_interval;
+
+            let trace_config = session.get_trace_config();
+            let runtime_metadata = RuntimeMetadata::new(
+                trace_config.language.clone(),
+                trace_config.language_version.clone(),
+                trace_config.tracer_version.clone(),
+            );
+            drop(trace_config);
+            let process_tags = session.process_tags.lock_or_panic().clone();
+            let instance_id = InstanceId {
+                session_id: runtime_id.to_owned(),
+                runtime_id: runtime_id.to_owned(),
+            };
+            let telemetry = {
+                let telemetry_mutex = telemetry_clients.get_or_create(
+                    &service_name,
+                    env,
+                    &instance_id,
+                    &runtime_metadata,
+                    || {session
+                .session_config
+                .lock_or_panic()
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| {
+                    warn!("Session telemetry config unavailable for env={env} version={version} service={service_name}; telemetry disabled in stats");
+                    Config::default()
+                })
+},
+                    process_tags,
+                );
+                let worker = telemetry_mutex
+                    .lock_or_panic()
+                    .as_ref()
+                    .map(|c| c.worker.clone());
+                worker
+            };
+
             tokio::spawn(async move {
-                run_stats_flush_loop(weak, map_key, flush_interval).await;
+                run_stats_flush_loop(weak, map_key, flush_interval, telemetry).await;
             });
             Some(state)
         }
@@ -292,7 +346,7 @@ pub async fn flush_all_stats_now(
             .values()
             .map(|s| {
                 (
-                    make_exporter(s, s.endpoint.clone(), Duration::from_secs(10)),
+                    make_exporter(s, s.endpoint.clone(), Duration::from_secs(10), None),
                     s.endpoint.clone(),
                 )
             })
