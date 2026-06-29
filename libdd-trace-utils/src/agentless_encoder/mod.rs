@@ -186,12 +186,20 @@ fn encode_span<T: TraceData, S: Serializer>(
         &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>, is_first_in_trace: bool| {
             let upper_bits = (span.trace_id >> 64) as u64;
             let mut p_tid_seen = false;
+            let mut span_links_seen = false;
+            let mut events_seen = false;
+            let mut compute_stats_seen = false;
+
             let mut meta = ser.serialize_map(None)?;
             for (k, v) in span.meta.iter() {
                 let key: &str = k.borrow();
-                if key == "_dd.p.tid" {
-                    p_tid_seen = true;
-                }
+                match key {
+                    "_dd.p.tid" => p_tid_seen = true,
+                    "_dd.span_links" => span_links_seen = true,
+                    "events" => events_seen = true,
+                    "_dd.compute_stats"=> compute_stats_seen = true,
+                    _ => {}
+                };
                 let val: &str = v.borrow();
                 meta.serialize_entry(key, val)?;
             }
@@ -203,17 +211,17 @@ fn encode_span<T: TraceData, S: Serializer>(
                     }),
                 )?;
             }
-            if !span.span_links.is_empty() {
+            if !span_links_seen && !span.span_links.is_empty() {
                 if let Some(s) = serialize_span_links(&span.span_links) {
                     meta.serialize_entry("_dd.span_links", &s)?;
                 }
             }
-            if !span.span_events.is_empty() {
+            if !events_seen && !span.span_events.is_empty() {
                 if let Some(s) = serialize_span_events(&span.span_events) {
                     meta.serialize_entry("events", &s)?;
                 }
             }
-            if is_first_in_trace {
+            if !compute_stats_seen && is_first_in_trace {
                 meta.serialize_entry("_dd.compute_stats", "1")?;
             }
             meta.end()
@@ -224,18 +232,23 @@ fn encode_span<T: TraceData, S: Serializer>(
         "metrics",
         &ser_fn!(<T: TraceData> |ser, span: &'a Span<T>| {
             let mut metrics = ser.serialize_map(None)?;
+            let mut trace_root_seen = false;
             for (k, v) in span.metrics.iter() {
                 let key: &str = k.borrow();
+                // serde_json refuses to serialize NaN/Inf; drop them silently.
                 if v.is_finite() {
-                    if key == "_top_level" {
-                        metrics.serialize_entry(key, &(*v as u32))?;
-                    } else {
-                        // serde_json refuses to serialize NaN/Inf; drop them silently.
-                        metrics.serialize_entry(key, v)?;
+                    match key {
+                        "_trace_root" => trace_root_seen = true,
+                        "_top_level" => {
+                            metrics.serialize_entry(key, &(*v as u32))?;
+                            continue
+                        },
+                        _ => {},
                     }
+                    metrics.serialize_entry(key, v)?
                 }
             }
-            if span.parent_id == 0 {
+            if !trace_root_seen && span.parent_id == 0 {
                 metrics.serialize_entry("_trace_root", &1u32)?;
             }
             metrics.end()
