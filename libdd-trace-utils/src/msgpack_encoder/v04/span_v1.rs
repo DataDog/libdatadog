@@ -28,11 +28,13 @@
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
 use crate::span::vec_map::VecMap;
 use crate::span::TraceData;
+use libdd_common::ResultInfallibleExt;
 use rmp::encode::{
     write_array_len, write_bin, write_bool, write_f64, write_i64, write_map_len, write_sint,
-    write_str, write_u32, write_u64, write_u8, RmpWrite, ValueWriteError,
+    write_str, write_u32, write_u64, write_u8, ByteBuf, RmpWrite, ValueWriteError,
 };
 use std::borrow::Borrow;
+use std::collections::HashSet;
 
 /// Writes a `bool` as the v0.4 string representation (`"true"` / `"false"`). Used wherever a
 /// typed V1 `Bool` attribute is downgraded into v0.4 `meta` (which is `String → String` only).
@@ -128,6 +130,19 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     let span_attrs_dd = span.attributes.defensive_dedup();
     let chunk_attrs_dd = chunk.attributes.defensive_dedup();
 
+    // Merge span + chunk attributes upfront with explicit "span overrides chunk" precedence.
+    // We don't rely on msgpack map last-write-wins decoding here: the v0.4 / msgpack specs do
+    // not formalize behavior for duplicate map keys, so we emit each key exactly once.
+    let span_keys: HashSet<&T::Text> = span_attrs_dd.iter().map(|(k, _)| k).collect();
+    let merged_attrs: Vec<(&T::Text, &AttributeValue<T>)> = span_attrs_dd
+        .iter()
+        .chain(
+            chunk_attrs_dd
+                .iter()
+                .filter(|(k, _)| !span_keys.contains(k)),
+        )
+        .collect();
+
     let (trace_id_low, trace_id_high) = split_trace_id(chunk.trace_id);
     let kind_meta = span_kind_to_meta(span.span_kind);
 
@@ -141,13 +156,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     counts.meta += !chunk.origin.borrow().is_empty() as u32;
     counts.meta += chunk.sampling_mechanism.is_some() as u32;
     counts.metrics += chunk.priority.is_some() as u32;
-    for (_, v) in span_attrs_dd.iter() {
-        counts.count_attr(v);
-    }
-    // Chunk attributes are propagated to every span. Duplicate keys between chunk and span are
-    // tolerated here — msgpack map decode keeps the last value (the span's), which matches the
-    // "span overrides chunk" precedence.
-    for (_, v) in chunk_attrs_dd.iter() {
+    for (_, v) in &merged_attrs {
         counts.count_attr(v);
     }
 
@@ -227,22 +236,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
             write_const_msg_pack_str!(writer, "_dd.p.dm")?;
             write_str(writer, &format!("-{mechanism}"))?;
         }
-        // Span attrs first, then chunk attrs (duplicate keys resolve to the span value via
-        // msgpack last-write-wins on the decoder side).
-        for (k, v) in span_attrs_dd.iter() {
-            match v {
-                AttributeValue::String(s) => {
-                    write_str(writer, k.borrow())?;
-                    write_str(writer, s.borrow())?;
-                }
-                AttributeValue::Bool(b) => {
-                    write_str(writer, k.borrow())?;
-                    write_bool_as_str(writer, *b)?;
-                }
-                _ => {}
-            }
-        }
-        for (k, v) in chunk_attrs_dd.iter() {
+        for &(k, v) in &merged_attrs {
             match v {
                 AttributeValue::String(s) => {
                     write_str(writer, k.borrow())?;
@@ -265,20 +259,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
             write_const_msg_pack_str!(writer, "_sampling_priority_v1")?;
             write_f64(writer, priority as f64)?;
         }
-        for (k, v) in span_attrs_dd.iter() {
-            match v {
-                AttributeValue::Float(f) => {
-                    write_str(writer, k.borrow())?;
-                    write_f64(writer, *f)?;
-                }
-                AttributeValue::Int(i) => {
-                    write_str(writer, k.borrow())?;
-                    write_f64(writer, *i as f64)?;
-                }
-                _ => {}
-            }
-        }
-        for (k, v) in chunk_attrs_dd.iter() {
+        for &(k, v) in &merged_attrs {
             match v {
                 AttributeValue::Float(f) => {
                     write_str(writer, k.borrow())?;
@@ -302,10 +283,7 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         write_const_msg_pack_str!(writer, "meta_struct")?;
         write_map_len(writer, counts.meta_struct)?;
 
-        for (k, v) in span_attrs_dd.iter() {
-            write_meta_struct_entry(writer, k, v)?;
-        }
-        for (k, v) in chunk_attrs_dd.iter() {
+        for &(k, v) in &merged_attrs {
             write_meta_struct_entry(writer, k, v)?;
         }
     }
@@ -320,9 +298,10 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Writes a single `meta_struct` entry. `Bytes` goes through as msgpack `bin`; structural
-/// `KeyValue` / `List` would need a recursive msgpack re-encoding — stubbed as empty `bin` for
-/// now (TODO: implement structural serialization).
+/// Writes a single `meta_struct` entry. `Bytes` passes through as a msgpack `bin`. `KeyValue`
+/// and `List` are recursively re-encoded as standalone msgpack (no V1 type tags, no string
+/// interning) into a scratch buffer, then emitted as the `bin` payload — matching the v0.4
+/// `meta_struct` contract of `String → msgpack-encoded bytes`.
 fn write_meta_struct_entry<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     k: &T::Text,
@@ -335,9 +314,54 @@ fn write_meta_struct_entry<W: RmpWrite, T: TraceData>(
         }
         AttributeValue::KeyValue(_) | AttributeValue::List(_) => {
             write_str(writer, k.borrow())?;
-            write_bin(writer, todo!())?;
+            let mut buf = ByteBuf::with_capacity(0);
+            encode_attribute_value(&mut buf, v)
+                .map_err(super::super::flatten_value_write_infallible)
+                .unwrap_infallible();
+            write_bin(writer, buf.as_ref())?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Recursively encodes a [`v1::AttributeValue`] as a self-contained msgpack value using natural
+/// types — `str`/`bool`/`int`/`f64`/`bin`/`array`/`map` — without the V1 `[type, value]` framing
+/// or its streaming string table. Used to build the body of a v0.4 `meta_struct` `bin` payload.
+fn encode_attribute_value<W: RmpWrite, T: TraceData>(
+    writer: &mut W,
+    v: &AttributeValue<T>,
+) -> Result<(), ValueWriteError<W::Error>> {
+    match v {
+        AttributeValue::String(s) => {
+            write_str(writer, s.borrow())?;
+        }
+        AttributeValue::Bool(b) => {
+            write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
+        }
+        AttributeValue::Int(i) => {
+            write_sint(writer, *i)?;
+        }
+        AttributeValue::Float(f) => {
+            write_f64(writer, *f)?;
+        }
+        AttributeValue::Bytes(b) => {
+            write_bin(writer, b.borrow())?;
+        }
+        AttributeValue::List(items) => {
+            write_array_len(writer, items.len() as u32)?;
+            for item in items {
+                encode_attribute_value(writer, item)?;
+            }
+        }
+        AttributeValue::KeyValue(map) => {
+            let deduped = map.defensive_dedup();
+            write_map_len(writer, deduped.len() as u32)?;
+            for (k, v) in deduped.iter() {
+                write_str(writer, k.borrow())?;
+                encode_attribute_value(writer, v)?;
+            }
+        }
     }
     Ok(())
 }
@@ -835,6 +859,112 @@ mod tests {
             }),
             Some(b"\xde\xad\xbe\xef".as_slice())
         );
+    }
+
+    /// Extracts the standalone msgpack value packed inside a `meta_struct` `bin` payload.
+    fn meta_struct_inner(meta_struct: &Value, key: &str) -> Value {
+        let bin = match map_get(meta_struct, key) {
+            Some(Value::Binary(b)) => b,
+            other => panic!("expected meta_struct[{key}] to be a Binary, got {other:?}"),
+        };
+        rmpv::decode::read_value(&mut bin.as_slice()).expect("inner msgpack decode failed")
+    }
+
+    #[test]
+    fn list_attribute_routes_to_meta_struct_as_nested_msgpack_array() {
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(
+            bs("ids"),
+            AttributeValue::List(vec![
+                AttributeValue::Int(1),
+                AttributeValue::Int(2),
+                AttributeValue::String(bs("three")),
+            ]),
+        );
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                ..minimal_span()
+            },
+        );
+        let traces = encode_and_decode(&payload);
+        let ms = map_get(&traces[0][0], "meta_struct").expect("meta_struct present");
+
+        let inner = meta_struct_inner(ms, "ids");
+        let items = match inner {
+            Value::Array(a) => a,
+            other => panic!("expected msgpack array inside bin, got {other:?}"),
+        };
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].as_i64(), Some(1));
+        assert_eq!(items[1].as_i64(), Some(2));
+        assert_eq!(items[2].as_str(), Some("three"));
+    }
+
+    #[test]
+    fn keyvalue_attribute_routes_to_meta_struct_as_nested_msgpack_map() {
+        let mut inner_kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        inner_kv.insert(bs("user_id"), AttributeValue::Int(42));
+        inner_kv.insert(bs("name"), AttributeValue::String(bs("alice")));
+        inner_kv.insert(bs("active"), AttributeValue::Bool(true));
+
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("user"), AttributeValue::KeyValue(inner_kv));
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                ..minimal_span()
+            },
+        );
+        let traces = encode_and_decode(&payload);
+        let ms = map_get(&traces[0][0], "meta_struct").expect("meta_struct present");
+
+        let inner = meta_struct_inner(ms, "user");
+        assert_eq!(inner.as_map().expect("inner is map").len(), 3);
+        assert_eq!(map_get(&inner, "user_id").unwrap().as_i64(), Some(42));
+        assert_eq!(map_get(&inner, "name").unwrap().as_str(), Some("alice"));
+        assert_eq!(map_get(&inner, "active").unwrap().as_bool(), Some(true));
+    }
+
+    #[test]
+    fn nested_keyvalue_and_list_recurse_through_meta_struct() {
+        // Build: {"outer": KeyValue { "items": List [String "a", KeyValue {"k": Int 1}] }}
+        let mut nested_kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        nested_kv.insert(bs("k"), AttributeValue::Int(1));
+
+        let mut middle_kv: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        middle_kv.insert(
+            bs("items"),
+            AttributeValue::List(vec![
+                AttributeValue::String(bs("a")),
+                AttributeValue::KeyValue(nested_kv),
+            ]),
+        );
+
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(bs("outer"), AttributeValue::KeyValue(middle_kv));
+
+        let payload = minimal_payload(
+            [0u8; 16],
+            SpanBytes {
+                attributes: attrs,
+                ..minimal_span()
+            },
+        );
+        let traces = encode_and_decode(&payload);
+        let ms = map_get(&traces[0][0], "meta_struct").expect("meta_struct present");
+
+        let outer = meta_struct_inner(ms, "outer");
+        let items = map_get(&outer, "items").expect("items present");
+        let items_arr = items.as_array().expect("items is array");
+        assert_eq!(items_arr.len(), 2);
+        assert_eq!(items_arr[0].as_str(), Some("a"));
+        let nested_map = items_arr[1].as_map().expect("nested KeyValue is map");
+        assert_eq!(nested_map.len(), 1);
+        assert_eq!(map_get(&items_arr[1], "k").unwrap().as_i64(), Some(1));
     }
 
     #[test]
