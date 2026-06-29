@@ -4,8 +4,10 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, MutexGuard},
-    time,
 };
+// `time::SystemTime::UNIX_EPOCH.elapsed()` panics on wasm32-unknown-unknown
+// (the host has no `std::time` backend); `web_time` proxies to `Date.now()`.
+use web_time as time;
 
 use libdd_common::tag::Tag;
 use libdd_ddsketch::DDSketch;

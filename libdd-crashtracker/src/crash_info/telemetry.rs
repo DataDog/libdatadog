@@ -342,9 +342,13 @@ impl TelemetryCrashUploader {
         self.send_telemetry_payload(&payload).await
     }
 
-    /// Helper to perform actual HTTP (or file) submission via configured telemetry client
+    /// Helper to perform actual HTTP submission via the native HTTP capability.
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        let client = libdd_telemetry::worker::http_client::from_config(&self.cfg);
+        use libdd_capabilities::{HttpClientCapability, SleepCapability};
+        use libdd_capabilities_impl::NativeCapabilities;
+
+        let client = NativeCapabilities::new_client();
+        let sleeper = <NativeCapabilities as SleepCapability>::new();
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
             .header(
@@ -359,19 +363,24 @@ impl TelemetryCrashUploader {
                 libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
                 "logs",
             )
-            .body(serde_json::to_string(&payload)?.into())?;
+            .body(libdd_capabilities::Bytes::from(serde_json::to_vec(
+                &payload,
+            )?))?;
 
-        tokio::time::timeout(
-            std::time::Duration::from_millis({
-                if let Some(endp) = self.cfg.endpoint() {
-                    endp.timeout_ms
-                } else {
-                    Endpoint::DEFAULT_TIMEOUT
-                }
-            }),
-            client.request(req),
-        )
-        .await??;
+        let timeout = std::time::Duration::from_millis({
+            if let Some(endp) = self.cfg.endpoint() {
+                endp.timeout_ms
+            } else {
+                Endpoint::DEFAULT_TIMEOUT
+            }
+        });
+        tokio::select! {
+            biased;
+            r = client.request(req) => { r?; }
+            _ = sleeper.sleep(timeout) => {
+                return Err(anyhow::anyhow!("Telemetry crash report timed out"));
+            }
+        }
 
         Ok(())
     }

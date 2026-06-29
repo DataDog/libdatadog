@@ -1,7 +1,10 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+// web_time::Instant is std::time::Instant on native and a Performance.now()
+// backed shim on wasm32-unknown-unknown (std::time::Instant panics there).
+use web_time::Instant;
 
 #[derive(Debug)]
 pub struct Scheduler<T: Clone + Eq> {

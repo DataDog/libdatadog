@@ -2859,6 +2859,7 @@ dependencies = [
 name = "libdd-capabilities-impl"
 version = "2.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "http",
  "http-body-util",
@@ -2942,6 +2943,8 @@ dependencies = [
  "goblin",
  "http",
  "libc",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-libunwind-sys",
  "libdd-telemetry",
@@ -3338,11 +3341,13 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures",
+ "getrandom 0.2.15",
  "hashbrown 0.15.1",
  "http",
- "http-body-util",
  "httpmock",
  "libc",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
  "libdd-shared-runtime",
@@ -3354,6 +3359,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wasm-bindgen-futures",
+ "web-time",
  "winver",
 ]
 
@@ -3364,6 +3371,7 @@ dependencies = [
  "build_common",
  "function_name",
  "libc",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-telemetry",
@@ -6526,6 +6534,16 @@ name = "web-sys"
 version = "0.3.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6488b90108c040df0fe62fa815cbdee25124641df01814dd7282749234c6112"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

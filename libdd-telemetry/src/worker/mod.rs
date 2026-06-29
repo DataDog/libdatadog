@@ -12,22 +12,32 @@ use crate::{
 };
 
 use async_trait::async_trait;
-use libdd_common::{http_common, tag::Tag};
+use bytes::Bytes;
+use libdd_capabilities::{HttpClientCapability, HttpError, MaybeSend, SleepCapability};
+use libdd_common::tag::Tag;
 use libdd_shared_runtime::Worker;
 
 use std::iter::Sum;
+use std::marker::PhantomData;
 use std::ops::Add;
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     ops::ControlFlow,
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
     },
-    time,
 };
 use std::{collections::HashSet, fmt::Debug, time::Duration};
+// `web_time` re-exports `std::time::Instant`/`SystemTime` on native and
+// provides Performance.now()/Date.now()-backed shims on wasm32. We use
+// `time::Instant` and `time::SystemTime` through this module-local alias so
+// the wasm runtime doesn't hit `time not implemented on this platform`.
+use web_time as time;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Condvar, Mutex};
 
 use crate::metrics::MetricBucketStats;
 use futures::{
@@ -36,11 +46,9 @@ use futures::{
 };
 use http::{header, HeaderValue};
 use serde::{Deserialize, Serialize};
-use tokio::{
-    runtime::{self, Handle},
-    sync::mpsc,
-    task::JoinHandle,
-};
+use tokio::sync::{mpsc, Notify};
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::{runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
@@ -48,8 +56,7 @@ const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
 
 fn time_now() -> f64 {
-    #[allow(clippy::unwrap_used)]
-    std::time::SystemTime::UNIX_EPOCH
+    time::SystemTime::UNIX_EPOCH
         .elapsed()
         .unwrap_or_default()
         .as_secs_f64()
@@ -131,21 +138,26 @@ struct TelemetryWorkerData {
     app: Application,
 }
 
-pub struct TelemetryWorker {
+/// `C` is the capability bundle. Leaf crates pin it to a concrete type
+/// (`NativeCapabilities` on native, `WasmCapabilities` on wasm).
+pub struct TelemetryWorker<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
     flavor: TelemetryWorkerFlavor,
     config: Config,
     mailbox: mpsc::Receiver<TelemetryActions>,
     cancellation_token: CancellationToken,
     seq_id: AtomicU64,
     runtime_id: String,
-    client: Box<dyn http_client::HttpClient + Sync + Send>,
+    capabilities: C,
     metrics_flush_interval: Duration,
     deadlines: scheduler::Scheduler<LifecycleAction>,
     data: TelemetryWorkerData,
     next_action: Option<TelemetryActions>,
     stopped: bool,
 }
-impl Debug for TelemetryWorker {
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Debug
+    for TelemetryWorker<C>
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TelemetryWorker")
             .field("flavor", &self.flavor)
@@ -161,8 +173,11 @@ impl Debug for TelemetryWorker {
     }
 }
 
-#[async_trait]
-impl Worker for TelemetryWorker {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Worker
+    for TelemetryWorker<C>
+{
     async fn trigger(&mut self) {
         if self.next_action.is_some() {
             // An action is already available and hasn't been executed
@@ -290,25 +305,27 @@ mod serialize {
     }
 }
 
-impl TelemetryWorker {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryWorker<C> {
     fn log_err(&self, err: &anyhow::Error) {
         telemetry_worker_log!(self, ERROR, "{}", err);
     }
 
     async fn recv_next_action(&mut self) -> TelemetryActions {
         let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
+            let deadline_action = *deadline_action;
             // If deadline passed, directly return associated action
-            if deadline
-                .checked_duration_since(time::Instant::now())
-                .is_none()
-            {
-                return TelemetryActions::Lifecycle(*deadline_action);
+            let Some(remaining) = deadline.checked_duration_since(time::Instant::now()) else {
+                return TelemetryActions::Lifecycle(deadline_action);
             };
 
-            // Otherwise run it in a timeout against the mailbox
-            match tokio::time::timeout_at(deadline.into(), self.mailbox.recv()).await {
-                Ok(mailbox_action) => mailbox_action,
-                Err(_) => Some(TelemetryActions::Lifecycle(*deadline_action)),
+            // Runtime-agnostic timeout: race the mailbox against a capability-driven sleep
+            // instead of `tokio::time::timeout_at`, which requires a tokio reactor (not
+            // available on wasm where we run on the JS event loop).
+            let sleeper = <C as SleepCapability>::new();
+            tokio::select! {
+                biased;
+                mailbox_action = self.mailbox.recv() => mailbox_action,
+                _ = sleeper.sleep(remaining) => Some(TelemetryActions::Lifecycle(deadline_action)),
             }
         } else {
             self.mailbox.recv().await
@@ -765,7 +782,7 @@ impl TelemetryWorker {
         Ok(())
     }
 
-    fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http_common::HttpRequest> {
+    fn build_request(&self, payload: &data::Payload) -> anyhow::Result<http::Request<Bytes>> {
         let seq_id = self.next_seq_id();
         let tel = Telemetry {
             api_version: data::ApiVersion::V2,
@@ -808,19 +825,20 @@ impl TelemetryWorker {
             self.config.root_session_id.as_deref(),
         );
 
-        let body = http_common::Body::from(serialize::serialize(&tel)?);
+        let body = Bytes::from(serialize::serialize(&tel)?);
         Ok(req.body(body)?)
     }
 
     async fn send_request(
         &self,
-        req: http_common::HttpRequest,
-    ) -> Result<http_common::HttpResponse, http_common::Error> {
+        req: http::Request<Bytes>,
+    ) -> Result<http::Response<Bytes>, HttpError> {
         let timeout_ms = if let Some(endpoint) = self.config.endpoint.as_ref() {
             endpoint.timeout_ms
         } else {
             libdd_common::Endpoint::DEFAULT_TIMEOUT
         };
+        let timeout = time::Duration::from_millis(timeout_ms);
 
         debug!(
             worker.runtime_id = %self.runtime_id,
@@ -828,32 +846,27 @@ impl TelemetryWorker {
             "Sending HTTP request"
         );
 
+        // Runtime-agnostic timeout: race the request against a capability-driven sleep,
+        // mirroring `agent_info::fetcher::fetch_and_hash_response`. Same pattern, same
+        // reason: `tokio::time::sleep` needs a tokio reactor that wasm doesn't provide.
+        let sleeper = <C as SleepCapability>::new();
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
                 debug!(
                     worker.runtime_id = %self.runtime_id,
                     "Telemetry request cancelled"
                 );
-                Err(http_common::Error::Other(anyhow::anyhow!("Request cancelled")))
+                Err(HttpError::Other(anyhow::anyhow!("Request cancelled")))
             },
-            _ = tokio::time::sleep(time::Duration::from_millis(timeout_ms)) => {
+            _ = sleeper.sleep(timeout) => {
                 debug!(
                     worker.runtime_id = %self.runtime_id,
                     http.timeout_ms = timeout_ms,
                     "Telemetry request timed out"
                 );
-                Err(http_common::Error::Other(anyhow::anyhow!("Request timed out")))
+                Err(HttpError::Other(anyhow::anyhow!("Request timed out")))
             },
-            r = self.client.request(req) => {
-                match r {
-                    Ok(resp) => {
-                        Ok(resp)
-                    }
-                    Err(e) => {
-                        Err(e)
-                    },
-                }
-            }
+            r = self.capabilities.request(req) => r,
         }
     }
 
@@ -925,51 +938,176 @@ impl TelemetryWorker {
     }
 }
 
+/// Cross-platform shutdown signaling.
+///
+/// Native callers can sync-block via the `Mutex<bool>`/`Condvar` pair (see
+/// [`TelemetryWorkerHandle::wait_for_shutdown`]); any caller can await
+/// asynchronously via the `Notify` (see
+/// [`TelemetryWorkerHandle::wait_for_shutdown_async`]) — `Notify` is pure
+/// atomics and works on wasm too. `shutdown_finished` triggers both so either
+/// path observes the same event.
 #[derive(Debug)]
 struct InnerTelemetryShutdown {
-    is_shutdown: Mutex<bool>,
+    is_shutdown: AtomicBool,
+    notify: Notify,
+    #[cfg(not(target_arch = "wasm32"))]
+    sync_state: Mutex<bool>,
+    #[cfg(not(target_arch = "wasm32"))]
     condvar: Condvar,
 }
 
 impl InnerTelemetryShutdown {
-    fn wait_for_shutdown(&self) {
-        drop(
-            #[allow(clippy::unwrap_used)]
-            self.condvar
-                .wait_while(self.is_shutdown.lock().unwrap(), |is_shutdown| {
-                    !*is_shutdown
-                })
-                .unwrap(),
-        )
+    fn new() -> Self {
+        Self {
+            is_shutdown: AtomicBool::new(false),
+            notify: Notify::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            sync_state: Mutex::new(false),
+            #[cfg(not(target_arch = "wasm32"))]
+            condvar: Condvar::new(),
+        }
     }
 
-    #[allow(clippy::unwrap_used)]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn wait_for_shutdown(&self) {
+        // Lock-poisoning here would mean another thread panicked while
+        // holding the mutex. The state is a single bool and any panic the
+        // notifier could have caused is recoverable, so treat the poisoned
+        // guard as authoritative and continue.
+        let guard = self
+            .sync_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = self
+            .condvar
+            .wait_while(guard, |is_shutdown| !*is_shutdown)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        drop(guard);
+    }
+
+    async fn wait_for_shutdown_async(&self) {
+        loop {
+            if self.is_shutdown.load(Ordering::Acquire) {
+                return;
+            }
+            // `Notify::notified()` returns a future that registers interest
+            // before we re-check the flag, so we cannot miss a notify that
+            // races with the load above.
+            let notified = self.notify.notified();
+            if self.is_shutdown.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     fn shutdown_finished(&self) {
-        *self.is_shutdown.lock().unwrap() = true;
-        self.condvar.notify_all();
+        self.is_shutdown.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Ok(mut guard) = self.sync_state.lock() {
+                *guard = true;
+            } else {
+                // Poisoned: another thread panicked while holding the lock.
+                // The Notify path is unaffected; sync waiters that depend on
+                // this mutex are already in an undefined state, so we
+                // proceed without setting the flag.
+                tracing::warn!(
+                    "TelemetryWorkerHandle shutdown mutex was poisoned; sync waiters may hang"
+                );
+            }
+            self.condvar.notify_all();
+        }
     }
 }
 
-#[derive(Clone, Debug)]
 /// TelemetryWorkerHandle is a handle which allows interactions with the telemetry worker.
 /// The handle is safe to use across threads.
 ///
 /// The worker won't send data to the agent until you call `TelemetryWorkerHandle::send_start`
 ///
 /// To stop the worker, call `TelemetryWorkerHandle::send_stop` which trigger flush asynchronously
-/// then `TelemetryWorkerHandle::wait_for_shutdown`
-pub struct TelemetryWorkerHandle {
+/// then `TelemetryWorkerHandle::wait_for_shutdown` (sync, native only) or
+/// `TelemetryWorkerHandle::wait_for_shutdown_async` (cross-platform).
+///
+/// `C` carries the capability bundle for any deferred work the handle itself
+/// has to schedule (e.g. cancellation deadlines). The handle does not store
+/// an instance — it constructs a fresh sleeper via `<C as SleepCapability>::new()`
+/// when needed.
+pub struct TelemetryWorkerHandle<
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+> {
     sender: mpsc::Sender<TelemetryActions>,
     shutdown: Arc<InnerTelemetryShutdown>,
     cancellation_token: CancellationToken,
-    // Used to spawn cancellation tasks. Should be None when running as a SharedRuntime worker,
-    // since the runtime is not guaranteed to exist for the lifetime of the worker.
+    // Used to spawn cancellation tasks on native. Should be None when running as a
+    // SharedRuntime worker, since the runtime is not guaranteed to exist for the
+    // lifetime of the worker. On wasm we spawn via `wasm_bindgen_futures::spawn_local`
+    // directly, so no handle is needed.
+    #[cfg(not(target_arch = "wasm32"))]
     runtime: Option<runtime::Handle>,
-
     contexts: MetricContexts,
+    _phantom: PhantomData<fn() -> C>,
 }
 
-impl TelemetryWorkerHandle {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Clone
+    for TelemetryWorkerHandle<C>
+{
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.clone(),
+            shutdown: self.shutdown.clone(),
+            cancellation_token: self.cancellation_token.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            runtime: self.runtime.clone(),
+            contexts: self.contexts.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Debug
+    for TelemetryWorkerHandle<C>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelemetryWorkerHandle")
+            .field("sender", &self.sender)
+            .field("cancellation_token", &self.cancellation_token)
+            .finish()
+    }
+}
+
+/// Spawn a fire-and-forget future. Used by [`TelemetryWorkerHandle::cancel_requests_with_deadline`]
+/// to schedule a delayed `CancellationToken::cancel()`.
+///
+/// On native, defers to the stored tokio runtime handle (or logs and gives up if
+/// none was provided — matches the prior `tokio::runtime::Handle` based behavior).
+/// On wasm, defers to `wasm_bindgen_futures::spawn_local`, which puts the future
+/// on the JS event loop.
+#[cfg(not(target_arch = "wasm32"))]
+fn schedule_deferred_cancel<F>(runtime: Option<&runtime::Handle>, future: F)
+where
+    F: core::future::Future<Output = ()> + Send + 'static,
+{
+    let Some(rt) = runtime else {
+        tracing::error!("Cannot schedule cancellation deadline: no runtime handle available");
+        return;
+    };
+    rt.spawn(future);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn schedule_deferred_cancel<F>(future: F)
+where
+    F: core::future::Future<Output = ()> + 'static,
+{
+    wasm_bindgen_futures::spawn_local(future);
+}
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
+    TelemetryWorkerHandle<C>
+{
     pub fn register_metric_context(
         &self,
         name: String,
@@ -1021,22 +1159,40 @@ impl TelemetryWorkerHandle {
             .try_send(TelemetryActions::Lifecycle(LifecycleAction::Stop))?)
     }
 
-    fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
-        let Some(runtime) = &self.runtime else {
-            tracing::error!("Cannot schedule cancellation deadline: no runtime handle available");
-            return;
-        };
+    /// Schedule a deferred `CancellationToken::cancel()` to fire after `deadline`.
+    ///
+    /// Capability-driven sleep so the same code path works on native (tokio
+    /// reactor) and wasm (JS `setTimeout` via [`SleepCapability`]). The spawn
+    /// mechanism is platform-specific but the public API and observable
+    /// behavior are identical.
+    pub fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
         let token = self.cancellation_token.clone();
-        let f = async move {
-            tokio::time::sleep_until(deadline.into()).await;
-            token.cancel()
+        let remaining = deadline.saturating_duration_since(time::Instant::now());
+        let sleeper = <C as SleepCapability>::new();
+        let future = async move {
+            sleeper.sleep(remaining).await;
+            token.cancel();
         };
-        runtime.spawn(f);
+        #[cfg(not(target_arch = "wasm32"))]
+        schedule_deferred_cancel(self.runtime.as_ref(), future);
+        #[cfg(target_arch = "wasm32")]
+        schedule_deferred_cancel(future);
     }
 
+    /// Sync wrapper: schedule a cancellation deadline and block the current
+    /// thread until shutdown finishes. Native-only — wasm callers should use
+    /// [`Self::wait_for_shutdown_deadline_async`].
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_shutdown_deadline(&self, deadline: time::Instant) {
         self.cancel_requests_with_deadline(deadline);
         self.wait_for_shutdown()
+    }
+
+    /// Async equivalent of [`Self::wait_for_shutdown_deadline`] that works on
+    /// both native and wasm.
+    pub async fn wait_for_shutdown_deadline_async(&self, deadline: time::Instant) {
+        self.cancel_requests_with_deadline(deadline);
+        self.wait_for_shutdown_async().await
     }
 
     pub fn add_dependency(&self, name: String, version: Option<String>) -> anyhow::Result<()> {
@@ -1104,8 +1260,18 @@ impl TelemetryWorkerHandle {
         Ok(())
     }
 
+    /// Sync block-on-shutdown. Native-only — wasm callers should use
+    /// [`Self::wait_for_shutdown_async`] (the JS event loop is single-threaded
+    /// and cannot be blocked).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_shutdown(&self) {
         self.shutdown.wait_for_shutdown();
+    }
+
+    /// Async equivalent of [`Self::wait_for_shutdown`] that works on both
+    /// native and wasm.
+    pub async fn wait_for_shutdown_async(&self) {
+        self.shutdown.wait_for_shutdown_async().await
     }
 
     pub fn stats(&self) -> anyhow::Result<oneshot::Receiver<TelemetryWorkerStats>> {
@@ -1197,29 +1363,29 @@ impl TelemetryWorkerBuilder {
 
     /// Build the corresponding worker and its handle.
     ///
-    /// The optional runtime handle is stored in the worker handle and should be the one used to run
-    /// the worker task cancellation deadlines. Pass `None` when the worker will be run via a
-    /// [`SharedRuntime`](libdd_shared_runtime::SharedRuntime).
-    pub fn build_worker(
+    /// On native, the optional `tokio_runtime` handle is stored in the worker handle and
+    /// used to drive cancellation deadlines from
+    /// [`TelemetryWorkerHandle::cancel_requests_with_deadline`]. Pass `None` when the worker
+    /// will be run via a [`SharedRuntime`](libdd_shared_runtime::SharedRuntime).
+    ///
+    /// On wasm, cancellation deadlines are driven by `wasm_bindgen_futures::spawn_local` and
+    /// no runtime handle is required.
+    pub fn build_worker<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
-        tokio_runtime: Option<Handle>,
-    ) -> (TelemetryWorkerHandle, TelemetryWorker) {
+        #[cfg(not(target_arch = "wasm32"))] tokio_runtime: Option<runtime::Handle>,
+    ) -> (TelemetryWorkerHandle<C>, TelemetryWorker<C>) {
         let (tx, mailbox) = mpsc::channel(5000);
-        let shutdown = Arc::new(InnerTelemetryShutdown {
-            is_shutdown: Mutex::new(false),
-            condvar: Condvar::new(),
-        });
+        let shutdown = Arc::new(InnerTelemetryShutdown::new());
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
-        let client = http_client::from_config(&config);
+        let capabilities = C::new_client();
 
         let metrics_flush_interval =
             telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
 
-        #[allow(clippy::unwrap_used)]
         let worker = TelemetryWorker {
             flavor: self.flavor,
             data: TelemetryWorkerData {
@@ -1240,7 +1406,7 @@ impl TelemetryWorkerBuilder {
             runtime_id: self
                 .runtime_id
                 .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            client,
+            capabilities,
             metrics_flush_interval,
             deadlines: scheduler::Scheduler::new(vec![
                 (metrics_flush_interval, LifecycleAction::FlushMetricAggr),
@@ -1260,32 +1426,46 @@ impl TelemetryWorkerBuilder {
                 sender: tx,
                 shutdown,
                 cancellation_token: token,
+                #[cfg(not(target_arch = "wasm32"))]
                 runtime: tokio_runtime,
-
                 contexts,
+                _phantom: PhantomData,
             },
             worker,
         )
     }
 
-    /// Spawns a telemetry worker task in the current tokio runtime
-    /// The worker will capture a reference to the runtime and use it to run its tasks
-    pub fn spawn(self) -> (TelemetryWorkerHandle, JoinHandle<()>) {
+    /// Spawns a telemetry worker task in the current tokio runtime.
+    ///
+    /// Native-only convenience entry point. Wasm callers should construct via
+    /// [`Self::build_worker`] and hand the worker to a
+    /// [`SharedRuntime`](libdd_shared_runtime::SharedRuntime) like
+    /// `LocalRuntime`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn spawn<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        self,
+    ) -> (TelemetryWorkerHandle<C>, JoinHandle<()>) {
         let tokio_runtime = tokio::runtime::Handle::current();
 
-        let (worker_handle, worker) = self.build_worker(Some(tokio_runtime.clone()));
+        let (worker_handle, worker) = self.build_worker::<C>(Some(tokio_runtime.clone()));
 
         let join_handle = tokio_runtime.spawn(async move { worker.run_loop().await });
 
         (worker_handle, join_handle)
     }
 
-    /// Spawns a telemetry worker in a new thread and returns a handle to interact with it
-    pub fn run(self) -> anyhow::Result<TelemetryWorkerHandle> {
+    /// Spawns a telemetry worker in a new thread and returns a handle to interact with it.
+    ///
+    /// Native-only convenience entry point; spawning a fresh tokio runtime is not
+    /// meaningful on wasm.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn run<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        self,
+    ) -> anyhow::Result<TelemetryWorkerHandle<C>> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        let (handle, worker) = self.build_worker(Some(runtime.handle().clone()));
+        let (handle, worker) = self.build_worker::<C>(Some(runtime.handle().clone()));
         let notify_shutdown = handle.shutdown.clone();
         std::thread::spawn(move || {
             runtime.block_on(worker.run_loop());
@@ -1307,7 +1487,8 @@ mod tests {
         LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
         TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
-    use libdd_common::{http_common, Endpoint};
+    use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_common::Endpoint;
     use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
@@ -1316,16 +1497,16 @@ mod tests {
     #[test]
     fn test_handle_sync_send() {
         #[allow(clippy::redundant_closure)]
-        let _ = |h: TelemetryWorkerHandle| is_send(h);
+        let _ = |h: TelemetryWorkerHandle<NativeCapabilities>| is_send(h);
         #[allow(clippy::redundant_closure)]
-        let _ = |h: TelemetryWorkerHandle| is_sync(h);
+        let _ = |h: TelemetryWorkerHandle<NativeCapabilities>| is_sync(h);
     }
 
     fn test_worker(
         session_id: Option<String>,
         root_session_id: Option<String>,
         parent_session_id: Option<String>,
-    ) -> TelemetryWorker {
+    ) -> TelemetryWorker<NativeCapabilities> {
         let mut b = TelemetryWorkerBuilder::new(
             "h".into(),
             "svc".into(),
@@ -1341,7 +1522,8 @@ mod tests {
         b.config.parent_session_id = parent_session_id;
         b.config.root_session_id = root_session_id;
         let rt = Runtime::new().unwrap();
-        b.build_worker(Some(rt.handle().clone())).1
+        b.build_worker::<NativeCapabilities>(Some(rt.handle().clone()))
+            .1
     }
 
     #[test]
@@ -1407,7 +1589,7 @@ mod tests {
 
     #[test]
     fn telemetry_http_omits_session_family_without_valid_session_id() {
-        let assert_no_session_headers = |req: &http_common::HttpRequest| {
+        let assert_no_session_headers = |req: &http::Request<bytes::Bytes>| {
             assert!(req.headers().get(DD_SESSION_ID).is_none());
             assert!(req.headers().get(DD_ROOT_SESSION_ID).is_none());
             assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
@@ -1459,7 +1641,9 @@ mod tests {
         );
     }
 
-    fn build_test_worker_with_flavor(flavor: TelemetryWorkerFlavor) -> TelemetryWorker {
+    fn build_test_worker_with_flavor(
+        flavor: TelemetryWorkerFlavor,
+    ) -> TelemetryWorker<NativeCapabilities> {
         let mut b = TelemetryWorkerBuilder::new(
             "h".into(),
             "svc".into(),
@@ -1472,7 +1656,8 @@ mod tests {
             .unwrap();
         b.runtime_id = Some("rid".into());
         b.flavor = flavor;
-        b.build_worker(Some(tokio::runtime::Handle::current())).1
+        b.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()))
+            .1
     }
 
     /// Every event with a delay must be scheduled on Start; otherwise it sits in
@@ -1570,9 +1755,13 @@ mod tests {
             metrics::{MetricNamespace, MetricType},
             Configuration, ConfigurationOrigin, Dependency, Endpoint, Integration, Log, LogLevel,
         };
+        use libdd_capabilities_impl::NativeCapabilities;
         use libdd_shared_runtime::Worker;
 
-        fn build_test_worker() -> (TelemetryWorkerHandle, TelemetryWorker) {
+        fn build_test_worker() -> (
+            TelemetryWorkerHandle<NativeCapabilities>,
+            TelemetryWorker<NativeCapabilities>,
+        ) {
             let builder = TelemetryWorkerBuilder::new(
                 "hostname".to_string(),
                 "test-service".to_string(),
@@ -1581,7 +1770,7 @@ mod tests {
                 "1.0.0".to_string(),
             );
             // build_worker requires a tokio Handle; tests using this must be #[tokio::test]
-            builder.build_worker(Some(tokio::runtime::Handle::current()))
+            builder.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()))
         }
 
         fn make_log(id: u64, message: &str) -> (LogIdentifier, Log) {
@@ -1824,7 +2013,8 @@ mod tests {
         let runtime_handle = shared_runtime
             .block_on(async { tokio::runtime::Handle::current() })
             .expect("runtime handle");
-        let (telemetry_handle, worker) = builder.build_worker(Some(runtime_handle));
+        let (telemetry_handle, worker) =
+            builder.build_worker::<NativeCapabilities>(Some(runtime_handle));
 
         let _worker_handle = shared_runtime
             .spawn_worker(worker, false)

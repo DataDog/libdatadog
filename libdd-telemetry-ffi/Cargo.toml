@@ -23,6 +23,7 @@ regex-lite = ["libdd-common-ffi/regex-lite"]
 build_common = { path = "../build-common" }
 
 [dependencies]
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-telemetry = { path = "../libdd-telemetry" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }

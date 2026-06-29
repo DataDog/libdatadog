@@ -2,13 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use ffi::slice::AsBytes;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_common_ffi as ffi;
 use libdd_telemetry::{
     data,
-    worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor, TelemetryWorkerHandle},
+    worker::{TelemetryWorkerBuilder, TelemetryWorkerFlavor},
 };
 use std::ptr::NonNull;
+
+/// FFI-facing alias: the C ABI surface is native-only, so the worker handle is
+/// always pinned to [`NativeCapabilities`].
+type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 
 use ffi::MaybeError;
 
@@ -133,7 +138,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_run(
 ) -> MaybeError {
     out_handle
         .as_ptr()
-        .write(Box::new(crate::try_c!(builder.run())));
+        .write(Box::new(crate::try_c!(builder.run::<NativeCapabilities>())));
     MaybeError::None
 }
 
@@ -151,7 +156,7 @@ pub unsafe extern "C" fn ddog_telemetry_builder_run_metric_logs(
     builder.flavor = TelemetryWorkerFlavor::MetricsLogs;
     out_handle
         .as_ptr()
-        .write(Box::new(crate::try_c!(builder.run())));
+        .write(Box::new(crate::try_c!(builder.run::<NativeCapabilities>())));
     MaybeError::None
 }
 

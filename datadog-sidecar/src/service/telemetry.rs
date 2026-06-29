@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use zwohash::ZwoHasher;
 
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,11 @@ use std::time::SystemTime;
 use libdd_telemetry::config::Config;
 use libdd_telemetry::data::{self, Integration};
 use libdd_telemetry::metrics::{ContextKey, MetricContext};
-use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerHandle};
+use libdd_telemetry::worker::{LifecycleAction, TelemetryActions};
+
+/// Sidecar's telemetry worker is native-only, so its handle is pinned to
+/// [`NativeCapabilities`].
+type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 use manual_future::ManualFuture;
 use serde_with::{serde_as, VecSkipError};
 use tokio::time::{sleep, sleep_until, Instant as TokioInstant};
