@@ -24,6 +24,7 @@ pub enum TestMode {
     ThreadLimit,
     SidecarDoNothing,
     SidecarMultiThreadCollection,
+    UnhandledExceptionMultiThread,
 }
 
 impl TestMode {
@@ -49,6 +50,7 @@ impl TestMode {
             Self::ThreadLimit => "thread_limit",
             Self::SidecarDoNothing => "sidecar_donothing",
             Self::SidecarMultiThreadCollection => "sidecar_multi_thread_collection",
+            Self::UnhandledExceptionMultiThread => "unhandled_exception_multi_thread",
         }
     }
 
@@ -74,6 +76,7 @@ impl TestMode {
             Self::ThreadLimit,
             Self::SidecarDoNothing,
             Self::SidecarMultiThreadCollection,
+            Self::UnhandledExceptionMultiThread,
         ]
     }
 }
@@ -108,6 +111,7 @@ impl std::str::FromStr for TestMode {
             "thread_limit" => Ok(Self::ThreadLimit),
             "sidecar_donothing" => Ok(Self::SidecarDoNothing),
             "sidecar_multi_thread_collection" => Ok(Self::SidecarMultiThreadCollection),
+            "unhandled_exception_multi_thread" => Ok(Self::UnhandledExceptionMultiThread),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }

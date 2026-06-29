@@ -19,7 +19,7 @@ use libdd_data_pipeline::trace_exporter::{
 use libdd_log::logger::{
     logger_configure_std, logger_set_log_level, LogEventLevel, StdConfig, StdTarget,
 };
-use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
 use libdd_trace_utils::span::v04::{SpanBytes, SpanEvent, SpanLink, VecMap};
 use rand::random;
 use std::{collections::HashMap, sync::Arc, time::UNIX_EPOCH};
@@ -78,9 +78,9 @@ fn main() {
         .url
         .unwrap_or_else(|| format!("https://public-trace-http-intake.logs.{site}/v1/input"));
 
-    let shared_runtime = Arc::new(SharedRuntime::new().expect("Failed to create runtime"));
+    let shared_runtime = Arc::new(ForkSafeRuntime::new().expect("Failed to create runtime"));
 
-    let mut builder = TraceExporter::<NativeCapabilities>::builder();
+    let mut builder = TraceExporter::<NativeCapabilities, _>::builder();
     builder
         .set_hostname("COMP-N661JFW6JN")
         .set_env("prod")

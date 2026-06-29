@@ -23,6 +23,8 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
 use libdd_shared_runtime::SharedRuntime;
+#[cfg(not(target_arch = "wasm32"))]
+use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,8 +49,8 @@ fn build_otlp_header_map(headers: Vec<(String, String)>) -> http::HeaderMap {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Default)]
-pub struct TraceExporterBuilder {
+#[derive(Debug)]
+pub struct TraceExporterBuilder<R: SharedRuntime> {
     url: Option<String>,
     hostname: String,
     env: String,
@@ -77,7 +79,7 @@ pub struct TraceExporterBuilder {
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
-    shared_runtime: Option<Arc<SharedRuntime>>,
+    shared_runtime: Option<Arc<R>>,
     health_metrics_enabled: bool,
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
@@ -87,13 +89,78 @@ pub struct TraceExporterBuilder {
     agentless_endpoint: Option<String>,
     agentless_api_key: Option<String>,
     agentless_timeout: Option<Duration>,
+    otlp_protocol: OtlpProtocol,
     otlp_metrics_endpoint: Option<String>,
     otlp_metrics_headers: Vec<(String, String)>,
     otel_trace_semantics_enabled: bool,
     runtime_id: Option<String>,
 }
 
-impl TraceExporterBuilder {
+/// Default is impl'd for `R = ForkSafeRuntime` only so that bare
+/// `TraceExporterBuilder::default()` resolves unambiguously to the fork-safe variant on
+/// native. Builders parameterized with another runtime construct via
+/// [`TraceExporterBuilder::new`] explicitly.
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for TraceExporterBuilder<ForkSafeRuntime> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<R: SharedRuntime> TraceExporterBuilder<R> {
+    /// Construct a builder with all fields at their initial / `None` state.
+    ///
+    /// On native, `TraceExporterBuilder::<ForkSafeRuntime>::new()` and
+    /// `TraceExporterBuilder::default()` are equivalent; for other runtimes (e.g.
+    /// `BasicRuntime`, `LocalRuntime`) callers must use `new` directly.
+    pub fn new() -> Self {
+        Self {
+            url: None,
+            hostname: String::new(),
+            env: String::new(),
+            app_version: String::new(),
+            service: String::new(),
+            tracer_version: String::new(),
+            language: String::new(),
+            language_version: String::new(),
+            language_interpreter: String::new(),
+            language_interpreter_vendor: String::new(),
+            git_commit_sha: String::new(),
+            process_tags: String::new(),
+            input_format: TraceExporterInputFormat::default(),
+            output_format: TraceExporterOutputFormat::default(),
+            dogstatsd_url: None,
+            client_computed_stats: false,
+            client_computed_top_level: false,
+            stats_bucket_size: None,
+            peer_tags_aggregation: false,
+            compute_stats_by_span_kind: false,
+            peer_tags: Vec::new(),
+            #[cfg(feature = "stats-obfuscation")]
+            client_side_stats_obfuscation_enabled: false,
+            #[cfg(feature = "telemetry")]
+            telemetry: None,
+            telemetry_instrumentation_sessions: TelemetryInstrumentationSessions::default(),
+            shared_runtime: None,
+            health_metrics_enabled: false,
+            test_session_token: None,
+            agent_rates_payload_version_enabled: false,
+            connection_timeout: None,
+            otlp_endpoint: None,
+            otlp_headers: Vec::new(),
+            otlp_protocol: OtlpProtocol::default(),
+            otlp_metrics_endpoint: None,
+            otlp_metrics_headers: Vec::new(),
+            otel_trace_semantics_enabled: false,
+            runtime_id: None,
+            agentless_endpoint: None,
+            agentless_api_key: None,
+            agentless_timeout: None,
+        }
+    }
+}
+
+impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Sets the URL of the agent.
     ///
     /// The agent supports the following URL schemes:
@@ -277,7 +344,9 @@ impl TraceExporterBuilder {
     }
 
     /// Set a shared runtime used by the exporter for background workers.
-    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<SharedRuntime>) -> &mut Self {
+    ///
+    /// See [`libdd_shared_runtime::SharedRuntime`] for guidance on choosing an implementation.
+    pub fn set_shared_runtime(&mut self, shared_runtime: Arc<R>) -> &mut Self {
         self.shared_runtime = Some(shared_runtime);
         self
     }
@@ -316,6 +385,15 @@ impl TraceExporterBuilder {
     /// Example: `set_otlp_endpoint("http://localhost:4318/v1/traces")`
     pub fn set_otlp_endpoint(&mut self, url: &str) -> &mut Self {
         self.otlp_endpoint = Some(url.to_owned());
+        self
+    }
+
+    /// Selects the OTLP export protocol: [`OtlpProtocol::HttpJson`] (default) or
+    /// [`OtlpProtocol::HttpProtobuf`]. The host language resolves this from
+    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; a `grpc` value is
+    /// unsupported and is rejected when parsed into [`OtlpProtocol`], so it never reaches here.
+    pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
+        self.otlp_protocol = protocol;
         self
     }
 
@@ -371,7 +449,13 @@ impl TraceExporterBuilder {
         self
     }
 
-    /// Strip Datadog-specific `dd.*`/`_dd.*` data-point attributes from the exported histogram.
+    /// Enables OTel trace semantics, which does not add DD-specific per-span attributes
+    /// (`service.name`, `operation.name`, `resource.name`, `span.type`, `error.msg`,
+    ///  `error.message`, `span.kind`) to the OTLP payload.
+    /// Also strips Datadog-specific `dd.*`/`_dd.*` data-point attributes from the exported
+    /// histogram. This is useful when exporting to a native OTel backend that does not expect
+    /// Datadog semantics. The host language tracer is expected to observe this behavior by
+    /// setting the `DD_TRACE_OTEL_SEMANTICS_ENABLED` environment variable to `true`.
     pub fn enable_otel_trace_semantics(&mut self) -> &mut Self {
         self.otel_trace_semantics_enabled = true;
         self
@@ -389,15 +473,23 @@ impl TraceExporterBuilder {
     /// Build the [`TraceExporter`] synchronously.
     ///
     /// Sync facade over [`Self::build_async`]; panics inside an existing tokio context.
-    /// Not available on wasm — use [`Self::build_async`] there.
+    /// Requires `R: BlockingRuntime` so the builder can drive setup on the runtime. Not
+    /// available on wasm — use [`Self::build_async`] there.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         mut self,
-    ) -> Result<TraceExporter<C>, TraceExporterError> {
+    ) -> Result<TraceExporter<C, R>, TraceExporterError>
+    where
+        R: BlockingRuntime,
+    {
         let shared_runtime = match self.shared_runtime.as_ref() {
             Some(rt) => rt.clone(),
             None => {
-                let rt = Self::new_shared_runtime()?;
+                let rt = Arc::new(R::new().map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?);
                 self.shared_runtime = Some(rt.clone());
                 rt
             }
@@ -408,12 +500,13 @@ impl TraceExporterBuilder {
     /// Build the [`TraceExporter`] asynchronously.
     ///
     /// Awaits all async setup (e.g. telemetry start-up). Safe to drive from any async
-    /// context.
+    /// context. If [`set_shared_runtime`](Self::set_shared_runtime) was not called, a new
+    /// runtime is constructed via [`SharedRuntime::new`].
     pub async fn build_async<
         C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     >(
         self,
-    ) -> Result<TraceExporter<C>, TraceExporterError> {
+    ) -> Result<TraceExporter<C, R>, TraceExporterError> {
         if !Self::is_inputs_outputs_formats_compatible(self.input_format, self.output_format) {
             return Err(TraceExporterError::Builder(
                 BuilderErrorKind::InvalidConfiguration(
@@ -426,7 +519,9 @@ impl TraceExporterBuilder {
 
         let shared_runtime = match self.shared_runtime {
             Some(rt) => rt,
-            None => Self::new_shared_runtime()?,
+            None => Arc::new(R::new().map_err(|e| {
+                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
+            })?),
         };
 
         let dogstatsd = self.dogstatsd_url.and_then(|u| {
@@ -558,11 +653,14 @@ impl TraceExporterBuilder {
             .map(Duration::from_millis)
             .unwrap_or(DEFAULT_OTLP_TIMEOUT);
 
+        // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
+        // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
         let otlp_config = otlp_endpoint.map(|url| OtlpTraceConfig {
             endpoint_url: url,
             headers: build_otlp_header_map(self.otlp_headers),
             timeout: otlp_timeout,
-            protocol: OtlpProtocol::HttpJson,
+            protocol: self.otlp_protocol,
+            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 
         let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
@@ -692,12 +790,6 @@ impl TraceExporterBuilder {
         })
     }
 
-    fn new_shared_runtime() -> Result<Arc<SharedRuntime>, TraceExporterError> {
-        SharedRuntime::new().map(Arc::new).map_err(|e| {
-            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-        })
-    }
-
     /// Reject configurations that combine mutually exclusive trace export targets.
     ///
     /// Trace export uses exactly one of three transports:
@@ -767,6 +859,7 @@ mod tests {
     use super::*;
     use crate::trace_exporter::error::BuilderErrorKind;
     use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::ForkSafeRuntime;
 
     #[cfg_attr(miri, ignore)]
     #[test]
@@ -834,7 +927,7 @@ mod tests {
     #[test]
     fn test_set_shared_runtime() {
         let mut builder = TraceExporterBuilder::default();
-        let shared_runtime = Arc::new(SharedRuntime::new().unwrap());
+        let shared_runtime = Arc::new(ForkSafeRuntime::new().unwrap());
         builder.set_shared_runtime(shared_runtime.clone());
 
         let exporter = builder.build::<NativeCapabilities>().unwrap();
@@ -896,7 +989,7 @@ mod tests {
     }
 
     fn assert_invalid_config(
-        result: Result<TraceExporter<NativeCapabilities>, TraceExporterError>,
+        result: Result<TraceExporter<NativeCapabilities, ForkSafeRuntime>, TraceExporterError>,
     ) -> String {
         match result {
             Err(TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(msg))) => msg,
