@@ -154,7 +154,8 @@ impl SpanConcentrator {
             additional_metric_tag_keys: normalize_additional_metric_tag_keys(
                 additional_metric_tag_keys,
             ),
-            additional_metric_tags_cardinality_limit: DEFAULT_ADDITIONAL_METRIC_TAGS_CARDINALITY_LIMIT,
+            additional_metric_tags_cardinality_limit:
+                DEFAULT_ADDITIONAL_METRIC_TAGS_CARDINALITY_LIMIT,
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config: obfuscation_config.unwrap_or_default(),
         }
@@ -196,7 +197,8 @@ impl SpanConcentrator {
     }
 
     /// Set the per-bucket limit on distinct stat entries that include additional metric tags.
-    /// Values less than or equal to 0 are rejected and the existing limit is preserved with a warning.
+    /// Values less than or equal to 0 are rejected and the existing limit is preserved with a
+    /// warning.
     pub fn set_additional_metric_tags_cardinality_limit(&mut self, limit: usize) {
         if limit == 0 {
             warn!(
@@ -242,7 +244,10 @@ impl SpanConcentrator {
         };
         self.buckets
             .entry(bucket_timestamp)
-            .or_insert(StatsBucket::new(bucket_timestamp, self.additional_metric_tags_cardinality_limit))
+            .or_insert(StatsBucket::new(
+                bucket_timestamp,
+                self.additional_metric_tags_cardinality_limit,
+            ))
             .insert(
                 agg_key,
                 span.duration(),

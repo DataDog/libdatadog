@@ -1242,6 +1242,8 @@ fn test_additional_metric_tags_aggregation() {
         get_span_kinds(),
         vec![],
         vec![],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     let mut concentrator_with_additional_metric_tags = SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
@@ -1249,6 +1251,8 @@ fn test_additional_metric_tags_aggregation() {
         get_span_kinds(),
         vec![],
         vec!["custom.primary".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     for span in &spans {
         concentrator_without_additional_metric_tags.add_span(span);
@@ -1802,8 +1806,30 @@ fn test_additional_metric_tags_cardinality_limit_masks_overflow_entries() {
     let meta_a = [("region", "us-east-1")];
     let meta_b = [("region", "eu-west-1")];
     let mut spans = vec![
-        get_test_span_with_meta(now, 1, 0, 100, 5, "svc", "GET /a", 0, &meta_a, &[("_dd.measured", 1.0)]),
-        get_test_span_with_meta(now, 2, 0, 100, 5, "svc", "GET /b", 0, &meta_b, &[("_dd.measured", 1.0)]),
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
     ];
     compute_top_level_span(spans.as_mut_slice());
 
@@ -1830,7 +1856,10 @@ fn test_additional_metric_tags_cardinality_limit_masks_overflow_entries() {
         .flat_map(|s| s.additional_metric_tags.iter().map(String::as_str))
         .collect();
     tags.sort_unstable();
-    assert_eq!(tags, vec!["region:tracer_blocked_value", "region:us-east-1"]);
+    assert_eq!(
+        tags,
+        vec!["region:tracer_blocked_value", "region:us-east-1"]
+    );
 }
 
 #[test]
@@ -1841,9 +1870,42 @@ fn test_additional_metric_tags_cardinality_limit_existing_keys_merge_after_limit
     let meta_b = [("region", "eu-west-1")];
     // Three spans: first two fill and exceed a cap of 1, third re-hits the admitted key.
     let mut spans = vec![
-        get_test_span_with_meta(now, 1, 0, 100, 5, "svc", "GET /a", 0, &meta_a, &[("_dd.measured", 1.0)]),
-        get_test_span_with_meta(now, 2, 0, 100, 5, "svc", "GET /b", 0, &meta_b, &[("_dd.measured", 1.0)]),
-        get_test_span_with_meta(now, 3, 0, 100, 5, "svc", "GET /a", 0, &meta_a, &[("_dd.measured", 1.0)]),
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
     ];
     compute_top_level_span(spans.as_mut_slice());
 
@@ -1880,8 +1942,30 @@ fn test_additional_metric_tags_cardinality_limit_resets_on_flush() {
     let meta_a = [("region", "us-east-1")];
     let meta_b = [("region", "eu-west-1")];
     let mut spans = vec![
-        get_test_span_with_meta(now, 1, 0, 100, 5, "svc", "GET /a", 0, &meta_a, &[("_dd.measured", 1.0)]),
-        get_test_span_with_meta(now, 2, 0, 100, 5, "svc", "GET /b", 0, &meta_b, &[("_dd.measured", 1.0)]),
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
     ];
     compute_top_level_span(spans.as_mut_slice());
 
@@ -1908,12 +1992,22 @@ fn test_additional_metric_tags_cardinality_limit_resets_on_flush() {
     let later = flush1_time + Duration::from_nanos(BUCKET_SIZE);
     let meta_b2 = [("region", "eu-west-1")];
     let mut spans2 = vec![get_test_span_with_meta(
-        later, 4, 0, 100, 5, "svc", "GET /b", 0, &meta_b2, &[("_dd.measured", 1.0)],
+        later,
+        4,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /b",
+        0,
+        &meta_b2,
+        &[("_dd.measured", 1.0)],
     )];
     compute_top_level_span(spans2.as_mut_slice());
     concentrator.add_span(&spans2[0]);
 
-    let flush2_time = later + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let flush2_time =
+        later + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
     let second_buckets = concentrator.flush(flush2_time, true);
     let tags: Vec<&str> = second_buckets
         .iter()
@@ -1951,11 +2045,13 @@ fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
         get_span_kinds(),
         vec![],
         vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     concentrator.add_span(&spans[0]);
 
-    let flushtime = now
-        + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
     let buckets = concentrator.flush(flushtime, false);
     let tags = &buckets[0].stats[0].additional_metric_tags;
     assert_eq!(tags, &["region:tracer_blocked_value"]);
@@ -1986,11 +2082,13 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
         get_span_kinds(),
         vec![],
         vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
     );
     concentrator.add_span(&spans[0]);
 
-    let flushtime = now
-        + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
     let buckets = concentrator.flush(flushtime, false);
     let tags = &buckets[0].stats[0].additional_metric_tags;
     assert_eq!(tags, &[format!("region:{ok_value}")]);
@@ -1998,7 +2096,11 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
 
 #[test]
 fn test_normalize_additional_metric_tag_keys_sort() {
-    let keys = vec!["region".to_string(), "env".to_string(), "tenant".to_string()];
+    let keys = vec![
+        "region".to_string(),
+        "env".to_string(),
+        "tenant".to_string(),
+    ];
     let result = normalize_additional_metric_tag_keys(keys);
     assert_eq!(result, vec!["env", "region", "tenant"]);
 }

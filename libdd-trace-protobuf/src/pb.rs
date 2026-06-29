@@ -654,26 +654,20 @@ pub struct ClientGroupedStats {
     #[serde(rename = "HTTPEndpoint")]
     pub http_endpoint: ::prost::alloc::string::String,
     /// @inject_tag: msg:"srv_src"
-    /// used to identify service override origin
     #[prost(string, tag = "21")]
     #[serde(default)]
     #[serde(rename = "srv_src")]
     pub service_source: ::prost::alloc::string::String,
-    /// span_derived_primary_tags are user-configured tags that are extracted from spans and used for stats aggregation
-    /// E.g., `aws.s3.bucket`, `http.url`, or any custom tag
+    /// used to identify service override origin
     /// Deprecated: use additional_metric_tags (field 23) instead.
     #[prost(string, repeated, tag = "22")]
     #[serde(default)]
     pub span_derived_primary_tags: ::prost::alloc::vec::Vec<
         ::prost::alloc::string::String,
     >,
-    /// additional_metric_tags are tags to be used as additional dimensions for stats aggregation
-    /// E.g., `aws.s3.bucket`, `http.url`, or any custom tag
+    /// additional_metric_tags are tags sent by tracers to be used as additional dimensions for stats aggregation
     #[prost(string, repeated, tag = "23")]
-    #[serde(default)]
-    pub additional_metric_tags: ::prost::alloc::vec::Vec<
-        ::prost::alloc::string::String,
-    >,
+    pub additional_metric_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]

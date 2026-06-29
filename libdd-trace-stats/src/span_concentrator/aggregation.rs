@@ -218,7 +218,8 @@ impl<'a> BorrowedAggregationKey<'a> {
     ///
     /// If `peer_tag_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    /// If `additional_metric_tags` is not empty then matching span tags keys are included in the key.
+    /// If `additional_metric_tags` is not empty then matching span tags keys are included in the
+    /// key.
     pub(super) fn from_span<T: StatSpan<'a>>(
         span: &'a T,
         peer_tag_keys: &'a [String],
@@ -475,9 +476,13 @@ pub(super) struct StatsBucket {
 
 impl StatsBucket {
     /// Return a new StatsBucket starting at the given timestamp.
-    /// `additional_metric_tags_cardinality_limit` limits the number of distinct aggregation keys that include
-    /// additional metric tags; overflow entries have their tag values masked to TRACER_BLOCKED_VALUE.
-    pub(super) fn new(start_timestamp: u64, additional_metric_tags_cardinality_limit: usize) -> Self {
+    /// `additional_metric_tags_cardinality_limit` limits the number of distinct aggregation keys
+    /// that include additional metric tags; overflow entries have their tag values masked to
+    /// TRACER_BLOCKED_VALUE.
+    pub(super) fn new(
+        start_timestamp: u64,
+        additional_metric_tags_cardinality_limit: usize,
+    ) -> Self {
         Self {
             data: HashMap::new(),
             start: start_timestamp,
@@ -513,22 +518,22 @@ impl StatsBucket {
                 // Already exists — merge normally, no limit check needed.
                 e.get_mut().insert(duration, is_error, is_top_level);
             }
-            hashbrown::hash_map::EntryRef::Vacant(e) => {
-                if self.additional_metric_tags_entry_count < self.additional_metric_tags_cardinality_limit {
-                    // Under limit — admit new entry.
-                    self.additional_metric_tags_entry_count += 1;
-                    e.insert(GroupedStats::default())
+            hashbrown::hash_map::EntryRef::Vacant(e)
+                if self.additional_metric_tags_entry_count
+                    < self.additional_metric_tags_cardinality_limit =>
+            {
+                // Under limit — admit new entry.
+                self.additional_metric_tags_entry_count += 1;
+                e.insert(GroupedStats::default())
                     .insert(duration, is_error, is_top_level);
-                } else {
-                    // Cap exceeded — mask tag values and merge into the overflow entry.
-                    // Drop the vacant entry to release the mutable borrow before re-entering.
-                    drop(e);
-                    let masked = key.into_masked_owned();
-                    self.data
-                        .entry(masked)
-                        .or_default()
-                        .insert(duration, is_error, is_top_level);
-                }
+            }
+            hashbrown::hash_map::EntryRef::Vacant(_) => {
+                // Cap exceeded — mask tag values and merge into the overflow entry.
+                let masked = key.into_masked_owned();
+                self.data
+                    .entry(masked)
+                    .or_default()
+                    .insert(duration, is_error, is_top_level);
             }
         }
     }
