@@ -429,6 +429,7 @@ pub struct TracerPayload {
     /// containerDebug holds debug information about the container tags resolution.
     /// @gotags: json:"container_debug,omitempty" msg:"container_debug,omitempty"
     #[prost(message, optional, tag = "11")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub container_debug: ::core::option::Option<ContainerDebug>,
 }
 /// ContainerDebug holds debug information about the container tags resolution process.
