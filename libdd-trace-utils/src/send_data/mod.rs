@@ -394,29 +394,6 @@ impl SendData {
                     endpoint.as_ref(),
                 ));
             }
-            // TracerPayloadCollection::V1(payload) => {
-            //     // V0.4-shaped spans re-encoded as a V1 msgpack payload at send time. Used by
-            //     // the sidecar when the upstream SDK only speaks v0.4 but the agent advertises
-            //     // `/v1.0/traces`. `extract_payload_attrs` will pull env/hostname/app_version
-            //     // from span meta tags since the SDK propagates them there for v0.4 payloads.
-            //     #[allow(clippy::unwrap_used)]
-            //     let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
-            //     let mut headers = self.headers.clone();
-            //     headers.reserve(2);
-            //     headers.insert(DATADOG_TRACE_COUNT, chunks.into());
-            //     headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
-
-            //     let metadata = crate::tracer_metadata::TracerMetadata::default();
-            //     let payload = msgpack_encoder::v1::to_vec_from_payload_v1(payload);
-
-            //     futures.push(self.send_payload(
-            //         capabilities,
-            //         chunks,
-            //         payload,
-            //         headers,
-            //         endpoint.as_ref(),
-            //     ));
-            // }
             TracerPayloadCollection::V05(payload) => {
                 #[allow(clippy::unwrap_used)]
                 let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
@@ -429,6 +406,24 @@ impl SendData {
                     Ok(p) => p,
                     Err(e) => return result.error(anyhow!(e)),
                 };
+
+                futures.push(self.send_payload(
+                    capabilities,
+                    chunks,
+                    payload,
+                    headers,
+                    endpoint.as_ref(),
+                ));
+            }
+            TracerPayloadCollection::V1(payload) => {
+                #[allow(clippy::unwrap_used)]
+                let chunks = u64::try_from(self.tracer_payloads.size()).unwrap();
+                let mut headers = self.headers.clone();
+                headers.reserve(2);
+                headers.insert(DATADOG_TRACE_COUNT, chunks.into());
+                headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
+
+                let payload = msgpack_encoder::v1::to_vec_from_payload_v1(payload);
 
                 futures.push(self.send_payload(
                     capabilities,
@@ -560,10 +555,9 @@ mod tests {
                 msgpack_encoder::v04::to_encoded_byte_len(payloads) as usize
             }
             TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
-            // TracerPayloadCollection::V1(payloads) => {
-            //     let metadata = crate::tracer_metadata::TracerMetadata::default();
-            //     msgpack_encoder::v1::to_encoded_byte_len(payloads, &metadata) as usize
-            // }
+            TracerPayloadCollection::V1(payload) => {
+                msgpack_encoder::v1::to_encoded_byte_len_from_payload_v1(payload) as usize
+            }
         }
     }
 

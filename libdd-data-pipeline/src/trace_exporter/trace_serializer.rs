@@ -78,7 +78,7 @@ impl TraceSerializer {
             TraceExporterError::Deserialization(DecodeError::InvalidFormat(e.to_string()))
         };
         match output_format {
-            TraceExporterOutputFormat::V1 => Ok(tracer_payload::TraceChunks::V1(traces)),
+            TraceExporterOutputFormat::V1 => todo!("Implement V1 trace collection"),
             TraceExporterOutputFormat::V04 => Ok(tracer_payload::TraceChunks::V04(traces)),
             TraceExporterOutputFormat::V05 => {
                 trace_utils::convert_trace_chunks_v04_to_v05(traces).map_err(map_err)
@@ -126,8 +126,8 @@ impl TraceSerializer {
                     .map_err(TraceExporterError::Serialization)?;
                 buff
             }
-            tracer_payload::TraceChunks::V1(p) => {
-                msgpack_encoder::v1::to_vec_with_capacity(p, capacity as u32, metadata)
+            tracer_payload::TraceChunks::V1(_) => {
+                todo!("Implement V1 payload serialization with metadata : {:?}", metadata)
             }
         };
         self.previous_serialised_len
