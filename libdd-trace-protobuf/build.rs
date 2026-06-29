@@ -56,7 +56,10 @@ fn generate_protobuf() {
     //   intake expects the name ContainerID rather than the PascalCase ContainerId
 
     config.type_attribute("TracerPayload", "#[derive(Deserialize, Serialize)]");
-    config.type_attribute("ContainerDebug", "#[derive(Deserialize, Serialize, PartialOrd, Ord)]");
+    config.type_attribute(
+        "ContainerDebug",
+        "#[derive(Deserialize, Serialize, PartialOrd, Ord)]",
+    );
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
