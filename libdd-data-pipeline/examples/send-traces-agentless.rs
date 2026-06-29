@@ -30,7 +30,7 @@ fn get_span(now: i64, trace_id: u128, span_id: u64) -> SpanBytes {
         trace_id,
         span_id,
         parent_id: span_id.saturating_sub(1),
-        duration: 1_000_000 * span_id as i64,
+        duration,
         start: now + duration,
         service: "data-pipeline-agentless-example".into(),
         name: "agentless.example".into(),

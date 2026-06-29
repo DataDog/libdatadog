@@ -13,8 +13,8 @@
 //!   inlined on each trace instead of being carried in request headers. Hostname is always emitted
 //! - **IDs**: `trace_id`, `span_id`, `parent_id` are lowercase hex strings (16 chars; 32 for
 //!   span-link trace IDs)
-//! - **128-bit trace IDs**: only the low 64 bits go into `trace_id`; the `_dd.p.tid` meta tag carie
-//!   upper 64 bits
+//! - **128-bit trace IDs**: only the low 64 bits go into `trace_id`; the `_dd.p.tid` meta tag
+//!   carries upper 64 bits
 //! - **Span links / events**: not top-level fields. They are JSON-stringified into
 //!   `meta["_dd.span_links"]` and `meta["events"]`, each truncated to 25_000 chars. No top-level
 //!   `links` field is emitted.
@@ -415,7 +415,7 @@ impl serde::Serialize for MsgpackAsJson<'_> {
 }
 
 /// Truncate `s` to at most `max_len` bytes, appending `"..."` when truncation occurs.
-fn truncate_with_ellipsis(s: String, max_len: usize) -> String {
+fn truncate_with_ellipsis(mut s: String, max_len: usize) -> String {
     if s.len() <= max_len {
         return s;
     }
@@ -426,10 +426,9 @@ fn truncate_with_ellipsis(s: String, max_len: usize) -> String {
     while end > 0 && !s.is_char_boundary(end) {
         end -= 1;
     }
-    let mut truncated = String::with_capacity(end + suffix_len);
-    truncated.push_str(&s[..end]);
-    truncated.push_str(TRUNCATION_SUFFIX);
-    truncated
+    s.truncate(end);
+    s.push_str(TRUNCATION_SUFFIX);
+    s
 }
 
 #[cfg(test)]
