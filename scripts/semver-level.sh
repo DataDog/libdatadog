@@ -77,24 +77,24 @@ compute_semver_results() {
         LEVEL="none"
     elif [[ $SEMVER_EXIT_CODE -eq 1 ]]; then
         # Check if it's an error or actual semver violation
-        if echo "$SEMVER_OUTPUT" | grep -qE "Summary semver requires new major version"; then
+        if grep -qE "Summary semver requires new major version" <<< "$SEMVER_OUTPUT"; then
             # It's a semver violation - this is a major change
             LEVEL="major"
             REASON="cargo-semver-checks detected breaking changes"
             # Extract the relevant violation details (skip the header/summary lines)
-            DETAILS=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
+            DETAILS=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
             log_verbose "Detected semver violations (major change)" >&2
             log_verbose "$SEMVER_OUTPUT" >&2
-        elif echo "$SEMVER_OUTPUT" | grep -qF "package \`$crate\` not found"; then
+        elif grep -qF "package \`$crate\` not found" <<< "$SEMVER_OUTPUT"; then
             # The crate doesn't exist in the baseline — it's a new crate being added
             LEVEL="minor"
             REASON="New crate (not present in baseline)"
             log_verbose "New crate '$crate' not found in baseline, treating as minor change" >&2
-        elif echo "$SEMVER_OUTPUT" | grep -qE "Summary semver requires new minor version"; then
+        elif grep -qE "Summary semver requires new minor version" <<< "$SEMVER_OUTPUT"; then
             LEVEL="minor"
             REASON="cargo-semver-checks detected minor breaking changes"
             # Extract the relevant violation details (skip the header/summary lines)
-            DETAILS=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
+            DETAILS=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
             log_verbose "Detected semver violations (minor change)" >&2
             log_verbose "$SEMVER_OUTPUT" >&2
         else
@@ -122,12 +122,12 @@ compute_semver_results() {
         log_verbose "$PUBLIC_API_OUTPUT"
 
         # Check for removed items (major change)
-        if echo "$PUBLIC_API_OUTPUT" | grep -q "Removed items from the public API$"; then
-          if ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Removed items from the public API$" | grep -q "^(none)$"; then
+        if grep -q "Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT"; then
+          if ! grep -A 2 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)$"; then
             LEVEL="major"
             REASON="cargo-public-api detected removed public API items"
             # Extract removed items section
-            DETAILS=$(echo "$PUBLIC_API_OUTPUT" | grep -A 50 "^Removed items from the public API$" | head -50)
+            DETAILS=$(grep -A 50 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | head -50)
             log_verbose "Detected removed items (major change)" >&2
           fi
         fi
@@ -139,12 +139,12 @@ compute_semver_results() {
 
         # Check for added items (minor change) - only if not already major
         if [[ "$LEVEL" != "major" ]]; then
-          if echo "$PUBLIC_API_OUTPUT" | grep -q "Added items to the public API$"; then
-            if ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Added items to the public API$" | grep -q "^(none)"; then
+          if grep -q "Added items to the public API$" <<< "$PUBLIC_API_OUTPUT"; then
+            if ! grep -A 2 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)"; then
               LEVEL="minor"
               REASON="cargo-public-api detected new public API items"
               # Extract added items section
-              DETAILS=$(echo "$PUBLIC_API_OUTPUT" | grep -A 50 "^Added items to the public API$" | head -50)
+              DETAILS=$(grep -A 50 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | head -50)
               log_verbose "Detected added items (minor change)" >&2
             fi
           fi
