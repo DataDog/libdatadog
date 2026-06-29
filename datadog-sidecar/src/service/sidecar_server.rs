@@ -1078,6 +1078,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         // Lazily create the concentrator on first IPC span for this (env, version, service).
         if let Some(state) = get_or_create_concentrator(
             &self.server.span_concentrators,
+            &self.server.telemetry_clients,
             &env,
             &version,
             session_id,
