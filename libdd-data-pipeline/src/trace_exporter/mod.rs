@@ -257,7 +257,6 @@ pub struct TraceExporter<
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     client_side_stats: StatsComputationConfig,
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
     #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
@@ -276,7 +275,6 @@ pub struct TraceExporter<
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
     /// skipped.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     otlp_stats_enabled: bool,
     /// When `Some(max_line_size)`, traces are written as newline-delimited JSON
     /// through the [`LogWriterCapability`] (the Datadog Forwarder "log exporter"
@@ -421,7 +419,6 @@ impl<
         Ok(res)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     /// Check if agent info state has changed
     fn has_agent_info_state_changed(&self, agent_info: &Arc<AgentInfo>) -> bool {
         Some(agent_info.state_hash.as_str())
@@ -434,7 +431,6 @@ impl<
 
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
-    #[cfg(not(target_arch = "wasm32"))]
     async fn check_agent_info(&self) {
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
@@ -500,18 +496,11 @@ impl<
             .store(Some(agent_info.state_hash.clone().into()))
     }
 
-    #[cfg(target_arch = "wasm32")]
-    async fn check_agent_info(&self) {
-        // No background workers on wasm — agent info is never fetched, stats are
-        // never computed. This is intentionally a no-op.
-    }
-
     /// Reconcile `v1_active` with the agent's currently-advertised endpoints. Called only when
     /// V1 is configured and the agent info state has changed, so transitions are logged at most
     /// once per change. Note: `v1_active` can also transition `true → false` outside this path,
     /// via the fail-closed hook in `send_trace_chunks_inner` when the agent returns 404 on
     /// `/v1.0/traces` (the agent does not bump its state hash on 404).
-    #[cfg(not(target_arch = "wasm32"))]
     fn refresh_v1_active(&self, agent_info: &Arc<AgentInfo>) {
         let supports_v1 = agent_info
             .info
