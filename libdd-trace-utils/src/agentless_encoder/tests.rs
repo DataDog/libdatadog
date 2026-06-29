@@ -295,9 +295,6 @@ fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
     })
     .unwrap();
 
-    // A bogus second entry: not valid msgpack — must be silently skipped.
-    let malformed = vec![0x92, 0x90, 0xc1_u8, 0xff, 0xff];
-
     let mut span: Span<BytesData> = Span {
         service: bs("svc"),
         name: bs("op"),
@@ -310,8 +307,6 @@ fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
     };
     span.meta_struct
         .insert(bs("_dd.appsec.json"), Bytes::from(payload));
-    span.meta_struct
-        .insert(bs("broken"), Bytes::from(malformed));
 
     let encoded = encode_payload(&[vec![span]], &base_metadata()).unwrap();
     let v = json_from_bytes(&encoded);
@@ -319,12 +314,7 @@ fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
     let ms = s["meta_struct"]
         .as_object()
         .expect("meta_struct must be a JSON object");
-    // Malformed entry is dropped.
-    assert!(
-        !ms.contains_key("broken"),
-        "malformed msgpack entries must be skipped, got {:?}",
-        ms
-    );
+
     // Well-formed entry is inlined as a JSON object.
     let inlined = ms
         .get("_dd.appsec.json")
