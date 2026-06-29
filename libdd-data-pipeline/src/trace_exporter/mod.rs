@@ -1335,7 +1335,7 @@ mod tests {
             span_id: 2,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_v04(&traces);
 
         let resp = exporter.send(data.as_ref()).unwrap();
         assert!(matches!(resp, AgentResponse::Unchanged));
@@ -1376,7 +1376,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_v04(&traces);
         // `send` is synchronous and, in log mode, returns after writing through the
         // capability without initiating any HTTP; combined with the structural assert
         // above this is deterministic (no background worker can race the mock).
