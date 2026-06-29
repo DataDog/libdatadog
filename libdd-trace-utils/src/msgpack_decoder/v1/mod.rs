@@ -138,7 +138,9 @@ where
 {
     let slice: &[u8] = buf.as_mut_slice();
     let marker_byte = *slice.first().ok_or_else(|| {
-        DecodeError::InvalidFormat("Unexpected end of V1 buffer when reading interned string".to_owned())
+        DecodeError::InvalidFormat(
+            "Unexpected end of V1 buffer when reading interned string".to_owned(),
+        )
     })?;
 
     // msgpack markers:
@@ -154,9 +156,7 @@ where
         Ok(table.record(s))
     } else if is_uint {
         let id: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
-            DecodeError::InvalidFormat(
-                "V1 interned string reference uint read failure".to_owned(),
-            )
+            DecodeError::InvalidFormat("V1 interned string reference uint read failure".to_owned())
         })?;
         table.resolve(id)
     } else {
@@ -170,8 +170,8 @@ where
 ///
 /// # Returns
 ///
-/// * `Ok((payload, payload_size))` — the decoded payload and the number of bytes consumed from
-///   the buffer.
+/// * `Ok((payload, payload_size))` — the decoded payload and the number of bytes consumed from the
+///   buffer.
 /// * `Err(DecodeError)` — if the payload is malformed.
 ///
 /// # Errors
@@ -213,9 +213,8 @@ fn decode_payload<T: DeserializableTraceData>(
 where
     T::Text: Clone,
 {
-    let map_len = decode::read_map_len(buf.as_mut_slice()).map_err(|_| {
-        DecodeError::InvalidFormat("Unable to read V1 payload map len".to_owned())
-    })?;
+    let map_len = decode::read_map_len(buf.as_mut_slice())
+        .map_err(|_| DecodeError::InvalidFormat("Unable to read V1 payload map len".to_owned()))?;
 
     let mut payload = TracerPayload::<T>::default();
     let mut saw_chunks = false;
@@ -233,9 +232,7 @@ where
             trace_key::LANGUAGE_VERSION => {
                 payload.language_version = read_interned_string(buf, table)?
             }
-            trace_key::TRACER_VERSION => {
-                payload.tracer_version = read_interned_string(buf, table)?
-            }
+            trace_key::TRACER_VERSION => payload.tracer_version = read_interned_string(buf, table)?,
             trace_key::RUNTIME_ID => payload.runtime_id = read_interned_string(buf, table)?,
             trace_key::ENV_REF => payload.env = read_interned_string(buf, table)?,
             trace_key::HOSTNAME_REF => payload.hostname = read_interned_string(buf, table)?,
@@ -290,9 +287,8 @@ where
     let mut saw_spans = false;
 
     for _ in 0..map_len {
-        let key = decode::read_int::<u8, _>(buf.as_mut_slice()).map_err(|_| {
-            DecodeError::InvalidFormat("V1 chunk key (u8) read failure".to_owned())
-        })?;
+        let key = decode::read_int::<u8, _>(buf.as_mut_slice())
+            .map_err(|_| DecodeError::InvalidFormat("V1 chunk key (u8) read failure".to_owned()))?;
         match key {
             chunk_key::TRACE_ID => {
                 let len = decode::read_bin_len(buf.as_mut_slice()).map_err(|_| {
@@ -377,6 +373,7 @@ mod tests {
         TracerPayloadBytes,
     };
     use crate::span::vec_map::VecMap;
+    use bolero::check;
     use libdd_tinybytes::{Bytes, BytesString};
 
     fn bs(s: &str) -> BytesString {
@@ -581,5 +578,81 @@ mod tests {
             }
             _ => panic!("attribute should decode as KeyValue"),
         }
+    }
+
+    /// Fuzz test: bolero generates random strings + numbers for the V1 payload, the encoder
+    /// serialises it, and the decoder must accept its own output (no panic, no error). Mirrors
+    /// the v04 `fuzz_from_bytes` pattern. Bolero caps tuples at 12 fields — extra metadata is
+    /// either omitted or filled with deterministic defaults.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn fuzz_from_bytes() {
+        check!()
+            .with_type::<(
+                String, // language_name
+                String, // env (payload-level)
+                String, // service
+                String, // name
+                String, // resource
+                String, // span env
+                String, // attr_key
+                String, // attr_value
+                u64,    // span_id
+                u64,    // parent_id
+                u64,    // start
+                bool,   // error
+            )>()
+            .cloned()
+            .for_each(
+                |(
+                    lang,
+                    payload_env,
+                    service,
+                    name,
+                    resource,
+                    span_env,
+                    attr_key,
+                    attr_value,
+                    span_id,
+                    parent_id,
+                    start,
+                    error,
+                )| {
+                    let bs = |s: &str| BytesString::from_slice(s.as_ref()).unwrap();
+                    let mut attrs = VecMap::<BytesString, AttributeValue<_>>::new();
+                    attrs.insert(bs(&attr_key), AttributeValue::String(bs(&attr_value)));
+
+                    let span = V1SpanBytes {
+                        service: bs(&service),
+                        name: bs(&name),
+                        resource: bs(&resource),
+                        span_id,
+                        parent_id,
+                        start: start as i64,
+                        error,
+                        env: bs(&span_env),
+                        attributes: attrs,
+                        ..Default::default()
+                    };
+
+                    let payload = TracerPayloadBytes {
+                        language_name: bs(&lang),
+                        env: bs(&payload_env),
+                        chunks: vec![TraceChunkBytes {
+                            trace_id: [0xab; 16],
+                            spans: vec![span],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    };
+
+                    let encoded = to_vec_from_payload_v1(&payload);
+                    let result = from_bytes(Bytes::from(encoded));
+                    assert!(
+                        result.is_ok(),
+                        "decoder rejected its own encoded output: {result:?}"
+                    );
+                },
+            );
     }
 }

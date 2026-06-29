@@ -129,9 +129,9 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
 
-    /// Sends a v0.4-encoded trace via shared memory; the sidecar re-encodes it as a V1
-    /// msgpack payload before forwarding to the agent. Use this when the upstream SDK only
-    /// speaks v0.4 but the agent advertises `/v1.0/traces`.
+    /// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 `TracerPayload`,
+    /// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
+    /// `/v1.0/traces` endpoint. Use this when the SDK speaks V1 natively.
     ///
     /// # Arguments
     ///
@@ -146,14 +146,14 @@ pub trait SidecarInterface {
         headers: SerializedTracerHeaderTags,
     );
 
-    /// Sends a v0.4-encoded trace as bytes; the sidecar re-encodes it as a V1 msgpack payload
-    /// before forwarding to the agent. Use this when the upstream SDK only speaks v0.4 but
-    /// the agent advertises `/v1.0/traces`.
+    /// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 `TracerPayload`, can
+    /// inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
+    /// endpoint. Use this when the SDK speaks V1 natively.
     ///
     /// # Arguments
     ///
     /// * `instance_id` - The ID of the instance.
-    /// * `data` - The v0.4 trace data serialized as bytes.
+    /// * `data` - The V1 trace data serialized as bytes.
     /// * `headers` - The serialized headers from the tracer.
     async fn send_trace_v1_bytes(
         instance_id: InstanceId,

@@ -253,9 +253,9 @@ impl SidecarServer {
         self.send_trace(headers, data, target, retry_interval, TraceEncoding::V04)
     }
 
-    /// Re-encode entry point for the V1 path. Input bytes are still v0.4 msgpack from the SDK;
-    /// the [`TraceEncoding::V1`] tag tells [`SendData`] to encode the wire payload as V1 before
-    /// forwarding to the agent.
+    /// Entry point for the V1 trace path. Input bytes are a V1 msgpack `TracerPayload` from the
+    /// SDK; the [`TraceEncoding::V1`] tag drives [`decode_to_trace_chunks`] to the V1 decoder,
+    /// and [`SendData`] then re-encodes the same shape as V1 on the wire to the agent.
     fn send_trace_v1(
         &self,
         headers: &SerializedTracerHeaderTags,

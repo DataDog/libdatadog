@@ -1109,8 +1109,9 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v04_bytes(
     MaybeError::None
 }
 
-/// Sends a v0.4-encoded trace to the sidecar via shared memory; the sidecar will re-encode
-/// it as a V1 msgpack payload before forwarding to the agent.
+/// Sends a V1-encoded trace to the sidecar via shared memory. The sidecar decodes the V1
+/// `TracerPayload`, can inspect it, and re-encodes it as V1 msgpack on the way to the agent's
+/// `/v1.0/traces` endpoint.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
@@ -1133,8 +1134,9 @@ pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_shm(
     MaybeError::None
 }
 
-/// Sends a v0.4-encoded trace as bytes to the sidecar; the sidecar will re-encode it as a
-/// V1 msgpack payload before forwarding to the agent.
+/// Sends a V1-encoded trace as bytes to the sidecar. The sidecar decodes the V1 `TracerPayload`,
+/// can inspect it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces`
+/// endpoint.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn ddog_sidecar_send_trace_v1_bytes(

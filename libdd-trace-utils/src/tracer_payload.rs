@@ -99,8 +99,9 @@ impl TracerPayloadCollection {
             }
             TracerPayloadCollection::V1(dest) => {
                 if let TracerPayloadCollection::V1(src) = other {
-                    // Same-target SendData entries are coalesced by trace_utils::coalesce_send_data,
-                    // so both V1 payloads typically share tracer-level metadata. If all metadata
+                    // Same-target SendData entries are coalesced by
+                    // trace_utils::coalesce_send_data, so both V1 payloads
+                    // typically share tracer-level metadata. If all metadata
                     // fields match we append `src`'s chunks into `dest`; if any diverge we no-op
                     // (logging a warning) rather than silently dropping `src`'s metadata.
                     if metadata_matches_v1(dest, src) {
@@ -247,15 +248,21 @@ pub fn decode_to_trace_chunks(
 ) -> Result<(TraceChunks<BytesData>, usize), anyhow::Error> {
     match encoding_type {
         TraceEncoding::V04 => {
-            let (data, size) = msgpack_decoder::v04::from_bytes(data).map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
+            let (data, size) = msgpack_decoder::v04::from_bytes(data).map_err(|e| {
+                anyhow::format_err!("Error deserializing trace from request body: {e}")
+            })?;
             Ok((TraceChunks::V04(data), size))
         }
         TraceEncoding::V05 => {
-            let (data, size) = msgpack_decoder::v05::from_bytes(data).map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
+            let (data, size) = msgpack_decoder::v05::from_bytes(data).map_err(|e| {
+                anyhow::format_err!("Error deserializing trace from request body: {e}")
+            })?;
             Ok((convert_trace_chunks_v04_to_v05(data)?, size))
         }
         TraceEncoding::V1 => {
-            let (data, size) = msgpack_decoder::v1::from_bytes(data).map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
+            let (data, size) = msgpack_decoder::v1::from_bytes(data).map_err(|e| {
+                anyhow::format_err!("Error deserializing trace from request body: {e}")
+            })?;
             Ok((TraceChunks::V1(data), size))
         }
     }
@@ -274,7 +281,10 @@ fn metadata_matches_v1(
 ) -> bool {
     let differing: Vec<&'static str> = [
         ("language_name", dest.language_name == src.language_name),
-        ("language_version", dest.language_version == src.language_version),
+        (
+            "language_version",
+            dest.language_version == src.language_version,
+        ),
         ("tracer_version", dest.tracer_version == src.tracer_version),
         ("runtime_id", dest.runtime_id == src.runtime_id),
         ("env", dest.env == src.env),

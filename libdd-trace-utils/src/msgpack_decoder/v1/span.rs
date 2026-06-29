@@ -186,9 +186,9 @@ where
             }
             Ok(AttributeValue::List(items))
         }
-        ANY_VALUE_KEY_KEY_VALUE_LIST => Ok(AttributeValue::KeyValue(read_attributes_map(
-            buf, table,
-        )?)),
+        ANY_VALUE_KEY_KEY_VALUE_LIST => {
+            Ok(AttributeValue::KeyValue(read_attributes_map(buf, table)?))
+        }
         unknown => Err(DecodeError::InvalidFormat(format!(
             "Unknown V1 AnyValue type discriminant: {unknown}"
         ))),
@@ -227,9 +227,8 @@ fn decode_span_link<T: DeserializableTraceData>(
 where
     T::Text: Clone,
 {
-    let map_len = decode::read_map_len(buf.as_mut_slice()).map_err(|_| {
-        DecodeError::InvalidFormat("V1 span_link map len read failure".to_owned())
-    })?;
+    let map_len = decode::read_map_len(buf.as_mut_slice())
+        .map_err(|_| DecodeError::InvalidFormat("V1 span_link map len read failure".to_owned()))?;
     let mut link = SpanLink::<T>::default();
 
     for _ in 0..map_len {
@@ -300,9 +299,8 @@ fn decode_span_event<T: DeserializableTraceData>(
 where
     T::Text: Clone,
 {
-    let map_len = decode::read_map_len(buf.as_mut_slice()).map_err(|_| {
-        DecodeError::InvalidFormat("V1 span_event map len read failure".to_owned())
-    })?;
+    let map_len = decode::read_map_len(buf.as_mut_slice())
+        .map_err(|_| DecodeError::InvalidFormat("V1 span_event map len read failure".to_owned()))?;
     let mut event = SpanEvent::<T>::default();
 
     for _ in 0..map_len {

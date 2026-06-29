@@ -294,7 +294,8 @@ pub fn send_trace_v04_shm(
     Ok(())
 }
 
-/// Sends a v0.4-encoded trace as bytes; the sidecar re-encodes it as V1 before forwarding.
+/// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 payload, can inspect it, and
+/// re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
 pub fn send_trace_v1_bytes(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
@@ -305,8 +306,8 @@ pub fn send_trace_v1_bytes(
     Ok(())
 }
 
-/// Sends a v0.4-encoded trace via shared memory; the sidecar re-encodes it as V1 before
-/// forwarding.
+/// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 payload, can inspect
+/// it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
 pub fn send_trace_v1_shm(
     transport: &mut SidecarTransport,
     instance_id: &InstanceId,
