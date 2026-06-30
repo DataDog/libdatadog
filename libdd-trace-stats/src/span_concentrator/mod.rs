@@ -3,6 +3,7 @@
 //! This module implements the SpanConcentrator used to aggregate spans into stats
 use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
+use tracing::debug;
 
 use libdd_trace_protobuf::pb;
 
@@ -20,11 +21,13 @@ pub use stat_span::StatSpan;
 /// `StatsExporter` is generic over `C: FlushableConcentrator` so it can work with
 /// both the in-process [`SpanConcentrator`] and the SHM-backed `ShmSpanConcentrator`.
 pub trait FlushableConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket>;
+    /// Flush time buckets and return them together with the number of spans that were
+    /// collapsed into the overflow sentinel bucket due to cardinality limiting.
+    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64);
 }
 
 impl FlushableConcentrator for SpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket> {
+    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64) {
         self.flush(SystemTime::now(), force)
     }
 }
@@ -226,14 +229,26 @@ impl SpanConcentrator {
 
     /// Flush all stats bucket except for the `buffer_len` most recent. If `force` is true, flush
     /// all buckets.
-    pub fn flush(&mut self, now: SystemTime, force: bool) -> Vec<pb::ClientStatsBucket> {
+    ///
+    /// Returns a tuple of `(buckets, collapsed_spans)` where `collapsed_spans` is the total number
+    /// of spans that were collapsed into the overflow sentinel bucket due to cardinality limiting
+    /// across all flushed time buckets.
+    pub fn flush(&mut self, now: SystemTime, force: bool) -> (Vec<pb::ClientStatsBucket>, u64) {
         self.drain_due_buckets(now, force, StatsBucket::flush)
     }
 
     /// Like [`Self::flush`], but also emits exact per-cell scalars alongside each bucket for the
     /// OTLP trace-metrics path. The protobuf bucket inside each [`OtlpStatsBucket`] is identical
     /// to what [`Self::flush`] would produce, so the /v0.6/stats agent path is unaffected.
-    pub fn flush_with_otlp_exact(&mut self, now: SystemTime, force: bool) -> Vec<OtlpStatsBucket> {
+    ///
+    /// Returns a tuple of `(buckets, collapsed_spans)` where `collapsed_spans` is the total number
+    /// of spans that were collapsed into the overflow sentinel bucket due to cardinality limiting
+    /// across all flushed time buckets.
+    pub fn flush_with_otlp_exact(
+        &mut self,
+        now: SystemTime,
+        force: bool,
+    ) -> (Vec<OtlpStatsBucket>, u64) {
         self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact)
     }
 
@@ -242,7 +257,7 @@ impl SpanConcentrator {
         now: SystemTime,
         force: bool,
         encode: impl Fn(StatsBucket, u64) -> T,
-    ) -> Vec<T> {
+    ) -> (Vec<T>, u64) {
         // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
         let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
@@ -253,7 +268,7 @@ impl SpanConcentrator {
                 - (self.buffer_len as u64 - 1) * self.bucket_size
         };
         let mut total_collapsed = 0;
-        buckets
+        let buckets_pb = buckets
             .into_iter()
             .filter_map(|(timestamp, bucket)| {
                 // Always keep `bufferLen` buckets (default is 2: current + previous one).
@@ -271,7 +286,11 @@ impl SpanConcentrator {
                 total_collapsed += bucket.collapsed_count();
                 Some(encode(bucket, self.bucket_size))
             })
-            .collect()
+            .collect();
+        if total_collapsed > 0 {
+            debug!(max_entries_per_bucket = self.max_entries_per_bucket, total_collapsed, "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT");
+        }
+        (buckets_pb, total_collapsed)
     }
 }
 
