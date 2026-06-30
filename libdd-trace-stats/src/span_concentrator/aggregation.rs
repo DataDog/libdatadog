@@ -223,8 +223,9 @@ const GRPC_STATUS_NAMES: [&str; 17] = [
     "UNAUTHENTICATED",
 ];
 
-/// Map a numeric gRPC status code string (as carried on [`pb::ClientGroupedStats::grpc_status_code`])
-/// to its canonical OTel status name. Returns `None` for empty/unparseable/out-of-range values.
+/// Map a numeric gRPC status code string (as carried on
+/// [`pb::ClientGroupedStats::grpc_status_code`]) to its canonical OTel status name. Returns `None`
+/// for empty/unparseable/out-of-range values.
 pub fn grpc_status_code_to_name(code: &str) -> Option<&'static str> {
     GRPC_STATUS_NAMES.get(code.parse::<usize>().ok()?).copied()
 }
