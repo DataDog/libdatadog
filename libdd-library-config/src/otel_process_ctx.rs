@@ -627,6 +627,7 @@ pub mod linux {
     #[cfg(test)]
     #[serial_test::serial]
     mod tests {
+        use std::io;
         use std::sync::atomic::Ordering;
 
         use super::MappingHeader;
