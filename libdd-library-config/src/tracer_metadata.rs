@@ -240,10 +240,8 @@ mod tests {
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{AnyValue, ProcessContext};
 
-    fn find_attr<'a>(ctx: &'a ProcessContext, key: &str) -> Option<&'a AnyValue> {
-        ctx.resource
-            .as_ref()?
-            .attributes
+    fn find_extra_attr<'a>(ctx: &'a ProcessContext, key: &str) -> Option<&'a AnyValue> {
+        ctx.extra_attributes
             .iter()
             .find(|kv| kv.key == key)?
             .value
@@ -273,8 +271,8 @@ mod tests {
     fn threadlocal_attrs_absent_when_keys_empty() {
         let ctx = TracerMetadata::default().to_otel_process_ctx();
 
-        assert!(find_attr(&ctx, "threadlocal.schema_version").is_none());
-        assert!(find_attr(&ctx, "threadlocal.attribute_key_map").is_none());
+        assert!(find_extra_attr(&ctx, "threadlocal.schema_version").is_none());
+        assert!(find_extra_attr(&ctx, "threadlocal.attribute_key_map").is_none());
     }
 
     #[cfg(feature = "otel-thread-ctx")]
@@ -291,7 +289,7 @@ mod tests {
         .to_otel_process_ctx();
 
         // Schema version attribute
-        let schema_version = find_attr(&ctx, "threadlocal.schema_version")
+        let schema_version = find_extra_attr(&ctx, "threadlocal.schema_version")
             .expect("threadlocal.schema_version should be present");
         assert_eq!(
             schema_version.value,
@@ -299,7 +297,7 @@ mod tests {
         );
 
         // Key map attribute: ordered array of key name strings
-        let key_map = find_attr(&ctx, "threadlocal.attribute_key_map")
+        let key_map = find_extra_attr(&ctx, "threadlocal.attribute_key_map")
             .expect("threadlocal.attribute_key_map should be present");
         let array = match &key_map.value {
             Some(any_value::Value::ArrayValue(a)) => a,
