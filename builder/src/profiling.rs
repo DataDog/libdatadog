@@ -61,6 +61,8 @@ impl Profiling {
         headers.push("ffe.h");
         #[cfg(feature = "shared-runtime")]
         headers.push("shared-runtime.h");
+        #[cfg(feature = "otel-thread-ctx")]
+        headers.push("otel-thread-ctx.h");
 
         let mut origin_path: PathBuf = [&self.source_include, "dummy.h"].iter().collect();
         let mut target_path: PathBuf = [&self.target_include, "dummy.h"].iter().collect();
@@ -133,6 +135,8 @@ impl Module for Profiling {
         let features = self.features.to_string() + "," + "cbindgen";
         #[cfg(feature = "crashtracker")]
         let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
+        #[cfg(feature = "otel-thread-ctx")]
+        let features = features.add(",otel-thread-ctx-ffi");
 
         // Using rustc instead of build in order to overcome issues with LTO optimization.
         let mut cargo_args = vec![

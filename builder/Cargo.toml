@@ -31,6 +31,7 @@ log = []
 ddsketch = []
 ffe = []
 shared-runtime = []
+otel-thread-ctx = []
 regex-lite = ["libdd-common/regex-lite"]
 
 [lib]

@@ -18,7 +18,7 @@ name = "datadog_profiling_ffi"
 
 [features]
 default = ["ddcommon-ffi"]
-cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-runtime-ffi?/cbindgen", "libdd-otel-thread-ctx-ffi?/cbindgen"]
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
@@ -34,6 +34,7 @@ ddcommon-ffi = ["dep:libdd-common-ffi"]
 ddsketch-ffi = ["dep:libdd-ddsketch-ffi"]
 datadog-ffe-ffi = ["dep:datadog-ffe-ffi"]
 shared-runtime = ["dep:libdd-shared-runtime-ffi", "libdd-shared-runtime-ffi/catch_panic"]
+otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [build-dependencies]
@@ -62,3 +63,4 @@ thiserror = "2"
 tokio-util = "0.7.1"
 datadog-ffe-ffi = { path = "../datadog-ffe-ffi", default-features = false, optional = true }
 libdd-shared-runtime-ffi = { path = "../libdd-shared-runtime-ffi", default-features = false, optional = true }
+libdd-otel-thread-ctx-ffi = { path = "../libdd-otel-thread-ctx-ffi", default-features = false, optional = true }
