@@ -17,13 +17,14 @@
 //!   carries upper 64 bits
 //! - **Span links / events**: not top-level fields. They are JSON-stringified into
 //!   `meta["_dd.span_links"]` and `meta["events"]`, each truncated to 25_000 chars. No top-level
-//!   `links` field is emitted.
+//!   `links` field is emitted. If meta attributes for "_dd.span_links" of "events" are already
+//!   attached to the span we will keep existing fields and the span level field will be dropped
 //! - **Stats / top-level flags**: the intake has no trace-agent to compute them, so the encoder
 //!   injects `meta["_dd.compute_stats"]="1"` on the first span of each chunk and
 //!   `metrics["_trace_root"]=1` where applicable.
 //! - **Non-finite metrics** (NaN/Inf) are dropped (JSON can't represent them).
 //!
-//! Left todo is span normalization (service/name/resource/type truncation + defaults)
+//! TODO: span normalization (service/name/resource/type truncation + defaults)
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
@@ -198,7 +199,7 @@ fn encode_span<T: TraceData, S: Serializer>(
     )?;
     map.serialize_entry("service", service_str)?;
     map.serialize_entry("error", &span.error)?;
-    map.serialize_entry("start", &span.start)?;
+    map.serialize_entry("start", &span.start.max(0))?;
     map.serialize_entry("duration", &span.duration)?;
 
     let type_str: &str = span.r#type.borrow();

@@ -18,9 +18,10 @@
 //!   that module for the payload-shape differences.
 //! - **Retries**: up to 2 retries with exponential backoff starting at 1 s and no cap (the agent
 //!   path uses its own strategy).
-//! - **Mutual exclusion with OTLP**: if both an OTLP and an agentless endpoint are configured on
-//!   the builder, OTLP wins and the agentless config is silently dropped with a warning at build
-//!   time.
+//! - **Mutually exclusive transport**: agentless cannot be combined with OTLP
+//!   ([`set_otlp_endpoint`]), a caller-supplied agent URL ([`set_url`]), or log output; configuring
+//!   any of them together causes `build`/`build_async` to return
+//!   `BuilderErrorKind::InvalidConfiguration`.
 
 pub(crate) mod config;
 pub(crate) mod exporter;

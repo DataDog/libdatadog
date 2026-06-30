@@ -427,6 +427,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// ([`Self::set_otlp_endpoint`]) and a configured agent URL ([`Self::set_url`]);
     /// combining either with this method causes [`Self::build`]/[`Self::build_async`]
     /// to return [`BuilderErrorKind::InvalidConfiguration`].
+    /// the output format is ignored in agentless mode; payloads are always
+    /// JSON
     ///
     /// Example: `set_agentless_endpoint("https://public-trace-http-intake.logs.datadoghq.com/v1/input", "<api-key>")`
     pub fn set_agentless_endpoint(&mut self, url: &str, api_key: &str) -> &mut Self {
