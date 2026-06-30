@@ -11,7 +11,9 @@ use aggregation::StatsBucket;
 
 mod aggregation;
 use aggregation::BorrowedAggregationKey;
-pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
+pub use aggregation::{
+    grpc_status_code_to_name, FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket,
+};
 
 pub mod stat_span;
 pub use stat_span::StatSpan;
