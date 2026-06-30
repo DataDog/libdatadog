@@ -115,7 +115,7 @@ impl TracerMetadata {
             threadlocal_attribute_keys,
         } = self;
 
-        let attributes = vec![
+        let resource_attrs = vec![
             key_value_opt("service.name", service_name),
             key_value_opt("service.instance.id", runtime_id),
             key_value_opt("service.version", service_version),
@@ -127,6 +127,8 @@ impl TracerMetadata {
             key_value_opt("container.id", container_id),
         ];
 
+        // `mut` is only needed when `otel-thread-ctx` is enabled.
+        #[allow(unused_mut)]
         let mut extra_attributes = vec![key_value_opt("datadog.process_tags", process_tags)];
 
         #[cfg(feature = "otel-thread-ctx")]
@@ -157,7 +159,7 @@ impl TracerMetadata {
 
         ProcessContext {
             resource: Some(Resource {
-                attributes,
+                attributes: resource_attrs,
                 dropped_attributes_count: 0,
                 entity_refs: vec![],
             }),
