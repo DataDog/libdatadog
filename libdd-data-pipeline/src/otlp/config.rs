@@ -6,12 +6,16 @@
 use http::HeaderMap;
 use std::time::Duration;
 
-/// OTLP trace export protocol — selects the HTTP body encoding and `Content-Type`.
+/// OTLP trace export protocol — selects the wire transport and body encoding.
 ///
-/// Only the HTTP encodings libdatadog actually supports are representable. A `grpc` value (e.g.
-/// resolved from the OTel-default `OTEL_EXPORTER_OTLP_PROTOCOL`) is rejected by
-/// [`FromStr`](std::str::FromStr) rather than represented here, so an unsupported protocol can
-/// never be constructed and silently mishandled downstream.
+/// All three OTel-standard protocol strings parse successfully; the selection
+/// controls which send path the exporter uses:
+/// - `http/json` and `http/protobuf` → OTLP over HTTP/1.1 via
+///   [`HttpClientCapability`](libdd_capabilities::HttpClientCapability).
+/// - `grpc` → OTLP over HTTP/2 via a tonic [`Channel`](tonic::transport::Channel).
+///
+/// Plaintext gRPC (`http://` scheme, port 4317) is supported. TLS gRPC
+/// (`https://` scheme) is not yet implemented — use a TLS-terminating sidecar.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OtlpProtocol {
     /// HTTP with a JSON body (`Content-Type: application/json`). The default.
@@ -19,6 +23,9 @@ pub enum OtlpProtocol {
     HttpJson,
     /// HTTP with a protobuf body (`Content-Type: application/x-protobuf`).
     HttpProtobuf,
+    /// gRPC over HTTP/2. Protobuf-encoded body with 5-byte gRPC framing.
+    /// Default port is 4317. Only plaintext (`http://`) is supported.
+    Grpc,
 }
 
 impl std::str::FromStr for OtlpProtocol {
@@ -27,11 +34,7 @@ impl std::str::FromStr for OtlpProtocol {
         match s {
             "http/json" => Ok(OtlpProtocol::HttpJson),
             "http/protobuf" => Ok(OtlpProtocol::HttpProtobuf),
-            // gRPC is a valid OTLP protocol in the OTel spec but is not implemented in
-            // libdatadog. Reject it explicitly so callers get a clean error at the parse
-            // boundary, rather than constructing an unsupported value that has to be guarded
-            // against everywhere downstream.
-            "grpc" => Err("OTLP gRPC export is not supported".to_string()),
+            "grpc" => Ok(OtlpProtocol::Grpc),
             other => Err(format!("unknown OTLP protocol: {other}")),
         }
     }
@@ -40,24 +43,30 @@ impl std::str::FromStr for OtlpProtocol {
 impl OtlpProtocol {
     /// The HTTP `Content-Type` for this protocol's body encoding. Crate-internal: the public type
     /// is only constructed/selected by callers; encoding is the exporter's job.
+    /// Only called on the HTTP path; the gRPC path uses tonic's ProstCodec.
     pub(crate) fn content_type(&self) -> http::HeaderValue {
+        #[allow(clippy::unreachable)]
         match self {
             OtlpProtocol::HttpJson => libdd_common::header::APPLICATION_JSON,
             OtlpProtocol::HttpProtobuf => libdd_common::header::APPLICATION_PROTOBUF,
+            OtlpProtocol::Grpc => unreachable!("gRPC path does not call content_type()"),
         }
     }
 
     /// Encode the prost OTLP request to this protocol's wire format. Crate-internal so the
     /// third-party `serde_json::Error` does not leak into the public API.
+    /// Only called on the HTTP path; the gRPC path uses tonic's ProstCodec.
     pub(crate) fn encode(
         &self,
         req: &libdd_trace_utils::otlp_encoder::ProtoExportTraceServiceRequest,
     ) -> Result<Vec<u8>, serde_json::Error> {
+        #[allow(clippy::unreachable)]
         match self {
             OtlpProtocol::HttpJson => libdd_trace_utils::otlp_encoder::encode_otlp_json(req),
             OtlpProtocol::HttpProtobuf => {
                 Ok(libdd_trace_utils::otlp_encoder::encode_otlp_protobuf(req))
             }
+            OtlpProtocol::Grpc => unreachable!("gRPC path does not call encode()"),
         }
     }
 }
@@ -99,10 +108,15 @@ mod tests {
     }
 
     #[test]
-    fn grpc_is_rejected_at_parse() {
-        // gRPC is unsupported, so it must not parse into a protocol: an unsupported value can
-        // never be constructed.
-        assert!(OtlpProtocol::from_str("grpc").is_err());
+    fn grpc_parses_successfully() {
+        // gRPC is now a supported protocol — it must parse without error.
+        assert_eq!(OtlpProtocol::from_str("grpc").unwrap(), OtlpProtocol::Grpc);
+    }
+
+    #[test]
+    fn grpc_config_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<OtlpGrpcTraceConfig>();
     }
 
     #[test]
@@ -116,6 +130,21 @@ mod tests {
             libdd_common::header::APPLICATION_PROTOBUF
         );
     }
+}
+
+/// Parsed OTLP gRPC trace exporter configuration.
+///
+/// The endpoint URL is consumed at build time to construct the tonic
+/// [`Channel`](tonic::transport::Channel); only the per-request settings below
+/// are retained here.
+#[derive(Clone, Debug)]
+pub struct OtlpGrpcTraceConfig {
+    /// Custom key-value pairs forwarded as gRPC request metadata.
+    pub headers: Vec<(String, String)>,
+    /// Per-request timeout (applied via [`tokio::time::timeout`]).
+    pub timeout: Duration,
+    /// When `true`, omit DD-specific per-span attributes from the payload.
+    pub otel_trace_semantics_enabled: bool,
 }
 
 /// Parsed OTLP trace-metrics exporter configuration.

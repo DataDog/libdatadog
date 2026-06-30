@@ -29,9 +29,15 @@
 
 pub mod config;
 pub mod exporter;
+// gRPC OTLP export depends on tonic, which does not build for wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod grpc_exporter;
 pub mod metrics;
 
-pub use config::{OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};
+pub use config::{OtlpGrpcTraceConfig, OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};
 pub use exporter::send_otlp_traces_http;
 pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
 pub use metrics::OtlpStatsExporter;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use grpc_exporter::{build_grpc_channel, send_otlp_traces_grpc, OtlpGrpcTransport};

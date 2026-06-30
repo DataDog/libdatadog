@@ -46,10 +46,17 @@ libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
 libdd-capabilities-impl = { version = "2.0.0", path = "../libdd-capabilities-impl", default-features = false }
+# tonic's transport (hyper/tokio/socket2) does not build for wasm32, so the gRPC
+# OTLP transport — and prost, which only the gRPC exporter uses — are gated off
+# wasm targets along with the code that uses them.
+tonic = { version = "0.14", default-features = false, features = [
+    "transport",  # Channel, Endpoint, Server
+    "codegen",    # Grpc<T> client, tonic::client::Grpc
+] }
+prost = "0.14.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -62,6 +69,11 @@ bench = false
 name = "trace_buffer"
 harness = false
 path = "benches/trace_buffer.rs"
+
+[[bench]]
+name = "otlp_grpc_export"
+harness = false
+path = "benches/otlp_grpc_export.rs"
 
 [dev-dependencies]
 libdd-capabilities-impl = { version = "2.0.0", path = "../libdd-capabilities-impl" }
@@ -81,8 +93,11 @@ tokio = { version = "1.23", features = [
     "rt",
     "time",
     "test-util",
+    "macros",
 ], default-features = false }
 duplicate = "2.0.1"
+h2 = "0.4"
+tokio-stream = { version = "0.1", features = ["net"] }
 
 [features]
 default = ["https", "telemetry"]

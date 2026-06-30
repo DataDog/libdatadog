@@ -4,6 +4,9 @@
 use crate::agent_info::AgentInfoFetcher;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
+// gRPC OTLP export depends on tonic, which does not build for wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{build_grpc_channel, OtlpGrpcTraceConfig, OtlpGrpcTransport};
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -14,9 +17,9 @@ use crate::trace_exporter::TelemetryConfig;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
-    TracerMetadata, INFO_ENDPOINT,
+    add_path, OtlpExportMode, StatsComputationStatus, TelemetryInstrumentationSessions,
+    TraceExporter, TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TraceSerializer, TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
@@ -382,10 +385,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
-    /// Selects the OTLP export protocol: [`OtlpProtocol::HttpJson`] (default) or
-    /// [`OtlpProtocol::HttpProtobuf`]. The host language resolves this from
-    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; a `grpc` value is
-    /// unsupported and is rejected when parsed into [`OtlpProtocol`], so it never reaches here.
+    /// Selects the OTLP export protocol. The host language resolves this from
+    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`. All three OTel
+    /// protocol strings (`http/json`, `http/protobuf`, `grpc`) are valid. Plaintext gRPC only;
+    /// `https://` endpoints are rejected at [`build`](Self::build) time.
     pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
         self.otlp_protocol = protocol;
         self
@@ -625,15 +628,39 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             .map(Duration::from_millis)
             .unwrap_or(DEFAULT_OTLP_TIMEOUT);
 
-        // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
-        // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
-        let otlp_config = self.otlp_endpoint.map(|url| OtlpTraceConfig {
-            endpoint_url: url,
-            headers: build_otlp_header_map(self.otlp_headers),
-            timeout: otlp_timeout,
-            protocol: self.otlp_protocol,
-            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
-        });
+        let otlp = match self.otlp_endpoint {
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(ref url) if self.otlp_protocol == OtlpProtocol::Grpc => {
+                let channel = build_grpc_channel(url, otlp_timeout)?;
+                Some(OtlpExportMode::Grpc(OtlpGrpcTransport {
+                    config: OtlpGrpcTraceConfig {
+                        headers: self.otlp_headers.clone(),
+                        timeout: otlp_timeout,
+                        otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+                    },
+                    channel,
+                }))
+            }
+            // gRPC export is unavailable on wasm32 (tonic does not build there). Reject it
+            // explicitly instead of falling through to the HTTP arm, which would store
+            // `OtlpProtocol::Grpc` in `OtlpTraceConfig` and panic at `encode()` on send.
+            #[cfg(target_arch = "wasm32")]
+            Some(_) if self.otlp_protocol == OtlpProtocol::Grpc => {
+                return Err(TraceExporterError::Builder(
+                    BuilderErrorKind::InvalidConfiguration(
+                        "OTLP gRPC export is not supported on wasm32 targets".to_string(),
+                    ),
+                ));
+            }
+            Some(ref url) => Some(OtlpExportMode::Http(OtlpTraceConfig {
+                endpoint_url: url.clone(),
+                headers: build_otlp_header_map(self.otlp_headers.clone()),
+                timeout: otlp_timeout,
+                protocol: self.otlp_protocol,
+                otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+            })),
+            None => None,
+        };
 
         let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
             endpoint_url: url,
@@ -760,7 +787,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
-            otlp_config,
+            otlp,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
             log_output,
@@ -971,6 +998,52 @@ mod tests {
                 .add_path(&exporter.endpoint.url)
                 .to_string(),
             "http://127.0.0.1:8126/v0.4/traces"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn build_with_grpc_protocol_and_endpoint_succeeds() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint("http://localhost:4317")
+            .set_otlp_protocol(crate::otlp::OtlpProtocol::Grpc);
+        // connect_lazy() doesn't dial, so this must build successfully even without a server.
+        let result = builder.build::<NativeCapabilities>();
+        assert!(
+            result.is_ok(),
+            "gRPC protocol + endpoint should build successfully: {result:?}"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn build_with_grpc_protocol_no_endpoint_uses_agent_path() {
+        // A configured gRPC protocol without an OTLP endpoint is inert — the exporter
+        // falls back to the normal Datadog agent path.
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url("http://localhost:8126")
+            .set_otlp_protocol(crate::otlp::OtlpProtocol::Grpc);
+        let result = builder.build::<NativeCapabilities>();
+        assert!(
+            result.is_ok(),
+            "gRPC protocol without endpoint must use agent path, not fail: {result:?}"
+        );
+    }
+
+    // build() spins up the shared runtime, whose worker hits a syscall Miri can't execute.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn build_with_grpc_https_endpoint_rejected() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint("https://collector.example.com:4317")
+            .set_otlp_protocol(crate::otlp::OtlpProtocol::Grpc);
+        let result = builder.build::<NativeCapabilities>();
+        assert!(
+            result.is_err(),
+            "https:// gRPC should be rejected until TLS is implemented"
         );
     }
 }
