@@ -667,6 +667,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 std::time::SystemTime::now(),
                 span_kinds,
                 self.peer_tags.clone(),
+                vec![],
                 #[cfg(feature = "stats-obfuscation")]
                 None,
             )));

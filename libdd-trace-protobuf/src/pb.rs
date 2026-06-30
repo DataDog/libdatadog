@@ -659,13 +659,15 @@ pub struct ClientGroupedStats {
     #[serde(rename = "srv_src")]
     pub service_source: ::prost::alloc::string::String,
     /// used to identify service override origin
-    /// span_derived_primary_tags are user-configured tags that are extracted from spans and used for stats aggregation
-    /// E.g., `aws.s3.bucket`, `http.url`, or any custom tag
+    /// Deprecated: use additional_metric_tags (field 23) instead.
     #[prost(string, repeated, tag = "22")]
     #[serde(default)]
     pub span_derived_primary_tags: ::prost::alloc::vec::Vec<
         ::prost::alloc::string::String,
     >,
+    /// additional_metric_tags are tags sent by tracers to be used as additional dimensions for stats aggregation
+    #[prost(string, repeated, tag = "23")]
+    pub additional_metric_tags: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// Trilean is an expanded boolean type that is meant to differentiate between being unset and false.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
