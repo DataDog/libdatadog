@@ -309,8 +309,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
                     extra_services,
                     env,
                     app_version,
-                    tags: tags.iter().map(|t| t.to_string()).collect(),
-                    process_tags: process_tags.iter().map(|t| t.to_string()).collect(),
+                    tags,
+                    process_tags,
                     container_tags: vec![],
                 }),
                 is_agent: false,
@@ -596,26 +596,19 @@ pub mod tests {
             name: "config".to_string(),
         });
 
-    pub(crate) static DUMMY_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
-        Arc::new(Target {
-            service: "service".to_string(),
-            env: "env".to_string(),
-            app_version: "1.3.5".to_string(),
-            tags: vec![],
-            process_tags: vec![],
-        })
-    });
+    pub(crate) static DUMMY_TARGET: LazyLock<Arc<Target>> =
+        LazyLock::new(|| Arc::new(Target::new("service", "env", "1.3.5", vec![], vec![])));
     pub(crate) static DUMMY_TARGET_WITH_PROCESS_TAGS: LazyLock<Arc<Target>> = LazyLock::new(|| {
-        Arc::new(Target {
-            service: "service".to_string(),
-            env: "env".to_string(),
-            app_version: "1.3.5".to_string(),
-            tags: vec![],
-            process_tags: vec![
-                libdd_common::tag!("entrypoint.workdir", "libdd-remote-config"),
-                libdd_common::tag!("entrypoint.type", "script"),
+        Arc::new(Target::new(
+            "service",
+            "env",
+            "1.3.5",
+            vec![],
+            vec![
+                "entrypoint.workdir:libdd-remote-config".to_string(),
+                "entrypoint.type:script".to_string(),
             ],
-        })
+        ))
     });
 
     static DUMMY_RUNTIME_ID: &str = "3b43524b-a70c-45dc-921d-34504e50c5eb";
