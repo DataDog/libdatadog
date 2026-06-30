@@ -3102,6 +3102,7 @@ dependencies = [
 name = "libdd-heap-allocator"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "libdd-heap-sampler",
 ]
 

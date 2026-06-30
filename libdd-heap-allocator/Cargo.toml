@@ -17,3 +17,10 @@ bench = false
 
 [dependencies]
 libdd-heap-sampler = { path = "../libdd-heap-sampler" }
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "sampler_overhead"
+harness = false
