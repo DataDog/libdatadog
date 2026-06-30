@@ -251,6 +251,8 @@ fn generate_protobuf() {
         "#[serde(rename = \"srv_src\")]",
     );
 
+    config.type_attribute("Trilean", "#[derive(Deserialize, Serialize)]");
+
     // idx module type attributes
     config.type_attribute("pb.idx.AnyValue", "#[derive(Deserialize, Serialize)]");
     config.type_attribute(
