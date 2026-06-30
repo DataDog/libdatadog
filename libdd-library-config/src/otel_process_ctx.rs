@@ -62,6 +62,19 @@ pub mod linux {
         payload_ptr: *const u8,
     }
 
+    // Compile-time verification that MappingHeader matches the field offsets and total size
+    // mandated by the OTel process context spec:
+    // https://github.com/open-telemetry/opentelemetry-specification/blob/main/oteps/profiles/4719-process-ctx.md
+    const _: () = {
+        use std::mem::{offset_of, size_of};
+        assert!(offset_of!(MappingHeader, signature) == 0);
+        assert!(offset_of!(MappingHeader, version) == 8);
+        assert!(offset_of!(MappingHeader, payload_size) == 12);
+        assert!(offset_of!(MappingHeader, monotonic_published_at_ns) == 16);
+        assert!(offset_of!(MappingHeader, payload_ptr) == 24);
+        assert!(size_of::<MappingHeader>() == 32);
+    };
+
     /// The shared memory mapped area to publish the context to. The memory region is owned by a
     /// [MemMapping] instance and is automatically unmapped upon drop.
     ///
