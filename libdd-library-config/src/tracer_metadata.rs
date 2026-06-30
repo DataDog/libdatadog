@@ -178,15 +178,13 @@ impl TracerMetadata {
                 key_ref: 0,
             });
 
-            attributes.extend(
-                extra_attributes.iter().map(|(k,v)| {
-                    KeyValue {
-                        key: k.clone(),
-                        value: Some(AnyValue {
-                            value: Some(v.clone()),
-                        }),
-                        key_ref: 0,
-                    }));
+            attributes.extend(extra_attributes.iter().map(|(k, v)| KeyValue {
+                key: k.clone(),
+                value: Some(AnyValue {
+                    value: Some(v.clone()),
+                }),
+                key_ref: 0,
+            }));
         }
 
         ProcessContext {
