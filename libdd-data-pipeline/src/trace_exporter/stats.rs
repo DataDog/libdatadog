@@ -135,6 +135,7 @@ pub(crate) fn start_stats_computation<
             std::time::SystemTime::now(),
             span_kinds,
             peer_tags,
+            None,
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),
         )));
