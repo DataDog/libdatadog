@@ -11,7 +11,9 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-use libdd_trace_stats::span_concentrator::{OtlpStatsBucket, SpanConcentrator};
+use libdd_trace_stats::span_concentrator::{
+    grpc_status_code_to_name, OtlpStatsBucket, SpanConcentrator,
+};
 use libdd_trace_utils::otlp_encoder::mapper::status_code;
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
 use serde_json::{json, Value};
@@ -145,7 +147,10 @@ fn build_attributes(
     push("span.kind", &group.span_kind);
     push("http.request.method", &group.http_method);
     push("http.route", &group.http_endpoint);
-    push("rpc.response.status_code", &group.grpc_status_code);
+    // group.grpc_status_code is the numeric code as a string; emit the canonical OTel status name.
+    if let Some(name) = grpc_status_code_to_name(&group.grpc_status_code) {
+        push("rpc.response.status_code", name);
+    }
     for tag in &group.peer_tags {
         if let Some((k, v)) = tag.split_once(':') {
             push(k, v);
@@ -469,6 +474,26 @@ mod tests {
             k.starts_with("datadog.") || k.starts_with("_datadog.")
         }));
         assert_eq!(str_at(a, "http.request.method"), Some("POST"));
+    }
+
+    #[test]
+    fn emits_canonical_grpc_status_name_for_rpc_response_status_code() {
+        let g = group_with_exact(&[1_000_000_000], &[], |g| {
+            g.grpc_status_code = "5".into();
+        });
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let a = points(&req)[0]["attributes"].as_array().unwrap();
+        assert_eq!(str_at(a, "rpc.response.status_code"), Some("NOT_FOUND"));
+
+        // Empty/unmapped codes omit the attribute.
+        for code in ["", "99"] {
+            let g = group_with_exact(&[1_000_000_000], &[], |g| {
+                g.grpc_status_code = code.into();
+            });
+            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            let a = points(&req)[0]["attributes"].as_array().unwrap();
+            assert!(!a.iter().any(|kv| kv["key"] == "rpc.response.status_code"));
+        }
     }
 
     #[test]
