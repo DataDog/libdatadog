@@ -11,9 +11,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-use libdd_trace_stats::span_concentrator::{
-    grpc_status_code_to_name, OtlpStatsBucket, SpanConcentrator,
-};
+use libdd_trace_stats::span_concentrator::{OtlpStatsBucket, SpanConcentrator};
 use libdd_trace_utils::otlp_encoder::mapper::status_code;
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
 use serde_json::{json, Value};
@@ -23,6 +21,32 @@ use tracing::error;
 
 const METRIC_NAME: &str = "traces.span.sdk.metrics.duration";
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+
+// Canonical gRPC status names indexed by numeric code.
+// See <https://github.com/grpc/grpc/blob/master/doc/statuscodes.md>.
+const GRPC_STATUS_NAMES: [&str; 17] = [
+    "OK",
+    "CANCELLED",
+    "UNKNOWN",
+    "INVALID_ARGUMENT",
+    "DEADLINE_EXCEEDED",
+    "NOT_FOUND",
+    "ALREADY_EXISTS",
+    "PERMISSION_DENIED",
+    "RESOURCE_EXHAUSTED",
+    "FAILED_PRECONDITION",
+    "ABORTED",
+    "OUT_OF_RANGE",
+    "UNIMPLEMENTED",
+    "INTERNAL",
+    "UNAVAILABLE",
+    "DATA_LOSS",
+    "UNAUTHENTICATED",
+];
+
+fn grpc_status_code_to_name(code: &str) -> Option<&'static str> {
+    GRPC_STATUS_NAMES.get(code.parse::<usize>().ok()?).copied()
+}
 /// Fixed bucket boundaries (seconds) mirroring the OTel spanmetrics-connector defaults.
 const EXPLICIT_BOUNDS_SECONDS: [f64; 16] = [
     0.002, 0.004, 0.006, 0.008, 0.01, 0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.4, 2.0, 5.0, 10.0, 15.0,
@@ -553,5 +577,16 @@ mod tests {
         let ok_s = ok_pt["sum"].as_f64().unwrap();
         let err_s = err_pt["sum"].as_f64().unwrap();
         assert_eq!(ok_s + err_s, ns_to_s(combined_ns));
+    }
+
+    #[test]
+    fn test_grpc_status_code_to_name() {
+        assert_eq!(grpc_status_code_to_name("0"), Some("OK"));
+        assert_eq!(grpc_status_code_to_name("5"), Some("NOT_FOUND"));
+        assert_eq!(grpc_status_code_to_name("14"), Some("UNAVAILABLE"));
+        assert_eq!(grpc_status_code_to_name("16"), Some("UNAUTHENTICATED"));
+        assert_eq!(grpc_status_code_to_name("17"), None);
+        assert_eq!(grpc_status_code_to_name(""), None);
+        assert_eq!(grpc_status_code_to_name("OK"), None);
     }
 }

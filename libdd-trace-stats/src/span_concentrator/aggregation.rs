@@ -200,35 +200,6 @@ fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
     None
 }
 
-/// Canonical gRPC status names indexed by numeric code; the inverse of the name->code
-/// normalization in [`grpc_status_str_to_int_value`].
-/// See <https://github.com/grpc/grpc/blob/master/doc/statuscodes.md>.
-const GRPC_STATUS_NAMES: [&str; 17] = [
-    "OK",
-    "CANCELLED",
-    "UNKNOWN",
-    "INVALID_ARGUMENT",
-    "DEADLINE_EXCEEDED",
-    "NOT_FOUND",
-    "ALREADY_EXISTS",
-    "PERMISSION_DENIED",
-    "RESOURCE_EXHAUSTED",
-    "FAILED_PRECONDITION",
-    "ABORTED",
-    "OUT_OF_RANGE",
-    "UNIMPLEMENTED",
-    "INTERNAL",
-    "UNAVAILABLE",
-    "DATA_LOSS",
-    "UNAUTHENTICATED",
-];
-
-/// Map a numeric gRPC status code string (as carried on
-/// [`pb::ClientGroupedStats::grpc_status_code`]) to its canonical OTel status name. Returns `None`
-/// for empty/unparseable/out-of-range values.
-pub fn grpc_status_code_to_name(code: &str) -> Option<&'static str> {
-    GRPC_STATUS_NAMES.get(code.parse::<usize>().ok()?).copied()
-}
 
 impl<'a> BorrowedAggregationKey<'a> {
     /// Return an AggregationKey matching the given span.
@@ -1279,14 +1250,4 @@ mod tests {
         assert_eq!(grpc_status_str_to_int_value("🤣"), None);
     }
 
-    #[test]
-    fn test_grpc_status_code_to_name() {
-        assert_eq!(grpc_status_code_to_name("0"), Some("OK"));
-        assert_eq!(grpc_status_code_to_name("5"), Some("NOT_FOUND"));
-        assert_eq!(grpc_status_code_to_name("14"), Some("UNAVAILABLE"));
-        assert_eq!(grpc_status_code_to_name("16"), Some("UNAUTHENTICATED"));
-        assert_eq!(grpc_status_code_to_name("17"), None);
-        assert_eq!(grpc_status_code_to_name(""), None);
-        assert_eq!(grpc_status_code_to_name("OK"), None);
-    }
 }
