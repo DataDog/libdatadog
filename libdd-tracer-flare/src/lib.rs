@@ -181,6 +181,7 @@ impl TracerFlareManager {
                 language,
                 tracer_version,
                 endpoint: remote_config_endpoint,
+                agentless: None,
             },
             products: vec![
                 RemoteConfigProduct::AgentConfig,
@@ -189,18 +190,21 @@ impl TracerFlareManager {
             capabilities: vec![],
         };
 
-        tracer_flare.listener = Some(SingleChangesFetcher::new(
-            ParsedFileStorage::default(),
-            Target {
-                service,
-                env,
-                app_version,
-                tags: vec![],
-                process_tags: vec![],
-            },
-            runtime_id,
-            config_to_fetch,
-        ));
+        tracer_flare.listener = Some(
+            SingleChangesFetcher::new_no_agentless(
+                ParsedFileStorage::default(),
+                Target {
+                    service,
+                    env,
+                    app_version,
+                    tags: vec![],
+                    process_tags: vec![],
+                },
+                runtime_id,
+                config_to_fetch,
+            )
+            .map_err(|e| FlareError::ListeningError(e.to_string()))?,
+        );
 
         Ok(tracer_flare)
     }
