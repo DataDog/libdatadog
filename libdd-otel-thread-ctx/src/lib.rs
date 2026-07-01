@@ -290,6 +290,39 @@ pub mod linux {
             compiler_fence(Ordering::SeqCst);
             self.valid.store(1, Ordering::Relaxed);
         }
+
+        /// Publish `record_ptr` into the current thread's TLS slot and return the raw pointer to
+        /// the previously attached record (null if none).
+        ///
+        /// This is the low-level attach primitive shared by [`OwnedThreadContext`] and
+        /// [`SharedThreadContext`]. It only moves raw pointers in and out of the slot; the caller
+        /// is responsible for the ownership semantics of both the passed-in pointer (which is now
+        /// published and must be kept alive until detached) and the returned one (which must be
+        /// reclaimed into an owning handle to avoid leaks).
+        ///
+        /// # Memory ordering
+        ///
+        /// [^tls-slot-ordering]: since we get back the previous record, we could in principle use
+        /// an `Acquire` (thus combining into an `AcqRel`) compiler fence to make sure we don't get
+        /// back a not-yet-initialized record. However, this thread (excluding the reader signal
+        /// handler) is the only one to ever _write_ to the slot, so the store we load the value
+        /// from automatically happens-before (because it's sequenced-before) the swap. We still
+        /// need a release fence to avoid exposing uninitialized memory to the handler.
+        fn attach_raw(record_ptr: *mut ThreadContextRecord) -> *mut ThreadContextRecord {
+            compiler_fence(Ordering::Release);
+            with_tls_slot(|slot| slot.swap(record_ptr, Ordering::Relaxed))
+        }
+
+        /// Detach the current record from the current thread's TLS slot, returning the raw pointer
+        /// to the previously attached record (null if none).
+        ///
+        /// This is the low-level detach primitive shared by [`OwnedThreadContext`] and
+        /// [`SharedThreadContext`]. As with [`Self::attach_raw`], the caller is responsible for
+        /// releasing the returned memory.
+        fn detach_raw() -> *mut ThreadContextRecord {
+            // We don't need any fence here, see [^tls-slot-ordering].
+            with_tls_slot(|slot| slot.swap(ptr::null_mut(), Ordering::Relaxed))
+        }
     }
 
     impl Default for ThreadContextRecord {
@@ -417,38 +450,6 @@ pub mod linux {
         pub unsafe fn from_opaque_ptr(ptr: NonNull<ThreadContext>) -> Self {
             Self(ptr.cast())
         }
-    }
-
-    impl Default for OwnedThreadContext {
-        fn default() -> Self {
-            Self::from(ThreadContextRecord::default())
-        }
-    }
-
-    impl From<ThreadContextRecord> for OwnedThreadContext {
-        fn from(record: ThreadContextRecord) -> Self {
-            // Safety: `Box::into_raw` returns a non-null pointer
-            unsafe { Self(NonNull::new_unchecked(Box::into_raw(Box::new(record)))) }
-        }
-    }
-
-    impl From<ThreadContext> for OwnedThreadContext {
-        fn from(ctx: ThreadContext) -> Self {
-            Self::from(ctx.0)
-        }
-    }
-
-    impl OwnedThreadContext {
-        /// Atomically swap the current context with a pointer value. Return the previously
-        /// attached context, if any.
-        fn swap(
-            slot: &AtomicPtr<ThreadContextRecord>,
-            tgt: *mut ThreadContextRecord,
-        ) -> Option<OwnedThreadContext> {
-            // Safety: a non-null value in the slot came from a prior `into_ptr` call.
-            NonNull::new(slot.swap(tgt, Ordering::Relaxed))
-                .map(|ptr| unsafe { OwnedThreadContext::from_ptr(ptr) })
-        }
 
         /// Publish a new (or previously detached) thread context record by writing its pointer
         /// into the TLS slot. Returns the previously attached context, if any.
@@ -456,17 +457,9 @@ pub mod linux {
         /// `valid` is already `1` since construction, so any reader that observes the new pointer
         /// also observes `valid = 1`.
         pub fn attach(self) -> Option<OwnedThreadContext> {
-            // [^tls-slot-ordering]: since we get back the previous context, we should in principle
-            // use an `Acquire` (thus combining into an `AcqRel`) compiler fence to make sure we
-            // don't get back a not-yet-initialized record.
-            //
-            // However, this thread (excluding the reader signal handler) is the only one to ever
-            // _write_ to the context, so the store we load the value from automatically
-            // happens-before (because it's sequenced-before) the swap.
-            //
-            // We still need a release fence to avoid exposing uninitialized memory to the handler.
-            compiler_fence(Ordering::Release);
-            with_tls_slot(|slot| Self::swap(slot, self.into_ptr().as_ptr()))
+            let prev = ThreadContextRecord::attach_raw(self.into_ptr().as_ptr());
+            // Safety: a non-null value in the slot came from a prior `into_ptr` call.
+            NonNull::new(prev).map(|ptr| unsafe { OwnedThreadContext::from_ptr(ptr) })
         }
 
         /// Update the currently attached record in-place. Sets `valid = 0` before the update and
@@ -495,8 +488,9 @@ pub mod linux {
                             .as_ptr();
                     // No need for `AcqRel`, see [^tls-slot-ordering].
                     compiler_fence(Ordering::Release);
-                    // `OwnedThreadContext::new` already initialises `valid = 1`.
-                    let _ = Self::swap(slot, ctxt);
+                    // The slot was null; publish the freshly created record, which
+                    // `OwnedThreadContext::new` already initialises with `valid = 1`.
+                    slot.store(ctxt, Ordering::Relaxed);
                 }
             })
         }
@@ -504,8 +498,28 @@ pub mod linux {
         /// Detach the current record from the TLS slot. Writes null to the slot and returns the
         /// detached record.
         pub fn detach() -> Option<OwnedThreadContext> {
-            // We don't need any fence here, see [^tls-slot-ordering].
-            with_tls_slot(|slot| Self::swap(slot, ptr::null_mut()))
+            // Safety: a non-null value in the slot came from a prior `into_ptr` call.
+            NonNull::new(ThreadContextRecord::detach_raw())
+                .map(|ptr| unsafe { OwnedThreadContext::from_ptr(ptr) })
+        }
+    }
+
+    impl Default for OwnedThreadContext {
+        fn default() -> Self {
+            Self::from(ThreadContextRecord::default())
+        }
+    }
+
+    impl From<ThreadContextRecord> for OwnedThreadContext {
+        fn from(record: ThreadContextRecord) -> Self {
+            // Safety: `Box::into_raw` returns a non-null pointer
+            unsafe { Self(NonNull::new_unchecked(Box::into_raw(Box::new(record)))) }
+        }
+    }
+
+    impl From<ThreadContext> for OwnedThreadContext {
+        fn from(ctx: ThreadContext) -> Self {
+            Self::from(ctx.0)
         }
     }
 
@@ -581,34 +595,25 @@ pub mod linux {
             // Move the strong reference into the TLS slot; it stays alive until detached.
             // `ThreadContext` is `repr(transparent)` over `ThreadContextRecord`, so the data
             // pointer is also the record pointer readers expect.
-            let record_ptr = Arc::into_raw(self.0) as *mut ThreadContextRecord;
-
-            // No need for `AcqRel`, see [^tls-slot-ordering]. Though our `SharedThreadContext`
-            // might actually come from a different thread now, it's wrapped in an `Arc` that
-            // handles drop safety by synchronizing on the reference count.
             //
-            // The release fence still prevents the record from being exposed to a reader before it
-            // is fully written. The record is already `valid = 1` and, being shared, immutable.
-            compiler_fence(Ordering::Release);
-            with_tls_slot(|slot| {
-                // Safety: a non-null value in the slot came from a prior `attach` of a shared
-                // context (see the type-level note on not mixing owned and shared attaches).
-                NonNull::new(slot.swap(record_ptr, Ordering::Relaxed))
-                    .map(|ptr| unsafe { Self::from_record_ptr(ptr) })
-            })
+            // Though our `SharedThreadContext` might actually come from a different thread now,
+            // it's wrapped in an `Arc` that handles drop safety by synchronizing on the reference
+            // count. The record is already `valid = 1` and, being shared, immutable.
+            let record_ptr = Arc::into_raw(self.0) as *mut ThreadContextRecord;
+            // Safety: a non-null value in the slot came from a prior `attach` of a shared
+            // context (see the type-level note on not mixing owned and shared attaches).
+            NonNull::new(ThreadContextRecord::attach_raw(record_ptr))
+                .map(|ptr| unsafe { Self::from_record_ptr(ptr) })
         }
 
         /// Detach the currently attached shared context from the TLS slot and return it. Dropping
         /// the returned value decrements the strong count that [`Self::attach`] moved into the
         /// slot. Returns `None` if the slot was empty.
         pub fn detach() -> Option<SharedThreadContext> {
-            // We don't need any fence here, see [^tls-slot-ordering].
-            with_tls_slot(|slot| {
-                // Safety: a non-null value in the slot came from a prior `attach` of a shared
-                // context (see the type-level note on not mixing owned and shared attaches).
-                NonNull::new(slot.swap(ptr::null_mut(), Ordering::Relaxed))
-                    .map(|ptr| unsafe { Self::from_record_ptr(ptr) })
-            })
+            // Safety: a non-null value in the slot came from a prior `attach` of a shared
+            // context (see the type-level note on not mixing owned and shared attaches).
+            NonNull::new(ThreadContextRecord::detach_raw())
+                .map(|ptr| unsafe { Self::from_record_ptr(ptr) })
         }
     }
 
