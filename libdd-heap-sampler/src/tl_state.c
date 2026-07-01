@@ -4,6 +4,7 @@
 #include <datadog/heap/tl_state.h>
 #include <datadog/heap/sample_flag.h>
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
 
@@ -38,7 +39,7 @@ static void tl_state_populate(dd_tl_state_t *st) {
     st->initialized    = true;
     st->reentry_guard  = true;
 
-    dd_sample_flag_thread_init();
+    bool flag_ok = dd_sample_flag_thread_init();
 
     struct timespec ts = {0};
     (void)clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -48,7 +49,15 @@ static void tl_state_populate(dd_tl_state_t *st) {
     st->rng = seed ? seed : 1u;
 
     st->sampling_interval = DD_SAMPLING_INTERVAL_DEFAULT;
-    st->reentry_guard = false;
+    /* If the per-thread flagging scheme is unavailable (arm64 prctl
+     * failure), leave reentry_guard set. The fast path in
+     * dd_allocation_requested short-circuits on reentry_guard, so this
+     * thread will pass every allocation through unsampled - no tagged
+     * pointers get produced, no syscall EFAULTs. Cheaper than adding a
+     * dedicated "sampling_disabled" field + branch on the hot path. */
+    if (flag_ok) {
+        st->reentry_guard = false;
+    }
 }
 
 dd_tl_state_t *dd_tl_state_get(void) {

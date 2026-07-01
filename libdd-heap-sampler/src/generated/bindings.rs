@@ -53,16 +53,22 @@ unsafe extern "C" {
 #[derive(Debug, Copy, Clone)]
 pub struct dd_alloc_req_t {
     pub size: usize,
+    pub user_size: usize,
+    pub alignment: usize,
     pub weight: u64,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of dd_alloc_req_t"][::std::mem::size_of::<dd_alloc_req_t>() - 16usize];
+    ["Size of dd_alloc_req_t"][::std::mem::size_of::<dd_alloc_req_t>() - 32usize];
     ["Alignment of dd_alloc_req_t"][::std::mem::align_of::<dd_alloc_req_t>() - 8usize];
     ["Offset of field: dd_alloc_req_t::size"]
         [::std::mem::offset_of!(dd_alloc_req_t, size) - 0usize];
+    ["Offset of field: dd_alloc_req_t::user_size"]
+        [::std::mem::offset_of!(dd_alloc_req_t, user_size) - 8usize];
+    ["Offset of field: dd_alloc_req_t::alignment"]
+        [::std::mem::offset_of!(dd_alloc_req_t, alignment) - 16usize];
     ["Offset of field: dd_alloc_req_t::weight"]
-        [::std::mem::offset_of!(dd_alloc_req_t, weight) - 8usize];
+        [::std::mem::offset_of!(dd_alloc_req_t, weight) - 24usize];
 };
 unsafe extern "C" {
     pub fn dd_allocation_requested_slow(
@@ -89,18 +95,25 @@ unsafe extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 unsafe extern "C" {
-    pub fn dd_sample_flag_thread_init();
+    pub fn dd_sample_flag_thread_init() -> bool;
 }
 unsafe extern "C" {
-    pub fn dd_sample_flag_overhead() -> usize;
-}
-unsafe extern "C" {
-    pub fn dd_sample_flag_apply(raw: *mut ::std::os::raw::c_void) -> *mut ::std::os::raw::c_void;
+    pub fn dd_sample_flag_apply(
+        raw: *mut ::std::os::raw::c_void,
+        alignment: usize,
+    ) -> *mut ::std::os::raw::c_void;
 }
 unsafe extern "C" {
     pub fn dd_sample_flag_check(
         user: *mut ::std::os::raw::c_void,
         raw_out: *mut *mut ::std::os::raw::c_void,
+    ) -> bool;
+}
+unsafe extern "C" {
+    pub fn dd_sample_flag_peek(
+        user: *mut ::std::os::raw::c_void,
+        raw_out: *mut *mut ::std::os::raw::c_void,
+        offset_out: *mut usize,
     ) -> bool;
 }
 unsafe extern "C" {

@@ -5,6 +5,8 @@
 #include <datadog/heap/sample_flag.h>
 
 #include <math.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 /*
  * Advances the Park-Miller LCG one step and returns the new 31-bit state.
@@ -87,10 +89,60 @@ static uint64_t sample(dd_tl_state_t *tl) {
  *
  * (ddprof: AllocationTracker::track_allocation / next_sample_interval)
  */
+/*
+ * Compute the bumped size to pass to the underlying allocator for a
+ * sampled allocation. Returns true on success and writes the bumped
+ * size to *out_size. Returns false when the arithmetic would overflow
+ * or the alignment exceeds what the sampler is willing to honor, in
+ * which case the caller must pass this allocation through unsampled.
+ *
+ * x86-64 places a 16-byte (magic, offset) header immediately before
+ * the user pointer, and picks user = raw + max(alignment, 16) (plus
+ * possibly another `alignment` bump to satisfy the page-boundary
+ * invariant). The bumped size must reserve room for that offset plus
+ * the user's requested bytes, and must satisfy aligned_alloc's
+ * size %% alignment == 0 constraint (a superset of posix_memalign's
+ * requirements).
+ *
+ * arm64 uses TBI tagging with no size bump.
+ */
+static bool bumped_alloc_size(size_t user_size, size_t alignment,
+                              size_t *out_size) {
+#if defined(__x86_64__)
+    if (alignment > DD_SAMPLE_ALIGNMENT_CAP) return false;
+
+    /* Reserve twice the base offset so x86_apply's page-boundary bump
+     * (which may push the user pointer another `base` bytes forward)
+     * always fits inside the allocation. Base is max(alignment, 16):
+     * the minimum offset needed to seat the 16-byte header before the
+     * user pointer while staying alignment-aligned. */
+    size_t base = alignment > DD_HEADER_BYTES ? alignment : DD_HEADER_BYTES;
+    if (base > SIZE_MAX / 2) return false;
+    size_t reserve = base * 2;
+
+    if (reserve > SIZE_MAX - user_size) return false;
+    size_t bumped = user_size + reserve;
+
+    /* Round up to a multiple of alignment so aligned_alloc callers
+     * (which require size %% alignment == 0) are satisfied. For
+     * alignment <= DD_HEADER_BYTES this is already a multiple of
+     * alignment (reserve = 32, a multiple of 1/2/4/8/16). */
+    if (alignment > 1) {
+        size_t mask = alignment - 1;
+        if (bumped > SIZE_MAX - mask) return false;
+        bumped = (bumped + mask) & ~mask;
+    }
+    *out_size = bumped;
+    return true;
+#else
+    (void)alignment;
+    *out_size = user_size;
+    return true;
+#endif
+}
+
 dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
                                              size_t alignment) {
-    (void)alignment;
-
     /* Open the reentry guard before doing anything else. Any allocation that
      * happens between here and dd_allocation_created_slow (e.g. inside log()
      * or the USDT machinery) will see the guard set and pass through unsampled. */
@@ -101,15 +153,26 @@ dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
         /* First-interval miss: no sample this time. Close the guard now since
          * dd_allocation_created_slow won't be called on the sampled path. */
         tl->reentry_guard = false;
-        dd_alloc_req_t out = { size, 0 };
+        dd_alloc_req_t out = { size, size, alignment, 0 };
+        return out;
+    }
+
+    size_t bumped;
+    if (!bumped_alloc_size(size, alignment, &bumped)) {
+        /* Alignment too large or arithmetic overflow: pass through as
+         * an unsampled allocation rather than corrupt the request. The
+         * guard must be closed here since dd_allocation_created_slow
+         * won't be reached (weight == 0 fast-path in the header). */
+        tl->reentry_guard = false;
+        dd_alloc_req_t out = { size, size, alignment, 0 };
         return out;
     }
 
     dd_alloc_req_t out = {
-        /* Ask the allocator for extra bytes if the flag scheme needs them
-         * (16 bytes on x86-64 for the header; 0 on arm64). */
-        .size   = size + dd_sample_flag_overhead(),
-        .weight = weight,
+        .size      = bumped,
+        .user_size = size,
+        .alignment = alignment,
+        .weight    = weight,
     };
     return out;
 }

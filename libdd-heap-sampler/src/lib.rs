@@ -41,7 +41,7 @@ mod tests {
 
     #[test]
     fn alloc_req_layout_matches_c() {
-        assert_eq!(core::mem::size_of::<dd_alloc_req_t>(), 16);
+        assert_eq!(core::mem::size_of::<dd_alloc_req_t>(), 32);
         assert_eq!(core::mem::align_of::<dd_alloc_req_t>(), 8);
     }
 
@@ -76,6 +76,8 @@ mod tests {
             let fake = 0xdead_beef_usize as *mut c_void;
             let req = dd_alloc_req_t {
                 size: 64,
+                user_size: 64,
+                alignment: 8,
                 weight: 0,
             };
             assert_eq!(dd_allocation_created(fake, req), fake);

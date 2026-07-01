@@ -5,6 +5,8 @@
 #include <datadog/heap/probes.h>
 #include <datadog/heap/sample_flag.h>
 
+#include <stdint.h>
+
 /*
  * Slow path for dd_allocation_freed. We only arrive here when
  * dd_sample_flag_check_fast confirmed that ptr carries the sample flag,
@@ -18,19 +20,37 @@
  */
 dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
                                           size_t alignment) {
-    (void)alignment;
-
     /* Fire with the user-visible pointer, matching what was reported at alloc
      * time, so the profiler can correlate the two events by address. */
     dd_probe_free(ptr);
+
     dd_alloc_freed_t out = {
         /* Return the raw pointer so the caller passes the real allocation base
          * to the deallocator, not the user pointer that may be offset or tagged. */
         .ptr  = raw,
-        /* Recover the full allocation size including any header reserved at
-         * alloc time. On arm64 dd_sample_flag_overhead() is 0, so this is
-         * a no-op there. */
-        .size = size + dd_sample_flag_overhead(),
+        .size = size,
     };
+
+#if defined(__x86_64__)
+    /* Recover the bumped size the allocator actually holds. On x86-64
+     * that's user_size + (user - raw), then rounded up to a multiple
+     * of alignment to match dd_allocation_requested_slow's bumped-size
+     * arithmetic. Sized-free callers (sdallocx, operator delete(sz))
+     * rely on this being exact.
+     *
+     * When the caller doesn't know the alignment (alignment == 0),
+     * fall back to size + offset. Plain free() ignores out.size so
+     * this only matters for sized-free variants that must supply an
+     * alignment. */
+    size_t offset = (size_t)((uintptr_t)ptr - (uintptr_t)raw);
+    size_t bumped = size + offset;
+    if (alignment > 1) {
+        size_t mask = alignment - 1;
+        bumped = (bumped + mask) & ~mask;
+    }
+    out.size = bumped;
+#else
+    (void)alignment;
+#endif
     return out;
 }

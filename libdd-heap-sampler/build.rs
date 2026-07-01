@@ -109,6 +109,10 @@ mod linux {
             .flag_if_supported("-mtls-dialect=gnu2");
         build.compile("dd_heap_sampler");
 
+        // `allocation_requested.c` calls `log()`; glibc keeps it in libm,
+        // separate from libc. Harmless on musl (empty stub libm).
+        println!("cargo:rustc-link-lib=m");
+
         for f in SOURCES {
             println!("cargo:rerun-if-changed={f}");
         }

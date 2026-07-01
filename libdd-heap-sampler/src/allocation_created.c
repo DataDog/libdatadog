@@ -33,8 +33,11 @@ void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req) {
         /* Apply the sample flag and fire the USDT. We use the user pointer
          * (post-flag) as the USDT argument so the profiler sees the same
          * address the application will. */
-        user = dd_sample_flag_apply(raw);
-        dd_probe_alloc(user, (uint64_t)req.size, req.weight);
+        user = dd_sample_flag_apply(raw, req.alignment);
+        /* Report the application-requested size, not the sampler-bumped
+         * size (`req.size`), so heap-size distributions in the profiler
+         * aren't skewed by per-sample overhead. */
+        dd_probe_alloc(user, (uint64_t)req.user_size, req.weight);
     }
 
     /* Always close the reentry guard, even on allocation failure (raw == NULL),

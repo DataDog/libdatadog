@@ -23,8 +23,10 @@ use std::ffi::CStr;
 
 use libc::{
     dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Phdr, Elf64_Rel, Elf64_Rela, Elf64_Sym,
-    PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
+    PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
 };
+use std::io::{BufRead, BufReader};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ELF dynamic-section tags and friends. The `libc` crate doesn't export
 // these (they're processor-independent ELF spec constants), so we name
@@ -282,15 +284,117 @@ fn iterate_libraries<F: FnMut(&dl_phdr_info, bool) -> bool>(mut cb: F) {
     }
 }
 
-/// Temporarily make the containing page writable and replace one GOT entry.
-unsafe fn override_entry(addr: usize, new_value: usize) -> bool {
-    let page = sysconf(_SC_PAGESIZE) as usize;
-    let aligned = (addr & !(page - 1)) as *mut c_void;
-    if mprotect(aligned, page, PROT_READ | PROT_WRITE) != 0 {
-        return false;
+/// A single /proc/self/maps entry: address range + current protection flags.
+#[derive(Clone, Copy)]
+struct MapEntry {
+    start: usize,
+    end: usize,
+    prot: i32,
+}
+
+/// Parse /proc/self/maps into a sorted list of (range, prot) entries.
+///
+/// Used to remember each GOT page's original protection so we can restore
+/// it after patching, rather than leaving Full-RELRO pages read-write for
+/// the lifetime of the process.
+fn read_proc_maps() -> Vec<MapEntry> {
+    let Ok(f) = std::fs::File::open("/proc/self/maps") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in BufReader::new(f).lines().map_while(Result::ok) {
+        let mut parts = line.split_whitespace();
+        let Some(range) = parts.next() else { continue };
+        let Some(perms) = parts.next() else { continue };
+        let Some(dash) = range.find('-') else {
+            continue;
+        };
+        let Ok(start) = usize::from_str_radix(&range[..dash], 16) else {
+            continue;
+        };
+        let Ok(end) = usize::from_str_radix(&range[dash + 1..], 16) else {
+            continue;
+        };
+        let b = perms.as_bytes();
+        let mut prot = 0;
+        if b.first() == Some(&b'r') {
+            prot |= PROT_READ;
+        }
+        if b.get(1) == Some(&b'w') {
+            prot |= PROT_WRITE;
+        }
+        if b.get(2) == Some(&b'x') {
+            prot |= PROT_EXEC;
+        }
+        out.push(MapEntry { start, end, prot });
     }
-    std::ptr::write_unaligned(addr as *mut usize, new_value);
-    true
+    out
+}
+
+/// Batched GOT-entry patcher that remembers each touched page's
+/// original protection and restores it at the end of a patching pass.
+///
+/// On Full-RELRO binaries, GOT pages start read-only. The old
+/// `override_entry` helper flipped them to read-write and never
+/// restored them, weakening RELRO for the process lifetime. This guard
+/// mprotects each unique page once (RW), lets the caller write as
+/// many entries as it needs, then mprotects each page back to what
+/// /proc/self/maps reported at guard-construction time.
+struct PageProtGuard {
+    page_size: usize,
+    maps: Vec<MapEntry>,
+    // Aligned page base -> original prot flags read from /proc/self/maps.
+    touched: HashMap<usize, i32>,
+}
+
+impl PageProtGuard {
+    fn new() -> Self {
+        Self {
+            page_size: unsafe { sysconf(_SC_PAGESIZE) as usize },
+            maps: read_proc_maps(),
+            touched: HashMap::new(),
+        }
+    }
+
+    fn original_prot(&self, addr: usize) -> Option<i32> {
+        self.maps
+            .iter()
+            .find(|m| addr >= m.start && addr < m.end)
+            .map(|m| m.prot)
+    }
+
+    /// Make the containing page writable if it isn't already touched,
+    /// then replace one GOT entry.
+    unsafe fn override_entry(&mut self, addr: usize, new_value: usize) -> bool {
+        let aligned = addr & !(self.page_size - 1);
+        if !self.touched.contains_key(&aligned) {
+            // If /proc/self/maps isn't available (or the page isn't in
+            // it, which shouldn't happen for a mapped GOT page) fall
+            // back to PROT_READ - the RELRO'd default. That's tighter
+            // than the previous behavior of leaving pages RW.
+            let orig = self.original_prot(aligned).unwrap_or(PROT_READ);
+            if mprotect(
+                aligned as *mut c_void,
+                self.page_size,
+                PROT_READ | PROT_WRITE,
+            ) != 0
+            {
+                return false;
+            }
+            self.touched.insert(aligned, orig);
+        }
+        std::ptr::write_unaligned(addr as *mut usize, new_value);
+        true
+    }
+
+    /// Restore every touched page to its original protection.
+    fn finish(mut self) {
+        for (aligned, orig) in self.touched.drain() {
+            // Best-effort: nothing sensible to do on failure other than
+            // leave the page RW, which is the pre-fix behavior.
+            unsafe { mprotect(aligned as *mut c_void, self.page_size, orig) };
+        }
+    }
 }
 
 /// Read one GOT entry without assuming pointer alignment.
@@ -343,9 +447,9 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
 /// Per-library revert info: GOT addr -> original value at that addr.
 #[derive(Default)]
 struct LibraryRevertInfo {
-    /// Kept for diagnostics / future logging; we identify libraries by
-    /// base address elsewhere.
-    #[allow(dead_code)]
+    /// Identifies the library at this base address, so we can detect
+    /// base-address reuse after a `dlclose` + `dlopen` places a
+    /// different library at the same load address.
     library_name: String,
     old_value_per_address: HashMap<usize, usize>,
     processed: bool,
@@ -354,9 +458,11 @@ struct LibraryRevertInfo {
 /// One registered override entry.
 struct OverrideInfo {
     /// Output slot the install path fills with the resolved real symbol
-    /// address (so hooks can call through it). `AtomicUsize` is what the
-    /// hook side sees; we just store its address here.
-    ref_slot: *mut usize,
+    /// address (so hooks can call through it). Points to a `'static
+    /// AtomicUsize` supplied by the caller; the install-time write goes
+    /// through `store(Release)` to pair with the hook-side
+    /// `load(Acquire)`.
+    ref_slot: *const AtomicUsize,
     /// Address of our hook function, written into matching GOT entries.
     new_symbol: usize,
     /// If a GOT entry's address equals this, leave it alone. Used to
@@ -390,8 +496,9 @@ impl SymbolOverrides {
 
     /// Register an override. `ref_slot` is filled in by `apply_overrides`
     /// with the resolved address of the real symbol so the hook can call
-    /// through it.
-    pub fn register(&mut self, name: &str, hook: usize, ref_slot: *mut usize) {
+    /// through it. Must point to a `'static AtomicUsize`; the install
+    /// path publishes via `store(Release)`.
+    pub fn register(&mut self, name: &str, hook: usize, ref_slot: *const AtomicUsize) {
         self.overrides.insert(
             name.to_string(),
             OverrideInfo {
@@ -421,7 +528,11 @@ impl SymbolOverrides {
             .collect();
         for (name, addr) in resolved {
             if let Some(ov) = self.overrides.get_mut(&name) {
-                unsafe { *ov.ref_slot = addr };
+                // SAFETY: `ref_slot` was registered pointing at a
+                // `'static AtomicUsize`, so the pointer is valid for the
+                // lifetime of the process. Release pairs with the
+                // hook-side Acquire load.
+                unsafe { (*ov.ref_slot).store(addr, Ordering::Release) };
             }
         }
         self.update_overrides();
@@ -446,10 +557,14 @@ impl SymbolOverrides {
             v.processed = false;
         }
 
+        let mut guard = PageProtGuard::new();
+
         // SAFETY: closure runs synchronously inside dl_iterate_phdr.
         let self_ptr = self as *mut Self as usize;
+        let guard_ptr = &mut guard as *mut PageProtGuard as usize;
         iterate_libraries(move |info, _is_exe| unsafe {
             let this = &mut *(self_ptr as *mut Self);
+            let g = &mut *(guard_ptr as *mut PageProtGuard);
             let lib_name = if info.dlpi_name.is_null() {
                 String::new()
             } else {
@@ -461,10 +576,12 @@ impl SymbolOverrides {
                 return false;
             }
             if let Some(dyn_info) = DynamicInfo::from_phdr(info) {
-                this.apply_to_library(&dyn_info, lib_name);
+                this.apply_to_library(&dyn_info, lib_name, g);
             }
             false
         });
+
+        guard.finish();
 
         // Drop any tracked libraries that have been unloaded.
         self.revert_info_per_library.retain(|_, v| v.processed);
@@ -473,29 +590,51 @@ impl SymbolOverrides {
     /// Restore every GOT entry we touched.
     pub fn restore_overrides(&mut self) {
         let info_per_lib = std::mem::take(&mut self.revert_info_per_library);
+        let mut guard = PageProtGuard::new();
         for (_base, revert) in info_per_lib {
-            unsafe {
-                for (addr, old) in revert.old_value_per_address {
-                    override_entry(addr, old);
-                }
+            for (addr, old) in revert.old_value_per_address {
+                unsafe { guard.override_entry(addr, old) };
             }
         }
+        guard.finish();
         self.last_seen_nb_libs = -1;
     }
 
-    unsafe fn apply_to_library(&mut self, dyn_info: &DynamicInfo, library_name: String) {
-        let (entry_is_new, _) = match self.revert_info_per_library.entry(dyn_info.base_address) {
+    unsafe fn apply_to_library(
+        &mut self,
+        dyn_info: &DynamicInfo,
+        library_name: String,
+        guard: &mut PageProtGuard,
+    ) {
+        // Detect base-address reuse: a previous `dlclose` may have freed
+        // the load address, and a later `dlopen` can place a different
+        // library at the same address. If the name differs from what we
+        // recorded, the stored `old_value_per_address` refers to memory
+        // that is either unmapped or now belongs to the new library, so
+        // we must not try to restore it. Drop the stale entry and treat
+        // this as a fresh library.
+        let entry_is_new = match self.revert_info_per_library.entry(dyn_info.base_address) {
             std::collections::hash_map::Entry::Vacant(e) => {
                 e.insert(LibraryRevertInfo {
                     library_name: library_name.clone(),
                     processed: true,
                     ..Default::default()
                 });
-                (true, ())
+                true
             }
             std::collections::hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().processed = true;
-                (false, ())
+                if e.get().library_name != library_name {
+                    // Base-address reuse: replace the stale entry.
+                    e.insert(LibraryRevertInfo {
+                        library_name: library_name.clone(),
+                        processed: true,
+                        ..Default::default()
+                    });
+                    true
+                } else {
+                    e.get_mut().processed = true;
+                    false
+                }
             }
         };
         if !entry_is_new {
@@ -517,6 +656,7 @@ impl SymbolOverrides {
                     elf64_r_sym(reloc.r_info) as u32,
                     reloc.r_offset as usize,
                     revert,
+                    guard,
                 );
             }
         }
@@ -535,6 +675,7 @@ impl SymbolOverrides {
                     elf64_r_sym(reloc.r_info) as u32,
                     reloc.r_offset as usize,
                     revert,
+                    guard,
                 );
             }
         }
@@ -546,6 +687,7 @@ impl SymbolOverrides {
         sym_index: u32,
         r_offset: usize,
         revert: &mut LibraryRevertInfo,
+        guard: &mut PageProtGuard,
     ) {
         // st_name -> string in strtab. Walk lazily: we look up the
         // name in the override map; if it's not there, skip.
@@ -562,7 +704,8 @@ impl SymbolOverrides {
         };
         // `ref_slot==0` means we never resolved the real symbol, so the
         // hook would call a NULL pointer. Skip.
-        let real = unsafe { *ov.ref_slot };
+        // SAFETY: `ref_slot` points at a `'static AtomicUsize`.
+        let real = unsafe { (*ov.ref_slot).load(Ordering::Acquire) };
         if real == 0 {
             return;
         }
@@ -575,7 +718,7 @@ impl SymbolOverrides {
             return;
         }
         revert.old_value_per_address.insert(addr, read_entry(addr));
-        override_entry(addr, ov.new_symbol);
+        guard.override_entry(addr, ov.new_symbol);
     }
 }
 

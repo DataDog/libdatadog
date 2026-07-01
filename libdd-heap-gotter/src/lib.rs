@@ -43,6 +43,8 @@
 mod elf;
 #[cfg(target_os = "linux")]
 mod hooks;
+#[cfg(any(target_os = "linux", test))]
+mod realloc_math;
 
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
@@ -148,13 +150,11 @@ fn register_all(so: &mut SymbolOverrides) {
 
     // Register one entry per supported symbol. The `ref_slot` raw
     // pointer is to a `'static AtomicUsize`, so it's valid forever.
-    // AtomicUsize is repr(transparent) over UnsafeCell<usize>; we
-    // intentionally bypass its API for the install-time write because
-    // we hand the raw `*mut usize` to the ELF GOT scanner. Hooks then
-    // read it back via `Atomic::load(Acquire)`.
+    // The install path stores via `store(Release)` and hooks read via
+    // `load(Acquire)`; both go through the typed atomic to avoid
+    // racing plain writes against atomic loads.
     fn reg(so: &mut SymbolOverrides, name: &str, hook_addr: usize, slot: &'static AtomicUsize) {
-        let slot_ptr = slot as *const AtomicUsize as *mut usize;
-        so.register(name, hook_addr, slot_ptr);
+        so.register(name, hook_addr, slot as *const AtomicUsize);
     }
 
     reg(

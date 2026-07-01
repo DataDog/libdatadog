@@ -10,12 +10,18 @@
  * the cost of drawing a fresh inter-sample interval and setting the reentry
  * guard.
  *
- * The returned dd_alloc_req_t carries two values the caller must forward:
- *   - size:   the number of bytes to request from the real allocator
- *             (may be larger than the original on architectures that store
- *             the sample flag in a header word before the user pointer).
- *   - weight: 0 if not sampled; otherwise the unbiased size estimator
- *             (nsamples * interval) to attribute to this allocation.
+ * The returned dd_alloc_req_t carries the values the caller must forward:
+ *   - size:      the number of bytes to request from the real allocator
+ *                (may be larger than the original on architectures that
+ *                store the sample flag in a header word before the user
+ *                pointer).
+ *   - user_size: the original application-requested size, reported to
+ *                the profiler via the ddheap:alloc USDT.
+ *   - alignment: passed through so dd_allocation_created can place the
+ *                user pointer correctly relative to the raw pointer.
+ *   - weight:    0 if not sampled; otherwise the unbiased size
+ *                estimator (nsamples * interval) to attribute to this
+ *                allocation.
  *
  * Always pair with dd_allocation_created(), even if the allocator fails.
  */
@@ -31,18 +37,30 @@
  * Return type for dd_allocation_requested, paired with the `req`
  * argument of dd_allocation_created.
  *
- *   size    - size the wrapper MUST pass to its underlying allocator.
- *             Usually the caller's requested size; on sampled
- *             allocations on architectures that use in-band flagging
- *             (header magic), this is bumped by the flag overhead.
- *   weight  - 0 if this allocation was not sampled; otherwise the
- *             unbiased size estimator (nsamples * interval) for
- *             aggregated reporting.
+ *   size      - size the wrapper MUST pass to its underlying allocator.
+ *               Usually the caller's requested size; on sampled
+ *               allocations on architectures that use in-band flagging
+ *               (header magic), this is bumped for the header and any
+ *               alignment slack.
+ *   user_size - the size the application originally asked for. This is
+ *               the value that gets reported to the profiler via the
+ *               ddheap:alloc USDT, so that heap-size distributions are
+ *               not skewed by the sampler's per-allocation overhead.
+ *   alignment - alignment the wrapper MUST pass to its underlying
+ *               allocator. Equals the alignment the caller passed to
+ *               dd_allocation_requested; carried through so
+ *               dd_allocation_created can place the user pointer
+ *               correctly relative to the raw pointer.
+ *   weight    - 0 if this allocation was not sampled; otherwise the
+ *               unbiased size estimator (nsamples * interval) for
+ *               aggregated reporting.
  *
- * Kept to 16 bytes so it's returned in registers.
+ * 32 bytes on 64-bit targets, cache-line-friendly.
  */
 typedef struct {
     size_t   size;
+    size_t   user_size;
+    size_t   alignment;
     uint64_t weight;
 } dd_alloc_req_t;
 
@@ -73,7 +91,7 @@ dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
  */
 static inline __attribute__((always_inline))
 dd_alloc_req_t dd_allocation_requested(size_t size, size_t alignment) {
-    dd_alloc_req_t out = { size, 0 };
+    dd_alloc_req_t out = { size, size, alignment, 0 };
 
     // If we don't have TLS yet, or the reentry guard is set (meaning a sampled
     // allocation is already in flight on this thread and something in its slow

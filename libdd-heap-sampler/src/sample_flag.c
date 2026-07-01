@@ -6,25 +6,45 @@
 #if defined(__x86_64__)
 
 /*
- * x86-64 layout details live in sample_flag.h alongside DD_MAGIC_A/B
- * and the x86 helper pair. Summary: allocate user_size + 32,
- * let the helper pick the user pointer (raw+16 in the common case,
- * raw+32 when raw+16 would land in the unsafe first-16-bytes-of-page
- * region), and write the corresponding magic at user-16. On free the
- * matched magic tells us which offset to use to recover raw.
+ * x86-64 layout details live in sample_flag.h alongside DD_MAGIC and
+ * the x86 helper pair. Summary: bump the size to reserve room for a
+ * 16-byte (magic, offset) header plus alignment slack, let the helper
+ * pick the user pointer inside the bumped region such that user is
+ * alignment-aligned and user & (PAGE-1) >= 16, and stamp (magic,
+ * offset) at user - 16. On free the offset stored in the header lets
+ * us recover raw directly.
  */
 
-void dd_sample_flag_thread_init(void) { /* nothing needed on x86-64 */ }
-
-size_t dd_sample_flag_overhead(void) {
-    // +32 guarantees both raw+16 and raw+32 are available; one of them
-    // is always safe to use as the user pointer regardless of where raw
-    // lands relative to a page boundary.
-    return 2 * DD_HEADER_BYTES;
+bool dd_sample_flag_thread_init(void) {
+    /* Nothing needed on x86-64; always safe. */
+    return true;
 }
 
-void *dd_sample_flag_apply(void *raw) {
-    return x86_apply(raw);
+void *dd_sample_flag_apply(void *raw, size_t alignment) {
+    return x86_apply(raw, alignment);
+}
+
+bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out) {
+    if (((uintptr_t)user & (DD_PAGE_SIZE - 1)) < DD_HEADER_BYTES) {
+        return false;
+    }
+
+    void *header = (char *)user - DD_HEADER_BYTES;
+    uint64_t magic;
+    memcpy(&magic, header, sizeof(magic));
+    if (magic != DD_MAGIC) {
+        return false;
+    }
+
+    uint64_t offset;
+    memcpy(&offset, (char *)header + sizeof(magic), sizeof(offset));
+    if (offset < DD_HEADER_BYTES || offset > 2 * DD_SAMPLE_ALIGNMENT_CAP) {
+        return false;
+    }
+
+    *raw_out = x86_raw_from_user(user, offset);
+    *offset_out = (size_t)offset;
+    return true;
 }
 
 bool dd_sample_flag_check(void *user, void **raw_out) {
@@ -52,12 +72,17 @@ bool dd_sample_flag_check(void *user, void **raw_out) {
  * TODO: audit interaction with HWASan and MTE, which also use the top byte.
  */
 
-size_t dd_sample_flag_overhead(void) {
-    return 0;
+void *dd_sample_flag_apply(void *raw, size_t alignment) {
+    (void)alignment;
+    return (void *)((uintptr_t)raw | DD_TBI_TAGGED);
 }
 
-void *dd_sample_flag_apply(void *raw) {
-    return (void *)((uintptr_t)raw | DD_TBI_TAGGED);
+bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out) {
+    if (!dd_sample_flag_check_fast(user, raw_out)) {
+        return false;
+    }
+    *offset_out = 0;
+    return true;
 }
 
 bool dd_sample_flag_check(void *user, void **raw_out) {
@@ -82,11 +107,19 @@ bool dd_sample_flag_check(void *user, void **raw_out) {
 #  define PR_TAGGED_ADDR_ENABLE (1UL << 0)
 #endif
 
-void dd_sample_flag_thread_init(void) {
-    prctl(PR_SET_TAGGED_ADDR_CTRL, PR_TAGGED_ADDR_ENABLE, 0, 0, 0);
+bool dd_sample_flag_thread_init(void) {
+    /* prctl returns 0 on success. On failure (older kernel without
+     * PR_SET_TAGGED_ADDR_CTRL, seccomp filter blocking it, MTE
+     * conflict, ...) tagged pointers would be rejected by the kernel
+     * with EFAULT the next time one crosses a syscall. Report failure
+     * so the caller disables sampling on this thread. */
+    return prctl(PR_SET_TAGGED_ADDR_CTRL, PR_TAGGED_ADDR_ENABLE, 0, 0, 0) == 0;
 }
 #else
-void dd_sample_flag_thread_init(void) { }
+bool dd_sample_flag_thread_init(void) {
+    /* No tagging on non-Linux arm64 targets; sampling is always safe. */
+    return true;
+}
 #endif
 
 #else
