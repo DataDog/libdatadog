@@ -662,7 +662,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                             e.to_string(),
                         ))
                     })?;
-                    let _ = client_tel.start();
+                    if let Err(e) = client_tel.start() {
+                        tracing::warn!("Failed to start telemetry: {e}");
+                    }
                     (Some(client_tel), Some(handle))
                 }
                 None => (None, None),
