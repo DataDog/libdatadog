@@ -105,6 +105,7 @@ jobs:
             # shellcheck disable=SC2086
             cargo fmt $FMT_PACKAGES -- --check
           fi
+
   clippy:
     needs: setup
     if: needs.setup.outputs.crates-count != '0'
@@ -150,6 +151,55 @@ jobs:
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             export AWS_LC_FIPS_SYS_NO_ASM=1
           fi
+          if [[ -z "$CLIPPY_PACKAGES" ]]; then
+            cargo clippy --workspace --all-targets --all-features -- -D warnings
+          else
+            # shellcheck disable=SC2086
+            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings
+          fi
+
+  clippy-wasm:
+    needs: setup
+    if: needs.setup.outputs.crates-count != '0'
+    name: "clippy #wasm ${{ matrix.rust_version }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_version: ["msrv", "stable", "nightly"]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install ${{ matrix.rust_version }} toolchain and clippy
+        id: install-toolchain
+        shell: bash
+        run: |
+          VERSION="${{ matrix.rust_version }}"
+          if [ "$VERSION" = "msrv" ]; then
+            VERSION="${{ needs.setup.outputs.rust-version }}"
+          elif [ "$VERSION" = "nightly" ]; then
+            VERSION="${{ needs.setup.outputs.nightly-version }}"
+          fi
+          rustup set profile minimal
+          rustup install "$VERSION"
+          rustup component add clippy --toolchain "$VERSION"
+          rustup target add wasm32-unknown-unknown
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
+      - name: Run clippy on wasm ${{ matrix.rust_version }}
+        shell: bash
+        env:
+          CLIPPY_PACKAGES: ${{ needs.setup.outputs.clippy-packages }}
+          # Override rust-toolchain.toml so each matrix entry actually runs on
+          # its chosen toolchain instead of falling back to the workspace MSRV.
+          RUSTUP_TOOLCHAIN: ${{ steps.install-toolchain.outputs.version }}
+        run: |
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
             cargo clippy --workspace --all-targets --all-features -- -D warnings
           else
