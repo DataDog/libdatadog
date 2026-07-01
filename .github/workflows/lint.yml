@@ -201,7 +201,7 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ steps.install-toolchain.outputs.version }}
         run: |
           # List of crates that are meant to be compilable for wasm.
-          WASM_ALLOWLIST="build_common cc_utils datadog-ffe datadog-ffe-test-suite datadog-ipc-macros datadog-sidecar-macros libdd-capabilities libdd-common libdd-ddsketch libdd-dogstatsd-client libdd-log libdd-otel-thread-ctx libdd-otel-thread-ctx-ffi libdd-profiling-protobuf libdd-remote-config libdd-sampling libdd-tinybytes libdd-trace-normalization libdd-trace-obfuscation libdd-trace-protobuf libdd-trace-utils sidecar_mockgen"
+          WASM_ALLOWLIST="build_common cc_utils datadog-ffe datadog-ffe-test-suite datadog-ipc-macros datadog-sidecar-macros libdd-capabilities libdd-common libdd-data-pipeline libdd-ddsketch libdd-dogstatsd-client libdd-log libdd-otel-thread-ctx libdd-otel-thread-ctx-ffi libdd-profiling-protobuf libdd-remote-config libdd-sampling libdd-shared-runtime libdd-tinybytes libdd-trace-normalization libdd-trace-obfuscation libdd-trace-protobuf libdd-trace-stats libdd-trace-utils sidecar_mockgen"
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
             WASM_PACKAGES=$(for p in $WASM_ALLOWLIST; do echo "-p $p"; done | xargs)
           else
