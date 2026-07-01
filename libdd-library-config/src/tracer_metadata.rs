@@ -370,7 +370,7 @@ mod tests {
         }
         .to_otel_process_ctx();
 
-        let schema_version = find_attr(&ctx, "threadlocal.schema_version")
+        let schema_version = find_extra_attr(&ctx, "threadlocal.schema_version")
             .expect("threadlocal.schema_version should be present");
         assert_eq!(
             schema_version.value,
@@ -405,15 +405,15 @@ mod tests {
         .to_otel_process_ctx();
 
         assert_eq!(
-            find_attr(&ctx, "threadlocal.wrapped_object_offset").and_then(|v| v.value.clone()),
+            find_extra_attr(&ctx, "threadlocal.wrapped_object_offset").and_then(|v| v.value.clone()),
             Some(any_value::Value::IntValue(24))
         );
         assert_eq!(
-            find_attr(&ctx, "threadlocal.tagged_size").and_then(|v| v.value.clone()),
+            find_extra_attr(&ctx, "threadlocal.tagged_size").and_then(|v| v.value.clone()),
             Some(any_value::Value::IntValue(8))
         );
         assert_eq!(
-            find_attr(&ctx, "threadlocal.runtime.name").and_then(|v| v.value.clone()),
+            find_extra_attr(&ctx, "threadlocal.runtime.name").and_then(|v| v.value.clone()),
             Some(any_value::Value::StringValue("nodejs".to_owned()))
         );
     }
