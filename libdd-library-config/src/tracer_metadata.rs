@@ -405,7 +405,8 @@ mod tests {
         .to_otel_process_ctx();
 
         assert_eq!(
-            find_extra_attr(&ctx, "threadlocal.wrapped_object_offset").and_then(|v| v.value.clone()),
+            find_extra_attr(&ctx, "threadlocal.wrapped_object_offset")
+                .and_then(|v| v.value.clone()),
             Some(any_value::Value::IntValue(24))
         );
         assert_eq!(
