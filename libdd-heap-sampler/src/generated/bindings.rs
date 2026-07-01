@@ -154,6 +154,40 @@ unsafe extern "C" {
         alignment: usize,
     ) -> dd_alloc_freed_t;
 }
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct dd_realloc_prep_t {
+    pub raw_ptr: *mut ::std::os::raw::c_void,
+    pub raw_size: usize,
+    pub old_offset: usize,
+    pub was_sampled: bool,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of dd_realloc_prep_t"][::std::mem::size_of::<dd_realloc_prep_t>() - 32usize];
+    ["Alignment of dd_realloc_prep_t"][::std::mem::align_of::<dd_realloc_prep_t>() - 8usize];
+    ["Offset of field: dd_realloc_prep_t::raw_ptr"]
+        [::std::mem::offset_of!(dd_realloc_prep_t, raw_ptr) - 0usize];
+    ["Offset of field: dd_realloc_prep_t::raw_size"]
+        [::std::mem::offset_of!(dd_realloc_prep_t, raw_size) - 8usize];
+    ["Offset of field: dd_realloc_prep_t::old_offset"]
+        [::std::mem::offset_of!(dd_realloc_prep_t, old_offset) - 16usize];
+    ["Offset of field: dd_realloc_prep_t::was_sampled"]
+        [::std::mem::offset_of!(dd_realloc_prep_t, was_sampled) - 24usize];
+};
+unsafe extern "C" {
+    pub fn dd_allocation_realloc_prepare(
+        old_user: *mut ::std::os::raw::c_void,
+        new_size: usize,
+    ) -> dd_realloc_prep_t;
+}
+unsafe extern "C" {
+    pub fn dd_allocation_realloc_commit(
+        old_user: *mut ::std::os::raw::c_void,
+        new_raw: *mut ::std::os::raw::c_void,
+        prep: dd_realloc_prep_t,
+    ) -> *mut ::std::os::raw::c_void;
+}
 unsafe extern "C" {
     pub fn dd_probe_alloc(user: *mut ::std::os::raw::c_void, size: u64, weight: u64);
 }

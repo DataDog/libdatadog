@@ -6,6 +6,7 @@
 #include "include/datadog/heap/allocation_requested.h"
 #include "include/datadog/heap/allocation_created.h"
 #include "include/datadog/heap/allocation_freed.h"
+#include "include/datadog/heap/allocation_realloc.h"
 #include "include/datadog/heap/probes.h"
 #include "include/datadog/heap/sample_flag.h"
 #include "include/datadog/heap/tl_state.h"

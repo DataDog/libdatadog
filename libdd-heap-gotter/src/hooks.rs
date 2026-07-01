@@ -19,11 +19,9 @@ use core::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use libdd_heap_sampler::{
-    dd_alloc_req_t, dd_allocation_created, dd_allocation_freed, dd_allocation_requested,
-    dd_probe_free, dd_sample_flag_peek, dd_tl_state_get, dd_tl_state_init,
+    dd_alloc_req_t, dd_allocation_created, dd_allocation_freed, dd_allocation_realloc_commit,
+    dd_allocation_realloc_prepare, dd_allocation_requested, dd_tl_state_get, dd_tl_state_init,
 };
-
-use crate::realloc_math::sampled_realloc_raw_size;
 
 // Per-thread reentry guard for the gotter shims themselves. Distinct
 // from the sampler's `dd_tl_state_t::reentry_guard` because that one
@@ -228,72 +226,21 @@ pub unsafe extern "C" fn gotter_realloc(ptr: *mut c_void, size: usize) -> *mut c
         return real(freed.ptr, 0);
     }
 
-    // Peek is non-destructive: if realloc fails below, the old header
-    // must stay intact so a later gotter_free(ptr) still resolves the
-    // right raw pointer for libc.
-    let mut old_raw = std::ptr::null_mut();
-    let mut old_offset = 0usize;
-    if !dd_sample_flag_peek(ptr, &mut old_raw, &mut old_offset) {
-        // Case 3: unsampled old allocation. Passthrough. We deliberately
-        // do not opportunistically sample here: we don't know the old
-        // user-requested size, so we can't safely place a header and
-        // move user contents without either over-reading the old block
-        // or shifting user data.
-        // TODO: revisit once sampled headers carry the original user
-        // size, or we have another safe bound for copying old contents.
-        return real(ptr, size);
-    }
-
-    // Case 4: sampled old allocation. MVP semantics:
+    // Cases 3 & 4: delegate to the sampler. `prepare` is
+    // non-destructive: if the underlying realloc fails, `ptr` stays
+    // live with its sampler flag intact for a later free.
     //
+    // Sampled path (MVP): commit implements
     //   successful sampled realloc = ddheap:free(old sampled)
     //                              + new unsampled allocation
-    //
-    // Why unsampled on the new side:
-    //   * The new raw pointer picked by the underlying realloc may sit at a different page offset,
-    //     so the sampler's x86 offset picker may want a different `new_offset` than `old_offset`.
-    //     Stamping a header at the new offset before moving user data would overlap the
-    //     still-to-be-copied source region.
-    //   * We also don't know the original user-requested size, so we can't cheaply resize +
-    //     resample + report a coherent alloc event to the profiler.
-    //
-    // The overhead of "unsampled from now on" is only paid on
-    // sampled-then-realloc'd blocks, which are already rare.
+    // Unsampled path: prep is a passthrough; commit returns new_raw
+    // unchanged.
     //
     // TODO: emit `free + new sampled allocation` when sampled headers
     // carry the original user size (see project TODO #13 / repo TODO #7).
-    let Some(raw_size) = sampled_realloc_raw_size(size, old_offset) else {
-        return std::ptr::null_mut();
-    };
-
-    // Underlying realloc. Contract: on failure, `old_raw` is still
-    // live and its header is still valid (peek was non-destructive).
-    let new_raw = real(old_raw, raw_size);
-    if new_raw.is_null() {
-        return std::ptr::null_mut();
-    }
-
-    // On success, libc copied the old block's bytes into `new_raw`
-    // starting at offset 0, so the old user data now sits at
-    // `new_raw + old_offset`. Shift it down to `new_raw` so the caller
-    // sees the user pointer at offset 0 of an unsampled block.
-    // memmove (not memcpy) because when the underlying realloc extends
-    // in place, `new_raw == old_raw` and source/destination overlap.
-    #[cfg(target_arch = "x86_64")]
-    {
-        let copied_user = (new_raw as *mut u8).add(old_offset).cast::<c_void>();
-        if new_raw != copied_user {
-            libc::memmove(new_raw, copied_user, size);
-        }
-    }
-
-    // Fire ddheap:free for the OLD user pointer (the address the
-    // profiler last saw as live). We call `dd_probe_free` directly,
-    // not `dd_allocation_freed`, because there's no header left to
-    // clear: libc has already consumed the old block and we've
-    // overwritten those bytes above.
-    dd_probe_free(ptr);
-    new_raw
+    let prep = dd_allocation_realloc_prepare(ptr, size);
+    let new_raw = real(prep.raw_ptr, prep.raw_size);
+    dd_allocation_realloc_commit(ptr, new_raw, prep)
 }
 
 #[no_mangle]

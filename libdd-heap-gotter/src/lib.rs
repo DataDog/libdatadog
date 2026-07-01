@@ -43,8 +43,6 @@
 mod elf;
 #[cfg(target_os = "linux")]
 mod hooks;
-#[cfg(any(target_os = "linux", test))]
-mod realloc_math;
 
 #[cfg(target_os = "linux")]
 use std::sync::Mutex;
