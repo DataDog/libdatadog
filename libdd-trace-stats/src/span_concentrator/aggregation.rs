@@ -200,7 +200,6 @@ fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
     None
 }
 
-
 impl<'a> BorrowedAggregationKey<'a> {
     /// Return an AggregationKey matching the given span.
     ///
@@ -1249,5 +1248,4 @@ mod tests {
         // Non ascii
         assert_eq!(grpc_status_str_to_int_value("🤣"), None);
     }
-
 }
