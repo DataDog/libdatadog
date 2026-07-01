@@ -210,7 +210,11 @@ impl<'a> TrustedTarget<'a> {
                 .as_u64()
                 .ok_or_else(|| format_err!("expiry not a number"))?;
 
-            if expiry_ts * 1000 <= now_unix_milli_ts() {
+            // Use saturating arithmetic so a far-future `expires` cannot overflow
+            // `u64` (which panics in debug builds and wraps to a fail-open value in
+            // release builds). Saturating to `u64::MAX` keeps genuinely far-future
+            // targets "not yet expired" while never wrapping below `now`.
+            if expiry_ts.saturating_mul(1000) <= now_unix_milli_ts() {
                 bail!("expired target at path: {path}")
             }
         }
@@ -921,9 +925,20 @@ where
     T: IntoIterator<Item = &'a remoteconfig::TopMeta> + 'a,
 {
     for tm in tms {
+        // TODO(RC): rust-tuf represents all metadata versions as `u32`, so we
+        // cannot faithfully store versions above `u32::MAX`. It is crucial to
+        // modify rust-tuf to accept `u64` versions before shipping; until then we
+        // error explicitly instead of silently truncating the high 32 bits.
+        let version = u32::try_from(tm.version).map_err(|_| {
+            format_err!(
+                "metadata version {} exceeds u32::MAX; rust-tuf must be updated to \
+                 support u64 versions",
+                tm.version
+            )
+        })?;
         repo.store_metadata(
             path,
-            MetadataVersion::Number(tm.version as u32),
+            MetadataVersion::Number(version),
             &mut tm.raw.as_slice(),
         )
         .await?;
@@ -974,7 +989,7 @@ fn trim_hash_target_path(target_path: &str) -> anyhow::Result<String> {
 pub(crate) struct NewTarget {
     pub path: String,
     pub version: u64,
-    /// Lowercase hex of the primary (sha256-preferred) hash.
+    /// Lowercase hex of the primary hash.
     pub primary_hash: String,
     /// All `(algorithm_name, hex_hash)` pairs for the target.
     pub hashes: Vec<(String, String)>,
