@@ -7,7 +7,7 @@
 //! as an integration test in its own binary rather than a unit test.
 //! Miri can't execute the underlying dl_iterate_phdr/mprotect calls.
 
-#![cfg(all(target_os = "linux", not(miri)))]
+#![cfg(all(target_os = "linux", target_pointer_width = "64", not(miri)))]
 
 use libdd_common_ffi::VoidResult;
 use libdd_heap_gotter_ffi::{

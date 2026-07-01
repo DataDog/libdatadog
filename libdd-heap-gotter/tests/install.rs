@@ -9,7 +9,7 @@
 
 // Integration test invokes the GOT-patching machinery for real
 // (dl_iterate_phdr + dlsym + mprotect), which miri can't execute.
-#![cfg(all(target_os = "linux", not(miri)))]
+#![cfg(all(target_os = "linux", target_pointer_width = "64", not(miri)))]
 
 use std::ffi::c_void;
 

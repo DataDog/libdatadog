@@ -12,8 +12,8 @@
 //!
 //! The public API is available on every platform so downstream code
 //! never has to `#[cfg]`-guard its callers. The GOT-patching machinery
-//! itself only exists on Linux (where `dl_iterate_phdr` + ELF relocs
-//! are well-defined); on every other target the entry points compile
+//! itself only exists on 64-bit Linux (where `dl_iterate_phdr` + ELF64
+//! relocs are well-defined); on every other target the entry points compile
 //! to no-ops and `heap_overrides_are_installed()` always returns
 //! `false`.
 //!
@@ -39,21 +39,21 @@
 //! * jemalloc-specific `mallocx`/`dallocx`/etc.
 //! * `pthread_atfork` child handler to reset state cleanly across `fork()`.
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod elf;
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod hooks;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 use std::sync::Mutex;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 use elf::SymbolOverrides;
 
 /// Holds the SymbolOverrides registry across calls to `install` / `update`
 /// / `restore`. ddprof keeps the equivalent state in
 /// `g_symbol_overrides` guarded by `g_mutex`
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 static GLOBAL_OVERRIDES: Mutex<Option<SymbolOverrides>> = Mutex::new(None);
 
 /// Install GOT overrides for the supported allocator and helper symbols.
@@ -65,10 +65,10 @@ static GLOBAL_OVERRIDES: Mutex<Option<SymbolOverrides>> = Mutex::new(None);
 /// target process has already been statically linked against a custom
 /// allocator that doesn't appear in the dynamic symbol table.
 ///
-/// On non-Linux targets this is a no-op that always returns `false` —
-/// the GOT-patching path it would otherwise execute has no portable
-/// equivalent outside ELF + `dl_iterate_phdr`.
-#[cfg(target_os = "linux")]
+/// On non-64-bit-Linux targets this is a no-op that always returns
+/// `false` — the GOT-patching path it would otherwise execute has no
+/// portable equivalent outside ELF64 + `dl_iterate_phdr`.
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn install_heap_overrides() -> bool {
     let mut guard = GLOBAL_OVERRIDES.lock().expect("gotter mutex poisoned");
     if guard.is_none() {
@@ -83,7 +83,7 @@ pub fn install_heap_overrides() -> bool {
 }
 
 /// See the Linux variant above.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
 pub fn install_heap_overrides() -> bool {
     false
 }
@@ -91,7 +91,7 @@ pub fn install_heap_overrides() -> bool {
 /// Re-scan loaded libraries and patch any newly-introduced GOT entries.
 /// Called automatically from the `dlopen` hook; user code typically
 /// doesn't need to call this directly. No-op on non-Linux targets.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn update_heap_overrides() {
     // `try_lock` so a dlopen happening on the same thread that owns the
     // install lock doesn't deadlock - that thread will finish its
@@ -104,13 +104,13 @@ pub fn update_heap_overrides() {
 }
 
 /// See the Linux variant above.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
 pub fn update_heap_overrides() {}
 
 /// Revert every GOT entry we patched. After this call, the process is
 /// once again calling the real allocator symbols directly. No-op on
 /// non-Linux targets.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn restore_heap_overrides() {
     let mut guard = GLOBAL_OVERRIDES.lock().expect("gotter mutex poisoned");
     if let Some(so) = guard.as_mut() {
@@ -120,13 +120,13 @@ pub fn restore_heap_overrides() {
 }
 
 /// See the Linux variant above.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
 pub fn restore_heap_overrides() {}
 
 /// Return whether heap GOT overrides are currently installed. Always
 /// returns `false` on non-Linux targets, since `install_heap_overrides`
 /// is a no-op there.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn heap_overrides_are_installed() -> bool {
     GLOBAL_OVERRIDES
         .lock()
@@ -135,13 +135,13 @@ pub fn heap_overrides_are_installed() -> bool {
 }
 
 /// See the Linux variant above.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
 pub fn heap_overrides_are_installed() -> bool {
     false
 }
 
 /// Register GOT overrides for every symbol this crate currently hooks.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 fn register_all(so: &mut SymbolOverrides) {
     use hooks::*;
     use std::sync::atomic::AtomicUsize;
@@ -200,7 +200,7 @@ fn register_all(so: &mut SymbolOverrides) {
     );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 fn any_orig_resolved() -> bool {
     use hooks::*;
     use std::sync::atomic::Ordering;
@@ -221,7 +221,7 @@ fn any_orig_resolved() -> bool {
 // Tests call into the ELF symbol-lookup path (dl_iterate_phdr +
 // dynsym parsing of loaded libraries) which miri can't execute, so
 // skip the whole module under miri.
-#[cfg(all(test, target_os = "linux", not(miri)))]
+#[cfg(all(test, target_os = "linux", target_pointer_width = "64", not(miri)))]
 mod tests {
     use super::*;
 

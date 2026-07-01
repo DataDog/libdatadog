@@ -13,10 +13,10 @@ This profiling infrastructure will initially support these two use cases:
 **Rust compile-time instrumentation**
 A crate exposing a `GlobalAlloc` implementation will allow Rust users to, at compile time, opt into heap profiling. We
 anticipate this will be shipped as a feature of `dd-trace-rs`. This addresses a pain point both internally with the
-increase in Rust adoption in Datadog services, and would adress the same pain point within the broader Rust community. 
+increase in Rust adoption in Datadog services, and would address the same pain point within the broader Rust community. 
 
 **Python Runtime Instrumentation for _native_ library allocation sampling**
-Today our python profiler cannot sample allocations occuring behind the FFI; we will extend `ddtrace-py` to load our dynamic
+Today our python profiler cannot sample allocations occurring behind the FFI; we will extend `ddtrace-py` to load our dynamic
 runtime patching mechanism such that, as native libraries are loaded, we intercept their allocators. As many popular python
 libraries function largely as API glue around native libraries this will help close the allocation observability gap. 
 
@@ -56,7 +56,7 @@ The actual USDTs emitted are:
 
 By splitting into `requested` and `created`, these are designed to be generic across different allocation functions 
 (e.g. `malloc`, `operator new`, `aligned_alloc`, etc.). The job of binding these back to concrete callsites in a 
-process is left to the other components - e.g. `libddd-heap-gotter`, `libdd-heap-allocator`, etc.     
+process is left to the other components - e.g. `libdd-heap-gotter`, `libdd-heap-allocator`, etc.     
 
 The allocation-side pair is declared `static inline __attribute__((always_inline))` so the non-sampled fast path inlines
 into the wrapper with no function-call overhead.

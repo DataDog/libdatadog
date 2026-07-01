@@ -48,6 +48,7 @@ static uint64_t next_interval(uint32_t *rng, uint64_t mean) {
  */
 static uint64_t sample(dd_tl_state_t *tl) {
     uint64_t interval = tl->sampling_interval;
+    if (interval == 0) return 0;
 
     if (!tl->remaining_bytes_initialized) {
         /* First allocation on this thread: draw the initial interval and

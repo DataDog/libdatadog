@@ -176,19 +176,19 @@ fn gnu_hash(name: &[u8]) -> u32 {
 
 unsafe fn gnu_hash_symbol_count(hashtab: *const u32) -> u32 {
     let nbuckets = *hashtab;
-    let symbias = *hashtab.add(1);
-    let bloom_size = *hashtab.add(2);
+    let symbias = *hashtab.wrapping_add(1);
+    let bloom_size = *hashtab.wrapping_add(2);
     // 4 header words + bloom (one Elf64_Addr per entry == 2 u32s)
-    let mut p = hashtab.add(4 + 2 * bloom_size as usize);
+    let mut p = hashtab.wrapping_add(4 + 2 * bloom_size as usize);
     let buckets = std::slice::from_raw_parts(p, nbuckets as usize);
-    p = p.add(nbuckets as usize);
-    let chain_zero = p.offset(-(symbias as isize));
+    p = p.wrapping_add(nbuckets as usize);
+    let chain_zero = p.wrapping_offset(-(symbias as isize));
 
     if nbuckets == 0 {
         return 0;
     }
     let mut idx = *buckets.iter().max().unwrap();
-    while *chain_zero.add(idx as usize) & 1 == 0 {
+    while *chain_zero.wrapping_add(idx as usize) & 1 == 0 {
         idx += 1;
     }
     idx + 1
@@ -197,38 +197,39 @@ unsafe fn gnu_hash_symbol_count(hashtab: *const u32) -> u32 {
 unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> {
     let hashtab = info.gnu_hash;
     let nbuckets = *hashtab;
-    let symbias = *hashtab.add(1);
-    let bloom_size = *hashtab.add(2);
-    let bloom_shift = *hashtab.add(3);
-    let bloom = hashtab.add(4) as *const u64;
-    let mut p = hashtab.add(4 + 2 * bloom_size as usize);
+    let symbias = *hashtab.wrapping_add(1);
+    let bloom_size = *hashtab.wrapping_add(2);
+    let bloom_shift = *hashtab.wrapping_add(3);
+    let bloom = hashtab.wrapping_add(4) as *const u64;
+    let mut p = hashtab.wrapping_add(4 + 2 * bloom_size as usize);
     let buckets = p;
-    p = p.add(nbuckets as usize);
-    let chain_zero = p.offset(-(symbias as isize));
+    p = p.wrapping_add(nbuckets as usize);
+    let chain_zero = p.wrapping_offset(-(symbias as isize));
 
     if nbuckets == 0 {
         return None;
     }
 
     let h = gnu_hash(name);
-    let word = *bloom.add(((h / 64) & (bloom_size - 1)) as usize);
+    let word = *bloom.wrapping_add(((h / 64) & (bloom_size - 1)) as usize);
     let bit1 = h & 63;
     let bit2 = (h >> bloom_shift) & 63;
     if ((word >> bit1) & (word >> bit2) & 1) == 0 {
         return None;
     }
 
-    let mut symidx = *buckets.add((h % nbuckets) as usize);
+    let mut symidx = *buckets.wrapping_add((h % nbuckets) as usize);
     if symidx == STN_UNDEF {
         return None;
     }
 
     loop {
-        let chain_h = *chain_zero.add(symidx as usize);
+        let chain_h = *chain_zero.wrapping_add(symidx as usize);
         if ((chain_h ^ h) >> 1) == 0 {
             if let Some(sname) = info.sym_name(symidx) {
-                if sname.to_bytes() == name && check_sym(&*info.symtab.add(symidx as usize)) {
-                    return Some(*info.symtab.add(symidx as usize));
+                let sym = info.symtab.wrapping_add(symidx as usize);
+                if sname.to_bytes() == name && check_sym(&*sym) {
+                    return Some(*sym);
                 }
             }
         }
@@ -349,8 +350,13 @@ struct PageProtGuard {
 
 impl PageProtGuard {
     fn new() -> Self {
+        // sysconf can return -1 on error; casting that to usize gives
+        // a huge value that breaks the alignment/mprotect math. Fall
+        // back to a conservative 4 KiB default if the query fails.
+        let raw = unsafe { sysconf(_SC_PAGESIZE) };
+        let page_size = if raw > 0 { raw as usize } else { 4096 };
         Self {
-            page_size: unsafe { sysconf(_SC_PAGESIZE) as usize },
+            page_size,
             maps: read_proc_maps(),
             touched: HashMap::new(),
         }

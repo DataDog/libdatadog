@@ -171,7 +171,9 @@ pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void
         return real(nmemb, size);
     }
     ensure_tls();
-    let total = nmemb.saturating_mul(size);
+    let Some(total) = nmemb.checked_mul(size) else {
+        return real(nmemb, size);
+    };
     let req = dd_allocation_requested(total, core::mem::align_of::<u64>() * 2);
     // calloc takes (nmemb, size); when the sampler bumps `req.size` we
     // funnel the extra bytes into the size argument (nmemb stays 1's
