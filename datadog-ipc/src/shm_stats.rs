@@ -814,6 +814,7 @@ impl ShmSpanConcentrator {
                 .unwrap_or_default(),
             service_source: read_str!(f.service_source),
             span_derived_primary_tags: vec![],
+            additional_metric_tags: vec![],
         }
     }
 }

@@ -550,7 +550,8 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .map(|c| c.to_string())
             .unwrap_or_default(),
         service_source: f.service_source,
-        span_derived_primary_tags: vec![], // Todo
+        span_derived_primary_tags: vec![],
+        additional_metric_tags: vec![],
     }
 }
 
