@@ -114,6 +114,7 @@ mod tests {
                     http_method: "GET".to_string(),
                     service_source: "".to_string(),
                     span_derived_primary_tags: vec![],
+                    additional_metric_tags: vec![],
                 }],
                 agent_time_shift: 0,
             }],
@@ -132,5 +133,39 @@ mod tests {
         };
 
         assert_eq!(deserialized_stats_json, client_stats_payload)
+    }
+
+    #[test]
+    fn test_deserialize_tracer_payload_partial_container_debug() {
+        use crate::pb::{ContainerDebug, TracerPayload};
+
+        let json = r#"{
+            "container_id": "cid",
+            "language_name": "go",
+            "language_version": "1.22",
+            "tracer_version": "1.0",
+            "runtime_id": "runtime",
+            "chunks": [],
+            "tags": {},
+            "env": "prod",
+            "hostname": "host",
+            "app_version": "2.0",
+            "container_debug": {
+                "latency_ms": 42,
+                "was_buffered": true
+            }
+        }"#;
+
+        let decoded: TracerPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            decoded.container_debug,
+            Some(ContainerDebug {
+                error: String::new(),
+                latency_ms: 42,
+                was_buffered: true,
+                buffer_ms: 0,
+                buffer_eviction_reason: String::new(),
+            })
+        );
     }
 }

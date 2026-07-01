@@ -3,7 +3,7 @@ on:
   pull_request:
     types: [ opened, synchronize, reopened ]
 env:
-  DATADOG_AGENT_TAG: "bdcdd8cf1ba4090a29b96d5669cfab5dd81814b1"
+  DATADOG_AGENT_TAG: "fdc29d4428db855950228a642c43a5595e56bb09"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 jobs:

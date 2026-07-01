@@ -56,6 +56,19 @@ fn generate_protobuf() {
     //   intake expects the name ContainerID rather than the PascalCase ContainerId
 
     config.type_attribute("TracerPayload", "#[derive(Deserialize, Serialize)]");
+    config.field_attribute(
+        ".pb.TracerPayload.containerDebug",
+        "#[serde(skip_serializing_if = \"Option::is_none\")]",
+    );
+    config.type_attribute(
+        "ContainerDebug",
+        "#[derive(Deserialize, Serialize, PartialOrd, Ord)]",
+    );
+    config.field_attribute("ContainerDebug.error", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.latencyMs", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.wasBuffered", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.bufferMs", "#[serde(default)]");
+    config.field_attribute("ContainerDebug.bufferEvictionReason", "#[serde(default)]");
     config.type_attribute("TraceChunk", "#[derive(Deserialize, Serialize)]");
 
     config.type_attribute("SpanLink", "#[derive(Deserialize, Serialize)]");
@@ -214,6 +227,10 @@ fn generate_protobuf() {
     config.field_attribute("ClientGroupedStats.service_source", "#[serde(default)]");
     config.field_attribute(
         "ClientGroupedStats.span_derived_primary_tags",
+        "#[serde(default)]",
+    );
+    config.field_attribute(
+        "ClientGroupedStats.additional_metric_tags",
         "#[serde(default)]",
     );
 
