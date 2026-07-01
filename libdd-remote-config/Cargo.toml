@@ -10,8 +10,8 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-remote-confi
 description = "Datadog Remote Configuration client and config parsers"
 
 [features]
-default = ["client", "https"]
-agentless = ["tuf", "client", "https"]
+default = ["client", "https", "agentless"]
+agentless = ["tuf", "chrono", "client", "https"]
 client = [
     "libdd-trace-protobuf",
     "http-body-util",
@@ -62,6 +62,7 @@ serde_with = "3"
 thiserror = "2"
 hashbrown = "0.15"
 tuf = { git = "https://github.com/DataDog/rust-tuf/", tag = "0.3.0-beta10-opw-3", default-features = false, optional = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 prost = "0.14.1"
 futures = { version = "0.3", features = ["executor"] }
 # `EnumIter` for external consumers to make struct available to runtime

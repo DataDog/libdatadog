@@ -174,6 +174,7 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     endpoint: Endpoint,
 }
 
+#[derive(Debug)]
 pub struct ClientTargetRef {
     pub path: String,
     pub version: u64,
@@ -532,17 +533,6 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         let snapshot_path = MetadataPath::snapshot();
         let targets_path = MetadataPath::targets();
 
-        let repo = self.director_client.remote_repo_mut();
-        *repo = TUFRepo::new();
-        for target_file in &response.target_files {
-            let trimmed_path = trim_hash_target_path(&target_file.path)?;
-            repo.store_target(
-                &TargetPath::new(&trimmed_path)?,
-                &mut target_file.raw.as_slice(),
-            )
-            .await?;
-        }
-
         let config_repo_mut = self.config_client.remote_repo_mut();
         *config_repo_mut = TUFRepo::new();
         let Some(metas) = response.config_metas.as_ref() else {
@@ -553,15 +543,23 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         store_noversion(config_repo_mut, &timestamp_path, &metas.timestamp).await?;
         store(config_repo_mut, &snapshot_path, &metas.snapshot).await?;
         store(config_repo_mut, &targets_path, &metas.top_targets).await?;
-        // TODO: We do not store the delegated targets metadata
-        // This will need to be revisited in order to support proper Uptane
-        // verification of the full configuration data.
-        // store(repo, &targets_path, &metas.delegated_targets).await?;
+        // Delegated targets are stored later, after verifying the top-level signatures.
 
-        let director_remote_repo = self.director_client.remote_repo_mut();
         let Some(metas) = response.director_metas.as_ref() else {
             bail!("missing director meta from LatestConfigsResponse")
         };
+
+        let director_remote_repo = self.director_client.remote_repo_mut();
+        *director_remote_repo = TUFRepo::new();
+        for target_file in &response.target_files {
+            let trimmed_path = trim_hash_target_path(&target_file.path)?;
+            director_remote_repo
+                .store_target(
+                    &TargetPath::new(&trimmed_path)?,
+                    &mut target_file.raw.as_slice(),
+                )
+                .await?;
+        }
 
         store(director_remote_repo, &root_path, &metas.roots).await?;
         store_noversion(director_remote_repo, &timestamp_path, &metas.timestamp).await?;
@@ -570,6 +568,30 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
 
         self.config_client.update().await?;
         self.director_client.update().await?;
+
+        let now = chrono::Utc::now();
+        let parent = MetadataPath::targets();
+
+        // Ingest each delegated targets blob into the config DB. This enforces the
+        // per-product signing keys: `update_delegated_targets` verifies signatures,
+        // expiry and version monotonicity before inserting into `trusted_delegations`.
+        if let Some(metas) = response.config_metas.as_ref() {
+            for dm in &metas.delegated_targets {
+                let role = MetadataPath::new(dm.role.clone())
+                    .map_err(|e| format_err!("bad delegated role name {:?}: {e}", dm.role))?;
+                let raw = RawSignedMetadata::new(dm.raw.clone());
+                self.config_client
+                    .database_mut()
+                    .update_delegated_targets(&now, &parent, &role, &raw)
+                    .map_err(|e: tuf::Error| {
+                        format_err!("failed to verify config delegation {}: {e}", dm.role)
+                    })?;
+            }
+        }
+
+        // Enforce that each director-announced target is also authorized by the
+        // config repo's per-product delegated keys, not just the single director key.
+        verify_director_against_config(&self.config_client, &self.director_client)?;
 
         let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?.collect();
 
@@ -714,6 +736,164 @@ fn now_unix_milli_ts() -> u64 {
             .as_millis(),
     )
     .unwrap_or(u64::MAX)
+}
+
+/// Cross-verify the director's announced targets against the config repo's
+/// per-product delegation tree.
+///
+/// Datadog's RC uses two TUF repos: the *director* has a flat top-level
+/// `targets` signed by a single key, while the *config repo* authorizes
+/// everything through per-product delegated roles (`APM_TRACING`, `ASM_DD`, …).
+/// Trusting only the director collapses the model to one key, so every director
+/// target must also be authorized — with the same `(length, hashes)` — by the
+/// config delegation tree.
+///
+/// We can't use the built-in `Database::target_description` walker because it
+/// doesn't filter delegations by `paths` before checking `trusted_delegations`,
+/// and its matcher handles only directory-prefix patterns, not the globs
+/// Datadog uses (`datadog/*/APM_TRACING/*/*`).
+///
+/// Assumes the config repo is flat (delegated roles are direct children of the
+/// top-level targets); nested delegations would require making this recursive.
+fn verify_director_against_config(
+    config_client: &TUFClient,
+    director_client: &TUFClient,
+) -> anyhow::Result<()> {
+    let top_config_targets = config_client
+        .database()
+        .trusted_targets()
+        .ok_or_else(|| format_err!("config client has no trusted top-level targets"))?;
+    let trusted_delegations = config_client.database().trusted_delegations();
+
+    let director_targets = director_client
+        .database()
+        .trusted_targets()
+        .ok_or_else(|| format_err!("director client has no trusted targets"))?;
+
+    for (path, dir_desc) in director_targets.targets() {
+        let cfg_desc = lookup_config_target(path, top_config_targets, trusted_delegations)
+            .ok_or_else(|| {
+                format_err!("director target {path} is not authorized by config delegations")
+            })?;
+
+        if cfg_desc.length() != dir_desc.length() {
+            bail!(
+                "length mismatch between director and config for {path}: director={}, config={}",
+                dir_desc.length(),
+                cfg_desc.length()
+            );
+        }
+
+        // Require at least one shared hash algorithm, and identical digests for
+        // every shared one. The two sides need not publish the same set.
+        let mut overlapped = false;
+        for (alg, dir_h) in dir_desc.hashes() {
+            if let Some(cfg_h) = cfg_desc.hashes().get(alg) {
+                overlapped = true;
+                if cfg_h != dir_h {
+                    bail!("{alg:?} hash mismatch between director and config for {path}");
+                }
+            }
+        }
+        if !overlapped {
+            bail!("no common hash algorithm between director and config descriptions for {path}");
+        }
+
+    }
+
+    Ok(())
+}
+
+/// Resolve `path` against the (flat) config delegation tree, returning the
+/// target description from the first matching delegation that lists it.
+/// Returns `None` if no delegation authorizes the path.
+fn lookup_config_target<'a>(
+    path: &TargetPath,
+    top: &'a tuf::verify::Verified<tuf::metadata::TargetsMetadata>,
+    trusted_delegations: &'a std::collections::HashMap<
+        MetadataPath,
+        tuf::verify::Verified<tuf::metadata::TargetsMetadata>,
+    >,
+) -> Option<&'a TargetDescription> {
+    // Direct hit on the top-level targets (Datadog's are empty, but be safe).
+    if let Some(d) = top.targets().get(path) {
+        return Some(d);
+    }
+
+    // Spec-style preorder walk over the (ordered) delegation list.
+    for delegation in top.delegations().roles() {
+        let matches_scope = delegation
+            .paths()
+            .iter()
+            .any(|pat| target_matches_pattern(path.as_str(), pat.as_str()));
+        if !matches_scope {
+            continue;
+        }
+
+        if let Some(meta) = trusted_delegations.get(delegation.name()) {
+            if let Some(d) = meta.targets().get(path) {
+                return Some(d);
+            }
+        }
+
+        // Scope matched but path not found: per TUF, a `terminating` delegation
+        // stops the search rather than falling through to siblings.
+        if delegation.terminating() {
+            return None;
+        }
+    }
+
+    None
+}
+
+/// TUF-style glob path matching. `*` matches any run of characters within a
+/// single `/`-delimited segment; segments must otherwise match literally.
+/// E.g. `datadog/*/APM_TRACING/*/*` matches
+/// `datadog/556989/APM_TRACING/<id>/<hash>` but not
+/// `datadog/x/y/APM_TRACING/<id>/<hash>`.
+fn target_matches_pattern(path: &str, pattern: &str) -> bool {
+    let mut p_segs = pattern.split('/');
+    let mut t_segs = path.split('/');
+    loop {
+        match (p_segs.next(), t_segs.next()) {
+            (None, None) => return true,
+            (Some(p), Some(t)) if segment_matches(p, t) => continue,
+            _ => return false,
+        }
+    }
+}
+
+/// Match a single path segment against a single pattern segment. `*` in the
+/// pattern matches zero-or-more characters (within the segment, since segments
+/// don't contain `/`).
+fn segment_matches(pattern: &str, segment: &str) -> bool {
+    // Fast paths.
+    if pattern == "*" {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return pattern == segment;
+    }
+
+    // General case: literals split by `*`, anchored at both ends.
+    let parts: Vec<&str> = pattern.split('*').collect();
+    let first = parts[0];
+    if !segment.starts_with(first) {
+        return false;
+    }
+    let last = parts[parts.len() - 1];
+    let mut cursor = &segment[first.len()..];
+    // Middle literals must appear in order, non-overlapping.
+    for mid in &parts[1..parts.len() - 1] {
+        if mid.is_empty() {
+            continue;
+        }
+        match cursor.find(mid) {
+            Some(i) => cursor = &cursor[i + mid.len()..],
+            None => return false,
+        }
+    }
+    cursor.ends_with(last) && cursor.len() >= last.len()
 }
 
 /// Return all currently trusted, unexpired targets.  Targets that are expired or that lack a
@@ -1159,6 +1339,47 @@ mod tests {
 
         assert_eq!(compute_backoff(4), Some(Duration::from_secs(120)));
         assert_eq!(compute_backoff(42), Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn test_target_matches_pattern() {
+        use super::target_matches_pattern as m;
+
+        // Real Datadog delegation pattern.
+        assert!(m(
+            "datadog/556989/APM_TRACING/abc/def",
+            "datadog/*/APM_TRACING/*/*"
+        ));
+
+        // Wrong product segment.
+        assert!(!m(
+            "datadog/556989/ASM_DD/abc/def",
+            "datadog/*/APM_TRACING/*/*"
+        ));
+
+        // Extra path segment must not match (`*` doesn't cross `/`).
+        assert!(!m(
+            "datadog/x/y/APM_TRACING/abc/def",
+            "datadog/*/APM_TRACING/*/*"
+        ));
+
+        // Missing path segment.
+        assert!(!m(
+            "datadog/556989/APM_TRACING/abc",
+            "datadog/*/APM_TRACING/*/*"
+        ));
+
+        // Employee-prefix delegation.
+        assert!(m("employee/ASM_DD/abc/def", "employee/ASM_DD/*/*"));
+        assert!(!m("employee/CWS_DD/abc/def", "employee/ASM_DD/*/*"));
+
+        // Partial-segment wildcards.
+        assert!(super::segment_matches("foo*bar", "foo123bar"));
+        assert!(super::segment_matches("foo*", "foobar"));
+        assert!(super::segment_matches("*bar", "foobar"));
+        assert!(!super::segment_matches("foo*bar", "fobar"));
+        // `*` does not cross `/`.
+        assert!(!m("foo/bar", "foo*bar"));
     }
 
     #[test]
