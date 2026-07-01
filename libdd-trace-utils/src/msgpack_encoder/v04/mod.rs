@@ -7,22 +7,7 @@ use crate::span::TraceData;
 use libdd_common::ResultInfallibleExt;
 use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 
-macro_rules! write_const_msg_pack_str {
-    ($writer:expr, $str:expr) => {{
-        use rmp::encode::ValueWriteError;
-        const STRING_ENCODING_LEN: usize = super::msp_string_encoding_len($str);
-        const STRING_ENCODING: [u8; STRING_ENCODING_LEN] = super::msp_const_string_encoding($str);
-
-        $writer
-            .write_bytes(&STRING_ENCODING)
-            .map_err(ValueWriteError::InvalidDataWrite)
-    }};
-}
-
-mod span_v04;
-mod span_v1;
-
-const fn msp_string_encoding_len(s: &str) -> usize {
+const fn msgpack_string_encoding_len(s: &str) -> usize {
     let length_marker_len = if s.len() < 32 {
         1
     } else if s.len() < 256 {
@@ -35,8 +20,8 @@ const fn msp_string_encoding_len(s: &str) -> usize {
     length_marker_len + s.len()
 }
 
-// Compute the encoding of a string to messagepack in a const manner
-const fn msp_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u8; ENCODING_LEN] {
+// Compute the encoding of a string to msgpack in a const manner
+const fn msgpack_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u8; ENCODING_LEN] {
     // copy_to_slice is not const yet, so we make a helper
     const fn copy_to_slice(dest: &mut [u8], src: &[u8], n: usize) {
         let mut i = 0;
@@ -65,6 +50,22 @@ const fn msp_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u8; E
     copy_to_slice(storage.split_at_mut(1 + len_bytes).1, s.as_bytes(), s.len());
     storage
 }
+
+macro_rules! write_const_msgpack_str {
+    ($writer:expr, $str:expr) => {{
+        use rmp::encode::ValueWriteError;
+        const STRING_ENCODING_LEN: usize = super::msgpack_string_encoding_len($str);
+        const STRING_ENCODING: [u8; STRING_ENCODING_LEN] =
+            super::msgpack_const_string_encoding($str);
+
+        $writer
+            .write_bytes(&STRING_ENCODING)
+            .map_err(ValueWriteError::InvalidDataWrite)
+    }};
+}
+
+mod span_v04;
+mod span_v1;
 
 #[inline(always)]
 fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
@@ -103,7 +104,7 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::write_to_slice_v04;
+/// use libdd_trace_utils::msgpack_encoder::v04::write_to_slice_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let mut buffer = vec![0u8; 1024];
@@ -113,9 +114,9 @@ fn to_writer<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 /// };
 /// let traces = vec![vec![span]];
 ///
-/// write_to_slice_v04(&mut &mut buffer[..], &traces).expect("Encoding failed");
+/// write_to_slice_from_v04(&mut &mut buffer[..], &traces).expect("Encoding failed");
 /// ```
-pub fn write_to_slice_v04<T: TraceData, S: AsRef<[Span<T>]>>(
+pub fn write_to_slice_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
     slice: &mut &mut [u8],
     traces: &[S],
 ) -> Result<(), ValueWriteError> {
@@ -135,7 +136,7 @@ pub fn write_to_slice_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::to_vec_v04;
+/// use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let span = SpanSlice {
@@ -143,12 +144,12 @@ pub fn write_to_slice_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
-/// let encoded = to_vec_v04(&traces);
+/// let encoded = to_vec_from_v04(&traces);
 ///
 /// assert!(!encoded.is_empty());
 /// ```
-pub fn to_vec_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
-    to_vec_with_capacity_v04(traces, 0)
+pub fn to_vec_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
+    to_vec_with_capacity_from_v04(traces, 0)
 }
 
 /// Serializes traces into a vector of bytes with specified capacity.
@@ -165,7 +166,7 @@ pub fn to_vec_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::to_vec_with_capacity_v04;
+/// use libdd_trace_utils::msgpack_encoder::v04::to_vec_with_capacity_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let span = SpanSlice {
@@ -173,11 +174,11 @@ pub fn to_vec_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> Vec<u8> {
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
-/// let encoded = to_vec_with_capacity_v04(&traces, 1024);
+/// let encoded = to_vec_with_capacity_from_v04(&traces, 1024);
 ///
 /// assert!(encoded.capacity() >= 1024);
 /// ```
-pub fn to_vec_with_capacity_v04<T: TraceData, S: AsRef<[Span<T>]>>(
+pub fn to_vec_with_capacity_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
     capacity: u32,
 ) -> Vec<u8> {
@@ -204,7 +205,7 @@ pub fn to_vec_with_capacity_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v04::to_encoded_byte_len_v04;
+/// use libdd_trace_utils::msgpack_encoder::v04::to_encoded_byte_len_from_v04;
 /// use libdd_trace_utils::span::v04::SpanSlice;
 ///
 /// let span = SpanSlice {
@@ -212,11 +213,11 @@ pub fn to_vec_with_capacity_v04<T: TraceData, S: AsRef<[Span<T>]>>(
 ///     ..Default::default()
 /// };
 /// let traces = vec![vec![span]];
-/// let encoded_len = to_encoded_byte_len_v04(&traces);
+/// let encoded_len = to_encoded_byte_len_from_v04(&traces);
 ///
 /// assert!(encoded_len > 0);
 /// ```
-pub fn to_encoded_byte_len_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
+pub fn to_encoded_byte_len_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) -> u32 {
     let mut counter = super::CountLength(0);
     // `CountLength` impls `std::io::Write` (whose error type is `std::io::Error`, not
     // `Infallible`), so we can't statically prove infallibility via `unwrap_infallible`
@@ -231,7 +232,7 @@ pub fn to_encoded_byte_len_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &[S]) 
 /// does not advertise `/v1.0/traces`). The output is a msgpack array of traces, where each
 /// trace is itself a msgpack array of v0.4-shaped spans — matching the existing v0.4 wire
 /// format produced by [`to_vec`].
-fn encode_payload_v1<W: RmpWrite, T: TraceData>(
+fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -260,16 +261,19 @@ fn encode_payload_v1<W: RmpWrite, T: TraceData>(
 /// The output is byte-compatible with [`to_vec`] for equivalent data — chunk-level fields are
 /// propagated to every span and typed attributes are bucketed into the v0.4 `meta` /
 /// `metrics` / `meta_struct` maps per [`span_v1_to_v04`]'s mapping table.
-pub fn to_vec_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
-    to_vec_with_capacity_v1(payload, 0)
+pub fn to_vec_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
+    to_vec_with_capacity_from_v1(payload, 0)
 }
 
 /// Serializes a [`TracerPayload`] as a v0.4 msgpack payload with a caller-supplied initial
 /// capacity. Use this when you can size the buffer up front (e.g. from
-/// [`to_encoded_byte_len_v1`]) to avoid reallocations.
-pub fn to_vec_with_capacity_v1<T: TraceData>(payload: &TracerPayload<T>, capacity: u32) -> Vec<u8> {
+/// [`to_encoded_byte_len_from_v1`]) to avoid reallocations.
+pub fn to_vec_with_capacity_from_v1<T: TraceData>(
+    payload: &TracerPayload<T>,
+    capacity: u32,
+) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    encode_payload_v1(&mut buf, payload)
+    encode_payload_from_v1(&mut buf, payload)
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
@@ -281,17 +285,17 @@ pub fn to_vec_with_capacity_v1<T: TraceData>(payload: &TracerPayload<T>, capacit
 /// # Errors
 ///
 /// Returns any [`ValueWriteError`] from the underlying writer (typically buffer-too-small).
-pub fn write_to_slice_v1<T: TraceData>(
+pub fn write_to_slice_from_v1<T: TraceData>(
     slice: &mut &mut [u8],
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError> {
-    encode_payload_v1(slice, payload)
+    encode_payload_from_v1(slice, payload)
 }
 
-/// Returns the exact number of bytes [`to_vec_v1`] would write for `payload`. Walks
+/// Returns the exact number of bytes [`to_vec_from_v1`] would write for `payload`. Walks
 /// the payload through a counting writer without allocating an output buffer.
-pub fn to_encoded_byte_len_v1<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
+pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
     let mut counter = super::CountLength(0);
-    let _ = encode_payload_v1(&mut counter, payload);
+    let _ = encode_payload_from_v1(&mut counter, payload);
     counter.0
 }

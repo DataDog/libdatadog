@@ -112,6 +112,7 @@ pub struct TraceChunk<T: TraceData> {
 /// A V1 tracer payload: tracer-level metadata and the trace chunks it carries.
 #[derive(Debug, Default)]
 pub struct TracerPayload<T: TraceData> {
+    pub container_id: T::Text,
     pub language_name: T::Text,
     pub language_version: T::Text,
     pub tracer_version: T::Text,

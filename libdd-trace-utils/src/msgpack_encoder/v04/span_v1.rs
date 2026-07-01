@@ -1,11 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// Naming convention: parent module (`v04`) = output wire format, file suffix (`_v1`) = input
-// span type. This file encodes a [`crate::span::v1::Span`] into the v0.4 msgpack wire format
-// (cross-format downgrade).
-
-//! Downgrade encoder: writes a [`crate::span::v1::Span`] in the v0.4 msgpack wire format.
+//! Downgrade encoder: `crate::span::v1::Span` → v0.4 msgpack wire.
+//! (Convention documented in [`crate::msgpack_encoder`].)
 //!
 //! Used when the receiving agent does not advertise the `/v1.0/traces` endpoint and the tracer
 //! must fall back to v0.4. The mapping is:
@@ -172,68 +169,68 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
 
     write_map_len(writer, span_len)?;
 
-    write_const_msg_pack_str!(writer, "service")?;
+    write_const_msgpack_str!(writer, "service")?;
     write_str(writer, span.service.borrow())?;
 
-    write_const_msg_pack_str!(writer, "name")?;
+    write_const_msgpack_str!(writer, "name")?;
     write_str(writer, span.name.borrow())?;
 
-    write_const_msg_pack_str!(writer, "resource")?;
+    write_const_msgpack_str!(writer, "resource")?;
     write_str(writer, span.resource.borrow())?;
 
-    write_const_msg_pack_str!(writer, "trace_id")?;
+    write_const_msgpack_str!(writer, "trace_id")?;
     write_u64(writer, trace_id_low)?;
 
-    write_const_msg_pack_str!(writer, "span_id")?;
+    write_const_msgpack_str!(writer, "span_id")?;
     write_u64(writer, span.span_id)?;
 
     if span.parent_id != 0 {
-        write_const_msg_pack_str!(writer, "parent_id")?;
+        write_const_msgpack_str!(writer, "parent_id")?;
         write_u64(writer, span.parent_id)?;
     }
 
-    write_const_msg_pack_str!(writer, "start")?;
+    write_const_msgpack_str!(writer, "start")?;
     write_i64(writer, span.start)?;
 
-    write_const_msg_pack_str!(writer, "duration")?;
+    write_const_msgpack_str!(writer, "duration")?;
     write_sint(writer, span.duration)?;
 
     if span.error {
-        write_const_msg_pack_str!(writer, "error")?;
+        write_const_msgpack_str!(writer, "error")?;
         write_sint(writer, 1)?;
     }
 
     if counts.meta > 0 {
-        write_const_msg_pack_str!(writer, "meta")?;
+        write_const_msgpack_str!(writer, "meta")?;
         write_map_len(writer, counts.meta)?;
 
         if !span.env.borrow().is_empty() {
-            write_const_msg_pack_str!(writer, "env")?;
+            write_const_msgpack_str!(writer, "env")?;
             write_str(writer, span.env.borrow())?;
         }
         if !span.version.borrow().is_empty() {
-            write_const_msg_pack_str!(writer, "version")?;
+            write_const_msgpack_str!(writer, "version")?;
             write_str(writer, span.version.borrow())?;
         }
         if !span.component.borrow().is_empty() {
-            write_const_msg_pack_str!(writer, "component")?;
+            write_const_msgpack_str!(writer, "component")?;
             write_str(writer, span.component.borrow())?;
         }
         if let Some(kind_str) = kind_meta {
-            write_const_msg_pack_str!(writer, "span.kind")?;
+            write_const_msgpack_str!(writer, "span.kind")?;
             write_str(writer, kind_str)?;
         }
         if trace_id_high != 0 {
             // Lower-case hex without `0x` prefix — the agent expects this format.
-            write_const_msg_pack_str!(writer, "_dd.p.tid")?;
+            write_const_msgpack_str!(writer, "_dd.p.tid")?;
             write_str(writer, &format!("{trace_id_high:016x}"))?;
         }
         if !chunk.origin.borrow().is_empty() {
-            write_const_msg_pack_str!(writer, "_dd.origin")?;
+            write_const_msgpack_str!(writer, "_dd.origin")?;
             write_str(writer, chunk.origin.borrow())?;
         }
         if let Some(mechanism) = chunk.sampling_mechanism {
-            write_const_msg_pack_str!(writer, "_dd.p.dm")?;
+            write_const_msgpack_str!(writer, "_dd.p.dm")?;
             write_str(writer, &format!("-{mechanism}"))?;
         }
         for &(k, v) in &merged_attrs {
@@ -252,11 +249,11 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     }
 
     if counts.metrics > 0 {
-        write_const_msg_pack_str!(writer, "metrics")?;
+        write_const_msgpack_str!(writer, "metrics")?;
         write_map_len(writer, counts.metrics)?;
 
         if let Some(priority) = chunk.priority {
-            write_const_msg_pack_str!(writer, "_sampling_priority_v1")?;
+            write_const_msgpack_str!(writer, "_sampling_priority_v1")?;
             write_f64(writer, priority as f64)?;
         }
         for &(k, v) in &merged_attrs {
@@ -275,12 +272,12 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     }
 
     if !span.r#type.borrow().is_empty() {
-        write_const_msg_pack_str!(writer, "type")?;
+        write_const_msgpack_str!(writer, "type")?;
         write_str(writer, span.r#type.borrow())?;
     }
 
     if counts.meta_struct > 0 {
-        write_const_msg_pack_str!(writer, "meta_struct")?;
+        write_const_msgpack_str!(writer, "meta_struct")?;
         write_map_len(writer, counts.meta_struct)?;
 
         for &(k, v) in &merged_attrs {
@@ -375,7 +372,7 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_links: &[SpanLink<T>],
 ) -> Result<(), ValueWriteError<W::Error>> {
-    write_const_msg_pack_str!(writer, "span_links")?;
+    write_const_msgpack_str!(writer, "span_links")?;
     write_array_len(writer, span_links.len() as u32)?;
 
     for link in span_links {
@@ -393,17 +390,17 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
 
         write_map_len(writer, link_len)?;
 
-        write_const_msg_pack_str!(writer, "trace_id")?;
+        write_const_msgpack_str!(writer, "trace_id")?;
         write_u64(writer, trace_id_low)?;
 
-        write_const_msg_pack_str!(writer, "trace_id_high")?;
+        write_const_msgpack_str!(writer, "trace_id_high")?;
         write_u64(writer, trace_id_high)?;
 
-        write_const_msg_pack_str!(writer, "span_id")?;
+        write_const_msgpack_str!(writer, "span_id")?;
         write_u64(writer, link.span_id)?;
 
         if attr_count > 0 {
-            write_const_msg_pack_str!(writer, "attributes")?;
+            write_const_msgpack_str!(writer, "attributes")?;
             write_map_len(writer, attr_count)?;
             for (k, v) in attrs_dd.iter() {
                 match v {
@@ -421,12 +418,12 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
         }
 
         if !link.tracestate.borrow().is_empty() {
-            write_const_msg_pack_str!(writer, "tracestate")?;
+            write_const_msgpack_str!(writer, "tracestate")?;
             write_str(writer, link.tracestate.borrow())?;
         }
 
         if link.flags != 0 {
-            write_const_msg_pack_str!(writer, "flags")?;
+            write_const_msgpack_str!(writer, "flags")?;
             write_u32(writer, link.flags)?;
         }
     }
@@ -442,7 +439,7 @@ fn encode_span_events<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_events: &[SpanEvent<T>],
 ) -> Result<(), ValueWriteError<W::Error>> {
-    write_const_msg_pack_str!(writer, "span_events")?;
+    write_const_msgpack_str!(writer, "span_events")?;
     write_array_len(writer, span_events.len() as u32)?;
 
     for event in span_events {
@@ -457,14 +454,14 @@ fn encode_span_events<W: RmpWrite, T: TraceData>(
 
         write_map_len(writer, event_len)?;
 
-        write_const_msg_pack_str!(writer, "time_unix_nano")?;
+        write_const_msgpack_str!(writer, "time_unix_nano")?;
         write_u64(writer, event.time_unix_nano)?;
 
-        write_const_msg_pack_str!(writer, "name")?;
+        write_const_msgpack_str!(writer, "name")?;
         write_str(writer, event.name.borrow())?;
 
         if attr_count > 0 {
-            write_const_msg_pack_str!(writer, "attributes")?;
+            write_const_msgpack_str!(writer, "attributes")?;
             write_map_len(writer, attr_count)?;
             for (k, v) in attrs_dd.iter() {
                 if !is_supported_event_attr(v) {
@@ -501,30 +498,30 @@ fn write_event_attr_value<W: RmpWrite, T: TraceData>(
     match v {
         AttributeValue::String(s) => {
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 0)?;
-            write_const_msg_pack_str!(writer, "string_value")?;
+            write_const_msgpack_str!(writer, "string_value")?;
             write_str(writer, s.borrow())?;
         }
         AttributeValue::Bool(b) => {
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 1)?;
-            write_const_msg_pack_str!(writer, "bool_value")?;
+            write_const_msgpack_str!(writer, "bool_value")?;
             write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
         }
         AttributeValue::Int(i) => {
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 2)?;
-            write_const_msg_pack_str!(writer, "int_value")?;
+            write_const_msgpack_str!(writer, "int_value")?;
             write_sint(writer, *i)?;
         }
         AttributeValue::Float(f) => {
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 3)?;
-            write_const_msg_pack_str!(writer, "double_value")?;
+            write_const_msgpack_str!(writer, "double_value")?;
             write_f64(writer, *f)?;
         }
         AttributeValue::List(arr) => {
@@ -533,11 +530,11 @@ fn write_event_attr_value<W: RmpWrite, T: TraceData>(
             let scalar_elems = arr.iter().filter(|e| is_scalar_array_elem(e));
             let elem_count = scalar_elems.clone().count() as u32;
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 4)?;
-            write_const_msg_pack_str!(writer, "array_value")?;
+            write_const_msgpack_str!(writer, "array_value")?;
             write_map_len(writer, 1)?;
-            write_const_msg_pack_str!(writer, "values")?;
+            write_const_msgpack_str!(writer, "values")?;
             write_array_len(writer, elem_count)?;
             for elem in scalar_elems {
                 write_event_array_element(writer, elem)?;
@@ -571,30 +568,30 @@ fn write_event_array_element<W: RmpWrite, T: TraceData>(
     match v {
         AttributeValue::String(s) => {
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 0)?;
-            write_const_msg_pack_str!(writer, "string_value")?;
+            write_const_msgpack_str!(writer, "string_value")?;
             write_str(writer, s.borrow())?;
         }
         AttributeValue::Bool(b) => {
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 1)?;
-            write_const_msg_pack_str!(writer, "bool_value")?;
+            write_const_msgpack_str!(writer, "bool_value")?;
             write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
         }
         AttributeValue::Int(i) => {
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 2)?;
-            write_const_msg_pack_str!(writer, "int_value")?;
+            write_const_msgpack_str!(writer, "int_value")?;
             write_sint(writer, *i)?;
         }
         AttributeValue::Float(f) => {
             write_map_len(writer, 2)?;
-            write_const_msg_pack_str!(writer, "type")?;
+            write_const_msgpack_str!(writer, "type")?;
             write_u8(writer, 3)?;
-            write_const_msg_pack_str!(writer, "double_value")?;
+            write_const_msgpack_str!(writer, "double_value")?;
             write_f64(writer, *f)?;
         }
         _ => {
@@ -608,7 +605,7 @@ fn write_event_array_element<W: RmpWrite, T: TraceData>(
 #[cfg(test)]
 mod tests {
     //! Unit tests for the v1::Span → v0.4 downgrade encoder. Each test encodes a small
-    //! `TracerPayload` via [`super::super::to_vec_v1`] and decodes the bytes with
+    //! `TracerPayload` via [`super::super::to_vec_from_v1`] and decodes the bytes with
     //! `rmpv` to assert on the resulting v0.4 shape — this implicitly checks that the output
     //! is also valid msgpack consumable by any standard v0.4 decoder (test-agent, agent, etc.).
     use crate::span::v1::{
@@ -627,7 +624,7 @@ mod tests {
     /// Encodes `payload` and decodes back into `rmpv::Value`. The top level of v0.4 is an
     /// array of traces; this helper returns it as a `Vec<Value>` so tests can index in.
     fn encode_and_decode(payload: &TracerPayloadBytes) -> Vec<Value> {
-        let bytes = super::super::to_vec_v1(payload);
+        let bytes = super::super::to_vec_from_v1(payload);
         let value = rmpv::decode::read_value(&mut &bytes[..]).expect("decode failed");
         match value {
             Value::Array(traces) => traces,

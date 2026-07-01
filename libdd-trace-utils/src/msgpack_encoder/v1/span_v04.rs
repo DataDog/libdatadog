@@ -1,9 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-// Naming convention: parent module (`v1`) = output wire format, file suffix (`_v04`) = input
-// span type. This file encodes a [`crate::span::v04::Span`] into the V1 msgpack wire format
-// (cross-format upgrade).
+//! Upgrade encoder: `crate::span::v04::Span` → V1 msgpack wire.
+//! (Convention documented in [`crate::msgpack_encoder`].)
 
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
