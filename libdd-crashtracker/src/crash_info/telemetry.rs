@@ -344,11 +344,10 @@ impl TelemetryCrashUploader {
 
     /// Helper to perform actual HTTP submission via the native HTTP capability.
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        use libdd_capabilities::{HttpClientCapability, SleepCapability};
+        use libdd_capabilities::HttpClientCapability;
         use libdd_capabilities_impl::NativeCapabilities;
 
         let client = NativeCapabilities::new_client();
-        let sleeper = <NativeCapabilities as SleepCapability>::new();
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
             .header(
@@ -374,13 +373,9 @@ impl TelemetryCrashUploader {
                 Endpoint::DEFAULT_TIMEOUT
             }
         });
-        tokio::select! {
-            biased;
-            r = client.request(req) => { r?; }
-            _ = sleeper.sleep(timeout) => {
-                return Err(anyhow::anyhow!("Telemetry crash report timed out"));
-            }
-        }
+        tokio::time::timeout(timeout, client.request(req))
+            .await
+            .map_err(|_| anyhow::anyhow!("Telemetry crash report timed out"))??;
 
         Ok(())
     }
