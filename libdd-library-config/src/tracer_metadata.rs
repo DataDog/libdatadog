@@ -133,8 +133,7 @@ impl TracerMetadata {
             threadlocal_metadata,
         } = self;
 
-        #[cfg_attr(not(feature = "otel-thread-ctx"), allow(unused_mut))]
-        let mut attributes = vec![
+        let resource_attrs = vec![
             key_value_opt("service.name", service_name),
             key_value_opt("service.instance.id", runtime_id),
             key_value_opt("service.version", service_version),
@@ -146,21 +145,25 @@ impl TracerMetadata {
             key_value_opt("container.id", container_id),
         ];
 
+        // `mut` is only needed when `otel-thread-ctx` is enabled.
+        #[allow(unused_mut)]
+        let mut extra_attributes = vec![key_value_opt("datadog.process_tags", process_tags)];
+
         #[cfg(feature = "otel-thread-ctx")]
         if let Some(ThreadLocalMetadata {
             attribute_keys,
             schema_version,
-            extra_attributes,
+            extra_attributes: threadlocal_extras,
         }) = threadlocal_metadata.as_ref()
         {
-            attributes.push(key_value(
+            extra_attributes.push(key_value(
                 "threadlocal.schema_version",
                 schema_version
                     .clone()
                     .unwrap_or_else(|| "tlsdesc_v1_dev".to_owned()),
             ));
 
-            attributes.push(KeyValue {
+            extra_attributes.push(KeyValue {
                 key: "threadlocal.attribute_key_map".to_owned(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::ArrayValue(ArrayValue {
@@ -178,7 +181,7 @@ impl TracerMetadata {
                 key_ref: 0,
             });
 
-            attributes.extend(extra_attributes.iter().map(|(k, v)| KeyValue {
+            extra_attributes.extend(threadlocal_extras.iter().map(|(k, v)| KeyValue {
                 key: k.clone(),
                 value: Some(AnyValue {
                     value: Some(v.clone()),
@@ -189,11 +192,11 @@ impl TracerMetadata {
 
         ProcessContext {
             resource: Some(Resource {
-                attributes,
+                attributes: resource_attrs,
                 dropped_attributes_count: 0,
                 entity_refs: vec![],
             }),
-            extra_attributes: vec![key_value_opt("datadog.process_tags", process_tags)],
+            extra_attributes,
         }
     }
 }
@@ -270,10 +273,8 @@ mod tests {
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{AnyValue, ProcessContext};
 
-    fn find_attr<'a>(ctx: &'a ProcessContext, key: &str) -> Option<&'a AnyValue> {
-        ctx.resource
-            .as_ref()?
-            .attributes
+    fn find_extra_attr<'a>(ctx: &'a ProcessContext, key: &str) -> Option<&'a AnyValue> {
+        ctx.extra_attributes
             .iter()
             .find(|kv| kv.key == key)?
             .value
@@ -303,8 +304,8 @@ mod tests {
     fn threadlocal_attrs_absent_when_metadata_none() {
         let ctx = TracerMetadata::default().to_otel_process_ctx();
 
-        assert!(find_attr(&ctx, "threadlocal.schema_version").is_none());
-        assert!(find_attr(&ctx, "threadlocal.attribute_key_map").is_none());
+        assert!(find_extra_attr(&ctx, "threadlocal.schema_version").is_none());
+        assert!(find_extra_attr(&ctx, "threadlocal.attribute_key_map").is_none());
     }
 
     #[cfg(feature = "otel-thread-ctx")]
@@ -324,7 +325,7 @@ mod tests {
         .to_otel_process_ctx();
 
         // Schema version attribute
-        let schema_version = find_attr(&ctx, "threadlocal.schema_version")
+        let schema_version = find_extra_attr(&ctx, "threadlocal.schema_version")
             .expect("threadlocal.schema_version should be present");
         assert_eq!(
             schema_version.value,
@@ -332,7 +333,7 @@ mod tests {
         );
 
         // Key map attribute: ordered array of key name strings
-        let key_map = find_attr(&ctx, "threadlocal.attribute_key_map")
+        let key_map = find_extra_attr(&ctx, "threadlocal.attribute_key_map")
             .expect("threadlocal.attribute_key_map should be present");
         let array = match &key_map.value {
             Some(any_value::Value::ArrayValue(a)) => a,

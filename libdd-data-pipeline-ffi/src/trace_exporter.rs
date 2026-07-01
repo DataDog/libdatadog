@@ -592,10 +592,16 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         if let Some(config) = config {
-            // let config = &*ptr;
             let mut builder = TraceExporter::builder();
+            // Only forward the agent URL when one was explicitly provided. Calling
+            // `set_url("")` would mark the agent URL as configured and conflict with
+            // agentless trace export, which rejects any caller-supplied agent URL at build
+            // time. Leaving `url` unset lets the builder fall back to its default agent URL
+            // when no transport override is configured.
+            if let Some(url) = config.url.as_ref() {
+                builder.set_url(url);
+            }
             builder
-                .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
                 .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
                 .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
                 .set_language_version(config.language_version.as_ref().unwrap_or(&"".to_string()))
@@ -1117,35 +1123,6 @@ mod tests {
             assert_eq!(ret, None);
 
             ddog_trace_exporter_free(exporter);
-            ddog_trace_exporter_config_free(cfg);
-        }
-    }
-
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn exporter_constructor_error_test() {
-        unsafe {
-            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
-            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
-
-            let mut cfg = config.assume_init();
-            let error = ddog_trace_exporter_config_set_service(
-                Some(cfg.as_mut()),
-                CharSlice::from("service"),
-            );
-            assert_eq!(error, None);
-
-            ddog_trace_exporter_error_free(error);
-
-            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
-
-            let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
-
-            let error = ret.as_ref().unwrap();
-            assert_eq!(error.code, ErrorCode::InvalidUrl);
-
-            ddog_trace_exporter_error_free(ret);
-
             ddog_trace_exporter_config_free(cfg);
         }
     }
