@@ -116,9 +116,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.93"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c95c10ba0b00a02636238b814946408b1322d5ac4760326e6fb8ec956d85775"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "arbitrary"
@@ -695,7 +695,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -704,7 +704,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1392,7 +1392,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe-test-suite"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1717,6 +1717,12 @@ name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
+
+[[package]]
+name = "elf"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4445909572dbd556c457c849c4ca58623d84b27c8fff1e74b0b4227d8b90d17b"
 
 [[package]]
 name = "encoding_rs"
@@ -2819,7 +2825,7 @@ checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libdd-agent-client"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2869,7 +2875,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "4.2.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2913,7 +2919,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -2966,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3013,6 +3019,7 @@ dependencies = [
  "libdd-trace-protobuf",
  "libdd-trace-stats",
  "libdd-trace-utils",
+ "prost",
  "rand 0.8.5",
  "regex",
  "rmp-serde",
@@ -3028,7 +3035,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3057,7 +3064,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3079,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3150,7 +3157,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3161,8 +3168,10 @@ dependencies = [
 name = "libdd-otel-thread-ctx"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "build_common",
  "cc",
+ "elf",
 ]
 
 [[package]]
@@ -3260,7 +3269,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3319,7 +3328,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3356,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -3441,7 +3450,9 @@ dependencies = [
  "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
+ "libdd-dogstatsd-client",
  "libdd-shared-runtime",
+ "libdd-telemetry",
  "libdd-trace-obfuscation",
  "libdd-trace-protobuf",
  "libdd-trace-utils",
@@ -3467,6 +3478,7 @@ dependencies = [
  "flate2",
  "futures",
  "getrandom 0.2.15",
+ "hex",
  "http",
  "http-body",
  "http-body-util",
@@ -3487,6 +3499,7 @@ dependencies = [
  "rmpv",
  "rustc-hash",
  "serde",
+ "serde-transcode",
  "serde_json",
  "tempfile",
  "thin-vec",
@@ -5172,6 +5185,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-transcode"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "590c0e25c2a5bb6e85bf5c1bce768ceb86b316e7a01bdf07d2cb4ec2271990e2"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_bytes"
 version = "0.11.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5621,7 +5643,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6069,7 +6091,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "36.0.0"
+version = "37.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

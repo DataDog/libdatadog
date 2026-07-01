@@ -21,7 +21,7 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-anyhow = "1.0.93"
+anyhow = "1.0.103"
 datadog-ffe = { path = "../datadog-ffe", version = "=1.0.0" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 function_name = "0.3.0"

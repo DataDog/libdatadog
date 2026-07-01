@@ -14,7 +14,7 @@ use crate::span_concentrator::SharedStatsComputationObfuscationConfig;
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_common::{tag, Endpoint};
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
@@ -24,6 +24,12 @@ use std::fmt::Debug;
 use tracing::error;
 
 pub const STATS_ENDPOINT_PATH: &str = "/v0.6/stats";
+
+/// Health metric name for the number of spans collapsed.
+pub const COLLAPSED_SPANS_HEALTH_METRIC: &str = "datadog.tracer.stats.collapsed_spans";
+
+/// Telemetry metric name for the number of spans collapsed.
+pub const COLLAPSED_SPANS_TELEMETRY_METRIC: &str = "tracers.stats_collapsed_spans";
 
 /// Metadata needed by the stats exporter to annotate payloads and HTTP requests.
 #[derive(Clone, Default, Debug)]
@@ -93,6 +99,15 @@ pub struct StatsExporter<
     obfuscation_config: SharedStatsComputationObfuscationConfig,
     #[cfg(feature = "stats-obfuscation")]
     supported_obfuscation_version: &'static str,
+    /// Optional telemetry handle and context key.
+    #[cfg(feature = "telemetry")]
+    telemetry: Option<(
+        libdd_telemetry::worker::TelemetryWorkerHandle,
+        libdd_telemetry::metrics::ContextKey,
+    )>,
+    /// Optional DogStatsD client.
+    #[cfg(feature = "dogstatsd")]
+    dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
 }
 
 impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
@@ -105,6 +120,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     ///   agent
     /// - `meta` metadata used in ClientStatsPayload and as headers to send stats to the agent
     /// - `endpoint` the Endpoint used to send stats to the agent
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         flush_interval: time::Duration,
         concentrator: Arc<Mutex<Con>>,
@@ -114,7 +130,22 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
         #[cfg(feature = "stats-obfuscation")]
         obfuscation_config: SharedStatsComputationObfuscationConfig,
         #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
+        #[cfg(feature = "telemetry")] telemetry: Option<
+            libdd_telemetry::worker::TelemetryWorkerHandle,
+        >,
+        #[cfg(feature = "dogstatsd")] dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
     ) -> Self {
+        #[cfg(feature = "telemetry")]
+        let telemetry = telemetry.map(|handle| {
+            let key = handle.register_metric_context(
+                COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
+                vec![tag!("collapsed_spans", "whole_key")],
+                libdd_telemetry::data::metrics::MetricType::Count,
+                true,
+                libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+            );
+            (handle, key)
+        });
         Self {
             flush_interval,
             concentrator,
@@ -126,6 +157,10 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             obfuscation_config,
             #[cfg(feature = "stats-obfuscation")]
             supported_obfuscation_version,
+            #[cfg(feature = "telemetry")]
+            telemetry,
+            #[cfg(feature = "dogstatsd")]
+            dogstatsd,
         }
     }
 
@@ -146,7 +181,23 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     /// case stats cannot be flushed since the concentrator might be corrupted.
     /// Returns `Ok(true)` if stats were sent, `Ok(false)` if the concentrator had nothing to send.
     pub async fn send(&self, force_flush: bool) -> anyhow::Result<bool> {
-        let payload = self.flush(force_flush);
+        let (payload, collapsed_spans) = self.flush(force_flush);
+
+        if collapsed_spans > 0 {
+            #[cfg(feature = "telemetry")]
+            if let Some((handle, key)) = &self.telemetry {
+                let _ = handle.add_point(collapsed_spans as f64, key, vec![]);
+            }
+            #[cfg(feature = "dogstatsd")]
+            if let Some(client) = &self.dogstatsd {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    collapsed_spans as i64,
+                    [tag!("collapsed_spans", "whole_key")].iter(),
+                )]);
+            }
+        }
+
         if payload.stats.is_empty() {
             return Ok(false);
         }
@@ -194,14 +245,13 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     /// # Panic
     /// Will panic if another thread panicked while holding the concentrator lock in which
     /// case stats cannot be flushed since the concentrator might be corrupted.
-    fn flush(&self, force_flush: bool) -> pb::ClientStatsPayload {
+    fn flush(&self, force_flush: bool) -> (pb::ClientStatsPayload, u64) {
         let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
-        encode_stats_payload(
-            &self.meta,
-            sequence,
-            #[allow(clippy::unwrap_used)]
-            self.concentrator.lock().unwrap().flush_buckets(force_flush),
-        )
+        #[allow(clippy::unwrap_used)]
+        let (buckets, collapsed_spans) =
+            self.concentrator.lock().unwrap().flush_buckets(force_flush);
+        let payload = encode_stats_payload(&self.meta, sequence, buckets);
+        (payload, collapsed_spans)
     }
 }
 
@@ -271,7 +321,7 @@ mod tests {
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_shared_runtime::SharedRuntime;
+    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
     use libdd_trace_utils::test_utils::poll_for_mock_hit;
     use time::Duration;
@@ -309,6 +359,7 @@ mod tests {
             SystemTime::now() - BUCKETS_DURATION * 3,
             vec![],
             vec![],
+            None,
             #[cfg(feature = "stats-obfuscation")]
             None,
         );
@@ -356,6 +407,10 @@ mod tests {
             StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "dogstatsd")]
+            None,
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -387,6 +442,10 @@ mod tests {
             StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "dogstatsd")]
+            None,
         );
 
         let send_status = stats_exporter.send(true).await;
@@ -401,7 +460,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_run() {
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
 
         let server = MockServer::start();
 
@@ -426,6 +485,10 @@ mod tests {
             StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "dogstatsd")]
+            None,
         );
         let _handle = shared_runtime
             .spawn_worker(stats_exporter, true)
@@ -445,7 +508,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_worker_shutdown() {
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
 
         let server = MockServer::start();
 
@@ -471,6 +534,10 @@ mod tests {
             StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "dogstatsd")]
+            None,
         );
 
         let _handle = shared_runtime
@@ -542,11 +609,232 @@ mod tests {
             })),
             #[cfg(feature = "stats-obfuscation")]
             "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            #[cfg(feature = "dogstatsd")]
+            None,
         );
 
         let send_status = stats_exporter.send(true).await;
         send_status.unwrap();
 
         mock.assert_async().await;
+    }
+
+    /// Build a concentrator with `max_entries_per_bucket = 1` pre-seeded with four distinct spans
+    /// so that three spans are collapsed into the overflow bucket.
+    fn get_collapsed_concentrator() -> SpanConcentrator {
+        use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
+
+        let mut concentrator = SpanConcentrator::new(
+            BUCKETS_DURATION,
+            SystemTime::now(),
+            vec![],
+            vec![],
+            Some(1), // max 1 distinct key → second span collapses
+            #[cfg(feature = "stats-obfuscation")]
+            None,
+        );
+
+        let mut trace = vec![
+            SpanSlice {
+                service: "svc",
+                resource: "resource-a",
+                duration: 10,
+                ..Default::default()
+            },
+            SpanSlice {
+                service: "svc",
+                resource: "resource-b",
+                duration: 20,
+                ..Default::default()
+            },
+            SpanSlice {
+                service: "svc",
+                resource: "resource-c",
+                duration: 20,
+                ..Default::default()
+            },
+            SpanSlice {
+                service: "svc",
+                resource: "resource-d",
+                duration: 20,
+                ..Default::default()
+            },
+        ];
+        trace_utils::compute_top_level_span(trace.as_mut_slice());
+        for span in &trace {
+            concentrator.add_span(span);
+        }
+        concentrator
+    }
+
+    /// Verify that when `collapsed_spans == 0` the DogStatsD socket receives nothing.
+    #[cfg(feature = "dogstatsd")]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_no_emission_when_zero() {
+        use std::net;
+
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|_when, then| {
+                then.status(200).body("");
+            })
+            .await;
+
+        // Bind a UDP socket so we can detect whether anything arrives.
+        let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind UDP socket");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+        let addr = socket.local_addr().unwrap().to_string();
+
+        let dogstatsd_client = Arc::new(
+            libdd_dogstatsd_client::new(libdd_common::Endpoint::from_slice(&addr))
+                .expect("failed to create dogstatsd client"),
+        );
+
+        // get_test_concentrator() has no cardinality collapse: collapsed_spans will be 0.
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_test_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            Some(dogstatsd_client),
+        );
+
+        stats_exporter.send(true).await.unwrap();
+
+        // The socket must not have received any datagram.
+        let mut buf = [0u8; 256];
+        let result = socket.recv(&mut buf);
+        assert!(
+            result.is_err(),
+            "No DogStatsD datagram expected when collapsed_spans == 0"
+        );
+    }
+
+    /// Verify that `COLLAPSED_SPANS_METRIC` is emitted to DogStatsD when spans are collapsed.
+    #[cfg(feature = "dogstatsd")]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_collapsed_spans_dogstatsd() {
+        use std::net;
+
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|_when, then| {
+                then.status(200).body("");
+            })
+            .await;
+
+        let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind UDP socket");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+            .unwrap();
+        let addr = socket.local_addr().unwrap().to_string();
+
+        let dogstatsd_client = Arc::new(
+            libdd_dogstatsd_client::new(libdd_common::Endpoint::from_slice(&addr))
+                .expect("failed to create dogstatsd client"),
+        );
+
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_collapsed_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            Some(dogstatsd_client),
+        );
+
+        stats_exporter.send(true).await.unwrap();
+
+        let mut buf = [0u8; 256];
+        let n = socket
+            .recv(&mut buf)
+            .expect("expected a DogStatsD datagram");
+        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
+        assert_eq!(
+            datagram, "datadog.tracer.stats.collapsed_spans:3|c|#collapsed_spans:whole_key",
+            "DogStatsD datagram must match the expected format"
+        );
+    }
+
+    /// Verify that `COLLAPSED_SPANS_METRIC` is enqueued to the telemetry worker when spans
+    /// are collapsed. This does not verify the actual value of the metric.
+    #[cfg(feature = "telemetry")]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_collapsed_spans_telemetry() {
+        use libdd_telemetry::worker::TelemetryWorkerBuilder;
+
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|_when, then| {
+                then.status(200).body("");
+            })
+            .await;
+
+        let (handle, _join_handle) = TelemetryWorkerBuilder::new(
+            "test-host".to_string(),
+            "test-service".to_string(),
+            "rust".to_string(),
+            "1.0".to_string(),
+            "0.0.0".to_string(),
+        )
+        .spawn();
+
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_collapsed_concentrator())),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            StatsComputationObfuscationConfig::disabled(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
+            #[cfg(feature = "telemetry")]
+            Some(handle),
+            #[cfg(feature = "dogstatsd")]
+            None,
+        );
+
+        stats_exporter.send(true).await.unwrap();
+
+        let stats_exporter_ref = &stats_exporter;
+        let (handle_ref, _key) = stats_exporter_ref
+            .telemetry
+            .as_ref()
+            .expect("telemetry must be set");
+        let receiver = handle_ref.stats().expect("failed to request stats");
+        let stats = receiver.await.expect("failed to receive stats");
+        // metric_contexts == 1 verifies that exactly one metric name was registered
+        // (i.e. COLLAPSED_SPANS_METRIC and nothing else).
+        // metric_buckets.buckets == 1 verifies that a data point was recorded for it.
+        // However it does not check the value of the data point.
+        assert_eq!(
+            stats.metric_contexts, 1,
+            "exactly one metric context (COLLAPSED_SPANS_METRIC) should be registered"
+        );
+        assert_eq!(
+            stats.metric_buckets.buckets, 1,
+            "exactly one metric bucket expected after one collapsed-spans emission"
+        );
     }
 }

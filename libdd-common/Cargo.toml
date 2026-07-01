@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-common"
-version = "4.2.0"
+version = "5.0.0"
 description = "Shared utilities for Datadog libraries including HTTP/HTTPS connectors, container entity detection, tag validation, rate limiting, and Unix/Windows platform helpers"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
 repository = "https://github.com/DataDog/libdatadog/tree/main/datadog-common"
@@ -16,7 +16,7 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-anyhow = "1.0"
+anyhow = "1.0.103"
 futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
@@ -69,6 +69,7 @@ features = [
     "Win32_Foundation",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Performance",
+    "Win32_System_Registry",
     "Win32_System_Threading",
 ]
 

@@ -22,10 +22,9 @@ mod targets;
 pub use parse::*;
 pub use path::*;
 
-use {
-    libdd_common::tag::Tag,
-    serde::{Deserialize, Serialize},
-};
+pub use libdd_common::{tag::Tag, Endpoint};
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Target {

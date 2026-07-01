@@ -2,6 +2,25 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.2.0..libdd-common-v5.0.0) - 2026-06-19
+
+### Added
+
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+
+### Changed
+
+- Replace native-certs with platform-verifier ([#2078](https://github.com/datadog/libdatadog/issues/2078)) - ([59db709](https://github.com/datadog/libdatadog/commit/59db7092373d33acc833c4ccfc13bbb486554e98))
+- Use SECURITY_ANONYMOUS when connecting to named pipe server ([#2134](https://github.com/datadog/libdatadog/issues/2134)) - ([b10b1d4](https://github.com/datadog/libdatadog/commit/b10b1d46577e95e057bd2b310641f965e6167d58))
+- Fix timeouts on heavily contended scenarios ([#2093](https://github.com/datadog/libdatadog/issues/2093)) - ([e780619](https://github.com/datadog/libdatadog/commit/e780619d5e0626a8cc161c4cb848057fbbe13533))
+
+### Fixed
+
+- Add fallback logic for resolving Azure Functions instance name [SVLS-8931] ([#2077](https://github.com/datadog/libdatadog/issues/2077)) - ([a820699](https://github.com/datadog/libdatadog/commit/a820699426f28cbabb3a74d87c7309d030b52e7c))
+- Fix http PathAndQuery Uri Parsing ([#2122](https://github.com/datadog/libdatadog/issues/2122)) - ([e746d26](https://github.com/datadog/libdatadog/commit/e746d26c489c518db9dc61e112dd8e2db97d0656))
+
+
+
 ## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.1.0..libdd-common-v4.2.0) - 2026-05-29
 
 ### Added
