@@ -14,8 +14,14 @@ pub const EVP_FLAGEVALUATION_PATH: &str = "/evp_proxy/v2/api/v2/flagevaluation";
 pub const EVP_SUBDOMAIN_HEADER: &str = "X-Datadog-EVP-Subdomain";
 /// EVP subdomain that routes requests to event-platform intake.
 pub const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
-/// EVP uncompressed request-body limit.
-pub const EVP_PAYLOAD_SIZE_LIMIT: usize = 5 * 1024 * 1024;
+/// Agent EVP proxy uncompressed request-body limit.
+///
+/// Revalidated against `DataDog/datadog-agent` on 2026-07-01:
+/// `pkg/config/setup/apm.go` defaults `evp_proxy_config.max_payload_size` to
+/// `10*1024*1024`; `comp/trace/config/impl/setup.go` copies that value into
+/// `EVPProxy.MaxPayloadSize`; and `pkg/trace/api/evp_proxy.go` enforces it via
+/// `apiutil.NewLimitedReader`.
+pub const EVP_PAYLOAD_SIZE_LIMIT: usize = 10 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct FlagEvaluationEvpSendConfig {
