@@ -596,13 +596,20 @@ pub mod tests {
             name: "config".to_string(),
         });
 
-    pub(crate) static DUMMY_TARGET: LazyLock<Arc<Target>> =
-        LazyLock::new(|| Arc::new(Target::new("service", "env", "1.3.5", vec![], vec![])));
+    pub(crate) static DUMMY_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
+        Arc::new(Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.3.5".to_string(),
+            vec![],
+            vec![],
+        ))
+    });
     pub(crate) static DUMMY_TARGET_WITH_PROCESS_TAGS: LazyLock<Arc<Target>> = LazyLock::new(|| {
         Arc::new(Target::new(
-            "service",
-            "env",
-            "1.3.5",
+            "service".to_string(),
+            "env".to_string(),
+            "1.3.5".to_string(),
             vec![],
             vec![
                 "entrypoint.workdir:libdd-remote-config".to_string(),

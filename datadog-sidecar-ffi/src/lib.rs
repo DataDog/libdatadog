@@ -264,9 +264,9 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             endpoint: endpoint.clone(),
         },
         &Arc::new(Target::new(
-            &service_name.to_utf8_lossy(),
-            &env_name.to_utf8_lossy(),
-            &app_version.to_utf8_lossy(),
+            service_name.to_utf8_lossy().to_string(),
+            env_name.to_utf8_lossy().to_string(),
+            app_version.to_utf8_lossy().to_string(),
             tags.as_slice().iter().map(|t| t.to_string()).collect(),
             vec![],
         )),

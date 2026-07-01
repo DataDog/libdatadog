@@ -37,9 +37,9 @@ impl Target {
     /// Creates a new `Target`. `tags` and `process_tags` are expected as
     /// already-formatted `"key:value"` strings.
     pub fn new(
-        service: &str,
-        env: &str,
-        app_version: &str,
+        service: String,
+        env: String,
+        app_version: String,
         tags: Vec<String>,
         process_tags: Vec<String>,
     ) -> Target {

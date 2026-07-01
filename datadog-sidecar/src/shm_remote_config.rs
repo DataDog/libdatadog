@@ -474,9 +474,9 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         process_tags: Vec<Tag>,
     ) -> ShmRemoteConfigsGuard<N> {
         let target = Arc::new(Target::new(
-            &service,
-            &env,
-            &app_version,
+            service,
+            env,
+            app_version,
             tags.iter().map(|t| t.to_string()).collect(),
             process_tags.iter().map(|t| t.to_string()).collect(),
         ));
@@ -824,8 +824,15 @@ mod tests {
         name: "config".to_string(),
     });
 
-    static DUMMY_TARGET: LazyLock<Arc<Target>> =
-        LazyLock::new(|| Arc::new(Target::new("service", "env", "1.3.5", vec![], vec![])));
+    static DUMMY_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
+        Arc::new(Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.3.5".to_string(),
+            vec![],
+            vec![],
+        ))
+    });
 
     #[derive(Debug, Clone)]
     struct NotifyDummy(Arc<tokio::sync::mpsc::Sender<()>>);

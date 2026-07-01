@@ -28,9 +28,9 @@ async fn main() {
         // FileStorage implementation is recommended
         ParsedFileStorage::default(),
         Target::new(
-            SERVICE,
-            ENV,
-            VERSION,
+            SERVICE.to_string(),
+            ENV.to_string(),
+            VERSION.to_string(),
             vec!["test:value".to_string()],
             vec![],
         ),

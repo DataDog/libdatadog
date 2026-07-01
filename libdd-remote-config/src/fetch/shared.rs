@@ -379,8 +379,15 @@ pub mod tests {
     use futures::future::join_all;
     use std::sync::{Arc, LazyLock};
 
-    pub(crate) static OTHER_TARGET: LazyLock<Arc<Target>> =
-        LazyLock::new(|| Arc::new(Target::new("other", "env", "7.8.9", vec![], vec![])));
+    pub(crate) static OTHER_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
+        Arc::new(Target::new(
+            "other".to_string(),
+            "env".to_string(),
+            "7.8.9".to_string(),
+            vec![],
+            vec![],
+        ))
+    });
 
     pub struct RcPathStore {
         pub store: Arc<PathStore>,
