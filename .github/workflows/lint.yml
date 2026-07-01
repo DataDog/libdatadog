@@ -200,11 +200,28 @@ jobs:
           # its chosen toolchain instead of falling back to the workspace MSRV.
           RUSTUP_TOOLCHAIN: ${{ steps.install-toolchain.outputs.version }}
         run: |
+          # Most crates pull in tokio/mio/socket2/getrandom/ring or native mmap
+          # code and cannot target wasm32. Restrict this job to the crates that
+          # are actually wasm-compatible, intersecting with the affected-crates
+          # list when one is available. --all-features is intentionally not
+          # used: it force-enables the native (non-wasm) code paths that these
+          # crates otherwise gate behind default features.
+          WASM_ALLOWLIST="build_common cc_utils datadog-ffe datadog-ffe-test-suite datadog-ipc-macros datadog-sidecar-macros libdd-capabilities libdd-ddsketch libdd-log libdd-otel-thread-ctx libdd-profiling-protobuf libdd-sampling libdd-tinybytes libdd-trace-normalization libdd-trace-protobuf sidecar_mockgen"
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
-            cargo clippy --workspace --all-targets --all-features -- -D warnings
+            WASM_PACKAGES=$(for p in $WASM_ALLOWLIST; do echo "-p $p"; done | xargs)
+          else
+            WASM_PACKAGES=""
+            for pkg in $WASM_ALLOWLIST; do
+              if echo "$CLIPPY_PACKAGES" | grep -qw -- "$pkg"; then
+                WASM_PACKAGES="$WASM_PACKAGES -p $pkg"
+              fi
+            done
+          fi
+          if [[ -z "$WASM_PACKAGES" ]]; then
+            echo "No wasm-compatible crates affected by this change; skipping."
           else
             # shellcheck disable=SC2086
-            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings
+            cargo clippy $WASM_PACKAGES --target wasm32-unknown-unknown -- -D warnings
           fi
 
   licensecheck:
