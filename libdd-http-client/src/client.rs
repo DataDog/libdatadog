@@ -110,6 +110,7 @@ mod tests {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn new_creates_client() {
         ensure_crypto_provider();
@@ -120,6 +121,7 @@ mod tests {
         assert_eq!(client.config().timeout(), Duration::from_secs(3));
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_creates_client() {
         ensure_crypto_provider();

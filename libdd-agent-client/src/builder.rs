@@ -310,6 +310,7 @@ mod tests {
         assert!(matches!(result, Err(BuildError::MissingLanguageMetadata)));
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn build_succeeds_with_required_fields() {
         let _ = rustls::crypto::ring::default_provider().install_default();

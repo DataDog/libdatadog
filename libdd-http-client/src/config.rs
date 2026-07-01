@@ -230,6 +230,7 @@ mod tests {
             .contains("timeout is required"));
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_success() {
         ensure_crypto_provider();
@@ -240,6 +241,7 @@ mod tests {
         assert!(client.is_ok());
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_treat_http_errors_defaults_true() {
         ensure_crypto_provider();
@@ -251,6 +253,7 @@ mod tests {
         assert!(client.config().treat_http_errors_as_errors());
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_treat_http_errors_set_false() {
         ensure_crypto_provider();
@@ -263,6 +266,7 @@ mod tests {
         assert!(!client.config().treat_http_errors_as_errors());
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_allow_connection_pooling_defaults_true() {
         ensure_crypto_provider();
@@ -274,6 +278,7 @@ mod tests {
         assert!(client.config().allow_connection_pooling());
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_allow_connection_pooling_set_false() {
         ensure_crypto_provider();
