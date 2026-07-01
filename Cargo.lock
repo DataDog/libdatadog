@@ -2901,6 +2901,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "rustls-platform-verifier",
+ "rustls-webpki",
  "serde",
  "static_assertions",
  "tempfile",
