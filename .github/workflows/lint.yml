@@ -185,7 +185,7 @@ jobs:
           rustup set profile minimal
           rustup install "$VERSION"
           rustup component add clippy --toolchain "$VERSION"
-          rustup target add wasm32-unknown-unknown
+          rustup target add wasm32-unknown-unknown --toolchain "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
       - name: Cache [rust]
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
