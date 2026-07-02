@@ -4,6 +4,7 @@
 use crate::fetch::FileStorage;
 
 use std::{
+    borrow::Cow,
     fmt,
     ops::RangeInclusive,
     path::PathBuf,
@@ -24,7 +25,7 @@ use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
 use serde_json::Value;
-use tracing::debug;
+use tracing::{debug, error};
 use tuf::repository::RepositoryStorage;
 use tuf::{
     metadata::{
@@ -35,22 +36,16 @@ use tuf::{
 
 // Embedded TUF trust roots, per site
 const PROD_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/prod/config_root.json");
-const PROD_CONFIG_ROOT_VERSION: u64 = 16;
 
 const PROD_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/prod/director_root.json");
-const PROD_DIRECTOR_ROOT_VERSION: u64 = 15;
 
 const STAGING_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/staging/config_root.json");
-const STAGING_CONFIG_ROOT_VERSION: u64 = 29;
 
 const STAGING_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/staging/director_root.json");
-const STAGING_DIRECTOR_ROOT_VERSION: u64 = 1;
 
 const GOV_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/gov/config_root.json");
-const GOV_CONFIG_ROOT_VERSION: u64 = 1;
 
 const GOV_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/gov/director_root.json");
-const GOV_DIRECTOR_ROOT_VERSION: u64 = 1;
 
 /// Datadog site selection used to pick a default TUF trust-root pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -77,19 +72,19 @@ impl Site {
         }
     }
 
-    fn embedded_config_root(self) -> (&'static [u8], u64) {
+    fn embedded_config_root(self) -> &'static [u8] {
         match self {
-            Site::Prod => (PROD_CONFIG_ROOT, PROD_CONFIG_ROOT_VERSION),
-            Site::Staging => (STAGING_CONFIG_ROOT, STAGING_CONFIG_ROOT_VERSION),
-            Site::Gov => (GOV_CONFIG_ROOT, GOV_CONFIG_ROOT_VERSION),
+            Site::Prod => PROD_CONFIG_ROOT,
+            Site::Staging => STAGING_CONFIG_ROOT,
+            Site::Gov => GOV_CONFIG_ROOT,
         }
     }
 
-    fn embedded_director_root(self) -> (&'static [u8], u64) {
+    fn embedded_director_root(self) -> &'static [u8] {
         match self {
-            Site::Prod => (PROD_DIRECTOR_ROOT, PROD_DIRECTOR_ROOT_VERSION),
-            Site::Staging => (STAGING_DIRECTOR_ROOT, STAGING_DIRECTOR_ROOT_VERSION),
-            Site::Gov => (GOV_DIRECTOR_ROOT, GOV_DIRECTOR_ROOT_VERSION),
+            Site::Prod => PROD_DIRECTOR_ROOT,
+            Site::Staging => STAGING_DIRECTOR_ROOT,
+            Site::Gov => GOV_DIRECTOR_ROOT,
         }
     }
 }
@@ -159,12 +154,19 @@ pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::Nati
 
 pub struct AgentlessFetcher<C: HttpClientCapability> {
     http: C,
-    initialized: bool,
     opaque_backend_state: Vec<u8>,
     director_client: TUFClient,
     config_client: TUFClient,
-    initial_config_root_version: u64,
-    initial_director_root_version: u64,
+    /// Raw signed TUF root bytes used to (re)build the clients. Usually a static
+    /// slice for embedded roots, owned only when loaded from an override path.
+    config_root_bytes: Cow<'static, [u8]>,
+    director_root_bytes: Cow<'static, [u8]>,
+    /// Last non-empty config top-targets metadata received from the backend. The
+    /// backend only re-sends config top-targets when their version changes; on a
+    /// config root rotation rust-tuf purges its trusted top-targets and must
+    /// re-fetch them from the remote repo, so we cache and re-serve the last copy
+    /// to avoid wedging (incident-45734).
+    last_config_top_targets: Option<remoteconfig::TopMeta>,
     hostname: String,
     agent_uuid_override: Option<String>,
     products: HashSet<String>,
@@ -243,31 +245,22 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     ///
     /// # Errors
     /// Returns an error if TUF root initialization fails.
-    /// This can happen for instance if the trust root certificates have expired
     pub async fn new(cfg: AgentlessConfig, endpoint: Endpoint) -> anyhow::Result<Self> {
-        // Pick the default trust roots based on the endpoint's host. Overrides
-        // (if any) take precedence.
+        // Pick the default trust roots based on the endpoint's host and overrides
         let site = endpoint
             .url
             .authority()
             .map(|a| Site::from_host(a.as_str()))
             .unwrap_or(Site::Prod);
 
-        let (config_root_bytes, initial_config_root_version) =
-            match cfg.config_root_override_path.as_deref() {
-                Some(p) => load_root(p)?,
-                None => {
-                    let (embedded, version) = site.embedded_config_root();
-                    (embedded.to_vec(), version)
-                }
-            };
-        let (director_root_bytes, initial_director_root_version) =
+        let config_root_bytes: Cow<'static, [u8]> = match cfg.config_root_override_path.as_deref() {
+            Some(p) => Cow::Owned(load_root(p)?.0),
+            None => Cow::Borrowed(site.embedded_config_root()),
+        };
+        let director_root_bytes: Cow<'static, [u8]> =
             match cfg.director_root_override_path.as_deref() {
-                Some(p) => load_root(p)?,
-                None => {
-                    let (embedded, version) = site.embedded_director_root();
-                    (embedded.to_vec(), version)
-                }
+                Some(p) => Cow::Owned(load_root(p)?.0),
+                None => Cow::Borrowed(site.embedded_director_root()),
             };
 
         Ok(Self {
@@ -275,20 +268,21 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             http: C::new_client(),
             director_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(director_root_bytes),
+                &RawSignedMetadata::new(director_root_bytes.to_vec()),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
             .await?,
             config_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(config_root_bytes),
+                &RawSignedMetadata::new(config_root_bytes.to_vec()),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
             .await?,
-            initial_config_root_version,
-            initial_director_root_version,
+            config_root_bytes,
+            director_root_bytes,
+            last_config_top_targets: None,
             hostname: cfg.hostname,
             agent_uuid_override: cfg.agent_uuid,
             products: HashSet::new(),
@@ -296,7 +290,6 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             opaque_backend_state: Vec::new(),
             refresh_interval: Duration::from_secs(60),
             consecutive_failures: 0,
-            initialized: false,
         })
     }
 
@@ -310,6 +303,39 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     /// applies (i.e. either no failures yet, or only a single one).
     pub fn next_backoff(&self) -> Option<Duration> {
         compute_backoff(self.consecutive_failures)
+    }
+
+    /// Rebuild both TUF clients from the embedded/override roots and discard all
+    /// derived state, restarting the fetcher as if freshly constructed. Called on
+    /// `apply()` failure so a partially-advanced trusted database cannot block
+    /// subsequent polls
+    ///
+    /// TODO(rust-tuf): rebuilding from the embedded root discards any newer root
+    /// versions we had already verified, so recovery re-reports the embedded root
+    /// version and the backend re-sends the rotated roots to be re-verified.
+    /// rust-tuf has a private `Database::purge_metadata()` (TUF §5.1.9) that
+    /// clears snapshot/targets/timestamp/delegations while keeping the trusted
+    /// root; if that were exposed we could reset non-root state in place and
+    /// preserve the advanced root instead of restarting from the embedded one.
+    async fn reset(&mut self) -> anyhow::Result<()> {
+        self.director_client = TUFClient::with_trusted_root(
+            tuf::client::Config::default(),
+            &RawSignedMetadata::new(self.director_root_bytes.to_vec()),
+            TUFRepo::new(),
+            TUFRepo::new(),
+        )
+        .await?;
+        self.config_client = TUFClient::with_trusted_root(
+            tuf::client::Config::default(),
+            &RawSignedMetadata::new(self.config_root_bytes.to_vec()),
+            TUFRepo::new(),
+            TUFRepo::new(),
+        )
+        .await?;
+        self.products.clear();
+        self.opaque_backend_state.clear();
+        self.last_config_top_targets = None;
+        Ok(())
     }
 
     async fn fetch_target(&self, target: &TrustedTarget<'_>) -> anyhow::Result<Vec<u8>> {
@@ -359,29 +385,22 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         c: remoteconfig::Client,
         cache: &TargetCache<'_, Storage>,
     ) -> anyhow::Result<ClientResponse> {
-        let (
-            current_config_snapshot_version,
-            current_config_root_version,
-            current_director_root_version,
-        ) = if self.initialized {
-            (
-                u64::from(
-                    self.config_client
-                        .database()
-                        .trusted_snapshot()
-                        .ok_or(anyhow::anyhow!("Missing snapshot data"))?
-                        .version(),
-                ),
-                u64::from(self.config_client.database().trusted_root().version()),
-                u64::from(self.director_client.database().trusted_root().version()),
-            )
-        } else {
-            (
-                0,
-                self.initial_config_root_version,
-                self.initial_director_root_version,
-            )
-        };
+        // Derive the versions we report to the backend directly from the live
+        // trusted databases so they always match what `apply()` has actually
+        // committed. (Previously these came from a `self.initialized` flag that
+        // could diverge from the in-place-mutated trusted DB after a partial
+        // `apply()` failure — D-F1.) A freshly built or just-reset client has no
+        // trusted snapshot yet, so it reports snapshot version 0 and the embedded
+        // root versions.
+        let current_config_snapshot_version = self
+            .config_client
+            .database()
+            .trusted_snapshot()
+            .map_or(0, |s| u64::from(s.version()));
+        let current_config_root_version =
+            u64::from(self.config_client.database().trusted_root().version());
+        let current_director_root_version =
+            u64::from(self.director_client.database().trusted_root().version());
 
         let all_products = c.products.iter().fold(HashSet::new(), |mut acc, p| {
             acc.get_or_insert_with(p, String::clone);
@@ -437,8 +456,19 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         };
         self.consecutive_failures = 0;
 
-        let active_targets = self.apply(&response, cache).await?;
-        self.initialized = true;
+        let active_targets = match self.apply(&response, cache).await {
+            Ok(t) => t,
+            Err(e) => {
+                // On any `apply()` failure the trusted databases may have been advanced
+                // in place and incrementally, leaving them inconsistent with the
+                // versions we would report next poll.
+                // Reset both clients so the next poll restarts from a clean state
+                if let Err(reset_err) = self.reset().await {
+                    error!("failed to reset TUF clients after apply error: {reset_err}");
+                }
+                return Err(e);
+            }
+        };
         self.products = all_products;
 
         // TODO:
@@ -537,16 +567,31 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         let snapshot_path = MetadataPath::snapshot();
         let targets_path = MetadataPath::targets();
 
-        let config_repo_mut = self.config_client.remote_repo_mut();
-        *config_repo_mut = TUFRepo::new();
         let Some(metas) = response.config_metas.as_ref() else {
             bail!("missing config meta from LatestConfigsResponse")
         };
+        // The backend diffs config top-targets against the snapshot version we
+        // report: it sends them only when their version changed, otherwise the
+        // field is empty.
+        //
+        // rust-tuf purges its trusted top-targets whenever the
+        // config root rotates and then re-fetches them from the remote repo; if
+        // we wipe the remote repo (below) and the backend sent none, that
+        // re-fetch finds nothing and `update()` wedges (incident-45734). Re-serve
+        // the last cached copy when the response omits them.
+        let config_top_targets = if metas.top_targets.is_some() {
+            &metas.top_targets
+        } else {
+            &self.last_config_top_targets
+        };
+
+        let config_repo_mut = self.config_client.remote_repo_mut();
+        *config_repo_mut = TUFRepo::new();
 
         store(config_repo_mut, &root_path, &metas.roots).await?;
         store_noversion(config_repo_mut, &timestamp_path, &metas.timestamp).await?;
         store(config_repo_mut, &snapshot_path, &metas.snapshot).await?;
-        store(config_repo_mut, &targets_path, &metas.top_targets).await?;
+        store(config_repo_mut, &targets_path, config_top_targets).await?;
         // Delegated targets are stored later, after verifying the top-level signatures.
 
         let Some(metas) = response.director_metas.as_ref() else {
@@ -649,6 +694,15 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             }
             if let Some(refresh_interval) = refresh_interval {
                 self.refresh_interval = refresh_interval;
+            }
+        }
+
+        // Commit the top-targets cache only now that `apply()` has fully
+        // succeeded, so a mid-way failure (followed by `reset()`) never leaves a
+        // stale cached copy
+        if let Some(config_metas) = response.config_metas.as_ref() {
+            if config_metas.top_targets.is_some() {
+                self.last_config_top_targets = config_metas.top_targets.clone();
             }
         }
 
@@ -802,7 +856,6 @@ fn verify_director_against_config(
         if !overlapped {
             bail!("no common hash algorithm between director and config descriptions for {path}");
         }
-
     }
 
     Ok(())
@@ -1279,12 +1332,7 @@ pub fn debug_latest_configs_response(
 #[cfg(test)]
 mod tests {
     use super::trim_hash_target_path;
-    use super::{
-        Site, GOV_CONFIG_ROOT, GOV_CONFIG_ROOT_VERSION, GOV_DIRECTOR_ROOT,
-        GOV_DIRECTOR_ROOT_VERSION, PROD_CONFIG_ROOT, PROD_CONFIG_ROOT_VERSION, PROD_DIRECTOR_ROOT,
-        PROD_DIRECTOR_ROOT_VERSION, STAGING_CONFIG_ROOT, STAGING_CONFIG_ROOT_VERSION,
-        STAGING_DIRECTOR_ROOT, STAGING_DIRECTOR_ROOT_VERSION,
-    };
+    use super::Site;
 
     #[test]
     fn strips_hash_prefix() {
@@ -1318,24 +1366,6 @@ mod tests {
     #[test]
     fn trailing_slash_is_error() {
         assert!(trim_hash_target_path("datadog/2/foo/").is_err());
-    }
-
-    #[test]
-    fn test_root_versions_match() {
-        // Every embedded root's hardcoded version must match the
-        // `signed.version` field inside the JSON. If you bump a root file,
-        // bump the matching `_VERSION` constant in this module too.
-        for (raw, expected) in [
-            (PROD_CONFIG_ROOT, PROD_CONFIG_ROOT_VERSION),
-            (PROD_DIRECTOR_ROOT, PROD_DIRECTOR_ROOT_VERSION),
-            (STAGING_CONFIG_ROOT, STAGING_CONFIG_ROOT_VERSION),
-            (STAGING_DIRECTOR_ROOT, STAGING_DIRECTOR_ROOT_VERSION),
-            (GOV_CONFIG_ROOT, GOV_CONFIG_ROOT_VERSION),
-            (GOV_DIRECTOR_ROOT, GOV_DIRECTOR_ROOT_VERSION),
-        ] {
-            let v: serde_json::Value = serde_json::from_slice(raw).unwrap();
-            assert_eq!(v["signed"]["version"], expected);
-        }
     }
 
     #[test]
@@ -1408,3 +1438,6 @@ mod tests {
         assert_eq!(Site::from_host("config.foo.ddog-gov.com"), Site::Gov);
     }
 }
+
+#[cfg(test)]
+mod recovery_tests;

@@ -235,13 +235,7 @@ async fn main() -> anyhow::Result<()> {
     let mut refetches = Vec::with_capacity(iterations);
 
     for i in 0..iterations {
-        match run_one_iteration(
-            i,
-            endpoint.clone(),
-            agentless.clone(),
-        )
-        .await
-        {
+        match run_one_iteration(i, endpoint.clone(), agentless.clone()).await {
             Ok((init, first, refetch)) => {
                 print_row("  client init", init);
                 print_row("  initial fetch", first);
