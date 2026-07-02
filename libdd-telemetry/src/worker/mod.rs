@@ -1035,10 +1035,6 @@ pub struct TelemetryWorkerHandle<
     sender: mpsc::Sender<TelemetryActions>,
     shutdown: Arc<InnerTelemetryShutdown>,
     cancellation_token: CancellationToken,
-    // Used to spawn cancellation tasks on native. Should be None when running as a
-    // SharedRuntime worker, since the runtime is not guaranteed to exist for the
-    // lifetime of the worker. On wasm we spawn via `wasm_bindgen_futures::spawn_local`
-    // directly, so no handle is needed.
     #[cfg(not(target_arch = "wasm32"))]
     runtime: Option<runtime::Handle>,
     contexts: MetricContexts,
@@ -1072,13 +1068,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Deb
     }
 }
 
-/// Spawn a fire-and-forget future. Used by [`TelemetryWorkerHandle::cancel_requests_with_deadline`]
-/// to schedule a delayed `CancellationToken::cancel()`.
-///
-/// On native, defers to the stored tokio runtime handle (or logs and gives up if
-/// none was provided — matches the prior `tokio::runtime::Handle` based behavior).
-/// On wasm, defers to `wasm_bindgen_futures::spawn_local`, which puts the future
-/// on the JS event loop.
 #[cfg(not(target_arch = "wasm32"))]
 fn schedule_deferred_cancel<F>(runtime: Option<&runtime::Handle>, future: F)
 where
@@ -1089,14 +1078,6 @@ where
         return;
     };
     rt.spawn(future);
-}
-
-#[cfg(target_arch = "wasm32")]
-fn schedule_deferred_cancel<F>(future: F)
-where
-    F: core::future::Future<Output = ()> + 'static,
-{
-    wasm_bindgen_futures::spawn_local(future);
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
@@ -1154,6 +1135,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
     }
 
     /// Schedule a deferred `CancellationToken::cancel()` to fire after `deadline`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
         let token = self.cancellation_token.clone();
         let remaining = deadline.saturating_duration_since(time::Instant::now());
@@ -1162,23 +1144,19 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
             sleeper.sleep(remaining).await;
             token.cancel();
         };
-        #[cfg(not(target_arch = "wasm32"))]
         schedule_deferred_cancel(self.runtime.as_ref(), future);
-        #[cfg(target_arch = "wasm32")]
-        schedule_deferred_cancel(future);
     }
 
     /// Sync wrapper: schedule a cancellation deadline and block the current
-    /// thread until shutdown finishes. Native-only — wasm callers should use
-    /// [`Self::wait_for_shutdown_deadline_async`].
+    /// thread until shutdown finishes.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_shutdown_deadline(&self, deadline: time::Instant) {
         self.cancel_requests_with_deadline(deadline);
         self.wait_for_shutdown()
     }
 
-    /// Async equivalent of [`Self::wait_for_shutdown_deadline`] that works on
-    /// both native and wasm.
+    /// Async equivalent of [`Self::wait_for_shutdown_deadline`].
+    #[cfg(not(target_arch = "wasm32"))]
     pub async fn wait_for_shutdown_deadline_async(&self, deadline: time::Instant) {
         self.cancel_requests_with_deadline(deadline);
         self.wait_for_shutdown_async().await
@@ -1351,14 +1329,6 @@ impl TelemetryWorkerBuilder {
     }
 
     /// Build the corresponding worker and its handle.
-    ///
-    /// On native, the optional `tokio_runtime` handle is stored in the worker handle and
-    /// used to drive cancellation deadlines from
-    /// [`TelemetryWorkerHandle::cancel_requests_with_deadline`]. Pass `None` when the worker
-    /// will be run via a [`SharedRuntime`](libdd_shared_runtime::SharedRuntime).
-    ///
-    /// On wasm, cancellation deadlines are driven by `wasm_bindgen_futures::spawn_local` and
-    /// no runtime handle is required.
     pub fn build_worker<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
         #[cfg(not(target_arch = "wasm32"))] tokio_runtime: Option<runtime::Handle>,

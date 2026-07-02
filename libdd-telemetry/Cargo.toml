@@ -41,7 +41,6 @@ web-time = "1" # cross-platform Instant/SystemTime; shims via js-sys on wasm32
 sys-info = { version = "0.9.0" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-futures = "0.4"
 getrandom = { version = "0.2", features = ["js"] }
 uuid = { version = "1", features = ["js"] }
 
