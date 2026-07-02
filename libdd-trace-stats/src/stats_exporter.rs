@@ -86,7 +86,7 @@ impl From<TracerMetadata> for StatsMetadata {
 /// concrete type (`NativeCapabilities` or `WasmCapabilities`).
 #[derive(Debug)]
 pub struct StatsExporter<
-    Cap: HttpClientCapability + SleepCapability,
+    Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     Con: FlushableConcentrator = SpanConcentrator,
 > {
     flush_interval: time::Duration,
@@ -102,7 +102,7 @@ pub struct StatsExporter<
     /// Optional telemetry handle and context key.
     #[cfg(feature = "telemetry")]
     telemetry: Option<(
-        libdd_telemetry::worker::TelemetryWorkerHandle,
+        libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
         libdd_telemetry::metrics::ContextKey,
     )>,
     /// Optional DogStatsD client.
@@ -110,8 +110,10 @@ pub struct StatsExporter<
     dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
 }
 
-impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
-    StatsExporter<Cap, Con>
+impl<
+        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+        Con: FlushableConcentrator,
+    > StatsExporter<Cap, Con>
 {
     /// Return a new StatsExporter
     ///
@@ -131,7 +133,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
         obfuscation_config: SharedStatsComputationObfuscationConfig,
         #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
         #[cfg(feature = "telemetry")] telemetry: Option<
-            libdd_telemetry::worker::TelemetryWorkerHandle,
+            libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
         >,
         #[cfg(feature = "dogstatsd")] dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
     ) -> Self {

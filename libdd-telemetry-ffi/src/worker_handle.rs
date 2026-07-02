@@ -4,13 +4,17 @@
 use ffi::slice::AsBytes;
 use ffi::MaybeError;
 use function_name::named;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_common_ffi as ffi;
 use libdd_telemetry::{
     data::metrics::{MetricNamespace, MetricType},
     metrics::ContextKey,
-    worker::TelemetryWorkerHandle,
 };
+
+/// FFI-facing alias: the C ABI surface is native-only, so the worker handle is
+/// always pinned to [`NativeCapabilities`].
+type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 
 #[allow(clippy::missing_safety_doc)]
 #[no_mangle]

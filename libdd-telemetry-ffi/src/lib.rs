@@ -111,15 +111,20 @@ mod tests {
     use crate::{builder::*, worker_handle::*};
     use ffi::tags::{ddog_Vec_Tag_new, ddog_Vec_Tag_push, PushTagResult};
     use ffi::MaybeError;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common_ffi as ffi;
     use libdd_telemetry::{
         data::{
             metrics::{MetricNamespace, MetricType},
             LogLevel,
         },
-        worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},
+        worker::TelemetryWorkerBuilder,
     };
     use std::{mem::MaybeUninit, ptr::NonNull};
+
+    /// Test-side alias: matches the FFI surface, which pins `C` to
+    /// [`NativeCapabilities`].
+    type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 
     /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
     /// The caller is responsible for stopping the worker and reading the file.

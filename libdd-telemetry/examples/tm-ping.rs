@@ -6,13 +6,18 @@ use std::{
     time::SystemTime,
 };
 
+use bytes::Bytes;
 use http::header::CONTENT_TYPE;
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_telemetry::{
     build_host,
     config::Config,
     data::{self, AppStarted, Application, Telemetry},
     worker::http_client::request_builder,
 };
+use std::time::Duration;
+use tokio::select;
 
 fn build_app_started_payload() -> AppStarted {
     AppStarted {
@@ -46,13 +51,26 @@ fn build_request<'a>(
 
 pub async fn push_telemetry(telemetry: &Telemetry<'_>) -> anyhow::Result<()> {
     let config = Config::from_env();
-    let client = libdd_telemetry::worker::http_client::from_config(&config);
+    let timeout = Duration::from_millis(
+        config
+            .endpoint()
+            .map(|e| e.timeout_ms)
+            .unwrap_or(libdd_common::Endpoint::DEFAULT_TIMEOUT),
+    );
+    let client = NativeCapabilities::new_client();
+    let sleeper = <NativeCapabilities as SleepCapability>::new();
     let req = request_builder(&config)?
         .method(http::Method::POST)
         .header(CONTENT_TYPE, libdd_common::header::APPLICATION_JSON)
-        .body(serde_json::to_string(telemetry)?.into())?;
+        .body(Bytes::from(serde_json::to_vec(telemetry)?))?;
 
-    let resp = client.request(req).await?;
+    let resp = select! {
+        biased;
+        result = client.request(req) => result?,
+        _ = sleeper.sleep(timeout) => {
+            return Err(anyhow::anyhow!("Telemetry request timed out"));
+        }
+    };
 
     if !resp.status().is_success() {
         Err(anyhow::Error::msg(format!(
