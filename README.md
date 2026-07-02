@@ -93,6 +93,52 @@ We provide two Dev Container configurations:
 
 The container includes all necessary dependencies for building and testing `libdatadog`.
 
+#### Nix development shell
+
+The Nix flake provides a reproducible, pinned shell with Rust, `cbindgen`, and native build tools.
+
+This works natively under both Linux and Darwin.
+
+##### Prerequisite: install Nix
+
+This one-liner installs Nix isolated in `/nix`:
+
+```bash
+curl --proto '=https' --tlsv1.2 --location https://nixos.org/nix/install | sh -s -- --daemon
+```
+
+Enable the modern CLI and flakes in `/etc/nix/nix.conf`:
+
+```bash
+echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
+```
+
+See the [Nix manual](https://nix.dev/manual/nix/2.28/installation/index.html) for more information.
+
+##### Spawn an interactive shell
+
+Spawn a shell with an environment set up to expose the tooling:
+
+```bash
+nix develop
+```
+
+Note: legacy `nix-shell` and `nix-build` are also available via the `flake-compat` shims.
+
+##### Run commands
+
+Alternatively, run individual commands:
+
+```bash
+nix develop --command cargo build --workspace --exclude builder
+nix develop .#nightly --command cargo fmt --all -- --check
+```
+
+##### Debugging CI failures
+
+- Reproduce the Nix CI build with `nix develop --command cargo build --workspace --exclude builder`.
+- After an MSRV or nightly bump, update `rust-toolchain.toml` or `nightly-toolchain.toml`, then refresh `flake.lock` with `nix flake update`.
+
 #### Docker container
 A dockerfile is provided to run tests in a Ubuntu linux environment. This is particularly useful for running and debugging linux-only tests on macOS.
 
