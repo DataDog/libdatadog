@@ -743,7 +743,12 @@ pub mod linux {
     /// this is no-op.
     ///
     /// A call to [publish] following an [unpublish] will create a new mapping.
-    pub fn unpublish() -> io::Result<()> {
+    ///
+    /// # Safety
+    ///
+    /// This function may only be called if it can be guaranteed that there are no in-process
+    /// readers, or at least that they will not be used after the call.
+    pub unsafe fn unpublish() -> io::Result<()> {
         let mut guard = lock_context_handle()?;
 
         if let Some(ProcessContextHandle { mapping, .. }) = guard.take() {
@@ -807,7 +812,9 @@ pub mod linux {
 
             super::publish(&context).expect("couldn't publish the process context");
             let read_context = super::read().expect("couldn't read back the process context");
-            super::unpublish().expect("couldn't unpublish the context");
+            unsafe {
+                super::unpublish().expect("couldn't unpublish the context");
+            }
 
             assert!(read_context == context, "read back a different context");
         }
@@ -872,7 +879,9 @@ pub mod linux {
             );
             assert!(read_payload == payload_v2.as_bytes(), "payload mismatch");
 
-            super::unpublish().expect("couldn't unpublish the context");
+            unsafe {
+                super::unpublish().expect("couldn't unpublish the context");
+            }
         }
 
         #[test]
@@ -887,7 +896,9 @@ pub mod linux {
             super::ProcessContextSelfReader::find_otel_mapping()
                 .expect("couldn't find the otel mapping after publishing");
 
-            super::unpublish().expect("couldn't unpublish the context");
+            unsafe {
+                super::unpublish().expect("couldn't unpublish the context");
+            }
 
             // After unpublishing the name must no longer appear in /proc/self/maps
             assert!(
