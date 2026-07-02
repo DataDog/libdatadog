@@ -86,8 +86,8 @@ typedef struct {
                                                This _will probably_ be constant, but if we
                                                drop it in the TLS we afford the eBPF profiler
                                                the opportunity to tune it to adjust overhead
-                                               dynamically. Whether or not this turns out to be
-                                               a clever idea remains to be seen. */
+                                               dynamically. A value of 0 explicitly disables
+                                               sampling for this thread. */
     int64_t  remaining_bytes;               /* signed counter; sample when >= 0 */
     bool     remaining_bytes_initialized;   /* false until first interval drawn */
     bool     initialized;                   /* false until dd_tl_state_init() has run;

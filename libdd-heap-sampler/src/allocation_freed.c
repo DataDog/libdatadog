@@ -32,23 +32,35 @@ dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
     };
 
 #if defined(__x86_64__)
-    /* Recover the bumped size the allocator actually holds. On x86-64
-     * that's user_size + (user - raw), then rounded up to a multiple
-     * of alignment to match dd_allocation_requested_slow's bumped-size
-     * arithmetic. Sized-free callers (sdallocx, operator delete(sz))
-     * rely on this being exact.
+    /* Recover the bumped size the allocator actually holds. This must
+     * exactly mirror allocation_requested.c's bumped_alloc_size():
+     *
+     *   base    = max(alignment, DD_HEADER_BYTES)
+     *   reserve = 2 * base
+     *   bumped  = round_up(size + reserve, alignment)
+     *
+     * Do not use (user - raw) as the reserve. That offset is usually
+     * only one `base`, while allocation reserved two so x86_apply() has
+     * room for its optional page-boundary bump. Sized-free callers
+     * (Rust GlobalAlloc::dealloc, sdallocx, operator delete(sz)) rely
+     * on this being exact.
      *
      * When the caller doesn't know the alignment (alignment == 0),
-     * fall back to size + offset. Plain free() ignores out.size so
-     * this only matters for sized-free variants that must supply an
-     * alignment. */
+     * fall back to size + offset. Plain free() ignores out.size so this
+     * only matters for sized-free variants that must supply an alignment. */
     size_t offset = (size_t)((uintptr_t)ptr - (uintptr_t)raw);
-    size_t bumped = size + offset;
-    if (alignment > 1) {
-        size_t mask = alignment - 1;
-        bumped = (bumped + mask) & ~mask;
+    if (alignment == 0) {
+        out.size = size + offset;
+    } else {
+        size_t base = alignment > DD_HEADER_BYTES ? alignment : DD_HEADER_BYTES;
+        size_t reserve = base * 2;
+        size_t bumped = size + reserve;
+        if (alignment > 1) {
+            size_t mask = alignment - 1;
+            bumped = (bumped + mask) & ~mask;
+        }
+        out.size = bumped;
     }
-    out.size = bumped;
 #else
     (void)alignment;
 #endif

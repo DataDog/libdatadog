@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use libdd_heap_sampler::{
     dd_alloc_req_t, dd_allocation_created, dd_allocation_freed, dd_allocation_realloc_commit,
-    dd_allocation_realloc_prepare, dd_allocation_requested, dd_tl_state_get, dd_tl_state_init,
+    dd_allocation_realloc_prepare, dd_allocation_requested, dd_tl_state_init,
 };
 
 // Per-thread reentry guard for the gotter shims themselves. Distinct
@@ -77,19 +77,6 @@ pub(crate) static ORIG_DLOPEN: AtomicUsize = AtomicUsize::new(0);
 /// Resolved address of the real `pthread_create`.
 pub(crate) static ORIG_PTHREAD_CREATE: AtomicUsize = AtomicUsize::new(0);
 
-/// Ensure the sampler's per-thread state exists before recording an allocation.
-#[inline]
-fn ensure_tls() {
-    unsafe {
-        if dd_tl_state_get().is_null() {
-            // dd_tl_state_init calls calloc internally; the gotter
-            // reentry guard around the caller stops us from re-entering
-            // this path through our own gotter_calloc hook.
-            dd_tl_state_init();
-        }
-    }
-}
-
 /// Load a resolved function pointer from one of the `ORIG_*` slots.
 #[inline]
 unsafe fn load_fn<T>(slot: &AtomicUsize) -> Option<T> {
@@ -137,7 +124,6 @@ pub unsafe extern "C" fn gotter_malloc(size: usize) -> *mut c_void {
     if guard.reentered() {
         return real(size);
     }
-    ensure_tls();
     // Default alignment for malloc on glibc is 2*sizeof(void*) == 16.
     let req = dd_allocation_requested(size, core::mem::align_of::<u64>() * 2);
     let raw = real(req.size);
@@ -170,7 +156,6 @@ pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void
     if guard.reentered() {
         return real(nmemb, size);
     }
-    ensure_tls();
     let Some(total) = nmemb.checked_mul(size) else {
         return real(nmemb, size);
     };
@@ -210,7 +195,6 @@ pub unsafe extern "C" fn gotter_realloc(ptr: *mut c_void, size: usize) -> *mut c
     if guard.reentered() {
         return real(ptr, size);
     }
-    ensure_tls();
 
     // Case 1: realloc(NULL, size) == malloc(size). Normal sampling path.
     if ptr.is_null() {
@@ -258,7 +242,6 @@ pub unsafe extern "C" fn gotter_posix_memalign(
     if guard.reentered() {
         return real(memptr, alignment, size);
     }
-    ensure_tls();
     let req = dd_allocation_requested(size, alignment);
     let ret = real(memptr, alignment, req.size);
     // Always pair with dd_allocation_created, even on failure, so the
@@ -283,7 +266,6 @@ pub unsafe extern "C" fn gotter_aligned_alloc(alignment: usize, size: usize) -> 
     if guard.reentered() {
         return real(alignment, size);
     }
-    ensure_tls();
     let req = dd_allocation_requested(size, alignment);
     let raw = real(alignment, req.size);
     dd_allocation_created(raw, req)
@@ -298,7 +280,9 @@ pub unsafe extern "C" fn gotter_dlopen(filename: *const c_char, flags: c_int) ->
     };
     let handle = real(filename, flags);
     // New library may have introduced new GOT entries that need patching.
-    crate::update_heap_overrides();
+    // This hook is an extern "C" boundary, so never let a Rust panic from
+    // best-effort ELF parsing/GOT patching unwind into the caller.
+    let _ = std::panic::catch_unwind(crate::update_heap_overrides);
     handle
 }
 

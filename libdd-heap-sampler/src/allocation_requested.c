@@ -36,7 +36,8 @@ static uint64_t next_interval(uint32_t *rng, uint64_t mean) {
  * Called when remaining_bytes has crossed zero, meaning at least one sample
  * is owed. Draws fresh intervals until the counter is negative again, counting
  * how many samples fired. Returns nsamples * interval as the unbiased weight
- * estimator to attribute to this allocation.
+ * estimator to attribute to this allocation. A sampling_interval of 0 is the
+ * documented "do not sample this thread" value and returns 0 immediately.
  *
  * On the very first call for a thread, remaining_bytes_initialized is false
  * and we draw the initial interval from scratch. If that interval exceeds the

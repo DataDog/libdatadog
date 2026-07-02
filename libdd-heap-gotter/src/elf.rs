@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use libc::{
-    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Phdr, Elf64_Rel, Elf64_Rela, Elf64_Sym,
-    PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
+    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym, PROT_EXEC,
+    PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
 };
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -64,6 +64,7 @@ struct DynamicInfo {
     jmprels: *const Elf64_Rela,
     jmprels_count: usize,
     gnu_hash: *const u32,
+    gnu_hash_words: usize,
     base_address: usize,
 }
 
@@ -78,6 +79,13 @@ impl DynamicInfo {
         let dyn_phdr = phdrs.iter().find(|p| p.p_type == PT_DYNAMIC)?;
         let dyn_begin = (info.dlpi_addr as usize + dyn_phdr.p_vaddr as usize) as *const Elf64_Dyn;
         let base = info.dlpi_addr as usize;
+        let containing_load_segment_end = |addr: usize| -> Option<usize> {
+            phdrs.iter().filter(|p| p.p_type == PT_LOAD).find_map(|p| {
+                let start = base.checked_add(p.p_vaddr as usize)?;
+                let end = start.checked_add(p.p_memsz as usize)?;
+                (addr >= start && addr < end).then_some(end)
+            })
+        };
         let correct = |a: u64| -> usize {
             let a = a as usize;
             if a > base {
@@ -133,7 +141,11 @@ impl DynamicInfo {
             return None;
         }
 
-        let sym_count = gnu_hash_symbol_count(gnu_hash);
+        let gnu_hash_addr = gnu_hash as usize;
+        let gnu_hash_words = containing_load_segment_end(gnu_hash_addr)?
+            .checked_sub(gnu_hash_addr)?
+            / core::mem::size_of::<u32>();
+        let sym_count = gnu_hash_symbol_count(gnu_hash, gnu_hash_words)?;
 
         Some(Self {
             strtab,
@@ -147,6 +159,7 @@ impl DynamicInfo {
             jmprels,
             jmprels_count: jmprels_size / core::mem::size_of::<Elf64_Rela>(),
             gnu_hash,
+            gnu_hash_words,
             base_address: base,
         })
     }
@@ -174,60 +187,97 @@ fn gnu_hash(name: &[u8]) -> u32 {
     h
 }
 
-unsafe fn gnu_hash_symbol_count(hashtab: *const u32) -> u32 {
-    let nbuckets = *hashtab;
-    let symbias = *hashtab.wrapping_add(1);
-    let bloom_size = *hashtab.wrapping_add(2);
-    // 4 header words + bloom (one Elf64_Addr per entry == 2 u32s)
-    let mut p = hashtab.wrapping_add(4 + 2 * bloom_size as usize);
-    let buckets = std::slice::from_raw_parts(p, nbuckets as usize);
-    p = p.wrapping_add(nbuckets as usize);
-    let chain_zero = p.wrapping_offset(-(symbias as isize));
+unsafe fn gnu_hash_symbol_count(hashtab: *const u32, hashtab_words: usize) -> Option<u32> {
+    if hashtab_words < 4 {
+        return None;
+    }
 
+    let nbuckets = *hashtab;
+    let symbias = *hashtab.add(1);
+    let bloom_size = *hashtab.add(2);
+    let bloom_size_words = (bloom_size as usize).checked_mul(2)?;
+    let buckets_start = 4usize.checked_add(bloom_size_words)?;
+    let chains_start = buckets_start.checked_add(nbuckets as usize)?;
+
+    if bloom_size == 0 || buckets_start > hashtab_words || chains_start > hashtab_words {
+        return None;
+    }
     if nbuckets == 0 {
-        return 0;
+        return Some(symbias);
     }
-    let mut idx = *buckets.iter().max().unwrap();
-    while *chain_zero.wrapping_add(idx as usize) & 1 == 0 {
-        idx += 1;
+
+    let buckets = std::slice::from_raw_parts(hashtab.add(buckets_start), nbuckets as usize);
+    let mut idx = *buckets.iter().max()?;
+    if idx == STN_UNDEF {
+        return Some(symbias);
     }
-    idx + 1
+    if idx < symbias {
+        return None;
+    }
+
+    let chain_count = hashtab_words - chains_start;
+    loop {
+        let chain_idx = (idx - symbias) as usize;
+        if chain_idx >= chain_count {
+            return None;
+        }
+        if *hashtab.add(chains_start + chain_idx) & 1 != 0 {
+            return idx.checked_add(1);
+        }
+        idx = idx.checked_add(1)?;
+    }
 }
 
 unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> {
     let hashtab = info.gnu_hash;
-    let nbuckets = *hashtab;
-    let symbias = *hashtab.wrapping_add(1);
-    let bloom_size = *hashtab.wrapping_add(2);
-    let bloom_shift = *hashtab.wrapping_add(3);
-    let bloom = hashtab.wrapping_add(4) as *const u64;
-    let mut p = hashtab.wrapping_add(4 + 2 * bloom_size as usize);
-    let buckets = p;
-    p = p.wrapping_add(nbuckets as usize);
-    let chain_zero = p.wrapping_offset(-(symbias as isize));
+    if info.gnu_hash_words < 4 {
+        return None;
+    }
 
-    if nbuckets == 0 {
+    let nbuckets = *hashtab;
+    let symbias = *hashtab.add(1);
+    let bloom_size = *hashtab.add(2);
+    let bloom_shift = *hashtab.add(3);
+    let bloom_size_words = (bloom_size as usize).checked_mul(2)?;
+    let buckets_start = 4usize.checked_add(bloom_size_words)?;
+    let chains_start = buckets_start.checked_add(nbuckets as usize)?;
+
+    if nbuckets == 0
+        || bloom_size == 0
+        || buckets_start > info.gnu_hash_words
+        || chains_start > info.gnu_hash_words
+    {
         return None;
     }
 
     let h = gnu_hash(name);
-    let word = *bloom.wrapping_add(((h / 64) & (bloom_size - 1)) as usize);
+    let bloom = hashtab.add(4) as *const u64;
+    let word = *bloom.add(((h / 64) & (bloom_size - 1)) as usize);
     let bit1 = h & 63;
     let bit2 = (h >> bloom_shift) & 63;
     if ((word >> bit1) & (word >> bit2) & 1) == 0 {
         return None;
     }
 
-    let mut symidx = *buckets.wrapping_add((h % nbuckets) as usize);
+    let buckets = hashtab.add(buckets_start);
+    let mut symidx = *buckets.add((h % nbuckets) as usize);
     if symidx == STN_UNDEF {
         return None;
     }
+    if symidx < symbias {
+        return None;
+    }
 
+    let chain_count = info.gnu_hash_words - chains_start;
     loop {
-        let chain_h = *chain_zero.wrapping_add(symidx as usize);
+        let chain_idx = (symidx - symbias) as usize;
+        if chain_idx >= chain_count {
+            return None;
+        }
+        let chain_h = *hashtab.add(chains_start + chain_idx);
         if ((chain_h ^ h) >> 1) == 0 {
             if let Some(sname) = info.sym_name(symidx) {
-                let sym = info.symtab.wrapping_add(symidx as usize);
+                let sym = info.symtab.add(symidx as usize);
                 if sname.to_bytes() == name && check_sym(&*sym) {
                     return Some(*sym);
                 }
@@ -236,7 +286,7 @@ unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> 
         if chain_h & 1 != 0 {
             break;
         }
-        symidx += 1;
+        symidx = symidx.checked_add(1)?;
     }
     None
 }
@@ -270,19 +320,51 @@ fn iterate_libraries<F: FnMut(&dl_phdr_info, bool) -> bool>(mut cb: F) {
         _size: libc::size_t,
         data: *mut c_void,
     ) -> c_int {
-        let ctx = &mut *(data as *mut Ctx);
-        let is_exe = ctx.is_first;
-        ctx.is_first = false;
-        if (ctx.cb)(&*info, is_exe) {
-            1
-        } else {
-            0
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let ctx = &mut *(data as *mut Ctx);
+            let is_exe = ctx.is_first;
+            ctx.is_first = false;
+            (ctx.cb)(&*info, is_exe)
+        }));
+
+        match result {
+            Ok(stop) => i32::from(stop),
+            // Never unwind a Rust panic through libc's dl_iterate_phdr callback.
+            // Treat patching as best-effort and stop iteration on panic.
+            Err(_) => 1,
         }
     }
 
     unsafe {
         dl_iterate_phdr(Some(trampoline), &mut ctx as *mut _ as *mut c_void);
     }
+}
+
+unsafe fn library_name(info: &dl_phdr_info) -> String {
+    if info.dlpi_name.is_null() {
+        String::new()
+    } else {
+        CStr::from_ptr(info.dlpi_name)
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+fn loaded_library_name_at_base(base: usize) -> Option<String> {
+    let mut found = None;
+    iterate_libraries(|info, _| unsafe {
+        if info.dlpi_addr as usize == base {
+            found = Some(library_name(info));
+            true
+        } else {
+            false
+        }
+    });
+    found
+}
+
+fn should_restore_library(expected_name: &str, current_name: Option<&str>) -> bool {
+    current_name == Some(expected_name)
 }
 
 /// A single /proc/self/maps entry: address range + current protection flags.
@@ -563,6 +645,12 @@ impl SymbolOverrides {
             v.processed = false;
         }
 
+        // TODO: This is intentionally simple but expensive on workloads that
+        // dlopen many libraries: every change re-walks all loaded objects,
+        // re-parses their dynamic sections/GNU hash tables, and eagerly reads
+        // /proc/self/maps via PageProtGuard even if only one new object needs
+        // patching. Track already-processed libraries and lazily create the
+        // page-protection guard to avoid repeated heavy work.
         let mut guard = PageProtGuard::new();
 
         // SAFETY: closure runs synchronously inside dl_iterate_phdr.
@@ -595,15 +683,39 @@ impl SymbolOverrides {
 
     /// Restore every GOT entry we touched.
     pub fn restore_overrides(&mut self) {
+        self.restore_overrides_with_lookup(loaded_library_name_at_base);
+    }
+
+    fn restore_overrides_with_lookup(
+        &mut self,
+        mut loaded_name_at_base: impl FnMut(usize) -> Option<String>,
+    ) -> usize {
         let info_per_lib = std::mem::take(&mut self.revert_info_per_library);
-        let mut guard = PageProtGuard::new();
-        for (_base, revert) in info_per_lib {
+        let mut guard = None;
+        let mut restored_libraries = 0;
+        for (base, revert) in info_per_lib {
+            // A tracked library may have been dlclose'd since the last update,
+            // and its address range may even have been reused by a different
+            // mapping. Only write old GOT values back when the same library is
+            // still loaded at the original base address.
+            if !should_restore_library(
+                revert.library_name.as_str(),
+                loaded_name_at_base(base).as_deref(),
+            ) {
+                continue;
+            }
+
+            restored_libraries += 1;
+            let guard = guard.get_or_insert_with(PageProtGuard::new);
             for (addr, old) in revert.old_value_per_address {
                 unsafe { guard.override_entry(addr, old) };
             }
         }
-        guard.finish();
+        if let Some(guard) = guard {
+            guard.finish();
+        }
         self.last_seen_nb_libs = -1;
+        restored_libraries
     }
 
     unsafe fn apply_to_library(
@@ -696,13 +808,15 @@ impl SymbolOverrides {
         guard: &mut PageProtGuard,
     ) {
         // st_name -> string in strtab. Walk lazily: we look up the
-        // name in the override map; if it's not there, skip.
-        let sym = &*dyn_info.symtab.add(sym_index as usize);
-        let name_off = sym.st_name as usize;
-        if name_off == 0 || name_off >= dyn_info.strtab_size {
+        // name in the override map; if it's not there, skip. Relocation
+        // symbol indices come from the object being inspected, so guard
+        // them before dereferencing dyn_info.symtab.
+        let Some(cstr) = dyn_info.sym_name(sym_index) else {
+            return;
+        };
+        if cstr.to_bytes().is_empty() {
             return;
         }
-        let cstr = CStr::from_ptr(dyn_info.strtab.add(name_off));
         let Ok(name) = cstr.to_str() else { return };
 
         let Some(ov) = overrides.get(name) else {
@@ -732,12 +846,85 @@ fn elf64_r_sym(info: u64) -> u64 {
     info >> 32
 }
 
-// Phdr/PT_LOAD ranges are unused for now; kept for future "skip self
-// library" logic. Silence unused warnings.
-#[allow(dead_code)]
-const _: () = {
-    let _ = PT_LOAD;
-};
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[allow(dead_code)]
-fn _phdr_marker(_: Elf64_Phdr) {}
+    #[test]
+    fn restore_library_requires_same_live_name() {
+        assert!(should_restore_library(
+            "/tmp/libfoo.so",
+            Some("/tmp/libfoo.so")
+        ));
+        assert!(!should_restore_library("/tmp/libfoo.so", None));
+        assert!(!should_restore_library(
+            "/tmp/libfoo.so",
+            Some("/tmp/libbar.so")
+        ));
+    }
+
+    #[test]
+    fn page_prot_guard_finds_original_mapping_protection() {
+        let guard = PageProtGuard {
+            page_size: 4096,
+            maps: vec![
+                MapEntry {
+                    start: 0x1000,
+                    end: 0x2000,
+                    prot: PROT_READ,
+                },
+                MapEntry {
+                    start: 0x2000,
+                    end: 0x3000,
+                    prot: PROT_READ | PROT_EXEC,
+                },
+            ],
+            touched: HashMap::new(),
+        };
+
+        assert_eq!(guard.original_prot(0x1000), Some(PROT_READ));
+        assert_eq!(guard.original_prot(0x1fff), Some(PROT_READ));
+        assert_eq!(guard.original_prot(0x2000), Some(PROT_READ | PROT_EXEC));
+        assert_eq!(guard.original_prot(0x3000), None);
+    }
+
+    #[test]
+    fn restore_overrides_skips_unloaded_or_reused_libraries() {
+        let mut overrides = SymbolOverrides::new();
+        overrides.revert_info_per_library.insert(
+            0x1000,
+            LibraryRevertInfo {
+                library_name: "/tmp/libfoo.so".to_string(),
+                old_value_per_address: HashMap::new(),
+                processed: true,
+            },
+        );
+        overrides.revert_info_per_library.insert(
+            0x2000,
+            LibraryRevertInfo {
+                library_name: "/tmp/libbar.so".to_string(),
+                old_value_per_address: HashMap::new(),
+                processed: true,
+            },
+        );
+        overrides.revert_info_per_library.insert(
+            0x3000,
+            LibraryRevertInfo {
+                library_name: "/tmp/libbaz.so".to_string(),
+                old_value_per_address: HashMap::new(),
+                processed: true,
+            },
+        );
+
+        let restored = overrides.restore_overrides_with_lookup(|base| match base {
+            0x1000 => Some("/tmp/libfoo.so".to_string()),
+            0x2000 => Some("/tmp/different.so".to_string()),
+            0x3000 => None,
+            _ => unreachable!(),
+        });
+
+        assert_eq!(restored, 1);
+        assert!(overrides.revert_info_per_library.is_empty());
+        assert_eq!(overrides.last_seen_nb_libs, -1);
+    }
+}
