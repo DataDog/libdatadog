@@ -330,7 +330,7 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     {
         #[cfg_attr(
             any(target_arch = "wasm32", not(feature = "telemetry")),
-            allow(unused_variables, "FIXME: add telemetry on wasm")
+            allow(unused_variables, reason = "FIXME: add telemetry on wasm")
         )]
         let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
 
