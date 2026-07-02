@@ -88,6 +88,7 @@ pub struct TraceExporterBuilder {
     otlp_metrics_headers: Vec<(String, String)>,
     otel_trace_semantics_enabled: bool,
     runtime_id: Option<String>,
+    native_span_events: bool,
 }
 
 impl TraceExporterBuilder {
@@ -358,6 +359,13 @@ impl TraceExporterBuilder {
     /// signals can be correlated by the backend. If not set, a fresh UUID is generated.
     pub fn set_runtime_id(&mut self, id: &str) -> &mut Self {
         self.runtime_id = Some(id.to_owned());
+        self
+    }
+
+    /// When enabled, span events are emitted as native `span_events` fields (v0.4 only).
+    /// When disabled (default), span events are JSON-encoded into `meta["events"]`.
+    pub fn set_native_span_events(&mut self, enabled: bool) -> &mut Self {
+        self.native_span_events = enabled;
         self
     }
 
@@ -632,6 +640,7 @@ impl TraceExporterBuilder {
             otlp_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
+            native_span_events: self.native_span_events,
         })
     }
 

@@ -28,6 +28,13 @@ pub struct Span {
     pub r#type: u32,
 }
 
+/// Convert a v0.4 span to the interned v0.5 representation.
+///
+/// **Precondition**: `span_links` and `span_events` must already be JSON-encoded into
+/// `span.meta["_dd.span_links"]` and `span.meta["events"]` respectively before calling
+/// this function. The v0.5 `Span` struct has no native fields for these; any non-empty
+/// `span_links`/`span_events` vecs are silently dropped. Use
+/// `preprocess_spans_for_encoding` (in `libdd-data-pipeline`) before conversion.
 pub fn from_v04_span<T: TraceData>(
     span: crate::span::v04::Span<T>,
     dict: &mut SharedDict<T::Text>,

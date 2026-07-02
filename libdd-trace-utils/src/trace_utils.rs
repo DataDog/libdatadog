@@ -583,6 +583,12 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     }
 }
 
+/// Collect and optionally convert trace chunks to the target encoding.
+///
+/// **V05 callers**: `span_links` and `span_events` on each span must be JSON-encoded
+/// into `meta["_dd.span_links"]` and `meta["events"]` before calling this function —
+/// see `preprocess_spans_for_encoding` in `libdd-data-pipeline`. The v0.5 struct has no
+/// native fields for these; non-empty vecs are silently dropped by `from_v04_span`.
 pub fn collect_trace_chunks<T: TraceData>(
     traces: Vec<Vec<crate::span::v04::Span<T>>>,
     format: TraceEncoding,
