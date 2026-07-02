@@ -21,10 +21,20 @@ set -eu
 node_index="${1:-1}"
 node_total="${2:-1}"
 
-# Known-heavy crates. They are distributed across shards first so the expensive
-# benchmarks are spread evenly, then the remaining crates fill in round-robin.
-# Tune this list from measured per-crate benchmark durations as the suite changes.
-SLOW_CRATES="libdd-trace-obfuscation libdd-sampling libdd-trace-utils libdd-data-pipeline"
+# Approximate per-crate benchmark cost (~minutes of candidate wall-time) used to balance the shards.
+# Measured 2026-07-02 from a full run (all 11 benchmarked crates); only relative magnitudes matter.
+# The seven crates that fall through to the default are all <1 min (normalization ~0.7, profiling
+# ~0.6, ffe ~0.4, ipc ~0.2, trace-stats ~0.1, crashtracker ~0.1, trace-obfuscation ~1.4), so they
+# act as interchangeable filler. Retune as benchmarks are added/removed; unknown crates default to 1.
+crate_weight() {
+  case "$1" in
+    libdd-trace-utils) echo 9 ;;
+    libdd-sampling) echo 6 ;;
+    libdd-ddsketch) echo 2 ;;
+    libdd-data-pipeline) echo 2 ;;
+    *) echo 1 ;;
+  esac
+}
 
 log() { echo "$@" >&2; }
 
@@ -49,7 +59,7 @@ elif [ "${IMPACTED_STATUS:-}" != "success" ] || [ -z "${AFFECTED_CRATES:-}" ] ||
 #   packages="$all_bench"
 else
   packages="$(jq -nr --argjson a "$AFFECTED_CRATES" --argjson b "$bench_json" \
-    '($a - ($a - $b)) | .[]' 2>/dev/null | LC_ALL=C sort | tr '\n' ' ')"
+    '($a - ($a - $b)) | .[]' 2>/dev/null | tr '\n' ' ')"
   if [ -z "$(printf '%s' "$packages" | tr -d '[:space:]')" ]; then
     echo "SKIP"
     exit 0
@@ -64,35 +74,37 @@ if [ -z "$(printf '%s' "$packages" | tr -d '[:space:]')" ]; then
   exit 0
 fi
 
-# Shard assignment: spread the slow crates first, then the rest, round-robin across shards.
-is_slow() {
-  local candidate=$1 slow
-  for slow in $SLOW_CRATES; do
-    [ "$candidate" = "$slow" ] && return 0
+# Shard assignment via longest-processing-time: process crates heaviest-first and give each to
+# the currently-lightest shard. Deterministic (stable sort by weight desc, then name asc), so every
+# shard computes the same assignment and just reads its own bucket.
+weighted="$(for crate in $packages; do echo "$(crate_weight "$crate") $crate"; done | LC_ALL=C sort -k1,1nr -k2,2)"
+
+idx=0
+while [ "$idx" -lt "$node_total" ]; do
+  loads[$idx]=0
+  assigned[$idx]=""
+  idx=$(( idx + 1 ))
+done
+
+while read -r weight crate; do
+  [ -z "$crate" ] && continue
+  min_idx=0
+  min_load="${loads[0]}"
+  j=1
+  while [ "$j" -lt "$node_total" ]; do
+    if [ "${loads[$j]}" -lt "$min_load" ]; then
+      min_load="${loads[$j]}"
+      min_idx="$j"
+    fi
+    j=$(( j + 1 ))
   done
-  return 1
-}
+  loads[$min_idx]=$(( min_load + weight ))
+  assigned[$min_idx]="${assigned[$min_idx]} $crate"
+done <<EOF
+$weighted
+EOF
 
-slow_present=""
-rest=""
-for crate in $packages; do
-  if is_slow "$crate"; then
-    slow_present="$slow_present $crate"
-  else
-    rest="$rest $crate"
-  fi
-done
-ordered="$slow_present $rest"
-
-out=""
-position=0
-for crate in $ordered; do
-  if [ "$(( position % node_total ))" -eq "$(( node_index - 1 ))" ]; then
-    out="$out $crate"
-  fi
-  position=$(( position + 1 ))
-done
-out="$(printf '%s' "$out" | sed 's/^ *//;s/ *$//')"
+out="$(printf '%s' "${assigned[$(( node_index - 1 ))]}" | sed 's/^ *//;s/ *$//')"
 
 if [ -z "$out" ]; then
   echo "SKIP"
