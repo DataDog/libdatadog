@@ -217,8 +217,12 @@ fn shutdown_appsec() -> bool {
     true
 }
 
+/// Allow initializing crashtracker independently for thread-mode sidecar.
 #[cfg(target_os = "linux")]
-fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> anyhow::Result<()> {
+pub fn build_crashtracker_receiver_config(
+    dependency_paths: Option<*const *const libc::c_char>,
+    output: Option<String>,
+) -> anyhow::Result<CrashtrackerReceiverConfig> {
     let entrypoint = entrypoint!(ddog_crashtracker_entry_point);
     let entrypoint_path = match unsafe { get_dl_path_raw(entrypoint.ptr as *const libc::c_void) } {
         (Some(path), _) => path,
@@ -257,12 +261,24 @@ fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> an
         }
     }
 
+    CrashtrackerReceiverConfig::new(
+        receiver_args,
+        receiver_env,
+        format!("/proc/{}/exe", unsafe { libc::getpid() }),
+        output,
+        None,
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> anyhow::Result<()> {
     let output = match &Config::get().log_method {
         LogMethod::Stdout => Some(format!("/proc/{}/fd/1", unsafe { libc::getpid() })),
         LogMethod::Stderr => Some(format!("/proc/{}/fd/2", unsafe { libc::getpid() })),
         LogMethod::File(file) => file.to_str().map(|s| s.to_string()),
         LogMethod::Disabled => None,
     };
+    let receiver_config = build_crashtracker_receiver_config(dependency_paths, output)?;
 
     let mut config_builder = CrashtrackerConfiguration::builder()
         .create_alt_stack(true)
@@ -291,13 +307,7 @@ fn init_crashtracker(dependency_paths: Option<*const *const libc::c_char>) -> an
 
     libdd_crashtracker::init(
         config_builder.build()?,
-        CrashtrackerReceiverConfig::new(
-            receiver_args,
-            receiver_env,
-            format!("/proc/{}/exe", unsafe { libc::getpid() }),
-            output,
-            None,
-        )?,
+        receiver_config,
         Metadata::new(
             "libdatadog".to_string(),
             crate::sidecar_version!().to_string(),
