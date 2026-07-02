@@ -57,6 +57,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -332,21 +334,36 @@ impl<
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     async fn shutdown_workers(self) {
-        // Sequential rather than the previous `JoinSet`-driven concurrent stop:
-        // there are at most ~3 workers and each stop is fast, so the parallelism
-        // wasn't load-bearing. The straight-line form drops the `tokio::task` and
-        // boxed-`dyn Future + MaybeSend` gymnastics needed to make the
-        // concurrent shape compile on both targets.
-        #[cfg(not(target_arch = "wasm32"))]
+        let mut join_set = JoinSet::new();
+
         if let StatsComputationStatus::Enabled { worker_handle, .. } =
             &**self.client_side_stats.status.load()
         {
-            if let Err(e) = worker_handle.clone().stop().await {
-                error!("Stats worker failed to shutdown: {:?}", e);
-            }
+            let handle = worker_handle.clone();
+            join_set.spawn(async move { handle.stop().await });
         }
 
+        if let Some(info_fetcher) = self.workers.info_fetcher {
+            join_set.spawn(async move { info_fetcher.stop().await });
+        }
+
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = self.workers.telemetry {
+            join_set.spawn(async move { telemetry.stop().await });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Ok(Err(e)) = result {
+                error!("Worker failed to shutdown: {:?}", e);
+            }
+        }
+    }
+
+    // wasm32: no Send + no shared reactor, so stops run sequentially
+    #[cfg(target_arch = "wasm32")]
+    async fn shutdown_workers(self) {
         if let Some(info_fetcher) = self.workers.info_fetcher {
             if let Err(e) = info_fetcher.stop().await {
                 error!("Info fetcher failed to shutdown: {:?}", e);
