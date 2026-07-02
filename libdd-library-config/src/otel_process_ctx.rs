@@ -261,6 +261,11 @@ pub mod linux {
     impl ProcessContextHandle {
         /// Initial publication of the process context. Creates an appropriate memory mapping.
         fn publish(payload: Vec<u8>) -> io::Result<Self> {
+            let payload_size = payload
+                .len()
+                .try_into()
+                .map_err(|_| io::Error::other("payload size overflowed"))?;
+
             let mut mapping = MemMapping::new()?;
             let size = mapping_size();
             check_syscall_retval(
@@ -276,27 +281,18 @@ pub mod linux {
 
             let header = mapping.start_addr.as_ptr() as *mut MappingHeader;
 
+            // SAFETY: header points to a zero-filled, page-aligned mapping of at least
+            // mapping_size() bytes; field projections are in-bounds and aligned.
             unsafe {
-                // SAFETY: header points to a freshly mmaped region valid for at least
-                // `mapping_size()` bytes, which we ensure is >= size_of::<MappingHeader>(). The
-                // base address is page-aligned, so all fields including `monotonic_published_at_ns`
-                // (at offset 16) satisfy their alignment requirements.
-                ptr::write(
-                    header,
-                    MappingHeader {
-                        signature: *SIGNATURE,
-                        version: PROCESS_CTX_VERSION,
-                        payload_size: AtomicU32::new(
-                            payload
-                                .len()
-                                .try_into()
-                                .map_err(|_| io::Error::other("payload size overflowed"))?,
-                        ),
-                        // will be set atomically at last
-                        monotonic_published_at_ns: AtomicU64::new(0),
-                        payload_ptr: AtomicPtr::new(payload.as_ptr().cast_mut()),
-                    },
-                );
+                ptr::addr_of_mut!((*header).signature).write(*SIGNATURE);
+                ptr::addr_of_mut!((*header).version).write(PROCESS_CTX_VERSION);
+                (*header)
+                    .payload_size
+                    .store(payload_size, Ordering::Relaxed);
+                (*header)
+                    .payload_ptr
+                    .store(payload.as_ptr().cast_mut(), Ordering::Relaxed);
+
                 (*header)
                     .monotonic_published_at_ns
                     .store(published_at_ns, Ordering::Release);
