@@ -22,10 +22,14 @@ use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
     blocking::{self, SidecarTransport},
-    DynamicInstrumentationConfigState, FfeEvaluationMetric as SidecarFfeEvaluationMetric,
-    FfeExposure as SidecarFfeExposure, FfeExposureBatch as SidecarFfeExposureBatch,
-    FfeTelemetryContext as SidecarFfeTelemetryContext, InstanceId, QueueId, RuntimeMetadata,
-    SerializedTracerHeaderTags, SessionConfig, SidecarAction, SidecarFlushOptions,
+    AllocationKey, ContextDD, DynamicInstrumentationConfigState, EvalError,
+    FfeEvaluationMetric as SidecarFfeEvaluationMetric, FfeExposure as SidecarFfeExposure,
+    FfeExposureBatch as SidecarFfeExposureBatch,
+    FfeFlagEvaluationBatch as SidecarFfeFlagEvaluationBatch,
+    FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
+    FfeTelemetryContext as SidecarFfeTelemetryContext, FlagEvalEventContext, FlagKey, InstanceId,
+    QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
+    SidecarFlushOptions, TargetingRuleKey, VariantKey,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
@@ -1209,6 +1213,23 @@ pub struct FfeEvaluationMetric<'a> {
     pub allocation_key: CharSlice<'a>,
 }
 
+#[repr(C)]
+pub struct FfeFlagEvaluation<'a> {
+    pub timestamp_ms: i64,
+    pub flag_key: CharSlice<'a>,
+    pub first_evaluation_ms: i64,
+    pub last_evaluation_ms: i64,
+    pub evaluation_count: u64,
+    pub variant: CharSlice<'a>,
+    pub allocation_key: CharSlice<'a>,
+    pub targeting_rule_key: CharSlice<'a>,
+    pub targeting_key: CharSlice<'a>,
+    /// UTF-8 JSON object. Empty, invalid, or non-object JSON is omitted.
+    pub evaluation_context_json: CharSlice<'a>,
+    pub error_message: CharSlice<'a>,
+    pub runtime_default_used: bool,
+}
+
 /// Send structured FFE exposure events to the sidecar. The sidecar owns
 /// deduplication, JSON serialization, and Agent EVP delivery. This function is
 /// caller-driven; shared libdatadog evaluator calls do not log unless an SDK
@@ -1280,6 +1301,78 @@ fn ddog_sidecar_send_ffe_exposure_batch_impl(
     MaybeError::None
 }
 
+/// Send structured FFE flag evaluation events to the sidecar. The sidecar owns
+/// JSON serialization and Agent EVP delivery. This function is caller-driven;
+/// callers must aggregate and bound event cardinality before passing a batch.
+///
+/// # Safety
+/// `context` and every element in `flag_evaluations` must contain valid UTF-8
+/// `CharSlice` values. Empty `flag_evaluations` is a no-op.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_send_ffe_flag_evaluation_batch(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    context: &FfeTelemetryContext<'_>,
+    flag_evaluations: Slice<FfeFlagEvaluation<'_>>,
+) -> MaybeError {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
+            transport,
+            instance_id,
+            queue_id,
+            context,
+            flag_evaluations,
+        )
+    }))
+    .unwrap_or_else(|panic| {
+        MaybeError::Some(libdd_common_ffi::utils::handle_panic_error(
+            panic,
+            "ddog_sidecar_send_ffe_flag_evaluation_batch",
+        ))
+    })
+}
+
+fn ddog_sidecar_send_ffe_flag_evaluation_batch_impl(
+    transport: &mut Box<SidecarTransport>,
+    instance_id: &InstanceId,
+    queue_id: &QueueId,
+    context: &FfeTelemetryContext<'_>,
+    flag_evaluations: Slice<FfeFlagEvaluation<'_>>,
+) -> MaybeError {
+    let flag_evaluations = try_c!(flag_evaluations
+        .try_as_slice()
+        .map_err(|e| format!("Invalid flag evaluation slice: {e}")));
+
+    if flag_evaluations.is_empty() {
+        return MaybeError::None;
+    }
+
+    let context = try_c!(ffe_context_from_ffi(context));
+    let flag_evaluations = try_c!(flag_evaluations
+        .iter()
+        .map(|event| ffe_flag_evaluation_from_ffi(event, &context.service))
+        .collect::<Result<Vec<_>, _>>());
+
+    if flag_evaluations.is_empty() {
+        return MaybeError::None;
+    }
+
+    try_c!(blocking::enqueue_actions(
+        transport,
+        instance_id,
+        queue_id,
+        vec![SidecarAction::FfeFlagEvaluationBatch(
+            SidecarFfeFlagEvaluationBatch {
+                context,
+                flag_evaluations,
+            }
+        )],
+    ));
+    MaybeError::None
+}
+
 /// Send structured FFE evaluation metric events to the sidecar. The sidecar
 /// owns aggregation, OTLP/protobuf serialization, and OTLP HTTP delivery. This
 /// function is caller-driven so SDKs with existing host-language hooks can
@@ -1344,6 +1437,37 @@ fn ffe_exposure_from_ffi(exposure: &FfeExposure<'_>) -> Result<SidecarFfeExposur
     })
 }
 
+fn ffe_flag_evaluation_from_ffi(
+    event: &FfeFlagEvaluation<'_>,
+    service: &str,
+) -> Result<SidecarFfeFlagEvaluationEvent, String> {
+    let evaluation = optional_json_object_string(event.evaluation_context_json)?;
+    let context = evaluation.map(|evaluation| FlagEvalEventContext {
+        evaluation: Some(evaluation),
+        dd: Some(ContextDD {
+            service: service.to_owned(),
+        }),
+    });
+
+    Ok(SidecarFfeFlagEvaluationEvent {
+        timestamp: event.timestamp_ms,
+        flag: FlagKey {
+            key: char_slice_to_string(event.flag_key)?,
+        },
+        first_evaluation: event.first_evaluation_ms,
+        last_evaluation: event.last_evaluation_ms,
+        evaluation_count: event.evaluation_count,
+        variant: optional_string(event.variant)?.map(|key| VariantKey { key }),
+        allocation: optional_string(event.allocation_key)?.map(|key| AllocationKey { key }),
+        targeting_rule: optional_string(event.targeting_rule_key)?
+            .map(|key| TargetingRuleKey { key }),
+        targeting_key: optional_string(event.targeting_key)?,
+        context,
+        error: optional_string(event.error_message)?.map(|message| EvalError { message }),
+        runtime_default_used: event.runtime_default_used,
+    })
+}
+
 fn ffe_metric_from_ffi(
     metric: &FfeEvaluationMetric<'_>,
 ) -> Result<SidecarFfeEvaluationMetric, String> {
@@ -1361,6 +1485,21 @@ fn optional_string(slice: CharSlice) -> Result<Option<String>, String> {
         Ok(None)
     } else {
         char_slice_to_string(slice).map(Some)
+    }
+}
+
+fn optional_json_object_string(slice: CharSlice) -> Result<Option<String>, String> {
+    let Some(raw) = optional_string(slice)? else {
+        return Ok(None);
+    };
+    let value = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    if value.is_object() {
+        Ok(Some(value.to_string()))
+    } else {
+        Ok(None)
     }
 }
 

@@ -5,6 +5,10 @@
 use crate::config;
 pub use datadog_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
 pub use datadog_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
+pub use datadog_ffe::telemetry::flagevaluation::{
+    AllocationKey, ContextDD, EvalError, FfeFlagEvaluationBatch, FfeFlagEvaluationEvent,
+    FlagEvalEventContext, FlagKey, TargetingRuleKey, VariantKey,
+};
 pub use datadog_ffe::telemetry::FfeTelemetryContext;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
@@ -30,8 +34,11 @@ pub(crate) use sidecar_interface::SidecarInterface;
 pub mod agent_info;
 pub mod blocking;
 mod debugger_diagnostics_bookkeeper;
+pub(crate) mod evp_proxy;
 pub mod exception_hash_rate_limiter;
+pub(crate) mod ffe_evp_proxy;
 pub(crate) mod ffe_exposures_flusher;
+pub(crate) mod ffe_flagevaluation_flusher;
 pub(crate) mod ffe_metrics_flusher;
 mod instance_id;
 mod queue_id;
@@ -100,4 +107,13 @@ pub enum SidecarAction {
         context: FfeTelemetryContext,
         metrics: Vec<FfeEvaluationMetric>,
     },
+    /// Structured FFE flag evaluation batch for the EVP flagevaluation track.
+    /// The sidecar serializes and POSTs the batch to
+    /// `/evp_proxy/v2/api/v2/flagevaluation` (fire-and-forget). PHP (EMIT-07)
+    /// drives the two-tier aggregation upstream and dispatches via this action.
+    ///
+    /// Keep this appended after pre-existing variants: this enum crosses the
+    /// bincode sidecar IPC boundary, so inserting a variant before existing
+    /// variants changes their wire ordinals.
+    FfeFlagEvaluationBatch(FfeFlagEvaluationBatch),
 }

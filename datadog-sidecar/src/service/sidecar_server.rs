@@ -37,6 +37,7 @@ use crate::service::debugger_diagnostics_bookkeeper::{
 };
 use crate::service::exception_hash_rate_limiter::EXCEPTION_HASH_LIMITER;
 use crate::service::ffe_exposures_flusher;
+use crate::service::ffe_flagevaluation_flusher;
 use crate::service::ffe_metrics_flusher;
 use crate::service::remote_configs::{RemoteConfigNotifyTarget, RemoteConfigs};
 use crate::service::stats_flusher::{
@@ -117,6 +118,8 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    /// Sidecar-owned EVP flagevaluation coalescer, shared across PHP request lifetimes.
+    pub(crate) ffe_flagevaluation_coalescer: ffe_flagevaluation_flusher::FlagEvaluationCoalescer,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -443,6 +446,27 @@ impl SidecarInterface for ConnectionSidecarHandler {
                         }
                     } else {
                         debug!("ffe_exposures_flusher: no session endpoint, dropping batch");
+                    }
+                    false
+                }
+                SidecarAction::FfeFlagEvaluationBatch(batch) => {
+                    if let Some(base) = trace_config.endpoint.as_ref() {
+                        if let Some(ep) = ffe_flagevaluation_flusher::flagevaluation_endpoint(base)
+                        {
+                            self.server.ffe_flagevaluation_coalescer.enqueue(
+                                ffe_http_client.clone(),
+                                ep,
+                                batch.clone(),
+                            );
+                        } else {
+                            debug!(
+                                "ffe_flagevaluation_flusher: could not derive endpoint, dropping batch"
+                            );
+                        }
+                    } else {
+                        debug!(
+                            "ffe_flagevaluation_flusher: no session endpoint, dropping batch"
+                        );
                     }
                     false
                 }
@@ -1090,6 +1114,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn flush(&self, _peer: PeerCredentials, options: SidecarFlushOptions) {
+        self.server
+            .ffe_flagevaluation_coalescer
+            .flush_now(self.server.ffe_http_client.clone())
+            .await;
+
         if options.traces_and_stats {
             let flusher = self.server.trace_flusher.clone();
             if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
