@@ -7,7 +7,7 @@ use crate::span::v05::dict::SharedDict;
 use crate::span::{v05, TraceData};
 pub use crate::tracer_header_tags::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
-use crate::tracer_payload::{self, TraceChunks, TraceEncoding};
+use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
 use bytes::buf::Reader;
 use bytes::Buf;
@@ -585,25 +585,28 @@ pub fn enrich_span_with_azure_function_metadata(span: &mut pb::Span) {
     }
 }
 
-pub fn collect_trace_chunks<T: TraceData>(
+/// Converts v0.4-shaped span chunks into the v0.5 wire representation.
+///
+/// v0.5 deduplicates every string field across the whole payload through a shared dictionary
+/// and replaces them with `u32` indices. This walks each span via [`v05::from_v04_span`],
+/// interning strings into the [`SharedDict`] as it goes, and returns the resulting
+/// `(dict, traces)` pair wrapped in [`TraceChunks::V05`].
+///
+/// Returns `Err` if any span fails to convert (e.g. unsupported field value); the partial
+/// dictionary built so far is discarded.
+pub fn convert_trace_chunks_v04_to_v05<T: TraceData>(
     traces: Vec<Vec<crate::span::v04::Span<T>>>,
-    format: TraceEncoding,
 ) -> anyhow::Result<TraceChunks<T>> {
-    match format {
-        TraceEncoding::V05 => {
-            let mut shared_dict = SharedDict::default();
-            let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
-            for trace in traces {
-                let v05_trace = trace
-                    .into_iter()
-                    .map(|span| v05::from_v04_span(span, &mut shared_dict))
-                    .collect::<anyhow::Result<Vec<_>>>()?;
-                v05_traces.push(v05_trace);
-            }
-            Ok(TraceChunks::V05((shared_dict, v05_traces)))
-        }
-        TraceEncoding::V04 => Ok(TraceChunks::V04(traces)),
+    let mut shared_dict = SharedDict::default();
+    let mut v05_traces: Vec<Vec<v05::Span>> = Vec::with_capacity(traces.len());
+    for trace in traces {
+        let v05_trace = trace
+            .into_iter()
+            .map(|span| v05::from_v04_span(span, &mut shared_dict))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        v05_traces.push(v05_trace);
     }
+    Ok(TraceChunks::V05((shared_dict, v05_traces)))
 }
 
 pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
@@ -1121,10 +1124,10 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_trace_chunks_v05() {
+    fn test_convert_trace_chunks_v04_to_v05() {
         let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
 
-        let collection = collect_trace_chunks(vec![chunk], TraceEncoding::V05).unwrap();
+        let collection = convert_trace_chunks_v04_to_v05(vec![chunk]).unwrap();
 
         let (dict, traces) = match collection {
             TraceChunks::V05(payload) => payload,
@@ -1193,27 +1196,6 @@ mod tests {
                 .unwrap(),
             1.0
         );
-    }
-
-    #[test]
-    fn test_collect_trace_chunks_v04() {
-        let chunk = vec![create_test_no_alloc_span(123, 456, 789, 1, true)];
-
-        let collection = collect_trace_chunks(vec![chunk], TraceEncoding::V04).unwrap();
-
-        let traces = match collection {
-            TraceChunks::V04(traces) => traces,
-            _ => panic!("Unexpected type"),
-        };
-
-        assert_eq!(traces.len(), 1);
-        assert_eq!(traces[0].len(), 1);
-        let span = &traces[0][0];
-        assert_eq!(span.trace_id, 123);
-        assert_eq!(span.span_id, 456);
-        assert_eq!(span.parent_id, 789);
-        assert_eq!(span.start, 1);
-        assert_eq!(span.error, 0);
     }
 
     #[test]
