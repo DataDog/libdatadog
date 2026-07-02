@@ -170,6 +170,9 @@ bool dd_sample_flag_check_fast(void *user, void **raw_out) {
 
     uint64_t offset;
     memcpy(&offset, (char *)header + sizeof(magic), sizeof(offset));
+    if (offset < DD_HEADER_BYTES || offset > 2 * DD_SAMPLE_ALIGNMENT_CAP) {
+        return false;
+    }
 
     /* Clear the whole 16-byte header so a re-use of this address
      * (e.g. allocator returns the same block to a later, unsampled

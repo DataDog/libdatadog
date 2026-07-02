@@ -85,6 +85,26 @@ mod tests {
     }
 
     #[test]
+    fn zero_sampling_interval_disables_sampling() {
+        let mut tl = dd_tl_state_t {
+            sampling_interval: 0,
+            remaining_bytes: 0,
+            remaining_bytes_initialized: true,
+            initialized: true,
+            reentry_guard: false,
+            rng: 1,
+        };
+
+        let req = unsafe { dd_allocation_requested_slow(&mut tl, 64, 8) };
+
+        assert_eq!(req.size, 64);
+        assert_eq!(req.user_size, 64);
+        assert_eq!(req.alignment, 8);
+        assert_eq!(req.weight, 0);
+        assert!(!tl.reentry_guard);
+    }
+
+    #[test]
     fn freed_unsampled_returns_inputs_unchanged() {
         // The C side now reads 8 bytes at ptr-16 looking for DD_MAGIC,
         // so we need a real buffer underneath. Zero contents won't match,
@@ -96,6 +116,61 @@ mod tests {
             assert_eq!(freed.ptr, ptr);
             assert_eq!(freed.size, 64);
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn sample_flag_check_fast_rejects_invalid_offset() {
+        const MAGIC: u64 = 0xfab1eddec0dedca7;
+        const HEADER_BYTES: usize = 16;
+
+        let mut buf = vec![0u8; 8192];
+        let base = buf.as_mut_ptr() as usize;
+        let user_addr = (base + 128 + 4095) & !4095;
+        let user_addr = user_addr + 64;
+        assert!(user_addr + 64 <= base + buf.len());
+
+        let header = user_addr - HEADER_BYTES;
+        let header_idx = header - base;
+        buf[header_idx..header_idx + 8].copy_from_slice(&MAGIC.to_ne_bytes());
+        // Too small to have been produced by x86_apply().
+        buf[header_idx + 8..header_idx + 16].copy_from_slice(&8u64.to_ne_bytes());
+
+        let mut raw = core::ptr::null_mut();
+        let sampled = unsafe { dd_sample_flag_check_fast(user_addr as *mut c_void, &mut raw) };
+
+        assert!(!sampled);
+        assert!(raw.is_null());
+        assert_eq!(&buf[header_idx..header_idx + 8], &MAGIC.to_ne_bytes());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn freed_slow_size_matches_requested_bump_formula() {
+        const HEADER_BYTES: usize = 16;
+
+        fn requested_bumped_size(user_size: usize, alignment: usize) -> usize {
+            let base = alignment.max(HEADER_BYTES);
+            let reserve = 2 * base;
+            let bumped = user_size + reserve;
+            if alignment > 1 {
+                let mask = alignment - 1;
+                (bumped + mask) & !mask
+            } else {
+                bumped
+            }
+        }
+
+        let user_size = 100;
+        let alignment = 16;
+        let base = alignment.max(HEADER_BYTES);
+        let raw = 0x100000usize as *mut c_void;
+        let ptr = (0x100000usize + base) as *mut c_void;
+
+        let freed = unsafe { dd_allocation_freed_slow(ptr, raw, user_size, alignment) };
+
+        assert_eq!(freed.ptr, raw);
+        assert_eq!(freed.size, requested_bumped_size(user_size, alignment));
     }
 
     #[test]

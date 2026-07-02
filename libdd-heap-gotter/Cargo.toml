@@ -22,3 +22,5 @@ libdd-heap-sampler = { path = "../libdd-heap-sampler" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"
+libdd-heap-sampler = { path = "../libdd-heap-sampler" }
+serial_test = "3.2"

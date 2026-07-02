@@ -45,7 +45,7 @@ mod elf;
 mod hooks;
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, TryLockError};
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 use elf::SymbolOverrides;
@@ -55,6 +55,13 @@ use elf::SymbolOverrides;
 /// `g_symbol_overrides` guarded by `g_mutex`
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 static GLOBAL_OVERRIDES: Mutex<Option<SymbolOverrides>> = Mutex::new(None);
+
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+fn lock_global_overrides() -> MutexGuard<'static, Option<SymbolOverrides>> {
+    GLOBAL_OVERRIDES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Install GOT overrides for the supported allocator and helper symbols.
 /// Safe to call more than once: the registry is rebuilt and re-applied,
@@ -70,7 +77,7 @@ static GLOBAL_OVERRIDES: Mutex<Option<SymbolOverrides>> = Mutex::new(None);
 /// portable equivalent outside ELF64 + `dl_iterate_phdr`.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn install_heap_overrides() -> bool {
-    let mut guard = GLOBAL_OVERRIDES.lock().expect("gotter mutex poisoned");
+    let mut guard = lock_global_overrides();
     if guard.is_none() {
         let mut so = SymbolOverrides::new();
         register_all(&mut so);
@@ -96,10 +103,13 @@ pub fn update_heap_overrides() {
     // `try_lock` so a dlopen happening on the same thread that owns the
     // install lock doesn't deadlock - that thread will finish its
     // outer apply_overrides, which already walks every library.
-    if let Ok(mut guard) = GLOBAL_OVERRIDES.try_lock() {
-        if let Some(so) = guard.as_mut() {
-            so.update_overrides();
-        }
+    let mut guard = match GLOBAL_OVERRIDES.try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return,
+    };
+    if let Some(so) = guard.as_mut() {
+        so.update_overrides();
     }
 }
 
@@ -112,7 +122,7 @@ pub fn update_heap_overrides() {}
 /// non-Linux targets.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn restore_heap_overrides() {
-    let mut guard = GLOBAL_OVERRIDES.lock().expect("gotter mutex poisoned");
+    let mut guard = lock_global_overrides();
     if let Some(so) = guard.as_mut() {
         so.restore_overrides();
     }
@@ -128,10 +138,7 @@ pub fn restore_heap_overrides() {}
 /// is a no-op there.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn heap_overrides_are_installed() -> bool {
-    GLOBAL_OVERRIDES
-        .lock()
-        .map(|guard| guard.is_some())
-        .unwrap_or(false)
+    lock_global_overrides().is_some()
 }
 
 /// See the Linux variant above.

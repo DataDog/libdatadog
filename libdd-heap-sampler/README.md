@@ -6,6 +6,13 @@ For allocations that are sampled as well as the corresponding frees of these all
 emitted such that an external process such as the [eBPF full host profiler](https://github.com/open-telemetry/opentelemetry-ebpf-profiler) can collect the samples as
 well as the stack trace at the time they are emitted to ultimately emit as a heap profiling event stream.
 
+## Docs
+
+Two parts of this crate are fiddly enough that they get their own writeup:
+
+* [docs/tagging.md](docs/tagging.md) - how we mark an allocation as sampled and recognise it again at free time
+* [docs/realloc.md](docs/realloc.md) - how we handle `realloc`
+
 ## Use Cases
 
 This profiling infrastructure will initially support these two use cases:
@@ -101,6 +108,18 @@ the common public surface, so those internal arch-specific helpers and
 constants are not emitted into `bindings.rs` and a single checked-in
 binding set works for both supported Linux architectures.
 
+```bash
+# We use an env var and not a feature, as several parts of the libdatadog
+# build turn on all features, and we don't want everything to need the extra
+# build tooling. 
+LIBDD_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-heap-sampler
+```
+
+This refreshes `src/generated/bindings.rs` and
+`src/generated/dd_heap_sampler_static_wrappers.c`. Commit the delta. CI's
+`verify-heap-sampler-bindings` workflow runs the same command on every PR
+and fails if the checked-in files are stale.
+
 ### Requirements
 
 - **`libclang`** (`libclang-dev` on Debian/Ubuntu, `libclang-devel` on
@@ -110,22 +129,3 @@ binding set works for both supported Linux architectures.
 You do **not** need `bindgen-cli`, a cross libc, a cross Rust toolchain,
 or a cross linker — `build.rs` invokes the `bindgen` crate directly and
 only emits the arch-independent Rust-facing ABI.
-
-### Regenerating
-
-```bash
-LIBDD_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-heap-sampler
-```
-
-This refreshes `src/generated/bindings.rs` and
-`src/generated/dd_heap_sampler_static_wrappers.c`. Commit the delta. CI's
-`verify-heap-sampler-bindings` workflow runs the same command on every PR
-and fails if the checked-in files are stale.
-
-> **Why an env var, not a `cargo` feature?** Several of libdatadog's
-> CI jobs (clippy, coverage, workspace tests) run with
-> `--all-features`. Cargo has no way to hide a feature from that flag,
-> so a `regen-bindings` feature would be silently enabled everywhere
-> and drag `libclang` into every build. An env var is
-> invisible to `--all-features`, so `build.rs` only invokes bindgen
-> when a human (or the verify-bindings workflow) explicitly asks.
