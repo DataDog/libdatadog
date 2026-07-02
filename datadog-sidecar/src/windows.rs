@@ -12,6 +12,7 @@ use libdd_crashtracker_ffi::{ddog_crasht_init_windows, Metadata};
 use manual_future::ManualFuture;
 use spawn_worker::{write_crashtracking_trampoline, SpawnWorker, Stdio, TrampolineData};
 use std::ffi::CStr;
+use std::fs::File;
 use std::io::{self, Error};
 use std::os::windows::io::{FromRawHandle, IntoRawHandle, OwnedHandle};
 use std::ptr::null_mut;
@@ -124,7 +125,8 @@ pub fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata)
         "datadog-crashtracking-{}",
         primary_sidecar_identifier()
     )) {
-        Ok((path, _)) => {
+        Ok((path, file)) => {
+            *CRASHTRACKING_TRAMPOLINE.lock_or_panic() = Some(file);
             if let Ok(path_str) = path.into_os_string().into_string() {
                 return ddog_crasht_init_windows(
                     CharSlice::from(path_str.as_str()),
@@ -142,6 +144,8 @@ pub fn ddog_setup_crashtracking(endpoint: Option<&Endpoint>, metadata: Metadata)
 
     false
 }
+
+static CRASHTRACKING_TRAMPOLINE: LazyLock<Mutex<Option<File>>> = LazyLock::new(|| Mutex::new(None));
 
 static SIDECAR_IDENTIFIER: LazyLock<String> = LazyLock::new(fetch_sidecar_identifier);
 
