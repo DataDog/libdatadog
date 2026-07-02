@@ -191,6 +191,7 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
     }
 
     /// Reset the worker state (e.g. in a fork child).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn reset(&mut self) {
         if let PausableWorker::Paused { worker } = self {
             worker.reset();
