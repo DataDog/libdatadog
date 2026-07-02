@@ -3,6 +3,40 @@
 
 //! Implementation of the publisher part of the [OTEL process
 //! context](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
+//! specification.
+//!
+//! Implements a seqlock-style algorithm, which generally goes like this:
+//!
+//! atomic<unsigned> seq{0};
+//! atomic<int> data1, data2;
+//! T reader() {
+//!     int r1, r2;
+//!     unsigned seq0, seq1;
+//!     do {
+//!         seq0 = seq.load(m_o_acquire);
+//!         r1 = data1.load(m_o_relaxed);
+//!         r2 = data2.load(m_o_relaxed);
+//!         atomic_thread_fence(m_o_acquire);
+//!         seq1 = seq.load(m_o_relaxed);
+//!     } while (seq0 & 1 || seq0 != seq1);
+//!     ...
+//! }
+//!
+//! void writer(...) {
+//!     unsigned seq0 = seq.load(m_o_relaxed);
+//!     while (seq0 & 1 ||
+//!            !seq.compare_exchange_weak(seq0, seq0 + 1, m_o_acquire)) {}
+//!     atomic_thread_fence(m_o_release);
+//!     data1.store(..., m_o_relaxed);
+//!     data2.store(..., m_o_relaxed);
+//!     seq.store(seq0 + 2, m_o_release);
+//! }
+//!
+//! Although we instead use 0 to signal the writer is progress and a timestamp
+//! instead of even numbers.
+//! We also forbid concurrent writers, and leave the reader retries to the
+//! discretion of the caller.
+//! We ignore the corner case where time returns 0.
 
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]
@@ -10,7 +44,7 @@ pub mod linux {
     use std::{
         ffi::{c_void, CStr},
         fs::File,
-        io::{self, BufRead, BufReader, ErrorKind},
+        io::{self, BufRead, BufReader},
         mem::{size_of, ManuallyDrop},
         os::fd::{AsRawFd, FromRawFd, OwnedFd},
         ptr::{self, NonNull},
@@ -36,18 +70,10 @@ pub mod linux {
     /// The header structure written at the start of the mapping. This must match the C
     /// layout of the specification.
     ///
-    /// # Atomic accesses
-    ///
-    /// The publishing protocol requires some form of synchronization. Using fences or any non-OS
-    /// based synchronization requires the use of atomics to have any effect (see [Mandatory
-    /// atomic](https://doc.rust-lang.org/std/sync/atomic/fn.fence.html#mandatory-atomic))
-    ///
-    /// We use `monotonic_published_at_ns` for synchronization with the reader. `AtomicU64` has the
-    /// same in-memory representation as `u64` and is 8-bytes aligned. `payload_size` and
-    /// `payload_ptr` are atomic too because they are modified while readers may be sampling the
-    /// header. The timestamp field lands at offset 16 in the struct (after 8 bytes of signature +
-    /// 4 bytes version + 4 bytes payload_size), which satisfies that alignment on any
-    /// page-aligned base address.
+    /// The seqlock algorithm is inherently racy, so we need all accesses to be atomic
+    /// (even if relaxed); otherwise we hit UB. The only exception is the reading the
+    /// payload through process_vm_readv(), which is a syscall and so falls outside of
+    /// the scope of the memory model.
     #[repr(C)]
     struct MappingHeader {
         signature: [u8; 8],
@@ -405,177 +431,219 @@ pub mod linux {
         })
     }
 
-    /// Parses the start address from a /proc/self/maps line.
-    fn parse_mapping_start(line: &str) -> Option<usize> {
-        usize::from_str_radix(line.split('-').next()?, 16).ok()
+    /// Reader for the current process's OTel process context mapping.
+    ///
+    /// Locates the OTEL_CTX mapping at construction. Call [`read`](Self::read) repeatedly to fetch
+    /// updated context data without re-parsing `/proc/self/maps`, as long as the process has not
+    /// forked. After a `fork()`, reads fail and a new reader must be constructed.
+    pub struct ProcessContextSelfReader {
+        pid: libc::pid_t,
+        header_ptr: NonNull<MappingHeader>,
     }
 
-    /// Checks if a mapping line refers to the OTEL_CTX mapping.
-    fn is_named_otel_mapping(line: &str) -> bool {
-        let trimmed = line.trim_end();
+    // SAFETY: ProcessContextSelfReader doesn't rely on thread local state and
+    // only references static memory -- owns nothing.
+    unsafe impl Send for ProcessContextSelfReader {}
+    // SAFETY: ProcessContextSelfReader doesn't modify anything
+    unsafe impl Sync for ProcessContextSelfReader {}
 
-        // The name of the mapping is the 6th column. The separator changes (both ' ' and '\t')
-        // but `split_whitespace()` takes care of that.
-        let Some(name) = trimmed.split_whitespace().nth(5) else {
-            return false;
-        };
-
-        // The spec says:
-        // 1. **Locate mapping**: Parse `/proc/<pid>/maps` and search for entries with name
-        // **starting with** `[anon_shmem:OTEL_CTX]`, `[anon:OTEL_CTX]` or `/memfd:OTEL_CTX`.
-        name.starts_with("/memfd:OTEL_CTX")
-            || name.starts_with("[anon_shmem:OTEL_CTX]")
-            || name.starts_with("[anon:OTEL_CTX]")
-    }
-
-    /// Find the OTEL_CTX mapping in /proc/self/maps.
-    fn find_otel_mapping() -> io::Result<usize> {
-        let file = File::open("/proc/self/maps")?;
-        let reader = BufReader::new(file);
-
-        for line in reader.lines() {
-            let line = line?;
-
-            if is_named_otel_mapping(&line) {
-                if let Some(addr) = parse_mapping_start(&line) {
-                    return Ok(addr);
-                }
-            }
+    impl ProcessContextSelfReader {
+        /// Locates the OTEL_CTX mapping in `/proc/self/maps`.
+        pub fn new() -> io::Result<Self> {
+            let mapping_addr = Self::find_otel_mapping()?;
+            // SAFETY: getpid() is always safe to call.
+            let pid = unsafe { libc::getpid() };
+            Ok(Self {
+                pid,
+                header_ptr: Self::header_ptr_from_addr(mapping_addr)?,
+            })
         }
 
-        Err(io::Error::new(
-            ErrorKind::NotFound,
-            "couldn't find the mapping of the process context",
-        ))
+        /// Reads and decodes the current process's OTel process context.
+        pub fn read(&self) -> io::Result<ProcessContext> {
+            // SAFETY: getpid() is always safe to call.
+            let current_pid = unsafe { libc::getpid() };
+            if current_pid != self.pid {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "process context reader is stale after fork; construct a new reader",
+                ));
+            }
+
+            // SAFETY: `header_ptr` is non-null and points to our own process memory at an address
+            // we found in /proc/self/maps for `self.pid`. The mapping must be readable if it is
+            // listed as the OTel context.
+            let header = unsafe { self.header_ptr.as_ref() };
+
+            let published_at = header.monotonic_published_at_ns.load(Ordering::Acquire);
+            if published_at == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "process context is currently being updated",
+                ));
+            }
+
+            // `signature` and `version` are immutable after the mapping becomes discoverable,
+            // so there is no change of races that would be UB. The seqlock-controlled fields
+            // must be loaded atomically because they can change during an update.
+            // The payload pointed to payload_ptr is also immutable, but it's irrelevant for the
+            // memory model because it's read with process_vm_readv().
+            let signature = header.signature;
+            let version = header.version;
+
+            if signature != *SIGNATURE {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid signature in process context mapping",
+                ));
+            }
+            if version != PROCESS_CTX_VERSION {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("unsupported process context version {version}"),
+                ));
+            }
+
+            let payload_size = header.payload_size.load(Ordering::Relaxed);
+            let payload_ptr = header.payload_ptr.load(Ordering::Relaxed).cast_const();
+
+            if payload_ptr.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "process context payload pointer is null",
+                ));
+            }
+
+            let payload_bytes =
+                Self::read_process_memory(self.pid, payload_ptr, payload_size as usize)?;
+
+            // pairs with the first release fence on update() to ensure that, if we read data updated
+            // after the initial published time, we at least see the published time being set to 0 in
+            // the next load of the published time (or we could see a later time rather than 0)
+            fence(Ordering::Acquire);
+
+            let published_at_after = header.monotonic_published_at_ns.load(Ordering::Relaxed);
+            if published_at != published_at_after {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "process context changed while being read",
+                ));
+            }
+
+            let context = ProcessContext::decode(payload_bytes.as_slice())
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+            Ok(context)
+        }
+
+        fn header_ptr_from_addr(mapping_addr: usize) -> io::Result<NonNull<MappingHeader>> {
+            NonNull::new(ptr::with_exposed_provenance::<MappingHeader>(mapping_addr).cast_mut())
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "null process context header")
+                })
+        }
+
+        /// Find the OTEL_CTX mapping in /proc/self/maps.
+        fn find_otel_mapping() -> io::Result<usize> {
+            let file = File::open("/proc/self/maps")?;
+            let reader = BufReader::new(file);
+
+            for line in reader.lines() {
+                let line = line?;
+
+                if Self::is_named_otel_mapping(&line) {
+                    if let Some(addr) = Self::parse_mapping_start(&line) {
+                        return Ok(addr);
+                    }
+                }
+            }
+
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "couldn't find the mapping of the process context",
+            ))
+        }
+
+        /// Parses the start address from a /proc/self/maps line.
+        fn parse_mapping_start(line: &str) -> Option<usize> {
+            usize::from_str_radix(line.split('-').next()?, 16).ok()
+        }
+
+        /// Checks if a mapping line refers to the OTEL_CTX mapping.
+        fn is_named_otel_mapping(line: &str) -> bool {
+            let trimmed = line.trim_end();
+
+            // The name of the mapping is the 6th column. The separator changes (both ' ' and '\t')
+            // but `split_whitespace()` takes care of that.
+            let Some(name) = trimmed.split_whitespace().nth(5) else {
+                return false;
+            };
+
+            // The spec says:
+            // 1. **Locate mapping**: Parse `/proc/<pid>/maps` and search for entries with name
+            // **starting with** `[anon_shmem:OTEL_CTX]`, `[anon:OTEL_CTX]` or `/memfd:OTEL_CTX`.
+            name.starts_with("/memfd:OTEL_CTX")
+                || name.starts_with("[anon_shmem:OTEL_CTX]")
+                || name.starts_with("[anon:OTEL_CTX]")
+        }
+
+        /// Reads `len` bytes from `addr` in the address space of `pid` via `process_vm_readv(2)`.
+        ///
+        /// Returns [`ErrorKind::WouldBlock`] when the remote memory is no longer mapped or only
+        /// partially readable. The kernel reports the former as [`libc::EFAULT`] from
+        /// `pin_user_pages_remote()` and the latter as a short read (see `process_vm_rw_core()` in
+        /// `mm/process_vm_access.c`).
+        fn read_process_memory(
+            pid: libc::pid_t,
+            addr: *const u8,
+            len: usize,
+        ) -> io::Result<Vec<u8>> {
+            if len == 0 {
+                return Ok(Vec::new());
+            }
+
+            let mut buf = vec![0u8; len];
+            let local_iov = libc::iovec {
+                iov_base: buf.as_mut_ptr().cast(),
+                iov_len: len,
+            };
+            let remote_iov = libc::iovec {
+                iov_base: addr.cast_mut().cast(),
+                iov_len: len,
+            };
+
+            // SAFETY: `buf` and `addr` each span `len` bytes for the duration of the syscall.
+            let nbytes = unsafe { libc::process_vm_readv(pid, &local_iov, 1, &remote_iov, 1, 0) };
+
+            if nbytes < 0 {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::EFAULT) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        "process context payload was unmapped during read",
+                    ));
+                }
+                return Err(io::Error::new(
+                    err.kind(),
+                    format!("failed to read process context payload: {err}"),
+                ));
+            }
+
+            if nbytes as usize != len {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "incomplete read of process context payload",
+                ));
+            }
+
+            Ok(buf)
+        }
     }
 
     /// Reads and decodes the current process's OTel process context.
+    /// To read multiple times, construct a new reader with [`ProcessContextSelfReader::new()`].
     pub fn read() -> io::Result<ProcessContext> {
-        let mapping_addr = find_otel_mapping()?;
-        let header_ptr: *const MappingHeader = ptr::with_exposed_provenance(mapping_addr);
-
-        // SAFETY: we're reading from our own process memory at an address we found in
-        // /proc/self/maps. The mapping must be readable if it is listed as the OTel context.
-        let header = unsafe {
-            if header_ptr.is_null() {
-                return Err(io::Error::new(
-                    ErrorKind::InvalidData,
-                    "null process context header",
-                ));
-            }
-            &*header_ptr
-        };
-
-        let published_at = header.monotonic_published_at_ns.load(Ordering::Acquire);
-        if published_at == 0 {
-            return Err(io::Error::new(
-                ErrorKind::WouldBlock,
-                "process context is currently being updated",
-            ));
-        }
-
-        // `signature` and `version` are immutable after the mapping becomes discoverable,
-        // so there is no change of races that would be UB. The seqlock-controlled fields
-        // must be loaded atomically because they can change during an update.
-        // The payload pointed to payload_ptr is also immutable, but it's irrelevant for the
-        // memory model because it's read with process_vm_readv().
-        let signature = header.signature;
-        let version = header.version;
-
-        if signature != *SIGNATURE {
-            return Err(io::Error::new(
-                ErrorKind::InvalidData,
-                "invalid signature in process context mapping",
-            ));
-        }
-        if version != PROCESS_CTX_VERSION {
-            return Err(io::Error::new(
-                ErrorKind::InvalidData,
-                format!("unsupported process context version {version}"),
-            ));
-        }
-
-        let payload_size = header.payload_size.load(Ordering::Relaxed);
-        let payload_ptr = header.payload_ptr.load(Ordering::Relaxed).cast_const();
-
-        if payload_ptr.is_null() {
-            return Err(io::Error::new(
-                ErrorKind::InvalidData,
-                "process context payload pointer is null",
-            ));
-        }
-
-        let payload_bytes = read_process_memory(
-            unsafe { libc::getpid() },
-            payload_ptr,
-            payload_size as usize,
-        )?;
-
-        // pairs with the first release fence on update() to ensure that, if we read data updated
-        // after the initial published time, we at least see the published time being set to 0 in
-        // the next load of the published time (or we could see a later time rather than 0)
-        fence(Ordering::Acquire);
-
-        let published_at_after = header.monotonic_published_at_ns.load(Ordering::Acquire);
-        if published_at != published_at_after {
-            return Err(io::Error::new(
-                ErrorKind::WouldBlock,
-                "process context changed while being read",
-            ));
-        }
-
-        let context = ProcessContext::decode(payload_bytes.as_slice())
-            .map_err(|err| io::Error::new(ErrorKind::InvalidData, err))?;
-
-        Ok(context)
-    }
-
-    /// Reads `len` bytes from `addr` in the address space of `pid` via `process_vm_readv(2)`.
-    ///
-    /// Returns [`ErrorKind::WouldBlock`] when the remote memory is no longer mapped or only
-    /// partially readable. The kernel reports the former as [`libc::EFAULT`] from
-    /// `pin_user_pages_remote()` and the latter as a short read (see `process_vm_rw_core()` in
-    /// `mm/process_vm_access.c`).
-    fn read_process_memory(pid: libc::pid_t, addr: *const u8, len: usize) -> io::Result<Vec<u8>> {
-        if len == 0 {
-            return Ok(Vec::new());
-        }
-
-        let mut buf = vec![0u8; len];
-        let local_iov = libc::iovec {
-            iov_base: buf.as_mut_ptr().cast(),
-            iov_len: len,
-        };
-        let remote_iov = libc::iovec {
-            iov_base: addr.cast_mut().cast(),
-            iov_len: len,
-        };
-
-        // SAFETY: `buf` and `addr` each span `len` bytes for the duration of the syscall.
-        let nbytes = unsafe { libc::process_vm_readv(pid, &local_iov, 1, &remote_iov, 1, 0) };
-
-        if nbytes < 0 {
-            let err = io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::EFAULT) {
-                return Err(io::Error::new(
-                    ErrorKind::WouldBlock,
-                    "process context payload was unmapped during read",
-                ));
-            }
-            return Err(io::Error::new(
-                err.kind(),
-                format!("failed to read process context payload: {err}"),
-            ));
-        }
-
-        if nbytes as usize != len {
-            return Err(io::Error::new(
-                ErrorKind::WouldBlock,
-                "incomplete read of process context payload",
-            ));
-        }
-
-        Ok(buf)
+        ProcessContextSelfReader::new()?.read()
     }
 
     fn string_array(value: &AnyValue) -> Option<Vec<String>> {
@@ -710,7 +778,7 @@ pub mod linux {
         /// concurrent writers after reading the header, because we know they can't be). Do not
         /// extract or use as it is as a generic Rust OTel process context reader.
         fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
-            let mapping_addr = super::find_otel_mapping()?;
+            let mapping_addr = super::ProcessContextSelfReader::find_otel_mapping()?;
             let header_ptr: *const MappingHeader = std::ptr::with_exposed_provenance(mapping_addr);
             // SAFETY: the mapping was published by this test before being read.
             let header = unsafe { &*header_ptr };
@@ -816,13 +884,14 @@ pub mod linux {
                 .expect("couldn't publish the process context");
 
             // The mapping must be discoverable right after publishing
-            super::find_otel_mapping().expect("couldn't find the otel mapping after publishing");
+            super::ProcessContextSelfReader::find_otel_mapping()
+                .expect("couldn't find the otel mapping after publishing");
 
             super::unpublish().expect("couldn't unpublish the context");
 
             // After unpublishing the name must no longer appear in /proc/self/maps
             assert!(
-                super::find_otel_mapping().is_err(),
+                super::ProcessContextSelfReader::find_otel_mapping().is_err(),
                 "otel mapping should not be visible after unpublish"
             );
         }
