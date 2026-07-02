@@ -5,7 +5,11 @@ variables:
 
 benchmarks:
   tags: ["runner:apm-k8s-tweaked-metal"]
-  needs: []
+  needs:
+    # Not created on main/release/hotfix (full suite) -- hence optional.
+    - job: compute_impacted_crates
+      artifacts: true
+      optional: true
   image:
     name: $BASE_CI_IMAGE
   rules:
@@ -17,6 +21,35 @@ benchmarks:
     - interruptible: true
   timeout: 80m
   script:
+    # Decide which crates to benchmark. Runs first, while $CI_PROJECT_DIR is the libdatadog checkout.
+    # BENCH_PACKAGES (consumed by benchmark/run_benchmarks_ci.sh) is empty for a full-workspace run
+    # and a space-separated crate list for a scoped run. main always runs the full suite; a PR runs
+    # only the impacted crates. AFFECTED_CRATES / IMPACTED_STATUS come from the
+    # compute_impacted_crates dotenv artifact and changed_files.txt is its file artifact.
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "main" ]; then
+        echo "Full benchmark suite (main)."
+        export BENCH_PACKAGES=""
+      elif [ "${IMPACTED_STATUS:-}" != "success" ] || [ -z "${AFFECTED_CRATES:-}" ]; then
+        echo "Impacted crates undetermined -> full benchmark suite."
+        export BENCH_PACKAGES=""
+      elif grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml)' changed_files.txt 2>/dev/null; then
+        echo "Benchmark infrastructure changed -> full benchmark suite."
+        export BENCH_PACKAGES=""
+      elif ! BENCH_CRATES=$(set -o pipefail; cargo metadata --no-deps --format-version 1 \
+             | jq -c '[.packages[] | select(any(.targets[]?; .kind[]? == "bench")) | .name]'); then
+        echo "Could not detect benchmarked crates -> full benchmark suite."
+        export BENCH_PACKAGES=""
+      else
+        IMPACTED=$(jq -nr --argjson a "$AFFECTED_CRATES" --argjson b "$BENCH_CRATES" \
+          '($a - ($a - $b)) | .[]' | tr '\n' ' ')
+        if [ -z "$IMPACTED" ]; then
+          echo "No benchmarked crates impacted by this PR -> skipping benchmarks."
+          exit 0
+        fi
+        export BENCH_PACKAGES="$IMPACTED"
+        echo "Benchmarking impacted crates: $BENCH_PACKAGES"
+      fi
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
     - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
     - ./steps/capture-hardware-software-info.sh

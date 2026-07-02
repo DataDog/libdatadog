@@ -20,9 +20,41 @@ OUTPUT_DIR="${1:-}"
 
 pushd "${PROJECT_DIR}" > /dev/null
 
+# Some bench targets need crate-specific features enabled; when scoping the run to a subset of
+# crates we must pass only the features for the selected crates (cargo errors on --features for a
+# crate that isn't part of the selection).
+bench_features_for_crate() {
+  case "$1" in
+    libdd-crashtracker) echo "libdd-crashtracker/benchmarking" ;;
+    libdd-sampling) echo "libdd-sampling/v04_span libdd-sampling/bench-internals" ;;
+    libdd-trace-utils) echo "libdd-trace-utils/bench-internals" ;;
+    *) echo "" ;;
+  esac
+}
+
 # Run benchmarks
 message "Running benchmarks"
-cargo bench --workspace --features libdd-crashtracker/benchmarking,libdd-sampling/v04_span,libdd-sampling/bench-internals,libdd-trace-utils/bench-internals -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+# BENCH_PACKAGES (optional, space-separated crate names) scopes the run to specific crates -- set by
+# the GitLab benchmarks job so a PR only benchmarks the crates it impacts. When empty (e.g. on main)
+# the full workspace is benchmarked.
+if [[ -n "${BENCH_PACKAGES:-}" ]]; then
+  package_args=()
+  features=()
+  for crate in ${BENCH_PACKAGES}; do
+    package_args+=(-p "${crate}")
+    for feature in $(bench_features_for_crate "${crate}"); do
+      features+=("${feature}")
+    done
+  done
+  feature_args=()
+  if (( ${#features[@]} > 0 )); then
+    feature_args=(--features "$(IFS=,; echo "${features[*]}")")
+  fi
+  message "Benchmarking selected crates: ${BENCH_PACKAGES}"
+  cargo bench "${package_args[@]}" "${feature_args[@]}" -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+else
+  cargo bench --workspace --features libdd-crashtracker/benchmarking,libdd-sampling/v04_span,libdd-sampling/bench-internals,libdd-trace-utils/bench-internals -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+fi
 message "Finished running benchmarks"
 
 # Copy the benchmark results to the output directory

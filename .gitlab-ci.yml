@@ -6,6 +6,7 @@ variables:
     description: "downstream jobs are triggered on this branch"
 
 include:
+  - local: .gitlab/impacted-crates.yml
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/fuzz.yml
 
