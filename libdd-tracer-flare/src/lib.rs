@@ -191,13 +191,7 @@ impl TracerFlareManager {
 
         tracer_flare.listener = Some(SingleChangesFetcher::new(
             ParsedFileStorage::default(),
-            Target {
-                service,
-                env,
-                app_version,
-                tags: vec![],
-                process_tags: vec![],
-            },
+            Target::new(service, env, app_version, vec![], vec![]),
             runtime_id,
             config_to_fetch,
         ));
