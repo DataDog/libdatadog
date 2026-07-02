@@ -65,6 +65,18 @@ max_level() {
     fi
 }
 
+# Normalize a cargo-public-api signature line so that only semver-significant
+# differences remain. Reads lines on stdin and writes normalized lines out.
+# It drops the leading +/- diff marker, removes attribute tokens (`#[...]`) and
+# the `const`/`async`/`unsafe` qualifiers, and collapses whitespace. Those
+# qualifier/attribute deltas are either non-breaking (adding `#[repr(C)]`,
+# making a fn `const`) or already covered by cargo-semver-checks' own lints, so
+# stripping them lets us tell a real signature change (e.g. a parameter or
+# return type change) from cosmetic churn under "Changed items".
+normalize_api_line() {
+    sed -E 's/^[+-]//; s/#\[[^]]*\]//g; s/\b(const|async|unsafe)\b//g; s/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
 compute_semver_results() {
     local crate=$1
     local baseline=$2
@@ -139,6 +151,12 @@ compute_semver_results() {
     # we run it unconditionally and combine with semver-checks via max_level.
     # Skip only when there is no baseline (new crate) or when semver-checks
     # already flagged major (cannot go higher).
+    #
+    # Requires cargo-public-api >= 0.52.0: earlier versions include function
+    # parameter names in signatures, so a non-breaking parameter *rename* diffs
+    # as Removed + Added and would be falsely promoted to major. From 0.52.0
+    # parameter names are omitted by default, so only signature-meaningful
+    # changes (e.g. parameter type changes) surface here.
     # ----------------------------------------------------------------
     local public_api_level="none"
     local public_api_reason=""
@@ -161,25 +179,57 @@ compute_semver_results() {
         log_verbose "$PUBLIC_API_OUTPUT"
 
         # Removed public items → major.
+        local removed_breaking=false
         if grep -q "Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" \
            && ! grep -A 2 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)$"; then
+            removed_breaking=true
+        fi
+
+        # Changed public items → breaking only if a semver-significant delta
+        # survives normalization. This is the case cargo-semver-checks misses:
+        # a parameter/return type change on a non-generic fn renders here as a
+        # "-old / +new" signature pair rather than as Removed+Added. We compare
+        # the normalized old vs new signatures; if they still differ after
+        # stripping non-breaking churn (#[repr(C)] additions, const/async/unsafe
+        # qualifiers — see normalize_api_line), the change is breaking → major.
+        local changed_breaking=false
+        local changed_section
+        changed_section=$(sed -n '/^Changed items in the public API$/,/^Added items to the public API$/p' <<< "$PUBLIC_API_OUTPUT")
+        if [[ -n "$changed_section" ]] \
+           && ! grep -A 2 "^Changed items in the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)$"; then
+            local changed_old changed_new
+            changed_old=$(grep '^-' <<< "$changed_section" | normalize_api_line | sort)
+            changed_new=$(grep '^+' <<< "$changed_section" | normalize_api_line | sort)
+            if [[ "$changed_old" != "$changed_new" ]]; then
+                changed_breaking=true
+            else
+                log_verbose "cargo-public-api: changed items are non-breaking (attribute/qualifier only)"
+            fi
+        fi
+
+        # Added public items → minor.
+        local added=false
+        if grep -q "Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" \
+           && ! grep -A 2 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)"; then
+            added=true
+        fi
+
+        if $removed_breaking; then
             public_api_level="major"
             public_api_reason="cargo-public-api detected removed public API items"
             public_api_details=$(grep -A 50 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | head -50)
             log_verbose "cargo-public-api: major (removed items)"
-        # Added public items → minor (only when not major).
-        elif grep -q "Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" \
-             && ! grep -A 2 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)"; then
+        elif $changed_breaking; then
+            public_api_level="major"
+            public_api_reason="cargo-public-api detected breaking signature changes"
+            public_api_details=$(head -50 <<< "$changed_section")
+            log_verbose "cargo-public-api: major (changed signatures)"
+        elif $added; then
             public_api_level="minor"
             public_api_reason="cargo-public-api detected new public API items"
             public_api_details=$(grep -A 50 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | head -50)
             log_verbose "cargo-public-api: minor (added items)"
         fi
-
-        # TODO: Improve parsing changed items with an allowlist. Right now is not working because there is some occasions
-        # in which changed items are not a breaking change. Examples:
-        # - Adding #[repr(c)] is not a breaking change (https://doc.rust-lang.org/cargo/reference/semver.html#repr-c-add).
-        # - Removing #[repr(c)] is a breaking change.
     fi
 
     # ----------------------------------------------------------------
