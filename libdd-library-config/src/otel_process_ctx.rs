@@ -3,13 +3,6 @@
 
 //! Implementation of the publisher part of the [OTEL process
 //! context](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
-//!
-//! # A note on race conditions
-//!
-//! Process context sharing implies concurrently writing to a memory area that another process
-//! might be actively reading. However, reading isn't done as direct memory accesses but goes
-//! through the OS, so the Rust definition of race conditions doesn't really apply. We also use
-//! atomics and fences, see MappingHeader's documentation.
 
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]
@@ -17,12 +10,12 @@ pub mod linux {
     use std::{
         ffi::{c_void, CStr},
         fs::File,
-        io::{self, BufRead, BufReader},
-        mem::ManuallyDrop,
+        io::{self, BufRead, BufReader, ErrorKind},
+        mem::{size_of, ManuallyDrop},
         os::fd::{AsRawFd, FromRawFd, OwnedFd},
-        ptr,
+        ptr::{self, NonNull},
         sync::{
-            atomic::{fence, AtomicU64, Ordering},
+            atomic::{fence, AtomicPtr, AtomicU32, AtomicU64, Ordering},
             Mutex, MutexGuard,
         },
         time::Duration,
@@ -50,16 +43,18 @@ pub mod linux {
     /// atomic](https://doc.rust-lang.org/std/sync/atomic/fn.fence.html#mandatory-atomic))
     ///
     /// We use `monotonic_published_at_ns` for synchronization with the reader. `AtomicU64` has the
-    /// same in-memory representation as `u64` and is 8-bytes aligned. The field lands at offset 16
-    /// in the struct (after 8 bytes of signature + 4 bytes version + 4 bytes payload_size), which
-    /// satisfies that alignment on any page-aligned base address.
+    /// same in-memory representation as `u64` and is 8-bytes aligned. `payload_size` and
+    /// `payload_ptr` are atomic too because they are modified while readers may be sampling the
+    /// header. The timestamp field lands at offset 16 in the struct (after 8 bytes of signature +
+    /// 4 bytes version + 4 bytes payload_size), which satisfies that alignment on any
+    /// page-aligned base address.
     #[repr(C)]
     struct MappingHeader {
         signature: [u8; 8],
         version: u32,
-        payload_size: u32,
+        payload_size: AtomicU32,
         monotonic_published_at_ns: AtomicU64,
-        payload_ptr: *const u8,
+        payload_ptr: AtomicPtr<u8>,
     }
 
     // Compile-time verification that MappingHeader matches the field offsets and total size
@@ -73,6 +68,9 @@ pub mod linux {
         assert!(offset_of!(MappingHeader, monotonic_published_at_ns) == 16);
         assert!(offset_of!(MappingHeader, payload_ptr) == 24);
         assert!(size_of::<MappingHeader>() == 32);
+        assert!(core::mem::align_of::<MappingHeader>() == 8);
+        assert!(core::mem::align_of::<AtomicU32>() == core::mem::align_of::<u32>());
+        assert!(core::mem::align_of::<AtomicPtr<u8>>() == core::mem::align_of::<*mut u8>());
     };
 
     /// The shared memory mapped area to publish the context to. The memory region is owned by a
@@ -86,7 +84,7 @@ pub mod linux {
     /// - once `self` has been dropped, no memory access must be performed on the memory previously
     ///   pointed to by `start`.
     struct MemMapping {
-        start_addr: *mut c_void,
+        start_addr: NonNull<c_void>,
     }
 
     // SAFETY: MemMapping represents ownership over the mapped region. It never leaks or
@@ -105,6 +103,8 @@ pub mod linux {
         ///
         /// `memfd` is the preferred method, but this function fallbacks to an anonymous mapping if
         /// `memfd` failed for any reason.
+        ///
+        /// The memory is guaranteed to initialized to zeroes.
         fn new() -> io::Result<Self> {
             let size = mapping_size();
 
@@ -166,7 +166,7 @@ pub mod linux {
                     libc::prctl(
                         libc::PR_SET_VMA,
                         libc::PR_SET_VMA_ANON_NAME as libc::c_ulong,
-                        self.start_addr as libc::c_ulong,
+                        self.start_addr.as_ptr() as libc::c_ulong,
                         mapping_size() as libc::c_ulong,
                         MAPPING_NAME.as_ptr() as libc::c_ulong,
                     )
@@ -204,7 +204,7 @@ pub mod linux {
         unsafe fn unmap(&mut self) -> io::Result<()> {
             check_syscall_retval(
                 // SAFETY: upheld by the caller.
-                unsafe { libc::munmap(self.start_addr, mapping_size()) },
+                unsafe { libc::munmap(self.start_addr.as_ptr(), mapping_size()) },
                 "munmap failed when freeing the process context",
             )?;
 
@@ -223,7 +223,7 @@ pub mod linux {
     struct ProcessContextHandle {
         mapping: MemMapping,
         /// Once published, and until the next update is complete, the backing allocation of
-        /// `payload` might be read by external processes and thus most not move (e.g. by resizing
+        /// `payload` might be read by external processes and thus must not move (e.g. by resizing
         /// or drop).
         #[allow(unused)]
         payload: Vec<u8>,
@@ -237,11 +237,10 @@ pub mod linux {
         fn publish(payload: Vec<u8>) -> io::Result<Self> {
             let mut mapping = MemMapping::new()?;
             let size = mapping_size();
-
             check_syscall_retval(
                 // SAFETY: the invariants of MemMapping ensures `start_addr` is not null and comes
                 // from a previous call to `mmap`
-                unsafe { libc::madvise(mapping.start_addr, size, libc::MADV_DONTFORK) },
+                unsafe { libc::madvise(mapping.start_addr.as_ptr(), size, libc::MADV_DONTFORK) },
                 "madvise MADVISE_DONTFORK failed",
             )?;
 
@@ -249,7 +248,7 @@ pub mod linux {
                 io::Error::other("failed to get current time for process context publication")
             })?;
 
-            let header = mapping.start_addr as *mut MappingHeader;
+            let header = mapping.start_addr.as_ptr() as *mut MappingHeader;
 
             unsafe {
                 // SAFETY: header points to a freshly mmaped region valid for at least
@@ -261,25 +260,20 @@ pub mod linux {
                     MappingHeader {
                         signature: *SIGNATURE,
                         version: PROCESS_CTX_VERSION,
-                        payload_size: payload
-                            .len()
-                            .try_into()
-                            .map_err(|_| io::Error::other("payload size overflowed"))?,
+                        payload_size: AtomicU32::new(
+                            payload
+                                .len()
+                                .try_into()
+                                .map_err(|_| io::Error::other("payload size overflowed"))?,
+                        ),
                         // will be set atomically at last
                         monotonic_published_at_ns: AtomicU64::new(0),
-                        payload_ptr: payload.as_ptr(),
+                        payload_ptr: AtomicPtr::new(payload.as_ptr().cast_mut()),
                     },
                 );
-                // We typically want to avoid the compiler and the hardware to re-order the write
-                // to the `monotonic_published_at_ns` (which should be last according to the
-                // specification) with the writes to other fields of the header.
-                //
-                // To do so, we implement synchronization during publication _as if the reader were
-                // another thread of this program_, using atomics and fences.
-                fence(Ordering::SeqCst);
                 (*header)
                     .monotonic_published_at_ns
-                    .store(published_at_ns, Ordering::Relaxed);
+                    .store(published_at_ns, Ordering::Release);
             }
 
             // Note that naming must be unconditionally attempted, even on kernels where we might
@@ -298,41 +292,46 @@ pub mod linux {
 
         /// Updates the context after initial publication.
         fn update(&mut self, payload: Vec<u8>) -> io::Result<()> {
-            let header = self.mapping.start_addr as *mut MappingHeader;
+            let header = self.mapping.start_addr.as_ptr() as *mut MappingHeader;
 
             let monotonic_published_at_ns = since_boottime_ns()
                 .ok_or_else(|| io::Error::other("could not get the current timestamp"))?;
             let payload_size = payload.len().try_into().map_err(|_| {
                 io::Error::other("couldn't update process context: new payload too large")
             })?;
-
-            // SAFETY: the mapping is live and valid; the header pointer is page-aligned which
-            // satisfies AtomicU64's alignment.
-            let published_at_atomic = unsafe { &(*header).monotonic_published_at_ns };
-
             // A process shouldn't try to concurrently update its own context
             //
             // Note: be careful of early return while `monotonic_published_at` is still zero, as
             // this would effectively "lock" any future publishing. Move throwing code above this
             // swap, or properly restore the previous value if the former can't be done.
-            if published_at_atomic.swap(0, Ordering::Relaxed) == 0 {
+            // SAFETY: the mapping is live and valid; the timestamp field is atomic and aligned.
+            let published_at_atomic = unsafe { &(*header).monotonic_published_at_ns };
+            let previous_published_at_ns = published_at_atomic.swap(0, Ordering::Acquire);
+            if previous_published_at_ns == 0 {
                 return Err(io::Error::other(
                     "concurrent update of the process context is not supported",
                 ));
             }
 
-            fence(Ordering::SeqCst);
+            // The timestamp also acts as the seqlock version, so it must advance even if the
+            // clock source returns the same value for two rapid updates.
+            let monotonic_published_at_ns =
+                monotonic_published_at_ns.max(previous_published_at_ns.saturating_add(1));
+
+            fence(Ordering::Release);
             self.payload = payload;
 
-            // SAFETY: we own the mapping, which is live and valid for writes. The header is packed
-            // and thus has no alignment constraints.
+            // SAFETY: the mapping is live and valid; the changeable fields are atomic and aligned.
             unsafe {
-                (*header).payload_ptr = self.payload.as_ptr();
-                (*header).payload_size = payload_size;
+                (*header)
+                    .payload_ptr
+                    .store(self.payload.as_ptr().cast_mut(), Ordering::Relaxed);
+                (*header)
+                    .payload_size
+                    .store(payload_size, Ordering::Relaxed);
             }
 
-            fence(Ordering::SeqCst);
-            published_at_atomic.store(monotonic_published_at_ns, Ordering::Relaxed);
+            published_at_atomic.store(monotonic_published_at_ns, Ordering::Release);
 
             Ok(())
         }
@@ -340,12 +339,13 @@ pub mod linux {
 
     /// Returns `Err` wrapping the current `errno` with `msg` as context if `addr` equals
     /// `MAP_FAILED`, `Ok(addr)` otherwise.
-    fn check_mapping_addr(addr: *mut c_void, msg: &'static str) -> io::Result<*mut c_void> {
+    fn check_mapping_addr(addr: *mut c_void, msg: &'static str) -> io::Result<NonNull<c_void>> {
         if addr == libc::MAP_FAILED {
             let e = io::Error::last_os_error();
             Err(io::Error::new(e.kind(), format!("{msg}: {e}")))
         } else {
-            Ok(addr)
+            // SAFETY: mmap returns a non-null pointer on success.
+            Ok(unsafe { NonNull::new_unchecked(addr) })
         }
     }
 
@@ -377,7 +377,7 @@ pub mod linux {
     }
 
     // The returned size is guaranteed to be larger or equal to the size of `MappingHeader`.
-    fn mapping_size() -> usize {
+    const fn mapping_size() -> usize {
         size_of::<MappingHeader>()
     }
 
@@ -420,6 +420,9 @@ pub mod linux {
             return false;
         };
 
+        // The spec says:
+        // 1. **Locate mapping**: Parse `/proc/<pid>/maps` and search for entries with name
+        // **starting with** `[anon_shmem:OTEL_CTX]`, `[anon:OTEL_CTX]` or `/memfd:OTEL_CTX`.
         name.starts_with("/memfd:OTEL_CTX")
             || name.starts_with("[anon_shmem:OTEL_CTX]")
             || name.starts_with("[anon:OTEL_CTX]")
@@ -441,80 +444,138 @@ pub mod linux {
         }
 
         Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "couldn't find the mapping of the OTel process context",
+            ErrorKind::NotFound,
+            "couldn't find the mapping of the process context",
         ))
     }
 
     /// Reads and decodes the current process's OTel process context.
     pub fn read() -> io::Result<ProcessContext> {
         let mapping_addr = find_otel_mapping()?;
-        let header: *mut MappingHeader = ptr::with_exposed_provenance_mut(mapping_addr);
+        let header_ptr: *const MappingHeader = ptr::with_exposed_provenance(mapping_addr);
 
         // SAFETY: we're reading from our own process memory at an address we found in
         // /proc/self/maps. The mapping must be readable if it is listed as the OTel context.
-        let published_at = unsafe { (*header).monotonic_published_at_ns.load(Ordering::Relaxed) };
+        let header = unsafe {
+            if header_ptr.is_null() {
+                return Err(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "null process context header",
+                ));
+            }
+            &*header_ptr
+        };
+
+        let published_at = header.monotonic_published_at_ns.load(Ordering::Acquire);
         if published_at == 0 {
             return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
+                ErrorKind::WouldBlock,
                 "process context is currently being updated",
             ));
         }
-        fence(Ordering::SeqCst);
 
-        let (signature, version, payload_size, payload_ptr) =
-            // SAFETY: a non-zero published timestamp means the header is initialized.
-            if let Some(header) = unsafe { header.as_ref() } {
-                (
-                    header.signature,
-                    header.version,
-                    header.payload_size,
-                    header.payload_ptr,
-                )
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "null process context header",
-                ));
-            };
+        // `signature` and `version` are immutable after the mapping becomes discoverable,
+        // so there is no change of races that would be UB. The seqlock-controlled fields
+        // must be loaded atomically because they can change during an update.
+        // The payload pointed to payload_ptr is also immutable, but it's irrelevant for the
+        // memory model because it's read with process_vm_readv().
+        let signature = header.signature;
+        let version = header.version;
 
         if signature != *SIGNATURE {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                ErrorKind::InvalidData,
                 "invalid signature in process context mapping",
             ));
         }
         if version != PROCESS_CTX_VERSION {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                ErrorKind::InvalidData,
                 format!("unsupported process context version {version}"),
             ));
         }
+
+        let payload_size = header.payload_size.load(Ordering::Relaxed);
+        let payload_ptr = header.payload_ptr.load(Ordering::Relaxed).cast_const();
+
         if payload_ptr.is_null() {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                ErrorKind::InvalidData,
                 "process context payload pointer is null",
             ));
         }
 
-        // SAFETY: the publisher stores a pointer to `payload_size` initialized bytes and keeps that
-        // allocation alive until the next update. The timestamp check below detects concurrent
-        // updates and discards the read.
-        let payload = unsafe { std::slice::from_raw_parts(payload_ptr, payload_size as usize) };
-        let context = ProcessContext::decode(payload)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let payload_bytes = read_process_memory(
+            unsafe { libc::getpid() },
+            payload_ptr,
+            payload_size as usize,
+        )?;
 
-        fence(Ordering::SeqCst);
-        let published_at_after =
-            unsafe { (*header).monotonic_published_at_ns.load(Ordering::Relaxed) };
+        // pairs with the first release fence on update() to ensure that, if we read data updated
+        // after the initial published time, we at least see the published time being set to 0 in
+        // the next load of the published time (or we could see a later time rather than 0)
+        fence(Ordering::Acquire);
+
+        let published_at_after = header.monotonic_published_at_ns.load(Ordering::Acquire);
         if published_at != published_at_after {
             return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
+                ErrorKind::WouldBlock,
                 "process context changed while being read",
             ));
         }
 
+        let context = ProcessContext::decode(payload_bytes.as_slice())
+            .map_err(|err| io::Error::new(ErrorKind::InvalidData, err))?;
+
         Ok(context)
+    }
+
+    /// Reads `len` bytes from `addr` in the address space of `pid` via `process_vm_readv(2)`.
+    ///
+    /// Returns [`ErrorKind::WouldBlock`] when the remote memory is no longer mapped or only
+    /// partially readable. The kernel reports the former as [`libc::EFAULT`] from
+    /// `pin_user_pages_remote()` and the latter as a short read (see `process_vm_rw_core()` in
+    /// `mm/process_vm_access.c`).
+    fn read_process_memory(pid: libc::pid_t, addr: *const u8, len: usize) -> io::Result<Vec<u8>> {
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut buf = vec![0u8; len];
+        let local_iov = libc::iovec {
+            iov_base: buf.as_mut_ptr().cast(),
+            iov_len: len,
+        };
+        let remote_iov = libc::iovec {
+            iov_base: addr.cast_mut().cast(),
+            iov_len: len,
+        };
+
+        // SAFETY: `buf` and `addr` each span `len` bytes for the duration of the syscall.
+        let nbytes = unsafe { libc::process_vm_readv(pid, &local_iov, 1, &remote_iov, 1, 0) };
+
+        if nbytes < 0 {
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EFAULT) {
+                return Err(io::Error::new(
+                    ErrorKind::WouldBlock,
+                    "process context payload was unmapped during read",
+                ));
+            }
+            return Err(io::Error::new(
+                err.kind(),
+                format!("failed to read process context payload: {err}"),
+            ));
+        }
+
+        if nbytes as usize != len {
+            return Err(io::Error::new(
+                ErrorKind::WouldBlock,
+                "incomplete read of process context payload",
+            ));
+        }
+
+        Ok(buf)
     }
 
     fn string_array(value: &AnyValue) -> Option<Vec<String>> {
@@ -630,7 +691,15 @@ pub mod linux {
         use std::io;
         use std::sync::atomic::Ordering;
 
-        use super::MappingHeader;
+        use super::{any_value, AnyValue, KeyValue, MappingHeader, ProcessContext};
+
+        struct MappingHeaderSnapshot {
+            signature: [u8; 8],
+            version: u32,
+            payload_size: u32,
+            monotonic_published_at_ns: u64,
+            payload_ptr: *const u8,
+        }
 
         /// Read the process context from the current process.
         ///
@@ -640,11 +709,39 @@ pub mod linux {
         /// functions it relies on, are specialized for tests (for example, it doesn't check for
         /// concurrent writers after reading the header, because we know they can't be). Do not
         /// extract or use as it is as a generic Rust OTel process context reader.
-        fn read_process_context() -> io::Result<MappingHeader> {
+        fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
             let mapping_addr = super::find_otel_mapping()?;
             let header_ptr: *const MappingHeader = std::ptr::with_exposed_provenance(mapping_addr);
             // SAFETY: the mapping was published by this test before being read.
-            Ok(unsafe { std::ptr::read(header_ptr) })
+            let header = unsafe { &*header_ptr };
+            Ok(MappingHeaderSnapshot {
+                signature: header.signature,
+                version: header.version,
+                payload_size: header.payload_size.load(Ordering::Relaxed),
+                monotonic_published_at_ns: header.monotonic_published_at_ns.load(Ordering::Relaxed),
+                payload_ptr: header.payload_ptr.load(Ordering::Relaxed).cast_const(),
+            })
+        }
+
+        #[test]
+        #[cfg_attr(miri, ignore)]
+        fn publish_then_read_process_context() {
+            let context = ProcessContext {
+                resource: None,
+                extra_attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("checkout".to_string())),
+                    }),
+                    key_ref: 0,
+                }],
+            };
+
+            super::publish(&context).expect("couldn't publish the process context");
+            let read_context = super::read().expect("couldn't read back the process context");
+            super::unpublish().expect("couldn't unpublish the context");
+
+            assert!(read_context == context, "read back a different context");
         }
 
         #[test]
@@ -673,12 +770,12 @@ pub mod linux {
                 "wrong payload size"
             );
             assert!(
-                header.monotonic_published_at_ns.load(Ordering::Relaxed) > 0,
+                header.monotonic_published_at_ns > 0,
                 "monotonic_published_at_ns is zero"
             );
             assert!(read_payload == payload_v1.as_bytes(), "payload mismatch");
 
-            let published_at_ns_v1 = header.monotonic_published_at_ns.load(Ordering::Relaxed);
+            let published_at_ns_v1 = header.monotonic_published_at_ns;
             // Ensure the clock advances so the updated timestamp is strictly greater
             std::thread::sleep(std::time::Duration::from_nanos(10));
 
@@ -702,7 +799,7 @@ pub mod linux {
                 "wrong payload size"
             );
             assert!(
-                header.monotonic_published_at_ns.load(Ordering::Relaxed) > published_at_ns_v1,
+                header.monotonic_published_at_ns > published_at_ns_v1,
                 "published_at_ns should be strictly greater after update"
             );
             assert!(read_payload == payload_v2.as_bytes(), "payload mismatch");
