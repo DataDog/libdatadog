@@ -185,10 +185,6 @@ fn add_path(url: &Uri, path: &str) -> Uri {
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
 /// Handles for the background workers owned by a [`TraceExporter`].
-///
-/// Stored on both native and wasm so the JS host can drive symmetric shutdown
-/// via [`TraceExporter::shutdown_async`]. On native this drives the tokio
-/// workers; on wasm it drives the `LocalRuntime` worker entries.
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
     /// `None` when no background `/info` fetcher is started (agentless trace

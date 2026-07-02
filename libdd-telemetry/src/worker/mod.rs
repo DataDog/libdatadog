@@ -318,9 +318,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 return TelemetryActions::Lifecycle(deadline_action);
             };
 
-            // Runtime-agnostic timeout: race the mailbox against a capability-driven sleep
-            // instead of `tokio::time::timeout_at`, which requires a tokio reactor (not
-            // available on wasm where we run on the JS event loop).
             let sleeper = <C as SleepCapability>::new();
             tokio::select! {
                 biased;
@@ -846,9 +843,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             "Sending HTTP request"
         );
 
-        // Runtime-agnostic timeout: race the request against a capability-driven sleep,
-        // mirroring `agent_info::fetcher::fetch_and_hash_response`. Same pattern, same
-        // reason: `tokio::time::sleep` needs a tokio reactor that wasm doesn't provide.
         let sleeper = <C as SleepCapability>::new();
         tokio::select! {
             _ = self.cancellation_token.cancelled() => {
@@ -1160,11 +1154,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
     }
 
     /// Schedule a deferred `CancellationToken::cancel()` to fire after `deadline`.
-    ///
-    /// Capability-driven sleep so the same code path works on native (tokio
-    /// reactor) and wasm (JS `setTimeout` via [`SleepCapability`]). The spawn
-    /// mechanism is platform-specific but the public API and observable
-    /// behavior are identical.
     pub fn cancel_requests_with_deadline(&self, deadline: time::Instant) {
         let token = self.cancellation_token.clone();
         let remaining = deadline.saturating_duration_since(time::Instant::now());
@@ -1436,11 +1425,6 @@ impl TelemetryWorkerBuilder {
     }
 
     /// Spawns a telemetry worker task in the current tokio runtime.
-    ///
-    /// Native-only convenience entry point. Wasm callers should construct via
-    /// [`Self::build_worker`] and hand the worker to a
-    /// [`SharedRuntime`](libdd_shared_runtime::SharedRuntime) like
-    /// `LocalRuntime`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
@@ -1455,9 +1439,6 @@ impl TelemetryWorkerBuilder {
     }
 
     /// Spawns a telemetry worker in a new thread and returns a handle to interact with it.
-    ///
-    /// Native-only convenience entry point; spawning a fresh tokio runtime is not
-    /// meaningful on wasm.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn run<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
         self,
