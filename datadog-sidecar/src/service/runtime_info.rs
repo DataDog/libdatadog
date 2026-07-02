@@ -133,6 +133,8 @@ impl ActiveApplication {
         &mut self,
         remote_configs: &RemoteConfigs,
         session: &SessionInfo,
+        instance_id: InstanceId,
+        remote_config_generation: u64,
         notify_target: RemoteConfigNotifyTarget,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
     ) {
@@ -142,6 +144,9 @@ impl ActiveApplication {
             .expect("Expecting remote config invariants to be set early")
             .clone();
 
+        // Target is hashed on the sidecar side and on the PHP read side
+        // (sidecar.c:ddog_remote_configs_service_env_change). PHP passes the
+        // bare process_tags Vec, so we must too — otherwise SHM lookups miss.
         let process_tags = session.process_tags.lock_or_panic().clone();
 
         if *session.remote_config_enabled.lock_or_panic() {
@@ -149,7 +154,8 @@ impl ActiveApplication {
                 remote_configs.add_runtime(
                     options,
                     *session.remote_config_interval.lock_or_panic(),
-                    session.session_id.clone(),
+                    instance_id,
+                    remote_config_generation,
                     notify_target,
                     self.env.clone().expect("set_metadata was called before"),
                     self.service_name

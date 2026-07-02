@@ -3,6 +3,7 @@
 
 //! Defines a pausable worker to be able to stop background processes before forks
 
+use crate::weak_waker::WeakWakerFuture;
 use crate::worker::Worker;
 use core::pin::Pin;
 use libdd_capabilities::spawn::SpawnError;
@@ -96,8 +97,8 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
     /// Start the worker using the given spawn function.
     ///
     /// The worker's main loop will be spawned via the provided closure.
-    /// `SharedRuntime` constructs the appropriate platform-specific closure
-    /// (tokio on native, spawn_local on wasm).
+    /// `SharedRuntime` implementations construct the appropriate platform-specific
+    /// closure (tokio on native, spawn_local on wasm).
     pub fn start(
         &mut self,
         spawn_fn: impl FnOnce(WorkerFuture<T>) -> WorkerJoinHandle<T>,
@@ -116,13 +117,18 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                 let stop_token = CancellationToken::new();
                 let cloned_token = stop_token.clone();
                 let future = Box::pin(async move {
-                    // First iteration using initial_trigger
+                    // First iteration using initial_trigger.
+                    //
+                    // `trigger`/`initial_trigger` are wrapped with [`WeakWakerFuture::new`] so the
+                    // waker handed out to the worker (and potentially shared with code
+                    // outside of this runtime, e.g. the non-runtime end of a channel) does
+                    // not keep the runtime scheduler alive after this task is dropped.
                     select! {
                         biased;
                         _ = cloned_token.cancelled() => {
                             return worker;
                         }
-                        _ = worker.initial_trigger() => {
+                        _ = WeakWakerFuture::new(worker.initial_trigger()) => {
                             worker.run().await;
                         }
                     }
@@ -134,7 +140,7 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                             _ = cloned_token.cancelled() => {
                                 break;
                             }
-                            _ = worker.trigger() => {
+                            _ = WeakWakerFuture::new(worker.trigger()) => {
                                 worker.run().await;
                             }
                         }
@@ -170,9 +176,8 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                     stop_token.cancel();
                 }
 
-                if let Ok(mut worker) = handle.await {
+                if let Ok(worker) = handle.await {
                     debug!(?worker, "Worker paused successfully");
-                    worker.on_pause().await;
                     *self = PausableWorker::Paused { worker };
                     Ok(())
                 } else {

@@ -240,12 +240,11 @@ pub fn decode_to_trace_chunks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span::v04::SpanBytes;
+    use crate::span::v04::{SpanBytes, VecMap};
     use crate::test_utils::create_test_no_alloc_span;
     use libdd_tinybytes::BytesString;
     use libdd_trace_protobuf::pb;
     use serde_json::json;
-    use std::collections::HashMap;
 
     fn create_dummy_collection_v07() -> TracerPayloadCollection {
         TracerPayloadCollection::V07(vec![pb::TracerPayload {
@@ -265,6 +264,7 @@ mod tests {
             env: "".to_string(),
             hostname: "".to_string(),
             app_version: "".to_string(),
+            container_debug: None,
         }])
     }
 
@@ -362,9 +362,9 @@ mod tests {
             start: 1,
             duration: 5,
             error: 0,
-            meta: HashMap::new(),
-            metrics: HashMap::new(),
-            meta_struct: HashMap::new(),
+            meta: VecMap::new(),
+            metrics: VecMap::new(),
+            meta_struct: VecMap::new(),
             r#type: BytesString::from_slice("serverless".as_ref()).unwrap(),
             span_links: vec![],
             span_events: vec![],
@@ -395,9 +395,9 @@ mod tests {
             start: 1,
             duration: 5,
             error: 1,
-            meta: HashMap::new(),
-            metrics: HashMap::new(),
-            meta_struct: HashMap::new(),
+            meta: VecMap::new(),
+            metrics: VecMap::new(),
+            meta_struct: VecMap::new(),
             r#type: BytesString::default(),
             span_links: vec![],
             span_events: vec![],

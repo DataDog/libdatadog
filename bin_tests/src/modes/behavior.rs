@@ -140,6 +140,13 @@ pub fn get_behavior(mode_str: &str) -> Box<dyn Behavior> {
         "errno_preservation" => Box::new(test_016_errno_preservation::Test),
         "multi_thread_collection" => Box::new(test_017_multi_thread_collection::Test),
         "thread_limit" => Box::new(test_018_thread_limit::Test),
+        "sidecar_donothing" => Box::new(test_019_sidecar_donothing::Test),
+        "sidecar_multi_thread_collection" => {
+            Box::new(test_020_sidecar_multi_thread_collection::Test)
+        }
+        "unhandled_exception_multi_thread" => {
+            Box::new(test_021_unhandled_exception_multi_thread::Test)
+        }
         "runtime_preload_logger" => Box::new(test_000_donothing::Test),
         _ => panic!("Unknown mode: {mode_str}"),
     }

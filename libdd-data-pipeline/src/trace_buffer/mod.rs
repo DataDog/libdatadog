@@ -13,8 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_shared_runtime::Worker;
+use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
+use libdd_shared_runtime::{SharedRuntime, Worker};
 
 use crate::trace_exporter::{
     agent_response::AgentResponse, error::TraceExporterError, TraceExporter,
@@ -42,13 +42,16 @@ where
         size += self.resource.as_ref().len();
         size += self.r#type.as_ref().len();
 
-        for (k, v) in &self.meta {
+        // We expect VecMaps to be already deduped at this point, so `defensive_dedup` should be
+        // cheap (and alloc-free). In the future we could relax the check and accept non-deduped
+        // VecMap, trading over-estimating the size of a span for less work.
+        for (k, v) in self.meta.defensive_dedup().iter() {
             size += k.as_ref().len() + v.as_ref().len();
         }
-        for k in self.metrics.keys() {
+        for (k, _) in self.metrics.defensive_dedup().iter() {
             size += k.as_ref().len() + 8;
         }
-        for (k, v) in &self.meta_struct {
+        for (k, v) in self.meta_struct.defensive_dedup().iter() {
             size += k.as_ref().len() + v.as_ref().len();
         }
         for link in &self.span_links {
@@ -640,18 +643,28 @@ pub trait Export<T>: Send + Debug {
 }
 
 #[derive(Debug)]
-pub struct DefaultExport<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
-    trace_exporter: TraceExporter<C>,
+pub struct DefaultExport<C, R>
+where
+    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
+{
+    trace_exporter: TraceExporter<C, R>,
 }
 
-impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> DefaultExport<C> {
-    pub fn new(trace_exporter: TraceExporter<C>) -> Self {
+impl<C, R> DefaultExport<C, R>
+where
+    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
+{
+    pub fn new(trace_exporter: TraceExporter<C, R>) -> Self {
         Self { trace_exporter }
     }
 }
 
-impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
-    Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C>
+impl<C, R> Export<libdd_trace_utils::span::v04::SpanBytes> for DefaultExport<C, R>
+where
+    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime + std::fmt::Debug + Send + Sync + 'static,
 {
     fn export_trace_chunks(
         &mut self,
@@ -778,7 +791,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use libdd_shared_runtime::SharedRuntime;
+    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
 
     use crate::trace_buffer::{BufferSize, Export, TraceBuffer, TraceBufferConfig};
     use crate::trace_exporter::agent_response::AgentResponse;
@@ -825,11 +838,11 @@ mod tests {
         assert_export: Box<dyn FnMut(Vec<Vec<()>>) + Send + Sync>,
         cfg: TraceBufferConfig,
     ) -> (
-        Arc<SharedRuntime>,
+        Arc<ForkSafeRuntime>,
         Arc<tokio::sync::Semaphore>,
         TraceBuffer<()>,
     ) {
-        let rt = Arc::new(SharedRuntime::new().unwrap());
+        let rt = Arc::new(ForkSafeRuntime::new().unwrap());
         let sem: Arc<tokio::sync::Semaphore> = Arc::new(tokio::sync::Semaphore::new(0));
         let (sender, worker) = TraceBuffer::new(
             cfg,

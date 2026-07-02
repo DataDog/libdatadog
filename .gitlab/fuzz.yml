@@ -24,7 +24,7 @@ fuzz:
     - VAULT_VERSION=1.15.4 && curl -fsSL "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip" -o vault.zip && unzip vault.zip && mv vault /usr/local/bin/vault && rm vault.zip && chmod +x /usr/local/bin/vault
     - NIGHTLY_VERSION=$(awk -F'"' '/^channel[[:space:]]*=/ {print $2}' nightly-toolchain.toml)
     - rustup default "$NIGHTLY_VERSION"
-    - cargo install cargo-fuzz
+    - cargo +"$NIGHTLY_VERSION" install cargo-fuzz --locked
     - pip3 install requests toml
     - python3 fuzz/fuzz_infra.py
   allow_failure: true

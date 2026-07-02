@@ -60,7 +60,7 @@ use libdd_trace_stats::span_concentrator::{FixedAggregationKey, FlushableConcent
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 
-const SHM_VERSION: u32 = 1;
+const SHM_VERSION: u32 = 2;
 
 /// Maximum peer-tag (key, value) pairs per aggregation slot.
 pub const MAX_PEER_TAGS: usize = 16;
@@ -805,11 +805,7 @@ impl ShmSpanConcentrator {
             top_level_hits,
             span_kind: read_str!(f.span_kind),
             peer_tags,
-            is_trace_root: if f.is_trace_root {
-                pb::Trilean::True.into()
-            } else {
-                pb::Trilean::False.into()
-            },
+            is_trace_root: f.is_trace_root.into(),
             http_method: read_str!(f.http_method),
             http_endpoint: read_str!(f.http_endpoint),
             grpc_status_code: f
@@ -818,13 +814,14 @@ impl ShmSpanConcentrator {
                 .unwrap_or_default(),
             service_source: read_str!(f.service_source),
             span_derived_primary_tags: vec![],
+            additional_metric_tags: vec![],
         }
     }
 }
 
 impl FlushableConcentrator for ShmSpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket> {
-        self.drain_buckets(force)
+    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64) {
+        (self.drain_buckets(force), 0)
     }
 }
 
@@ -856,7 +853,7 @@ mod tests {
                 service_source: "",
                 http_status_code: 200,
                 is_synthetics_request: false,
-                is_trace_root: true,
+                is_trace_root: pb::Trilean::True,
                 grpc_status_code: None,
             },
             peer_tags: &[],

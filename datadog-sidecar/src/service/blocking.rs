@@ -35,6 +35,19 @@ pub struct SidecarTransport {
 }
 
 impl SidecarTransport {
+    /// Returns the PID of the remote peer (the sidecar/daemon process).
+    ///
+    /// Uses the platform's peer credential mechanism (SO_PEERCRED on Linux,
+    /// LOCAL_PEERPID on macOS) on the underlying IPC socket.
+    pub fn peer_pid(&self) -> io::Result<u32> {
+        let sender = self
+            .inner
+            .lock()
+            .map_err(|e| io::Error::other(format!("Failed to lock transport: {e}")))?;
+        let creds = sender.channel.0.conn.peer_credentials()?;
+        Ok(creds.pid)
+    }
+
     pub fn reconnect<F>(&mut self, factory: F)
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
@@ -258,6 +271,22 @@ pub fn set_session_process_tags(
     Ok(())
 }
 
+pub fn set_session_default_service_name(
+    transport: &mut SidecarTransport,
+    name: Option<String>,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_default_service_name(name);
+    Ok(())
+}
+
+pub fn set_session_user_service_defined(
+    transport: &mut SidecarTransport,
+    is_defined: bool,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_user_service_defined(is_defined);
+    Ok(())
+}
+
 /// Sends a trace as bytes.
 pub fn send_trace_v04_bytes(
     transport: &mut SidecarTransport,
@@ -375,6 +404,7 @@ pub fn set_universal_service_tags(
     app_version: String,
     global_tags: Vec<Tag>,
     dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+    remote_config_generation: u64,
 ) -> io::Result<()> {
     lock_sender(transport)?.set_universal_service_tags(
         instance_id.clone(),
@@ -384,6 +414,7 @@ pub fn set_universal_service_tags(
         app_version,
         global_tags,
         dynamic_instrumentation_state,
+        remote_config_generation,
     );
     Ok(())
 }
@@ -504,5 +535,24 @@ mod tests {
         assert!(!transport.is_closed());
         drop(transport);
         drop(listener);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_peer_pid_returns_current_process() {
+        let tmpdir = tempdir().unwrap();
+        let socket_path = tmpdir.path().join("test_peer_pid.sock");
+
+        let listener = SeqpacketListener::bind(&socket_path).expect("Cannot bind");
+        let conn = SeqpacketConn::connect(&socket_path).unwrap();
+        let _server_conn = listener.try_accept().expect("try_accept");
+
+        let transport = SidecarTransport::from(conn);
+        let pid = transport.peer_pid().expect("peer_pid should succeed");
+        assert_eq!(
+            pid,
+            std::process::id(),
+            "peer_pid should be our own PID for a loopback connection"
+        );
     }
 }

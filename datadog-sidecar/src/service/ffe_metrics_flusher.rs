@@ -14,21 +14,6 @@ use tracing::{debug, warn};
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
 
-/// Build an `Endpoint` for an OTLP metrics intake from a fully-qualified URL.
-///
-/// Production callers supply the URL via the FFI (typically the value of
-/// `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`; the OpenTelemetry spec default is
-/// `http://localhost:4318/v1/metrics`).
-/// Returns `None` if the URL is unparseable. The OTLP endpoint is unrelated
-/// to the Agent base, so we don't preserve any session fields here.
-pub(crate) fn otlp_metrics_endpoint(url: &str) -> Option<Endpoint> {
-    let url = url.parse().ok()?;
-    Some(Endpoint {
-        url,
-        ..Endpoint::default()
-    })
-}
-
 /// POST structured FFE metric events as OTLP/protobuf to the configured intake.
 /// Fire-and-forget: non-2xx responses and network errors are logged and
 /// dropped (matches dd-trace-go/py OTLP exporter behavior).
@@ -140,8 +125,10 @@ mod tests {
             })
             .await;
 
-        let url = server.url("/v1/metrics");
-        let ep = otlp_metrics_endpoint(&url).unwrap();
+        let ep = Endpoint {
+            url: server.url("/v1/metrics").parse().unwrap(),
+            ..Endpoint::default()
+        };
         let client = NativeCapabilities::new_client();
 
         send_metrics(
@@ -168,8 +155,10 @@ mod tests {
             })
             .await;
 
-        let url = server.url("/v1/metrics");
-        let ep = otlp_metrics_endpoint(&url).unwrap();
+        let ep = Endpoint {
+            url: server.url("/v1/metrics").parse().unwrap(),
+            ..Endpoint::default()
+        };
         let client = NativeCapabilities::new_client();
         send_metrics(
             &client,
@@ -195,18 +184,6 @@ mod tests {
             vec![metric("flag", "variant", "TARGETING_MATCH")],
         )
         .await;
-    }
-
-    #[test]
-    fn default_endpoint_is_parseable() {
-        let ep = otlp_metrics_endpoint("http://localhost:4318/v1/metrics").unwrap();
-        assert_eq!(ep.url.scheme_str(), Some("http"));
-        assert_eq!(ep.url.path(), "/v1/metrics");
-    }
-
-    #[test]
-    fn invalid_url_returns_none() {
-        assert!(otlp_metrics_endpoint("not a url").is_none());
     }
 
     #[derive(Clone, Debug)]

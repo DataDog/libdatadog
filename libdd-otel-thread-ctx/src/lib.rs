@@ -64,6 +64,9 @@
 //! `atomic_signal_fence`) to keep field writes boxed between the `valid = 0` and `valid = 1`
 //! stores during in-place updates.
 
+#[cfg(all(target_os = "linux", feature = "sanity-check"))]
+pub mod sanity_check;
+
 #[cfg(target_os = "linux")]
 pub mod linux {
     use std::{
@@ -429,15 +432,13 @@ pub mod linux {
                     compiler_fence(Ordering::SeqCst);
                     current.valid.store(1, Ordering::Relaxed);
                 } else {
+                    let ctxt = ThreadContext::new(trace_id, span_id, local_root_span_id, attrs)
+                        .into_ptr()
+                        .as_ptr();
                     // No need for `AcqRel`, see [^tls-slot-ordering].
                     compiler_fence(Ordering::Release);
                     // `ThreadContext::new` already initialises `valid = 1`.
-                    let _ = Self::swap(
-                        slot,
-                        ThreadContext::new(trace_id, span_id, local_root_span_id, attrs)
-                            .into_ptr()
-                            .as_ptr(),
-                    );
+                    let _ = Self::swap(slot, ctxt);
                 }
             })
         }

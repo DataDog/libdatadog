@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::send_data::SendData;
-use crate::span::v04::SpanBytes;
+use crate::span::v04::{SpanBytes, VecMap};
 use crate::span::{v05, SharedDictBytes};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
@@ -43,7 +43,7 @@ pub fn create_test_no_alloc_span(
         start,
         duration: 5,
         error: 0,
-        meta: HashMap::from([
+        meta: vec![
             (
                 BytesString::from_slice("service".as_ref()).unwrap(),
                 BytesString::from_slice("test-service".as_ref()).unwrap(),
@@ -56,10 +56,11 @@ pub fn create_test_no_alloc_span(
                 BytesString::from_slice("runtime-id".as_ref()).unwrap(),
                 BytesString::from_slice("test-runtime-id-value".as_ref()).unwrap(),
             ),
-        ]),
-        metrics: HashMap::new(),
+        ]
+        .into(),
+        metrics: VecMap::new(),
         r#type: BytesString::default(),
-        meta_struct: HashMap::new(),
+        meta_struct: VecMap::new(),
         span_links: vec![],
         span_events: vec![],
     };
@@ -497,6 +498,7 @@ pub fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
         env: "test".to_owned(),
         hostname: "test_host".to_owned(),
         app_version: "2.0".to_owned(),
+        container_debug: None,
     };
 
     SendData::new(

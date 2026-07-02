@@ -318,6 +318,7 @@ pub(crate) fn construct_tracer_payload(
         language_version: tracer_tags.lang_version.to_string(),
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),
+        container_debug: None,
     }
 }
 
@@ -331,6 +332,7 @@ pub(crate) fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayloa
         .then(a.runtime_id.cmp(&b.runtime_id))
         .then(a.env.cmp(&b.env))
         .then(a.app_version.cmp(&b.app_version))
+        .then(a.container_debug.cmp(&b.container_debug))
 }
 
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
@@ -381,10 +383,7 @@ pub fn get_root_span_index(trace: &[pb::Span]) -> anyhow::Result<usize> {
         }
     }
 
-    let mut span_ids: HashSet<u64> = HashSet::with_capacity(trace.len());
-    for span in trace.iter() {
-        span_ids.insert(span.span_id);
-    }
+    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id).collect();
 
     let mut root_span_id = None;
     for (i, span) in trace.iter().enumerate() {
@@ -424,19 +423,19 @@ pub fn compute_top_level_span(trace: &mut [pb::Span]) {
     }
     for span in trace.iter_mut() {
         if span.parent_id == 0 {
-            set_top_level_span(span, true);
+            set_top_level_span(span);
             continue;
         }
         match span_id_to_service.get(&span.parent_id) {
             Some(parent_span_service) => {
                 if !parent_span_service.eq(&span.service) {
                     // parent is not in the same service
-                    set_top_level_span(span, true)
+                    set_top_level_span(span)
                 }
             }
             None => {
                 // span has no parent in chunk
-                set_top_level_span(span, true)
+                set_top_level_span(span)
             }
         }
     }
@@ -450,12 +449,8 @@ pub fn has_top_level(span: &pb::Span) -> bool {
         || span.metrics.get(TOP_LEVEL_KEY).is_some_and(|v| *v == 1.0)
 }
 
-fn set_top_level_span(span: &mut pb::Span, is_top_level: bool) {
-    if is_top_level {
-        span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
-    } else {
-        span.metrics.remove(TOP_LEVEL_KEY);
-    }
+fn set_top_level_span(span: &mut pb::Span) {
+    span.metrics.insert(TOP_LEVEL_KEY.to_string(), 1.0);
 }
 
 pub fn set_serverless_root_span_tags(
@@ -749,6 +744,7 @@ mod tests {
                     env: "".to_string(),
                     hostname: "".to_string(),
                     app_version: "".to_string(),
+                    container_debug: None,
                 }]),
                 TracerHeaderTags::default(),
                 &Endpoint::default(),

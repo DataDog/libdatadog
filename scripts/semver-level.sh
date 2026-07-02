@@ -103,21 +103,21 @@ compute_semver_results() {
         log_verbose "cargo-semver-checks: no violations"
         semver_level="none"
     elif [[ $SEMVER_EXIT_CODE -eq 1 ]]; then
-        if echo "$SEMVER_OUTPUT" | grep -qE "Summary semver requires new major version"; then
+        if grep -qE "Summary semver requires new major version" <<< "$SEMVER_OUTPUT"; then
             semver_level="major"
             semver_reason="cargo-semver-checks detected breaking changes"
-            semver_details=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
+            semver_details=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
             log_verbose "cargo-semver-checks: major"
-        elif echo "$SEMVER_OUTPUT" | grep -qF "package \`$crate\` not found"; then
+        elif grep -qF "package \`$crate\` not found" <<< "$SEMVER_OUTPUT"; then
             # The crate doesn't exist in the baseline — it's a new crate being added
             semver_level="minor"
             semver_reason="New crate (not present in baseline)"
             crate_is_new=true
             log_verbose "cargo-semver-checks: new crate, treat as minor"
-        elif echo "$SEMVER_OUTPUT" | grep -qE "Summary semver requires new minor version"; then
+        elif grep -qE "Summary semver requires new minor version" <<< "$SEMVER_OUTPUT"; then
             semver_level="minor"
             semver_reason="cargo-semver-checks detected minor breaking changes"
-            semver_details=$(echo "$SEMVER_OUTPUT" | grep -A 1000 "^--- failure" | head -100 || echo "$SEMVER_OUTPUT" | tail -50)
+            semver_details=$(grep -A 1000 "^--- failure" <<< "$SEMVER_OUTPUT" | head -100 || tail -50 <<< "$SEMVER_OUTPUT")
             log_verbose "cargo-semver-checks: minor"
         else
             echo "Error running cargo-semver-checks: $SEMVER_OUTPUT" >&2
@@ -161,18 +161,18 @@ compute_semver_results() {
         log_verbose "$PUBLIC_API_OUTPUT"
 
         # Removed public items → major.
-        if echo "$PUBLIC_API_OUTPUT" | grep -q "Removed items from the public API$" \
-           && ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Removed items from the public API$" | grep -q "^(none)$"; then
+        if grep -q "Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" \
+           && ! grep -A 2 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)$"; then
             public_api_level="major"
             public_api_reason="cargo-public-api detected removed public API items"
-            public_api_details=$(echo "$PUBLIC_API_OUTPUT" | grep -A 50 "^Removed items from the public API$" | head -50)
+            public_api_details=$(grep -A 50 "^Removed items from the public API$" <<< "$PUBLIC_API_OUTPUT" | head -50)
             log_verbose "cargo-public-api: major (removed items)"
         # Added public items → minor (only when not major).
-        elif echo "$PUBLIC_API_OUTPUT" | grep -q "Added items to the public API$" \
-             && ! echo "$PUBLIC_API_OUTPUT" | grep -A 2 "^Added items to the public API$" | grep -q "^(none)"; then
+        elif grep -q "Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" \
+             && ! grep -A 2 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | grep -q "^(none)"; then
             public_api_level="minor"
             public_api_reason="cargo-public-api detected new public API items"
-            public_api_details=$(echo "$PUBLIC_API_OUTPUT" | grep -A 50 "^Added items to the public API$" | head -50)
+            public_api_details=$(grep -A 50 "^Added items to the public API$" <<< "$PUBLIC_API_OUTPUT" | head -50)
             log_verbose "cargo-public-api: minor (added items)"
         fi
 

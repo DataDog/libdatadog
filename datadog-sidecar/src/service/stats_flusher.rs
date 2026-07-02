@@ -14,6 +14,7 @@ use base64::Engine;
 use datadog_ipc::shm_stats::{
     ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
 };
+use futures::{future::join_all, TryFutureExt};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
@@ -23,7 +24,7 @@ use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use zwohash::ZwoHasher;
 
 /// Build the stats endpoint by appending `/v0.6/stats` to the agent base URL.
@@ -118,6 +119,8 @@ fn make_exporter(
         )),
         #[cfg(feature = "stats-obfuscation")]
         "0",
+        None,
+        None,
     )
 }
 
@@ -283,14 +286,29 @@ pub(crate) fn get_or_create_concentrator(
 pub async fn flush_all_stats_now(
     state: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
 ) {
-    let states: Vec<Arc<SpanConcentratorState>> = {
+    let states: Vec<_> = {
         let guard = state.lock_or_panic();
-        guard.values().cloned().collect()
+        guard
+            .values()
+            .map(|s| {
+                (
+                    make_exporter(s, s.endpoint.clone(), Duration::from_secs(10)),
+                    s.endpoint.clone(),
+                )
+            })
+            .collect()
     };
-    for s in states {
-        let exporter = make_exporter(&s, s.endpoint.clone(), Duration::from_secs(10));
-        if let Err(e) = exporter.send(false).await {
-            warn!("flush_all_stats_now: failed to send stats: {e}");
-        }
-    }
+    debug!(
+        "Flushing all stats now: {} different exporters",
+        states.len()
+    );
+    join_all(states.iter().map(|(exporter, endpoint)| {
+        exporter.send(false).inspect_err(move |e| {
+            warn!(
+                "flush_all_stats_now: failed to send stats to {:?}: {}",
+                endpoint, e
+            );
+        })
+    }))
+    .await;
 }

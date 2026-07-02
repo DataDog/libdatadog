@@ -13,8 +13,8 @@ use futures::future;
 use crate::log::{MultiEnvFilterGuard, MultiWriterGuard};
 use crate::{spawn_map_err, tracer};
 use datadog_live_debugger::sender::{DebuggerType, PayloadSender};
-use datadog_remote_config::fetch::ConfigOptions;
-use libdd_common::{tag::Tag, MutexExt};
+use libdd_common::{tag::Tag, Endpoint, MutexExt};
+use libdd_remote_config::fetch::ConfigOptions;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::service::agent_info::AgentInfoGuard;
@@ -45,7 +45,10 @@ pub(crate) struct SessionInfo {
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
     pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
+    pub(crate) auto_resolved_service_name: Arc<Mutex<Option<String>>>,
+    pub(crate) user_service_defined: Arc<Mutex<bool>>,
     pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
+    otlp_metrics_endpoint: Arc<Mutex<Option<Endpoint>>>,
 }
 
 impl SessionInfo {
@@ -130,6 +133,31 @@ impl SessionInfo {
         self.runtimes.lock_or_panic()
     }
 
+    pub(crate) fn process_tags_with_svc_source(&self) -> Vec<Tag> {
+        let mut tags = self.process_tags.lock_or_panic().clone();
+        if *self.user_service_defined.lock_or_panic() {
+            if let Ok(tag) = Tag::new("svc.user", "true") {
+                tags.push(tag);
+            }
+        } else if let Some(name) = self.auto_resolved_service_name.lock_or_panic().as_ref() {
+            if let Ok(tag) = Tag::new("svc.auto", name.clone()) {
+                tags.push(tag);
+            }
+        }
+        tags
+    }
+
+    pub(crate) fn refresh_stats_process_tags(&self) {
+        if let Some(stats) = self.stats_config.lock_or_panic().as_mut() {
+            stats.process_tags = self
+                .process_tags_with_svc_source()
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+        }
+    }
+
     pub(crate) fn get_telemetry_config(
         &self,
     ) -> MutexGuard<'_, Option<libdd_telemetry::config::Config>> {
@@ -158,6 +186,17 @@ impl SessionInfo {
         if let Some(cfg) = &mut *self.stats_config.lock_or_panic() {
             f(cfg)
         }
+    }
+
+    pub(crate) fn get_otlp_metrics_endpoint(&self) -> MutexGuard<'_, Option<Endpoint>> {
+        self.otlp_metrics_endpoint.lock_or_panic()
+    }
+
+    pub(crate) fn modify_otlp_metrics_endpoint<F>(&self, f: F)
+    where
+        F: FnOnce(&mut Option<Endpoint>),
+    {
+        f(&mut self.get_otlp_metrics_endpoint());
     }
 
     pub(crate) fn get_trace_config(&self) -> MutexGuard<'_, tracer::Config> {

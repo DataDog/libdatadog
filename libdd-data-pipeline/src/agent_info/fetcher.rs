@@ -159,11 +159,11 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 /// ```no_run
 /// # use anyhow::Result;
 /// # use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-/// # use libdd_shared_runtime::Worker;
+/// # use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, Worker};
+/// # use libdd_data_pipeline::agent_info;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// use libdd_data_pipeline::agent_info;
 /// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
 /// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::<
@@ -172,7 +172,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 ///     endpoint, std::time::Duration::from_secs(5 * 60)
 /// );
 /// // Start the fetcher on a shared runtime
-/// let runtime = libdd_shared_runtime::SharedRuntime::new()?;
+/// let runtime = ForkSafeRuntime::new()?;
 /// runtime.spawn_worker(fetcher, true)?;
 ///
 /// // Get the Arc to access the info
@@ -195,7 +195,6 @@ pub struct AgentInfoFetcher<C: HttpClientCapability + SleepCapability> {
     info_endpoint: Endpoint,
     refresh_interval: Duration,
     trigger_rx: Option<mpsc::Receiver<()>>,
-    trigger_tx: mpsc::Sender<()>,
     /// `C` lives on the struct because `Worker::run(&mut self)` (a fixed trait
     /// signature) calls `fetch_info_with_state::<C>()` internally.
     _phantom: PhantomData<C>,
@@ -216,7 +215,6 @@ impl<C: HttpClientCapability + SleepCapability> AgentInfoFetcher<C> {
             info_endpoint,
             refresh_interval,
             trigger_rx: Some(trigger_rx),
-            trigger_tx: trigger_tx.clone(),
             _phantom: PhantomData,
         };
 
@@ -269,16 +267,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
                 sleeper.sleep(self.refresh_interval).await;
             }
         }
-    }
-
-    async fn on_pause(&mut self) {
-        // Release the IoStack waker stored in trigger_rx by waking the channel and drain the
-        // message to avoid a spurious fetch on restart. If the channel is not empty then it has
-        // already been waked.
-        if self.trigger_rx.as_ref().is_some_and(|rx| rx.is_empty()) {
-            let _ = self.trigger_tx.try_send(());
-            self.drain();
-        };
     }
 
     async fn run(&mut self) {
@@ -368,7 +356,7 @@ mod single_threaded_tests {
     use crate::agent_info;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_shared_runtime::SharedRuntime;
+    use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
 
     const TEST_INFO: &str = r#"{
         "version": "0.0.0",
@@ -608,7 +596,7 @@ mod single_threaded_tests {
             Duration::from_millis(100),
         );
         assert!(agent_info::get_agent_info().is_none());
-        let shared_runtime = SharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Wait until the info is fetched
@@ -691,7 +679,7 @@ mod single_threaded_tests {
             // Interval is too long to fetch during the test
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
-        let shared_runtime = SharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the new agent state
@@ -772,7 +760,7 @@ mod single_threaded_tests {
         let (fetcher, response_observer) =
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
-        let shared_runtime = SharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the same agent state

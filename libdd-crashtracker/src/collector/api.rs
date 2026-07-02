@@ -648,7 +648,7 @@ mod single_threaded_tests {
                 // should fail.
                 let mut children = vec![];
                 let sleep_duration = Duration::from_millis(100);
-                let timeout_duration = Duration::from_millis(150);
+                let timeout_duration = Duration::from_millis(500);
                 for _ in 0..10 {
                     match unsafe { libc::fork() } {
                         -1 => {

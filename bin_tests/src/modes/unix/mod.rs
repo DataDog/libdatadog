@@ -19,3 +19,6 @@ pub mod test_015_panic_hook_unknown_type;
 pub mod test_016_errno_preservation;
 pub mod test_017_multi_thread_collection;
 pub mod test_018_thread_limit;
+pub mod test_019_sidecar_donothing;
+pub mod test_020_sidecar_multi_thread_collection;
+pub mod test_021_unhandled_exception_multi_thread;

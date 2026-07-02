@@ -69,6 +69,15 @@ pub trait SidecarInterface {
     /// * `process_tags` - The process tags.
     async fn set_session_process_tags(process_tags: Vec<Tag>);
 
+    /// Records the auto-resolved default service name for the session
+    /// (thread-bound; the tracer's fallback when `DD_SERVICE` is unset).
+    /// Pass `None` to clear it.
+    async fn set_session_default_service_name(name: Option<String>);
+
+    /// Records whether `DD_SERVICE` is currently set for the session
+    /// (per-request mutable; tracer should refresh on RINIT).
+    async fn set_session_user_service_defined(is_defined: bool);
+
     /// Removes the application entry for the given queue ID from the instance.
     ///
     /// # Arguments
@@ -177,6 +186,8 @@ pub trait SidecarInterface {
     /// * `global_tags` - Global tags which need to be propagated.
     /// * `dynamic_instrumentation_state` - Whether dynamic instrumentation is enabled, disabled or
     ///   not set.
+    /// * `remote_config_generation` - The SHM reader generation last read by the client (0 if
+    ///   unread).
     async fn set_universal_service_tags(
         instance_id: InstanceId,
         queue_id: QueueId,
@@ -185,6 +196,7 @@ pub trait SidecarInterface {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        remote_config_generation: u64,
     );
 
     /// Sets request state which does not directly affect the RC connection.
