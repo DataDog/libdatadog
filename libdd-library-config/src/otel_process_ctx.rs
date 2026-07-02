@@ -747,8 +747,25 @@ pub mod linux {
     pub unsafe fn unpublish() -> io::Result<()> {
         let mut guard = lock_context_handle()?;
 
-        if let Some(ProcessContextHandle { mapping, .. }) = guard.take() {
-            mapping.free()?;
+        if let Some(ProcessContextHandle {
+            mapping, payload, ..
+        }) = guard.take()
+        {
+            // Mark the context as being-updated and order that store before the payload free.
+            //
+            // SAFETY: the mapping is still live and valid; the timestamp field is atomic
+            // and aligned.
+            let header = mapping.start_addr.as_ptr() as *mut MappingHeader;
+            unsafe {
+                (*header)
+                    .monotonic_published_at_ns
+                    .store(0, Ordering::Relaxed);
+            }
+            fence(Ordering::Release);
+
+            mapping.free()?; // payload will still drop if it fails
+                             // but we'll be stuck with a zero timestamp
+            drop(payload);
         }
 
         Ok(())
