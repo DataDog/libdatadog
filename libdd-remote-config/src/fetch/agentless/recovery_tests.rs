@@ -432,6 +432,7 @@ async fn build_config_with_delegation(
     role_name: &str,
     entries: &[(&str, &[u8])],
     glob_paths: &[&str],
+    target_hashes: &[HashAlgorithm],
 ) -> (RawSignedMetadataSet<Json>, Vec<u8>) {
     // Delegated targets blob: describes every authorized (path, content).
     let mut builder = TargetsMetadataBuilder::new();
@@ -440,7 +441,7 @@ async fn build_config_with_delegation(
             .insert_target_from_slice(
                 TargetPath::new((*path).to_string()).unwrap(),
                 content,
-                &[HashAlgorithm::Sha256],
+                target_hashes,
             )
             .unwrap();
     }
@@ -487,6 +488,7 @@ async fn build_config_with_delegation(
 async fn build_director_with_targets(
     director_key: &Ed25519PrivateKey,
     entries: &[(&str, &[u8])],
+    target_hashes: &[HashAlgorithm],
 ) -> RawSignedMetadataSet<Json> {
     let mut repo = EphemeralRepository::<Json>::new();
     let mut builder = RepoBuilder::create(&mut repo)
@@ -496,7 +498,7 @@ async fn build_director_with_targets(
         .trusted_timestamp_keys(&[director_key])
         .stage_root_if_necessary()
         .unwrap()
-        .target_hash_algorithms(&[HashAlgorithm::Sha256]);
+        .target_hash_algorithms(target_hashes);
     for (path, content) in entries {
         builder = builder
             .add_target(
@@ -540,31 +542,12 @@ async fn unknown_product_target_does_not_wedge_known_targets() {
             "datadog/*/APM_TRACING/*/*",
             "datadog/*/BRAND_NEW_PRODUCT/*/*",
         ],
+        &[HashAlgorithm::Sha256],
     )
     .await;
-    let dir = build_director_with_targets(&director_key, entries).await;
+    let dir = build_director_with_targets(&director_key, entries, &[HashAlgorithm::Sha256]).await;
 
-    let resp = remoteconfig::LatestConfigsResponse {
-        config_metas: Some(remoteconfig::ConfigMetas {
-            roots: vec![top(cfg.root().unwrap().as_bytes())],
-            timestamp: Some(top(cfg.timestamp().unwrap().as_bytes())),
-            snapshot: Some(top(cfg.snapshot().unwrap().as_bytes())),
-            top_targets: Some(top(cfg.targets().unwrap().as_bytes())),
-            delegated_targets: vec![remoteconfig::DelegatedMeta {
-                version: meta_version(&raw_delegated),
-                role: "APM_TRACING".to_string(),
-                raw: raw_delegated,
-            }],
-        }),
-        director_metas: Some(director_metas(&dir)),
-        target_files: entries
-            .iter()
-            .map(|(path, content)| remoteconfig::File {
-                path: (*path).to_string(),
-                raw: content.to_vec(),
-            })
-            .collect(),
-    };
+    let resp = delegated_response(&cfg, raw_delegated, "APM_TRACING", &dir, entries);
 
     let http = MockHttp::new();
     http.push(&resp);
@@ -602,4 +585,95 @@ async fn unknown_product_target_does_not_wedge_known_targets() {
         .collect_handles(&res.targets)
         .expect("active batch must not wedge collect_handles");
     assert_eq!(handles.len(), 1, "only the known target should be served");
+}
+
+/// Assemble a `LatestConfigsResponse` from a config set + its raw delegated
+/// blob, a director set, and the `(path, content)` entries served as files.
+fn delegated_response(
+    cfg: &RawSignedMetadataSet<Json>,
+    raw_delegated: Vec<u8>,
+    role_name: &str,
+    dir: &RawSignedMetadataSet<Json>,
+    entries: &[(&str, &[u8])],
+) -> remoteconfig::LatestConfigsResponse {
+    remoteconfig::LatestConfigsResponse {
+        config_metas: Some(remoteconfig::ConfigMetas {
+            roots: vec![top(cfg.root().unwrap().as_bytes())],
+            timestamp: Some(top(cfg.timestamp().unwrap().as_bytes())),
+            snapshot: Some(top(cfg.snapshot().unwrap().as_bytes())),
+            top_targets: Some(top(cfg.targets().unwrap().as_bytes())),
+            delegated_targets: vec![remoteconfig::DelegatedMeta {
+                version: meta_version(&raw_delegated),
+                role: role_name.to_string(),
+                raw: raw_delegated,
+            }],
+        }),
+        director_metas: Some(director_metas(dir)),
+        target_files: entries
+            .iter()
+            .map(|(path, content)| remoteconfig::File {
+                path: (*path).to_string(),
+                raw: content.to_vec(),
+            })
+            .collect(),
+    }
+}
+
+/// A-F1 (libdd #14): `verify_director_against_config` must require the director
+/// and config hash sets to be *exactly equal*. Here the director publishes
+/// sha256+sha512 for a target while config pins only sha256. The old
+/// overlap-only check (shared algos agree) would accept this — letting the
+/// director assert an arbitrary sha512 digest config never authorized — so the
+/// whole `apply()` must now fail.
+#[tokio::test]
+async fn director_hash_superset_is_rejected() {
+    let config_key = new_key();
+    let product_key = new_key();
+    let director_key = new_key();
+
+    let path = "datadog/2/APM_TRACING/cfgid/config";
+    let content: &[u8] = b"apm config payload";
+    let entries: &[(&str, &[u8])] = &[(path, content)];
+
+    // Config pins sha256 only.
+    let (cfg, raw_delegated) = build_config_with_delegation(
+        &config_key,
+        &product_key,
+        "APM_TRACING",
+        entries,
+        &["datadog/*/APM_TRACING/*/*"],
+        &[HashAlgorithm::Sha256],
+    )
+    .await;
+    // Director publishes a superset: sha256 + sha512 (digests still correct for
+    // the content, so only the *set* differs).
+    let dir = build_director_with_targets(
+        &director_key,
+        entries,
+        &[HashAlgorithm::Sha256, HashAlgorithm::Sha512],
+    )
+    .await;
+
+    let resp = delegated_response(&cfg, raw_delegated, "APM_TRACING", &dir, entries);
+    let http = MockHttp::new();
+    http.push(&resp);
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+        panic!("director hash superset must be rejected (exact-equality)");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("hash set mismatch"),
+        "expected a hash-set mismatch error, got: {msg}"
+    );
 }

@@ -853,19 +853,9 @@ fn verify_director_against_config(
             );
         }
 
-        // Require at least one shared hash algorithm, and identical digests for
-        // every shared one. The two sides need not publish the same set.
-        let mut overlapped = false;
-        for (alg, dir_h) in dir_desc.hashes() {
-            if let Some(cfg_h) = cfg_desc.hashes().get(alg) {
-                overlapped = true;
-                if cfg_h != dir_h {
-                    bail!("{alg:?} hash mismatch between director and config for {path}");
-                }
-            }
-        }
-        if !overlapped {
-            bail!("no common hash algorithm between director and config descriptions for {path}");
+        // Check that the director and config hases sets are equal
+        if dir_desc.hashes() != cfg_desc.hashes() {
+            bail!("hash set mismatch between director and config for {path}");
         }
     }
 
@@ -1062,12 +1052,11 @@ pub(crate) struct NewTarget {
 
 pub(crate) use cache::TargetCache;
 
-
 /// This module serves as a way to decouple the agentless logic from the rest of this crate
 /// This is done for two purposes:
 /// * Making review easier by allowing independent review of the RC checking alone
-/// * Being able to isolate the agentless logic in it's own crate eventually so 
-///     that we can reuse it in bottlecap/ obs-pipeline without the rest of the code
+/// * Being able to isolate the agentless logic in it's own crate eventually so that we can reuse it
+///   in bottlecap/ obs-pipeline without the rest of the code
 mod cache {
     use std::sync::Arc;
 
