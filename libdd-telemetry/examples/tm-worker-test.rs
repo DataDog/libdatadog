@@ -39,8 +39,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     builder.config = libdd_telemetry::config::Config::from_env();
     builder
         .config
-        .set_endpoint(libdd_common::Endpoint {
-            url: libdd_common::parse_uri("file://./tm-worker-test.output").unwrap(),
+        .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+            url: Some("file://./tm-worker-test.output".to_owned()),
             ..Default::default()
         })
         .unwrap();

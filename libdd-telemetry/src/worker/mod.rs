@@ -1359,6 +1359,7 @@ impl TelemetryWorkerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::TelemetryEndpoint;
     use crate::data::Payload;
     use crate::worker::http_client::header::{
         DD_PARENT_SESSION_ID, DD_ROOT_SESSION_ID, DD_SESSION_ID,
@@ -1368,7 +1369,6 @@ mod tests {
         TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_common::Endpoint;
     use tokio::runtime::Runtime;
 
     fn is_send<T: Send>(_: T) {}
@@ -1395,7 +1395,10 @@ mod tests {
             "tv".into(),
         );
         b.config
-            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("http://127.0.0.1:1".to_owned()),
+                ..Default::default()
+            })
             .unwrap();
         b.runtime_id = Some("rid".into());
         b.config.session_id = session_id;
@@ -1532,7 +1535,10 @@ mod tests {
             "tv".into(),
         );
         b.config
-            .set_endpoint(Endpoint::from_slice("http://127.0.0.1:1"))
+            .set_endpoint(TelemetryEndpoint {
+                url: Some("http://127.0.0.1:1".to_owned()),
+                ..Default::default()
+            })
             .unwrap();
         b.runtime_id = Some("rid".into());
         b.flavor = flavor;
@@ -1864,7 +1870,6 @@ mod tests {
     #[test]
     fn test_channel_close_flushes_and_parks_via_shared_runtime() {
         use httpmock::prelude::*;
-        use libdd_common::Endpoint;
         use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
         use std::time::Duration;
 
@@ -1885,7 +1890,10 @@ mod tests {
         );
         builder
             .config
-            .set_endpoint(Endpoint::from_slice(&server.url("/")))
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(server.url("/")),
+                ..Default::default()
+            })
             .unwrap();
         builder.runtime_id = Some("rid".into());
 

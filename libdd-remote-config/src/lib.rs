@@ -22,17 +22,35 @@ mod targets;
 pub use parse::*;
 pub use path::*;
 
-pub use libdd_common::{tag::Tag, Endpoint};
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Target {
-    pub service: String,
-    pub env: String,
-    pub app_version: String,
-    pub tags: Vec<Tag>,
-    pub process_tags: Vec<Tag>,
+    service: String,
+    env: String,
+    app_version: String,
+    tags: Vec<String>,
+    process_tags: Vec<String>,
+}
+
+impl Target {
+    /// Creates a new `Target`. `tags` and `process_tags` are expected as
+    /// already-formatted `"key:value"` strings.
+    pub fn new(
+        service: String,
+        env: String,
+        app_version: String,
+        tags: Vec<String>,
+        process_tags: Vec<String>,
+    ) -> Target {
+        Target {
+            service: service.to_string(),
+            env: env.to_string(),
+            app_version: app_version.to_string(),
+            tags,
+            process_tags,
+        }
+    }
 }
 
 #[repr(C)]
