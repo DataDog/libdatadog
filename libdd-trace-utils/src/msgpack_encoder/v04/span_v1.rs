@@ -500,6 +500,15 @@ fn is_supported_event_attr<T: TraceData>(v: &AttributeValue<T>) -> bool {
     )
 }
 
+macro_rules! write_type {
+    ($writer:expr, $int_type:expr, $str_type:expr) => {{
+        write_map_len($writer, 2)?;
+        write_const_msgpack_str!($writer, "type")?;
+        write_u8($writer, $int_type)?;
+        write_str($writer, $str_type)?;
+    }};
+}
+
 /// Writes a v0.4 event-attribute value as `{"type": <u8>, "..._value": ...}`. Scalars produce a
 /// 2-entry map; `List` produces `{"type": 4, "array_value": {"values": [...]}}` with each
 /// element written via `write_event_array_element`.
@@ -509,42 +518,27 @@ fn write_event_attr_value<W: RmpWrite, T: TraceData>(
 ) -> Result<(), ValueWriteError<W::Error>> {
     match v {
         AttributeValue::String(s) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 0)?;
-            write_const_msgpack_str!(writer, "string_value")?;
+            write_type!(writer, 0, "string_value");
             write_str(writer, s.borrow())?;
         }
         AttributeValue::Bool(b) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 1)?;
-            write_const_msgpack_str!(writer, "bool_value")?;
+            write_type!(writer, 1, "bool_value");
             write_bool(writer, *b).map_err(ValueWriteError::InvalidDataWrite)?;
         }
         AttributeValue::Int(i) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 2)?;
-            write_const_msgpack_str!(writer, "int_value")?;
+            write_type!(writer, 2, "int_value");
             write_sint(writer, *i)?;
         }
         AttributeValue::Float(f) => {
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 3)?;
-            write_const_msgpack_str!(writer, "double_value")?;
+            write_type!(writer, 3, "double_value");
             write_f64(writer, *f)?;
         }
         AttributeValue::List(arr) => {
+            write_type!(writer, 4, "array_value");
             // Only scalar elements survive the downgrade; nested structural entries are
             // skipped because v0.4 array elements must themselves be scalar.
             let scalar_elems = arr.iter().filter(|e| is_scalar_array_elem(e));
             let elem_count = scalar_elems.clone().count() as u32;
-            write_map_len(writer, 2)?;
-            write_const_msgpack_str!(writer, "type")?;
-            write_u8(writer, 4)?;
-            write_const_msgpack_str!(writer, "array_value")?;
             write_map_len(writer, 1)?;
             write_const_msgpack_str!(writer, "values")?;
             write_array_len(writer, elem_count)?;
