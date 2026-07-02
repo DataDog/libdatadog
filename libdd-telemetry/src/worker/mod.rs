@@ -25,7 +25,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::ControlFlow,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc,
     },
 };
@@ -46,7 +46,7 @@ use futures::{
 };
 use http::{header, HeaderValue};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::mpsc;
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::{runtime, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -932,87 +932,30 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     }
 }
 
-/// Cross-platform shutdown signaling.
-///
-/// Native callers can sync-block via the `Mutex<bool>`/`Condvar` pair (see
-/// [`TelemetryWorkerHandle::wait_for_shutdown`]); any caller can await
-/// asynchronously via the `Notify` (see
-/// [`TelemetryWorkerHandle::wait_for_shutdown_async`]) — `Notify` is pure
-/// atomics and works on wasm too. `shutdown_finished` triggers both so either
-/// path observes the same event.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct InnerTelemetryShutdown {
-    is_shutdown: AtomicBool,
-    notify: Notify,
-    #[cfg(not(target_arch = "wasm32"))]
-    sync_state: Mutex<bool>,
-    #[cfg(not(target_arch = "wasm32"))]
+    is_shutdown: Mutex<bool>,
     condvar: Condvar,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl InnerTelemetryShutdown {
-    fn new() -> Self {
-        Self {
-            is_shutdown: AtomicBool::new(false),
-            notify: Notify::new(),
-            #[cfg(not(target_arch = "wasm32"))]
-            sync_state: Mutex::new(false),
-            #[cfg(not(target_arch = "wasm32"))]
-            condvar: Condvar::new(),
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
     fn wait_for_shutdown(&self) {
-        // Lock-poisoning here would mean another thread panicked while
-        // holding the mutex. The state is a single bool and any panic the
-        // notifier could have caused is recoverable, so treat the poisoned
-        // guard as authoritative and continue.
-        let guard = self
-            .sync_state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let guard = self
-            .condvar
-            .wait_while(guard, |is_shutdown| !*is_shutdown)
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        drop(guard);
+        drop(
+            #[allow(clippy::unwrap_used)]
+            self.condvar
+                .wait_while(self.is_shutdown.lock().unwrap(), |is_shutdown| {
+                    !*is_shutdown
+                })
+                .unwrap(),
+        )
     }
 
-    async fn wait_for_shutdown_async(&self) {
-        loop {
-            if self.is_shutdown.load(Ordering::Acquire) {
-                return;
-            }
-            // `Notify::notified()` returns a future that registers interest
-            // before we re-check the flag, so we cannot miss a notify that
-            // races with the load above.
-            let notified = self.notify.notified();
-            if self.is_shutdown.load(Ordering::Acquire) {
-                return;
-            }
-            notified.await;
-        }
-    }
-
+    #[allow(clippy::unwrap_used)]
     fn shutdown_finished(&self) {
-        self.is_shutdown.store(true, Ordering::Release);
-        self.notify.notify_waiters();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Ok(mut guard) = self.sync_state.lock() {
-                *guard = true;
-            } else {
-                // Poisoned: another thread panicked while holding the lock.
-                // The Notify path is unaffected; sync waiters that depend on
-                // this mutex are already in an undefined state, so we
-                // proceed without setting the flag.
-                tracing::warn!(
-                    "TelemetryWorkerHandle shutdown mutex was poisoned; sync waiters may hang"
-                );
-            }
-            self.condvar.notify_all();
-        }
+        *self.is_shutdown.lock().unwrap() = true;
+        self.condvar.notify_all();
     }
 }
 
@@ -1022,17 +965,13 @@ impl InnerTelemetryShutdown {
 /// The worker won't send data to the agent until you call `TelemetryWorkerHandle::send_start`
 ///
 /// To stop the worker, call `TelemetryWorkerHandle::send_stop` which trigger flush asynchronously
-/// then `TelemetryWorkerHandle::wait_for_shutdown` (sync, native only) or
-/// `TelemetryWorkerHandle::wait_for_shutdown_async` (cross-platform).
-///
-/// `C` carries the capability bundle for any deferred work the handle itself
-/// has to schedule (e.g. cancellation deadlines). The handle does not store
-/// an instance — it constructs a fresh sleeper via `<C as SleepCapability>::new()`
-/// when needed.
+/// then `TelemetryWorkerHandle::wait_for_shutdown` (native only — wasm callers rely on the
+/// SharedRuntime worker JoinHandle instead).
 pub struct TelemetryWorkerHandle<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
 > {
     sender: mpsc::Sender<TelemetryActions>,
+    #[cfg(not(target_arch = "wasm32"))]
     shutdown: Arc<InnerTelemetryShutdown>,
     cancellation_token: CancellationToken,
     #[cfg(not(target_arch = "wasm32"))]
@@ -1047,6 +986,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Clo
     fn clone(&self) -> Self {
         Self {
             sender: self.sender.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
             shutdown: self.shutdown.clone(),
             cancellation_token: self.cancellation_token.clone(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1155,13 +1095,6 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         self.wait_for_shutdown()
     }
 
-    /// Async equivalent of [`Self::wait_for_shutdown_deadline`].
-    #[cfg(not(target_arch = "wasm32"))]
-    pub async fn wait_for_shutdown_deadline_async(&self, deadline: time::Instant) {
-        self.cancel_requests_with_deadline(deadline);
-        self.wait_for_shutdown_async().await
-    }
-
     pub fn add_dependency(&self, name: String, version: Option<String>) -> anyhow::Result<()> {
         self.sender
             .try_send(TelemetryActions::AddDependency(Dependency {
@@ -1227,18 +1160,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         Ok(())
     }
 
-    /// Sync block-on-shutdown. Native-only — wasm callers should use
-    /// [`Self::wait_for_shutdown_async`] (the JS event loop is single-threaded
-    /// and cannot be blocked).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_shutdown(&self) {
         self.shutdown.wait_for_shutdown();
-    }
-
-    /// Async equivalent of [`Self::wait_for_shutdown`] that works on both
-    /// native and wasm.
-    pub async fn wait_for_shutdown_async(&self) {
-        self.shutdown.wait_for_shutdown_async().await
     }
 
     pub fn stats(&self) -> anyhow::Result<oneshot::Receiver<TelemetryWorkerStats>> {
@@ -1334,7 +1258,11 @@ impl TelemetryWorkerBuilder {
         #[cfg(not(target_arch = "wasm32"))] tokio_runtime: Option<runtime::Handle>,
     ) -> (TelemetryWorkerHandle<C>, TelemetryWorker<C>) {
         let (tx, mailbox) = mpsc::channel(5000);
-        let shutdown = Arc::new(InnerTelemetryShutdown::new());
+        #[cfg(not(target_arch = "wasm32"))]
+        let shutdown = Arc::new(InnerTelemetryShutdown {
+            is_shutdown: Mutex::new(false),
+            condvar: Condvar::new(),
+        });
         let contexts = MetricContexts::default();
         let token = CancellationToken::new();
         let config = self.config;
@@ -1383,6 +1311,7 @@ impl TelemetryWorkerBuilder {
         (
             TelemetryWorkerHandle {
                 sender: tx,
+                #[cfg(not(target_arch = "wasm32"))]
                 shutdown,
                 cancellation_token: token,
                 #[cfg(not(target_arch = "wasm32"))]
