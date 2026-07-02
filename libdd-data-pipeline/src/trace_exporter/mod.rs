@@ -2413,7 +2413,7 @@ mod tests {
             error: 0,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(
@@ -2470,7 +2470,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         exporter.send(data.as_ref()).unwrap();
         mock_intake.assert();
     }
