@@ -1,6 +1,9 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Upgrade encoder: `crate::span::v04::Span` → V1 msgpack wire.
+//! (Convention documented in [`crate::msgpack_encoder`].)
+
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, Span, SpanEvent, SpanLink};
 use crate::span::TraceData;
 use rmp::encode::{
@@ -26,10 +29,9 @@ fn span_kind_from_str(s: &str) -> u32 {
     }
 }
 
-/// Encodes span links into the V1 format.
-///
-/// Uses integer keys and string interning for string values. Each span link's
-/// trace ID is encoded as a 16-byte big-endian binary.
+/// Encodes [`v04::SpanLink`](crate::span::v04::SpanLink)s into the V1 msgpack wire format
+/// (upgrade: v0.4 input → V1 output). Uses integer keys and string interning for string
+/// values. Each span link's trace ID is encoded as a 16-byte big-endian binary.
 pub fn encode_span_links<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_links: &[SpanLink<T>],
@@ -80,9 +82,9 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes span events into the V1 format.
-///
-/// Uses integer keys and string interning. Attribute values are type-tagged.
+/// Encodes [`v04::SpanEvent`](crate::span::v04::SpanEvent)s into the V1 msgpack wire format
+/// (upgrade: v0.4 input → V1 output). Uses integer keys and string interning. Attribute values
+/// are type-tagged.
 pub fn encode_span_events<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     span_events: &[SpanEvent<T>],
@@ -171,7 +173,8 @@ fn encode_attribute_any_value<W: RmpWrite, T: TraceData>(
     Ok(())
 }
 
-/// Encodes a v0.4 span into the V1 msgpack format.
+/// Encodes a [`v04::Span`](crate::span::v04::Span) into the V1 msgpack wire format
+/// (upgrade: v0.4 input → V1 output).
 ///
 /// Key differences from v0.4:
 /// - Uses integer keys for all fields.

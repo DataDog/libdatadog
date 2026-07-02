@@ -18,6 +18,7 @@ use std::collections::HashMap;
 
 /// Integer keys for the top-level V1 trace payload map.
 mod trace_key {
+    pub const CONTAINER_ID: u8 = 2;
     pub const LANGUAGE_NAME: u8 = 3;
     pub const LANGUAGE_VERSION: u8 = 4;
     pub const TRACER_VERSION: u8 = 5;
@@ -109,7 +110,8 @@ pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 /// incrementing integer ID. On subsequent occurrences only the ID is emitted as a msgpack `uint`.
 /// ID 0 is reserved for the empty string (pre-inserted in the constructor).
 ///
-/// The string table is scoped per payload: each `to_vec` / `write_to_slice` call starts with a
+/// The string table is scoped per payload: each `to_vec_from_v04` / `to_vec_from_v1` (and
+/// their `write_to_slice_from_v04` / `write_to_slice_from_v1` counterparts) call starts with a
 /// fresh table so deduplication is payload-local.
 pub(crate) struct StringTable {
     seen: HashMap<String, u32>,
@@ -308,6 +310,7 @@ where
 /// Top-level format:
 /// ```text
 /// Map {
+///   trace_key::CONTAINER_ID (2)  → str|uint       // optional, interned
 ///   trace_key::ENV_REF      (7)  → str|uint       // optional, interned
 ///   trace_key::HOSTNAME_REF (8)  → str|uint       // optional, interned
 ///   trace_key::APP_VERSION  (9)  → str|uint       // optional, interned
@@ -315,7 +318,7 @@ where
 ///   trace_key::CHUNKS       (11) → Array[Chunk, ...]
 /// }
 /// ```
-fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
+fn encode_payload_from_v04<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     writer: &mut W,
     traces: &[S],
     metadata: &TracerMetadata,
@@ -332,6 +335,7 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
         + (!metadata.language_version.is_empty()) as u32
         + (!metadata.tracer_version.is_empty()) as u32
         + (!metadata.runtime_id.is_empty()) as u32
+        + (!metadata.container_id.is_empty()) as u32
         + payload_attrs.env.is_some() as u32
         + payload_attrs.hostname.is_some() as u32
         + payload_attrs.app_version.is_some() as u32
@@ -342,7 +346,7 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     write_uint8(writer, trace_key::CHUNKS)?;
     write_array_len(writer, traces.len() as u32)?;
     for trace in traces {
-        encode_chunk(writer, trace.as_ref(), &mut table)?;
+        encode_chunk_from_v04(writer, trace.as_ref(), &mut table)?;
     }
 
     if !metadata.language.is_empty() {
@@ -363,6 +367,11 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
     if !metadata.runtime_id.is_empty() {
         write_uint8(writer, trace_key::RUNTIME_ID)?;
         table.write_interned(writer, &metadata.runtime_id)?;
+    }
+
+    if !metadata.container_id.is_empty() {
+        write_uint8(writer, trace_key::CONTAINER_ID)?;
+        table.write_interned(writer, &metadata.container_id)?;
     }
 
     if let Some(env) = payload_attrs.env {
@@ -411,7 +420,7 @@ fn encode_payload<W: RmpWrite, T: TraceData, S: AsRef<[Span<T>]>>(
 ///   chunk_key::SPANS              (4) → Array[Span, ...]
 /// }
 /// ```
-fn encode_chunk<W: RmpWrite, T: TraceData>(
+fn encode_chunk_from_v04<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     spans: &[Span<T>],
     table: &mut StringTable,
@@ -456,38 +465,38 @@ fn encode_chunk<W: RmpWrite, T: TraceData>(
 ///
 /// # Errors
 /// Returns a `ValueWriteError` if the underlying writer fails.
-pub fn write_to_slice<T: TraceData, S: AsRef<[Span<T>]>>(
+pub fn write_to_slice_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
     // &mut &mut [u8] lets the caller see the slice shrink as bytes are written.
     slice: &mut &mut [u8],
     traces: &[S],
     metadata: &TracerMetadata,
 ) -> Result<(), ValueWriteError> {
-    encode_payload(slice, traces, metadata)
+    encode_payload_from_v04(slice, traces, metadata)
 }
 
 /// Serializes traces into a `Vec<u8>` using the V1 msgpack format.
-pub fn to_vec<T: TraceData, S: AsRef<[Span<T>]>>(
+pub fn to_vec_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
     metadata: &TracerMetadata,
 ) -> Vec<u8> {
-    to_vec_with_capacity(traces, 0, metadata)
+    to_vec_with_capacity_from_v04(traces, 0, metadata)
 }
 
 /// Serializes traces into a `Vec<u8>` with a pre-allocated capacity.
-pub fn to_vec_with_capacity<T: TraceData, S: AsRef<[Span<T>]>>(
+pub fn to_vec_with_capacity_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
     capacity: u32,
     metadata: &TracerMetadata,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    encode_payload(&mut buf, traces, metadata)
+    encode_payload_from_v04(&mut buf, traces, metadata)
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
 }
 
 /// Returns the number of bytes the V1 payload for `traces` would occupy.
-pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(
+pub fn to_encoded_byte_len_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(
     traces: &[S],
     metadata: &TracerMetadata,
 ) -> u32 {
@@ -497,12 +506,12 @@ pub fn to_encoded_byte_len<T: TraceData, S: AsRef<[Span<T>]>>(
     // the way we do for `ByteBuf`. In practice `CountLength::write*` only ever return
     // `Ok`, so the error path here is unreachable today; should `CountLength` ever grow
     // a fallible code path, fuzz tests on the msgpack encoded length would catch it.
-    let _ = encode_payload(&mut counter, traces, metadata);
+    let _ = encode_payload_from_v04(&mut counter, traces, metadata);
     counter.0
 }
 
 /// Encodes a [`TracerPayload`] (V1 data model) as a V1 msgpack payload.
-fn encode_payload_v1<W: RmpWrite, T: TraceData>(
+fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
@@ -511,6 +520,7 @@ fn encode_payload_v1<W: RmpWrite, T: TraceData>(
     let has_attributes = !payload.attributes.is_empty();
 
     let map_len = 1u32 // chunks always present
+        + (!payload.container_id.borrow().is_empty()) as u32
         + (!payload.language_name.borrow().is_empty()) as u32
         + (!payload.language_version.borrow().is_empty()) as u32
         + (!payload.tracer_version.borrow().is_empty()) as u32
@@ -525,7 +535,12 @@ fn encode_payload_v1<W: RmpWrite, T: TraceData>(
     write_uint8(writer, trace_key::CHUNKS)?;
     write_array_len(writer, payload.chunks.len() as u32)?;
     for chunk in &payload.chunks {
-        encode_chunk_v1(writer, chunk, &mut table)?;
+        encode_chunk_from_v1(writer, chunk, &mut table)?;
+    }
+
+    if !payload.container_id.borrow().is_empty() {
+        write_uint8(writer, trace_key::CONTAINER_ID)?;
+        table.write_interned(writer, payload.container_id.borrow())?;
     }
 
     if !payload.language_name.borrow().is_empty() {
@@ -572,7 +587,7 @@ fn encode_payload_v1<W: RmpWrite, T: TraceData>(
 }
 
 /// Encodes one V1 chunk (a group of spans sharing a trace ID).
-fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
+fn encode_chunk_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
     chunk: &crate::span::v1::TraceChunk<T>,
     table: &mut StringTable,
@@ -640,19 +655,19 @@ fn encode_chunk_v1<W: RmpWrite, T: TraceData>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_payload_v1;
+/// use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
 /// use libdd_trace_utils::span::v1::TracerPayloadSlice;
 ///
 /// let payload = TracerPayloadSlice {
 ///     language_name: "rust".into(),
 ///     ..Default::default()
 /// };
-/// let encoded = to_vec_from_payload_v1(&payload);
+/// let encoded = to_vec_from_v1(&payload);
 ///
 /// assert!(!encoded.is_empty());
 /// ```
-pub fn to_vec_from_payload_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
-    to_vec_from_payload_with_capacity_v1(payload, 0)
+pub fn to_vec_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
+    to_vec_with_capacity_from_v1(payload, 0)
 }
 
 /// Serializes a `TracerPayload` into a vector of bytes with specified capacity.
@@ -669,23 +684,23 @@ pub fn to_vec_from_payload_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_payload_with_capacity_v1;
+/// use libdd_trace_utils::msgpack_encoder::v1::to_vec_with_capacity_from_v1;
 /// use libdd_trace_utils::span::v1::TracerPayloadSlice;
 ///
 /// let payload = TracerPayloadSlice {
 ///     language_name: "rust".into(),
 ///     ..Default::default()
 /// };
-/// let encoded = to_vec_from_payload_with_capacity_v1(&payload, 1024);
+/// let encoded = to_vec_with_capacity_from_v1(&payload, 1024);
 ///
 /// assert!(encoded.capacity() >= 1024);
 /// ```
-pub fn to_vec_from_payload_with_capacity_v1<T: TraceData>(
+pub fn to_vec_with_capacity_from_v1<T: TraceData>(
     payload: &TracerPayload<T>,
     capacity: u32,
 ) -> Vec<u8> {
     let mut buf = ByteBuf::with_capacity(capacity as usize);
-    encode_payload_v1(&mut buf, payload)
+    encode_payload_from_v1(&mut buf, payload)
         .map_err(super::flatten_value_write_infallible)
         .unwrap_infallible();
     buf.into_vec()
@@ -710,7 +725,7 @@ pub fn to_vec_from_payload_with_capacity_v1<T: TraceData>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v1::write_payload_to_slice_v1;
+/// use libdd_trace_utils::msgpack_encoder::v1::write_to_slice_from_v1;
 /// use libdd_trace_utils::span::v1::TracerPayloadSlice;
 ///
 /// let mut buffer = vec![0u8; 1024];
@@ -719,13 +734,13 @@ pub fn to_vec_from_payload_with_capacity_v1<T: TraceData>(
 ///     ..Default::default()
 /// };
 ///
-/// write_payload_to_slice_v1(&mut &mut buffer[..], &payload).expect("Encoding failed");
+/// write_to_slice_from_v1(&mut &mut buffer[..], &payload).expect("Encoding failed");
 /// ```
-pub fn write_payload_to_slice_v1<T: TraceData>(
+pub fn write_to_slice_from_v1<T: TraceData>(
     slice: &mut &mut [u8],
     payload: &TracerPayload<T>,
 ) -> Result<(), ValueWriteError> {
-    encode_payload_v1(slice, payload)
+    encode_payload_from_v1(slice, payload)
 }
 
 /// Computes the number of bytes required to encode the given `TracerPayload`.
@@ -744,20 +759,20 @@ pub fn write_payload_to_slice_v1<T: TraceData>(
 /// # Examples
 ///
 /// ```
-/// use libdd_trace_utils::msgpack_encoder::v1::to_encoded_byte_len_from_payload_v1;
+/// use libdd_trace_utils::msgpack_encoder::v1::to_encoded_byte_len_from_v1;
 /// use libdd_trace_utils::span::v1::TracerPayloadSlice;
 ///
 /// let payload = TracerPayloadSlice {
 ///     language_name: "rust".into(),
 ///     ..Default::default()
 /// };
-/// let encoded_len = to_encoded_byte_len_from_payload_v1(&payload);
+/// let encoded_len = to_encoded_byte_len_from_v1(&payload);
 ///
 /// assert!(encoded_len > 0);
 /// ```
-pub fn to_encoded_byte_len_from_payload_v1<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
+pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> u32 {
     let mut counter = super::CountLength(0);
-    let _ = encode_payload_v1(&mut counter, payload);
+    let _ = encode_payload_from_v1(&mut counter, payload);
     counter.0
 }
 
@@ -791,14 +806,14 @@ mod tests {
     fn test_to_vec_non_empty() {
         let spans = vec![make_span("svc", "op", 42, 1, 0)];
         let traces = vec![spans];
-        let encoded = to_vec(&traces, &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&traces, &TracerMetadata::default());
         assert!(!encoded.is_empty());
     }
 
     #[test]
     fn test_to_vec_empty_traces() {
         let traces: Vec<Vec<SpanBytes>> = vec![];
-        let encoded = to_vec(&traces, &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&traces, &TracerMetadata::default());
         // Must still produce a valid msgpack map with an empty chunks array.
         assert!(!encoded.is_empty());
     }
@@ -814,8 +829,8 @@ mod tests {
         let s_single = make_span("my-service", "op1", 1, 1, 0);
         let traces_single = vec![vec![s_single]];
 
-        let encoded_two = to_vec(&traces_two, &TracerMetadata::default());
-        let encoded_single = to_vec(&traces_single, &TracerMetadata::default());
+        let encoded_two = to_vec_from_v04(&traces_two, &TracerMetadata::default());
+        let encoded_single = to_vec_from_v04(&traces_single, &TracerMetadata::default());
 
         // The two-trace payload should be less than 2× the single-trace payload
         // if interning is working (the second "my-service" is encoded as an integer).
@@ -850,7 +865,7 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = to_vec(&[vec![root]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![root]], &TracerMetadata::default());
         assert!(!encoded.is_empty());
         // The payload must contain "lambda" somewhere (the origin string).
         let lambda_bytes = b"lambda";
@@ -870,8 +885,8 @@ mod tests {
         ];
         let traces = vec![spans];
         let meta = TracerMetadata::default();
-        let encoded = to_vec(&traces, &meta);
-        let len = to_encoded_byte_len(&traces, &meta);
+        let encoded = to_vec_from_v04(&traces, &meta);
+        let len = to_encoded_byte_len_from_v04(&traces, &meta);
         assert_eq!(encoded.len() as u32, len);
     }
 
@@ -897,7 +912,7 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = to_vec(&[vec![root]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![root]], &TracerMetadata::default());
         assert!(!encoded.is_empty());
     }
 
@@ -932,7 +947,7 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![span]], &TracerMetadata::default());
         let prod_bytes = b"prod";
         assert!(
             encoded.windows(prod_bytes.len()).any(|w| w == prod_bytes),
@@ -972,7 +987,7 @@ mod tests {
             ..Default::default()
         };
 
-        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![span]], &TracerMetadata::default());
 
         // Both attribute strings must appear in the payload bytes.
         let ssi_bytes = b"ssi";
@@ -1002,7 +1017,7 @@ mod tests {
     fn test_payload_attributes_absent_when_no_relevant_tags() {
         // A span with no _dd.apm_mode or _dd.git.commit.sha must not produce key 10.
         let span = make_span("svc", "op", 1, 1, 0);
-        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![span]], &TracerMetadata::default());
         let apm_key = b"_dd.apm_mode";
         assert!(
             !encoded.windows(apm_key.len()).any(|w| w == apm_key),
@@ -1020,7 +1035,7 @@ mod tests {
             runtime_id: "abc-123-uuid".to_string(),
             ..Default::default()
         };
-        let encoded = to_vec(&[vec![span]], &metadata);
+        let encoded = to_vec_from_v04(&[vec![span]], &metadata);
 
         for s in &[b"python" as &[u8], b"3.11", b"2.0.0", b"abc-123-uuid"] {
             assert!(
@@ -1034,14 +1049,14 @@ mod tests {
     #[test]
     fn test_payload_metadata_absent_when_empty() {
         let span = make_span("svc", "op", 1, 1, 0);
-        let encoded_with = to_vec(
+        let encoded_with = to_vec_from_v04(
             &[vec![span.clone()]],
             &TracerMetadata {
                 language: "go".to_string(),
                 ..Default::default()
             },
         );
-        let encoded_without = to_vec(&[vec![span]], &TracerMetadata::default());
+        let encoded_without = to_vec_from_v04(&[vec![span]], &TracerMetadata::default());
         // Payload with metadata must be larger (it carries extra fields).
         assert!(encoded_with.len() > encoded_without.len());
     }
@@ -1065,7 +1080,7 @@ mod tests {
             meta,
             ..Default::default()
         };
-        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![span]], &TracerMetadata::default());
 
         // Expected 16-byte BE: high = 0x640cfd5400000000, low = 0x0123456789abcdef
         let expected = [
@@ -1088,7 +1103,7 @@ mod tests {
     fn test_128bit_trace_id_without_dd_p_tid() {
         // Absent _dd.p.tid → high 64 bits zero.
         let span = make_span("svc", "op", 0x0123456789abcdef, 1, 0);
-        let encoded = to_vec(&[vec![span]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![span]], &TracerMetadata::default());
         let expected = [
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
             0xcd, 0xef,
@@ -1120,7 +1135,7 @@ mod tests {
             meta,
             ..Default::default()
         };
-        let encoded = to_vec(&[vec![root]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![root]], &TracerMetadata::default());
 
         // The chunk-level sampling_mechanism (key 7) must be encoded as uint 4.
         // The byte sequence is `chunk_key::SAMPLING_MECHANISM (0x07)` followed by the
@@ -1184,7 +1199,7 @@ mod tests {
             meta: meta3,
             ..Default::default()
         };
-        let encoded = to_vec(&[vec![s1, s2, s3]], &TracerMetadata::default());
+        let encoded = to_vec_from_v04(&[vec![s1, s2, s3]], &TracerMetadata::default());
 
         // Each attribute must be present at chunk level — collected from a different
         // non-root span.
@@ -1210,7 +1225,7 @@ mod tests {
 
 #[cfg(test)]
 mod v1_payload_tests {
-    //! Unit tests for the v1::Span encoder (`encode_payload_v1`).
+    //! Unit tests for the v1::Span encoder (`encode_payload_from_v1`).
     //!
     //! Verifies the encoder produces a valid V1 payload from the canonical
     //! [`crate::span::v1::TracerPayload`] data model and that core invariants (interning, byte
@@ -1251,7 +1266,7 @@ mod v1_payload_tests {
     #[test]
     fn empty_payload_is_valid_msgpack_map() {
         let payload = TracerPayloadBytes::default();
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         // Map with a single entry (chunks), then an empty array. `0x81` = fixmap of length 1,
         // followed by chunk key (0x0b), then `0x90` (fixarray length 0).
         assert_eq!(encoded, vec![0x81, 0x0b, 0x90]);
@@ -1264,8 +1279,8 @@ mod v1_payload_tests {
             chunks: vec![chunk],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
-        let len = to_encoded_byte_len_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
+        let len = to_encoded_byte_len_from_v1(&payload);
         assert_eq!(encoded.len() as u32, len);
     }
 
@@ -1278,7 +1293,7 @@ mod v1_payload_tests {
             chunks: vec![chunk],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         let pat = [0x10u8, 0x01u8];
         assert!(
             encoded.windows(2).any(|w| w == pat),
@@ -1305,7 +1320,7 @@ mod v1_payload_tests {
             chunks: vec![chunk],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         // String attribute → type discriminant = 1 (`AnyValueKey::String`).
         assert!(
             encoded.windows(b"k_str".len()).any(|w| w == b"k_str"),
@@ -1335,7 +1350,7 @@ mod v1_payload_tests {
             chunks: vec![make_chunk(vec![span], [0u8; 16])],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         // bin8 marker `0xc4` followed by length `0x02` and the bytes themselves.
         let want = [0xc4u8, 0x02, 0xde, 0xad];
         assert!(
@@ -1371,7 +1386,7 @@ mod v1_payload_tests {
             chunks: vec![make_chunk(vec![span], [0u8; 16])],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         // The keys and the nested key must all appear at least once.
         for s in &[b"list" as &[u8], b"kv", b"a", b"nk"] {
             assert!(
@@ -1395,7 +1410,7 @@ mod v1_payload_tests {
             chunks: vec![make_chunk(vec![make_span("svc", "op", 1)], [0u8; 16])],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         for s in &[
             b"python" as &[u8],
             b"3.11",
@@ -1426,7 +1441,7 @@ mod v1_payload_tests {
             chunks: vec![chunk],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         assert!(
             encoded.windows(b"lambda".len()).any(|w| w == b"lambda"),
             "chunk origin should appear"
@@ -1448,7 +1463,7 @@ mod v1_payload_tests {
             chunks: vec![chunk],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         // DROPPED_TRACE (0x05) + msgpack true marker (0xc3)
         let want = [chunk_key::DROPPED_TRACE, 0xc3];
         assert!(
@@ -1469,7 +1484,7 @@ mod v1_payload_tests {
             chunks: vec![chunk],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         assert!(
             !encoded.contains(&chunk_key::DROPPED_TRACE),
             "DROPPED_TRACE key should not be emitted when false"
@@ -1490,7 +1505,7 @@ mod v1_payload_tests {
             chunks: vec![chunk],
             ..Default::default()
         };
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
         // ATTRIBUTES (0x03) + msgpack fixarray header for 3 elements (0x93)
         let want = [chunk_key::ATTRIBUTES, 0x93];
         assert!(
@@ -1528,7 +1543,7 @@ mod v1_payload_tests {
                 chunks: vec![make_chunk(vec![span], [0u8; 16])],
                 ..Default::default()
             };
-            let encoded = to_vec_from_payload_v1(&payload);
+            let encoded = to_vec_from_v1(&payload);
             let want = [0x10u8, expected_byte];
             assert!(
                 encoded.windows(2).any(|w| w == want),
@@ -1554,8 +1569,8 @@ mod v1_payload_tests {
             chunks: vec![make_chunk(vec![make_span("shared", "op1", 1)], [0u8; 16])],
             ..Default::default()
         };
-        let two = to_vec_from_payload_v1(&chunk_with_two);
-        let one = to_vec_from_payload_v1(&single);
+        let two = to_vec_from_v1(&chunk_with_two);
+        let one = to_vec_from_v1(&single);
         let shared_occurrences = two
             .windows(b"shared".len())
             .filter(|w| *w == b"shared")

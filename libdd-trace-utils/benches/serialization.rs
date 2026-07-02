@@ -65,7 +65,7 @@ pub fn serialize_internal_to_msgpack(c: &mut Criterion) {
         b.iter_batched(
             || vec![0u8; 12_000_000],
             |mut vec| {
-                let _ = black_box(msgpack_encoder::v04::write_to_slice(
+                let _ = black_box(msgpack_encoder::v04::write_to_slice_from_v04(
                     &mut vec.as_mut_slice(),
                     black_box(&data),
                 ));

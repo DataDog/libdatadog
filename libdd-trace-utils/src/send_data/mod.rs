@@ -384,7 +384,7 @@ impl SendData {
                 headers.insert(DATADOG_TRACE_COUNT, chunks.into());
                 headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
-                let payload = msgpack_encoder::v04::to_vec(payload);
+                let payload = msgpack_encoder::v04::to_vec_from_v04(payload);
 
                 futures.push(self.send_payload(
                     capabilities,
@@ -534,7 +534,7 @@ mod tests {
                 total
             }
             TracerPayloadCollection::V04(payloads) => {
-                msgpack_encoder::v04::to_encoded_byte_len(payloads) as usize
+                msgpack_encoder::v04::to_encoded_byte_len_from_v04(payloads) as usize
             }
             TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
         }
