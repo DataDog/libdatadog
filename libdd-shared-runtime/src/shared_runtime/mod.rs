@@ -24,8 +24,17 @@ use crate::worker::Worker;
 use libdd_capabilities::MaybeSend;
 use libdd_common::MutexExt;
 use pausable_worker::{PausableWorker, PausableWorkerError};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::{fmt, io};
+
+// Shared, reference-counted registry of live workers. On native targets it must be `Arc` because
+// runtimes and their `WorkerHandle`s are shared across threads. On wasm the runtime is
+// single-threaded and its workers are `!Send`, so `Rc` is both correct and avoids the
+// `arc_with_non_send_sync` lint.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type WorkerRegistry = std::sync::Arc<Mutex<Vec<WorkerEntry>>>;
+#[cfg(target_arch = "wasm32")]
+pub(crate) type WorkerRegistry = std::rc::Rc<Mutex<Vec<WorkerEntry>>>;
 
 /// A worker registered on a [`SharedRuntime`].
 pub(crate) type BoxedWorker = Box<dyn Worker + Sync>;
@@ -33,6 +42,7 @@ pub(crate) type BoxedWorker = Box<dyn Worker + Sync>;
 #[derive(Debug)]
 pub(crate) struct WorkerEntry {
     pub(crate) id: u64,
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) restart_on_fork: bool,
     pub(crate) worker: PausableWorker<BoxedWorker>,
 }
@@ -97,7 +107,7 @@ pub trait BlockingRuntime: SharedRuntime {
 #[derive(Clone, Debug)]
 pub struct WorkerHandle {
     pub(crate) worker_id: u64,
-    pub(crate) workers: Arc<Mutex<Vec<WorkerEntry>>>,
+    pub(crate) workers: WorkerRegistry,
 }
 
 #[derive(Debug)]
