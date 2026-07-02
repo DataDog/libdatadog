@@ -513,9 +513,10 @@ pub mod linux {
             let payload_bytes =
                 Self::read_process_memory(self.pid, payload_ptr, payload_size as usize)?;
 
-            // pairs with the first release fence on update() to ensure that, if we read data updated
-            // after the initial published time, we at least see the published time being set to 0 in
-            // the next load of the published time (or we could see a later time rather than 0)
+            // pairs with the first release fence on update() to ensure that, if we read data
+            // updated after the initial published time, we at least see the published
+            // time being set to 0 in the next load of the published time (or we could
+            // see a later time rather than 0)
             fence(Ordering::Acquire);
 
             let published_at_after = header.monotonic_published_at_ns.load(Ordering::Relaxed);
