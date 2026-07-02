@@ -4,13 +4,11 @@
 // Datadog, Inc.
 
 use std::{
-    borrow::Cow,
     sync::atomic::{AtomicU64, Ordering},
     time::SystemTime,
 };
 
-use http::{header::CONTENT_TYPE, Uri};
-use libdd_common::Endpoint;
+use http::header::CONTENT_TYPE;
 use libdd_telemetry::{
     build_host,
     config::Config,
@@ -111,10 +109,11 @@ async fn async_main() {
     let mut config = Config::from_env();
     config.direct_submission_enabled = true;
     config.debug_enabled = true;
+    let api_key = std::env::var("DD_API_KEY").unwrap();
     config
-        .set_endpoint(Endpoint {
-            url: Uri::from_static("https://instrumentation-telemetry-intake.datad0g.com"),
-            api_key: Some(Cow::Owned(std::env::var("DD_API_KEY").unwrap())),
+        .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+            url: Some("https://instrumentation-telemetry-intake.datad0g.com".to_owned()),
+            api_key: Some(api_key),
             ..Default::default()
         })
         .unwrap();

@@ -3,6 +3,7 @@
 //! This module implements the SpanConcentrator used to aggregate spans into stats
 use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
+use tracing::debug;
 
 use libdd_trace_protobuf::pb;
 
@@ -20,11 +21,13 @@ pub use stat_span::StatSpan;
 /// `StatsExporter` is generic over `C: FlushableConcentrator` so it can work with
 /// both the in-process [`SpanConcentrator`] and the SHM-backed `ShmSpanConcentrator`.
 pub trait FlushableConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket>;
+    /// Flush time buckets and return them together with the number of spans that were
+    /// collapsed into the overflow sentinel bucket due to cardinality limiting.
+    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64);
 }
 
 impl FlushableConcentrator for SpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> Vec<pb::ClientStatsBucket> {
+    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64) {
         self.flush(SystemTime::now(), force)
     }
 }
@@ -65,6 +68,14 @@ pub struct StatsComputationObfuscationConfig {
 pub type SharedStatsComputationObfuscationConfig =
     std::sync::Arc<arc_swap::ArcSwap<StatsComputationObfuscationConfig>>;
 
+/// Default maximum number of distinct aggregation keys per time bucket.
+///
+/// 7 168 is the limit to exactly saturate hashbrown's internal table at its maximum load factor of
+/// 7/8. Any higher limit would immediately force a doubling of the table capacity, wasting
+/// half the allocated slots for a modest increase in cardinality. To avoid future changes going
+/// over this limit (e.g. adding extra overflow buckets) we set a slightly lower limit.
+pub const DEFAULT_MAX_ENTRIES_PER_BUCKET: usize = 7_000;
+
 /// SpanConcentrator compute stats on span aggregated by time and span attributes
 ///
 /// # Aggregation
@@ -80,6 +91,11 @@ pub type SharedStatsComputationObfuscationConfig =
 /// When the SpanConcentrator is flushed it keeps the `buffer_len` most recent buckets and remove
 /// all older buckets returning their content. When using force flush all buckets are flushed
 /// regardless of their age.
+///
+/// # Cardinality limiting
+/// Each time bucket holds at most `max_entries_per_bucket` distinct aggregation keys. Once that
+/// limit is reached, spans whose key is not already present are merged into a single overflow
+/// bucket keyed by [`aggregation::TRACER_BLOCKED_VALUE`].
 #[derive(Debug, Clone)]
 pub struct SpanConcentrator {
     /// Size of the time buckets used for aggregation in nanos
@@ -90,6 +106,8 @@ pub struct SpanConcentrator {
     oldest_timestamp: u64,
     /// bufferLen is the number stats bucket we keep when flushing.
     buffer_len: usize,
+    /// Maximum number of distinct aggregation keys per bucket.
+    max_entries_per_bucket: usize,
     /// span.kind fields eligible for stats computation
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
@@ -104,12 +122,15 @@ impl SpanConcentrator {
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
     /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
+    /// - `override_max_entries_per_bucket` maximum distinct aggregation keys per time bucket before
+    ///   cardinality limiting applies. Pass `None` to use [`DEFAULT_MAX_ENTRIES_PER_BUCKET`].
     /// - `obfuscation_config` optional and updatable config for resource key obfuscation
     pub fn new(
         bucket_size: Duration,
         now: SystemTime,
         span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
+        override_max_entries_per_bucket: Option<usize>,
         #[cfg(feature = "stats-obfuscation")] obfuscation_config: Option<
             SharedStatsComputationObfuscationConfig,
         >,
@@ -122,6 +143,8 @@ impl SpanConcentrator {
                 bucket_size.as_nanos() as u64,
             ),
             buffer_len: 2,
+            max_entries_per_bucket: override_max_entries_per_bucket
+                .unwrap_or(DEFAULT_MAX_ENTRIES_PER_BUCKET),
             span_kinds_stats_computed,
             peer_tag_keys,
             #[cfg(feature = "stats-obfuscation")]
@@ -178,7 +201,7 @@ impl SpanConcentrator {
         };
         self.buckets
             .entry(bucket_timestamp)
-            .or_insert(StatsBucket::new(bucket_timestamp))
+            .or_insert_with(|| StatsBucket::new(bucket_timestamp, self.max_entries_per_bucket))
             .insert(
                 agg_key,
                 span.duration(),
@@ -206,14 +229,26 @@ impl SpanConcentrator {
 
     /// Flush all stats bucket except for the `buffer_len` most recent. If `force` is true, flush
     /// all buckets.
-    pub fn flush(&mut self, now: SystemTime, force: bool) -> Vec<pb::ClientStatsBucket> {
+    ///
+    /// Returns a tuple of `(buckets, collapsed_spans)` where `collapsed_spans` is the total number
+    /// of spans that were collapsed into the overflow sentinel bucket due to cardinality limiting
+    /// across all flushed time buckets.
+    pub fn flush(&mut self, now: SystemTime, force: bool) -> (Vec<pb::ClientStatsBucket>, u64) {
         self.drain_due_buckets(now, force, StatsBucket::flush)
     }
 
     /// Like [`Self::flush`], but also emits exact per-cell scalars alongside each bucket for the
     /// OTLP trace-metrics path. The protobuf bucket inside each [`OtlpStatsBucket`] is identical
     /// to what [`Self::flush`] would produce, so the /v0.6/stats agent path is unaffected.
-    pub fn flush_with_otlp_exact(&mut self, now: SystemTime, force: bool) -> Vec<OtlpStatsBucket> {
+    ///
+    /// Returns a tuple of `(buckets, collapsed_spans)` where `collapsed_spans` is the total number
+    /// of spans that were collapsed into the overflow sentinel bucket due to cardinality limiting
+    /// across all flushed time buckets.
+    pub fn flush_with_otlp_exact(
+        &mut self,
+        now: SystemTime,
+        force: bool,
+    ) -> (Vec<OtlpStatsBucket>, u64) {
         self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact)
     }
 
@@ -222,7 +257,7 @@ impl SpanConcentrator {
         now: SystemTime,
         force: bool,
         encode: impl Fn(StatsBucket, u64) -> T,
-    ) -> Vec<T> {
+    ) -> (Vec<T>, u64) {
         // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
         let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
@@ -232,7 +267,8 @@ impl SpanConcentrator {
             align_timestamp(now_timestamp, self.bucket_size)
                 - (self.buffer_len as u64 - 1) * self.bucket_size
         };
-        buckets
+        let mut total_collapsed = 0;
+        let buckets_pb = buckets
             .into_iter()
             .filter_map(|(timestamp, bucket)| {
                 // Always keep `bufferLen` buckets (default is 2: current + previous one).
@@ -247,9 +283,14 @@ impl SpanConcentrator {
                     self.buckets.insert(timestamp, bucket);
                     return None;
                 }
+                total_collapsed += bucket.collapsed_count();
                 Some(encode(bucket, self.bucket_size))
             })
-            .collect()
+            .collect();
+        if total_collapsed > 0 {
+            debug!(max_entries_per_bucket = self.max_entries_per_bucket, total_collapsed, "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT");
+        }
+        (buckets_pb, total_collapsed)
     }
 }
 

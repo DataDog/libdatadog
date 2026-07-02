@@ -135,6 +135,7 @@ pub(crate) fn start_stats_computation<
             std::time::SystemTime::now(),
             span_kinds,
             peer_tags,
+            None,
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),
         )));
@@ -165,6 +166,9 @@ fn create_and_start_stats_worker<
         client_side_stats.obfuscation_config.clone(),
         #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
+        #[cfg(feature = "telemetry")]
+        None,
+        None,
     );
     let worker_handle = ctx
         .shared_runtime
