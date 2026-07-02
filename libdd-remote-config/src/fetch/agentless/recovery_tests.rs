@@ -16,10 +16,13 @@ use libdd_capabilities::maybe_send::MaybeSend;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
-use tuf::crypto::Ed25519PrivateKey;
+use tuf::crypto::{Ed25519PrivateKey, HashAlgorithm, PrivateKey};
 use tuf::database::Database;
 use tuf::interchange::Json;
-use tuf::metadata::RawSignedMetadataSet;
+use tuf::metadata::{
+    Delegation, MetadataDescription, MetadataPath, RawSignedMetadataSet, TargetPath,
+    TargetsMetadataBuilder,
+};
 use tuf::repo_builder::RepoBuilder;
 use tuf::repository::EphemeralRepository;
 
@@ -417,4 +420,186 @@ async fn apply_error_resets_and_recovers() {
     assert_eq!(req3.current_config_snapshot_version, 0);
     assert_eq!(req3.current_config_root_version, 1);
     assert_eq!(req3.current_director_root_version, 1);
+}
+
+/// Build a config repo (v1) that authorizes both `known_path` and
+/// `unknown_path` through a single delegated role `role_name` whose glob
+/// `paths` cover both products. Returns the signed config metadata set plus the
+/// raw delegated-targets blob (to feed as `DelegatedMeta`).
+async fn build_config_with_delegation(
+    config_key: &Ed25519PrivateKey,
+    product_key: &Ed25519PrivateKey,
+    role_name: &str,
+    entries: &[(&str, &[u8])],
+    glob_paths: &[&str],
+) -> (RawSignedMetadataSet<Json>, Vec<u8>) {
+    // Delegated targets blob: describes every authorized (path, content).
+    let mut builder = TargetsMetadataBuilder::new();
+    for (path, content) in entries {
+        builder = builder
+            .insert_target_from_slice(
+                TargetPath::new((*path).to_string()).unwrap(),
+                content,
+                &[HashAlgorithm::Sha256],
+            )
+            .unwrap();
+    }
+    let delegated = builder.signed::<Json>(product_key).unwrap();
+    let raw_delegated = delegated.to_raw().unwrap().as_bytes().to_vec();
+
+    // Top-level config targets: delegate the glob paths to `role_name`.
+    let mut delegation = Delegation::builder(MetadataPath::new(role_name.to_string()).unwrap())
+        .key(product_key.public());
+    for g in glob_paths {
+        delegation = delegation.delegate_path(TargetPath::new((*g).to_string()).unwrap());
+    }
+    let delegation = delegation.build().unwrap();
+
+    let role_path = MetadataPath::new(role_name.to_string()).unwrap();
+    let delegated_desc =
+        MetadataDescription::from_slice(&raw_delegated, 1, &[HashAlgorithm::Sha256]).unwrap();
+
+    let mut repo = EphemeralRepository::<Json>::new();
+    let set = RepoBuilder::create(&mut repo)
+        .trusted_root_keys(&[config_key])
+        .trusted_targets_keys(&[config_key])
+        .trusted_snapshot_keys(&[config_key])
+        .trusted_timestamp_keys(&[config_key])
+        .stage_root()
+        .unwrap()
+        .add_delegation_key(product_key.public().clone())
+        .add_delegation_role(delegation)
+        .stage_targets()
+        .unwrap()
+        .stage_snapshot_with_builder(|builder| {
+            builder.insert_metadata_description(role_path.clone(), delegated_desc.clone())
+        })
+        .unwrap()
+        .commit()
+        .await
+        .unwrap();
+
+    (set, raw_delegated)
+}
+
+/// Build a director repo (v1) that announces every `(path, content)` entry as a
+/// top-level target (sha256), matching the config authorization.
+async fn build_director_with_targets(
+    director_key: &Ed25519PrivateKey,
+    entries: &[(&str, &[u8])],
+) -> RawSignedMetadataSet<Json> {
+    let mut repo = EphemeralRepository::<Json>::new();
+    let mut builder = RepoBuilder::create(&mut repo)
+        .trusted_root_keys(&[director_key])
+        .trusted_targets_keys(&[director_key])
+        .trusted_snapshot_keys(&[director_key])
+        .trusted_timestamp_keys(&[director_key])
+        .stage_root_if_necessary()
+        .unwrap()
+        .target_hash_algorithms(&[HashAlgorithm::Sha256]);
+    for (path, content) in entries {
+        builder = builder
+            .add_target(
+                TargetPath::new((*path).to_string()).unwrap(),
+                futures_util::io::Cursor::new(content.to_vec()),
+            )
+            .await
+            .unwrap();
+    }
+    builder.stage_targets().unwrap().commit().await.unwrap()
+}
+
+/// E-F1 / G-F1: a director target for a product the closed `RemoteConfigProduct`
+/// enum does not know must not fail the fetch of the other, known targets.
+///
+/// The cache owns the parsing rules (`TargetCache::is_parseable_path`); `apply()`
+/// consults it to drop unparseable/unknown-product targets before they reach
+/// `active_targets`, so `collect_handles` never sees a path it can't serve.
+#[tokio::test]
+async fn unknown_product_target_does_not_wedge_known_targets() {
+    let config_key = new_key();
+    let product_key = new_key();
+    let director_key = new_key();
+
+    let known_path = "datadog/2/APM_TRACING/cfgid/config";
+    let unknown_path = "datadog/2/BRAND_NEW_PRODUCT/cfgid/config";
+    let known_content: &[u8] = b"known apm config payload";
+    let unknown_content: &[u8] = b"brand new product payload";
+
+    let entries: &[(&str, &[u8])] = &[(known_path, known_content), (unknown_path, unknown_content)];
+
+    // Config authorizes BOTH paths (so `verify_director_against_config` passes);
+    // the divergence is purely that libdatadog's product enum can't parse the
+    // second one.
+    let (cfg, raw_delegated) = build_config_with_delegation(
+        &config_key,
+        &product_key,
+        "APM_TRACING",
+        entries,
+        &[
+            "datadog/*/APM_TRACING/*/*",
+            "datadog/*/BRAND_NEW_PRODUCT/*/*",
+        ],
+    )
+    .await;
+    let dir = build_director_with_targets(&director_key, entries).await;
+
+    let resp = remoteconfig::LatestConfigsResponse {
+        config_metas: Some(remoteconfig::ConfigMetas {
+            roots: vec![top(cfg.root().unwrap().as_bytes())],
+            timestamp: Some(top(cfg.timestamp().unwrap().as_bytes())),
+            snapshot: Some(top(cfg.snapshot().unwrap().as_bytes())),
+            top_targets: Some(top(cfg.targets().unwrap().as_bytes())),
+            delegated_targets: vec![remoteconfig::DelegatedMeta {
+                version: meta_version(&raw_delegated),
+                role: "APM_TRACING".to_string(),
+                raw: raw_delegated,
+            }],
+        }),
+        director_metas: Some(director_metas(&dir)),
+        target_files: entries
+            .iter()
+            .map(|(path, content)| remoteconfig::File {
+                path: (*path).to_string(),
+                raw: content.to_vec(),
+            })
+            .collect(),
+    };
+
+    let http = MockHttp::new();
+    http.push(&resp);
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg.root().unwrap().as_bytes().to_vec(),
+        dir.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    let res = f
+        .fetch_config(dummy_client(), &cache)
+        .await
+        .expect("a config-authorized unknown-product target must not wedge the fetch");
+
+    // The cache knows it cannot serve the unknown-product path.
+    assert!(cache.is_parseable_path(known_path));
+    assert!(!cache.is_parseable_path(unknown_path));
+
+    // `apply()` filtered it out, so only the known target is active — the unknown
+    // product never reaches `active_targets`/`collect_handles`.
+    let returned: Vec<&str> = res.targets.iter().map(|t| t.path.as_str()).collect();
+    assert_eq!(
+        returned,
+        vec![known_path],
+        "only the known-product target should be active"
+    );
+
+    // The active batch is fully servable: `collect_handles` succeeds (no wedge).
+    let handles = cache
+        .collect_handles(&res.targets)
+        .expect("active batch must not wedge collect_handles");
+    assert_eq!(handles.len(), 1, "only the known target should be served");
 }

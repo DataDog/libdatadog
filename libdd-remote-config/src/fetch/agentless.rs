@@ -25,7 +25,7 @@ use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
 use serde_json::Value;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 use tuf::repository::RepositoryStorage;
 use tuf::{
     metadata::{
@@ -642,7 +642,18 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         // config repo's per-product delegated keys, not just the single director key.
         verify_director_against_config(&self.config_client, &self.director_client)?;
 
-        let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?.collect();
+        let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?
+            .filter(|t| {
+                let parseable = cache.is_parseable_path(t.path.as_str());
+                if !parseable {
+                    warn!(
+                        "Skipping unparseable/unknown-product remote config path: {}",
+                        t.path.as_str()
+                    );
+                }
+                parseable
+            })
+            .collect();
 
         let cached_paths: hashbrown::HashSet<&str> = cache.is_cached_batch(
             targets
@@ -1051,6 +1062,12 @@ pub(crate) struct NewTarget {
 
 pub(crate) use cache::TargetCache;
 
+
+/// This module serves as a way to decouple the agentless logic from the rest of this crate
+/// This is done for two purposes:
+/// * Making review easier by allowing independent review of the RC checking alone
+/// * Being able to isolate the agentless logic in it's own crate eventually so 
+///     that we can reuse it in bottlecap/ obs-pipeline without the rest of the code
 mod cache {
     use std::sync::Arc;
 
@@ -1197,6 +1214,10 @@ mod cache {
                 handles.push(stored.handle.clone());
             }
             Ok(handles)
+        }
+
+        pub(crate) fn is_parseable_path(&self, path: &str) -> bool {
+            RemoteConfigPath::try_parse(path).is_ok()
         }
     }
 }

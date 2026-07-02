@@ -675,14 +675,8 @@ impl<S: FileStorage> ConfigFetcher<S> {
 
                 let mut config_paths: HashSet<RemoteConfigPath> = HashSet::new();
                 for target_ref in &res.targets {
-                    match RemoteConfigPath::try_parse(&target_ref.path) {
-                        Ok(parsed) => {
-                            config_paths.insert(parsed.into());
-                        }
-                        Err(e) => warn!(
-                            "Failed parsing remote config path: {} - {e:?}",
-                            target_ref.path
-                        ),
+                    if let Ok(parsed) = RemoteConfigPath::try_parse(&target_ref.path) {
+                        config_paths.insert(parsed.into());
                     }
                 }
 
