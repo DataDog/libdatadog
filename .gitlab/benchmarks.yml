@@ -3,9 +3,17 @@ variables:
   # The Dockerfile to this image is located at:
   # https://github.com/DataDog/benchmarking-platform/tree/libdatadog/benchmarks
 
+# The benchmark suite is sharded across parallel jobs to reduce wall-clock time. Each shard runs
+# both candidate and baseline for its assigned crates on the same runner (so the comparison stays
+# noise-controlled), then benchmarks_combine merges the shards' results into a single PR comment.
 benchmarks:
+  parallel: 2
   tags: ["runner:apm-k8s-tweaked-metal"]
-  needs: []
+  needs:
+    # Not created on main/release/hotfix (full suite) -- hence optional.
+    - job: compute_impacted_crates
+      artifacts: true
+      optional: true
   image:
     name: $BASE_CI_IMAGE
   rules:
@@ -17,6 +25,26 @@ benchmarks:
     - interruptible: true
   timeout: 80m
   script:
+    # Decide which crates THIS shard benchmarks. Runs first, while $CI_PROJECT_DIR is the libdatadog
+    # checkout (so ./benchmark/... and the compute_impacted_crates artifacts are available). The
+    # helper prints SKIP (nothing to do), FULL (whole workspace), or a space-separated crate list;
+    # BENCH_PACKAGES is consumed by benchmark/run_benchmarks_ci.sh.
+    - |
+      DECISION="$(./benchmark/select_bench_packages.sh "${CI_NODE_INDEX:-1}" "${CI_NODE_TOTAL:-1}")"
+      case "$DECISION" in
+        SKIP)
+          echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1}: nothing to benchmark."
+          exit 0
+          ;;
+        FULL)
+          echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1}: full-workspace benchmark run."
+          export BENCH_PACKAGES=""
+          ;;
+        *)
+          export BENCH_PACKAGES="$DECISION"
+          echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1} crates: $BENCH_PACKAGES"
+          ;;
+      esac
     - export ARTIFACTS_DIR="$(pwd)/reports" && (mkdir "${ARTIFACTS_DIR}" || :)
     - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform && cd /platform
     - ./steps/capture-hardware-software-info.sh
@@ -47,11 +75,12 @@ benchmarks:
     - ./steps/analyze-results.sh
     - "./steps/upload-results-to-s3.sh || :"
     - "./steps/upload-results-to-benchmarking-api.sh || :"
-    - "./steps/post-pr-comment.sh || :"
+    # Hand this shard's reports to benchmarks_combine, which posts the single PR comment.
+    - mv "${ARTIFACTS_DIR}" "${CI_PROJECT_DIR}/reports-${CI_NODE_INDEX:-1}"
   artifacts:
-    name: "reports"
+    name: "reports-${CI_NODE_INDEX}"
     paths:
-      - reports/
+      - reports-*/
     expire_in: 3 months
   variables:
     UPSTREAM_PROJECT_ID: $CI_PROJECT_ID # The ID of the current project. This ID is unique across all projects on the GitLab instance.
@@ -59,6 +88,53 @@ benchmarks:
     UPSTREAM_BRANCH: $CI_COMMIT_REF_NAME # The branch or tag name for which project is built.
     UPSTREAM_COMMIT_SHA: $CI_COMMIT_SHA # The commit revision the project is built for.
     UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog" # The HTTP URL to the project's repository.
+
+    KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
+    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
+
+# Merges the parallel benchmark shards and posts a single PR comment. Each shard already uploaded its
+# own results to S3 / the Benchmarking API with correct per-run metadata; this job only assembles the
+# combined comment (pr-commenter uses --on-duplicate=replace, so exactly one job may comment).
+benchmarks_combine:
+  tags: ["arch:amd64"]
+  needs:
+    - job: benchmarks
+      artifacts: true
+      optional: true
+  image:
+    name: $BASE_CI_IMAGE
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
+      when: never
+    - if: $CI_COMMIT_BRANCH == "main"
+      interruptible: false
+    - interruptible: true
+  script:
+    - |
+      if ! ls -d "${CI_PROJECT_DIR}"/reports-*/ >/dev/null 2>&1; then
+        echo "No shard reports produced -> nothing to combine."
+        exit 0
+      fi
+    - git clone --branch libdatadog/benchmarks https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.ddbuild.io/DataDog/benchmarking-platform /platform
+    - |
+      # Assemble the files post-pr-comment.sh reads by concatenating each shard's markdown.
+      export ARTIFACTS_DIR="${CI_PROJECT_DIR}/reports"
+      mkdir -p "${ARTIFACTS_DIR}/candidate" "${ARTIFACTS_DIR}/baseline"
+      cat "${CI_PROJECT_DIR}"/reports-*/comparison-baseline-vs-candidate.md > "${ARTIFACTS_DIR}/comparison-baseline-vs-candidate.md" 2>/dev/null || :
+      cat "${CI_PROJECT_DIR}"/reports-*/candidate/analysis-candidate.md     > "${ARTIFACTS_DIR}/candidate/analysis-candidate.md"     2>/dev/null || :
+      cat "${CI_PROJECT_DIR}"/reports-*/baseline/analysis-baseline.md       > "${ARTIFACTS_DIR}/baseline/analysis-baseline.md"       2>/dev/null || :
+      (cd /platform && ./steps/post-pr-comment.sh) || :
+  artifacts:
+    name: "reports-combined"
+    paths:
+      - reports/
+    expire_in: 3 months
+  variables:
+    UPSTREAM_PROJECT_ID: $CI_PROJECT_ID
+    UPSTREAM_PROJECT_NAME: $CI_PROJECT_NAME # libdatadog
+    UPSTREAM_BRANCH: $CI_COMMIT_REF_NAME
+    UPSTREAM_COMMIT_SHA: $CI_COMMIT_SHA
+    UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog"
 
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
     FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
