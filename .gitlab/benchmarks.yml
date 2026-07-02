@@ -33,9 +33,11 @@ benchmarks:
       elif [ "${IMPACTED_STATUS:-}" != "success" ] || [ -z "${AFFECTED_CRATES:-}" ]; then
         echo "Impacted crates undetermined -> full benchmark suite."
         export BENCH_PACKAGES=""
-      elif grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml)' changed_files.txt 2>/dev/null; then
-        echo "Benchmark infrastructure changed -> full benchmark suite."
-        export BENCH_PACKAGES=""
+      # TEMP (DO NOT MERGE): infra-change guard disabled to test PR crate scoping while the benchmark
+      # infra still lives only on this branch. Restore before merging.
+      # elif grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml)' changed_files.txt 2>/dev/null; then
+      #   echo "Benchmark infrastructure changed -> full benchmark suite."
+      #   export BENCH_PACKAGES=""
       elif ! BENCH_CRATES=$(set -o pipefail; cargo metadata --no-deps --format-version 1 \
              | jq -c '[.packages[] | select(any(.targets[]?; .kind[]? == "bench")) | .name]'); then
         echo "Could not detect benchmarked crates -> full benchmark suite."
