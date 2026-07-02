@@ -216,6 +216,7 @@ mod tests {
         .await;
     }
 
+    #[cfg_attr(miri, ignore)] // tokio executor park/wake overhead is prohibitively slow under Miri
     #[tokio::test]
     async fn timeout_returns_without_waiting_for_http_response() {
         let ep = Endpoint {

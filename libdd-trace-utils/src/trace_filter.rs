@@ -403,6 +403,7 @@ mod tests {
         assert!(traces.is_empty());
     }
 
+    #[cfg_attr(miri, ignore)] // regex compilation is prohibitively slow under Miri
     #[test]
     fn reject_regex_value_no_match_keeps() {
         let mut traces = one_trace(span_with("r", &[("env", "staging")]));
@@ -646,6 +647,7 @@ mod tests {
         assert!(traces.is_empty());
     }
 
+    #[cfg_attr(miri, ignore)] // regex compilation is prohibitively slow under Miri
     #[test]
     fn regex_require_spaces_around_colon_keeps() {
         let mut traces = one_trace(span_with("r", &[("env", "production")]));
