@@ -367,6 +367,8 @@ struct CoalescerState<D> {
     dropped_overflow: u64,
 }
 
+// Keep this manual: deriving `Default` adds an unnecessary `D: Default` bound,
+// but the empty state only needs default maps and counters.
 impl<D> Default for CoalescerState<D> {
     fn default() -> Self {
         Self {
@@ -400,6 +402,7 @@ impl<D> Clone for FlagEvaluationEvpCoalescer<D> {
     }
 }
 
+// Keep this manual so callers can use destination key types without `Default`.
 impl<D> Default for FlagEvaluationEvpCoalescer<D> {
     fn default() -> Self {
         Self {
