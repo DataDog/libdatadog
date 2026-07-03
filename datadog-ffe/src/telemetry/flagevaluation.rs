@@ -818,18 +818,35 @@ fn expand_event_context(event: &mut serde_json::Value) {
 }
 
 fn strip_placeholders(value: &mut serde_json::Value) {
+    strip_placeholders_at(value, PlaceholderLocation::Root);
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PlaceholderLocation {
+    Root,
+    RootContext,
+    Other,
+}
+
+fn strip_placeholders_at(value: &mut serde_json::Value, location: PlaceholderLocation) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, child) in map.iter_mut() {
-                if key != "evaluation" {
-                    strip_placeholders(child);
+                if !(location == PlaceholderLocation::RootContext && key == "evaluation") {
+                    let child_location =
+                        if location == PlaceholderLocation::Root && key == "context" {
+                            PlaceholderLocation::RootContext
+                        } else {
+                            PlaceholderLocation::Other
+                        };
+                    strip_placeholders_at(child, child_location);
                 }
             }
             map.retain(|key, v| !is_placeholder(key, v));
         }
         serde_json::Value::Array(items) => {
             for item in items.iter_mut() {
-                strip_placeholders(item);
+                strip_placeholders_at(item, PlaceholderLocation::Other);
             }
             items.retain(|v| !is_array_placeholder(v));
         }
@@ -1267,6 +1284,59 @@ mod tests {
                 .is_none(),
             "unparseable evaluation must be dropped from the body"
         );
+    }
+
+    #[test]
+    fn placeholder_stripping_recurses_into_non_context_evaluation_objects() {
+        let mut value = json!({
+            "evaluation": {
+                "empty_array": [],
+                "empty_object": {},
+                "items": [null, {}, [], "kept"],
+                "null_value": null,
+                "present": "kept"
+            }
+        });
+
+        strip_placeholders(&mut value);
+
+        assert_eq!(
+            value,
+            json!({
+                "evaluation": {
+                    "items": ["kept"],
+                    "present": "kept"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn placeholder_stripping_preserves_context_evaluation_subtree() {
+        let mut value = json!({
+            "context": {
+                "evaluation": {
+                    "enabled": false,
+                    "empty": "",
+                    "empty_array": [],
+                    "empty_object": {},
+                    "null_value": null
+                },
+                "dd": {
+                    "service": ""
+                }
+            }
+        });
+
+        strip_placeholders(&mut value);
+
+        let evaluation = &value["context"]["evaluation"];
+        assert_eq!(evaluation["enabled"], false);
+        assert_eq!(evaluation["empty"], "");
+        assert!(evaluation["empty_array"].is_array());
+        assert!(evaluation["empty_object"].is_object());
+        assert!(evaluation["null_value"].is_null());
+        assert!(value["context"].get("dd").is_none());
     }
 
     #[test]
