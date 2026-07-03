@@ -215,13 +215,15 @@ mod linux {
     use rand::Rng;
     use std::io::Write;
 
-    /// Create a memfd file storing the tracer metadata. This function also attempts to publish the
-    /// tracer metadata as an OTel process context separately, but will ignore resulting errors.
+    /// Create a memfd file storing the tracer metadata.
+    ///
+    /// Publishing the OTel process context is now an explicit, caller-driven step (see
+    /// [`crate::otel_process_ctx::publish`], whose returned handle the caller must retain) rather
+    /// than a fire-and-forget side effect here, so the caller can keep the mapping alive and learn
+    /// its pointer.
     pub fn store_tracer_metadata(
         data: &super::TracerMetadata,
     ) -> anyhow::Result<super::AnonymousFileHandle> {
-        let _ = crate::otel_process_ctx::linux::publish(&data.to_otel_process_ctx());
-
         let uid: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(8)
