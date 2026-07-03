@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-stats"
-version = "5.0.0"
+version = "6.0.0"
 description = "This crate provides utilities to compute stats from Datadog traces."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-stats"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-stats"
