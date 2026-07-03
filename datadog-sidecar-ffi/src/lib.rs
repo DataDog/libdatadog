@@ -29,7 +29,8 @@ use datadog_sidecar::service::{
     FfeFlagEvaluationEvent as SidecarFfeFlagEvaluationEvent,
     FfeTelemetryContext as SidecarFfeTelemetryContext, FlagEvalEventContext, FlagKey, InstanceId,
     QueueId, RuntimeMetadata, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
-    SidecarFlushOptions, TargetingRuleKey, VariantKey,
+    SidecarFlushOptions, TargetingRuleKey, VariantKey, MAX_CONTEXT_DEPTH, MAX_CONTEXT_FIELDS,
+    MAX_FIELD_LENGTH,
 };
 use datadog_sidecar::service::{get_telemetry_action_sender, InternalTelemetryActions};
 use datadog_sidecar::shm_remote_config::{path_for_remote_config, RemoteConfigReader};
@@ -1224,7 +1225,9 @@ pub struct FfeFlagEvaluation<'a> {
     pub allocation_key: CharSlice<'a>,
     pub targeting_rule_key: CharSlice<'a>,
     pub targeting_key: CharSlice<'a>,
-    /// UTF-8 JSON object. Empty, invalid, or non-object JSON is omitted.
+    /// UTF-8 JSON object. Empty, invalid, or non-object JSON is omitted. Object
+    /// values are pruned to 256 leaf fields, 256-byte string values, and four
+    /// levels of nested context depth.
     pub evaluation_context_json: CharSlice<'a>,
     pub error_message: CharSlice<'a>,
     pub runtime_default_used: bool,
@@ -1442,12 +1445,14 @@ fn ffe_flag_evaluation_from_ffi(
     service: &str,
 ) -> Result<SidecarFfeFlagEvaluationEvent, String> {
     let evaluation = optional_json_object_string(event.evaluation_context_json)?;
-    let context = evaluation.map(|evaluation| FlagEvalEventContext {
-        evaluation: Some(evaluation),
-        dd: Some(ContextDD {
-            service: service.to_owned(),
-        }),
+    let dd = (!service.is_empty()).then(|| ContextDD {
+        service: service.to_owned(),
     });
+    let context = if evaluation.is_some() || dd.is_some() {
+        Some(FlagEvalEventContext { evaluation, dd })
+    } else {
+        None
+    };
 
     Ok(SidecarFfeFlagEvaluationEvent {
         timestamp: event.timestamp_ms,
@@ -1466,6 +1471,74 @@ fn ffe_flag_evaluation_from_ffi(
         error: optional_string(event.error_message)?.map(|message| EvalError { message }),
         runtime_default_used: event.runtime_default_used,
     })
+}
+
+fn prune_evaluation_context_json(value: serde_json::Value) -> Option<String> {
+    let serde_json::Value::Object(attrs) = value else {
+        return None;
+    };
+
+    let mut remaining_fields = MAX_CONTEXT_FIELDS;
+    let pruned = prune_context_object(&attrs, 1, &mut remaining_fields);
+    Some(serde_json::Value::Object(pruned).to_string())
+}
+
+fn prune_context_object(
+    attrs: &serde_json::Map<String, serde_json::Value>,
+    depth: usize,
+    remaining_fields: &mut usize,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut keys: Vec<_> = attrs.keys().collect();
+    keys.sort();
+
+    let mut pruned = serde_json::Map::new();
+    for key in keys {
+        if *remaining_fields == 0 {
+            break;
+        }
+        let Some(value) = attrs
+            .get(key)
+            .and_then(|value| prune_context_value(value, depth, remaining_fields))
+        else {
+            continue;
+        };
+        pruned.insert(key.clone(), value);
+    }
+    pruned
+}
+
+fn prune_context_value(
+    value: &serde_json::Value,
+    depth: usize,
+    remaining_fields: &mut usize,
+) -> Option<serde_json::Value> {
+    match value {
+        serde_json::Value::String(s) if s.len() > MAX_FIELD_LENGTH => None,
+        serde_json::Value::Object(attrs) => {
+            if depth >= MAX_CONTEXT_DEPTH {
+                return None;
+            }
+            let pruned = prune_context_object(attrs, depth + 1, remaining_fields);
+            (!pruned.is_empty()).then_some(serde_json::Value::Object(pruned))
+        }
+        serde_json::Value::Array(values) => {
+            if depth >= MAX_CONTEXT_DEPTH {
+                return None;
+            }
+            let pruned: Vec<_> = values
+                .iter()
+                .filter_map(|value| prune_context_value(value, depth + 1, remaining_fields))
+                .collect();
+            (!pruned.is_empty()).then_some(serde_json::Value::Array(pruned))
+        }
+        _ => {
+            if *remaining_fields == 0 {
+                return None;
+            }
+            *remaining_fields -= 1;
+            Some(value.clone())
+        }
+    }
 }
 
 fn ffe_metric_from_ffi(
@@ -1496,11 +1569,7 @@ fn optional_json_object_string(slice: CharSlice) -> Result<Option<String>, Strin
         Ok(value) => value,
         Err(_) => return Ok(None),
     };
-    if value.is_object() {
-        Ok(Some(value.to_string()))
-    } else {
-        Ok(None)
-    }
+    Ok(prune_evaluation_context_json(value))
 }
 
 #[no_mangle]
@@ -1939,6 +2008,23 @@ mod tests {
     use super::*;
     use std::borrow::Cow;
 
+    fn ffi_flag_evaluation<'a>(evaluation_context_json: &'a str) -> FfeFlagEvaluation<'a> {
+        FfeFlagEvaluation {
+            timestamp_ms: 1_700_000_000_000,
+            flag_key: CharSlice::from("flag-a"),
+            first_evaluation_ms: 1_699_999_000_000,
+            last_evaluation_ms: 1_700_000_000_000,
+            evaluation_count: 7,
+            variant: CharSlice::empty(),
+            allocation_key: CharSlice::empty(),
+            targeting_rule_key: CharSlice::empty(),
+            targeting_key: CharSlice::empty(),
+            evaluation_context_json: CharSlice::from(evaluation_context_json),
+            error_message: CharSlice::empty(),
+            runtime_default_used: false,
+        }
+    }
+
     #[test]
     fn otlp_metrics_endpoint_inherits_agent_test_token_when_missing() {
         let agent_endpoint = Endpoint {
@@ -1971,5 +2057,73 @@ mod tests {
         .expect("expected OTLP metrics endpoint");
 
         assert_eq!(endpoint.test_token.as_deref(), Some("metrics-token"));
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_preserves_service_without_evaluation_context() {
+        let event = ffi_flag_evaluation("");
+
+        let converted = ffe_flag_evaluation_from_ffi(&event, "checkout").unwrap();
+        let context = converted.context.expect("service attribution must remain");
+
+        assert!(context.evaluation.is_none());
+        assert_eq!(
+            context.dd.expect("dd context must be present").service,
+            "checkout"
+        );
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_prunes_context_field_count_and_long_strings() {
+        let mut attrs = serde_json::Map::new();
+        attrs.insert(
+            "aaa_long".to_owned(),
+            serde_json::Value::String("x".repeat(MAX_FIELD_LENGTH + 1)),
+        );
+        for index in 0..=MAX_CONTEXT_FIELDS {
+            attrs.insert(format!("field_{index:03}"), serde_json::json!(index));
+        }
+        let raw = serde_json::Value::Object(attrs).to_string();
+        let event = ffi_flag_evaluation(&raw);
+
+        let converted = ffe_flag_evaluation_from_ffi(&event, "checkout").unwrap();
+        let context = converted.context.expect("context must be present");
+        let evaluation = context.evaluation.expect("evaluation context must remain");
+        let value: serde_json::Value = serde_json::from_str(&evaluation).unwrap();
+        let attrs = value.as_object().unwrap();
+
+        assert_eq!(attrs.len(), MAX_CONTEXT_FIELDS);
+        assert!(!attrs.contains_key("aaa_long"));
+        assert!(attrs.contains_key("field_000"));
+        assert!(attrs.contains_key(&format!("field_{:03}", MAX_CONTEXT_FIELDS - 1)));
+        assert!(!attrs.contains_key(&format!("field_{MAX_CONTEXT_FIELDS:03}")));
+    }
+
+    #[test]
+    fn ffe_flag_evaluation_prunes_context_beyond_depth_four() {
+        let raw = serde_json::json!({
+            "a": {
+                "b": {
+                    "c": {
+                        "d": "kept",
+                        "too_deep": {
+                            "e": "dropped"
+                        }
+                    }
+                }
+            },
+            "top": true
+        })
+        .to_string();
+        let event = ffi_flag_evaluation(&raw);
+
+        let converted = ffe_flag_evaluation_from_ffi(&event, "checkout").unwrap();
+        let context = converted.context.expect("context must be present");
+        let evaluation = context.evaluation.expect("evaluation context must remain");
+        let value: serde_json::Value = serde_json::from_str(&evaluation).unwrap();
+
+        assert_eq!(value["a"]["b"]["c"]["d"], "kept");
+        assert!(value["a"]["b"]["c"].get("too_deep").is_none());
+        assert_eq!(value["top"], true);
     }
 }

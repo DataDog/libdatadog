@@ -7,7 +7,8 @@ pub use datadog_ffe::telemetry::evaluation_metrics::FfeEvaluationMetric;
 pub use datadog_ffe::telemetry::exposures::{FfeExposure, FfeExposureBatch};
 pub use datadog_ffe::telemetry::flagevaluation::{
     AllocationKey, ContextDD, EvalError, FfeFlagEvaluationBatch, FfeFlagEvaluationEvent,
-    FlagEvalEventContext, FlagKey, TargetingRuleKey, VariantKey,
+    FlagEvalEventContext, FlagKey, TargetingRuleKey, VariantKey, MAX_CONTEXT_DEPTH,
+    MAX_CONTEXT_FIELDS, MAX_FIELD_LENGTH,
 };
 pub use datadog_ffe::telemetry::FfeTelemetryContext;
 use libdd_common::tag::Tag;

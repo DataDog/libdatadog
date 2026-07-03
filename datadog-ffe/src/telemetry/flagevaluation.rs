@@ -67,6 +67,9 @@ pub const MAX_CONTEXT_FIELDS: usize = 256;
 /// Maximum byte length of a context field value string. Values exceeding this
 /// are skipped entirely (not truncated) to avoid partial-data misattribution.
 pub const MAX_FIELD_LENGTH: usize = 256;
+/// Maximum nested context path depth accepted from FFI callers. A scalar at
+/// `a.b.c.d` is retained; fields nested below that depth are skipped.
+pub const MAX_CONTEXT_DEPTH: usize = 4;
 
 // ── Top-level batch ──────────────────────────────────────────────────────────
 
