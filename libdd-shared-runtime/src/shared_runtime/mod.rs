@@ -270,6 +270,29 @@ impl SharedRuntime {
         Ok(())
     }
 
+    /// Reinitialize the runtime in a forked child process.
+    ///
+    /// After `fork()` the inherited tokio runtime is unusable: its worker threads did not
+    /// survive the fork and its I/O driver file descriptors are now invalid. It must NOT be
+    /// reused, and it must NOT be dropped either -- dropping a runtime built in the parent from
+    /// the child blocks/panics inside tokio (`failed to wake I/O driver: Bad file descriptor`).
+    ///
+    /// Unlike [`restart_runtime`], which only builds a runtime when the slot is empty (relying on
+    /// [`before_fork`] having torn the old one down in the parent), this unconditionally replaces
+    /// the runtime and abandons any inherited one via [`std::mem::forget`] so its `Drop` never
+    /// runs in the child. This keeps the child safe even if `before_fork` did not run before the
+    /// fork. `PausableWorker` holds only a `JoinHandle` (never an `Arc<Runtime>`), so the slot is
+    /// the sole owner of the `Arc<Runtime>` and forgetting it is sufficient to suppress the drop.
+    fn reinit_runtime_for_child(&self) -> Result<(), SharedRuntimeError> {
+        let mut runtime_lock = self.runtime.lock_or_panic();
+        if let Some(stale) = runtime_lock.take() {
+            // Never run a parent-created runtime's Drop in the child.
+            std::mem::forget(stale);
+        }
+        *runtime_lock = Some(Arc::new(build_runtime()?));
+        Ok(())
+    }
+
     /// Hook to be called in the parent process after forking.
     ///
     /// This method restarts workers and resumes normal operation in the parent process.
@@ -310,7 +333,9 @@ impl SharedRuntime {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn after_fork_child(&self) -> Result<(), SharedRuntimeError> {
         debug!("after_fork_child: reinitializing runtime and workers");
-        self.restart_runtime()?;
+        // The inherited runtime cannot be reused or dropped in the child; forget it and build a
+        // fresh one. See `reinit_runtime_for_child` for the fork-safety rationale.
+        self.reinit_runtime_for_child()?;
 
         let runtime_lock = self.runtime.lock_or_panic();
         let runtime = runtime_lock
