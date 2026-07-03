@@ -98,6 +98,43 @@ fn install_produces_sampled_allocations() {
     libdd_heap_gotter::restore_heap_overrides();
 }
 
+/// On x86-64, page-aligned allocations must pass through unsampled.
+/// The header checker refuses pointers in the first 16 bytes of a page,
+/// so a sampled 4096-aligned pointer could not be recognised later by
+/// free or realloc.
+#[cfg(target_arch = "x86_64")]
+#[test]
+#[serial]
+fn page_aligned_allocations_are_unsampled() {
+    let installed = libdd_heap_gotter::install_heap_overrides();
+    assert!(installed);
+
+    unsafe {
+        let tl = dd_tl_state_get_or_init();
+        assert!(!tl.is_null());
+        (*tl).sampling_interval = 1;
+        (*tl).remaining_bytes = 0;
+        (*tl).remaining_bytes_initialized = true;
+
+        let p = libc::aligned_alloc(4096, 4096);
+        assert!(!p.is_null());
+        assert_eq!((p as usize) % 4096, 0);
+
+        let mut raw: *mut c_void = std::ptr::null_mut();
+        let mut offset: usize = 0;
+        let sampled = dd_sample_flag_peek(p, &mut raw, &mut offset);
+        assert!(
+            !sampled,
+            "page-aligned allocation must pass through unsampled"
+        );
+
+        libc::free(p);
+        (*tl).sampling_interval = 512 * 1024;
+    }
+
+    libdd_heap_gotter::restore_heap_overrides();
+}
+
 /// Same as above but for realloc: confirm a sampled allocation that
 /// gets reallocated comes back as a valid (unsampled) pointer with the
 /// user data intact.

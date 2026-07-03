@@ -64,10 +64,11 @@ bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out);
  * Largest alignment the sampler will honor. Above this we pass the
  * allocation through unsampled: the header + slack overhead grows with
  * alignment and stops being proportionate to any observability gain.
- * Sized in bytes; equals one typical 4 KiB page on the supported
- * architectures.
+ * Sized in bytes; kept below one typical 4 KiB page so x86-64 never
+ * returns a sampled pointer at page offset 0, which its fast-path
+ * checker deliberately rejects.
  */
-#define DD_SAMPLE_ALIGNMENT_CAP 4096
+#define DD_SAMPLE_ALIGNMENT_CAP 1024
 
 #if defined(__x86_64__)
 

@@ -81,13 +81,19 @@ one, check the other two.
 
 **Alignment cap**
 
-We don't sample allocations with alignment above 4096 bytes
+We don't sample allocations with alignment above 1024 bytes
 (`DD_SAMPLE_ALIGNMENT_CAP`). Because the bumped size is
 `user_size + 2 * max(alignment, 16)`, high alignments mean a lot of wasted
-space just to hold a 16-byte header. 
+space just to hold a 16-byte header.
 
-The worry is that some workloads/allocators may use big alignments to encourage the 
-system to hand back huge pages - see
+There is also a correctness reason for keeping the cap below a page. The x86-64
+fast check refuses to read `user - 16` when `user` is in the first 16 bytes of a
+page. That avoids touching an unmapped previous page for ordinary unsampled
+pointers. A 4096-byte aligned pointer always has page offset 0, so a sampled
+page-aligned allocation would not be recognised by free or realloc.
+
+Some workloads/allocators may use big alignments to encourage the system to
+hand back huge pages - see
 [this blog post](https://mazzo.li/posts/check-huge-page.html) for context on
 how common large-alignment allocations can be in practice. We need to monitor
 how much we see this happening in real workloads, because if it's a lot we're
