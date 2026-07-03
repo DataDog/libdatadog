@@ -10,7 +10,6 @@ pub enum Error {
     OperationTimedOut,
     UnixSocketUnsupported,
     CannotEstablishTlsConnection,
-    NoValidCertifacteRootsFound,
     WindowsNamedPipeUnsupported,
 }
 
@@ -22,9 +21,6 @@ impl fmt::Display for Error {
             Self::UnixSocketUnsupported => "unix sockets unsuported on windows",
             Self::CannotEstablishTlsConnection => {
                 "cannot establish requested secure TLS connection"
-            }
-            Self::NoValidCertifacteRootsFound => {
-                "missing or not valid system HTTPS/TLS certificate roots"
             }
             Self::WindowsNamedPipeUnsupported => "windows named pipes unsupported",
         })

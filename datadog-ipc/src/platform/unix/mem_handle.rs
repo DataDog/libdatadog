@@ -156,6 +156,13 @@ impl ShmHandle {
         ftruncate(handle.as_owned_fd()?, size as off_t)?;
         Ok(ShmHandle { handle, size })
     }
+
+    /// Refresh the size of the shared memory segment
+    pub fn adjust_to_file_size(&mut self) -> io::Result<()> {
+        let fd = self.handle.as_owned_fd()?;
+        self.size = nix::sys::stat::fstat(fd.as_raw_fd())?.st_size as usize;
+        Ok(())
+    }
 }
 
 impl NamedShmHandle {

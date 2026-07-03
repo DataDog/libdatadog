@@ -296,12 +296,14 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn builder_roundtrip() {
         let client = test_client(8126);
         assert!(client.base_url.contains("localhost"));
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn static_headers_contain_language_metadata() {
         let client = test_client(8126);
@@ -315,6 +317,7 @@ mod tests {
         assert!(keys.contains(&"User-Agent"));
     }
 
+    #[cfg_attr(miri, ignore)] // real TLS/HTTP client construction is prohibitively slow under Miri
     #[test]
     fn extra_headers_propagated() {
         ensure_crypto_provider();

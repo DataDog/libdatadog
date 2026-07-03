@@ -74,7 +74,10 @@ impl TelemetryClientBuilder {
     pub fn set_url(mut self, url: &str) -> Self {
         let _ = self
             .config
-            .set_endpoint(libdd_common::Endpoint::from_slice(url));
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(url.to_owned()),
+                ..Default::default()
+            });
         self
     }
 
@@ -164,7 +167,6 @@ pub struct SendPayloadTelemetry {
     errors_status_code: u64,
     bytes_sent: u64,
     chunks_sent: u64,
-    chunks_dropped_p0: u64,
     chunks_dropped_serialization_error: u64,
     chunks_dropped_send_failure: u64,
     responses_count_per_code: HashMap<u16, u64>,
@@ -193,17 +195,8 @@ impl SendPayloadTelemetry {
     /// * `value` - The result of sending traces with retry
     /// * `bytes_sent` - The number of bytes in the payload
     /// * `chunks` - The number of trace chunks in the payload
-    /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
-    pub fn from_retry_result(
-        value: &SendWithRetryResult,
-        bytes_sent: u64,
-        chunks: u64,
-        chunks_dropped_p0: u64,
-    ) -> Self {
-        let mut telemetry = Self {
-            chunks_dropped_p0,
-            ..Default::default()
-        };
+    pub fn from_retry_result(value: &SendWithRetryResult, bytes_sent: u64, chunks: u64) -> Self {
+        let mut telemetry = Self::default();
         match value {
             Ok((response, attempts)) => {
                 telemetry.chunks_sent = chunks;
@@ -283,11 +276,6 @@ impl TelemetryClient {
             self.worker
                 .add_point(data.chunks_sent as f64, key, vec![])?;
         }
-        if data.chunks_dropped_p0 > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
-            self.worker
-                .add_point(data.chunks_dropped_p0 as f64, key, vec![])?;
-        }
         if data.chunks_dropped_serialization_error > 0 {
             let key = self
                 .metrics
@@ -312,12 +300,38 @@ impl TelemetryClient {
         Ok(())
     }
 
+    /// Send dropped P0 trace counts to telemetry.
+    pub fn send_client_side_stats_drops(
+        &self,
+        dropped_p0_traces: usize,
+        dropped_by_trace_filter: usize,
+    ) -> Result<(), TelemetryError> {
+        if dropped_p0_traces > 0 {
+            let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
+            self.worker
+                .add_point(dropped_p0_traces as f64, key, vec![])?;
+        }
+        if dropped_by_trace_filter > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::ChunksDroppedByTraceFilter);
+            self.worker
+                .add_point(dropped_by_trace_filter as f64, key, vec![])?;
+        }
+        Ok(())
+    }
+
     /// Starts the client
     pub async fn start(&self) {
         _ = self
             .worker
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
             .await;
+    }
+
+    /// Clone the telemetry handle
+    pub fn clone_handle(&self) -> TelemetryWorkerHandle {
+        self.worker.clone()
     }
 }
 
@@ -329,7 +343,7 @@ mod tests {
     use httpmock::MockServer;
     use libdd_capabilities::HttpError;
 
-    use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, WorkerHandle};
     use libdd_trace_utils::test_utils::poll_for_mock_hits;
     // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
     // requires `Into<HttpMockRegex>`, which is only implemented for
@@ -337,7 +351,7 @@ mod tests {
     use regex::Regex;
     use tokio::time::sleep;
 
-    fn get_test_client(url: &str, runtime: &SharedRuntime) -> (TelemetryClient, WorkerHandle) {
+    fn get_test_client(url: &str, runtime: &ForkSafeRuntime) -> (TelemetryClient, WorkerHandle) {
         let (client, worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_service_version("test_version")
@@ -389,7 +403,7 @@ mod tests {
     #[test]
     fn api_bytes_test() {
         let payload = Regex::new(r#""metric":"trace_api.bytes","tags":\["src_library:libdatadog"\],"sketch_b64":".+","common":true,"interval":\d+,"type":"distribution""#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -420,7 +434,7 @@ mod tests {
     #[test]
     fn requests_test() {
         let payload = Regex::new(r#""metric":"trace_api.requests","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count""#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -451,7 +465,7 @@ mod tests {
     #[test]
     fn responses_per_code_test() {
         let payload = Regex::new(r#""metric":"trace_api.responses","points":\[\[\d+,1\.0\]\],"tags":\["status_code:200","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -482,7 +496,7 @@ mod tests {
     #[test]
     fn errors_timeout_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:timeout"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -513,7 +527,7 @@ mod tests {
     #[test]
     fn errors_network_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:network"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -544,7 +558,7 @@ mod tests {
     #[test]
     fn errors_status_code_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:status_code"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -575,7 +589,7 @@ mod tests {
     #[test]
     fn chunks_sent_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_sent","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -606,7 +620,7 @@ mod tests {
     #[test]
     fn chunks_dropped_send_failure_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:send_failure"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -635,23 +649,22 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn chunks_dropped_p0_test() {
-        let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:p0_drop"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+    fn send_client_side_stats_drops_test() {
+        let payload_p0 = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,3\.0\]\],"tags":\["src_library:libdatadog","reason:p0_drop"\],"common":true,"type":"count"#).unwrap();
+        let payload_trace_filter = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,5\.0\]\],"tags":\["src_library:libdatadog","reason:trace_filters"\],"common":true,"type":"count"#).unwrap();
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
-            when.method(POST).body_matches(payload);
+            when.method(POST)
+                .body_matches(payload_p0)
+                .body_matches(payload_trace_filter);
             then.status(200).body("");
         });
-        let data = SendPayloadTelemetry {
-            chunks_dropped_p0: 1,
-            ..Default::default()
-        };
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
                 client.start().await;
-                let _ = client.send(&data);
+                client.send_client_side_stats_drops(3, 5).unwrap();
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
 
@@ -668,7 +681,7 @@ mod tests {
     #[test]
     fn chunks_dropped_serialization_error_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:serialization_error"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -704,36 +717,13 @@ mod tests {
                 .unwrap(),
             3,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 bytes_sent: 4,
                 chunks_sent: 5,
                 requests_count: 3,
-                responses_count_per_code: HashMap::from([(200, 1)]),
-                ..Default::default()
-            }
-        )
-    }
-
-    #[test]
-    fn telemetry_from_ok_response_with_p0_drops_test() {
-        let result = Ok((
-            http::Response::builder()
-                .status(http::StatusCode::OK)
-                .body(Bytes::new())
-                .unwrap(),
-            3,
-        ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 10);
-        assert_eq!(
-            telemetry,
-            SendPayloadTelemetry {
-                bytes_sent: 4,
-                chunks_sent: 5,
-                requests_count: 3,
-                chunks_dropped_p0: 10,
                 responses_count_per_code: HashMap::from([(200, 1)]),
                 ..Default::default()
             }
@@ -747,7 +737,7 @@ mod tests {
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -766,7 +756,7 @@ mod tests {
             HttpError::Network(anyhow::anyhow!("connection refused")),
             5,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -781,7 +771,7 @@ mod tests {
     #[test]
     fn telemetry_from_timeout_error_test() {
         let result = Err(SendWithRetryError::Timeout(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -797,7 +787,7 @@ mod tests {
     #[test]
     fn telemetry_from_build_error_test() {
         let result = Err(SendWithRetryError::Build(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -840,7 +830,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn runtime_id_test() {
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_includes(r#""runtime_id":"foo""#);
@@ -871,7 +861,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn application_metadata_test() {
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_includes(
@@ -905,7 +895,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn session_headers_telemetry_test() {
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST)

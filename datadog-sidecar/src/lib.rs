@@ -14,7 +14,6 @@ mod dump;
 pub mod entry;
 #[cfg(feature = "tracing")]
 pub mod log;
-pub mod one_way_shared_memory;
 mod self_telemetry;
 pub mod setup;
 pub mod shm_remote_config;
