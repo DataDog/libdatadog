@@ -166,8 +166,10 @@ impl ProcessContextSelfReader {
     fn is_named_otel_mapping(line: &str) -> bool {
         let trimmed = line.trim_end();
 
-        // The name of the mapping is the 6th column. The separator changes (both ' ' and '\t')
-        // but `split_whitespace()` takes care of that.
+        // The mapping name is the `pathname` column documented for `/proc/<pid>/maps`:
+        // https://github.com/torvalds/linux/blob/9147566d801602c9e7fc7f85e989735735bf38ba/Documentation/filesystems/proc.rst?plain=1#L384-L386
+        // For the OTEL_CTX names we care about, it is the 6th whitespace-delimited field;
+        // `split_whitespace()` ignores the column padding.
         let Some(name) = trimmed.split_whitespace().nth(5) else {
             return false;
         };
