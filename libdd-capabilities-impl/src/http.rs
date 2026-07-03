@@ -67,7 +67,7 @@ mod native {
             req: http::Request<bytes::Bytes>,
         ) -> impl std::future::Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
         {
-            let client = self.client.get_or_init(new_default_client).clone();
+            let client_lock = self.client.clone();
             async move {
                 // file:// URIs short-circuit to the on-disk recorder used by tests.
                 if req.uri().scheme_str() == Some("file") {
@@ -75,6 +75,7 @@ mod native {
                     return write_to_file_endpoint(&parts.uri, body);
                 }
 
+                let client = client_lock.get_or_init(new_default_client).clone();
                 let hyper_req = req.map(Body::from_bytes);
 
                 let response = client
