@@ -1107,19 +1107,30 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn flush(&self, _peer: PeerCredentials, options: SidecarFlushOptions) {
-        self.server
-            .ffe_flagevaluation_coalescer
-            .flush_now(self.server.ffe_http_client.clone())
-            .await;
-
-        if options.traces_and_stats {
-            let flusher = self.server.trace_flusher.clone();
-            if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
-                error!("Failed flushing traces: {e:?}");
+        let flag_evaluations = options.flag_evaluations;
+        let ffe_coalescer = self.server.ffe_flagevaluation_coalescer.clone();
+        let ffe_http_client = self.server.ffe_http_client.clone();
+        let flush_flag_evaluations = async move {
+            if flag_evaluations {
+                ffe_coalescer.flush_now(ffe_http_client).await;
             }
-            flush_all_stats_now(&self.server.span_concentrators).await;
-            debug!("Finished executing flush() for traces and stats")
-        }
+        };
+
+        let traces_and_stats = options.traces_and_stats;
+        let flusher = self.server.trace_flusher.clone();
+        let span_concentrators = self.server.span_concentrators.clone();
+        let flush_traces_and_stats = async move {
+            if traces_and_stats {
+                if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
+                    error!("Failed flushing traces: {e:?}");
+                }
+                flush_all_stats_now(&span_concentrators).await;
+                debug!("Finished executing flush() for traces and stats")
+            }
+        };
+
+        tokio::join!(flush_flag_evaluations, flush_traces_and_stats);
+
         if options.telemetry {
             let workers: Vec<_> = {
                 let clients = self.server.telemetry_clients.inner.lock_or_panic();
@@ -1202,7 +1213,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::{FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeTelemetryContext};
+    use crate::service::{
+        FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeFlagEvaluationBatch,
+        FfeFlagEvaluationEvent, FfeTelemetryContext, FlagKey,
+    };
+    use datadog_ffe::telemetry::flagevaluation::EVP_FLAGEVALUATION_PATH;
     use httpmock::{Method::POST, MockServer};
     use tokio::time::{sleep, Duration as TokioDuration};
 
@@ -1232,6 +1247,28 @@ mod tests {
             reason: "TARGETING_MATCH".to_owned(),
             error_type: None,
             allocation_key: Some("alloc".to_owned()),
+        }
+    }
+
+    fn ffe_flag_evaluation_batch() -> FfeFlagEvaluationBatch {
+        FfeFlagEvaluationBatch {
+            context: ffe_context(),
+            flag_evaluations: vec![FfeFlagEvaluationEvent {
+                timestamp: 123,
+                flag: FlagKey {
+                    key: "flag".to_owned(),
+                },
+                first_evaluation: 100,
+                last_evaluation: 123,
+                evaluation_count: 1,
+                variant: None,
+                allocation: None,
+                targeting_rule: None,
+                targeting_key: None,
+                context: None,
+                error: None,
+                runtime_default_used: false,
+            }],
         }
     }
 
@@ -1355,6 +1392,62 @@ mod tests {
             .get_runtime(&instance_id)
             .lock_applications()
             .contains_key(&queue_id));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flush_options_control_ffe_flag_evaluations() {
+        let http_server = MockServer::start_async().await;
+        let flag_evaluations_mock = http_server
+            .mock_async(|when, then| {
+                when.method(POST).path(EVP_FLAGEVALUATION_PATH);
+                then.status(202);
+            })
+            .await;
+
+        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(42);
+
+        handler
+            .server
+            .get_session(&instance_id.session_id)
+            .modify_trace_config(|cfg| {
+                let endpoint = Endpoint {
+                    url: http_server.url("/").parse().unwrap(),
+                    ..Endpoint::default()
+                };
+                cfg.set_endpoint(endpoint).unwrap();
+            });
+
+        handler
+            .enqueue_actions(
+                PeerCredentials::default(),
+                instance_id,
+                queue_id,
+                vec![SidecarAction::FfeFlagEvaluationBatch(
+                    ffe_flag_evaluation_batch(),
+                )],
+            )
+            .await;
+
+        handler
+            .flush(PeerCredentials::default(), SidecarFlushOptions::default())
+            .await;
+        sleep(TokioDuration::from_millis(50)).await;
+        assert_eq!(flag_evaluations_mock.calls_async().await, 0);
+
+        handler
+            .flush(
+                PeerCredentials::default(),
+                SidecarFlushOptions {
+                    flag_evaluations: true,
+                    ..SidecarFlushOptions::default()
+                },
+            )
+            .await;
+
+        flag_evaluations_mock.assert_calls_async(1).await;
     }
 
     #[tokio::test]

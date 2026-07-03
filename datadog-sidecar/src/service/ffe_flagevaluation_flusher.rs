@@ -17,7 +17,9 @@ use datadog_ffe::telemetry::flagevaluation::{
 };
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex as AsyncMutex;
 
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
 const COALESCE_DELAY: Duration = Duration::from_millis(250);
@@ -48,6 +50,7 @@ impl DestinationKey {
 #[derive(Clone, Default)]
 pub(crate) struct FlagEvaluationCoalescer {
     inner: CommonFlagEvaluationEvpCoalescer<DestinationKey>,
+    flush_mutex: Arc<AsyncMutex<()>>,
 }
 
 impl FlagEvaluationCoalescer {
@@ -67,6 +70,11 @@ impl FlagEvaluationCoalescer {
     }
 
     pub(crate) async fn flush_now(&self, client: NativeCapabilities) {
+        let _guard = self.flush_mutex.lock().await;
+        self.flush_available_batches(client).await;
+    }
+
+    async fn flush_available_batches(&self, client: NativeCapabilities) {
         let batches = self.inner.take_batches();
         futures::future::join_all(batches.into_iter().map(|(destination, batch)| {
             let client = client.clone();
@@ -82,16 +90,10 @@ impl FlagEvaluationCoalescer {
     async fn flush_loop(self, client: NativeCapabilities) {
         loop {
             tokio::time::sleep(COALESCE_DELAY).await;
-            let batches = self.inner.take_batches();
-            futures::future::join_all(batches.into_iter().map(|(destination, batch)| {
-                let client = client.clone();
-                let coalescer = self.inner.clone();
-                async move {
-                    send_batch_with_writer_stats(&client, &destination.endpoint, batch, &coalescer)
-                        .await
-                }
-            }))
-            .await;
+            {
+                let _guard = self.flush_mutex.lock().await;
+                self.flush_available_batches(client.clone()).await;
+            }
 
             if self.inner.finish_flush_cycle() {
                 break;
@@ -217,6 +219,46 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
+        mock.assert_calls_async(1).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn flush_now_waits_for_in_flight_flush_section() {
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH);
+                then.status(202);
+            })
+            .await;
+
+        let base = endpoint_for(&server);
+        let ep = flagevaluation_endpoint(&base).unwrap();
+        let client = NativeCapabilities::new_client();
+        let coalescer = FlagEvaluationCoalescer::default();
+        let guard = coalescer.flush_mutex.lock().await;
+
+        coalescer.enqueue(client.clone(), ep, batch());
+
+        let mut flush = tokio::spawn({
+            let coalescer = coalescer.clone();
+            async move {
+                coalescer.flush_now(client).await;
+            }
+        });
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut flush)
+                .await
+                .is_err(),
+            "flush_now returned while another FFE flush section was in flight"
+        );
+        assert_eq!(mock.calls_async().await, 0);
+
+        drop(guard);
+        flush.await.unwrap();
         mock.assert_calls_async(1).await;
     }
 
