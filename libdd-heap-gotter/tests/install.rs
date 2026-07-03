@@ -15,7 +15,7 @@
 
 use std::ffi::c_void;
 
-use libdd_heap_sampler::{dd_sample_flag_check_fast, dd_tl_state_get, dd_tl_state_get_or_init};
+use libdd_heap_sampler::{dd_sample_flag_peek, dd_tl_state_get_or_init};
 use serial_test::serial;
 
 /// After install the heap should still be functional and no recursive
@@ -74,8 +74,12 @@ fn install_produces_sampled_allocations() {
         let p = libc::malloc(128);
         assert!(!p.is_null());
 
+        // Use peek (non-destructive) to verify the flag is set without
+        // clearing it. gotter_free needs the flag intact to recover the
+        // raw pointer.
         let mut raw: *mut c_void = std::ptr::null_mut();
-        let sampled = dd_sample_flag_check_fast(p, &mut raw);
+        let mut offset: usize = 0;
+        let sampled = dd_sample_flag_peek(p, &mut raw, &mut offset);
         assert!(
             sampled,
             "expected malloc to return a sampled pointer with interval=1"
@@ -83,7 +87,7 @@ fn install_produces_sampled_allocations() {
         assert!(!raw.is_null());
 
         // Free via libc::free which goes through gotter_free; it
-        // should handle the tagged pointer correctly.
+        // handles the tagged pointer correctly (check + free raw).
         libc::free(p);
 
         // Restore the default interval so we don't mess with anything
@@ -163,31 +167,42 @@ fn restore_stops_sampling() {
     unsafe {
         let tl = dd_tl_state_get_or_init();
         assert!(!tl.is_null());
+
+        // Confirm sampling works while installed.
         (*tl).sampling_interval = 1;
         (*tl).remaining_bytes = 0;
         (*tl).remaining_bytes_initialized = true;
+
+        let p = libc::malloc(64);
+        assert!(!p.is_null());
+        let mut raw: *mut c_void = std::ptr::null_mut();
+        let mut offset: usize = 0;
+        let sampled = dd_sample_flag_peek(p, &mut raw, &mut offset);
+        assert!(sampled, "expected sampling while installed");
+        libc::free(p);
+
+        // Disable sampling before restore so internal allocations
+        // during restore don't get tagged (they'd be freed through
+        // the unpatched GOT afterwards, causing SIGABRT on x86_64).
+        (*tl).sampling_interval = 512 * 1024;
     }
 
     libdd_heap_gotter::restore_heap_overrides();
 
     // After restore, malloc should return a plain pointer with no
-    // sample flag, even though the sampler TLS still has interval=1.
+    // sample flag.
     unsafe {
         let p = libc::malloc(128);
         assert!(!p.is_null());
 
         let mut raw: *mut c_void = std::ptr::null_mut();
-        let sampled = dd_sample_flag_check_fast(p, &mut raw);
+        let mut offset: usize = 0;
+        let sampled = dd_sample_flag_peek(p, &mut raw, &mut offset);
         assert!(
             !sampled,
             "expected malloc to return an unsampled pointer after restore"
         );
 
         libc::free(p);
-
-        let tl = dd_tl_state_get();
-        if !tl.is_null() {
-            (*tl).sampling_interval = 512 * 1024;
-        }
     }
 }
