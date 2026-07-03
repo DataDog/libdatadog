@@ -221,7 +221,8 @@ pub trait SidecarInterface {
     /// * `actions` - The DogStatsD actions to send.
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
 
-    /// Flushes outstanding traces/stats, flag evaluations, and/or telemetry, as specified by options.
+    /// Flushes outstanding traces/stats, flag evaluations, and/or telemetry, as specified by
+    /// options.
     #[blocking]
     async fn flush(options: SidecarFlushOptions);
 
