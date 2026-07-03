@@ -135,20 +135,20 @@ struct ConnectionSidecarHandler {
 }
 
 impl ConnectionSidecarHandler {
-    fn new(server: SidecarServer, connection: OwnedServerConn) -> Option<Self> {
+    fn new(server: SidecarServer, connection: OwnedServerConn) -> Self {
         let submitted_payloads = Arc::new(AtomicU64::new(0));
         server
             .connection_counters
             .lock_or_panic()
             .push(Arc::downgrade(&submitted_payloads));
-        Some(Self {
+        Self {
             server,
             submitted_payloads,
             session_id: Default::default(),
             instances: Default::default(),
             metric_registrations: Default::default(),
             connection,
-        })
+        }
     }
 
     fn track_instance(&self, instance_id: &InstanceId) {
@@ -208,10 +208,7 @@ impl SidecarServer {
                 return;
             }
         };
-        let Some(handler) = ConnectionSidecarHandler::new(self, server_conn) else {
-            return;
-        };
-        let handler = Arc::new(handler);
+        let handler = Arc::new(ConnectionSidecarHandler::new(self, server_conn));
         let handler_for_cleanup = handler.clone();
         serve_sidecar_interface_connection(handler).await;
         handler_for_cleanup.cleanup().await;
@@ -1199,7 +1196,7 @@ mod tests {
         let (local, peer) = SeqpacketConn::socketpair().expect("socketpair");
         drop(peer);
         let conn = OwnedServerConn::new(local).expect("OwnedServerConn");
-        ConnectionSidecarHandler::new(server, conn).expect("handler")
+        ConnectionSidecarHandler::new(server, conn)
     }
 
     fn ffe_context() -> FfeTelemetryContext {

@@ -126,7 +126,9 @@ mod adapter {
                     let size = max_message_size();
                     let mut vec = Vec::with_capacity(size);
                     // SAFETY: We only read bytes written by recv()
-                    unsafe { vec.set_len(size); }
+                    unsafe {
+                        vec.set_len(size);
+                    }
                     vec
                 },
                 leftover: Vec::new(),
