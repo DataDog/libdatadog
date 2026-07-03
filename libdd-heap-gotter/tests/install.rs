@@ -90,9 +90,10 @@ fn install_produces_sampled_allocations() {
         // handles the tagged pointer correctly (check + free raw).
         libc::free(p);
 
-        // Restore the default interval so we don't mess with anything
-        // after the test.
-        (*tl).sampling_interval = 512 * 1024;
+        // Disable sampling before restore. The forced interval=1 leaves
+        // remaining_bytes close to zero, so simply restoring the default
+        // interval can still let restore-time internal allocations sample.
+        (*tl).sampling_interval = 0;
     }
 
     libdd_heap_gotter::restore_heap_overrides();
@@ -125,7 +126,7 @@ fn realloc_null_produces_sampled_allocation() {
         );
 
         libc::free(p);
-        (*tl).sampling_interval = 512 * 1024;
+        (*tl).sampling_interval = 0;
     }
 
     libdd_heap_gotter::restore_heap_overrides();
@@ -162,7 +163,7 @@ fn page_aligned_allocations_are_unsampled() {
         );
 
         libc::free(p);
-        (*tl).sampling_interval = 512 * 1024;
+        (*tl).sampling_interval = 0;
     }
 
     libdd_heap_gotter::restore_heap_overrides();
@@ -220,7 +221,7 @@ fn realloc_of_sampled_allocation_preserves_data() {
         }
 
         libc::free(p2 as *mut c_void);
-        (*tl).sampling_interval = 512 * 1024;
+        (*tl).sampling_interval = 0;
     }
 
     libdd_heap_gotter::restore_heap_overrides();
@@ -253,14 +254,22 @@ fn restore_stops_sampling() {
         // Disable sampling before restore so internal allocations
         // during restore don't get tagged (they'd be freed through
         // the unpatched GOT afterwards, causing SIGABRT on x86_64).
-        (*tl).sampling_interval = 512 * 1024;
+        (*tl).sampling_interval = 0;
     }
 
     libdd_heap_gotter::restore_heap_overrides();
 
     // After restore, malloc should return a plain pointer with no
-    // sample flag.
+    // sample flag, even if the sampler TLS is configured to sample
+    // every allocation. The GOT should no longer route malloc through
+    // the sampler.
     unsafe {
+        let tl = dd_tl_state_get_or_init();
+        assert!(!tl.is_null());
+        (*tl).sampling_interval = 1;
+        (*tl).remaining_bytes = 0;
+        (*tl).remaining_bytes_initialized = true;
+
         let p = libc::malloc(128);
         assert!(!p.is_null());
 
