@@ -86,9 +86,16 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                         _ = cloned_token.cancelled() => {
                             return worker;
                         }
-                        _ = worker.initial_trigger() => {
-                            worker.run().await;
-                        }
+                        _ = worker.initial_trigger() => {}
+                    }
+
+                    // First run — also cancellable so that a fork signal received
+                    // while run() is executing (e.g. mid-HTTP-request) exits
+                    // immediately rather than waiting for the request to complete.
+                    select! {
+                        biased;
+                        _ = cloned_token.cancelled() => { return worker; }
+                        _ = worker.run() => {}
                     }
 
                     // Regular iterations
@@ -101,9 +108,17 @@ impl<T: Worker + MaybeSend + Sync + 'static> PausableWorker<T> {
                             _ = cloned_token.cancelled() => {
                                 break;
                             }
-                            _ = worker.trigger() => {
-                                worker.run().await;
-                            }
+                            _ = worker.trigger() => {}
+                        }
+
+                        // run() is also wrapped in select! so that a cancellation
+                        // signal (e.g. from before_fork) interrupts an in-flight
+                        // operation at the next tokio yield point instead of
+                        // blocking until the operation completes.
+                        select! {
+                            biased;
+                            _ = cloned_token.cancelled() => { break; }
+                            _ = worker.run() => {}
                         }
                     }
                     worker
@@ -214,5 +229,59 @@ mod tests {
         }
         pausable_worker.start(&runtime).unwrap();
         assert_eq!(receiver.recv().unwrap(), next_message);
+    }
+
+    /// Regression test: pause() must return promptly even when run() is executing
+    /// a long-running operation (e.g. an HTTP request to a slow agent).
+    ///
+    /// Before the fix, the task loop did not wrap `worker.run()` in a select!
+    /// against the cancellation token, so pause() had to wait for run() to
+    /// complete regardless of how long it took.
+    ///
+    /// After the fix, run() is also wrapped in select!, so cancelling the token
+    /// interrupts run() at its next tokio yield point, and pause() returns in
+    /// microseconds.
+    #[test]
+    fn test_pause_interrupts_long_running_run() {
+        /// Worker whose run() blocks for 10 seconds — simulates a slow agent.
+        #[derive(Debug)]
+        struct SlowWorker;
+
+        #[async_trait]
+        impl Worker for SlowWorker {
+            async fn run(&mut self) {
+                // Simulate a slow HTTP request (e.g. GET /info on an overloaded agent).
+                // Without the fix this holds up pause() for the full 10s.
+                sleep(Duration::from_secs(10)).await;
+            }
+
+            async fn trigger(&mut self) {
+                // Fire immediately so run() is called right away.
+            }
+        }
+
+        let runtime = Builder::new_multi_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let handle = runtime.handle().clone();
+        let mut worker: PausableWorker<Box<dyn Worker + Sync>> =
+            PausableWorker::new(Box::new(SlowWorker));
+
+        worker.start(tokio_spawn_fn(&handle)).unwrap();
+
+        // Give the task time to enter run() and start the 10s sleep.
+        std::thread::sleep(Duration::from_millis(50));
+
+        // pause() must complete well within 1 second, not after the 10s run().
+        let start = std::time::Instant::now();
+        runtime.block_on(async { worker.pause().await.unwrap() });
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "pause() took {elapsed:?} — run() was not interrupted by cancellation token. \
+             Before the fix, this would have blocked for ~10s waiting for the slow HTTP request."
+        );
     }
 }
