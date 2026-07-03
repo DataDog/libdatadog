@@ -66,10 +66,11 @@ typedef struct {
 
 /* Slow path for an allocation request. This is only taken when we think we
  * need to sample, and is declared as a separate function to avoid bloating
- the instruction cache of the fast path
+ * the instruction cache of the fast path
  */
 dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
-                                             size_t alignment);
+                                             size_t alignment)
+    __attribute__((warn_unused_result));
 
 /*
  * Pre-allocation hook. Call BEFORE invoking the underlying allocator.
@@ -89,7 +90,7 @@ dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
  * by the paired dd_allocation_created call. ALWAYS pair them, even on
  * allocator failure (pass raw=NULL).
  */
-static inline __attribute__((always_inline))
+static inline __attribute__((always_inline, warn_unused_result))
 dd_alloc_req_t dd_allocation_requested(size_t size, size_t alignment) {
     dd_alloc_req_t out = { size, size, alignment, 0 };
 
@@ -97,7 +98,7 @@ dd_alloc_req_t dd_allocation_requested(size_t size, size_t alignment) {
     // allocation is already in flight on this thread and something in its slow
     // path triggered another allocation), pass through without sampling.
     // Either condition is rare on a hot path, so mark the branch unlikely.
-    dd_tl_state_t *tl = dd_tl_state_get_or_init_fast();
+    dd_tl_state_t *tl = dd_tl_state_get_or_init();
     if (__builtin_expect(!tl || tl->reentry_guard, 0)) return out;
 
     // If we haven't crossed the sampling boundary, do nothing and bail.

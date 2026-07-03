@@ -24,7 +24,8 @@
  * from dd_allocation_created so that we don't bloat the instruction
  * cache for the fast path.
  */
-void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req);
+void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req)
+    __attribute__((warn_unused_result));
 
 /*
  * Post-allocation hook. Pair with dd_allocation_requested.
@@ -41,7 +42,7 @@ void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req);
  *
  * Safe when raw == NULL (allocator failed): no USDT, guard still closed.
  */
-static inline __attribute__((always_inline))
+static inline __attribute__((always_inline, warn_unused_result))
 void *dd_allocation_created(void *raw, dd_alloc_req_t req) {
     if (__builtin_expect(req.weight == 0, 1)) return raw;
     return dd_allocation_created_slow(raw, req);

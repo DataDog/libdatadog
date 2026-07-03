@@ -61,7 +61,7 @@ dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
 static inline __attribute__((always_inline))
 dd_alloc_freed_t dd_allocation_freed(void *ptr, size_t size, size_t alignment) {
     void *raw;
-    if (__builtin_expect(dd_sample_flag_check_fast(ptr, &raw), 0)) {
+    if (__builtin_expect(dd_sample_flag_check(ptr, &raw), 0)) {
         return dd_allocation_freed_slow(ptr, raw, size, alignment);
     }
 

@@ -47,10 +47,6 @@ bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out) {
     return true;
 }
 
-bool dd_sample_flag_check(void *user, void **raw_out) {
-    return dd_sample_flag_check_fast(user, raw_out);
-}
-
 #elif defined(__aarch64__)
 
 /*
@@ -78,15 +74,11 @@ void *dd_sample_flag_apply(void *raw, size_t alignment) {
 }
 
 bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out) {
-    if (!dd_sample_flag_check_fast(user, raw_out)) {
+    if (!dd_sample_flag_check(user, raw_out)) {
         return false;
     }
     *offset_out = 0;
     return true;
-}
-
-bool dd_sample_flag_check(void *user, void **raw_out) {
-    return dd_sample_flag_check_fast(user, raw_out);
 }
 
 #if defined(__linux__)

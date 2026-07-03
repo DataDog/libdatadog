@@ -121,10 +121,8 @@ extern _Thread_local dd_tl_state_t dd_tl_state_storage;
  * Returns the current thread's state, or NULL if not yet initialised.
  * Never allocates. Callers must treat NULL as "don't sample".
  */
-dd_tl_state_t *dd_tl_state_get(void);
-
 static inline __attribute__((always_inline))
-dd_tl_state_t *dd_tl_state_get_fast(void) {
+dd_tl_state_t *dd_tl_state_get(void) {
     if (__builtin_expect(!dd_tl_state_storage.initialized, 0)) return NULL;
     return &dd_tl_state_storage;
 }
@@ -138,10 +136,8 @@ dd_tl_state_t *dd_tl_state_init(void);
 /*
  * Returns the current thread's tracking state, initializing it on first use.
  */
-dd_tl_state_t *dd_tl_state_get_or_init(void);
-
 static inline __attribute__((always_inline))
-dd_tl_state_t *dd_tl_state_get_or_init_fast(void) {
+dd_tl_state_t *dd_tl_state_get_or_init(void) {
     if (__builtin_expect(dd_tl_state_storage.initialized, 1)) return &dd_tl_state_storage;
     return dd_tl_state_init();
 }

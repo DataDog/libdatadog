@@ -33,21 +33,15 @@ const _: () = {
     ["Offset of field: dd_tl_state_t::rng"][::std::mem::offset_of!(dd_tl_state_t, rng) - 20usize];
 };
 unsafe extern "C" {
+    #[link_name = "dd_tl_state_get__extern"]
     pub fn dd_tl_state_get() -> *mut dd_tl_state_t;
-}
-unsafe extern "C" {
-    #[link_name = "dd_tl_state_get_fast__extern"]
-    pub fn dd_tl_state_get_fast() -> *mut dd_tl_state_t;
 }
 unsafe extern "C" {
     pub fn dd_tl_state_init() -> *mut dd_tl_state_t;
 }
 unsafe extern "C" {
+    #[link_name = "dd_tl_state_get_or_init__extern"]
     pub fn dd_tl_state_get_or_init() -> *mut dd_tl_state_t;
-}
-unsafe extern "C" {
-    #[link_name = "dd_tl_state_get_or_init_fast__extern"]
-    pub fn dd_tl_state_get_or_init_fast() -> *mut dd_tl_state_t;
 }
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -104,12 +98,6 @@ unsafe extern "C" {
     ) -> *mut ::std::os::raw::c_void;
 }
 unsafe extern "C" {
-    pub fn dd_sample_flag_check(
-        user: *mut ::std::os::raw::c_void,
-        raw_out: *mut *mut ::std::os::raw::c_void,
-    ) -> bool;
-}
-unsafe extern "C" {
     pub fn dd_sample_flag_peek(
         user: *mut ::std::os::raw::c_void,
         raw_out: *mut *mut ::std::os::raw::c_void,
@@ -117,8 +105,8 @@ unsafe extern "C" {
     ) -> bool;
 }
 unsafe extern "C" {
-    #[link_name = "dd_sample_flag_check_fast__extern"]
-    pub fn dd_sample_flag_check_fast(
+    #[link_name = "dd_sample_flag_check__extern"]
+    pub fn dd_sample_flag_check(
         user: *mut ::std::os::raw::c_void,
         raw_out: *mut *mut ::std::os::raw::c_void,
     ) -> bool;

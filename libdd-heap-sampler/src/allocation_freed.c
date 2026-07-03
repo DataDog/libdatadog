@@ -9,7 +9,7 @@
 
 /*
  * Slow path for dd_allocation_freed. We only arrive here when
- * dd_sample_flag_check_fast confirmed that ptr carries the sample flag,
+ * dd_sample_flag_check confirmed that ptr carries the sample flag,
  * meaning this allocation was previously sampled.
  *
  * Fires the ddheap:free USDT with the user-visible pointer, then returns

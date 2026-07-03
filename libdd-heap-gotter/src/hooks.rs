@@ -67,6 +67,10 @@ type PosixMemalignFn = unsafe extern "C" fn(*mut *mut c_void, usize, usize) -> c
 type AlignedAllocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
 /// Signature of the real `dlopen`.
 type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+/// Linux RTLD_DEEPBIND. Some libcs we build against (notably musl on Alpine)
+/// don't expose this constant through the Rust libc crate, but the flag value
+/// is stable Linux ABI from <dlfcn.h>.
+const RTLD_DEEPBIND: c_int = 0x00008;
 /// Signature of a `pthread_create` start routine.
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
 /// Signature of the real `pthread_create`.
@@ -181,7 +185,7 @@ pub unsafe extern "C" fn gotter_dlopen(filename: *const c_char, flags: c_int) ->
         return libc::dlopen(filename, flags);
     };
     let handle = real(filename, flags);
-    if flags & libc::RTLD_DEEPBIND != 0 {
+    if flags & RTLD_DEEPBIND != 0 {
         // DEEPBIND changes symbol resolution order and causes issues with
         // GOT patching, so skip newly-loaded deep-bound libraries for now.
         return handle;

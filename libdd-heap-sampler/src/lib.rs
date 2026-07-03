@@ -137,7 +137,7 @@ mod tests {
         buf[header_idx + 8..header_idx + 16].copy_from_slice(&8u64.to_ne_bytes());
 
         let mut raw = core::ptr::null_mut();
-        let sampled = unsafe { dd_sample_flag_check_fast(user_addr as *mut c_void, &mut raw) };
+        let sampled = unsafe { dd_sample_flag_check(user_addr as *mut c_void, &mut raw) };
 
         assert!(!sampled);
         assert!(raw.is_null());

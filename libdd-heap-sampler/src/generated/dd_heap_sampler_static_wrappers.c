@@ -13,9 +13,9 @@
 
 // Static wrappers
 
-dd_tl_state_t * dd_tl_state_get_fast__extern(void) { return dd_tl_state_get_fast(); }
-dd_tl_state_t * dd_tl_state_get_or_init_fast__extern(void) { return dd_tl_state_get_or_init_fast(); }
+dd_tl_state_t * dd_tl_state_get__extern(void) { return dd_tl_state_get(); }
+dd_tl_state_t * dd_tl_state_get_or_init__extern(void) { return dd_tl_state_get_or_init(); }
 dd_alloc_req_t dd_allocation_requested__extern(size_t size, size_t alignment) { return dd_allocation_requested(size, alignment); }
 void * dd_allocation_created__extern(void *raw, dd_alloc_req_t req) { return dd_allocation_created(raw, req); }
-bool dd_sample_flag_check_fast__extern(void *user, void **raw_out) { return dd_sample_flag_check_fast(user, raw_out); }
+bool dd_sample_flag_check__extern(void *user, void **raw_out) { return dd_sample_flag_check(user, raw_out); }
 dd_alloc_freed_t dd_allocation_freed__extern(void *ptr, size_t size, size_t alignment) { return dd_allocation_freed(ptr, size, alignment); }

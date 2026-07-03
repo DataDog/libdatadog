@@ -43,13 +43,6 @@ bool dd_sample_flag_thread_init(void);
 void *dd_sample_flag_apply(void *raw, size_t alignment);
 
 /*
- * If `user` was previously returned by dd_sample_flag_apply, write the
- * raw pointer (to pass to the underlying free) into *raw_out and return
- * true. Otherwise leave *raw_out untouched and return false.
- */
-bool dd_sample_flag_check(void *user, void **raw_out);
-
-/*
  * Non-destructive variant of dd_sample_flag_check. Useful for realloc:
  * callers can resolve the raw pointer before calling the underlying
  * realloc, while leaving the old allocation's flag intact in case
@@ -156,8 +149,13 @@ void *x86_raw_from_user(void *user, uint64_t offset) {
     return (void *)((uintptr_t)user - (uintptr_t)offset);
 }
 
+/*
+ * If `user` was previously returned by dd_sample_flag_apply, write the
+ * raw pointer (to pass to the underlying free) into *raw_out and return
+ * true. Otherwise leave *raw_out untouched and return false.
+ */
 static inline __attribute__((always_inline))
-bool dd_sample_flag_check_fast(void *user, void **raw_out) {
+bool dd_sample_flag_check(void *user, void **raw_out) {
     if (((uintptr_t)user & (DD_PAGE_SIZE - 1)) < DD_HEADER_BYTES) {
         return false;
     }
@@ -192,8 +190,13 @@ bool dd_sample_flag_check_fast(void *user, void **raw_out) {
 #define DD_TBI_TAG_MASK ((uintptr_t)0xFFu << 56)
 #define DD_TBI_TAGGED   ((uintptr_t)DD_TBI_TAG << 56)
 
+/*
+ * If `user` was previously returned by dd_sample_flag_apply, write the
+ * raw pointer (to pass to the underlying free) into *raw_out and return
+ * true. Otherwise leave *raw_out untouched and return false.
+ */
 static inline __attribute__((always_inline))
-bool dd_sample_flag_check_fast(void *user, void **raw_out) {
+bool dd_sample_flag_check(void *user, void **raw_out) {
     uintptr_t addr = (uintptr_t)user;
     if ((addr & DD_TBI_TAG_MASK) != DD_TBI_TAGGED) {
         return false;

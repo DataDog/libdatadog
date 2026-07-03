@@ -60,10 +60,6 @@ static void tl_state_populate(dd_tl_state_t *st) {
     }
 }
 
-dd_tl_state_t *dd_tl_state_get(void) {
-    return dd_tl_state_get_fast();
-}
-
 /*
  * Initialises TLS for this thread on first call; returns NULL on subsequent
  * calls (state already exists). Callers that need the pointer regardless
@@ -74,8 +70,4 @@ dd_tl_state_t *dd_tl_state_init(void) {
 
     tl_state_populate(&dd_tl_state_storage);
     return &dd_tl_state_storage;
-}
-
-dd_tl_state_t *dd_tl_state_get_or_init(void) {
-    return dd_tl_state_get_or_init_fast();
 }

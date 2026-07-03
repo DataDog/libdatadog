@@ -74,7 +74,8 @@ typedef struct {
  * we hook. prepare() consumes the sampler flag in that case before the
  * frontend forwards the raw pointer to realloc(raw, 0).
  */
-dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size);
+dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size)
+    __attribute__((warn_unused_result));
 
 /*
  * Finalize the realloc. Given the return value of the underlying
@@ -94,6 +95,7 @@ dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size)
  * On sampled realloc failure (new_raw == NULL): returns NULL and leaves
  * old_user live with its sampler flag intact.
  */
-void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_prep_t prep);
+void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_prep_t prep)
+    __attribute__((warn_unused_result));
 
 #endif
