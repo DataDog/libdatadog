@@ -112,9 +112,7 @@ mod adapter {
         conn: &'a AsyncConn,
         /// Scratch buffer for one `recv()`, avoiding reallocation.
         recv_buf: Vec<u8>,
-        /// Leftover bytes from a datagram that did not fit in the caller's buffer.
-        leftover: Vec<u8>,
-        leftover_pos: usize,
+        buf_pos: usize,
         eof: bool,
     }
 
@@ -122,17 +120,8 @@ mod adapter {
         pub fn new(conn: &'a AsyncConn) -> Self {
             Self {
                 conn,
-                recv_buf: {
-                    let size = max_message_size();
-                    let mut vec = Vec::with_capacity(size);
-                    // SAFETY: We only read bytes written by recv()
-                    unsafe {
-                        vec.set_len(size);
-                    }
-                    vec
-                },
-                leftover: Vec::new(),
-                leftover_pos: 0,
+                recv_buf: Vec::with_capacity(max_message_size()),
+                buf_pos: 0,
                 eof: false,
             }
         }
@@ -147,15 +136,11 @@ mod adapter {
             let this = self.get_mut();
 
             // Drain any buffered leftover first.
-            if this.leftover_pos < this.leftover.len() {
-                let remaining = &this.leftover[this.leftover_pos..];
+            if this.buf_pos < this.recv_buf.len() {
+                let remaining = &this.recv_buf[this.buf_pos..];
                 let n = remaining.len().min(out.remaining());
                 out.put_slice(&remaining[..n]);
-                this.leftover_pos += n;
-                if this.leftover_pos >= this.leftover.len() {
-                    this.leftover.clear();
-                    this.leftover_pos = 0;
-                }
+                this.buf_pos += n;
                 return Poll::Ready(Ok(()));
             }
 
@@ -176,7 +161,7 @@ mod adapter {
                         libc::recv(
                             inner.as_raw_fd(),
                             recv_buf.as_mut_ptr() as *mut libc::c_void,
-                            recv_buf.len(),
+                            recv_buf.capacity(),
                             0,
                         )
                     };
@@ -193,14 +178,13 @@ mod adapter {
                             this.eof = true;
                             return Poll::Ready(Ok(()));
                         }
-                        let payload = &this.recv_buf[..n];
+                        unsafe {
+                            this.recv_buf.set_len(n);
+                        }
+                        let payload = this.recv_buf.as_slice();
                         let copied = payload.len().min(out.remaining());
                         out.put_slice(&payload[..copied]);
-                        if copied < payload.len() {
-                            this.leftover.clear();
-                            this.leftover.extend_from_slice(&payload[copied..]);
-                            this.leftover_pos = 0;
-                        }
+                        this.buf_pos = copied;
                         return Poll::Ready(Ok(()));
                     }
                     Ok(Err(e)) => {
@@ -247,15 +231,33 @@ mod tests {
     use tokio::io::{AsyncReadExt, BufReader};
 
     fn dgram_pair() -> (OwnedFd, OwnedFd) {
+        use std::os::fd::AsRawFd;
+
+        #[cfg(target_os = "linux")]
+        let sock_type = libc::SOCK_SEQPACKET;
+        #[cfg(not(target_os = "linux"))]
+        let sock_type = libc::SOCK_DGRAM;
+
         let mut fds = [0i32; 2];
-        let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_DGRAM, 0, fds.as_mut_ptr()) };
+        let rc = unsafe { libc::socketpair(libc::AF_UNIX, sock_type, 0, fds.as_mut_ptr()) };
         assert_eq!(
             rc,
             0,
             "socketpair failed: {}",
             std::io::Error::last_os_error()
         );
-        unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) }
+        let (a, b) = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        for fd in [a.as_raw_fd(), b.as_raw_fd()] {
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            assert!(
+                flags >= 0,
+                "fcntl(F_GETFL): {}",
+                std::io::Error::last_os_error()
+            );
+            let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+            assert_eq!(rc, 0, "fcntl(F_SETFL): {}", std::io::Error::last_os_error());
+        }
+        (a, b)
     }
 
     fn send_datagrams(fd: &OwnedFd, chunks: &[&[u8]]) {

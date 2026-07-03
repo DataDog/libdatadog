@@ -26,11 +26,7 @@ pub enum StacktraceCollection {
     EnabledWithSymbolsInReceiver,
 }
 
-// The derived `PartialEq` compares `unix_socket_connector`, a fn pointer. Comparing fn pointers is
-// unreliable (the lint), but harmless here: nothing compares whole `CrashtrackerConfiguration`
-// values, and the connector is process-local plumbing (also `#[serde(skip)]`).
-#[allow(unpredictable_function_pointer_comparisons)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
     additional_files: Vec<String>,
@@ -49,6 +45,22 @@ pub struct CrashtrackerConfiguration {
     #[serde(skip, default = "default_unix_socket_connector_value")]
     unix_socket_connector: fn(&str) -> std::os::fd::RawFd,
     use_alt_stack: bool,
+}
+
+impl PartialEq for CrashtrackerConfiguration {
+    fn eq(&self, other: &Self) -> bool {
+        self.additional_files == other.additional_files
+            && self.collect_all_threads == other.collect_all_threads
+            && self.create_alt_stack == other.create_alt_stack
+            && self.demangle_names == other.demangle_names
+            && self.endpoint == other.endpoint
+            && self.max_threads == other.max_threads
+            && self.resolve_frames == other.resolve_frames
+            && self.signals == other.signals
+            && self.timeout == other.timeout
+            && self.unix_socket_path == other.unix_socket_path
+            && self.use_alt_stack == other.use_alt_stack
+    }
 }
 
 pub const fn default_max_threads() -> usize {
