@@ -110,6 +110,8 @@ mod adapter {
     /// buffered and drained on later reads, so boundaries never truncate data.
     pub struct SeqpacketStreamReader<'a> {
         conn: &'a AsyncConn,
+        /// Scratch buffer for one `recv()`, avoiding reallocation.
+        recv_buf: Vec<u8>,
         /// Leftover bytes from a datagram that did not fit in the caller's buffer.
         leftover: Vec<u8>,
         leftover_pos: usize,
@@ -120,6 +122,13 @@ mod adapter {
         pub fn new(conn: &'a AsyncConn) -> Self {
             Self {
                 conn,
+                recv_buf: {
+                    let size = max_message_size();
+                    let mut vec = Vec::with_capacity(size);
+                    // SAFETY: We only read bytes written by recv()
+                    unsafe { vec.set_len(size); }
+                    vec
+                },
                 leftover: Vec::new(),
                 leftover_pos: 0,
                 eof: false,
@@ -159,36 +168,36 @@ mod adapter {
                     Poll::Pending => return Poll::Pending,
                 };
 
-                // One recv() returns one datagram; a max-sized buffer avoids truncation.
+                let recv_buf = &mut this.recv_buf;
                 let read_result = guard.try_io(|inner| {
-                    let mut tmp = vec![0u8; max_message_size()];
                     let n = unsafe {
                         libc::recv(
                             inner.as_raw_fd(),
-                            tmp.as_mut_ptr() as *mut libc::c_void,
-                            tmp.len(),
+                            recv_buf.as_mut_ptr() as *mut libc::c_void,
+                            recv_buf.len(),
                             0,
                         )
                     };
                     if n < 0 {
                         Err(io::Error::last_os_error())
                     } else {
-                        tmp.truncate(n as usize);
-                        Ok(tmp)
+                        Ok(n as usize)
                     }
                 });
 
                 match read_result {
-                    Ok(Ok(payload)) => {
-                        if payload.is_empty() {
+                    Ok(Ok(n)) => {
+                        if n == 0 {
                             this.eof = true;
                             return Poll::Ready(Ok(()));
                         }
-                        let n = payload.len().min(out.remaining());
-                        out.put_slice(&payload[..n]);
-                        if n < payload.len() {
-                            this.leftover = payload;
-                            this.leftover_pos = n;
+                        let payload = &this.recv_buf[..n];
+                        let copied = payload.len().min(out.remaining());
+                        out.put_slice(&payload[..copied]);
+                        if copied < payload.len() {
+                            this.leftover.clear();
+                            this.leftover.extend_from_slice(&payload[copied..]);
+                            this.leftover_pos = 0;
                         }
                         return Poll::Ready(Ok(()));
                     }
