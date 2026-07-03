@@ -24,8 +24,10 @@ use tokio::sync::Mutex as AsyncMutex;
 const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
 const COALESCE_DELAY: Duration = Duration::from_millis(250);
 
-pub(crate) const FLAG_EVALUATION_ROWS_DROPPED_METRIC: &str = "flagevaluation.rows.dropped";
-pub(crate) const FLAG_EVALUATION_ROWS_DEGRADED_METRIC: &str = "flagevaluation.rows.degraded";
+pub(crate) const FLAG_EVALUATION_DROPPED_EVALUATIONS_METRIC: &str =
+    "flagevaluation.evaluations.dropped";
+pub(crate) const FLAG_EVALUATION_DEGRADED_EVALUATIONS_METRIC: &str =
+    "flagevaluation.evaluations.degraded";
 pub(crate) const FLAG_EVALUATION_PAYLOAD_SPLITS_METRIC: &str = "flagevaluation.payload.splits";
 
 pub(crate) const FLAG_EVALUATION_REASON_DEGRADED_CAP: &str = "degraded_cap";
@@ -189,6 +191,22 @@ mod tests {
             context: context(),
             flag_evaluations: vec![eval_event()],
         }
+    }
+
+    #[test]
+    fn self_telemetry_metric_names_describe_evaluation_count_units() {
+        assert_eq!(
+            FLAG_EVALUATION_DROPPED_EVALUATIONS_METRIC,
+            "flagevaluation.evaluations.dropped"
+        );
+        assert_eq!(
+            FLAG_EVALUATION_DEGRADED_EVALUATIONS_METRIC,
+            "flagevaluation.evaluations.degraded"
+        );
+        assert_eq!(
+            FLAG_EVALUATION_PAYLOAD_SPLITS_METRIC,
+            "flagevaluation.payload.splits"
+        );
     }
 
     #[tokio::test]

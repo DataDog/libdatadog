@@ -3,9 +3,9 @@
 use crate::config::Config;
 use crate::log;
 use crate::service::ffe_flagevaluation_flusher::{
+    FLAG_EVALUATION_DEGRADED_EVALUATIONS_METRIC, FLAG_EVALUATION_DROPPED_EVALUATIONS_METRIC,
     FLAG_EVALUATION_PAYLOAD_SPLITS_METRIC, FLAG_EVALUATION_REASON_CARDINALITY_CAP,
     FLAG_EVALUATION_REASON_DEGRADED_CAP, FLAG_EVALUATION_REASON_PAYLOAD_LIMIT,
-    FLAG_EVALUATION_ROWS_DEGRADED_METRIC, FLAG_EVALUATION_ROWS_DROPPED_METRIC,
 };
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
@@ -36,8 +36,8 @@ struct MetricData<'a> {
     trace_api_bytes: ContextKey,
     trace_chunks_sent: ContextKey,
     trace_chunks_dropped: ContextKey,
-    flagevaluation_rows_dropped: ContextKey,
-    flagevaluation_rows_degraded: ContextKey,
+    flagevaluation_evaluations_dropped: ContextKey,
+    flagevaluation_evaluations_degraded: ContextKey,
     flagevaluation_payload_splits: ContextKey,
 }
 impl MetricData<'_> {
@@ -168,28 +168,28 @@ impl MetricData<'_> {
         }
         if flagevaluation_writer_stats.rows_dropped_degraded_cap > 0 {
             futures.push(self.send(
-                self.flagevaluation_rows_dropped,
+                self.flagevaluation_evaluations_dropped,
                 flagevaluation_writer_stats.rows_dropped_degraded_cap as f64,
                 vec![tag!("reason", FLAG_EVALUATION_REASON_DEGRADED_CAP)],
             ));
         }
         if flagevaluation_writer_stats.rows_dropped_payload_limit > 0 {
             futures.push(self.send(
-                self.flagevaluation_rows_dropped,
+                self.flagevaluation_evaluations_dropped,
                 flagevaluation_writer_stats.rows_dropped_payload_limit as f64,
                 vec![tag!("reason", FLAG_EVALUATION_REASON_PAYLOAD_LIMIT)],
             ));
         }
         if flagevaluation_writer_stats.rows_degraded_cardinality_cap > 0 {
             futures.push(self.send(
-                self.flagevaluation_rows_degraded,
+                self.flagevaluation_evaluations_degraded,
                 flagevaluation_writer_stats.rows_degraded_cardinality_cap as f64,
                 vec![tag!("reason", FLAG_EVALUATION_REASON_CARDINALITY_CAP)],
             ));
         }
         if flagevaluation_writer_stats.rows_degraded_payload_limit > 0 {
             futures.push(self.send(
-                self.flagevaluation_rows_degraded,
+                self.flagevaluation_evaluations_degraded,
                 flagevaluation_writer_stats.rows_degraded_payload_limit as f64,
                 vec![tag!("reason", FLAG_EVALUATION_REASON_PAYLOAD_LIMIT)],
             ));
@@ -329,15 +329,15 @@ impl SelfTelemetry {
                 true,
                 MetricNamespace::Tracers,
             ),
-            flagevaluation_rows_dropped: worker.register_metric_context(
-                FLAG_EVALUATION_ROWS_DROPPED_METRIC.to_string(),
+            flagevaluation_evaluations_dropped: worker.register_metric_context(
+                FLAG_EVALUATION_DROPPED_EVALUATIONS_METRIC.to_string(),
                 vec![],
                 MetricType::Count,
                 true,
                 MetricNamespace::Tracers,
             ),
-            flagevaluation_rows_degraded: worker.register_metric_context(
-                FLAG_EVALUATION_ROWS_DEGRADED_METRIC.to_string(),
+            flagevaluation_evaluations_degraded: worker.register_metric_context(
+                FLAG_EVALUATION_DEGRADED_EVALUATIONS_METRIC.to_string(),
                 vec![],
                 MetricType::Count,
                 true,
