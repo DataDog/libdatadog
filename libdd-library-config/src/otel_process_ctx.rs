@@ -121,10 +121,12 @@ pub mod linux {
         /// `memfd` is the preferred method, but this function fallbacks to an anonymous mapping if
         /// `memfd` failed for any reason.
         ///
-        /// The memory is guaranteed to be initialized to zeroes. This matters because a
-        /// memfd-backed mapping is discoverable before `set_name()` runs, so early readers may
-        /// race with header initialization. They must observe [`UNPUBLISHED_OR_UPDATING`] (0) and
-        /// stop until the final timestamp store publishes the initialized header.
+        /// Both allocation paths produce zero-filled memory: `MAP_ANONYMOUS` mappings are
+        /// initialized to zero, and the memfd path maps a newly-created file extended by
+        /// `ftruncate()`, whose extended bytes read as `\0`. This matters because a memfd-backed
+        /// mapping is discoverable before `set_name()` runs, so early readers may race with header
+        /// initialization. They must observe [`UNPUBLISHED_OR_UPDATING`] (0) and stop until the
+        /// final timestamp store publishes the initialized header.
         fn new() -> io::Result<Self> {
             let size = mapping_size();
 
