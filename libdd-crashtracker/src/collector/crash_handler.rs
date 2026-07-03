@@ -420,8 +420,8 @@ fn grant_ptracer_permission(receiver: &Receiver) {
             if expected_pid <= 0 {
                 0
             } else {
-                let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-                let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+                let mut cred: libc::ucred = unsafe { core::mem::zeroed() };
+                let mut len = core::mem::size_of::<libc::ucred>() as libc::socklen_t;
                 // SAFETY: getsockopt is async-signal-safe
                 let ret = unsafe {
                     libc::getsockopt(

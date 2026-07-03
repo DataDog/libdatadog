@@ -212,7 +212,7 @@ unsafe fn emit_backtrace_via_libunwind(
 
     // SAFETY: UnwCursor is a repr(C) struct of plain integers (`[u64; 127]`);
     // all-zeros is a valid bit pattern
-    let mut cursor: UnwCursor = unsafe { std::mem::zeroed() };
+    let mut cursor: UnwCursor = unsafe { core::mem::zeroed() };
 
     // SAFETY: `cursor` is zeroed and is valid for initialization.
     // `ucontext` was checked non-null above and points to the kernel-saved
@@ -244,7 +244,7 @@ unsafe fn emit_backtrace_via_libunwind(
 
         // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
         // all-zeros (null pointers, zero integers) is a valid representation
-        let mut dl_info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        let mut dl_info: libc::Dl_info = unsafe { core::mem::zeroed() };
         // SAFETY: `ip` is a code address obtained from the unwinder.
         // dladdr only reads ld.so internal tables (no allocation, no locks)
         // making it safe to call from a signal handler
@@ -266,13 +266,13 @@ unsafe fn emit_backtrace_via_libunwind(
                     &mut cursor,
                     name_buf.as_mut_ptr(),
                     name_buf.len(),
-                    std::ptr::null_mut(),
+                    core::ptr::null_mut(),
                 )
             } == 0
             {
                 // SAFETY: unw_get_proc_name returned 0 (success), guaranteeing
                 // a NUL-terminated string was written into name_buf.
-                let name = unsafe { std::ffi::CStr::from_ptr(name_buf.as_ptr()) };
+                let name = unsafe { core::ffi::CStr::from_ptr(name_buf.as_ptr()) };
                 if let Ok(s) = name.to_str() {
                     write!(w, ", \"function\": \"{s}\"")?;
                 }
@@ -391,7 +391,7 @@ unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), Em
             // SAFETY: dladdr returned non-zero and dli_sname is non-null, so
             // it points to a valid NUL-terminated C string in the shared
             // library's string table (static lifetime, read-only).
-            let name = unsafe { std::ffi::CStr::from_ptr(info.dli_sname) };
+            let name = unsafe { core::ffi::CStr::from_ptr(info.dli_sname) };
             if let Ok(s) = name.to_str() {
                 write!(w, ", \"function\": \"{s}\"")?;
             }
@@ -1057,7 +1057,7 @@ mod tests {
             emit_backtrace_via_libunwind(
                 &mut buf,
                 StacktraceCollection::WithoutSymbols,
-                std::ptr::null(),
+                core::ptr::null(),
             )
             .expect("should handle null ucontext gracefully");
         }
@@ -1071,7 +1071,7 @@ mod tests {
     fn test_emit_backtrace_via_libunwind_unw_init_failure() {
         // Test that when unw_init_local2 fails (e.g., with invalid context),
         // the function returns Ok(()) gracefully without writing anything
-        let context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        let context: libc::ucontext_t = unsafe { core::mem::zeroed() };
         let mut buf = Vec::new();
 
         unsafe {
@@ -1101,7 +1101,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn test_emit_ucontext_linux_valid() {
         // Create a minimal valid ucontext_t with zeroed register values
-        let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        let mut context: libc::ucontext_t = unsafe { core::mem::zeroed() };
 
         // Set up some test register values
         #[cfg(target_arch = "x86_64")]

@@ -19,9 +19,9 @@ use core::{
 use thiserror::Error;
 
 #[cfg(unix)]
-static FRAME_CSTR: &std::ffi::CStr = c"frame";
+static FRAME_CSTR: &core::ffi::CStr = c"frame";
 #[cfg(unix)]
-static STACKTRACE_STRING_CSTR: &std::ffi::CStr = c"stacktrace_string";
+static STACKTRACE_STRING_CSTR: &core::ffi::CStr = c"stacktrace_string";
 
 #[cfg(unix)]
 #[derive(Debug)]
@@ -243,7 +243,7 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
 
         if let Some(ref mut writer) = CURRENT_WRITER {
             // SAFETY: the runtime guarantees a valid, null-terminated C string.
-            let cstr = std::ffi::CStr::from_ptr(stacktrace_string);
+            let cstr = core::ffi::CStr::from_ptr(stacktrace_string);
             let bytes = cstr.to_bytes();
             let _ = writer.write_all(bytes);
             let _ = writeln!(writer);
@@ -353,7 +353,7 @@ mod tests {
     unsafe extern "C" fn test_emit_stacktrace_string_callback(
         emit_stacktrace_string: unsafe extern "C" fn(*const c_char),
     ) {
-        let stacktrace_string = std::ffi::CString::new("test_stacktrace_string").unwrap();
+        let stacktrace_string = alloc::ffi::CString::new("test_stacktrace_string").unwrap();
 
         emit_stacktrace_string(stacktrace_string.as_ptr());
     }
