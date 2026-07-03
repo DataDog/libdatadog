@@ -32,7 +32,7 @@ fips = ["libdd-capabilities-impl/fips"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "2.1.0", default-features = false }
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "3.0.0", default-features = false }
 tokio = { version = "1.23", features = ["rt-multi-thread"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
