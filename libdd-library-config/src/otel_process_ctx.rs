@@ -1,42 +1,28 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implementation of the publisher part of the [OTEL process
-//! context](https://github.com/open-telemetry/opentelemetry-specification/pull/4719)
-//! specification.
+//! Implementation of the publisher and same-process reader parts of the [OTEL process
+//! context specification](https://github.com/open-telemetry/opentelemetry-specification/pull/4719).
 //!
-//! Implements a seqlock-style algorithm, which generally goes like this:
+//! The update/read protocol is seqlock-style: the publisher marks the mapping as unavailable,
+//! writes the payload metadata, publishes a non-zero version, and readers accept a copy only if
+//! the version they observed before copying still matches afterward. The general algorithm and
+//! the C++ memory-model constraints are described in Boehm's
+//! [Can Seqlocks Get Along With Programming Language Memory Models?](https://web.archive.org/web/20211106170334/https://www.hpl.hp.com/techreports/2012/HPL-2012-68.pdf).
+//! Linux has its own [seqlock/seqcount implementation](https://github.com/torvalds/linux/blob/master/include/linux/seqlock.h),
+//! but its barriers are specified by the Linux kernel memory model, not by the C++/Rust models.
 //!
-//! atomic<unsigned> seq{0};
-//! atomic<int> data1, data2;
-//! T reader() {
-//!     int r1, r2;
-//!     unsigned seq0, seq1;
-//!     do {
-//!         seq0 = seq.load(m_o_acquire);
-//!         r1 = data1.load(m_o_relaxed);
-//!         r2 = data2.load(m_o_relaxed);
-//!         atomic_thread_fence(m_o_acquire);
-//!         seq1 = seq.load(m_o_relaxed);
-//!     } while (seq0 & 1 || seq0 != seq1);
-//!     ...
-//! }
+//! This implementation differs from the usual odd/even counter form in two ways: `0` is the
+//! in-progress sentinel, and each non-zero `monotonic_published_at_ns` value is the
+//! reader-visible version. Updates force that timestamp to advance so readers can detect torn
+//! reads even when the clock returns the same value twice. Concurrent writers are rejected, and
+//! retry policy is left to the reader's caller.
 //!
-//! void writer(...) {
-//!     unsigned seq0 = seq.load(m_o_relaxed);
-//!     while (seq0 & 1 ||
-//!            !seq.compare_exchange_weak(seq0, seq0 + 1, m_o_acquire)) {}
-//!     atomic_thread_fence(m_o_release);
-//!     data1.store(..., m_o_relaxed);
-//!     data2.store(..., m_o_relaxed);
-//!     seq.store(seq0 + 2, m_o_release);
-//! }
-//!
-//! Although we instead use 0 to signal the writer is progress and a timestamp
-//! instead of even numbers.
-//! We also forbid concurrent writers, and leave the reader retries to the
-//! discretion of the caller.
-//! We ignore the corner case where time returns 0.
+//! Process context sharing also crosses Rust's memory model boundary. In-process header fields
+//! that can change during publication are atomics, while payload bytes are copied with
+//! `process_vm_readv`; that syscall turns accesses to reclaimed payload memory that has been
+//! unmapped into a syscall error or short read instead of a segfault, but its ordering relative to
+//! the publisher has to be reasoned about at the OS/architecture level rather than only in Rust.
 
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]
@@ -55,6 +41,9 @@ pub mod linux {
         time::Duration,
     };
 
+    #[cfg(debug_assertions)]
+    use std::sync::atomic::AtomicUsize;
+
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
         any_value, AnyValue, KeyValue, ProcessContext,
     };
@@ -66,14 +55,16 @@ pub mod linux {
     pub const SIGNATURE: &[u8; 8] = b"OTEL_CTX";
     /// The discoverable name of the memory mapping.
     pub const MAPPING_NAME: &CStr = c"OTEL_CTX";
+    /// Sentinel timestamp indicating that the context is unpublished or being updated.
+    const UNPUBLISHED_OR_UPDATING: u64 = 0;
 
     /// The header structure written at the start of the mapping. This must match the C
     /// layout of the specification.
     ///
-    /// The seqlock algorithm is inherently racy, so we need all accesses to be atomic
-    /// (even if relaxed); otherwise we hit UB. The only exception is the reading the
-    /// payload through process_vm_readv(), which is a syscall and so falls outside of
-    /// the scope of the memory model.
+    /// The seqlock algorithm is inherently racy, so fields that can change during an
+    /// update must be atomic (even if accessed relaxed); otherwise we hit UB. `signature`
+    /// and `version` are intentionally plain fields; see the read-side synchronization comment in
+    /// [`ProcessContextSelfReader::read`] for why their accesses are race-free.
     #[repr(C)]
     struct MappingHeader {
         signature: [u8; 8],
@@ -97,6 +88,7 @@ pub mod linux {
         assert!(core::mem::align_of::<MappingHeader>() == 8);
         assert!(core::mem::align_of::<AtomicU32>() == core::mem::align_of::<u32>());
         assert!(core::mem::align_of::<AtomicPtr<u8>>() == core::mem::align_of::<*mut u8>());
+        assert!(size_of::<*mut u8>() == size_of::<libc::c_ulong>());
     };
 
     /// The shared memory mapped area to publish the context to. The memory region is owned by a
@@ -124,13 +116,19 @@ pub mod linux {
     /// single thread should handle context updates, even if it's not strictly required.
     static PROCESS_CONTEXT_HANDLER: Mutex<Option<ProcessContextHandle>> = Mutex::new(None);
 
+    #[cfg(debug_assertions)]
+    static LIVE_SELF_READERS: AtomicUsize = AtomicUsize::new(0);
+
     impl MemMapping {
         /// Creates a suitable memory mapping for the context protocol to be published.
         ///
         /// `memfd` is the preferred method, but this function fallbacks to an anonymous mapping if
         /// `memfd` failed for any reason.
         ///
-        /// The memory is guaranteed to initialized to zeroes.
+        /// The memory is guaranteed to be initialized to zeroes. This matters because a
+        /// memfd-backed mapping is discoverable before `set_name()` runs, so early readers may
+        /// race with header initialization. They must observe [`UNPUBLISHED_OR_UPDATING`] (0) and
+        /// stop until the final timestamp store publishes the initialized header.
         fn new() -> io::Result<Self> {
             let size = mapping_size();
 
@@ -261,7 +259,7 @@ pub mod linux {
     impl ProcessContextHandle {
         /// Initial publication of the process context. Creates an appropriate memory mapping.
         fn publish(payload: Vec<u8>) -> io::Result<Self> {
-            let payload_size = payload
+            let payload_size: u32 = payload
                 .len()
                 .try_into()
                 .map_err(|_| io::Error::other("payload size overflowed"))?;
@@ -318,18 +316,24 @@ pub mod linux {
 
             let monotonic_published_at_ns = since_boottime_ns()
                 .ok_or_else(|| io::Error::other("could not get the current timestamp"))?;
-            let payload_size = payload.len().try_into().map_err(|_| {
+            let payload_size: u32 = payload.len().try_into().map_err(|_| {
                 io::Error::other("couldn't update process context: new payload too large")
             })?;
-            // A process shouldn't try to concurrently update its own context
+            // A process shouldn't try to concurrently update its own context.
+            //
+            // `UNPUBLISHED_OR_UPDATING` is an out-of-band sentinel, not a value that
+            // `CLOCK_BOOTTIME` is expected to produce after publication. Published non-zero
+            // timestamp values must advance monotonically; the field may temporarily hold the
+            // sentinel while an update is in progress.
             //
             // Note: be careful of early return while `monotonic_published_at` is still zero, as
             // this would effectively "lock" any future publishing. Move throwing code above this
             // swap, or properly restore the previous value if the former can't be done.
             // SAFETY: the mapping is live and valid; the timestamp field is atomic and aligned.
             let published_at_atomic = unsafe { &(*header).monotonic_published_at_ns };
-            let previous_published_at_ns = published_at_atomic.swap(0, Ordering::Acquire);
-            if previous_published_at_ns == 0 {
+            let previous_published_at_ns =
+                published_at_atomic.swap(UNPUBLISHED_OR_UPDATING, Ordering::Acquire);
+            if previous_published_at_ns == UNPUBLISHED_OR_UPDATING {
                 return Err(io::Error::other(
                     "concurrent update of the process context is not supported",
                 ));
@@ -340,6 +344,10 @@ pub mod linux {
             let monotonic_published_at_ns =
                 monotonic_published_at_ns.max(previous_published_at_ns.saturating_add(1));
 
+            // Pair this with the reader's acquire fence before its second timestamp load. If a
+            // reader starts from the previous non-zero timestamp but copies data after this update
+            // begins, it must not accept that copy as the previous version: its final timestamp
+            // check should see `UNPUBLISHED_OR_UPDATING` or the later published timestamp.
             fence(Ordering::Release);
             self.payload = payload;
 
@@ -399,7 +407,7 @@ pub mod linux {
     }
 
     // The returned size is guaranteed to be larger or equal to the size of `MappingHeader`.
-    const fn mapping_size() -> usize {
+    fn mapping_size() -> usize {
         size_of::<MappingHeader>()
     }
 
@@ -449,10 +457,13 @@ pub mod linux {
             let mapping_addr = Self::find_otel_mapping()?;
             // SAFETY: getpid() is always safe to call.
             let pid = unsafe { libc::getpid() };
-            Ok(Self {
+            let reader = Self {
                 pid,
                 header_ptr: Self::header_ptr_from_addr(mapping_addr)?,
-            })
+            };
+            #[cfg(debug_assertions)]
+            LIVE_SELF_READERS.fetch_add(1, Ordering::Relaxed);
+            Ok(reader)
         }
 
         /// Reads and decodes the current process's OTel process context.
@@ -472,18 +483,19 @@ pub mod linux {
             let header = unsafe { self.header_ptr.as_ref() };
 
             let published_at = header.monotonic_published_at_ns.load(Ordering::Acquire);
-            if published_at == 0 {
+            if published_at == UNPUBLISHED_OR_UPDATING {
                 return Err(io::Error::new(
                     io::ErrorKind::WouldBlock,
                     "process context is currently being updated",
                 ));
             }
 
-            // `signature` and `version` are immutable after the mapping becomes discoverable,
-            // so there is no change of races that would be UB. The seqlock-controlled fields
-            // must be loaded atomically because they can change during an update.
-            // The payload pointed to payload_ptr is also immutable, but it's irrelevant for the
-            // memory model because it's read with process_vm_readv().
+            // `signature` and `version` are initialized before the release store that publishes
+            // a non-zero timestamp. If the acquire load above observed that timestamp, those
+            // writes are visible; if it observed `UNPUBLISHED_OR_UPDATING`, we returned before
+            // reading them. Updates never mutate these fields, so their accesses are race-free.
+            // The seqlock-controlled fields must be loaded atomically because they can change
+            // during an update.
             let signature = header.signature;
             let version = header.version;
 
@@ -576,20 +588,20 @@ pub mod linux {
                 return false;
             };
 
-            // The spec says:
-            // 1. **Locate mapping**: Parse `/proc/<pid>/maps` and search for entries with name
-            // **starting with** `[anon_shmem:OTEL_CTX]`, `[anon:OTEL_CTX]` or `/memfd:OTEL_CTX`.
-            name.starts_with("/memfd:OTEL_CTX")
-                || name.starts_with("[anon_shmem:OTEL_CTX]")
-                || name.starts_with("[anon:OTEL_CTX]")
+            // The OTel process context spec says to search for entries whose names start with
+            // these prefixes. In `/proc/<pid>/maps`, however, the optional ` (deleted)` suffix is
+            // emitted as a separate token, so the mapping-name token itself should match exactly.
+            name == "/memfd:OTEL_CTX"
+                || name == "[anon_shmem:OTEL_CTX]"
+                || name == "[anon:OTEL_CTX]"
         }
 
         /// Reads `len` bytes from `addr` in the address space of `pid` via `process_vm_readv(2)`.
         ///
-        /// Returns [`ErrorKind::WouldBlock`] when the remote memory is no longer mapped or only
-        /// partially readable. The kernel reports the former as [`libc::EFAULT`] from
-        /// `pin_user_pages_remote()` and the latter as a short read (see `process_vm_rw_core()` in
-        /// `mm/process_vm_access.c`).
+        /// Returns [`ErrorKind::WouldBlock`] for retryable races where the remote memory is no
+        /// longer mapped or only partially readable. The kernel reports the former as
+        /// [`libc::EFAULT`] from `pin_user_pages_remote()` and the latter as a short read (see
+        /// `process_vm_rw_core()` in `mm/process_vm_access.c`).
         fn read_process_memory(
             pid: libc::pid_t,
             addr: *const u8,
@@ -637,6 +649,13 @@ pub mod linux {
         }
     }
 
+    #[cfg(debug_assertions)]
+    impl Drop for ProcessContextSelfReader {
+        fn drop(&mut self) {
+            LIVE_SELF_READERS.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+
     /// Reads and decodes the current process's OTel process context.
     /// To read multiple times, construct a new reader with [`ProcessContextSelfReader::new()`].
     pub fn read() -> io::Result<ProcessContext> {
@@ -658,6 +677,8 @@ pub mod linux {
             .collect()
     }
 
+    // The process context only carries a small resource/extra attribute set, so a linear scan
+    // keeps this helper allocation-free and simpler than building a temporary index.
     fn find_attr<'a>(attrs: &'a [KeyValue], key: &str) -> Option<&'a AnyValue> {
         attrs
             .iter()
@@ -748,11 +769,23 @@ pub mod linux {
     pub unsafe fn unpublish() -> io::Result<()> {
         let mut guard = lock_context_handle()?;
 
+        #[cfg(debug_assertions)]
+        debug_assert_eq!(
+            LIVE_SELF_READERS.load(Ordering::Relaxed),
+            0,
+            "unpublish called while ProcessContextSelfReader instances are live"
+        );
+
         if let Some(ProcessContextHandle {
             mapping, payload, ..
         }) = guard.take()
         {
-            // Mark the context as being-updated and order that store before the payload free.
+            // Mark the context as unavailable before freeing the mapping/payload. The fence forces
+            // the writing CPU not to reorder the unavailable timestamp store and the deallocation
+            // stores. Formal correctness, which this does not aim for, only applies to in-process
+            // readers, and those are forbidden to read after `unpublish()` because they could also
+            // hit an unmapped header, which is why this function is unsafe. The ordering should
+            // help out-of-process readers.
             //
             // SAFETY: the mapping is still live and valid; the timestamp field is atomic
             // and aligned.
@@ -760,7 +793,7 @@ pub mod linux {
             unsafe {
                 (*header)
                     .monotonic_published_at_ns
-                    .store(0, Ordering::Relaxed);
+                    .store(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
             }
             fence(Ordering::Release);
 
@@ -808,6 +841,29 @@ pub mod linux {
                 monotonic_published_at_ns: header.monotonic_published_at_ns.load(Ordering::Relaxed),
                 payload_ptr: header.payload_ptr.load(Ordering::Relaxed).cast_const(),
             })
+        }
+
+        #[test]
+        fn is_named_otel_mapping_matches_exact_mapping_name() {
+            assert!(super::ProcessContextSelfReader::is_named_otel_mapping(
+                "7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX"
+            ));
+            assert!(super::ProcessContextSelfReader::is_named_otel_mapping(
+                "7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX (deleted)"
+            ));
+            assert!(super::ProcessContextSelfReader::is_named_otel_mapping(
+                "7f000000-7f001000 rw-p 00000000 00:00 0 [anon_shmem:OTEL_CTX]"
+            ));
+            assert!(super::ProcessContextSelfReader::is_named_otel_mapping(
+                "7f000000-7f001000 rw-p 00000000 00:00 0 [anon:OTEL_CTX]"
+            ));
+
+            assert!(!super::ProcessContextSelfReader::is_named_otel_mapping(
+                "7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX_BACKUP"
+            ));
+            assert!(!super::ProcessContextSelfReader::is_named_otel_mapping(
+                "7f000000-7f001000 rw-p 00000000 00:00 0 [anon:OTEL_CTX_old]"
+            ));
         }
 
         #[test]
