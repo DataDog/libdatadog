@@ -13,8 +13,8 @@
 //! Scope:
 //! * 64-bit ELF only (`Elf64_*`). Other targets are gated out at compile time via `#[cfg]` on the
 //!   parent module.
-//! * GNU hash tables only - `DT_HASH` is skipped, matching ddprof (sometimes points into kernel
-//!   space on old glibcs).
+//! * GNU hash tables only - `DT_HASH` is skipped because it has caused problems on older glibc
+//!   systems.
 //! * REL / RELA / JMPREL relocation arrays.
 
 use core::ffi::{c_char, c_int, c_void};
@@ -69,11 +69,10 @@ struct DynamicInfo {
 }
 
 impl DynamicInfo {
-    /// Read DT_* entries out of a PT_DYNAMIC array. ddprof's
-    /// `retrieve_dynamic_info` handles the glibc-vs-musl quirk where
-    /// glibc stores absolute addresses in DT entries while musl stores
-    /// load-relative offsets; we use the same `addr > base ? addr : base + addr`
-    /// heuristic.
+    /// Read DT_* entries out of a PT_DYNAMIC array. Handles the
+    /// glibc-vs-musl quirk where glibc stores absolute addresses in DT
+    /// entries while musl stores load-relative offsets; we use the
+    /// `addr > base ? addr : base + addr` heuristic.
     unsafe fn from_phdr(info: &dl_phdr_info) -> Option<Self> {
         let phdrs = std::slice::from_raw_parts(info.dlpi_phdr, info.dlpi_phnum as usize);
         let dyn_phdr = phdrs.iter().find(|p| p.p_type == PT_DYNAMIC)?;
@@ -151,9 +150,11 @@ impl DynamicInfo {
         };
         let sym_count = gnu_hash_symbol_count(gnu_hash, gnu_hash_words).unwrap_or_else(|| {
             // Fallback for degenerate .gnu.hash (e.g. executables with only
-            // undefined imports): estimate dynsym entry count from the
-            // distance between DT_SYMTAB and DT_STRTAB. This works because
-            // the linker always places .dynsym immediately before .dynstr.
+            // undefined imports): estimate dynsym entry count from the common
+            // .dynsym-before-.dynstr layout. This is a heuristic, not an ELF
+            // guarantee. If it underestimates we may skip patching some
+            // relocations; valid relocation indexes should still keep an
+            // overestimate from faulting on normal loaded objects.
             let symtab_addr = symtab as usize;
             let strtab_addr = strtab as usize;
             if strtab_addr > symtab_addr {
@@ -321,27 +322,25 @@ unsafe fn gnu_hash_lookup(info: &DynamicInfo, name: &[u8]) -> Option<Elf64_Sym> 
     None
 }
 
-/// Mirror of ddprof's `check`: defining symbol, function/object/notype.
+/// Return whether this is a defining function/object/notype symbol.
 fn check_sym(sym: &Elf64_Sym) -> bool {
     const SHN_ABS: u16 = 0xfff1;
     let stt = sym.st_info & 0xf;
-    if sym.st_value == 0 && sym.st_shndx != SHN_ABS {
-        return false;
-    }
-    // STT_NOTYPE(0), STT_OBJECT(1), STT_FUNC(2), STT_GNU_IFUNC(10)
-    matches!(stt, 0 | 1 | 2 | 10)
+    (sym.st_value != 0 || sym.st_shndx == SHN_ABS) &&
+        // STT_NOTYPE(0), STT_OBJECT(1), STT_FUNC(2), STT_GNU_IFUNC(10)
+        matches!(stt, 0 | 1 | 2 | 10)
 }
 
 /// Visit each loaded ELF object once. `is_exe` is true only on the
 /// first callback (the main executable). The callback returns `true` to
 /// stop iteration.
-fn iterate_libraries<F: FnMut(&dl_phdr_info, bool) -> bool>(mut cb: F) {
+fn iterate_libraries(mut callback: impl FnMut(&dl_phdr_info, bool) -> bool) {
     struct Ctx<'a> {
-        cb: &'a mut dyn FnMut(&dl_phdr_info, bool) -> bool,
+        callback: &'a mut dyn FnMut(&dl_phdr_info, bool) -> bool,
         is_first: bool,
     }
     let mut ctx = Ctx {
-        cb: &mut cb,
+        callback: &mut callback,
         is_first: true,
     };
 
@@ -354,15 +353,12 @@ fn iterate_libraries<F: FnMut(&dl_phdr_info, bool) -> bool>(mut cb: F) {
             let ctx = &mut *(data as *mut Ctx);
             let is_exe = ctx.is_first;
             ctx.is_first = false;
-            (ctx.cb)(&*info, is_exe)
+            (ctx.callback)(&*info, is_exe)
         }));
 
-        match result {
-            Ok(stop) => i32::from(stop),
-            // Never unwind a Rust panic through libc's dl_iterate_phdr callback.
-            // Treat patching as best-effort and stop iteration on panic.
-            Err(_) => 1,
-        }
+        // Never unwind a Rust panic through libc's dl_iterate_phdr callback.
+        // Treat patching as best-effort and stop iteration on panic.
+        result.map(i32::from).unwrap_or(1)
     }
 
     unsafe {
@@ -452,7 +448,7 @@ fn read_proc_maps() -> Vec<MapEntry> {
 /// restored them, weakening RELRO for the process lifetime. This guard
 /// mprotects each unique page once (RW), lets the caller write as
 /// many entries as it needs, then mprotects each page back to what
-/// /proc/self/maps reported at guard-construction time.
+/// `/proc/self/maps` reported at guard-construction time.
 struct PageProtGuard {
     page_size: usize,
     maps: Vec<MapEntry>,
@@ -462,11 +458,10 @@ struct PageProtGuard {
 
 impl PageProtGuard {
     fn new() -> Self {
-        // sysconf can return -1 on error; casting that to usize gives
-        // a huge value that breaks the alignment/mprotect math. Fall
-        // back to a conservative 4 KiB default if the query fails.
+        // sysconf can return -1 on error; fall back to a conservative
+        // 4 KiB default if the query fails.
         let raw = unsafe { sysconf(_SC_PAGESIZE) };
-        let page_size = if raw > 0 { raw as usize } else { 4096 };
+        let page_size = usize::try_from(raw).unwrap_or(4096);
         Self {
             page_size,
             maps: read_proc_maps(),
@@ -523,13 +518,11 @@ unsafe fn read_entry(addr: usize) -> usize {
 #[derive(Clone, Copy)]
 pub struct LookupResult {
     pub address: usize,
-    #[allow(dead_code)] // exposed for diagnostics / future filtering
-    pub size: u64,
 }
 
 /// Look up a symbol across loaded objects, returning the first
 /// non-zero-sized definition whose address is not `not_this_symbol`.
-/// Mirrors ddprof's `lookup_symbol(..., accept_null_sized_symbol=false)`.
+/// Null-sized symbols are ignored so hooks resolve to callable definitions.
 pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult> {
     let needle = name.as_bytes();
     let mut found: Option<LookupResult> = None;
@@ -549,10 +542,7 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
             if sym.st_size > 0 {
                 let addr = sym.st_value as usize + dyn_info.base_address;
                 if addr != not_this_symbol {
-                    found = Some(LookupResult {
-                        address: addr,
-                        size: sym.st_size,
-                    });
+                    found = Some(LookupResult { address: addr });
                     return true; // stop
                 }
             }
@@ -576,11 +566,10 @@ struct LibraryRevertInfo {
 /// One registered override entry.
 struct OverrideInfo {
     /// Output slot the install path fills with the resolved real symbol
-    /// address (so hooks can call through it). Points to a `'static
-    /// AtomicUsize` supplied by the caller; the install-time write goes
-    /// through `store(Release)` to pair with the hook-side
-    /// `load(Acquire)`.
-    ref_slot: *const AtomicUsize,
+    /// address (so hooks can call through it). This is a shared static
+    /// atomic supplied by the caller; the install-time write goes through
+    /// `store(Release)` to pair with the hook-side `load(Acquire)`.
+    ref_slot: &'static AtomicUsize,
     /// Address of our hook function, written into matching GOT entries.
     new_symbol: usize,
     /// If a GOT entry's address equals this, leave it alone. Used to
@@ -591,11 +580,7 @@ struct OverrideInfo {
     do_not_override_this_symbol: usize,
 }
 
-unsafe impl Send for OverrideInfo {}
-unsafe impl Sync for OverrideInfo {}
-
-/// Mirror of ddprof's `SymbolOverrides`. Holds the override table and
-/// the per-library revert info needed to undo writes.
+/// Holds the override table and the per-library revert info needed to undo writes.
 #[derive(Default)]
 pub struct SymbolOverrides {
     overrides: HashMap<String, OverrideInfo>,
@@ -614,9 +599,8 @@ impl SymbolOverrides {
 
     /// Register an override. `ref_slot` is filled in by `apply_overrides`
     /// with the resolved address of the real symbol so the hook can call
-    /// through it. Must point to a `'static AtomicUsize`; the install
-    /// path publishes via `store(Release)`.
-    pub fn register(&mut self, name: &str, hook: usize, ref_slot: *const AtomicUsize) {
+    /// through it. The install path publishes via `store(Release)`.
+    pub fn register(&mut self, name: &str, hook: usize, ref_slot: &'static AtomicUsize) {
         self.overrides.insert(
             name.to_string(),
             OverrideInfo {
@@ -646,11 +630,8 @@ impl SymbolOverrides {
             .collect();
         for (name, addr) in resolved {
             if let Some(ov) = self.overrides.get_mut(&name) {
-                // SAFETY: `ref_slot` was registered pointing at a
-                // `'static AtomicUsize`, so the pointer is valid for the
-                // lifetime of the process. Release pairs with the
-                // hook-side Acquire load.
-                unsafe { (*ov.ref_slot).store(addr, Ordering::Release) };
+                // Release pairs with the hook-side Acquire load.
+                ov.ref_slot.store(addr, Ordering::Release);
             }
         }
         self.update_overrides();
@@ -660,7 +641,7 @@ impl SymbolOverrides {
     /// No-op if the loaded-library count hasn't changed.
     pub fn update_overrides(&mut self) {
         // `dl_phdr_info::dlpi_adds` is incremented on every dlopen.
-        // ddprof uses it as a cheap "did anything change?" probe.
+        // Use it as a cheap "did anything change?" probe.
         let mut nb_loaded: i32 = -1;
         iterate_libraries(|info, _| {
             nb_loaded = info.dlpi_adds as i32;
@@ -854,8 +835,7 @@ impl SymbolOverrides {
         };
         // `ref_slot==0` means we never resolved the real symbol, so the
         // hook would call a NULL pointer. Skip.
-        // SAFETY: `ref_slot` points at a `'static AtomicUsize`.
-        let real = unsafe { (*ov.ref_slot).load(Ordering::Acquire) };
+        let real = ov.ref_slot.load(Ordering::Acquire);
         if real == 0 {
             return;
         }

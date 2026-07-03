@@ -45,13 +45,45 @@ dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size)
         return out;  /* passthrough: not sampled */
     }
 
+    /* Clear the magic header NOW, while we still own the block. Once the
+     * real realloc runs it may free the old block internally; if we left
+     * the magic intact, a future allocation that reuses that memory could
+     * be falsely detected as sampled by dd_sample_flag_check, leading to
+     * a bogus raw pointer and a heap corruption on free.
+     *
+     * This is safe even if the real realloc subsequently fails (returns
+     * NULL): in that case old_user is still live but now unsampled.
+     * commit() returns NULL to the caller, so the application retains
+     * old_user; a later free(old_user) will take the unsampled fast path
+     * and pass old_user directly to the underlying free — which is
+     * incorrect (it should pass old_raw). To handle this, commit()
+     * re-stamps the header when realloc fails. */
+#if defined(__x86_64__)
+    {
+        void *old_header = (char *)old_user - DD_HEADER_BYTES;
+        const uint64_t zero = 0;
+        memcpy(old_header, &zero, sizeof(zero));
+    }
+#endif
+
     /* Reserve room for the old header+slack ([0, old_offset)) plus
      * `new_size` bytes of user data at [old_offset, old_offset + new_size).
      * commit() shifts the user data down to [0, new_size). Overflow ->
      * fall back to passthrough with the caller-supplied size; the
      * underlying realloc will likely fail with a huge value, but
-     * nothing gets silently truncated or misinterpreted. */
+     * nothing gets silently truncated or misinterpreted.
+     *
+     * We already cleared the header above, so we must re-stamp it
+     * before falling through to passthrough, otherwise a later free
+     * would not recover old_raw. */
     if (new_size > SIZE_MAX - old_offset) {
+#if defined(__x86_64__)
+        void *hdr = (char *)old_user - DD_HEADER_BYTES;
+        uint64_t m = DD_MAGIC;
+        uint64_t o = (uint64_t)old_offset;
+        memcpy(hdr, &m, sizeof(m));
+        memcpy((char *)hdr + sizeof(m), &o, sizeof(o));
+#endif
         return out;
     }
 
@@ -75,10 +107,20 @@ void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_pre
         return new_raw;
     }
 
-    /* Underlying realloc failed: C says old_user is still live; its
-     * sampler flag was left intact by prepare(), so a later free()
-     * will still resolve the right raw pointer. */
-    if (new_raw == NULL) return NULL;
+    /* Underlying realloc failed: C says old_user is still live.
+     * prepare() cleared the header optimistically, so re-stamp it
+     * now so that a later free(old_user) correctly resolves the raw
+     * pointer via dd_sample_flag_check. */
+    if (new_raw == NULL) {
+#if defined(__x86_64__)
+        void *old_header = (char *)old_user - DD_HEADER_BYTES;
+        uint64_t magic  = DD_MAGIC;
+        uint64_t offset = (uint64_t)prep.old_offset;
+        memcpy(old_header, &magic, sizeof(magic));
+        memcpy((char *)old_header + sizeof(magic), &offset, sizeof(offset));
+#endif
+        return NULL;
+    }
 
     /* Sampled path. libc realloc copied the old block's bytes into
      * new_raw starting at index 0, so the old user data now sits at
@@ -96,8 +138,7 @@ void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_pre
     /* Report the free of the OLD sampled allocation (the address the
      * profiler last saw as live). No matching alloc is fired: the new
      * block is unsampled. dd_probe_free just emits the ddheap:free
-     * USDT; there's no header left to clear because libc consumed the
-     * old block and its bytes have been overwritten by the memmove. */
+     * USDT so the profiler can close the live-heap entry. */
     dd_probe_free(old_user);
     return new_raw;
 }

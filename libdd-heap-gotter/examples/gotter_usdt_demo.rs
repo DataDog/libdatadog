@@ -62,11 +62,18 @@ mod linux {
     unsafe impl Send for LiveAlloc {}
     unsafe impl Sync for LiveAlloc {}
     impl LiveAlloc {
-        fn as_slice_mut(&self) -> &'static mut [u8] {
+        fn as_slice(&self) -> &[u8] {
             // SAFETY: `ptr` is the return of a libc allocator and
             // `size` is the user-requested size. Lifetime is scoped by
-            // the caller of `as_slice_mut` and does not outlive the
-            // allocation.
+            // the caller and does not outlive the allocation.
+            unsafe { std::slice::from_raw_parts(self.ptr, self.size) }
+        }
+
+        fn as_slice_mut(&mut self) -> &mut [u8] {
+            // SAFETY: `ptr` is the return of a libc allocator and
+            // `size` is the user-requested size. `&mut self` prevents
+            // callers from creating two mutable slices to the same live
+            // allocation through this helper.
             unsafe { std::slice::from_raw_parts_mut(self.ptr, self.size) }
         }
     }
@@ -80,6 +87,7 @@ mod linux {
         fn new(seed: u64) -> Self {
             Rng(seed)
         }
+
         fn next(&mut self) -> u64 {
             let mut z = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
             self.0 = z;
@@ -87,9 +95,11 @@ mod linux {
             z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
             z ^ (z >> 31)
         }
+
         fn range(&mut self, lo: usize, hi: usize) -> usize {
             lo + (self.next() as usize) % (hi - lo).max(1)
         }
+
         fn choice<'a, T>(&mut self, xs: &'a [T]) -> &'a T {
             &xs[(self.next() as usize) % xs.len()]
         }
@@ -215,7 +225,7 @@ mod linux {
 
     unsafe fn do_realloc(old: LiveAlloc, new_size: usize) -> Option<LiveAlloc> {
         // Verify old contents before releasing the block.
-        verify_content(old.as_slice_mut(), old.seed);
+        verify_content(old.as_slice(), old.seed);
         let new_ptr = libc::realloc(old.ptr as *mut libc::c_void, new_size) as *mut u8;
         if new_ptr.is_null() {
             // Old block is still live on realloc failure. Return it as-is.
@@ -242,7 +252,7 @@ mod linux {
     }
 
     unsafe fn do_free(a: LiveAlloc) {
-        verify_content(a.as_slice_mut(), a.seed);
+        verify_content(a.as_slice(), a.seed);
         libc::free(a.ptr as *mut libc::c_void);
     }
 
@@ -280,7 +290,8 @@ mod linux {
                     };
                     let Some(mut a) = a else { continue };
                     a.seed = rng.next();
-                    fill_content(a.as_slice_mut(), a.seed);
+                    let seed = a.seed;
+                    fill_content(a.as_slice_mut(), seed);
                     allocs.fetch_add(1, Ordering::Relaxed);
                     if live.len() == MAX_LIVE {
                         let idx = rng.range(0, live.len());
@@ -301,7 +312,8 @@ mod linux {
                     // min(old_size,new_size) are undefined per the
                     // realloc contract.
                     resized.seed = rng.next();
-                    fill_content(resized.as_slice_mut(), resized.seed);
+                    let seed = resized.seed;
+                    fill_content(resized.as_slice_mut(), seed);
                     reallocs.fetch_add(1, Ordering::Relaxed);
                     live.push(resized);
                 } else if !live.is_empty() {

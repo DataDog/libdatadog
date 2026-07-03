@@ -198,7 +198,7 @@ pub unsafe extern "C" fn gotter_dlopen(filename: *const c_char, flags: c_int) ->
 }
 
 /// Args we package up so the wrapped start routine sees its original
-/// arg through our trampoline. Matches ddprof's `Args = tuple<...>`.
+/// arg through our trampoline.
 struct PthreadCreateArgs {
     start: StartRoutine,
     arg: *mut c_void,

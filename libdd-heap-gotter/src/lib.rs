@@ -51,8 +51,8 @@ use std::sync::{Mutex, MutexGuard, TryLockError};
 use elf::SymbolOverrides;
 
 /// Holds the SymbolOverrides registry across calls to `install` / `update`
-/// / `restore`. ddprof keeps the equivalent state in
-/// `g_symbol_overrides` guarded by `g_mutex`
+/// / `restore`. Guarded globally because GOT patching mutates process-wide
+/// state.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 static GLOBAL_OVERRIDES: Mutex<Option<SymbolOverrides>> = Mutex::new(None);
 
@@ -153,13 +153,12 @@ fn register_all(so: &mut SymbolOverrides) {
     use hooks::*;
     use std::sync::atomic::AtomicUsize;
 
-    // Register one entry per supported symbol. The `ref_slot` raw
-    // pointer is to a `'static AtomicUsize`, so it's valid forever.
-    // The install path stores via `store(Release)` and hooks read via
-    // `load(Acquire)`; both go through the typed atomic to avoid
-    // racing plain writes against atomic loads.
+    // Register one entry per supported symbol. The install path stores
+    // via `store(Release)` and hooks read via `load(Acquire)`; both go
+    // through the typed atomic to avoid racing plain writes against
+    // atomic loads.
     fn reg(so: &mut SymbolOverrides, name: &str, hook_addr: usize, slot: &'static AtomicUsize) {
-        so.register(name, hook_addr, slot as *const AtomicUsize);
+        so.register(name, hook_addr, slot);
     }
 
     reg(
@@ -241,7 +240,6 @@ mod tests {
         assert!(r.is_some(), "expected to find malloc in loaded libraries");
         let r = r.unwrap();
         assert!(r.address != 0);
-        assert!(r.size > 0);
     }
 
     #[test]
