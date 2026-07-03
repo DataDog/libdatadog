@@ -357,7 +357,6 @@ struct PendingDestination<D> {
     events: HashMap<EventKey, FfeFlagEvaluationEvent>,
 }
 
-#[derive(Default)]
 struct CoalescerState<D> {
     destinations: HashMap<D, PendingDestination<D>>,
     flush_running: bool,
@@ -368,12 +367,25 @@ struct CoalescerState<D> {
     dropped_overflow: u64,
 }
 
+impl<D> Default for CoalescerState<D> {
+    fn default() -> Self {
+        Self {
+            destinations: HashMap::new(),
+            flush_running: false,
+            pending_bucket_count: 0,
+            full_bucket_count: 0,
+            full_bucket_count_by_flag: HashMap::new(),
+            degraded_bucket_count: 0,
+            dropped_overflow: 0,
+        }
+    }
+}
+
 /// Shared flagevaluation coalescer.
 ///
 /// The generic destination is owned by the transport adapter. For the sidecar it
 /// is the EVP proxy endpoint plus batch context; an agentless sender can use
 /// its own endpoint identity without changing aggregation semantics.
-#[derive(Default)]
 pub struct FlagEvaluationEvpCoalescer<D> {
     state: Arc<Mutex<CoalescerState<D>>>,
     writer_stats: Arc<FlagEvaluationEvpWriterCounters>,
@@ -384,6 +396,15 @@ impl<D> Clone for FlagEvaluationEvpCoalescer<D> {
         Self {
             state: Arc::clone(&self.state),
             writer_stats: Arc::clone(&self.writer_stats),
+        }
+    }
+}
+
+impl<D> Default for FlagEvaluationEvpCoalescer<D> {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(CoalescerState::default())),
+            writer_stats: Arc::new(FlagEvaluationEvpWriterCounters::default()),
         }
     }
 }
