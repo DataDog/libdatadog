@@ -14,6 +14,7 @@ use libdd_heap_gotter_ffi::{
     ddog_heap_gotter_install, ddog_heap_gotter_is_installed, ddog_heap_gotter_restore,
 };
 
+#[track_caller]
 fn assert_ok(result: VoidResult, what: &str) {
     match result {
         VoidResult::Ok => {}

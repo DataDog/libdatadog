@@ -11,6 +11,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
+#![cfg_attr(not(test), deny(clippy::unreachable))]
 
 use function_name::named;
 use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};

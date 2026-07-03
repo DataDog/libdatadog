@@ -32,7 +32,6 @@ cargo check -p libdd-heap-gotter-ffi
 The `cdylib_demo` example loads the generated shared library with `dlopen`, resolves the C ABI symbols with `dlsym`, installs the GOT hooks, and produces allocation pressure.
 
 ```bash
-cargo build -p libdd-heap-gotter-ffi
 cargo run -p libdd-heap-gotter-ffi --example cdylib_demo
 ```
 

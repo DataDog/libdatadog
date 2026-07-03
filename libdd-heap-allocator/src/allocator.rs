@@ -37,6 +37,7 @@ impl SampledAllocator<System> {
 
 unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
     #[cfg(target_os = "linux")]
+    #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let req = dd_allocation_requested(layout.size(), layout.align());
         // Sampled paths may bump the size for inline flag storage;
@@ -47,11 +48,13 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
     }
 
     #[cfg(not(target_os = "linux"))]
+    #[inline(always)]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.inner.alloc(layout)
     }
 
     #[cfg(target_os = "linux")]
+    #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let freed = dd_allocation_freed(ptr.cast(), layout.size(), layout.align());
         let inner_layout = Layout::from_size_align_unchecked(freed.size, layout.align());
@@ -59,6 +62,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
     }
 
     #[cfg(not(target_os = "linux"))]
+    #[inline(always)]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         self.inner.dealloc(ptr, layout);
     }
