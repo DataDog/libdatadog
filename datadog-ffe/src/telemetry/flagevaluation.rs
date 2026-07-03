@@ -4,10 +4,6 @@
 //! Reusable EVP flagevaluation payload, coalescing, serialization, and sender
 //! primitives for the `flageval-worker` ingestion schema.
 //!
-//! Crate-naming note: this workspace uses `libdd-remote-config` (not
-//! `datadog-remote-config`) for the remote config crate. Downstream consumers
-//! (e.g. `dd-trace-php`) must use `libdd-remote-config` in any import paths.
-//!
 //! Two-tier aggregation (full → degraded → drop-counted), context pruning,
 //! payload-limit degradation, JSON POST encoding, and Agent EVP proxy sending
 //! live here so native FFE consumers can share the same behavior independent of
@@ -361,6 +357,7 @@ struct PendingDestination<D> {
     events: HashMap<EventKey, FfeFlagEvaluationEvent>,
 }
 
+#[derive(Default)]
 struct CoalescerState<D> {
     destinations: HashMap<D, PendingDestination<D>>,
     flush_running: bool,
@@ -371,25 +368,12 @@ struct CoalescerState<D> {
     dropped_overflow: u64,
 }
 
-impl<D> Default for CoalescerState<D> {
-    fn default() -> Self {
-        Self {
-            destinations: HashMap::new(),
-            flush_running: false,
-            pending_bucket_count: 0,
-            full_bucket_count: 0,
-            full_bucket_count_by_flag: HashMap::new(),
-            degraded_bucket_count: 0,
-            dropped_overflow: 0,
-        }
-    }
-}
-
 /// Shared flagevaluation coalescer.
 ///
 /// The generic destination is owned by the transport adapter. For the sidecar it
 /// is the EVP proxy endpoint plus batch context; an agentless sender can use
 /// its own endpoint identity without changing aggregation semantics.
+#[derive(Default)]
 pub struct FlagEvaluationEvpCoalescer<D> {
     state: Arc<Mutex<CoalescerState<D>>>,
     writer_stats: Arc<FlagEvaluationEvpWriterCounters>,
@@ -400,15 +384,6 @@ impl<D> Clone for FlagEvaluationEvpCoalescer<D> {
         Self {
             state: Arc::clone(&self.state),
             writer_stats: Arc::clone(&self.writer_stats),
-        }
-    }
-}
-
-impl<D> Default for FlagEvaluationEvpCoalescer<D> {
-    fn default() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(CoalescerState::default())),
-            writer_stats: Arc::new(FlagEvaluationEvpWriterCounters::default()),
         }
     }
 }
@@ -672,7 +647,6 @@ pub fn encode_flag_evaluation_payloads(
                 &mut current_events,
             );
             current_size = base_payload_size;
-            result.payload_splits = result.payload_splits.saturating_add(1);
         }
 
         let separator_size = usize::from(!current_events.is_empty());
@@ -680,17 +654,15 @@ pub fn encode_flag_evaluation_payloads(
         current_events.push(encoded_event);
     }
 
-    push_payload(
-        &mut result.payloads,
-        &payload_prefix,
-        payload_suffix,
-        &mut current_events,
-    );
-    if result.payloads.len() > 1 {
-        result.payload_splits = result
-            .payload_splits
-            .max(result.payloads.len().saturating_sub(1) as u64);
+    if !current_events.is_empty() {
+        push_payload(
+            &mut result.payloads,
+            &payload_prefix,
+            payload_suffix,
+            &mut current_events,
+        );
     }
+    result.payload_splits = result.payloads.len().saturating_sub(1) as u64;
 
     Ok(result)
 }
@@ -709,6 +681,10 @@ fn push_payload(
     payload_suffix: &str,
     encoded_events: &mut Vec<String>,
 ) {
+    debug_assert!(
+        !encoded_events.is_empty(),
+        "callers should only push non-empty payload event groups"
+    );
     if encoded_events.is_empty() {
         return;
     }
@@ -1367,6 +1343,23 @@ mod tests {
         assert_eq!(evaluation["empty"], "");
         assert!(evaluation["empty_object"].is_object());
         assert!(evaluation["empty_array"].is_array());
+    }
+
+    #[test]
+    fn payload_encoding_empty_batch_has_no_payloads_or_splits() {
+        let result = encode_flag_evaluation_payloads(
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: vec![],
+            },
+            EVP_PAYLOAD_SIZE_LIMIT,
+        )
+        .expect("payload build must succeed");
+
+        assert!(result.payloads.is_empty());
+        assert_eq!(result.payload_splits, 0);
+        assert_eq!(result.dropped_oversized_rows, 0);
+        assert_eq!(result.degraded_oversized_rows, 0);
     }
 
     #[test]

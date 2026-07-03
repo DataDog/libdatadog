@@ -110,8 +110,7 @@ pub enum SidecarAction {
     },
     /// Structured FFE flag evaluation batch for the EVP flagevaluation track.
     /// The sidecar serializes and POSTs the batch to
-    /// `/evp_proxy/v2/api/v2/flagevaluation` (fire-and-forget). PHP (EMIT-07)
-    /// drives the two-tier aggregation upstream and dispatches via this action.
+    /// `/evp_proxy/v2/api/v2/flagevaluation` (fire-and-forget).
     ///
     /// Keep this appended after pre-existing variants: this enum crosses the
     /// bincode sidecar IPC boundary, so inserting a variant before existing
