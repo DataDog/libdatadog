@@ -146,17 +146,21 @@ compute_semver_results() {
     #
     # cargo-semver-checks has known false-negatives at signature level — most
     # notably, parameter type changes on non-generic functions are not detected
-    # (the function_parameter_type_changed lint is not implemented). cargo-public-api
-    # shows the change as Removed (old signature) + Added (new signature), so
-    # we run it unconditionally and combine with semver-checks via max_level.
-    # Skip only when there is no baseline (new crate) or when semver-checks
-    # already flagged major (cannot go higher).
+    # (the function_parameter_type_changed lint is not implemented). Such a change
+    # keeps the item's path, so cargo-public-api reports it under "Changed items"
+    # as a "-old / +new" signature pair (not as a Removed + Added pair). We
+    # therefore run cargo-public-api unconditionally and, for changed items,
+    # normalize and compare the old vs new signatures (see the Changed handling
+    # below) before combining the result with semver-checks via max_level. Skip
+    # only when there is no baseline (new crate) or when semver-checks already
+    # flagged major (cannot go higher).
     #
     # Requires cargo-public-api >= 0.52.0: earlier versions include function
-    # parameter names in signatures, so a non-breaking parameter *rename* diffs
-    # as Removed + Added and would be falsely promoted to major. From 0.52.0
-    # parameter names are omitted by default, so only signature-meaningful
-    # changes (e.g. parameter type changes) surface here.
+    # parameter names in signatures, so a non-breaking parameter *rename* also
+    # surfaces under "Changed items" (-old / +new differing only by the name) and
+    # would be falsely promoted to major. From 0.52.0 parameter names are omitted
+    # by default, so a rename produces no diff and only signature-meaningful
+    # changes (e.g. parameter or return type changes) surface there.
     # ----------------------------------------------------------------
     local public_api_level="none"
     local public_api_reason=""
