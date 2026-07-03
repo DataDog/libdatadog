@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{fmt, io};
 use tokio::runtime::{Builder, Runtime};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 type BoxedWorker = Box<dyn Worker + Sync>;
 
@@ -152,6 +152,14 @@ pub struct SharedRuntime {
     runtime: Arc<Mutex<Option<Arc<Runtime>>>>,
     workers: Arc<Mutex<Vec<WorkerEntry>>>,
     next_worker_id: AtomicU64,
+    /// Diagnostic counter (APMSP fork investigation).
+    ///
+    /// Incremented every time [`Self::reinit_runtime_for_child`] finds a still-live
+    /// inherited runtime in a forked child and abandons it via [`std::mem::forget`].
+    /// That situation is only possible when `before_fork` did NOT run before the fork
+    /// (otherwise the parent would have emptied the slot). A non-zero value therefore
+    /// means the pre-fork hook was skipped for the fork that created this process.
+    stale_runtimes_forgotten: AtomicU64,
 }
 
 /// Build a tokio runtime appropriate for the current platform.
@@ -185,7 +193,14 @@ impl SharedRuntime {
             runtime: Arc::new(Mutex::new(Some(Arc::new(runtime)))),
             workers: Arc::new(Mutex::new(Vec::new())),
             next_worker_id: AtomicU64::new(1),
+            stale_runtimes_forgotten: AtomicU64::new(0),
         })
+    }
+
+    /// Number of times an inherited runtime had to be abandoned in a forked child
+    /// because `before_fork` was skipped for the fork. See [`Self::stale_runtimes_forgotten`].
+    pub fn stale_runtimes_forgotten(&self) -> u64 {
+        self.stale_runtimes_forgotten.load(Ordering::Relaxed)
     }
 
     /// Spawn a PausableWorker on this runtime.
@@ -286,7 +301,15 @@ impl SharedRuntime {
     fn reinit_runtime_for_child(&self) -> Result<(), SharedRuntimeError> {
         let mut runtime_lock = self.runtime.lock_or_panic();
         if let Some(stale) = runtime_lock.take() {
-            // Never run a parent-created runtime's Drop in the child.
+            // Reaching here means before_fork did not run before this fork (it would have
+            // emptied the slot in the parent). Record it for diagnostics, then abandon the
+            // inherited runtime without running its Drop, which would block/panic in the child.
+            let forgotten = self.stale_runtimes_forgotten.fetch_add(1, Ordering::Relaxed) + 1;
+            warn!(
+                forgotten_total = forgotten,
+                "after_fork_child: inherited tokio runtime was still live (before_fork was skipped \
+                 for this fork); abandoning it via mem::forget"
+            );
             std::mem::forget(stale);
         }
         *runtime_lock = Some(Arc::new(build_runtime()?));
@@ -580,6 +603,32 @@ mod tests {
             after_fork_value, 0,
             "after_fork_child should reset state to 0, got {after_fork_value}"
         );
+    }
+
+    #[test]
+    fn test_stale_runtimes_forgotten_counts_skipped_before_fork() {
+        // Models a fork where before_fork was NOT run: the runtime slot is still
+        // populated when after_fork_child runs, so the inherited runtime must be
+        // forgotten -- and counted.
+        let shared_runtime = SharedRuntime::new().unwrap();
+        assert_eq!(shared_runtime.stale_runtimes_forgotten(), 0);
+
+        shared_runtime.after_fork_child().unwrap();
+        assert_eq!(shared_runtime.stale_runtimes_forgotten(), 1);
+
+        shared_runtime.after_fork_child().unwrap();
+        assert_eq!(shared_runtime.stale_runtimes_forgotten(), 2);
+    }
+
+    #[test]
+    fn test_stale_runtimes_not_counted_when_before_fork_ran() {
+        // Models the healthy path: before_fork empties the slot in the parent, so
+        // after_fork_child finds nothing to forget and the counter stays at 0.
+        let shared_runtime = SharedRuntime::new().unwrap();
+
+        shared_runtime.before_fork();
+        shared_runtime.after_fork_child().unwrap();
+        assert_eq!(shared_runtime.stale_runtimes_forgotten(), 0);
     }
 
     #[test]
