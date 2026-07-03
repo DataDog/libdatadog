@@ -15,12 +15,16 @@ use std::alloc::System;
 static ALLOC: SampledAllocator<System> = SampledAllocator::<System>::DEFAULT;
 ```
 
-To wrap a custom allocator instead; note that this is kind of ill-advised; we want to see _all_ allocations for the process:
+To wrap a custom allocator instead:
 
 ```rust
 #[global_allocator]
 static ALLOC: SampledAllocator<MyAllocator> = SampledAllocator::new(MyAllocator::new());
 ```
+
+For profiling, prefer wrapping the allocator that is actually installed as the
+process global allocator. Heap profiling is most useful when all allocations in
+the process pass through the sampled wrapper.
 
 See [`examples/usdt_demo.rs`](examples/usdt_demo.rs) for a runnable demo that fires USDT probes in a loop for `bpftrace` to observe.
 

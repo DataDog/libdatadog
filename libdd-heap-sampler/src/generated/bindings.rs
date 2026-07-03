@@ -37,7 +37,7 @@ unsafe extern "C" {
     pub fn dd_tl_state_get() -> *mut dd_tl_state_t;
 }
 unsafe extern "C" {
-    pub fn dd_tl_state_init() -> *mut dd_tl_state_t;
+    pub fn dd_tl_state_init();
 }
 unsafe extern "C" {
     #[link_name = "dd_tl_state_get_or_init__extern"]

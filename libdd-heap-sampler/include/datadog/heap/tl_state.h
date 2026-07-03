@@ -128,18 +128,21 @@ dd_tl_state_t *dd_tl_state_get(void) {
 }
 
 /*
- * Initializes the current thread's tracking state if not already present.
- * Returns the new state, or NULL if state already exists on this thread.
+ * Ensures the current thread's tracking state exists, initializing it on the
+ * first call and doing nothing on subsequent calls. This is a fire-and-forget
+ * command: call it to eagerly warm TLS (e.g. from a thread-start hook) so the
+ * first tracked allocation on the thread doesn't pay the init cost. Callers
+ * that need the pointer should use dd_tl_state_get_or_init() instead.
  */
-dd_tl_state_t *dd_tl_state_init(void);
+void dd_tl_state_init(void);
 
 /*
  * Returns the current thread's tracking state, initializing it on first use.
  */
 static inline __attribute__((always_inline))
 dd_tl_state_t *dd_tl_state_get_or_init(void) {
-    if (__builtin_expect(dd_tl_state_storage.initialized, 1)) return &dd_tl_state_storage;
-    return dd_tl_state_init();
+    if (__builtin_expect(!dd_tl_state_storage.initialized, 0)) dd_tl_state_init();
+    return &dd_tl_state_storage;
 }
 
 #endif

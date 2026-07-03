@@ -174,12 +174,15 @@ mod tests {
     }
 
     #[test]
-    fn tl_state_init_then_get_returns_same_non_null() {
+    fn tl_state_init_populates_state() {
         std::thread::spawn(|| unsafe {
-            let initialized = dd_tl_state_init();
-            assert!(!initialized.is_null(), "init returned NULL on fresh thread");
+            assert!(
+                dd_tl_state_get().is_null(),
+                "fresh thread should start without sampler TLS"
+            );
+            dd_tl_state_init();
             let got = dd_tl_state_get();
-            assert_eq!(initialized, got);
+            assert!(!got.is_null(), "init should populate sampler TLS");
             assert_eq!((*got).sampling_interval, 512 * 1024);
         })
         .join()

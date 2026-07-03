@@ -13,6 +13,7 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 #![cfg_attr(not(test), deny(clippy::unreachable))]
 
+// `wrap_with_void_ffi_result!` uses `function_name!()` below.
 use function_name::named;
 use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 

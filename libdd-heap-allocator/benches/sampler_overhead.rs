@@ -16,8 +16,8 @@ mod linux_bench {
     use criterion::{criterion_group, BenchmarkId, Criterion, Throughput};
     use libdd_heap_allocator::SampledAllocator;
     use libdd_heap_sampler::{
-        dd_allocation_created, dd_allocation_freed, dd_allocation_requested, dd_tl_state_get,
-        dd_tl_state_init,
+        dd_allocation_created, dd_allocation_freed, dd_allocation_requested,
+        dd_tl_state_get_or_init,
     };
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::hint::black_box;
@@ -49,12 +49,7 @@ mod linux_bench {
     }
 
     unsafe fn sampler_tl_state() -> *mut libdd_heap_sampler::dd_tl_state_t {
-        let mut tl = unsafe { dd_tl_state_get() };
-        if tl.is_null() {
-            let _ = unsafe { dd_tl_state_init() };
-            tl = unsafe { dd_tl_state_get() };
-        }
-        tl
+        unsafe { dd_tl_state_get_or_init() }
     }
 
     unsafe fn pin_sampler_to_fast_path() {

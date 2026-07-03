@@ -19,13 +19,17 @@ The API installs hooks for supported allocator symbols, updates hooks after new 
 
 The shared library containing these hooks must remain loaded while overrides are installed. Patched GOT entries point at functions in this library, so unloading it before calling `ddog_heap_gotter_restore()` can leave dangling function pointers and crash the process.
 
+TODO: consider hooking `dlclose` too, so we can at least partially protect against unloading this library while its hooks are still installed.
+
 ## Building
 
-This crate follows the standard libdatadog FFI layout: it builds `staticlib` and `cdylib` artifacts and generates a C header with cbindgen.
+This crate follows the standard libdatadog FFI layout and can produce `staticlib` and `cdylib` artifacts.
 
 ```bash
-cargo check -p libdd-heap-gotter-ffi
+cargo build -p libdd-heap-gotter-ffi
 ```
+
+The C header is generated with cbindgen by the libdatadog release tooling, not by ordinary `cargo build`.
 
 ## Dynamic-loading demo
 

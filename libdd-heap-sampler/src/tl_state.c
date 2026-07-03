@@ -61,13 +61,12 @@ static void tl_state_populate(dd_tl_state_t *st) {
 }
 
 /*
- * Initialises TLS for this thread on first call; returns NULL on subsequent
- * calls (state already exists). Callers that need the pointer regardless
- * should use dd_tl_state_get_or_init().
+ * Initialises TLS for this thread on the first call and is a no-op on
+ * subsequent calls. Fire-and-forget: callers that need the pointer should
+ * use dd_tl_state_get_or_init().
  */
-dd_tl_state_t *dd_tl_state_init(void) {
-    if (dd_tl_state_storage.initialized) return NULL;
+void dd_tl_state_init(void) {
+    if (dd_tl_state_storage.initialized) return;
 
     tl_state_populate(&dd_tl_state_storage);
-    return &dd_tl_state_storage;
 }
