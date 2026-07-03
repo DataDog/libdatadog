@@ -154,17 +154,23 @@ unsafe extern "C" {
         alignment: usize,
     ) -> dd_alloc_freed_t;
 }
+pub const dd_realloc_kind_t_DD_REALLOC_KIND_PASSTHROUGH: dd_realloc_kind_t = 0;
+pub const dd_realloc_kind_t_DD_REALLOC_KIND_ALLOC: dd_realloc_kind_t = 1;
+pub const dd_realloc_kind_t_DD_REALLOC_KIND_FREE: dd_realloc_kind_t = 2;
+pub const dd_realloc_kind_t_DD_REALLOC_KIND_SAMPLED: dd_realloc_kind_t = 3;
+pub type dd_realloc_kind_t = ::std::os::raw::c_uint;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dd_realloc_prep_t {
     pub raw_ptr: *mut ::std::os::raw::c_void,
     pub raw_size: usize,
     pub old_offset: usize,
-    pub was_sampled: bool,
+    pub alloc_req: dd_alloc_req_t,
+    pub kind: dd_realloc_kind_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of dd_realloc_prep_t"][::std::mem::size_of::<dd_realloc_prep_t>() - 32usize];
+    ["Size of dd_realloc_prep_t"][::std::mem::size_of::<dd_realloc_prep_t>() - 64usize];
     ["Alignment of dd_realloc_prep_t"][::std::mem::align_of::<dd_realloc_prep_t>() - 8usize];
     ["Offset of field: dd_realloc_prep_t::raw_ptr"]
         [::std::mem::offset_of!(dd_realloc_prep_t, raw_ptr) - 0usize];
@@ -172,8 +178,10 @@ const _: () = {
         [::std::mem::offset_of!(dd_realloc_prep_t, raw_size) - 8usize];
     ["Offset of field: dd_realloc_prep_t::old_offset"]
         [::std::mem::offset_of!(dd_realloc_prep_t, old_offset) - 16usize];
-    ["Offset of field: dd_realloc_prep_t::was_sampled"]
-        [::std::mem::offset_of!(dd_realloc_prep_t, was_sampled) - 24usize];
+    ["Offset of field: dd_realloc_prep_t::alloc_req"]
+        [::std::mem::offset_of!(dd_realloc_prep_t, alloc_req) - 24usize];
+    ["Offset of field: dd_realloc_prep_t::kind"]
+        [::std::mem::offset_of!(dd_realloc_prep_t, kind) - 56usize];
 };
 unsafe extern "C" {
     pub fn dd_allocation_realloc_prepare(

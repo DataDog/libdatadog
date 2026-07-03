@@ -22,37 +22,39 @@ Whatever we do here has to keep a couple of properties intact:
   
 ## The algorithm
 
-`gotter_realloc` (`libdd-heap-gotter/src/hooks.rs`) - and any other users of the samplers - 
-sorts every call into one of four cases before deciding what to do:
+The sampler sorts every call into one of four cases in
+`dd_allocation_realloc_prepare(old_user, new_size)`:
 
 * `ptr == NULL` is just `malloc(size)`, so it runs through the normal
-  allocation sampling path.
-* `size == 0` is just `free(ptr)`, so it consumes the sampler flag (if
-  there is one) and forwards to the real allocator.
+  allocation sampling path. `prepare` returns the raw size to pass to the
+  real allocator, and `commit` pairs the result with
+  `dd_allocation_created`.
+* `size == 0` is just `free(ptr)` for the allocators we hook, so
+  `prepare` consumes the sampler flag if there is one and returns the raw
+  pointer to forward to the real allocator.
 * An unsampled `ptr` is a plain passthrough to the real `realloc`. We
   don't start sampling the resulting block here either, for the same
   reason as above: we didn't want realloc behaviour to depend on which
   side of the sampling coin flip the original allocation happened to land
   on.
-* A sampled `ptr` is where the interesting work happens, split into a
-  `prepare` / `commit` pair in `allocation_realloc.c` so we can respect
-  the "old pointer stays valid on failure" rule.
+* A sampled `ptr` is where the interesting work happens. `prepare` uses
+  the non-destructive `peek` (see [tagging.md](tagging.md)) to find the
+  real allocation start (`old_raw`) and the offset of the user pointer
+  (`old_offset`). It asks the frontend to call the real allocator with
+  `old_raw` and `new_size + old_offset`.
 
-`dd_allocation_realloc_prepare(old_user, new_size)` looks at the old
-pointer using the non-destructive `peek` (see [tagging.md](tagging.md)), 
-which tells us where the real allocation starts (`old_raw`) and how far
-into it the user pointer was (`old_offset`). 
-It computes the size to actually ask the real `realloc` for:
-`new_size + old_offset`. That extra `old_offset` bytes exist
-because libc's realloc will copy the old data forward from the old raw
-pointer, so the old header ends up occupying the front of the new block
-too unless we make room for it. Importantly, `prepare` leaves the old
-allocation's flag alone, so if the real realloc fails, the pointer is
-untouched and a later `free` on it still behaves correctly.
+That extra `old_offset` bytes exist because libc's realloc will copy the
+old data forward from the old raw pointer, so the old header ends up
+occupying the front of the new block too unless we make room for it.
+Importantly, the sampled-old prepare path leaves the old allocation's flag
+alone, so if the real realloc fails, the pointer is untouched and a later
+`free` on it still behaves correctly.
 
-The caller then calls the real `realloc` with the pointer and size
-`prepare` computed, and passes whatever comes back into
-`dd_allocation_realloc_commit(old_user, new_raw, prep)`:
+The frontend calls the real `realloc` with the pointer and size `prepare`
+computed, and passes whatever comes back into
+`dd_allocation_realloc_commit(old_user, new_raw, prep)`.
+
+For the sampled-old case:
 
 * If `new_raw` is `NULL`, realloc failed. We return `NULL` and leave
   everything else alone.

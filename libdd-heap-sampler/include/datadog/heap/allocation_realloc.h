@@ -12,53 +12,67 @@
  *   void *new_raw = real_realloc(prep.raw_ptr, prep.raw_size);
  *   return dd_allocation_realloc_commit(old_user, new_raw, prep);
  *
- * The MVP model for a sampled old allocation is:
+ * The prep/commit split mirrors dd_allocation_requested/created and
+ * dd_allocation_freed: the sampler owns the pointer tagging policy and
+ * the frontend owns the call to the real allocator.
  *
- *   successful sampled realloc = ddheap:free(old sampled)
- *                              + new unsampled allocation
+ * For a sampled old allocation, a successful realloc is reported as:
  *
- * See gotter's `gotter_realloc` for the full four-case handling
- * (`ptr == NULL`, `size == 0`, unsampled-old, sampled-old); this pair
- * covers only the last two cases (regular passthrough vs sampled
- * teardown), since malloc/free/realloc(NULL,_) / realloc(_,0) map to
- * dedicated sampler primitives.
+ *   ddheap:free(old sampled) + new unsampled allocation
  *
- * Not paired with dd_allocation_requested / dd_allocation_created: the
- * new block is deliberately unsampled to avoid data-corruption hazards
- * around header stamping without knowing the original user-requested
- * size. Revisit once sampled headers carry the original user size.
+ * New blocks from realloc(NULL, size) use the normal allocation sampling
+ * path. Existing unsampled blocks pass through unchanged. Existing
+ * sampled blocks are torn down as above.
  */
 #ifndef DD_SAMPLERS_ALLOCATION_REALLOC_H
 #define DD_SAMPLERS_ALLOCATION_REALLOC_H
 
-#include <stdbool.h>
+#include <datadog/heap/allocation_requested.h>
+
 #include <stddef.h>
+#include <stdint.h>
+
+/* Which realloc case prepare() classified. */
+typedef enum {
+    DD_REALLOC_KIND_PASSTHROUGH = 0,
+    DD_REALLOC_KIND_ALLOC       = 1,
+    DD_REALLOC_KIND_FREE        = 2,
+    DD_REALLOC_KIND_SAMPLED     = 3,
+} dd_realloc_kind_t;
 
 /*
- * Snapshot of the sampler state around a sampled realloc.
+ * Snapshot of the sampler state around realloc.
  *
- *   raw_ptr     - pointer the frontend MUST pass to the underlying
- *                 realloc. Equal to old_user on the passthrough path.
- *   raw_size    - size the frontend MUST pass to the underlying
- *                 realloc. Equal to new_size on the passthrough path.
- *   old_offset  - byte offset from raw to user in the OLD sampled
- *                 block. Used by commit() to shift user data down after
- *                 realloc succeeds. 0 on the passthrough path.
- *   was_sampled - true iff old_user was a sampled allocation. commit()
- *                 only runs the extra teardown work when this is true.
+ *   raw_ptr    - pointer the frontend MUST pass to the underlying
+ *                realloc. NULL for realloc(NULL, size). Equal to
+ *                old_user on the passthrough path.
+ *   raw_size   - size the frontend MUST pass to the underlying realloc.
+ *   old_offset - byte offset from raw to user in the OLD sampled block.
+ *                Used by commit() to shift user data down after realloc
+ *                succeeds. 0 except on the sampled-old path.
+ *   alloc_req  - allocation request state for realloc(NULL, size), so
+ *                commit() can pair the real realloc result with
+ *                dd_allocation_created and close the sampler guard.
+ *   kind       - which realloc case prepare() selected.
  */
 typedef struct {
-    void  *raw_ptr;
-    size_t raw_size;
-    size_t old_offset;
-    bool   was_sampled;
+    void              *raw_ptr;
+    size_t             raw_size;
+    size_t             old_offset;
+    dd_alloc_req_t     alloc_req;
+    dd_realloc_kind_t  kind;
 } dd_realloc_prep_t;
 
 /*
  * Inspect old_user and compute the request to hand to the underlying
- * realloc. Non-destructive: does not clear the sampler flag on
- * old_user, so if realloc later returns NULL the old allocation stays
- * usable and its flag stays intact for the eventual free.
+ * realloc. For sampled old allocations this is non-destructive: it does
+ * not clear the sampler flag on old_user, so if realloc later returns
+ * NULL the old allocation stays usable and its flag stays intact for the
+ * eventual free.
+ *
+ * realloc(old_user, 0) is destructive by definition for the allocators
+ * we hook. prepare() consumes the sampler flag in that case before the
+ * frontend forwards the raw pointer to realloc(raw, 0).
  */
 dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size);
 
@@ -68,12 +82,17 @@ dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size)
  * prepare(), returns the user-visible pointer to hand to the
  * application.
  *
- * On the sampled path: shifts old user contents from [old_offset, ...)
- * down to [0, ...), fires ddheap:free(old_user), and returns new_raw
- * as an unsampled pointer.
+ * On realloc(NULL, size): pairs new_raw with dd_allocation_created and
+ * returns the possibly tagged user pointer.
  *
- * On the unsampled/passthrough path: returns new_raw unchanged.
- * On realloc failure (new_raw == NULL): returns NULL.
+ * On the sampled-old path: shifts old user contents from [old_offset, ...)
+ * down to [0, ...), fires ddheap:free(old_user), and returns new_raw as
+ * an unsampled pointer.
+ *
+ * On the unsampled/passthrough and realloc(ptr, 0) paths: returns new_raw
+ * unchanged.
+ * On sampled realloc failure (new_raw == NULL): returns NULL and leaves
+ * old_user live with its sampler flag intact.
  */
 void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_prep_t prep);
 

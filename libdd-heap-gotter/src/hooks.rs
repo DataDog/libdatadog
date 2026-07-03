@@ -125,54 +125,15 @@ pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void
 
 /// `realloc` hook.
 ///
-/// Handled as four disjoint cases:
-///
-/// 1. **`ptr == NULL`** — equivalent to `malloc(size)`. Runs the normal sampling path (`request` +
-///    `created`).
-/// 2. **`size == 0`** — equivalent to `free(ptr)` for the allocators we hook. Consumes the sampler
-///    flag via `dd_allocation_freed` (clears the header + fires `ddheap:free`) and forwards.
-/// 3. **`ptr` is unsampled** — passthrough to the underlying realloc. We don't newly sample here
-///    (see TODO on the branch).
-/// 4. **`ptr` is sampled** — MVP: model a successful sampled realloc as `free(old sampled)`
-///    followed by a new *unsampled* allocation. See the branch comment for the full rationale.
-///
-/// This is a lot of logic that might end up being duplicated across other interception mechanisms
-/// on top of libdd-heap-sampler. If that _is_ the case, we should consider adding a special case
-/// `realloc` to the underlying sampler library and using that here; we've not done it for now to
-/// preserve the general pre/post pattern used by the other functions.
+/// The sampler owns the realloc cases and pointer math. Gotter only does
+/// the pre/post split: ask the sampler what raw call to make, call the
+/// real realloc symbol, then ask the sampler to turn the result back into
+/// the user-visible pointer.
 #[no_mangle]
 pub unsafe extern "C" fn gotter_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
     let Some(real): Option<ReallocFn> = load_fn(&ORIG_REALLOC) else {
         return std::ptr::null_mut();
     };
-    // Case 1: realloc(NULL, size) == malloc(size). Normal sampling path.
-    if ptr.is_null() {
-        let alignment = core::mem::align_of::<u64>() * 2;
-        let req = dd_allocation_requested(size, alignment);
-        let raw = real(std::ptr::null_mut(), req.size);
-        return dd_allocation_created(raw, req);
-    }
-
-    // Case 2: realloc(p, 0) == free(p). Safe to consume the sampler
-    // flag before forwarding because the old block will not remain
-    // live on this path.
-    if size == 0 {
-        let freed = dd_allocation_freed(ptr, 0, 0);
-        return real(freed.ptr, 0);
-    }
-
-    // Cases 3 & 4: delegate to the sampler. `prepare` is
-    // non-destructive: if the underlying realloc fails, `ptr` stays
-    // live with its sampler flag intact for a later free.
-    //
-    // Sampled path (MVP): commit implements
-    //   successful sampled realloc = ddheap:free(old sampled)
-    //                              + new unsampled allocation
-    // Unsampled path: prep is a passthrough; commit returns new_raw
-    // unchanged.
-    //
-    // TODO: emit `free + new sampled allocation` when sampled headers
-    // carry the original user size (see project TODO #13 / repo TODO #7).
     let prep = dd_allocation_realloc_prepare(ptr, size);
     let new_raw = real(prep.raw_ptr, prep.raw_size);
     dd_allocation_realloc_commit(ptr, new_raw, prep)
@@ -220,6 +181,11 @@ pub unsafe extern "C" fn gotter_dlopen(filename: *const c_char, flags: c_int) ->
         return libc::dlopen(filename, flags);
     };
     let handle = real(filename, flags);
+    if flags & libc::RTLD_DEEPBIND != 0 {
+        // DEEPBIND changes symbol resolution order and causes issues with
+        // GOT patching, so skip newly-loaded deep-bound libraries for now.
+        return handle;
+    }
     // New library may have introduced new GOT entries that need patching.
     // This hook is an extern "C" boundary, so never let a Rust panic from
     // best-effort ELF parsing/GOT patching unwind into the caller.
