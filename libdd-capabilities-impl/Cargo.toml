@@ -19,7 +19,7 @@ bench = false
 bytes = "1"
 http = "1"
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
-libdd-common = { path = "../libdd-common", version = "5.0.0", default-features = false }
+libdd-common = { path = "../libdd-common", version = "5.1.0", default-features = false }
 tokio = { version = "1", features = ["time"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
