@@ -340,10 +340,10 @@ unsafe fn emit_macos_backtrace_from_ucontext(
 
     const MAX_FRAMES: usize = 512;
     for _ in 0..MAX_FRAMES {
-        if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
+        if fp == 0 || fp % core::mem::align_of::<usize>() != 0 {
             break;
         }
-        if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
+        if !in_stack_bounds(fp, 2 * core::mem::size_of::<usize>()) {
             break;
         }
         // SAFETY: `fp` is non-zero, properly aligned, and the two-word frame
@@ -351,7 +351,7 @@ unsafe fn emit_macos_backtrace_from_ucontext(
         // bounds (checked by in_stack_bounds above). After fork(), the child
         // has a copy-on-write view of the parent's stack memory.
         let next_fp = unsafe { *(fp as *const usize) };
-        let return_addr = unsafe { *((fp + std::mem::size_of::<usize>()) as *const usize) };
+        let return_addr = unsafe { *((fp + core::mem::size_of::<usize>()) as *const usize) };
         if return_addr == 0 {
             break;
         }
@@ -372,7 +372,7 @@ unsafe fn emit_macos_backtrace_from_ucontext(
 unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), EmitterError> {
     // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
     // all-zeros (null pointers, zero integers) is a valid representation.
-    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
     // SAFETY: dladdr only reads dyld's internal data structures (no
     // allocation, no Mach IPC) making it async-signal-safe. `ip` is a code
     // address from the unwound stack or kernel-saved registers.
@@ -792,7 +792,7 @@ mod tests {
     use crate::StackFrame;
 
     use super::*;
-    use std::str;
+    use alloc::str;
 
     #[test]
     fn test_emit_complete_stacktrace() {
@@ -828,7 +828,7 @@ mod tests {
     #[test]
     fn test_emit_message_nullptr() {
         let mut buf = Vec::new();
-        emit_message(&mut buf, std::ptr::null_mut()).expect("to work ;-)");
+        emit_message(&mut buf, core::ptr::null_mut()).expect("to work ;-)");
         assert!(buf.is_empty());
     }
 
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn test_emit_ucontext_null_pointer() {
         let mut buf = Vec::new();
-        let result = emit_ucontext(&mut buf, std::ptr::null());
+        let result = emit_ucontext(&mut buf, core::ptr::null());
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), EmitterError::NullUcontext));
@@ -1190,10 +1190,10 @@ mod tests {
     fn test_emit_ucontext_macos_valid() {
         use libc::__darwin_ucontext;
         // Create a minimal valid ucontext_t for macOS
-        let mut context: __darwin_ucontext = unsafe { std::mem::zeroed() };
+        let mut context: __darwin_ucontext = unsafe { core::mem::zeroed() };
 
         // On macOS, we need to allocate mcontext and set up the pointer
-        let mut mcontext: libc::__darwin_mcontext64 = unsafe { std::mem::zeroed() };
+        let mut mcontext: libc::__darwin_mcontext64 = unsafe { core::mem::zeroed() };
         context.uc_mcontext = &mut mcontext as *mut libc::__darwin_mcontext64;
 
         // Set up some test register values
@@ -1267,8 +1267,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_macos_null_mcontext() {
         // Test the fallback case when mcontext is null
-        let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
-        context.uc_mcontext = std::ptr::null_mut(); // Explicitly set to null
+        let mut context: libc::ucontext_t = unsafe { core::mem::zeroed() };
+        context.uc_mcontext = core::ptr::null_mut(); // Explicitly set to null
 
         let mut buf = Vec::new();
         emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed with null mcontext");

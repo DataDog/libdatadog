@@ -50,6 +50,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+extern crate alloc;
+
 #[cfg(all(unix, feature = "collector"))]
 mod collector;
 #[cfg(all(windows, feature = "collector_windows"))]

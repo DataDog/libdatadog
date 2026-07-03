@@ -119,8 +119,8 @@ mod single_threaded_tests {
         begin_op, insert_span, insert_trace, CrashtrackerConfigurationBuilder, StacktraceCollection,
     };
     use chrono::Utc;
+    use core::time::Duration;
     use libdd_common::tag;
-    use std::time::Duration;
 
     const PATH_TO_RECEIVER: &str = "/tmp/libdatadog/bin/libdatadog-crashtracking-receiver";
     // We can't run this in the main test runner because it (deliberately) crashes,
@@ -178,7 +178,7 @@ mod single_threaded_tests {
 
         std::thread::sleep(Duration::from_secs(2));
 
-        let p: *const u32 = std::ptr::null();
+        let p: *const u32 = core::ptr::null();
         let q = unsafe { *p };
         assert_eq!(q, 3);
     }

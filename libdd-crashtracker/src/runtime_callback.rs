@@ -7,12 +7,12 @@
 //! callbacks that can provide runtime-specific stack traces during crash handling.
 
 use crate::crash_info::StackFrame;
+use core::ffi::c_char;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::ffi::c_char;
 
 #[cfg(unix)]
-use std::{
+use core::{
     ptr,
     sync::atomic::{AtomicPtr, Ordering},
 };
@@ -169,10 +169,10 @@ pub(crate) unsafe fn get_registered_callback() -> Option<CallbackData> {
 /// or registration functions concurrently, as those could invalidate
 /// the pointer between the null check and dereferencing.
 #[cfg(unix)]
-pub unsafe fn get_registered_callback_type_ptr() -> *const std::ffi::c_char {
+pub unsafe fn get_registered_callback_type_ptr() -> *const core::ffi::c_char {
     let callback_ptr = RUNTIME_CALLBACK.load(Ordering::SeqCst);
     if callback_ptr.is_null() {
-        return std::ptr::null();
+        return core::ptr::null();
     }
 
     // Safety: callback_ptr was checked to be non-null above, and was created by
@@ -196,7 +196,7 @@ pub unsafe fn get_registered_callback_type_ptr() -> *const std::ffi::c_char {
 /// - The callback is not being used in any other way
 #[cfg(unix)]
 pub unsafe fn clear_runtime_callback() {
-    let old_ptr = RUNTIME_CALLBACK.swap(std::ptr::null_mut(), Ordering::SeqCst);
+    let old_ptr = RUNTIME_CALLBACK.swap(core::ptr::null_mut(), Ordering::SeqCst);
     if !old_ptr.is_null() {
         // Safety: old_ptr was created by Box::into_raw() in register_runtime_stack_callback(),
         // so it's a valid Box pointer. We reconstruct the Box to properly drop the tuple.
@@ -224,7 +224,7 @@ pub(crate) unsafe fn invoke_runtime_callback_with_writer<W: std::io::Write>(
     }
     let callback_data = &*callback_ptr;
 
-    CURRENT_WRITER = Some(std::mem::transmute::<
+    CURRENT_WRITER = Some(core::mem::transmute::<
         &mut dyn std::io::Write,
         &'static mut dyn std::io::Write,
     >(writer));

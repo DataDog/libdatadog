@@ -1,6 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
+#![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 
 mod entry_points;
 pub use entry_points::{

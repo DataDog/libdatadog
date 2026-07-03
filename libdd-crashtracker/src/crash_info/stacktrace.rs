@@ -324,7 +324,7 @@ pub enum FileType {
 
 #[cfg(unix)]
 fn byte_slice_as_hex(bv: &[u8]) -> String {
-    use std::fmt::Write;
+    use core::fmt::Write;
 
     let mut s = String::with_capacity(bv.len() * 2);
     for byte in bv {

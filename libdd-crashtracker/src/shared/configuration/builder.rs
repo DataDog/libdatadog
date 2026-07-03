@@ -1,9 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use crate::{default_signals, shared::constants, signal_from_signum};
+use alloc::borrow::Cow;
+use core::time::Duration;
 use libdd_common::Endpoint;
-use std::borrow::Cow;
-use std::time::Duration;
 
 use super::{default_max_threads, CrashtrackerConfiguration, StacktraceCollection};
 
@@ -168,7 +168,7 @@ impl CrashtrackerConfigurationBuilder {
 mod tests {
     use super::*;
     use crate::{default_signals, shared::constants};
-    use std::time::Duration;
+    use core::time::Duration;
 
     #[test]
     fn test_build_defaults() -> anyhow::Result<()> {

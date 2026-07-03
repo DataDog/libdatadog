@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::Duration;
+use core::time::Duration;
 
 pub const DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS: &str = "DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS";
 pub const DD_CRASHTRACK_BEGIN_CONFIG: &str = "DD_CRASHTRACK_BEGIN_CONFIG";

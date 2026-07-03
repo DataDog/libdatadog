@@ -1,12 +1,11 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 
 use criterion::{black_box, criterion_group, BenchmarkId, Criterion};
-use libdd_crashtracker::benchmark::receiver_entry_point;
-use libdd_crashtracker::shared::constants::*;
 use libdd_crashtracker::{
-    default_signals, get_tests_folder_path, CrashtrackerConfiguration, SharedLibrary,
-    StacktraceCollection,
+    benchmark::receiver_entry_point, default_signals, get_tests_folder_path, shared::constants::*,
+    CrashtrackerConfiguration, SharedLibrary, StacktraceCollection,
 };
 use std::fmt::Write;
 use std::time::Duration;
