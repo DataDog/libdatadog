@@ -83,7 +83,7 @@ pub async fn send_flag_evaluation_batch<C: HttpClientCapability + SleepCapabilit
     };
 
     if result.dropped_oversized_rows > 0 {
-        log::warn!(
+        log::debug!(
             "ffe flagevaluation sender dropped {} flag evaluation row(s) because they exceeded the {} byte EVP payload limit after degradation",
             result.dropped_oversized_rows,
             config.payload_size_limit
@@ -139,7 +139,7 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
             let status = resp.status();
             if !status.is_success() {
                 let body_preview = truncate(resp.body().as_ref(), 256);
-                log::warn!("ffe flagevaluation sender non-2xx response {status}: {body_preview}");
+                log::debug!("ffe flagevaluation sender non-2xx response {status}: {body_preview}");
             } else {
                 log::debug!(
                     "ffe flagevaluation sender sent flag evaluation batch, status={status}"
@@ -167,11 +167,56 @@ mod tests {
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::future;
+    use std::sync::{Mutex, Once};
 
     use super::super::{
         AllocationKey, ContextDD, EvalError, FfeFlagEvaluationEvent, FlagEvalEventContext, FlagKey,
         TargetingRuleKey, VariantKey, MAX_EVENTS_PER_POST,
     };
+
+    #[derive(Clone)]
+    struct CapturedLog {
+        level: log::Level,
+        message: String,
+    }
+
+    struct CapturingLogger {
+        records: Mutex<Vec<CapturedLog>>,
+    }
+
+    impl log::Log for CapturingLogger {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Debug
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                self.records.lock().unwrap().push(CapturedLog {
+                    level: record.level(),
+                    message: record.args().to_string(),
+                });
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    static TEST_LOGGER: CapturingLogger = CapturingLogger {
+        records: Mutex::new(Vec::new()),
+    };
+    static INIT_LOGGER: Once = Once::new();
+
+    fn start_log_capture() {
+        INIT_LOGGER.call_once(|| {
+            let _ = log::set_logger(&TEST_LOGGER);
+            log::set_max_level(log::LevelFilter::Debug);
+        });
+        TEST_LOGGER.records.lock().unwrap().clear();
+    }
+
+    fn captured_logs() -> Vec<CapturedLog> {
+        TEST_LOGGER.records.lock().unwrap().clone()
+    }
 
     fn context() -> FfeTelemetryContext {
         FfeTelemetryContext {
@@ -341,6 +386,65 @@ mod tests {
         let client = NativeCapabilities::new_client();
 
         send_flag_evaluation_batch(&client, &ep, batch(), &send_config()).await;
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn failure_paths_log_at_debug_level() {
+        start_log_capture();
+
+        let server = MockServer::start_async().await;
+        let _mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(EVP_FLAGEVALUATION_PATH);
+                then.status(500).body("intake overloaded");
+            })
+            .await;
+        let ep = flagevaluation_agent_proxy_endpoint(&endpoint_for(&server)).unwrap();
+        let client = NativeCapabilities::new_client();
+
+        send_flag_evaluation_batch(&client, &ep, batch(), &send_config()).await;
+
+        let mut oversized = full_event();
+        oversized.flag.key = "x".repeat(1024);
+        let result = send_flag_evaluation_batch(
+            &client,
+            &ep,
+            FfeFlagEvaluationBatch {
+                context: context(),
+                flag_evaluations: vec![oversized],
+            },
+            &send_config().with_payload_size_limit(128),
+        )
+        .await
+        .expect("payload build should succeed");
+        assert_eq!(result.dropped_oversized_rows, 42);
+
+        let records = captured_logs();
+        for pattern in [
+            "ffe flagevaluation sender non-2xx response 500",
+            "ffe flagevaluation sender dropped 42 flag evaluation row(s)",
+        ] {
+            assert!(
+                records
+                    .iter()
+                    .any(|record| record.level == log::Level::Debug
+                        && record.message.contains(pattern)),
+                "expected debug log containing {pattern:?}; got {:?}",
+                records
+                    .iter()
+                    .map(|record| (&record.level, &record.message))
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                !records
+                    .iter()
+                    .any(|record| record.level == log::Level::Warn
+                        && record.message.contains(pattern)),
+                "expected no warn log containing {pattern:?}"
+            );
+        }
     }
 
     #[tokio::test]
