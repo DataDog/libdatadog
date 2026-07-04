@@ -49,29 +49,53 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(all(unix, feature = "collector"))]
+#[cfg(all(feature = "std", feature = "collector_signal-safe"))]
+compile_error!(
+    "The collector_signal-safe feature requires no_std; build with --no-default-features and without the std feature."
+);
+
+#[cfg(all(not(unix), feature = "collector_signal-safe"))]
+compile_error!("The collector_signal-safe feature is only supported on Unix targets.");
+
+#[cfg(all(test, not(feature = "std")))]
+extern crate std;
+
+#[cfg(all(unix, feature = "std", feature = "collector"))]
 mod collector;
-#[cfg(all(windows, feature = "collector_windows"))]
+#[cfg(all(unix, feature = "collector_signal-safe", not(feature = "std")))]
+pub mod collector_signal_safe;
+#[cfg(all(windows, feature = "std", feature = "collector_windows"))]
 mod collector_windows;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "std"))]
 mod common;
+#[cfg(feature = "std")]
 mod crash_info;
-#[cfg(all(unix, feature = "receiver"))]
+#[cfg(all(unix, feature = "std", feature = "receiver"))]
 mod receiver;
+#[cfg(feature = "std")]
 mod runtime_callback;
 
 // Keep this module private to avoid exposing blazesym to users of the crate
-#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+#[cfg(all(
+    unix,
+    feature = "std",
+    any(feature = "collector", feature = "receiver")
+))]
 #[cfg(not(feature = "benchmarking"))]
 mod shared;
 
 // Make this module public when benchmarking is enabled to allow access to constants
-#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+#[cfg(all(
+    unix,
+    feature = "std",
+    any(feature = "collector", feature = "receiver")
+))]
 #[cfg(feature = "benchmarking")]
 pub mod shared;
 
-#[cfg(all(unix, feature = "collector"))]
+#[cfg(all(unix, feature = "std", feature = "collector"))]
 pub use collector::{
     begin_op, clear_additional_tags, clear_spans, clear_traces, consume_and_emit_additional_tags,
     default_signals, disable, enable, end_op, get_expected_receiver_pid, init,
@@ -80,26 +104,32 @@ pub use collector::{
     set_expected_receiver_pid, update_config, update_metadata, OpTypes, DEFAULT_SYMBOLS,
 };
 
-#[cfg(all(windows, feature = "collector_windows"))]
+#[cfg(all(windows, feature = "std", feature = "collector_windows"))]
 pub use collector_windows::api::{exception_event_callback, init_crashtracking_windows};
 
+#[cfg(feature = "std")]
 pub use crash_info::*;
+#[cfg(feature = "std")]
 pub use runtime_callback::*;
 
-#[cfg(all(unix, feature = "receiver"))]
+#[cfg(all(unix, feature = "std", feature = "receiver"))]
 pub use receiver::{
     async_receiver_entry_point_unix_listener, async_receiver_entry_point_unix_socket,
     get_receiver_unix_socket, receiver_entry_point_stdin, receiver_entry_point_unix_socket,
 };
 
-#[cfg(all(unix, any(feature = "collector", feature = "receiver")))]
+#[cfg(all(
+    unix,
+    feature = "std",
+    any(feature = "collector", feature = "receiver")
+))]
 pub use shared::configuration::{
     default_max_threads, CrashtrackerConfiguration, CrashtrackerConfigurationBuilder,
     CrashtrackerReceiverConfig, StacktraceCollection,
 };
 
-#[cfg(all(unix, feature = "benchmarking"))]
+#[cfg(all(unix, feature = "std", feature = "benchmarking"))]
 pub use receiver::benchmark;
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "std"))]
 pub use common::{get_tests_folder_path, SharedLibrary};
