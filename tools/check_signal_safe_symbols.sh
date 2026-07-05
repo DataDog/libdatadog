@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+set -euo pipefail
+
+cargo build -p libdd-crashtracker --no-default-features --features collector_signal-safe --lib
+
+artifacts=()
+while IFS= read -r artifact; do
+  artifacts+=("${artifact}")
+done < <(find target/debug/deps -maxdepth 1 \( \
+  -name 'liblibdd_crashtracker*.rlib' -o \
+  -name 'librustix*.rlib' \
+\) -print)
+
+if [[ "${#artifacts[@]}" -eq 0 ]]; then
+  echo "signal-safe rlib artifacts not found" >&2
+  exit 1
+fi
+
+banned='(^|[^[:alnum:]_])(malloc|free|pthread_mutex_lock|__rust_alloc|getenv|dlsym|getauxval|fork|posix_spawn|pthread_atfork|__libc_[[:alnum:]_]+)([^[:alnum:]_]|$)'
+
+for artifact in "${artifacts[@]}"; do
+  if nm -u "${artifact}" 2>/dev/null | grep -E "${banned}"; then
+    echo "signal-safe crash-path artifact references banned symbols in ${artifact}" >&2
+    exit 1
+  fi
+done
