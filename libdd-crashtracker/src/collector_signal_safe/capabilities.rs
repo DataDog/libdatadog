@@ -1,0 +1,107 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use super::sys;
+
+pub const RECEIVER_OK: u32 = 1 << 0;
+pub const PROC_VM_READV: u32 = 1 << 1;
+pub const FORK_OK: u32 = 1 << 2;
+pub const DEV_NULL: u32 = 1 << 3;
+pub const PIPE_OK: u32 = 1 << 4;
+pub const REPORT_FD_OK: u32 = 1 << 5;
+
+pub const DEGRADED_MISSING_RECEIVER: u32 = 1 << 0;
+pub const DEGRADED_NO_PROC_VM_READV: u32 = 1 << 1;
+pub const DEGRADED_NO_FORK: u32 = 1 << 2;
+pub const DEGRADED_NO_DEV_NULL: u32 = 1 << 3;
+pub const DEGRADED_NO_PIPE: u32 = 1 << 4;
+pub const DEGRADED_PIPE_FAILED: u32 = 1 << 5;
+pub const DEGRADED_FORK_FAILED: u32 = 1 << 6;
+pub const DEGRADED_RECEIVER_UNAVAILABLE: u32 = 1 << 7;
+pub const DEGRADED_REPORT_TO_FD: u32 = 1 << 8;
+
+pub const DEGRADATION_REASONS: &[(u32, &str)] = &[
+    (DEGRADED_MISSING_RECEIVER, "missing_receiver"),
+    (DEGRADED_NO_PROC_VM_READV, "no_process_vm_readv"),
+    (DEGRADED_NO_FORK, "no_fork"),
+    (DEGRADED_NO_DEV_NULL, "no_dev_null"),
+    (DEGRADED_NO_PIPE, "no_pipe"),
+    (DEGRADED_PIPE_FAILED, "pipe_failed"),
+    (DEGRADED_FORK_FAILED, "fork_failed"),
+    (DEGRADED_RECEIVER_UNAVAILABLE, "receiver_unavailable"),
+    (DEGRADED_REPORT_TO_FD, "report_to_fd"),
+];
+
+static CAPABILITIES: AtomicU32 = AtomicU32::new(0);
+static DEGRADATIONS: AtomicU32 = AtomicU32::new(0);
+
+pub fn publish(receiver_path: &[u8], report_fd: i32) {
+    let mut caps = 0u32;
+    let mut degraded = 0u32;
+
+    if sys::access_executable(receiver_path.as_ptr()) {
+        caps |= RECEIVER_OK;
+    } else {
+        degraded |= DEGRADED_MISSING_RECEIVER;
+    }
+
+    if probe_process_vm_readv() {
+        caps |= PROC_VM_READV;
+    } else {
+        degraded |= DEGRADED_NO_PROC_VM_READV;
+    }
+
+    if sys::fork_supported() {
+        caps |= FORK_OK;
+    } else {
+        degraded |= DEGRADED_NO_FORK;
+    }
+
+    let devnull = sys::open_readwrite(c"/dev/null".as_ptr().cast());
+    if devnull >= 0 {
+        caps |= DEV_NULL;
+        sys::close(devnull);
+    } else {
+        degraded |= DEGRADED_NO_DEV_NULL;
+    }
+
+    let mut fds = [0i32; 2];
+    if sys::pipe(&mut fds) {
+        caps |= PIPE_OK;
+        sys::close(fds[0]);
+        sys::close(fds[1]);
+    } else {
+        degraded |= DEGRADED_NO_PIPE;
+    }
+
+    if report_fd >= 0 {
+        caps |= REPORT_FD_OK;
+    }
+
+    CAPABILITIES.store(caps, Ordering::Release);
+    DEGRADATIONS.store(degraded, Ordering::Release);
+}
+
+pub fn get() -> u32 {
+    CAPABILITIES.load(Ordering::Acquire)
+}
+
+pub fn has(capability: u32) -> bool {
+    get() & capability != 0
+}
+
+pub fn degradations() -> u32 {
+    DEGRADATIONS.load(Ordering::Acquire)
+}
+
+pub fn note_degraded(reason: u32) {
+    DEGRADATIONS.fetch_or(reason, Ordering::AcqRel);
+}
+
+fn probe_process_vm_readv() -> bool {
+    let src = 0x5au8;
+    let mut dst = [0u8; 1];
+    sys::read_own_mem(sys::getpid(), (&src as *const u8) as usize, &mut dst) && dst[0] == src
+}
