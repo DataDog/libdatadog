@@ -7,19 +7,35 @@ use core::sync::atomic::Ordering::Relaxed;
 
 use heapless::String as HeaplessString;
 
-use super::state::{self, meta_mut};
+use super::state::meta_mut;
+use super::{capabilities, state};
 
-pub const TRACE_C_VERSION: &str = match option_env!("DD_TRACE_C_VERSION") {
+// Compatibility preset for the existing C-tracer consumer. New integrators should pass
+// explicit metadata through SignalSafeInitConfig instead of relying on these defaults.
+pub const COMPAT_LIBRARY_VERSION: &str = match option_env!("DD_TRACE_C_VERSION") {
     Some(v) => v,
     None => "dev",
 };
 
-const DEFAULT_RECEIVER_PATH: &str = match option_env!("DD_TRACE_C_CRASHTRACKER_PROCESS_PATH") {
+// Prefer the neutral build-time receiver path name. The DD_TRACE_C_* name remains as a
+// lower-priority compatibility alias for existing C-tracer package builds.
+const DEFAULT_RECEIVER_PATH: &str = match option_env!("DD_CRASHTRACKING_RECEIVER_PATH") {
     Some(p) => p,
-    None => "/opt/datadog-packages/datadog-apm-library-c/stable/process-crash-receiver",
+    None => match option_env!("DD_TRACE_C_CRASHTRACKER_PROCESS_PATH") {
+        Some(p) => p,
+        None => "/opt/datadog-packages/datadog-apm-library-c/stable/process-crash-receiver",
+    },
 };
 
+pub const COMPAT_LIBRARY_NAME: &str = "dd-trace-c";
+pub const COMPAT_LIBRARY_FAMILY: &str = "native";
+pub const COMPAT_DEFAULT_SERVICE: &str = "dd-trace-c";
+
 pub const RECEIVER_TIMEOUT_SECS: u32 = 5;
+pub const COLLECTOR_REAP_MS: i32 = 500;
+pub const RECEIVER_TIMEOUT_GRACE_MS: i32 = 1000;
+pub const BACKTRACE_LEVELS_DEFAULT: usize = 32;
+pub const BACKTRACE_LEVELS_MAX: usize = 64;
 
 pub const CRASH_SIGNALS: [i32; 5] = [
     libc::SIGSEGV,
@@ -31,7 +47,7 @@ pub const CRASH_SIGNALS: [i32; 5] = [
 
 pub const CONFIG_JSON_BUF_SIZE: usize = 2048;
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct SignalSafeInitConfig<'a> {
     pub receiver_path: &'a [u8],
     pub service: &'a [u8],
@@ -39,24 +55,75 @@ pub struct SignalSafeInitConfig<'a> {
     pub app_version: &'a [u8],
     pub runtime_id: &'a [u8],
     pub platform: &'a [u8],
+    pub library_name: &'a [u8],
+    pub library_version: &'a [u8],
+    pub family: &'a [u8],
+    pub default_service: &'a [u8],
     pub force_on_top: bool,
     pub only_bootstrap: bool,
     pub debug_logging: bool,
+    pub create_alt_stack: bool,
+    pub use_alt_stack: bool,
+    pub block_signals: bool,
+    pub disarm_on_entry: bool,
+    pub report_fd: i32,
+    pub collector_reap_ms: i32,
+    pub receiver_timeout_secs: u32,
+    pub max_frames: usize,
+    pub close_fds_on_receiver: bool,
 }
 
-pub fn build_config_json(out: &mut HeaplessString<CONFIG_JSON_BUF_SIZE>) -> bool {
+impl<'a> Default for SignalSafeInitConfig<'a> {
+    fn default() -> Self {
+        Self {
+            receiver_path: &[],
+            service: &[],
+            env: &[],
+            app_version: &[],
+            runtime_id: &[],
+            platform: &[],
+            library_name: COMPAT_LIBRARY_NAME.as_bytes(),
+            library_version: COMPAT_LIBRARY_VERSION.as_bytes(),
+            family: COMPAT_LIBRARY_FAMILY.as_bytes(),
+            default_service: COMPAT_DEFAULT_SERVICE.as_bytes(),
+            force_on_top: false,
+            only_bootstrap: false,
+            debug_logging: false,
+            create_alt_stack: false,
+            use_alt_stack: false,
+            block_signals: true,
+            disarm_on_entry: false,
+            report_fd: -1,
+            collector_reap_ms: COLLECTOR_REAP_MS,
+            receiver_timeout_secs: RECEIVER_TIMEOUT_SECS,
+            max_frames: BACKTRACE_LEVELS_DEFAULT,
+            close_fds_on_receiver: true,
+        }
+    }
+}
+
+pub fn build_config_json(
+    out: &mut HeaplessString<CONFIG_JSON_BUF_SIZE>,
+    config: &SignalSafeInitConfig<'_>,
+) -> bool {
     out.clear();
     if out
-        .push_str(
-            "{\"additional_files\":[],\
-             \"create_alt_stack\":false,\
-             \"use_alt_stack\":false,\
-             \"demangle_names\":true,\
-             \"endpoint\":null,\
-             \"resolve_frames\":\"EnabledWithSymbolsInReceiver\",\
-             \"signals\":[",
-        )
+        .push_str("{\"additional_files\":[],\"create_alt_stack\":")
         .is_err()
+    {
+        return false;
+    }
+    if write!(out, "{}", config.create_alt_stack).is_err()
+        || out.push_str(",\"use_alt_stack\":").is_err()
+        || write!(out, "{}", config.use_alt_stack).is_err()
+        || out
+            .push_str(
+                ",\"demangle_names\":true,\
+                 \"endpoint\":null,\
+                 \"resolve_frames\":\"EnabledWithSymbolsInReceiver\",\
+                 \"signals\":[",
+            )
+            .is_err()
     {
         return false;
     }
@@ -72,14 +139,15 @@ pub fn build_config_json(out: &mut HeaplessString<CONFIG_JSON_BUF_SIZE>) -> bool
 
     writeln!(
         out,
-        "],\"timeout\":{{\"secs\":{RECEIVER_TIMEOUT_SECS},\"nanos\":0}},\"unix_socket_path\":null}}"
+        "],\"timeout\":{{\"secs\":{},\"nanos\":0}},\"unix_socket_path\":null}}",
+        normalized_receiver_timeout_secs(config.receiver_timeout_secs)
     )
     .is_ok()
 }
 
 pub fn prepare(config: &SignalSafeInitConfig<'_>) -> bool {
     let m = meta_mut();
-    if !build_config_json(&mut m.config_json) {
+    if !build_config_json(&mut m.config_json, config) {
         return false;
     }
 
@@ -91,6 +159,26 @@ pub fn prepare(config: &SignalSafeInitConfig<'_>) -> bool {
     if m.platform.is_empty() {
         set_str(&mut m.platform, b"host");
     }
+    set_str_or(
+        &mut m.library_name,
+        config.library_name,
+        COMPAT_LIBRARY_NAME.as_bytes(),
+    );
+    set_str_or(
+        &mut m.library_version,
+        config.library_version,
+        COMPAT_LIBRARY_VERSION.as_bytes(),
+    );
+    set_str_or(
+        &mut m.family,
+        config.family,
+        COMPAT_LIBRARY_FAMILY.as_bytes(),
+    );
+    set_str_or(
+        &mut m.default_service,
+        config.default_service,
+        COMPAT_DEFAULT_SERVICE.as_bytes(),
+    );
 
     if !set_receiver_path(&mut m.process_path, config.receiver_path) {
         return false;
@@ -99,15 +187,35 @@ pub fn prepare(config: &SignalSafeInitConfig<'_>) -> bool {
     state::FORCE_ON_TOP.store(config.force_on_top, Relaxed);
     state::ONLY_BOOTSTRAP.store(config.only_bootstrap, Relaxed);
     state::DEBUG_LOG.store(config.debug_logging, Relaxed);
+    state::CREATE_ALT_STACK.store(config.create_alt_stack, Relaxed);
+    state::USE_ALT_STACK.store(config.use_alt_stack, Relaxed);
+    state::BLOCK_SIGNALS.store(config.block_signals, Relaxed);
+    state::DISARM_ON_ENTRY.store(config.disarm_on_entry, Relaxed);
+    state::CLOSE_FDS_ON_RECEIVER.store(config.close_fds_on_receiver, Relaxed);
+    state::REPORT_FD.store(config.report_fd, Relaxed);
+    state::COLLECTOR_REAP_MS.store(
+        normalized_collector_reap_ms(config.collector_reap_ms),
+        Relaxed,
+    );
+    state::RECEIVER_TIMEOUT_MS.store(
+        normalized_receiver_timeout_secs(config.receiver_timeout_secs) as i32 * 1000
+            + RECEIVER_TIMEOUT_GRACE_MS,
+        Relaxed,
+    );
+    state::MAX_FRAMES.store(normalized_max_frames(config.max_frames), Relaxed);
+    capabilities::publish(m.process_path.as_slice(), config.report_fd);
     true
 }
 
 pub fn prepare_from_env() -> bool {
-    if is_false(env_get(b"DD_CRASHTRACKING_ENABLED\0")) {
+    if disabled_by_env() {
         return false;
     }
 
-    let receiver_path = env_get(b"DD_TRACE_C_CRASHTRACKER_PROCESS\0")
+    // Prefer the neutral runtime receiver path name. DD_TRACE_C_CRASHTRACKER_PROCESS is
+    // retained as a lower-priority compatibility alias for existing deployments.
+    let receiver_path = env_get(b"DD_CRASHTRACKING_RECEIVER_PATH\0")
+        .or_else(|| env_get(b"DD_TRACE_C_CRASHTRACKER_PROCESS\0"))
         .filter(|v| !v.is_empty())
         .unwrap_or(DEFAULT_RECEIVER_PATH.as_bytes());
     let platform = env_get(b"DD_INJECT_SENDER_TYPE\0")
@@ -125,7 +233,38 @@ pub fn prepare_from_env() -> bool {
         force_on_top: is_true(env_get(b"DD_CRASHTRACKING_ALWAYS_ON_TOP\0")),
         only_bootstrap: is_true(env_get(b"DD_CRASHTRACKING_ONLY_BOOTSTRAP\0")),
         debug_logging,
+        ..SignalSafeInitConfig::default()
     })
+}
+
+pub fn disabled_by_env() -> bool {
+    is_false(env_get(b"DD_CRASHTRACKING_ENABLED\0"))
+}
+
+fn normalized_receiver_timeout_secs(value: u32) -> u32 {
+    if value == 0 {
+        RECEIVER_TIMEOUT_SECS
+    } else {
+        value
+    }
+}
+
+fn normalized_collector_reap_ms(value: i32) -> i32 {
+    if value <= 0 {
+        COLLECTOR_REAP_MS
+    } else {
+        value
+    }
+}
+
+fn normalized_max_frames(value: usize) -> usize {
+    if value == 0 {
+        BACKTRACE_LEVELS_DEFAULT
+    } else if value > BACKTRACE_LEVELS_MAX {
+        BACKTRACE_LEVELS_MAX
+    } else {
+        value
+    }
 }
 
 fn set_str<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8]) {
@@ -136,6 +275,14 @@ fn set_str<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8]) {
                 break;
             }
         }
+    }
+}
+
+fn set_str_or<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8], default: &[u8]) {
+    if src.is_empty() {
+        set_str(dst, default);
+    } else {
+        set_str(dst, src);
     }
 }
 
@@ -243,7 +390,10 @@ mod tests {
     #[test]
     fn config_json_contains_receiver_contract() {
         let mut out = HeaplessString::<CONFIG_JSON_BUF_SIZE>::new();
-        assert!(build_config_json(&mut out));
+        assert!(build_config_json(
+            &mut out,
+            &SignalSafeInitConfig::default()
+        ));
         assert!(out.contains("\"additional_files\":[]"));
         assert!(out.contains("\"resolve_frames\":\"EnabledWithSymbolsInReceiver\""));
         assert!(out.contains("\"unix_socket_path\":null"));
@@ -251,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn bool_and_log_parsing_matches_dd_trace_c() {
+    fn bool_and_log_parsing_matches_compatibility_inputs() {
         assert!(is_false(Some(b"FALSE")));
         assert!(is_false(Some(b"0")));
         assert!(!is_false(Some(b"true")));
@@ -263,6 +413,10 @@ mod tests {
 
     #[test]
     fn prepare_caches_fixed_metadata() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+
         assert!(prepare(&SignalSafeInitConfig {
             receiver_path: b"/tmp/receiver",
             service: b"svc",
@@ -273,6 +427,7 @@ mod tests {
             force_on_top: true,
             only_bootstrap: true,
             debug_logging: true,
+            ..SignalSafeInitConfig::default()
         }));
 
         let meta = state::meta();

@@ -37,6 +37,29 @@ The dd-trace-c implementation assumes the signal handler and forked children are
 
 Current libdatadog still has `std`, `nix`, `UnixStream`, `File`, `serde_json`, `Box`-backed globals, formatting, and RAII/drop patterns reachable from the signal-handler/fork-child path. Some individual syscalls underneath are safe, but the Rust wrappers and destructors are not enough of a contract for the dd-trace-c preload use case.
 
+## Progress on the signal-safe collector branch
+
+Status as of 2026-07-06:
+
+- Implemented a separate `collector_signal-safe` path that can coexist with the standard collector feature, with a runtime signal-owner guard so only one collector arms crash signal handlers.
+- Added single-shot signal-safe initialization, release/acquire publication for handler enablement, fixed metadata snapshots, stage tags, and configurable integrator metadata. The C-tracer defaults are now a compatibility preset rather than hardcoded report fields.
+- Fixed the app-first recovery check by re-reading the live handler after the app handler returns, and kept the app-handler call path free of `Drop`-dependent state.
+- Added init-time capability probes and report degradation tags for missing receiver, missing `process_vm_readv`, no fork support, `/dev/null`, pipe availability, and report-to-fd fallback.
+- Replaced broad non-Linux forking with an explicit degraded no-fork policy. Linux x86_64/aarch64 keeps raw `clone(SIGCHLD)` for fork-based collection; other Unix targets can emit a minimal report to a pre-opened fd.
+- Adopted `rustix` for ordinary fd/process/time wrappers where it fits, kept raw asm only where needed, normalized fallback errno handling, and removed libc `fork()` from the fallback path.
+- Added optional alt-stack, signal-mask, disarm-on-entry, report-fd, timeout, max-frame, and receiver-fd cleanup config fields through Rust and FFI.
+- Added Linux receiver e2e coverage, portable report-to-fd degraded e2e coverage, an aarch64 Linux check, and a symbol guard for banned crash-path symbols.
+
+Deferred follow-up work:
+
+- Full `sigaction`/`signal` virtualization and PLT interposition for late app/runtime handler registration.
+- Receiver path discovery beside the loaded integration library, including architecture-suffixed receiver names.
+- Sacrificial-child probing for seccomp policies that kill `process_vm_readv`.
+- `close_range`/fd sweep behavior in the receiver child.
+- Regenerating and reviewing cbindgen headers for the expanded FFI structs.
+- Porting the complete dd-trace-c preload integration matrix, including app-handler recovery by `siglongjmp`, report-first policy tests, stuck receiver timeout tests, and receiver recursion prevention tests.
+- Packaging decisions for the sidecar receiver and any preload-owned release artifacts.
+
 ## P0 work
 
 ### 1. Add a signal-safe in-process collector surface

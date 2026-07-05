@@ -94,14 +94,23 @@ fn arch_seed(_uc: &libc::ucontext_t, _out: &mut [usize]) -> (usize, usize) {
     (0, 0)
 }
 
-pub fn backtrace_from_ucontext(out: &mut [usize], ucontext: *const c_void, self_pid: i32) -> usize {
+pub fn backtrace_from_ucontext(
+    out: &mut [usize],
+    ucontext: *const c_void,
+    self_pid: i32,
+    allow_memory_read: bool,
+) -> usize {
     if out.is_empty() || ucontext.is_null() {
         return 0;
     }
 
     let uc = unsafe { &*(ucontext as *const libc::ucontext_t) };
     let (n, fp) = arch_seed(uc, out);
-    walk_fp(out, n, self_pid, fp)
+    if allow_memory_read {
+        walk_fp(out, n, self_pid, fp)
+    } else {
+        n
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

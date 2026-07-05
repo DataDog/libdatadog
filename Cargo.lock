@@ -2974,6 +2974,7 @@ dependencies = [
  "page_size",
  "portable-atomic",
  "rand 0.8.5",
+ "rustix 1.1.3",
  "schemars",
  "serde",
  "serde-json-core",

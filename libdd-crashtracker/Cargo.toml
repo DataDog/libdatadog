@@ -58,7 +58,7 @@ std = [
 # Enables the in-process collection of crash-info
 collector = ["std"]
 # Enables the signal-safe in-process collection of crash-info
-collector_signal-safe = ["dep:heapless", "dep:libc", "dep:serde", "dep:serde-json-core"]
+collector_signal-safe = ["dep:heapless", "dep:libc", "dep:rustix", "dep:serde", "dep:serde-json-core"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 receiver = ["std"]
 # Enables the collection of crash-info on Windows
@@ -93,6 +93,7 @@ os_info = { version = "3.14.0", optional = true }
 page_size = { version = "0.6.0", optional = true }
 portable-atomic = { version = "1.6.0", features = ["serde"], optional = true }
 rand = { version = "0.8.5", optional = true }
+rustix = { version = "=1.1.3", default-features = false, features = ["event", "fs", "pipe", "process", "stdio", "thread", "time"], optional = true }
 schemars = { version = "0.8.21", optional = true }
 serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
 serde-json-core = { version = "0.6", default-features = false, optional = true }

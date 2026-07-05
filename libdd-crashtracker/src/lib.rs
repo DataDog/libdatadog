@@ -51,11 +51,6 @@
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(all(feature = "std", feature = "collector_signal-safe"))]
-compile_error!(
-    "The collector_signal-safe feature requires no_std; build with --no-default-features and without the std feature."
-);
-
 #[cfg(all(not(unix), feature = "collector_signal-safe"))]
 compile_error!("The collector_signal-safe feature is only supported on Unix targets.");
 
@@ -64,7 +59,7 @@ extern crate std;
 
 #[cfg(all(unix, feature = "std", feature = "collector"))]
 mod collector;
-#[cfg(all(unix, feature = "collector_signal-safe", not(feature = "std")))]
+#[cfg(all(unix, feature = "collector_signal-safe"))]
 pub mod collector_signal_safe;
 #[cfg(all(windows, feature = "std", feature = "collector_windows"))]
 mod collector_windows;
@@ -76,6 +71,8 @@ mod crash_info;
 mod receiver;
 #[cfg(feature = "std")]
 mod runtime_callback;
+#[cfg(all(unix, any(feature = "collector", feature = "collector_signal-safe")))]
+mod signal_owner;
 
 // Keep this module private to avoid exposing blazesym to users of the crate
 #[cfg(all(

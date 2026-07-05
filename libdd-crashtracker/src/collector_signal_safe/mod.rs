@@ -7,24 +7,47 @@ use heapless::{String as HeaplessString, Vec as HeaplessVec};
 use serde::Serialize;
 
 mod backtrace;
+mod capabilities;
 mod config;
 mod handler;
 mod state;
 mod sys;
 
+#[cfg(test)]
+pub(crate) static TEST_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub use config::{build_config_json, prepare, prepare_from_env, SignalSafeInitConfig};
-pub use handler::{bootstrap_complete, init, init_from_env, shutdown};
+pub use handler::{
+    bootstrap_complete, init, init_from_env, init_from_env_result, init_result, shutdown,
+    InitResult,
+};
 pub use state::{set_stage, Stage};
 pub use sys::FdSink;
 
 pub const SECTION_BUF_CAPACITY: usize = 4096;
 pub const TAG_CAPACITY: usize = 288;
-pub const MAX_TAGS: usize = 12;
+pub const MAX_TAGS: usize = 20;
 pub const FRAME_IP_CAPACITY: usize = 2 + core::mem::size_of::<usize>() * 2;
 pub const MESSAGE_CAPACITY: usize = 192;
 
 pub type Tag = HeaplessString<TAG_CAPACITY>;
 pub type Tags = HeaplessVec<Tag, MAX_TAGS>;
+
+pub fn capability_bits() -> u32 {
+    capabilities::get()
+}
+
+pub fn degradation_bits() -> u32 {
+    capabilities::degradations()
+}
+
+pub fn owned_signal_count() -> u32 {
+    state::owned_signal_count()
+}
+
+pub fn owns_signal(sig: i32) -> bool {
+    state::owns_signal(sig)
+}
 
 pub trait Sink {
     fn put(&mut self, bytes: &[u8]) -> bool;
@@ -208,13 +231,18 @@ pub struct CrashContext<'a> {
 
 pub struct Report<'a> {
     pub config_json: &'a str,
-    pub trace_c_version: &'a str,
+    pub library_name: &'a str,
+    pub library_version: &'a str,
+    pub family: &'a str,
+    pub default_service: &'a str,
     pub service: &'a str,
     pub env: &'a str,
     pub app_version: &'a str,
     pub runtime_id: &'a str,
     pub platform: &'a str,
     pub stage_name: &'a str,
+    pub stackwalk_method: &'a str,
+    pub degradation_bits: u32,
 }
 
 pub fn push_tag(tags: &mut Tags, key: &str, value: &str) -> bool {
@@ -232,7 +260,12 @@ pub fn push_tag(tags: &mut Tags, key: &str, value: &str) -> bool {
 pub fn emit_report(sink: &mut impl Sink, report: &Report<'_>, context: &CrashContext<'_>) -> bool {
     emit_config(sink, report.config_json)
         && emit_metadata(sink, report)
-        && emit_additional_tags(sink, report.stage_name)
+        && emit_additional_tags(
+            sink,
+            report.stage_name,
+            report.stackwalk_method,
+            report.degradation_bits,
+        )
         && emit_kind(sink)
         && emit_json_section(
             sink,
@@ -268,7 +301,7 @@ pub fn emit_report_with_metadata(
             metadata,
             b"DD_CRASHTRACK_END_METADATA\n",
         )
-        && emit_additional_tags(sink, stage_name)
+        && emit_additional_tags(sink, stage_name, "fp_pvr", 0)
         && emit_kind(sink)
         && emit_json_section(
             sink,
@@ -386,12 +419,12 @@ fn emit_config(sink: &mut impl Sink, config_json: &str) -> bool {
 
 fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
     let service = if report.service.is_empty() {
-        "dd-trace-c"
+        report.default_service
     } else {
         report.service
     };
 
-    let mut metadata = Metadata::new("dd-trace-c", report.trace_c_version, "native");
+    let mut metadata = Metadata::new(report.library_name, report.library_version, report.family);
     push_tag(&mut metadata.tags, "language", "native")
         && push_tag(&mut metadata.tags, "runtime", "native")
         && push_tag(&mut metadata.tags, "is_crash", "true")
@@ -403,18 +436,18 @@ fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
         && push_tag(
             &mut metadata.tags,
             "runtime_version",
-            report.trace_c_version,
+            report.library_version,
         )
         && push_tag(
             &mut metadata.tags,
             "library_version",
-            report.trace_c_version,
+            report.library_version,
         )
         && push_tag(&mut metadata.tags, "platform", report.platform)
         && push_tag(
             &mut metadata.tags,
             "injector_version",
-            report.trace_c_version,
+            report.library_version,
         )
         && emit_json_section(
             sink,
@@ -424,10 +457,23 @@ fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
         )
 }
 
-fn emit_additional_tags(sink: &mut impl Sink, stage: &str) -> bool {
+fn emit_additional_tags(
+    sink: &mut impl Sink,
+    stage: &str,
+    stackwalk_method: &str,
+    degradation_bits: u32,
+) -> bool {
     let mut tags = Tags::new();
     if !push_tag(&mut tags, "stage", stage) {
         return false;
+    }
+    if !push_tag(&mut tags, "stackwalk_method", stackwalk_method) {
+        return false;
+    }
+    for &(bit, reason) in capabilities::DEGRADATION_REASONS {
+        if degradation_bits & bit != 0 && !push_tag(&mut tags, "report_degraded", reason) {
+            return false;
+        }
     }
     emit_json_section(
         sink,
@@ -692,13 +738,18 @@ mod tests {
         };
         let report = Report {
             config_json: "{\"resolve_frames\":\"Disabled\"}",
-            trace_c_version: "golden-1.0",
+            library_name: config::COMPAT_LIBRARY_NAME,
+            library_version: "golden-1.0",
+            family: config::COMPAT_LIBRARY_FAMILY,
+            default_service: config::COMPAT_DEFAULT_SERVICE,
             service: "",
             env: "prod",
             app_version: "v1",
             runtime_id: "rid",
             platform: "linux",
             stage_name: "application",
+            stackwalk_method: "fp_pvr",
+            degradation_bits: 0,
         };
 
         let mut buf = [0u8; 4096];
@@ -742,10 +793,16 @@ mod tests {
         let kind: serde_json::Value = serde_json::from_str(kind.trim()).unwrap();
         let procinfo: serde_json::Value = serde_json::from_str(procinfo.trim()).unwrap();
 
-        assert_eq!(metadata["library_name"], "dd-trace-c");
+        assert_eq!(metadata["library_name"], config::COMPAT_LIBRARY_NAME);
         assert_eq!(metadata["library_version"], "golden-1.0");
         assert_eq!(metadata["tags"][0], "language:native");
-        assert_eq!(metadata["tags"][4], "service:dd-trace-c");
+        assert_eq!(
+            metadata["tags"][4]
+                .as_str()
+                .unwrap()
+                .strip_prefix("service:"),
+            Some(config::COMPAT_DEFAULT_SERVICE)
+        );
         assert_eq!(metadata["tags"][5], "env:prod");
         assert_eq!(metadata["tags"][6], "version:v1");
         assert_eq!(tags[0], "stage:application");

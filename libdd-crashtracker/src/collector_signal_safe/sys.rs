@@ -28,7 +28,7 @@ impl Sink for FdSink {
                 retries = 0;
                 continue;
             }
-            if n == -libc::EINTR as isize && retries < MAX_WRITE_RETRIES {
+            if n == -(libc::EINTR as isize) && retries < MAX_WRITE_RETRIES {
                 retries += 1;
                 continue;
             }
@@ -43,9 +43,19 @@ impl Sink for FdSink {
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 mod raw {
-    use super::*;
     use core::arch::asm;
     use core::ffi::c_void;
+    use rustix::fd::{BorrowedFd, IntoRawFd};
+
+    #[inline]
+    fn neg_errno(err: rustix::io::Errno) -> isize {
+        -(err.raw_os_error() as isize)
+    }
+
+    #[inline]
+    unsafe fn borrowed_fd(fd: i32) -> BorrowedFd<'static> {
+        BorrowedFd::borrow_raw(fd)
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
@@ -252,29 +262,16 @@ mod raw {
         ret
     }
 
-    #[inline]
-    fn cvt(ret: isize) -> isize {
-        if ret < 0 && ret >= -4095 {
-            ret
-        } else {
-            ret
-        }
-    }
-
     pub fn write(fd: i32, bytes: &[u8]) -> isize {
-        cvt(unsafe {
-            syscall3(
-                libc::SYS_write,
-                fd as usize,
-                bytes.as_ptr() as usize,
-                bytes.len(),
-            )
-        })
+        match rustix::io::write(unsafe { borrowed_fd(fd) }, bytes) {
+            Ok(n) => n as isize,
+            Err(err) => neg_errno(err),
+        }
     }
 
     pub fn close(fd: i32) {
         unsafe {
-            syscall1(libc::SYS_close, fd as usize);
+            rustix::io::close(fd);
         }
     }
 
@@ -297,7 +294,14 @@ mod raw {
     }
 
     pub fn pipe(fds: &mut [i32; 2]) -> bool {
-        unsafe { syscall2(libc::SYS_pipe2, fds.as_mut_ptr() as usize, 0) == 0 }
+        match rustix::pipe::pipe() {
+            Ok((read_fd, write_fd)) => {
+                fds[0] = read_fd.into_raw_fd();
+                fds[1] = write_fd.into_raw_fd();
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     pub fn open_readwrite(path: *const u8) -> i32 {
@@ -310,6 +314,21 @@ mod raw {
                 0,
             ) as i32
         }
+    }
+
+    pub fn access_executable(path: *const u8) -> bool {
+        unsafe {
+            syscall3(
+                libc::SYS_faccessat,
+                libc::AT_FDCWD as usize,
+                path as usize,
+                libc::X_OK as usize,
+            ) == 0
+        }
+    }
+
+    pub fn fork_supported() -> bool {
+        true
     }
 
     pub unsafe fn fork_raw() -> isize {
@@ -356,11 +375,11 @@ mod raw {
     }
 
     pub fn getpid() -> i32 {
-        unsafe { syscall0(libc::SYS_getpid) as i32 }
+        rustix::process::getpid().as_raw_pid()
     }
 
     pub fn gettid() -> i32 {
-        unsafe { syscall0(libc::SYS_gettid) as i32 }
+        rustix::thread::gettid().as_raw_pid()
     }
 
     pub fn kill(pid: i32, sig: i32) -> i32 {
@@ -381,9 +400,14 @@ mod raw {
     }
 
     pub fn poll_sleep_ms(timeout_ms: i32) {
-        unsafe {
-            let _ = syscall3(libc::SYS_poll, 0, 0, timeout_ms as usize);
+        if timeout_ms <= 0 {
+            return;
         }
+        let ts = rustix::thread::Timespec {
+            tv_sec: (timeout_ms / 1000) as i64,
+            tv_nsec: ((timeout_ms % 1000) as i64) * 1_000_000,
+        };
+        let _ = rustix::thread::nanosleep(&ts);
     }
 
     #[repr(C)]
@@ -393,23 +417,10 @@ mod raw {
     }
 
     pub fn monotonic_nanos() -> i64 {
-        let mut ts = KernelTimespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        let rc = unsafe {
-            syscall2(
-                libc::SYS_clock_gettime,
-                libc::CLOCK_MONOTONIC as usize,
-                (&mut ts as *mut KernelTimespec) as usize,
-            )
-        };
-        if rc != 0 {
-            return 0;
-        }
+        let ts = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
         ts.tv_sec
             .wrapping_mul(1_000_000_000)
-            .wrapping_add(ts.tv_nsec)
+            .wrapping_add(ts.tv_nsec as i64)
     }
 
     #[repr(C)]
@@ -448,7 +459,12 @@ mod raw {
 )))]
 mod raw {
     pub fn write(fd: i32, bytes: &[u8]) -> isize {
-        unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) }
+        let ret = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
+        if ret < 0 {
+            -(super::errno() as isize)
+        } else {
+            ret
+        }
     }
 
     pub fn close(fd: i32) {
@@ -473,8 +489,16 @@ mod raw {
         unsafe { libc::open(path.cast(), libc::O_RDWR) }
     }
 
+    pub fn access_executable(path: *const u8) -> bool {
+        unsafe { libc::access(path.cast(), libc::X_OK) == 0 }
+    }
+
+    pub fn fork_supported() -> bool {
+        false
+    }
+
     pub unsafe fn fork_raw() -> isize {
-        libc::fork() as isize
+        -(libc::ENOSYS as isize)
     }
 
     pub fn exit_process(code: i32) -> ! {
@@ -508,7 +532,12 @@ mod raw {
 
     pub fn waitpid_nohang(pid: i32) -> i32 {
         let mut status = 0i32;
-        unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) }
+        let ret = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if ret < 0 {
+            -super::errno()
+        } else {
+            ret
+        }
     }
 
     pub fn poll_sleep_ms(timeout_ms: i32) {
@@ -537,8 +566,9 @@ mod raw {
 }
 
 pub use raw::{
-    close, dup2, exit_process, fcntl_dupfd, fork_raw, getpid, gettid, kill, monotonic_nanos,
-    open_readwrite, pipe, poll_sleep_ms, read_own_mem, waitpid_nohang, write,
+    access_executable, close, dup2, exit_process, fcntl_dupfd, fork_raw, fork_supported, getpid,
+    gettid, kill, monotonic_nanos, open_readwrite, pipe, poll_sleep_ms, read_own_mem,
+    waitpid_nohang, write,
 };
 
 pub fn errno() -> i32 {

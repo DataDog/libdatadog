@@ -1,9 +1,10 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::ptr::{addr_of, addr_of_mut, null_mut};
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering::Relaxed};
+use core::ptr::null_mut;
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering};
 
 use heapless::{String as HeaplessString, Vec as HeaplessVec};
 
@@ -24,6 +25,10 @@ pub struct Meta {
     pub platform: HeaplessString<256>,
     pub runtime_id: HeaplessString<64>,
     pub process_path: HeaplessVec<u8, 513>,
+    pub library_name: HeaplessString<128>,
+    pub library_version: HeaplessString<128>,
+    pub family: HeaplessString<128>,
+    pub default_service: HeaplessString<128>,
 }
 
 impl Meta {
@@ -36,18 +41,52 @@ impl Meta {
             platform: HeaplessString::new(),
             runtime_id: HeaplessString::new(),
             process_path: HeaplessVec::new(),
+            library_name: HeaplessString::new(),
+            library_version: HeaplessString::new(),
+            family: HeaplessString::new(),
+            default_service: HeaplessString::new(),
         }
     }
 }
 
-static mut META: Meta = Meta::new();
+struct StaticMeta(UnsafeCell<Meta>);
+
+unsafe impl Sync for StaticMeta {}
+
+static META: StaticMeta = StaticMeta(UnsafeCell::new(Meta::new()));
+
+const INIT_UNINIT: i32 = 0;
+const INIT_INITIALIZING: i32 = 1;
+const INIT_READY: i32 = 2;
+const INIT_FAILED: i32 = 3;
+
+static INIT_STATE: AtomicI32 = AtomicI32::new(INIT_UNINIT);
+
+pub fn begin_init() -> bool {
+    INIT_STATE
+        .compare_exchange(
+            INIT_UNINIT,
+            INIT_INITIALIZING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_ok()
+}
+
+pub fn finish_init() {
+    INIT_STATE.store(INIT_READY, Ordering::Release);
+}
+
+pub fn fail_init() {
+    INIT_STATE.store(INIT_FAILED, Ordering::Release);
+}
 
 pub fn meta() -> &'static Meta {
-    unsafe { &*addr_of!(META) }
+    unsafe { &*META.0.get() }
 }
 
 pub fn meta_mut() -> &'static mut Meta {
-    unsafe { &mut *addr_of_mut!(META) }
+    unsafe { &mut *META.0.get() }
 }
 
 pub static ORIG_FN: [AtomicPtr<c_void>; NSIG] = [const { AtomicPtr::new(null_mut()) }; NSIG];
@@ -59,6 +98,15 @@ pub static FORCE_ON_TOP: AtomicBool = AtomicBool::new(false);
 pub static ONLY_BOOTSTRAP: AtomicBool = AtomicBool::new(false);
 pub static DEBUG_LOG: AtomicBool = AtomicBool::new(false);
 pub static INSTALLED: AtomicBool = AtomicBool::new(false);
+pub static CREATE_ALT_STACK: AtomicBool = AtomicBool::new(false);
+pub static USE_ALT_STACK: AtomicBool = AtomicBool::new(false);
+pub static BLOCK_SIGNALS: AtomicBool = AtomicBool::new(true);
+pub static DISARM_ON_ENTRY: AtomicBool = AtomicBool::new(false);
+pub static CLOSE_FDS_ON_RECEIVER: AtomicBool = AtomicBool::new(true);
+pub static REPORT_FD: AtomicI32 = AtomicI32::new(-1);
+pub static COLLECTOR_REAP_MS: AtomicI32 = AtomicI32::new(500);
+pub static RECEIVER_TIMEOUT_MS: AtomicI32 = AtomicI32::new(6_000);
+pub static MAX_FRAMES: AtomicUsize = AtomicUsize::new(32);
 
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,11 +125,11 @@ pub enum Stage {
 static STAGE: AtomicI32 = AtomicI32::new(Stage::Uninitialized as i32);
 
 pub fn set_stage(stage: Stage) {
-    STAGE.store(stage as i32, Relaxed);
+    STAGE.store(stage as i32, Ordering::Relaxed);
 }
 
 pub fn current_stage_name() -> &'static str {
-    match STAGE.load(Relaxed) {
+    match STAGE.load(Ordering::Relaxed) {
         1 => "crashtracker_init",
         2 => "platform_init",
         3 => "language_init",
@@ -97,9 +145,27 @@ pub fn current_stage_name() -> &'static str {
 pub fn clear_signal_state() {
     let mut i = 0usize;
     while i < NSIG {
-        ORIG_FN[i].store(null_mut(), Relaxed);
-        ORIG_FLAGS[i].store(0, Relaxed);
-        OWN_SIGNAL[i].store(false, Relaxed);
+        ORIG_FN[i].store(null_mut(), Ordering::Relaxed);
+        ORIG_FLAGS[i].store(0, Ordering::Relaxed);
+        OWN_SIGNAL[i].store(false, Ordering::Relaxed);
         i += 1;
     }
+}
+
+pub fn owns_signal(sig: i32) -> bool {
+    sig_index(sig)
+        .map(|i| OWN_SIGNAL[i].load(Ordering::Acquire))
+        .unwrap_or(false)
+}
+
+pub fn owned_signal_count() -> u32 {
+    let mut count = 0u32;
+    let mut i = 0usize;
+    while i < NSIG {
+        if OWN_SIGNAL[i].load(Ordering::Acquire) {
+            count += 1;
+        }
+        i += 1;
+    }
+    count
 }

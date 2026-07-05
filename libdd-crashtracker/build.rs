@@ -119,6 +119,7 @@ fn main() {
         std::env::var("TARGET").unwrap()
     );
 
+    #[cfg(feature = "std")]
     cc::Build::new()
         .file("src/crash_info/emit_sicodes.c")
         .compile("emit_sicodes");
