@@ -2,6 +2,36 @@
 
 
 
+## [7.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v6.0.0..libdd-data-pipeline-v7.0.0) - 2026-07-06
+
+### Added
+
+- Add agentless export ([#2081](https://github.com/datadog/libdatadog/issues/2081)) - ([48b8243](https://github.com/datadog/libdatadog/commit/48b8243418426ed881173fa184a619962d7aa69f))
+- Add stdout log trace exporter ([#2074](https://github.com/datadog/libdatadog/issues/2074)) - ([c2751ef](https://github.com/datadog/libdatadog/commit/c2751eff7036159127ec52c69130eebf7d9a5a97))
+- OTLP HTTP/protobuf trace export ([#2115](https://github.com/datadog/libdatadog/issues/2115)) - ([4e8e6cc](https://github.com/datadog/libdatadog/commit/4e8e6cc8c0fe083089cc8e57f0fd26667f29941c))
+- Export client-computed span stats as OTLP trace metrics ([#2067](https://github.com/datadog/libdatadog/issues/2067)) - ([cc2d696](https://github.com/datadog/libdatadog/commit/cc2d6963073a6f5f37c31c4429b805760e836906))
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+- Export OTLP spans with attribute-level OTel compatibility ([#2091](https://github.com/datadog/libdatadog/issues/2091)) - ([c690b5e](https://github.com/datadog/libdatadog/commit/c690b5e43ccdf5ff84566db4447d416ac8c48ea8))
+- SharedRuntime Borrowed & Owned mode ([#2061](https://github.com/datadog/libdatadog/issues/2061)) - ([4b79b7e](https://github.com/datadog/libdatadog/commit/4b79b7ed87113bea01db583d54e13fb0c2a19e74))
+- Use weak waker in trigger [APMSP-3371] ([#2050](https://github.com/datadog/libdatadog/issues/2050)) - ([da8cbcb](https://github.com/datadog/libdatadog/commit/da8cbcb8b81b5b46d8d06da494157d6c74eabf0e))
+- Emit canonical gRPC status name for OTLP rpc.response.status_code ([#2183](https://github.com/datadog/libdatadog/issues/2183)) - ([5e66eb6](https://github.com/datadog/libdatadog/commit/5e66eb6d84f37cdb3806d10aa35822665a0c5b77))
+- Send telemetry for cardinality limits ([#2159](https://github.com/datadog/libdatadog/issues/2159)) - ([a4d4417](https://github.com/datadog/libdatadog/commit/a4d4417004bb0c2af4010575d56c729185d29000))
+- Add whole key cardinality limit ([#2158](https://github.com/datadog/libdatadog/issues/2158)) - ([a38b630](https://github.com/datadog/libdatadog/commit/a38b6304dcd63c91a52a752f2baa04e7d21e374d))
+- Add endpoint gating to client-side stats [APMSP-3361] ([#2040](https://github.com/datadog/libdatadog/issues/2040)) - ([cde8f3a](https://github.com/datadog/libdatadog/commit/cde8f3ad7300a5c8ecdcd26c4b76ebd6c2250b36))
+- Enable telemetry in stats exporter ([#2160](https://github.com/datadog/libdatadog/issues/2160)) - ([d7b2aad](https://github.com/datadog/libdatadog/commit/d7b2aad37e2c45e44ba54473c9dd5ef5e3c94669))
+
+### Changed
+
+- Avoid leaking libdd-common types in the public API ([#2152](https://github.com/datadog/libdatadog/issues/2152)) - ([b3144c6](https://github.com/datadog/libdatadog/commit/b3144c676b73e157f9d563903c01df016882e8c4))
+- Use VecMap for `meta`, `metrics` and `meta_struct` for v04 spans ([#2043](https://github.com/datadog/libdatadog/issues/2043)) - ([74284ca](https://github.com/datadog/libdatadog/commit/74284cac76e9e6f8e4085b0029c851ec8d47b2f4))
+- Submit p0 telemetry in stats ([#2130](https://github.com/datadog/libdatadog/issues/2130)) - ([54bd386](https://github.com/datadog/libdatadog/commit/54bd38625350d27000653278cb2dd835005157da))
+
+### Fixed
+
+- Add grpc_method to aggregation key ([#2151](https://github.com/datadog/libdatadog/issues/2151)) - ([53e20b5](https://github.com/datadog/libdatadog/commit/53e20b54ed79e04e3bf5636ce97519732bcdbfad))
+
+
+
 ## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-data-pipeline-v5.0.0..libdd-data-pipeline-v6.0.0) - 2026-06-08
 
 ### Added
