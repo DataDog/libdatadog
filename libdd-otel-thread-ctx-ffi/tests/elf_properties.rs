@@ -10,8 +10,9 @@
 //! - `otel_thread_ctx_v1` is exported in the dynamic symbol table as a TLS GLOBAL symbol.
 //! - `otel_thread_ctx_v1` follows the TLSDESC access model: if there is a relocation for it, it is
 //!   a TLSDESC relocation.
-//! - The Rust inline-asm TLSDESC access sequence byte-for-byte matches what a C compiler generates
-//!   (guaranteeing that linker TLS relaxation works identically to a compiler-generated access).
+//! - The Rust inline-asm TLSDESC access sequence matches what a C compiler generates almost
+//!   byte-by-byte (up to the scratch register for reading the thread pointer), guaranteeing that
+//!   linker TLS relaxation works identically to a compiler-generated access.
 //!
 //! Library artifact paths are derived at runtime from the test executable location.
 //! The test binary and crate artifacts live in `target/<[triple/]profile>/deps/`.
@@ -279,14 +280,19 @@ fn tlsdesc_sequence_bounds(relocations: &[RawRelocation], section_len: usize) ->
 
 #[cfg(target_arch = "aarch64")]
 fn tlsdesc_sequence_bounds(relocations: &[RawRelocation], section_len: usize) -> (usize, usize) {
-    let first_offset = usize::try_from(relocations[0].offset)
+    // The core of the sequence is the four instructions `adrp`, `ldr`, `add` and (`.tlsdesccall`)
+    // `blr`, which all have an associated relocation.
+    //
+    // The first relocation is on the `adrp`, the last on the `blr`. The thread-pointer read (`mrs`)
+    // and the final `add` follow the `blr`. The window starts at the first relocation (not a fixed
+    // instruction before it) and extends past the `blr` to cover the trailing `mrs`/`add` (which
+    // don't have associated relocations).
+    let start = usize::try_from(relocations[0].offset)
         .expect("first relocation offset does not fit in usize");
-    let start = first_offset
-        .checked_sub(4)
-        .expect("AArch64 TLSDESC relocation offset is before the TPIDR_EL0 read");
     let last_offset = usize::try_from(relocations[relocations.len() - 1].offset)
         .expect("last relocation offset does not fit in usize");
-    let end = last_offset + 8;
+    // From the `blr` (last relocation): `blr`, `mrs`, `add` makes up for three 4-byte instructions.
+    let end = last_offset + 4 + 4 + 4;
     assert!(
         end <= section_len,
         "AArch64 TLSDESC sequence extends beyond section data"
@@ -294,13 +300,47 @@ fn tlsdesc_sequence_bounds(relocations: &[RawRelocation], section_len: usize) ->
     (start, end)
 }
 
+/// Mask out the register fields of the thread-pointer read and final addition so the byte
+/// comparison ignores which scratch register holds the thread pointer.
+///
+/// TLS relaxation only cares about the relocation-bearing core (`adrp`/`ldr`/`add`/`.tlsdesccall`
+/// +`blr`), which must match byte-for-byte. The register used for the thread-pointer read is
+/// irrelevant: our inline asm re-uses `x1` while GCC/Clang usually picks a fresh register when
+/// available.
+///
+/// AArch64 instructions are fixed 32-bit little-endian words:
+/// - `mrs Xd, TPIDR_EL0` encodes its destination register `Xd` in bits [4:0].
+/// - `add x0, Xn, x0` encodes its first source register `Xn` in bits [9:5].
+#[cfg(target_arch = "aarch64")]
+fn normalize_aarch64_tp_registers(bytes: &mut [u8], relocations: &[RawRelocation], start: usize) {
+    let last_offset = usize::try_from(relocations[relocations.len() - 1].offset)
+        .expect("last relocation offset does not fit in usize")
+        - start;
+    mask_instruction_bits(bytes, last_offset + 4, 0x0000_001F); // `mrs` destination register
+    mask_instruction_bits(bytes, last_offset + 8, 0x0000_03E0); // `add` first source register
+}
+
+/// Clear the bits set in `mask` from the 32-bit little-endian instruction word at `offset`.
+#[cfg(target_arch = "aarch64")]
+fn mask_instruction_bits(bytes: &mut [u8], offset: usize, mask: u32) {
+    let word: [u8; 4] = bytes[offset..offset + 4]
+        .try_into()
+        .expect("instruction word extends beyond the extracted sequence");
+    let masked = u32::from_le_bytes(word) & !mask;
+    bytes[offset..offset + 4].copy_from_slice(&masked.to_le_bytes());
+}
+
 fn tlsdesc_sequence_from_relocations(
     section_data: &[u8],
     relocations: &[RawRelocation],
 ) -> TlsDescSequence {
     let (start, end) = tlsdesc_sequence_bounds(relocations, section_data.len());
+    #[cfg_attr(not(target_arch = "aarch64"), allow(unused_mut))]
+    let mut bytes = section_data[start..end].to_vec();
+    #[cfg(target_arch = "aarch64")]
+    normalize_aarch64_tp_registers(&mut bytes, relocations, start);
     TlsDescSequence {
-        bytes: section_data[start..end].to_vec(),
+        bytes,
         relocations: relocations
             .iter()
             .map(|relocation| TlsDescRelocation {
@@ -439,11 +479,23 @@ fn compile_tls_shim_object(dir: &Path) -> PathBuf {
 #[cfg_attr(miri, ignore)]
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn tlsdesc_inline_assembly_matches_c_compiler_sequence() {
-    if !native_target() || skip_tls_shim_asm_test() {
+    fn print_skip_msg(label: &str) {
+        eprintln!("WARNING: {label}. Skipping inline assembly matches C compiler sequence test");
+    }
+
+    if !native_target() {
+        print_skip_msg("cross-compilation detected");
+        return;
+    }
+    if skip_tls_shim_asm_test() {
+        print_skip_msg(&format!(
+            "{SKIP_TLS_SHIM_ASM_TEST_ENV} environment varialbe set"
+        ));
         return;
     }
 
     if !required_tools_available(&["cc"]) {
+        print_skip_msg("no C compiler available");
         return;
     }
 
