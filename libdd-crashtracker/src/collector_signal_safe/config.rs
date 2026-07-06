@@ -5,6 +5,7 @@ use core::sync::atomic::Ordering::Relaxed;
 
 use heapless::String as HeaplessString;
 use serde::Serialize;
+use thiserror::Error;
 
 use super::state::meta_mut;
 use super::{capabilities, state, sys};
@@ -83,9 +84,11 @@ pub struct SignalSafeInitConfig<'a> {
     pub probe_seccomp: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum PrepareError {
+    #[error("invalid signal-safe crashtracker configuration")]
     InvalidConfig,
+    #[error("failed to prepare signal-safe crashtracker configuration")]
     Failed,
 }
 

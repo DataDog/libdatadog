@@ -8,6 +8,7 @@ use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering};
 
 use heapless::{String as HeaplessString, Vec as HeaplessVec};
+use thiserror::Error;
 
 use super::config::CONFIG_JSON_BUF_SIZE;
 
@@ -63,9 +64,11 @@ const INIT_READY: i32 = 2;
 
 static INIT_STATE: AtomicI32 = AtomicI32::new(INIT_UNINIT);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum BeginInitError {
+    #[error("signal-safe crashtracker is already initialized")]
     AlreadyInitialized,
+    #[error("signal-safe crashtracker initialization is already in progress")]
     Busy,
 }
 

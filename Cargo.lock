@@ -2980,7 +2980,7 @@ dependencies = [
  "symbolic-common",
  "symbolic-demangle",
  "tempfile",
- "thiserror 1.0.68",
+ "thiserror 2.0.17",
  "tokio",
  "uuid",
  "windows 0.59.0",
