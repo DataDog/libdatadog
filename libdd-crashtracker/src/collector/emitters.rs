@@ -4,6 +4,7 @@
 use crate::collector::additional_tags::consume_and_emit_additional_tags;
 use crate::collector::counters::emit_counters;
 use crate::collector::spans::{emit_spans, emit_traces};
+use crate::protocol;
 use crate::runtime_callback::{
     get_registered_callback, invoke_runtime_callback_with_writer, is_runtime_callback_registered,
     CallbackData,
@@ -36,6 +37,17 @@ pub enum EmitterError {
     AtomicSetError(#[from] crate::collector::atomic_set::AtomicSetError),
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+}
+
+fn emit_section<W: Write + ?Sized>(
+    w: &mut W,
+    begin: &str,
+    end: &str,
+    body: impl FnOnce(&mut W) -> Result<(), EmitterError>,
+) -> Result<(), EmitterError> {
+    protocol::section(w, begin, end, body)?;
+    w.flush()?;
+    Ok(())
 }
 
 /// Crash-kind-specific data passed to `emit_crashreport`.
@@ -124,7 +136,7 @@ pub(crate) fn emit_crashreport(
         }
     }
 
-    writeln!(pipe, "{DD_CRASHTRACK_DONE}")?;
+    protocol::marker_line::<_, EmitterError>(pipe, DD_CRASHTRACK_DONE)?;
     pipe.flush()?;
     Ok(())
 }
@@ -141,38 +153,41 @@ unsafe fn emit_backtrace_by_frames(
     resolve_frames: StacktraceCollection,
     ucontext: *const ucontext_t,
 ) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_STACKTRACE}")?;
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_STACKTRACE,
+        DD_CRASHTRACK_END_STACKTRACE,
+        |w| {
+            // On macOS, backtrace::trace_unsynchronized fails in forked children because
+            // macOS restricts many APIs after fork-without-exec. Walk the frame pointer
+            // chain directly from the saved ucontext registers instead. The parent's
+            // stack memory is still readable in the forked child.
+            #[cfg(target_os = "macos")]
+            {
+                let _ = resolve_frames;
+                // SAFETY: `ucontext` originates from the signal handler and points to
+                // the kernel-saved register snapshot. The caller guarantees we are in a
+                // crash-handling context where the parent's stack is still readable
+                // (copy-on-write after fork)
+                unsafe { emit_macos_backtrace_from_ucontext(w, ucontext)? };
+            }
 
-    // On macOS, backtrace::trace_unsynchronized fails in forked children because
-    // macOS restricts many APIs after fork-without-exec. Walk the frame pointer
-    // chain directly from the saved ucontext registers instead. The parent's
-    // stack memory is still readable in the forked child.
-    #[cfg(target_os = "macos")]
-    {
-        let _ = resolve_frames;
-        // SAFETY: `ucontext` originates from the signal handler and points to
-        // the kernel-saved register snapshot. The caller guarantees we are in a
-        // crash-handling context where the parent's stack is still readable
-        // (copy-on-write after fork)
-        unsafe { emit_macos_backtrace_from_ucontext(w, ucontext)? };
-    }
-
-    // On Linux, use the bundled libunwind. unw_init_local2(cursor, ucontext, 0)
-    // seeds the unwinder from the saved CPU context that the OS captured at the
-    // moment of the crash, so we start already past the signal frame at the
-    // actual faulting instruction. This is essential on musl libc (Alpine
-    // Linux), where the signal trampoline provides no DWARF unwind info and
-    // libgcc's unwinder cannot cross the signal frame boundary.
-    #[cfg(target_os = "linux")]
-    // SAFETY: `ucontext` originates from the signal handler and points to the
-    // kernel-saved register snapshot. The caller guarantees single-threaded,
-    // non-reentrant crash-handler execution
-    unsafe {
-        emit_backtrace_via_libunwind(w, resolve_frames, ucontext)?
-    };
-    writeln!(w, "{DD_CRASHTRACK_END_STACKTRACE}")?;
-    w.flush()?;
-    Ok(())
+            // On Linux, use the bundled libunwind. unw_init_local2(cursor, ucontext, 0)
+            // seeds the unwinder from the saved CPU context that the OS captured at the
+            // moment of the crash, so we start already past the signal frame at the
+            // actual faulting instruction. This is essential on musl libc (Alpine
+            // Linux), where the signal trampoline provides no DWARF unwind info and
+            // libgcc's unwinder cannot cross the signal frame boundary.
+            #[cfg(target_os = "linux")]
+            // SAFETY: `ucontext` originates from the signal handler and points to the
+            // kernel-saved register snapshot. The caller guarantees single-threaded,
+            // non-reentrant crash-handler execution
+            unsafe {
+                emit_backtrace_via_libunwind(w, resolve_frames, ucontext)?
+            };
+            Ok(())
+        },
+    )
 }
 
 /// Unwind the stack using the bundled libunwind, seeded from the OS-captured
@@ -327,13 +342,10 @@ unsafe fn emit_macos_backtrace_from_ucontext(
         addr >= stack_bottom && end <= stack_top
     };
 
-    // SAFETY: `mcontext` was checked non-null above and is the kernel-provided
-    // machine context from the signal handler's ucontext.
-    let ss = unsafe { &(*mcontext).__ss };
-    #[cfg(target_arch = "aarch64")]
-    let (pc, mut fp) = (ss.__pc as usize, ss.__fp as usize);
-    #[cfg(target_arch = "x86_64")]
-    let (pc, mut fp) = (ss.__rip as usize, ss.__rbp as usize);
+    let Some(registers) = crate::shared::ucontext::ucontext_registers(unsafe { &*ucontext }) else {
+        return Ok(());
+    };
+    let (pc, mut fp) = (registers.ip, registers.fp);
 
     // SAFETY: `pc` is a valid code address from the kernel-saved register state.
     unsafe { emit_frame_with_dladdr(w, pc)? };
@@ -412,37 +424,48 @@ unsafe fn emit_whole_stacktrace(
     w: &mut impl Write,
     stacktrace: StackTrace,
 ) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE}")?;
-    let _ = serde_json::to_writer(&mut *w, &stacktrace);
-    writeln!(w)?;
-    writeln!(w, "{DD_CRASHTRACK_END_WHOLE_STACKTRACE}")?;
-    w.flush()?;
-    Ok(())
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_WHOLE_STACKTRACE,
+        DD_CRASHTRACK_END_WHOLE_STACKTRACE,
+        |w| {
+            serde_json::to_writer(&mut *w, &stacktrace)?;
+            writeln!(w)?;
+            Ok(())
+        },
+    )
 }
 
 fn emit_config(w: &mut impl Write, config_str: &str) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_CONFIG}")?;
-    writeln!(w, "{config_str}")?;
-    writeln!(w, "{DD_CRASHTRACK_END_CONFIG}")?;
-    w.flush()?;
-    Ok(())
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_CONFIG,
+        DD_CRASHTRACK_END_CONFIG,
+        |w| {
+            writeln!(w, "{config_str}")?;
+            Ok(())
+        },
+    )
 }
 
 fn emit_kind<W: std::io::Write>(w: &mut W, kind: &ErrorKind) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_KIND}")?;
-    let _ = serde_json::to_writer(&mut *w, kind);
-    writeln!(w)?;
-    writeln!(w, "{DD_CRASHTRACK_END_KIND}")?;
-    w.flush()?;
-    Ok(())
+    emit_section(w, DD_CRASHTRACK_BEGIN_KIND, DD_CRASHTRACK_END_KIND, |w| {
+        serde_json::to_writer(&mut *w, kind)?;
+        writeln!(w)?;
+        Ok(())
+    })
 }
 
 fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_METADATA}")?;
-    writeln!(w, "{metadata_str}")?;
-    writeln!(w, "{DD_CRASHTRACK_END_METADATA}")?;
-    w.flush()?;
-    Ok(())
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_METADATA,
+        DD_CRASHTRACK_END_METADATA,
+        |w| {
+            writeln!(w, "{metadata_str}")?;
+            Ok(())
+        },
+    )
 }
 
 /// Write message content to the wire, escaping newlines and neutralizing sentinel
@@ -493,21 +516,27 @@ fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), Emit
     if !message_ptr.is_null() {
         let message = unsafe { &*message_ptr };
         if !message.trim().is_empty() {
-            writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
-            write_sanitized_message_line(w, message)?;
-            writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
-            w.flush()?;
+            emit_section(
+                w,
+                DD_CRASHTRACK_BEGIN_MESSAGE,
+                DD_CRASHTRACK_END_MESSAGE,
+                |w| write_sanitized_message_line(w, message),
+            )?;
         }
     }
     Ok(())
 }
 
 fn emit_procinfo(w: &mut impl Write, pid: i32, tid: libc::pid_t) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_PROCINFO}")?;
-    writeln!(w, "{{\"pid\": {pid}, \"tid\": {tid} }}")?;
-    writeln!(w, "{DD_CRASHTRACK_END_PROCINFO}")?;
-    w.flush()?;
-    Ok(())
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_PROCINFO,
+        DD_CRASHTRACK_END_PROCINFO,
+        |w| {
+            writeln!(w, "{{\"pid\": {pid}, \"tid\": {tid} }}")?;
+            Ok(())
+        },
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -523,53 +552,57 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     if ucontext.is_null() {
         return Err(EmitterError::NullUcontext);
     }
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
-    // SAFETY: the pointer is given to us by the signal handler, and is non-null.
-    let uc = unsafe { &*ucontext };
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_UCONTEXT,
+        DD_CRASHTRACK_END_UCONTEXT,
+        |w| {
+            // SAFETY: the pointer is given to us by the signal handler, and is non-null.
+            let uc = unsafe { &*ucontext };
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        let gregs = &uc.uc_mcontext.gregs;
-        write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
-        write!(w, "\"rip\": \"0x{:016x}\"", gregs[libc::REG_RIP as usize])?;
-        write!(w, ", \"rsp\": \"0x{:016x}\"", gregs[libc::REG_RSP as usize])?;
-        write!(w, ", \"rbp\": \"0x{:016x}\"", gregs[libc::REG_RBP as usize])?;
-        write!(w, ", \"rax\": \"0x{:016x}\"", gregs[libc::REG_RAX as usize])?;
-        write!(w, ", \"rbx\": \"0x{:016x}\"", gregs[libc::REG_RBX as usize])?;
-        write!(w, ", \"rcx\": \"0x{:016x}\"", gregs[libc::REG_RCX as usize])?;
-        write!(w, ", \"rdx\": \"0x{:016x}\"", gregs[libc::REG_RDX as usize])?;
-        write!(w, ", \"rsi\": \"0x{:016x}\"", gregs[libc::REG_RSI as usize])?;
-        write!(w, ", \"rdi\": \"0x{:016x}\"", gregs[libc::REG_RDI as usize])?;
-        write!(w, ", \"r8\": \"0x{:016x}\"", gregs[libc::REG_R8 as usize])?;
-        write!(w, ", \"r9\": \"0x{:016x}\"", gregs[libc::REG_R9 as usize])?;
-        write!(w, ", \"r10\": \"0x{:016x}\"", gregs[libc::REG_R10 as usize])?;
-        write!(w, ", \"r11\": \"0x{:016x}\"", gregs[libc::REG_R11 as usize])?;
-        write!(w, ", \"r12\": \"0x{:016x}\"", gregs[libc::REG_R12 as usize])?;
-        write!(w, ", \"r13\": \"0x{:016x}\"", gregs[libc::REG_R13 as usize])?;
-        write!(w, ", \"r14\": \"0x{:016x}\"", gregs[libc::REG_R14 as usize])?;
-        write!(w, ", \"r15\": \"0x{:016x}\"", gregs[libc::REG_R15 as usize])?;
-        // Preserve the full ucontext as a raw Debug string so that FPU state,
-        // signal mask, and alternate-stack info are not lost.
-        write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
-        writeln!(w, "}}")?;
-    }
+            #[cfg(target_arch = "x86_64")]
+            {
+                let gregs = &uc.uc_mcontext.gregs;
+                write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
+                write!(w, "\"rip\": \"0x{:016x}\"", gregs[libc::REG_RIP as usize])?;
+                write!(w, ", \"rsp\": \"0x{:016x}\"", gregs[libc::REG_RSP as usize])?;
+                write!(w, ", \"rbp\": \"0x{:016x}\"", gregs[libc::REG_RBP as usize])?;
+                write!(w, ", \"rax\": \"0x{:016x}\"", gregs[libc::REG_RAX as usize])?;
+                write!(w, ", \"rbx\": \"0x{:016x}\"", gregs[libc::REG_RBX as usize])?;
+                write!(w, ", \"rcx\": \"0x{:016x}\"", gregs[libc::REG_RCX as usize])?;
+                write!(w, ", \"rdx\": \"0x{:016x}\"", gregs[libc::REG_RDX as usize])?;
+                write!(w, ", \"rsi\": \"0x{:016x}\"", gregs[libc::REG_RSI as usize])?;
+                write!(w, ", \"rdi\": \"0x{:016x}\"", gregs[libc::REG_RDI as usize])?;
+                write!(w, ", \"r8\": \"0x{:016x}\"", gregs[libc::REG_R8 as usize])?;
+                write!(w, ", \"r9\": \"0x{:016x}\"", gregs[libc::REG_R9 as usize])?;
+                write!(w, ", \"r10\": \"0x{:016x}\"", gregs[libc::REG_R10 as usize])?;
+                write!(w, ", \"r11\": \"0x{:016x}\"", gregs[libc::REG_R11 as usize])?;
+                write!(w, ", \"r12\": \"0x{:016x}\"", gregs[libc::REG_R12 as usize])?;
+                write!(w, ", \"r13\": \"0x{:016x}\"", gregs[libc::REG_R13 as usize])?;
+                write!(w, ", \"r14\": \"0x{:016x}\"", gregs[libc::REG_R14 as usize])?;
+                write!(w, ", \"r15\": \"0x{:016x}\"", gregs[libc::REG_R15 as usize])?;
+                // Preserve the full ucontext as a raw Debug string so that FPU state,
+                // signal mask, and alternate-stack info are not lost.
+                write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
+                writeln!(w, "}}")?;
+            }
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        let mc = &uc.uc_mcontext;
-        write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
-        write!(w, "\"pc\": \"0x{:016x}\"", mc.pc)?;
-        write!(w, ", \"sp\": \"0x{:016x}\"", mc.sp)?;
-        for i in 0..31 {
-            write!(w, ", \"x{}\": \"0x{:016x}\"", i, mc.regs[i])?;
-        }
-        write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
-        writeln!(w, "}}")?;
-    }
+            #[cfg(target_arch = "aarch64")]
+            {
+                let mc = &uc.uc_mcontext;
+                write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
+                write!(w, "\"pc\": \"0x{:016x}\"", mc.pc)?;
+                write!(w, ", \"sp\": \"0x{:016x}\"", mc.sp)?;
+                for i in 0..31 {
+                    write!(w, ", \"x{}\": \"0x{:016x}\"", i, mc.regs[i])?;
+                }
+                write!(w, "}}, \"raw\": \"{:?}\"", uc)?;
+                writeln!(w, "}}")?;
+            }
 
-    writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
-    w.flush()?;
-    Ok(())
+            Ok(())
+        },
+    )
 }
 
 /// Emit runtime stack frames collected from registered runtime callback
@@ -605,24 +638,32 @@ fn emit_runtime_stack(w: &mut impl Write) -> Result<(), EmitterError> {
 }
 
 fn emit_runtime_stack_by_frames(w: &mut impl Write) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME}")?;
-    // SAFETY: The runtime callback was registered during initialization and
-    // must be signal-safe per its API contract. The crash handler's
-    // non-reentrant model ensures no concurrent invocation.
-    unsafe { invoke_runtime_callback_with_writer(w)? };
-    writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_FRAME}")?;
-    w.flush()?;
-    Ok(())
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_RUNTIME_STACK_FRAME,
+        DD_CRASHTRACK_END_RUNTIME_STACK_FRAME,
+        |w| {
+            // SAFETY: The runtime callback was registered during initialization and
+            // must be signal-safe per its API contract. The crash handler's
+            // non-reentrant model ensures no concurrent invocation.
+            unsafe { invoke_runtime_callback_with_writer(w)? };
+            Ok(())
+        },
+    )
 }
 
 fn emit_runtime_stack_by_stacktrace_string(w: &mut impl Write) -> Result<(), EmitterError> {
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING}")?;
-    // SAFETY: Same contract as emit_runtime_stack_by_frames — the callback
-    // was registered at init time and the crash handler runs non-reentrantly.
-    unsafe { invoke_runtime_callback_with_writer(w)? };
-    writeln!(w, "{DD_CRASHTRACK_END_RUNTIME_STACK_STRING}")?;
-    w.flush()?;
-    Ok(())
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_RUNTIME_STACK_STRING,
+        DD_CRASHTRACK_END_RUNTIME_STACK_STRING,
+        |w| {
+            // SAFETY: Same contract as emit_runtime_stack_by_frames — the callback
+            // was registered at init time and the crash handler runs non-reentrantly.
+            unsafe { invoke_runtime_callback_with_writer(w)? };
+            Ok(())
+        },
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -634,65 +675,68 @@ fn emit_ucontext(w: &mut impl Write, ucontext: *const ucontext_t) -> Result<(), 
     // SAFETY: the pointer is given to us by the signal handler, and is non-null.
     let uc = unsafe { &*ucontext };
     let mcontext = uc.uc_mcontext;
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_UCONTEXT}")?;
+    emit_section(
+        w,
+        DD_CRASHTRACK_BEGIN_UCONTEXT,
+        DD_CRASHTRACK_END_UCONTEXT,
+        |w| {
+            if mcontext.is_null() {
+                // Fall back to raw Debug output if mcontext pointer is null.
+                write!(w, "{{\"arch\": \"")?;
+                #[cfg(target_arch = "x86_64")]
+                write!(w, "x86_64")?;
+                #[cfg(target_arch = "aarch64")]
+                write!(w, "aarch64")?;
+                write!(w, "\", \"registers\": {{}}")?;
+                write!(w, ", \"raw\": \"{:?}\"", uc)?;
+                writeln!(w, "}}")?;
+            } else {
+                // SAFETY: mcontext is non-null, provided by the signal handler.
+                let mc = unsafe { &*mcontext };
+                let ss = &mc.__ss;
 
-    if mcontext.is_null() {
-        // Fall back to raw Debug output if mcontext pointer is null.
-        write!(w, "{{\"arch\": \"")?;
-        #[cfg(target_arch = "x86_64")]
-        write!(w, "x86_64")?;
-        #[cfg(target_arch = "aarch64")]
-        write!(w, "aarch64")?;
-        write!(w, "\", \"registers\": {{}}")?;
-        write!(w, ", \"raw\": \"{:?}\"", uc)?;
-        writeln!(w, "}}")?;
-    } else {
-        // SAFETY: mcontext is non-null, provided by the signal handler.
-        let mc = unsafe { &*mcontext };
-        let ss = &mc.__ss;
+                #[cfg(target_arch = "x86_64")]
+                {
+                    write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
+                    write!(w, "\"rip\": \"0x{:016x}\"", ss.__rip)?;
+                    write!(w, ", \"rsp\": \"0x{:016x}\"", ss.__rsp)?;
+                    write!(w, ", \"rbp\": \"0x{:016x}\"", ss.__rbp)?;
+                    write!(w, ", \"rax\": \"0x{:016x}\"", ss.__rax)?;
+                    write!(w, ", \"rbx\": \"0x{:016x}\"", ss.__rbx)?;
+                    write!(w, ", \"rcx\": \"0x{:016x}\"", ss.__rcx)?;
+                    write!(w, ", \"rdx\": \"0x{:016x}\"", ss.__rdx)?;
+                    write!(w, ", \"rsi\": \"0x{:016x}\"", ss.__rsi)?;
+                    write!(w, ", \"rdi\": \"0x{:016x}\"", ss.__rdi)?;
+                    write!(w, ", \"r8\": \"0x{:016x}\"", ss.__r8)?;
+                    write!(w, ", \"r9\": \"0x{:016x}\"", ss.__r9)?;
+                    write!(w, ", \"r10\": \"0x{:016x}\"", ss.__r10)?;
+                    write!(w, ", \"r11\": \"0x{:016x}\"", ss.__r11)?;
+                    write!(w, ", \"r12\": \"0x{:016x}\"", ss.__r12)?;
+                    write!(w, ", \"r13\": \"0x{:016x}\"", ss.__r13)?;
+                    write!(w, ", \"r14\": \"0x{:016x}\"", ss.__r14)?;
+                    write!(w, ", \"r15\": \"0x{:016x}\"", ss.__r15)?;
+                    write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
+                    writeln!(w, "}}")?;
+                }
 
-        #[cfg(target_arch = "x86_64")]
-        {
-            write!(w, "{{\"arch\": \"x86_64\", \"registers\": {{")?;
-            write!(w, "\"rip\": \"0x{:016x}\"", ss.__rip)?;
-            write!(w, ", \"rsp\": \"0x{:016x}\"", ss.__rsp)?;
-            write!(w, ", \"rbp\": \"0x{:016x}\"", ss.__rbp)?;
-            write!(w, ", \"rax\": \"0x{:016x}\"", ss.__rax)?;
-            write!(w, ", \"rbx\": \"0x{:016x}\"", ss.__rbx)?;
-            write!(w, ", \"rcx\": \"0x{:016x}\"", ss.__rcx)?;
-            write!(w, ", \"rdx\": \"0x{:016x}\"", ss.__rdx)?;
-            write!(w, ", \"rsi\": \"0x{:016x}\"", ss.__rsi)?;
-            write!(w, ", \"rdi\": \"0x{:016x}\"", ss.__rdi)?;
-            write!(w, ", \"r8\": \"0x{:016x}\"", ss.__r8)?;
-            write!(w, ", \"r9\": \"0x{:016x}\"", ss.__r9)?;
-            write!(w, ", \"r10\": \"0x{:016x}\"", ss.__r10)?;
-            write!(w, ", \"r11\": \"0x{:016x}\"", ss.__r11)?;
-            write!(w, ", \"r12\": \"0x{:016x}\"", ss.__r12)?;
-            write!(w, ", \"r13\": \"0x{:016x}\"", ss.__r13)?;
-            write!(w, ", \"r14\": \"0x{:016x}\"", ss.__r14)?;
-            write!(w, ", \"r15\": \"0x{:016x}\"", ss.__r15)?;
-            write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
-            writeln!(w, "}}")?;
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
-            write!(w, "\"pc\": \"0x{:016x}\"", ss.__pc)?;
-            write!(w, ", \"sp\": \"0x{:016x}\"", ss.__sp)?;
-            write!(w, ", \"fp\": \"0x{:016x}\"", ss.__fp)?;
-            write!(w, ", \"lr\": \"0x{:016x}\"", ss.__lr)?;
-            for i in 0..29 {
-                write!(w, ", \"x{}\": \"0x{:016x}\"", i, ss.__x[i])?;
+                #[cfg(target_arch = "aarch64")]
+                {
+                    write!(w, "{{\"arch\": \"aarch64\", \"registers\": {{")?;
+                    write!(w, "\"pc\": \"0x{:016x}\"", ss.__pc)?;
+                    write!(w, ", \"sp\": \"0x{:016x}\"", ss.__sp)?;
+                    write!(w, ", \"fp\": \"0x{:016x}\"", ss.__fp)?;
+                    write!(w, ", \"lr\": \"0x{:016x}\"", ss.__lr)?;
+                    for i in 0..29 {
+                        write!(w, ", \"x{}\": \"0x{:016x}\"", i, ss.__x[i])?;
+                    }
+                    write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
+                    writeln!(w, "}}")?;
+                }
             }
-            write!(w, "}}, \"raw\": \"{:?}, {:?}\"", uc, mc)?;
-            writeln!(w, "}}")?;
-        }
-    }
 
-    writeln!(w, "{DD_CRASHTRACK_END_UCONTEXT}")?;
-    w.flush()?;
-    Ok(())
+            Ok(())
+        },
+    )
 }
 
 fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), EmitterError> {
@@ -708,38 +752,41 @@ fn emit_siginfo(w: &mut impl Write, sig_info: *const siginfo_t) -> Result<(), Em
     // Derive the faulting address from `sig_info`
     // https://man7.org/linux/man-pages/man2/sigaction.2.html
     // SIGILL, SIGFPE, SIGSEGV, SIGBUS, and SIGTRAP fill in si_addr with the address of the fault.
-    let si_addr: Option<usize> = match si_signo {
-        libc::SIGILL | libc::SIGFPE | libc::SIGSEGV | libc::SIGBUS | libc::SIGTRAP => {
-            // SAFETY: for these signal types, si_addr is defined and valid
-            // per sigaction(2). `sig_info` was checked non-null above.
-            Some(unsafe { (*sig_info).si_addr() as usize })
-        }
-        _ => None,
+    let si_addr: Option<usize> = if crate::shared::signal_names::signal_has_address(si_signo) {
+        // SAFETY: for these signal types, si_addr is defined and valid
+        // per sigaction(2). `sig_info` was checked non-null above.
+        Some(unsafe { (*sig_info).si_addr() as usize })
+    } else {
+        None
     };
 
     // SAFETY: `sig_info` was checked non-null and points to valid kernel data.
     let si_code = unsafe { (*sig_info).si_code };
     let si_code_human_readable = translate_si_code(si_signo, si_code);
 
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_SIGINFO}")?;
-    write!(w, "{{")?;
-    write!(w, "\"si_code\": {si_code}")?;
-    write!(
+    emit_section(
         w,
-        ", \"si_code_human_readable\": \"{si_code_human_readable:?}\""
-    )?;
-    write!(w, ", \"si_signo\": {si_signo}")?;
-    write!(
-        w,
-        ", \"si_signo_human_readable\": \"{si_signo_human_readable:?}\""
-    )?;
-    if let Some(si_addr) = si_addr {
-        write!(w, ", \"si_addr\": \"{si_addr:#018x}\"")?;
-    }
-    writeln!(w, "}}")?;
-    writeln!(w, "{DD_CRASHTRACK_END_SIGINFO}")?;
-    w.flush()?;
-    Ok(())
+        DD_CRASHTRACK_BEGIN_SIGINFO,
+        DD_CRASHTRACK_END_SIGINFO,
+        |w| {
+            write!(w, "{{")?;
+            write!(w, "\"si_code\": {si_code}")?;
+            write!(
+                w,
+                ", \"si_code_human_readable\": \"{si_code_human_readable:?}\""
+            )?;
+            write!(w, ", \"si_signo\": {si_signo}")?;
+            write!(
+                w,
+                ", \"si_signo_human_readable\": \"{si_signo_human_readable:?}\""
+            )?;
+            if let Some(si_addr) = si_addr {
+                write!(w, ", \"si_addr\": \"{si_addr:#018x}\"")?;
+            }
+            writeln!(w, "}}")?;
+            Ok(())
+        },
+    )
 }
 
 /// Emit a file onto the given handle.

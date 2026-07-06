@@ -4,6 +4,7 @@
 use core::ffi::c_void;
 
 use super::sys;
+use crate::shared::ucontext::ucontext_registers;
 
 const MMAP_MIN_ADDR: usize = 0x10000;
 const MAX_FRAME_SIZE: usize = 0x100000;
@@ -49,49 +50,22 @@ fn walk_fp(out: &mut [usize], mut n: usize, self_pid: i32, mut fp: usize) -> usi
     n
 }
 
-#[cfg(all(
-    any(target_os = "linux", target_os = "android"),
-    target_arch = "x86_64"
-))]
 fn arch_seed(uc: &libc::ucontext_t, out: &mut [usize]) -> (usize, usize) {
-    let ip = uc.uc_mcontext.gregs[libc::REG_RIP as usize] as usize;
-    let fp = uc.uc_mcontext.gregs[libc::REG_RBP as usize] as usize;
+    let Some(registers) = ucontext_registers(uc) else {
+        return (0, 0);
+    };
     let mut n = 0;
-    if ip != 0 {
-        out[0] = ip;
-        n = 1;
-    }
-    (n, fp)
-}
-
-#[cfg(all(
-    any(target_os = "linux", target_os = "android"),
-    target_arch = "aarch64"
-))]
-fn arch_seed(uc: &libc::ucontext_t, out: &mut [usize]) -> (usize, usize) {
-    let pc = uc.uc_mcontext.pc as usize;
-    let fp = uc.uc_mcontext.regs[29] as usize;
-    let lr = uc.uc_mcontext.regs[30] as usize;
-    let mut n = 0;
-    if pc != 0 {
-        out[0] = pc;
+    if registers.ip != 0 {
+        out[0] = registers.ip;
         n = 1;
     }
 
-    let fp_walkable = fp != 0 && aligned_8(fp) && fp >= MMAP_MIN_ADDR;
-    if !fp_walkable && lr != 0 && n < out.len() {
-        out[n] = lr;
+    let fp_walkable = registers.fp != 0 && aligned_8(registers.fp) && registers.fp >= MMAP_MIN_ADDR;
+    if !fp_walkable && registers.link != 0 && n < out.len() {
+        out[n] = registers.link;
         n += 1;
     }
-    (n, fp)
-}
-
-#[cfg(not(all(
-    any(target_os = "linux", target_os = "android"),
-    any(target_arch = "x86_64", target_arch = "aarch64")
-)))]
-fn arch_seed(_uc: &libc::ucontext_t, _out: &mut [usize]) -> (usize, usize) {
-    (0, 0)
+    (n, registers.fp)
 }
 
 pub fn instruction_pointer(ucontext: *const c_void) -> usize {

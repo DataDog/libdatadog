@@ -11,6 +11,7 @@ use super::state::meta_mut;
 use super::{capabilities, state, sys};
 use crate::shared::{
     defaults::DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS, signals::SIGNAL_SAFE_CRASH_SIGNALS,
+    stacktrace_collection::StacktraceCollection,
 };
 
 // Compatibility preset for the existing C-tracer consumer. New integrators should pass
@@ -129,7 +130,7 @@ struct WireConfig<'a> {
     use_alt_stack: bool,
     demangle_names: bool,
     endpoint: Option<()>,
-    resolve_frames: &'a str,
+    resolve_frames: StacktraceCollection,
     signals: &'a [i32],
     timeout: WireTimeout,
     unix_socket_path: Option<()>,
@@ -152,7 +153,7 @@ pub fn build_config_json(
         use_alt_stack: config.use_alt_stack,
         demangle_names: true,
         endpoint: None,
-        resolve_frames: "EnabledWithSymbolsInReceiver",
+        resolve_frames: StacktraceCollection::EnabledWithSymbolsInReceiver,
         signals: &CRASH_SIGNALS,
         timeout: WireTimeout {
             secs: normalized_receiver_timeout_secs(config.receiver_timeout_secs),
@@ -546,9 +547,6 @@ mod tests {
         })
         .is_ok());
 
-        assert_ne!(
-            capabilities::degradations() & capabilities::DEGRADED_METADATA_TRUNCATED,
-            0
-        );
+        assert!(capabilities::degradations().contains(capabilities::DEGRADED_METADATA_TRUNCATED));
     }
 }

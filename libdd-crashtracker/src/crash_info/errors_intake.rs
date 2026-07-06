@@ -3,7 +3,7 @@
 
 use std::time::SystemTime;
 
-use crate::{OsInfo, SigInfo, Ucontext};
+use crate::{shared::tag_keys, OsInfo, SigInfo, Ucontext};
 
 use super::{
     telemetry::CrashPing, CrashInfo, Experimental, Metadata, ProcInfo, StackTrace, ThreadData,
@@ -296,16 +296,16 @@ impl ExtractedMetadata {
         for tag in &metadata.tags {
             if let Some((key, value)) = tag.split_once(':') {
                 match key {
-                    "service" => result.service_name = value.to_string(),
-                    "env" => result.env = Some(value.to_string()),
-                    "version" | "service_version" => {
+                    tag_keys::SERVICE => result.service_name = value.to_string(),
+                    tag_keys::ENV => result.env = Some(value.to_string()),
+                    tag_keys::VERSION | tag_keys::SERVICE_VERSION => {
                         result.service_version = Some(value.to_string())
                     }
-                    "language" => result.language_name = Some(value.to_string()),
-                    "language_version" | "runtime_version" => {
+                    tag_keys::LANGUAGE => result.language_name = Some(value.to_string()),
+                    tag_keys::LANGUAGE_VERSION | tag_keys::RUNTIME_VERSION => {
                         result.language_version = Some(value.to_string())
                     }
-                    "library_version" | "profiler_version" => {
+                    tag_keys::LIBRARY_VERSION | tag_keys::PROFILER_VERSION => {
                         result.tracer_version = Some(value.to_string())
                     }
                     _ => {}

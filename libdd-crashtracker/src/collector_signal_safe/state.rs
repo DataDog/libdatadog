@@ -89,10 +89,6 @@ pub fn finish_init() {
     INIT_STATE.store(INIT_READY, Ordering::Release);
 }
 
-pub fn fail_init() {
-    INIT_STATE.store(INIT_UNINIT, Ordering::Release);
-}
-
 pub fn reset_init() {
     INIT_STATE.store(INIT_UNINIT, Ordering::Release);
 }
@@ -105,28 +101,81 @@ pub fn meta_mut() -> &'static mut Meta {
     unsafe { &mut *META.0.get() }
 }
 
-pub static ORIG_FN: [AtomicPtr<c_void>; NSIG] = [const { AtomicPtr::new(null_mut()) }; NSIG];
-pub static ORIG_FLAGS: [AtomicI32; NSIG] = [const { AtomicI32::new(0) }; NSIG];
-pub static OWN_SIGNAL: [AtomicBool; NSIG] = [const { AtomicBool::new(false) }; NSIG];
-pub static APP_HANDLER_PRESENT: [AtomicBool; NSIG] = [const { AtomicBool::new(false) }; NSIG];
+pub(super) struct SignalSlot {
+    orig_fn: AtomicPtr<c_void>,
+    orig_flags: AtomicI32,
+    own_signal: AtomicBool,
+    app_handler_present: AtomicBool,
+    orig_mask: UnsafeCell<MaybeUninit<libc::sigset_t>>,
+}
 
-struct SigMaskStorage(UnsafeCell<[MaybeUninit<libc::sigset_t>; NSIG]>);
+unsafe impl Sync for SignalSlot {}
 
-unsafe impl Sync for SigMaskStorage {}
+impl SignalSlot {
+    const fn new() -> Self {
+        Self {
+            orig_fn: AtomicPtr::new(null_mut()),
+            orig_flags: AtomicI32::new(0),
+            own_signal: AtomicBool::new(false),
+            app_handler_present: AtomicBool::new(false),
+            orig_mask: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
 
-static ORIG_MASKS: SigMaskStorage =
-    SigMaskStorage(UnsafeCell::new([const { MaybeUninit::uninit() }; NSIG]));
+    pub(super) fn original_handler(&self) -> (*mut c_void, i32) {
+        (
+            self.orig_fn.load(Ordering::Relaxed),
+            self.orig_flags.load(Ordering::Relaxed),
+        )
+    }
 
-pub fn store_orig_mask(idx: usize, mask: &libc::sigset_t) {
-    unsafe {
-        (*ORIG_MASKS.0.get())[idx].as_mut_ptr().write(*mask);
+    pub(super) fn store_original_handler(
+        &self,
+        fn_ptr: *mut c_void,
+        flags: i32,
+        mask: &libc::sigset_t,
+    ) {
+        self.orig_fn.store(fn_ptr, Ordering::Relaxed);
+        self.orig_flags.store(flags, Ordering::Relaxed);
+        unsafe {
+            (*self.orig_mask.get()).as_mut_ptr().write(*mask);
+        }
+    }
+
+    pub(super) fn load_original_mask(&self, out: &mut libc::sigset_t) {
+        unsafe {
+            out.clone_from(&*(*self.orig_mask.get()).as_ptr());
+        }
+    }
+
+    pub(super) fn set_owned(&self, owned: bool) {
+        self.own_signal.store(owned, Ordering::Relaxed);
+    }
+
+    pub(super) fn owns_signal(&self) -> bool {
+        self.own_signal.load(Ordering::Acquire)
+    }
+
+    pub(super) fn set_app_handler_present(&self) {
+        self.app_handler_present.store(true, Ordering::Relaxed);
+    }
+
+    pub(super) fn app_handler_present(&self) -> bool {
+        self.app_handler_present.load(Ordering::Acquire)
+    }
+
+    fn clear(&self) {
+        self.orig_fn.store(null_mut(), Ordering::Relaxed);
+        self.orig_flags.store(0, Ordering::Relaxed);
+        self.own_signal.store(false, Ordering::Relaxed);
+        self.app_handler_present.store(false, Ordering::Relaxed);
     }
 }
 
-pub fn load_orig_mask(idx: usize, out: &mut libc::sigset_t) {
-    unsafe {
-        out.clone_from(&*(*ORIG_MASKS.0.get())[idx].as_ptr());
-    }
+static SIGNAL_SLOTS: [SignalSlot; NSIG] = [const { SignalSlot::new() }; NSIG];
+
+pub(super) fn signal_slot(idx: usize) -> &'static SignalSlot {
+    &SIGNAL_SLOTS[idx]
 }
 
 pub static HANDLERS_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -158,6 +207,41 @@ pub enum Stage {
     CrashtrackerUninstall = 8,
 }
 
+impl Stage {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Uninitialized => "uninitialized",
+            Self::CrashtrackerInit => "crashtracker_init",
+            Self::PlatformInit => "platform_init",
+            Self::LanguageInit => "language_init",
+            Self::PluginLoading => "plugin_loading",
+            Self::InjectionMetadataSend => "injection_metadata_send",
+            Self::HttpClientSend => "http_client_send",
+            Self::Application => "application",
+            Self::CrashtrackerUninstall => "crashtracker_uninstall",
+        }
+    }
+}
+
+impl TryFrom<i32> for Stage {
+    type Error = ();
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Uninitialized),
+            1 => Ok(Self::CrashtrackerInit),
+            2 => Ok(Self::PlatformInit),
+            3 => Ok(Self::LanguageInit),
+            4 => Ok(Self::PluginLoading),
+            5 => Ok(Self::InjectionMetadataSend),
+            6 => Ok(Self::HttpClientSend),
+            7 => Ok(Self::Application),
+            8 => Ok(Self::CrashtrackerUninstall),
+            _ => Err(()),
+        }
+    }
+}
+
 static STAGE: AtomicI32 = AtomicI32::new(Stage::Uninitialized as i32);
 
 pub fn set_stage(stage: Stage) {
@@ -165,50 +249,32 @@ pub fn set_stage(stage: Stage) {
 }
 
 pub fn current_stage_name() -> &'static str {
-    match STAGE.load(Ordering::Relaxed) {
-        1 => "crashtracker_init",
-        2 => "platform_init",
-        3 => "language_init",
-        4 => "plugin_loading",
-        5 => "injection_metadata_send",
-        6 => "http_client_send",
-        7 => "application",
-        8 => "crashtracker_uninstall",
-        _ => "uninitialized",
-    }
+    Stage::try_from(STAGE.load(Ordering::Relaxed))
+        .unwrap_or(Stage::Uninitialized)
+        .name()
 }
 
 pub fn clear_signal_state() {
-    let mut i = 0usize;
-    while i < NSIG {
-        ORIG_FN[i].store(null_mut(), Ordering::Relaxed);
-        ORIG_FLAGS[i].store(0, Ordering::Relaxed);
-        OWN_SIGNAL[i].store(false, Ordering::Relaxed);
-        APP_HANDLER_PRESENT[i].store(false, Ordering::Relaxed);
-        i += 1;
+    for slot in &SIGNAL_SLOTS {
+        slot.clear();
     }
 }
 
 pub fn owns_signal(sig: i32) -> bool {
     sig_index(sig)
-        .map(|i| OWN_SIGNAL[i].load(Ordering::Acquire))
+        .map(|i| signal_slot(i).owns_signal())
         .unwrap_or(false)
 }
 
 pub fn owned_signal_count() -> u32 {
-    let mut count = 0u32;
-    let mut i = 0usize;
-    while i < NSIG {
-        if OWN_SIGNAL[i].load(Ordering::Acquire) {
-            count += 1;
-        }
-        i += 1;
-    }
-    count
+    SIGNAL_SLOTS
+        .iter()
+        .filter(|slot| slot.owns_signal())
+        .count() as u32
 }
 
 pub fn app_handler_present(sig: i32) -> bool {
     sig_index(sig)
-        .map(|i| APP_HANDLER_PRESENT[i].load(Ordering::Acquire))
+        .map(|i| signal_slot(i).app_handler_present())
         .unwrap_or(false)
 }

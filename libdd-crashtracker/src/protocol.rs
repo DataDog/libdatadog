@@ -76,3 +76,42 @@ protocol_marker!(
     pub const DD_CRASHTRACK_END_UCONTEXT: &str = "DD_CRASHTRACK_END_UCONTEXT";
 );
 pub const DD_CRASHTRACK_END_MESSAGE: &str = "DD_CRASHTRACK_END_MESSAGE";
+
+pub trait ByteSink {
+    type Error;
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Self::Error>;
+}
+
+#[cfg(feature = "std")]
+impl<W: std::io::Write + ?Sized> ByteSink for W {
+    type Error = std::io::Error;
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
+        self.write_all(bytes)
+    }
+}
+
+pub fn marker_line<S, E>(sink: &mut S, marker: &str) -> Result<(), E>
+where
+    S: ByteSink + ?Sized,
+    E: From<S::Error>,
+{
+    sink.write_bytes(marker.as_bytes()).map_err(E::from)?;
+    sink.write_bytes(b"\n").map_err(E::from)
+}
+
+pub fn section<S, E>(
+    sink: &mut S,
+    begin: &str,
+    end: &str,
+    body: impl FnOnce(&mut S) -> Result<(), E>,
+) -> Result<(), E>
+where
+    S: ByteSink + ?Sized,
+    E: From<S::Error>,
+{
+    marker_line(sink, begin)?;
+    body(sink)?;
+    marker_line(sink, end)
+}

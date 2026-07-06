@@ -6,6 +6,9 @@
 pub(crate) mod defaults;
 pub(crate) mod signal_names;
 pub(crate) mod signals;
+pub(crate) mod stacktrace_collection;
+pub(crate) mod tag_keys;
+pub(crate) mod ucontext;
 
 #[cfg(feature = "std")]
 pub(crate) mod configuration;

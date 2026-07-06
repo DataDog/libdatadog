@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{fmt::Write, time::SystemTime};
 
-use crate::{ErrorKind, SigInfo};
+use crate::{shared::tag_keys, ErrorKind, SigInfo};
 
 use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
@@ -159,25 +159,6 @@ impl CrashPing {
     }
 }
 
-macro_rules! parse_tags {
-    (   $tag_iterator:expr,
-        $($tag_name:literal => $var:ident),* $(,)?)  => {
-        $(
-            let mut $var: Option<&str> = None;
-        )*
-        for tag in $tag_iterator {
-            let Some((name, value)) = tag.split_once(':') else {
-                continue;
-            };
-            match name {
-                $($tag_name => {$var = Some(value);}, )*
-                _ => {},
-            }
-        }
-
-    };
-}
-
 pub struct TelemetryCrashUploader {
     metadata: TelemetryMetadata,
     cfg: libdd_telemetry::config::Config,
@@ -216,18 +197,32 @@ impl TelemetryCrashUploader {
             let _ = cfg.set_endpoint(telemetry_endpoint);
         }
 
-        parse_tags!(
-            crashtracker_metadata.tags.iter(),
-            "env" => env,
-            "language" => language_name,
-            "library_version" => library_version,
-            "profiler_version" => profiler_version,
-            "runtime_version" => language_version,
-            "runtime-id" => runtime_id,
-            "service_version" => service_version,
-            "service" => service_name,
-            "process_tags" => process_tags,
-        );
+        let mut env: Option<&str> = None;
+        let mut language_name: Option<&str> = None;
+        let mut library_version: Option<&str> = None;
+        let mut profiler_version: Option<&str> = None;
+        let mut language_version: Option<&str> = None;
+        let mut runtime_id: Option<&str> = None;
+        let mut service_version: Option<&str> = None;
+        let mut service_name: Option<&str> = None;
+        let mut process_tags: Option<&str> = None;
+        for tag in &crashtracker_metadata.tags {
+            let Some((name, value)) = tag.split_once(':') else {
+                continue;
+            };
+            match name {
+                tag_keys::ENV => env = Some(value),
+                tag_keys::LANGUAGE => language_name = Some(value),
+                tag_keys::LIBRARY_VERSION => library_version = Some(value),
+                tag_keys::PROFILER_VERSION => profiler_version = Some(value),
+                tag_keys::RUNTIME_VERSION => language_version = Some(value),
+                tag_keys::RUNTIME_ID_LEGACY | tag_keys::RUNTIME_ID => runtime_id = Some(value),
+                tag_keys::SERVICE_VERSION => service_version = Some(value),
+                tag_keys::SERVICE => service_name = Some(value),
+                tag_keys::PROCESS_TAGS => process_tags = Some(value),
+                _ => {}
+            }
+        }
 
         let application = Application {
             service_name: service_name.unwrap_or("unknown").to_owned(),

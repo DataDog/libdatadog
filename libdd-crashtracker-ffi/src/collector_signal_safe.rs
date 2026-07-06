@@ -71,6 +71,22 @@ pub enum SignalSafeStage {
     CrashtrackerUninstall = 8,
 }
 
+impl From<SignalSafeStage> for Stage {
+    fn from(stage: SignalSafeStage) -> Self {
+        match stage {
+            SignalSafeStage::Uninitialized => Stage::Uninitialized,
+            SignalSafeStage::CrashtrackerInit => Stage::CrashtrackerInit,
+            SignalSafeStage::PlatformInit => Stage::PlatformInit,
+            SignalSafeStage::LanguageInit => Stage::LanguageInit,
+            SignalSafeStage::PluginLoading => Stage::PluginLoading,
+            SignalSafeStage::InjectionMetadataSend => Stage::InjectionMetadataSend,
+            SignalSafeStage::HttpClientSend => Stage::HttpClientSend,
+            SignalSafeStage::Application => Stage::Application,
+            SignalSafeStage::CrashtrackerUninstall => Stage::CrashtrackerUninstall,
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_init_from_env() -> SignalSafeInitResult {
     ffi_result(|| init_result_to_ffi(init_from_env_result()))
@@ -131,19 +147,7 @@ pub extern "C" fn ddog_crasht_signal_safe_shutdown() {
 
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_set_stage(stage: SignalSafeStage) {
-    ffi_void(|| {
-        set_stage(match stage {
-            SignalSafeStage::Uninitialized => Stage::Uninitialized,
-            SignalSafeStage::CrashtrackerInit => Stage::CrashtrackerInit,
-            SignalSafeStage::PlatformInit => Stage::PlatformInit,
-            SignalSafeStage::LanguageInit => Stage::LanguageInit,
-            SignalSafeStage::PluginLoading => Stage::PluginLoading,
-            SignalSafeStage::InjectionMetadataSend => Stage::InjectionMetadataSend,
-            SignalSafeStage::HttpClientSend => Stage::HttpClientSend,
-            SignalSafeStage::Application => Stage::Application,
-            SignalSafeStage::CrashtrackerUninstall => Stage::CrashtrackerUninstall,
-        });
-    });
+    ffi_void(|| set_stage(stage.into()));
 }
 
 #[no_mangle]

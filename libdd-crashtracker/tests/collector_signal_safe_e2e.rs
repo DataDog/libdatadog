@@ -10,10 +10,10 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use libdd_crashtracker::collector_signal_safe::init_from_env;
+use libdd_crashtracker::collector_signal_safe::init_from_env_result;
 use libdd_crashtracker::collector_signal_safe::{
-    bootstrap_complete, init, owned_signal_count, owns_signal, set_stage, SignalSafeInitConfig,
-    Stage,
+    bootstrap_complete, init_result, owned_signal_count, owns_signal, set_stage, InitResult,
+    SignalSafeInitConfig, Stage,
 };
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -23,7 +23,7 @@ fn signal_safe_receiver_child_process() {
         return;
     }
 
-    assert!(init_from_env());
+    assert_eq!(init_from_env_result(), InitResult::Enabled);
     bootstrap_complete();
     set_stage(Stage::Application);
 
@@ -37,15 +37,18 @@ fn signal_safe_report_fd_child_process() {
     };
 
     let report = fs::File::create(report).expect("create report");
-    assert!(init(&SignalSafeInitConfig {
-        receiver_path: b"/definitely/missing-signal-safe-receiver",
-        service: b"signal-safe-e2e",
-        env: b"test",
-        app_version: b"1",
-        runtime_id: b"00000000-0000-0000-0000-000000000001",
-        report_fd: report.as_raw_fd(),
-        ..SignalSafeInitConfig::default()
-    }));
+    assert_eq!(
+        init_result(&SignalSafeInitConfig {
+            receiver_path: b"/definitely/missing-signal-safe-receiver",
+            service: b"signal-safe-e2e",
+            env: b"test",
+            app_version: b"1",
+            runtime_id: b"00000000-0000-0000-0000-000000000001",
+            report_fd: report.as_raw_fd(),
+            ..SignalSafeInitConfig::default()
+        }),
+        InitResult::Enabled
+    );
     bootstrap_complete();
     set_stage(Stage::Application);
 
@@ -277,16 +280,19 @@ fn init_report_fd(
     only_bootstrap: bool,
 ) -> fs::File {
     let report = fs::File::create(report_path).expect("create report");
-    assert!(init(&SignalSafeInitConfig {
-        receiver_path,
-        service: b"signal-safe-e2e",
-        env: b"test",
-        app_version: b"1",
-        runtime_id: b"00000000-0000-0000-0000-000000000001",
-        report_fd: report.as_raw_fd(),
-        only_bootstrap,
-        ..SignalSafeInitConfig::default()
-    }));
+    assert_eq!(
+        init_result(&SignalSafeInitConfig {
+            receiver_path,
+            service: b"signal-safe-e2e",
+            env: b"test",
+            app_version: b"1",
+            runtime_id: b"00000000-0000-0000-0000-000000000001",
+            report_fd: report.as_raw_fd(),
+            only_bootstrap,
+            ..SignalSafeInitConfig::default()
+        }),
+        InitResult::Enabled
+    );
     report
 }
 

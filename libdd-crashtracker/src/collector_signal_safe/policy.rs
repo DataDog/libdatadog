@@ -5,9 +5,6 @@ use core::ffi::c_void;
 
 use super::signal_names::{SI_ASYNCIO, SI_MESGQ, SI_QUEUE, SI_SIGIO, SI_TIMER, SI_TKILL, SI_USER};
 
-const SIG_DFL_VALUE: usize = 0;
-const SIG_IGN_VALUE: usize = 1;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Disposition {
     Default,
@@ -23,27 +20,32 @@ pub enum ChainAction {
     Resume,
 }
 
-pub fn disposition_of(handler: *mut c_void) -> Disposition {
+pub(super) fn disposition_of(handler: *mut c_void) -> Disposition {
     match handler as usize {
-        SIG_DFL_VALUE => Disposition::Default,
-        SIG_IGN_VALUE => Disposition::Ignore,
+        value if value == libc::SIG_DFL => Disposition::Default,
+        value if value == libc::SIG_IGN => Disposition::Ignore,
         _ => Disposition::Handler,
     }
 }
 
-pub fn app_handler_is_real(handler: *mut c_void) -> bool {
+pub(super) fn app_handler_is_real(handler: *mut c_void) -> bool {
     matches!(disposition_of(handler), Disposition::Handler)
 }
 
-pub fn should_run_app_first(force_on_top: bool, app_is_real: bool) -> bool {
+pub(super) fn should_run_app_first(force_on_top: bool, app_is_real: bool) -> bool {
     !force_on_top && app_is_real
 }
 
-pub fn app_recovered(handler_after: *mut c_void) -> bool {
+pub(super) fn app_recovered(handler_after: *mut c_void) -> bool {
     disposition_of(handler_after) != Disposition::Default
 }
 
-pub fn is_genuine_fault(has_siginfo: bool, si_code: i32, si_pid: i32, self_pid: i32) -> bool {
+pub(super) fn is_genuine_fault(
+    has_siginfo: bool,
+    si_code: i32,
+    si_pid: i32,
+    self_pid: i32,
+) -> bool {
     if !has_siginfo {
         return false;
     }
@@ -53,7 +55,11 @@ pub fn is_genuine_fault(has_siginfo: bool, si_code: i32, si_pid: i32, self_pid: 
     si_pid == self_pid
 }
 
-pub fn chain_action(disposition: Disposition, has_siginfo: bool, si_code: i32) -> ChainAction {
+pub(super) fn chain_action(
+    disposition: Disposition,
+    has_siginfo: bool,
+    si_code: i32,
+) -> ChainAction {
     match disposition {
         Disposition::Ignore => ChainAction::Resume,
         Disposition::Handler => ChainAction::InvokeApp,
@@ -82,8 +88,8 @@ mod tests {
 
     #[test]
     fn dispositions_match_sigaction_sentinels() {
-        let dfl = SIG_DFL_VALUE as *mut c_void;
-        let ign = SIG_IGN_VALUE as *mut c_void;
+        let dfl = libc::SIG_DFL as *mut c_void;
+        let ign = libc::SIG_IGN as *mut c_void;
         let handler = 0x1234usize as *mut c_void;
 
         assert_eq!(disposition_of(dfl), Disposition::Default);
@@ -97,8 +103,8 @@ mod tests {
 
     #[test]
     fn handler_policy_tracks_application_recovery() {
-        let dfl = SIG_DFL_VALUE as *mut c_void;
-        let ign = SIG_IGN_VALUE as *mut c_void;
+        let dfl = libc::SIG_DFL as *mut c_void;
+        let ign = libc::SIG_IGN as *mut c_void;
         let handler = 0x1234usize as *mut c_void;
 
         assert!(should_run_app_first(false, true));

@@ -1,11 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::ffi::c_char;
+use core::ffi::{c_char, CStr};
 
-use super::Sink;
-
-const MAX_WRITE_RETRIES: u32 = 10;
 const CSTR_MAX_LEN: usize = 4096;
 
 unsafe extern "C" {
@@ -22,24 +19,153 @@ impl FdSink {
     }
 }
 
-impl Sink for FdSink {
-    fn put(&mut self, bytes: &[u8]) -> bool {
+impl crate::protocol::ByteSink for FdSink {
+    type Error = ();
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         let mut off = 0usize;
-        let mut retries = 0u32;
         while off < bytes.len() {
             let n = write(self.fd, &bytes[off..]);
             if n > 0 {
                 off += n as usize;
-                retries = 0;
                 continue;
             }
-            if n == -(libc::EINTR as isize) && retries < MAX_WRITE_RETRIES {
-                retries += 1;
-                continue;
-            }
-            return false;
+            return Err(());
         }
-        true
+        Ok(())
+    }
+}
+
+mod raw_common {
+    use core::ffi::CStr;
+    use core::num::NonZeroI32;
+    use rustix::fd::{BorrowedFd, IntoRawFd};
+
+    #[inline]
+    fn neg_errno(err: rustix::io::Errno) -> i32 {
+        -err.raw_os_error()
+    }
+
+    #[inline]
+    pub unsafe fn borrowed_fd(fd: i32) -> BorrowedFd<'static> {
+        BorrowedFd::borrow_raw(fd)
+    }
+
+    pub fn write(fd: i32, bytes: &[u8]) -> isize {
+        match rustix::io::retry_on_intr(|| rustix::io::write(unsafe { borrowed_fd(fd) }, bytes)) {
+            Ok(n) => n as isize,
+            Err(err) => neg_errno(err) as isize,
+        }
+    }
+
+    pub fn close(fd: i32) {
+        unsafe {
+            rustix::io::close(fd);
+        }
+    }
+
+    pub fn fcntl_dupfd(fd: i32, min_fd: i32) -> i32 {
+        match rustix::io::fcntl_dupfd_cloexec(unsafe { borrowed_fd(fd) }, min_fd) {
+            Ok(fd) => match rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::empty()) {
+                Ok(()) => fd.into_raw_fd(),
+                Err(err) => neg_errno(err),
+            },
+            Err(err) => neg_errno(err),
+        }
+    }
+
+    pub fn fd_valid(fd: i32) -> bool {
+        fd >= 0 && rustix::io::fcntl_getfd(unsafe { borrowed_fd(fd) }).is_ok()
+    }
+
+    pub fn pipe(fds: &mut [i32; 2]) -> bool {
+        match rustix::pipe::pipe() {
+            Ok((read_fd, write_fd)) => {
+                fds[0] = read_fd.into_raw_fd();
+                fds[1] = write_fd.into_raw_fd();
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn open_readwrite(path: *const u8) -> i32 {
+        let path = unsafe { CStr::from_ptr(path.cast()) };
+        match rustix::fs::openat(
+            rustix::fs::CWD,
+            path,
+            rustix::fs::OFlags::RDWR,
+            rustix::fs::Mode::empty(),
+        ) {
+            Ok(fd) => fd.into_raw_fd(),
+            Err(err) => neg_errno(err),
+        }
+    }
+
+    pub fn access_executable(path: *const u8) -> bool {
+        let path = unsafe { CStr::from_ptr(path.cast()) };
+        rustix::fs::accessat(
+            rustix::fs::CWD,
+            path,
+            rustix::fs::Access::EXEC_OK,
+            rustix::fs::AtFlags::empty(),
+        )
+        .is_ok()
+    }
+
+    pub fn mprotect_none(addr: *mut u8, len: usize) -> bool {
+        unsafe { rustix::mm::mprotect(addr.cast(), len, rustix::mm::MprotectFlags::empty()) }
+            .is_ok()
+    }
+
+    pub fn getpid() -> i32 {
+        rustix::process::getpid().as_raw_pid()
+    }
+
+    pub fn kill(pid: i32, sig: i32) -> i32 {
+        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+            return -libc::EINVAL;
+        };
+        let Some(sig) = NonZeroI32::new(sig) else {
+            return -libc::EINVAL;
+        };
+        let sig = unsafe { rustix::process::Signal::from_raw_nonzero_unchecked(sig) };
+        match rustix::process::kill_process(pid, sig) {
+            Ok(()) => 0,
+            Err(err) => neg_errno(err),
+        }
+    }
+
+    pub fn waitpid_nohang_status(pid: i32, status: &mut i32) -> i32 {
+        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+            return -libc::EINVAL;
+        };
+        match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
+            Ok(Some((waited, wait_status))) => {
+                *status = wait_status.as_raw();
+                waited.as_raw_pid()
+            }
+            Ok(None) => 0,
+            Err(err) => neg_errno(err),
+        }
+    }
+
+    pub fn poll_sleep_ms(timeout_ms: i32) {
+        if timeout_ms <= 0 {
+            return;
+        }
+        let ts = rustix::thread::Timespec {
+            tv_sec: (timeout_ms / 1000) as i64,
+            tv_nsec: ((timeout_ms % 1000) as i64) * 1_000_000,
+        };
+        let _ = rustix::thread::nanosleep(&ts);
+    }
+
+    pub fn monotonic_nanos() -> i64 {
+        let ts = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+        ts.tv_sec
+            .wrapping_mul(1_000_000_000)
+            .wrapping_add(ts.tv_nsec as i64)
     }
 }
 
@@ -49,19 +175,12 @@ impl Sink for FdSink {
 ))]
 mod raw {
     use core::arch::asm;
-    use core::ffi::{c_void, CStr};
-    use core::num::NonZeroI32;
-    use rustix::fd::{BorrowedFd, IntoRawFd};
+    use core::ffi::c_void;
 
-    #[inline]
-    fn neg_errno(err: rustix::io::Errno) -> isize {
-        -(err.raw_os_error() as isize)
-    }
-
-    #[inline]
-    unsafe fn borrowed_fd(fd: i32) -> BorrowedFd<'static> {
-        BorrowedFd::borrow_raw(fd)
-    }
+    pub use super::raw_common::{
+        access_executable, close, fcntl_dupfd, fd_valid, getpid, kill, monotonic_nanos,
+        mprotect_none, open_readwrite, pipe, poll_sleep_ms, waitpid_nohang_status, write,
+    };
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
@@ -177,38 +296,11 @@ mod raw {
         ret
     }
 
-    pub fn write(fd: i32, bytes: &[u8]) -> isize {
-        match rustix::io::write(unsafe { borrowed_fd(fd) }, bytes) {
-            Ok(n) => n as isize,
-            Err(err) => neg_errno(err),
-        }
-    }
-
-    pub fn close(fd: i32) {
-        unsafe {
-            rustix::io::close(fd);
-        }
-    }
-
     pub fn dup2(oldfd: i32, newfd: i32) -> i32 {
         if oldfd == newfd {
             return newfd;
         }
         unsafe { syscall3(libc::SYS_dup3, oldfd as usize, newfd as usize, 0) as i32 }
-    }
-
-    pub fn fcntl_dupfd(fd: i32, min_fd: i32) -> i32 {
-        match rustix::io::fcntl_dupfd_cloexec(unsafe { borrowed_fd(fd) }, min_fd) {
-            Ok(fd) => match rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::empty()) {
-                Ok(()) => fd.into_raw_fd(),
-                Err(err) => neg_errno(err) as i32,
-            },
-            Err(err) => neg_errno(err) as i32,
-        }
-    }
-
-    pub fn fd_valid(fd: i32) -> bool {
-        fd >= 0 && rustix::io::fcntl_getfd(unsafe { borrowed_fd(fd) }).is_ok()
     }
 
     pub fn close_range_from(first_fd: i32) -> bool {
@@ -221,46 +313,6 @@ mod raw {
                     0,
                 ) == 0
             }
-    }
-
-    pub fn pipe(fds: &mut [i32; 2]) -> bool {
-        match rustix::pipe::pipe() {
-            Ok((read_fd, write_fd)) => {
-                fds[0] = read_fd.into_raw_fd();
-                fds[1] = write_fd.into_raw_fd();
-                true
-            }
-            Err(_) => false,
-        }
-    }
-
-    pub fn open_readwrite(path: *const u8) -> i32 {
-        let path = unsafe { CStr::from_ptr(path.cast()) };
-        match rustix::fs::openat(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::OFlags::RDWR,
-            rustix::fs::Mode::empty(),
-        ) {
-            Ok(fd) => fd.into_raw_fd(),
-            Err(err) => neg_errno(err) as i32,
-        }
-    }
-
-    pub fn access_executable(path: *const u8) -> bool {
-        let path = unsafe { CStr::from_ptr(path.cast()) };
-        rustix::fs::accessat(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::Access::EXEC_OK,
-            rustix::fs::AtFlags::empty(),
-        )
-        .is_ok()
-    }
-
-    pub fn mprotect_none(addr: *mut u8, len: usize) -> bool {
-        unsafe { rustix::mm::mprotect(addr.cast(), len, rustix::mm::MprotectFlags::empty()) }
-            .is_ok()
     }
 
     pub fn fork_supported() -> bool {
@@ -310,58 +362,8 @@ mod raw {
         }
     }
 
-    pub fn getpid() -> i32 {
-        rustix::process::getpid().as_raw_pid()
-    }
-
     pub fn gettid() -> i32 {
         rustix::thread::gettid().as_raw_pid()
-    }
-
-    pub fn kill(pid: i32, sig: i32) -> i32 {
-        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
-            return -(libc::EINVAL);
-        };
-        let Some(sig) = NonZeroI32::new(sig) else {
-            return -(libc::EINVAL);
-        };
-        let sig = unsafe { rustix::process::Signal::from_raw_nonzero_unchecked(sig) };
-        match rustix::process::kill_process(pid, sig) {
-            Ok(()) => 0,
-            Err(err) => neg_errno(err) as i32,
-        }
-    }
-
-    pub fn waitpid_nohang_status(pid: i32, status: &mut i32) -> i32 {
-        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
-            return -(libc::EINVAL);
-        };
-        match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
-            Ok(Some((waited, wait_status))) => {
-                *status = wait_status.as_raw();
-                waited.as_raw_pid()
-            }
-            Ok(None) => 0,
-            Err(err) => neg_errno(err) as i32,
-        }
-    }
-
-    pub fn poll_sleep_ms(timeout_ms: i32) {
-        if timeout_ms <= 0 {
-            return;
-        }
-        let ts = rustix::thread::Timespec {
-            tv_sec: (timeout_ms / 1000) as i64,
-            tv_nsec: ((timeout_ms % 1000) as i64) * 1_000_000,
-        };
-        let _ = rustix::thread::nanosleep(&ts);
-    }
-
-    pub fn monotonic_nanos() -> i64 {
-        let ts = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
-        ts.tv_sec
-            .wrapping_mul(1_000_000_000)
-            .wrapping_add(ts.tv_nsec as i64)
     }
 
     pub fn read_own_mem(pid: i32, src: usize, dst: &mut [u8]) -> bool {
@@ -393,93 +395,17 @@ mod raw {
     any(target_arch = "x86_64", target_arch = "aarch64")
 )))]
 mod raw {
-    use core::ffi::CStr;
-    use core::num::NonZeroI32;
-    use rustix::fd::{BorrowedFd, IntoRawFd};
-
-    #[inline]
-    fn neg_errno(err: rustix::io::Errno) -> i32 {
-        -err.raw_os_error()
-    }
-
-    #[inline]
-    unsafe fn borrowed_fd(fd: i32) -> BorrowedFd<'static> {
-        BorrowedFd::borrow_raw(fd)
-    }
-
-    pub fn write(fd: i32, bytes: &[u8]) -> isize {
-        match rustix::io::write(unsafe { borrowed_fd(fd) }, bytes) {
-            Ok(n) => n as isize,
-            Err(err) => -(err.raw_os_error() as isize),
-        }
-    }
-
-    pub fn close(fd: i32) {
-        unsafe {
-            rustix::io::close(fd);
-        }
-    }
+    pub use super::raw_common::{
+        access_executable, close, fcntl_dupfd, fd_valid, getpid, kill, monotonic_nanos,
+        mprotect_none, open_readwrite, pipe, poll_sleep_ms, waitpid_nohang_status, write,
+    };
 
     pub fn dup2(oldfd: i32, newfd: i32) -> i32 {
         unsafe { libc::dup2(oldfd, newfd) }
     }
 
-    pub fn fcntl_dupfd(fd: i32, min_fd: i32) -> i32 {
-        match rustix::io::fcntl_dupfd_cloexec(unsafe { borrowed_fd(fd) }, min_fd) {
-            Ok(fd) => match rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::empty()) {
-                Ok(()) => fd.into_raw_fd(),
-                Err(err) => neg_errno(err),
-            },
-            Err(err) => neg_errno(err),
-        }
-    }
-
-    pub fn fd_valid(fd: i32) -> bool {
-        fd >= 0 && rustix::io::fcntl_getfd(unsafe { borrowed_fd(fd) }).is_ok()
-    }
-
     pub fn close_range_from(_first_fd: i32) -> bool {
         false
-    }
-
-    pub fn pipe(fds: &mut [i32; 2]) -> bool {
-        match rustix::pipe::pipe() {
-            Ok((read_fd, write_fd)) => {
-                fds[0] = read_fd.into_raw_fd();
-                fds[1] = write_fd.into_raw_fd();
-                true
-            }
-            Err(_) => false,
-        }
-    }
-
-    pub fn open_readwrite(path: *const u8) -> i32 {
-        let path = unsafe { CStr::from_ptr(path.cast()) };
-        match rustix::fs::openat(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::OFlags::RDWR,
-            rustix::fs::Mode::empty(),
-        ) {
-            Ok(fd) => fd.into_raw_fd(),
-            Err(err) => neg_errno(err),
-        }
-    }
-
-    pub fn access_executable(path: *const u8) -> bool {
-        let path = unsafe { CStr::from_ptr(path.cast()) };
-        rustix::fs::accessat(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::Access::EXEC_OK,
-            rustix::fs::AtFlags::empty(),
-        )
-        .is_ok()
-    }
-
-    pub fn mprotect_none(addr: *mut u8, len: usize) -> bool {
-        unsafe { rustix::mm::mprotect(addr.cast(), len, rustix::mm::MprotectFlags::empty()) }
-            .is_ok()
     }
 
     pub fn fork_supported() -> bool {
@@ -496,10 +422,6 @@ mod raw {
         }
     }
 
-    pub fn getpid() -> i32 {
-        rustix::process::getpid().as_raw_pid()
-    }
-
     pub fn gettid() -> i32 {
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         {
@@ -513,52 +435,6 @@ mod raw {
         {
             unsafe { libc::getpid() }
         }
-    }
-
-    pub fn kill(pid: i32, sig: i32) -> i32 {
-        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
-            return -libc::EINVAL;
-        };
-        let Some(sig) = NonZeroI32::new(sig) else {
-            return -libc::EINVAL;
-        };
-        let sig = unsafe { rustix::process::Signal::from_raw_nonzero_unchecked(sig) };
-        match rustix::process::kill_process(pid, sig) {
-            Ok(()) => 0,
-            Err(err) => neg_errno(err),
-        }
-    }
-
-    pub fn waitpid_nohang_status(pid: i32, status: &mut i32) -> i32 {
-        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
-            return -libc::EINVAL;
-        };
-        match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
-            Ok(Some((waited, wait_status))) => {
-                *status = wait_status.as_raw();
-                waited.as_raw_pid()
-            }
-            Ok(None) => 0,
-            Err(err) => neg_errno(err),
-        }
-    }
-
-    pub fn poll_sleep_ms(timeout_ms: i32) {
-        if timeout_ms <= 0 {
-            return;
-        }
-        let ts = rustix::thread::Timespec {
-            tv_sec: (timeout_ms / 1000) as i64,
-            tv_nsec: ((timeout_ms % 1000) as i64) * 1_000_000,
-        };
-        let _ = rustix::thread::nanosleep(&ts);
-    }
-
-    pub fn monotonic_nanos() -> i64 {
-        let ts = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
-        ts.tv_sec
-            .wrapping_mul(1_000_000_000)
-            .wrapping_add(ts.tv_nsec as i64)
     }
 
     pub fn read_own_mem(_pid: i32, _src: usize, _dst: &mut [u8]) -> bool {
@@ -667,10 +543,19 @@ pub unsafe fn cstr_bytes_bounded<'a>(p: *const c_char) -> &'a [u8] {
     while len < CSTR_MAX_LEN && *p.add(len) != 0 {
         len += 1;
     }
-    core::slice::from_raw_parts(p.cast(), len)
+    if len == CSTR_MAX_LEN {
+        return core::slice::from_raw_parts(p.cast(), len);
+    }
+
+    let bytes = core::slice::from_raw_parts(p.cast(), len + 1);
+    CStr::from_bytes_with_nul_unchecked(bytes).to_bytes()
 }
 
 pub unsafe fn cstr_starts_with(s: *const c_char, prefix: &[u8]) -> bool {
+    cstr_has_prefix(s, prefix)
+}
+
+unsafe fn cstr_has_prefix(s: *const c_char, prefix: &[u8]) -> bool {
     let mut i = 0usize;
     while i < prefix.len() {
         let c = *s.add(i);
@@ -683,13 +568,8 @@ pub unsafe fn cstr_starts_with(s: *const c_char, prefix: &[u8]) -> bool {
 }
 
 unsafe fn env_entry_value(entry: *const c_char, name: &[u8]) -> Option<*const c_char> {
-    let mut i = 0usize;
-    while i < name.len() {
-        let c = *entry.add(i);
-        if c == 0 || c as u8 != name[i] {
-            return None;
-        }
-        i += 1;
+    if !cstr_has_prefix(entry, name) {
+        return None;
     }
 
     if *entry.add(name.len()) as u8 == b'=' {
@@ -735,6 +615,7 @@ unsafe fn errno_location() -> *mut i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collector_signal_safe::Sink;
 
     #[test]
     fn fd_sink_writes_to_pipe() {

@@ -4,6 +4,7 @@
 use heapless::{String as HeaplessString, Vec as HeaplessVec};
 use serde::Serialize;
 
+use super::capabilities::{Capabilities, Degradations};
 use super::fmt::hex_addr;
 use super::signal_names::{rust_si_code_name, rust_signal_name, signal_has_address};
 
@@ -100,6 +101,6 @@ pub struct Report<'a> {
     pub platform: &'a str,
     pub stage_name: &'a str,
     pub stackwalk_method: &'a str,
-    pub capability_bits: u32,
-    pub degradation_bits: u32,
+    pub capabilities: Capabilities,
+    pub degradations: Degradations,
 }

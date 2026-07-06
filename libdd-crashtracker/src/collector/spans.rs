@@ -14,9 +14,15 @@ pub fn clear_spans() -> Result<(), AtomicSetError> {
 #[allow(dead_code)]
 pub fn emit_spans(w: &mut impl Write) -> Result<(), AtomicSetError> {
     use crate::shared::constants::*;
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_SPAN_IDS}")?;
-    ACTIVE_SPANS.consume_and_emit(w, true)?;
-    writeln!(w, "{DD_CRASHTRACK_END_SPAN_IDS}")?;
+    crate::protocol::section::<_, AtomicSetError>(
+        w,
+        DD_CRASHTRACK_BEGIN_SPAN_IDS,
+        DD_CRASHTRACK_END_SPAN_IDS,
+        |w| {
+            ACTIVE_SPANS.consume_and_emit(w, true)?;
+            Ok(())
+        },
+    )?;
     w.flush()?;
     Ok(())
 }
@@ -37,9 +43,15 @@ pub fn clear_traces() -> Result<(), AtomicSetError> {
 #[allow(dead_code)]
 pub fn emit_traces(w: &mut impl Write) -> Result<(), AtomicSetError> {
     use crate::shared::constants::*;
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_TRACE_IDS}")?;
-    ACTIVE_TRACES.consume_and_emit(w, true)?;
-    writeln!(w, "{DD_CRASHTRACK_END_TRACE_IDS}")?;
+    crate::protocol::section::<_, AtomicSetError>(
+        w,
+        DD_CRASHTRACK_BEGIN_TRACE_IDS,
+        DD_CRASHTRACK_END_TRACE_IDS,
+        |w| {
+            ACTIVE_TRACES.consume_and_emit(w, true)?;
+            Ok(())
+        },
+    )?;
     w.flush()?;
     Ok(())
 }

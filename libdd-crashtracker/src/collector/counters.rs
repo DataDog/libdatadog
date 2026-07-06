@@ -98,16 +98,22 @@ pub fn end_op(op: OpTypes) -> Result<(), CounterError> {
 pub fn emit_counters(w: &mut impl Write) -> Result<(), CounterError> {
     use crate::shared::constants::*;
 
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_COUNTERS}")?;
-    for (i, c) in OP_COUNTERS.iter().enumerate() {
-        writeln!(
-            w,
-            "{{\"{}\": {}}}",
-            OpTypes::name(i)?,
-            c.load(Ordering::Relaxed)
-        )?;
-    }
-    writeln!(w, "{DD_CRASHTRACK_END_COUNTERS}")?;
+    crate::protocol::section::<_, CounterError>(
+        w,
+        DD_CRASHTRACK_BEGIN_COUNTERS,
+        DD_CRASHTRACK_END_COUNTERS,
+        |w| {
+            for (i, c) in OP_COUNTERS.iter().enumerate() {
+                writeln!(
+                    w,
+                    "{{\"{}\": {}}}",
+                    OpTypes::name(i)?,
+                    c.load(Ordering::Relaxed)
+                )?;
+            }
+            Ok(())
+        },
+    )?;
     w.flush()?;
     Ok(())
 }

@@ -112,6 +112,7 @@ mod tests {
     async fn signal_safe_emitted_report_round_trips_through_receiver_parser() -> anyhow::Result<()>
     {
         use crate::collector_signal_safe as signal_safe;
+        use signal_safe::capabilities::{Capabilities, Degradations};
 
         let config = CrashtrackerConfiguration::builder()
             .signals(default_signals())
@@ -140,8 +141,8 @@ mod tests {
             platform: "linux",
             stage_name: "application",
             stackwalk_method: "fp_pvr",
-            capability_bits: 0x21,
-            degradation_bits: 1 << 8, // DEGRADED_REPORT_TO_FD
+            capabilities: Capabilities::from_bits(0x21),
+            degradations: Degradations::from_bits(1 << 8), // DEGRADED_REPORT_TO_FD
         };
 
         let mut buf = [0u8; 8192];

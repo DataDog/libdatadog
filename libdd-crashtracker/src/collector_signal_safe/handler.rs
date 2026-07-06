@@ -7,13 +7,15 @@ use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 use super::config::{self, PrepareError, SignalSafeInitConfig};
+use super::fmt::{write_i32, I32_BUF_CAPACITY};
+use super::policy::{
+    app_handler_is_real, app_recovered, chain_action, disposition_of, is_genuine_fault,
+    should_run_app_first, ChainAction,
+};
 use super::state::{self, sig_index, BeginInitError, Stage};
 use super::sys::{self, FdSink};
-use super::{
-    app_handler_is_real, app_recovered, chain_action, is_genuine_fault, should_run_app_first,
-    write_i32, ChainAction, CrashContext, Report, SignalInfo,
-};
 use super::{backtrace, capabilities};
+use super::{CrashContext, Report, SignalInfo};
 use crate::signal_owner::{self, SignalOwner};
 
 // Used only by forked children; 125 matches the existing shell-like "cannot exec" convention.
@@ -46,12 +48,73 @@ struct Target {
     flags: i32,
 }
 
+#[derive(Clone, Copy)]
+struct CrashEvent {
+    sig: i32,
+    si_code: i32,
+    has_info: bool,
+    si_addr: usize,
+    pid: i32,
+    tid: i32,
+    ucontext: *mut c_void,
+}
+
+impl CrashEvent {
+    fn context<'a>(self, frames: &'a [usize]) -> CrashContext<'a> {
+        CrashContext {
+            signal: SignalInfo::new(self.sig, self.si_code, self.si_addr, self.has_info),
+            pid: self.pid,
+            tid: self.tid,
+            frames,
+        }
+    }
+}
+
 static APP_CHAIN_TID: AtomicI32 = AtomicI32::new(0);
 static APP_CHAIN_STACK: AtomicUsize = AtomicUsize::new(0);
-static REPEAT_FAULT_PC: [AtomicUsize; state::NSIG] = [const { AtomicUsize::new(0) }; state::NSIG];
-static REPEAT_FAULT_ADDR: [AtomicUsize; state::NSIG] = [const { AtomicUsize::new(0) }; state::NSIG];
-static REPEAT_FAULT_COUNT: [AtomicUsize; state::NSIG] =
-    [const { AtomicUsize::new(0) }; state::NSIG];
+
+struct RepeatFaultSlot {
+    pc: AtomicUsize,
+    addr: AtomicUsize,
+    count: AtomicUsize,
+}
+
+impl RepeatFaultSlot {
+    const fn new() -> Self {
+        Self {
+            pc: AtomicUsize::new(0),
+            addr: AtomicUsize::new(0),
+            count: AtomicUsize::new(0),
+        }
+    }
+
+    fn tripped(&self, pc: usize, addr: usize) -> bool {
+        if pc == 0 {
+            return false;
+        }
+
+        let last_pc = self.pc.load(Ordering::Relaxed);
+        let last_addr = self.addr.load(Ordering::Relaxed);
+        if last_pc == pc && last_addr == addr {
+            self.count.fetch_add(1, Ordering::Relaxed) + 1 >= 2
+        } else {
+            self.addr.store(addr, Ordering::Relaxed);
+            self.count.store(1, Ordering::Relaxed);
+            self.pc.store(pc, Ordering::Relaxed);
+            false
+        }
+    }
+
+    #[cfg(test)]
+    fn reset(&self) {
+        self.pc.store(0, Ordering::Relaxed);
+        self.addr.store(0, Ordering::Relaxed);
+        self.count.store(0, Ordering::Relaxed);
+    }
+}
+
+static REPEAT_FAULT: [RepeatFaultSlot; state::NSIG] =
+    [const { RepeatFaultSlot::new() }; state::NSIG];
 /// Prevents recursive crash collection. Reset only during explicit shutdown/re-init lifecycle.
 static COLLECTING: AtomicBool = AtomicBool::new(false);
 
@@ -66,16 +129,8 @@ pub enum InitResult {
     InvalidConfig = 5,
 }
 
-pub fn init(config: &SignalSafeInitConfig<'_>) -> bool {
-    matches!(init_result(config), InitResult::Enabled)
-}
-
 pub fn init_result(config: &SignalSafeInitConfig<'_>) -> InitResult {
     init_with_prepare(|| config::prepare_result(config))
-}
-
-pub fn init_from_env() -> bool {
-    matches!(init_from_env_result(), InitResult::Enabled)
 }
 
 pub fn init_from_env_result() -> InitResult {
@@ -88,20 +143,20 @@ pub fn init_from_env_result() -> InitResult {
 fn init_with_prepare(prepare: impl FnOnce() -> Result<(), PrepareError>) -> InitResult {
     let begin = state::begin_init();
     if let Err(err) = begin {
-        return begin_init_error(err);
+        return err.into();
     }
     if !signal_owner::acquire(SignalOwner::SignalSafeCollector) {
-        state::fail_init();
+        state::reset_init();
         return InitResult::OwnerConflict;
     }
     if let Err(err) = prepare() {
         signal_owner::release(SignalOwner::SignalSafeCollector);
-        state::fail_init();
-        return prepare_error(err);
+        state::reset_init();
+        return err.into();
     }
     if !install_alt_stack_if_requested() {
         signal_owner::release(SignalOwner::SignalSafeCollector);
-        state::fail_init();
+        state::reset_init();
         return InitResult::Failed;
     }
     install_all_handlers();
@@ -130,25 +185,27 @@ pub fn shutdown() {
     state::reset_init();
 }
 
-fn begin_init_error(err: BeginInitError) -> InitResult {
-    match err {
-        BeginInitError::AlreadyInitialized => InitResult::AlreadyInitialized,
-        BeginInitError::Busy => InitResult::Failed,
+impl From<BeginInitError> for InitResult {
+    fn from(err: BeginInitError) -> Self {
+        match err {
+            BeginInitError::AlreadyInitialized => Self::AlreadyInitialized,
+            BeginInitError::Busy => Self::Failed,
+        }
     }
 }
 
-fn prepare_error(err: PrepareError) -> InitResult {
-    match err {
-        PrepareError::InvalidConfig => InitResult::InvalidConfig,
-        PrepareError::Failed => InitResult::Failed,
+impl From<PrepareError> for InitResult {
+    fn from(err: PrepareError) -> Self {
+        match err {
+            PrepareError::InvalidConfig => Self::InvalidConfig,
+            PrepareError::Failed => Self::Failed,
+        }
     }
 }
 
 fn effective_target(idx: usize) -> Target {
-    Target {
-        fn_ptr: state::ORIG_FN[idx].load(Ordering::Relaxed),
-        flags: state::ORIG_FLAGS[idx].load(Ordering::Relaxed),
-    }
+    let (fn_ptr, flags) = state::signal_slot(idx).original_handler();
+    Target { fn_ptr, flags }
 }
 
 unsafe fn invoke_handler(
@@ -205,20 +262,7 @@ fn leave_app_chain(tid: i32, stack_pos: usize) {
 }
 
 fn app_return_repeated_fault(idx: usize, pc: usize, addr: usize) -> bool {
-    if pc == 0 {
-        return false;
-    }
-
-    let last_pc = REPEAT_FAULT_PC[idx].load(Ordering::Relaxed);
-    let last_addr = REPEAT_FAULT_ADDR[idx].load(Ordering::Relaxed);
-    if last_pc == pc && last_addr == addr {
-        REPEAT_FAULT_COUNT[idx].fetch_add(1, Ordering::Relaxed) + 1 >= 2
-    } else {
-        REPEAT_FAULT_ADDR[idx].store(addr, Ordering::Relaxed);
-        REPEAT_FAULT_COUNT[idx].store(1, Ordering::Relaxed);
-        REPEAT_FAULT_PC[idx].store(pc, Ordering::Relaxed);
-        false
-    }
+    REPEAT_FAULT[idx].tripped(pc, addr)
 }
 
 fn crash_debug(msg: &[u8], sig: i32) {
@@ -230,7 +274,7 @@ fn crash_debug(msg: &[u8], sig: i32) {
     let _ = super::Sink::put(&mut sink, msg);
     if sig >= 0 {
         let _ = super::Sink::put(&mut sink, b" ");
-        let mut buf = [0u8; 12];
+        let mut buf = [0u8; I32_BUF_CAPACITY];
         let written = write_i32(sig, &mut buf);
         let _ = super::Sink::put(&mut sink, &buf[..written]);
     }
@@ -374,48 +418,29 @@ fn receiver_child(read_fd: i32, write_fd: i32) -> ! {
     sys::exit_process(EXIT_CODE_FAILURE);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn collector_child(
-    read_fd: i32,
-    write_fd: i32,
-    sig: i32,
-    si_code: i32,
-    has_info: bool,
-    si_addr: usize,
-    pid: i32,
-    tid: i32,
-    ucontext: *mut c_void,
-) -> ! {
+fn collector_child(read_fd: i32, write_fd: i32, event: CrashEvent) -> ! {
     sys::close(read_fd);
     let write_fd = sanitize_clone(write_fd, false);
     if write_fd < 0 {
         sys::exit_process(EXIT_CODE_FAILURE);
     }
 
-    let _ = emit_crash_report(
-        write_fd, sig, si_code, has_info, si_addr, pid, tid, ucontext, true,
-    );
+    let _ = emit_crash_report(write_fd, event, true);
     sys::exit_process(0);
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit_crash_report(
-    write_fd: i32,
-    sig: i32,
-    si_code: i32,
-    has_info: bool,
-    si_addr: usize,
-    pid: i32,
-    tid: i32,
-    ucontext: *mut c_void,
-    close_when_done: bool,
-) -> bool {
+fn emit_crash_report(write_fd: i32, event: CrashEvent, close_when_done: bool) -> bool {
     let mut frames = [0usize; config::BACKTRACE_LEVELS_MAX];
     let max_frames = state::MAX_FRAMES
         .load(Ordering::Relaxed)
         .min(config::BACKTRACE_LEVELS_MAX);
     let can_walk = capabilities::has(capabilities::PROC_VM_READV);
-    let n = backtrace::backtrace_from_ucontext(&mut frames[..max_frames], ucontext, pid, can_walk);
+    let n = backtrace::backtrace_from_ucontext(
+        &mut frames[..max_frames],
+        event.ucontext,
+        event.pid,
+        can_walk,
+    );
     let stackwalk_method = if n == 0 {
         "none"
     } else if can_walk {
@@ -443,15 +468,10 @@ fn emit_crash_report(
         platform: meta.platform.as_str(),
         stage_name: state::current_stage_name(),
         stackwalk_method,
-        capability_bits: capabilities::get(),
-        degradation_bits: capabilities::degradations(),
+        capabilities: capabilities::get(),
+        degradations: capabilities::degradations(),
     };
-    let context = CrashContext {
-        signal: SignalInfo::new(sig, si_code, si_addr, has_info),
-        pid,
-        tid,
-        frames: &frames[..n],
-    };
+    let context = event.context(&frames[..n]);
 
     let mut sink = FdSink::new(write_fd);
     let emitted = super::emit_report(&mut sink, &report, &context);
@@ -486,14 +506,21 @@ fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontex
     let pid = sys::getpid();
     let tid = sys::gettid();
     let report_fd = state::REPORT_FD.load(Ordering::Relaxed);
+    let event = CrashEvent {
+        sig,
+        si_code,
+        has_info,
+        si_addr,
+        pid,
+        tid,
+        ucontext,
+    };
 
-    let direct_report = |reason: u32| {
+    let direct_report = |reason: capabilities::Degradations| {
         capabilities::note_degraded(reason);
         if capabilities::has(capabilities::REPORT_FD_OK) {
             capabilities::note_degraded(capabilities::DEGRADED_REPORT_TO_FD);
-            let _ = emit_crash_report(
-                report_fd, sig, si_code, has_info, si_addr, pid, tid, ucontext, false,
-            );
+            let _ = emit_crash_report(report_fd, event, false);
         }
     };
 
@@ -532,9 +559,7 @@ fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontex
     if receiver > 0 {
         collector = unsafe { sys::fork_raw() };
         if collector == 0 {
-            collector_child(
-                read_fd, write_fd, sig, si_code, has_info, si_addr, pid, tid, ucontext,
-            );
+            collector_child(read_fd, write_fd, event);
         }
     } else {
         crash_debug(b"receiver fork failed", sig);
@@ -647,7 +672,7 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
             flags: 0,
         },
     };
-    let action = chain_action(super::disposition_of(target.fn_ptr), has_info, si_code);
+    let action = chain_action(disposition_of(target.fn_ptr), has_info, si_code);
     match action {
         ChainAction::RestoreDefaultAndRefault | ChainAction::RestoreDefaultAndReraise => {
             if !reset_signals_to_default(&[sig]) {
@@ -767,7 +792,7 @@ fn install_crash_handler(sig: c_int) {
     if cur.sa_sigaction != libc::SIG_DFL {
         if app_handler_is_real(cur.sa_sigaction as *mut c_void) {
             if let Some(i) = sig_index(sig) {
-                state::APP_HANDLER_PRESENT[i].store(true, Ordering::Relaxed);
+                state::signal_slot(i).set_app_handler_present();
             }
             capabilities::note_degraded(capabilities::DEGRADED_APP_HANDLER_PRESENT);
             crash_debug(b"app handler present", sig);
@@ -782,10 +807,12 @@ fn install_crash_handler(sig: c_int) {
     }
 
     if let Some(i) = sig_index(sig) {
-        state::ORIG_FN[i].store(old.sa_sigaction as *mut c_void, Ordering::Relaxed);
-        state::ORIG_FLAGS[i].store(old.sa_flags, Ordering::Relaxed);
-        state::store_orig_mask(i, &old.sa_mask);
-        state::OWN_SIGNAL[i].store(true, Ordering::Relaxed);
+        state::signal_slot(i).store_original_handler(
+            old.sa_sigaction as *mut c_void,
+            old.sa_flags,
+            &old.sa_mask,
+        );
+        state::signal_slot(i).set_owned(true);
     }
 }
 
@@ -802,9 +829,9 @@ fn uninstall_crash_handler(sig: c_int) {
     restore.sa_sigaction = target.fn_ptr as usize;
     restore.sa_flags = target.flags;
     unsafe {
-        state::load_orig_mask(i, &mut restore.sa_mask);
+        state::signal_slot(i).load_original_mask(&mut restore.sa_mask);
         if libc::sigaction(sig, &restore, null_mut()) == 0 {
-            state::OWN_SIGNAL[i].store(false, Ordering::Relaxed);
+            state::signal_slot(i).set_owned(false);
         }
     }
 }
@@ -851,10 +878,8 @@ mod tests {
 
         capabilities::publish(b"/definitely/missing-signal-safe-receiver\0", -1, false);
         assert!(install_alt_stack_with(|_, _| false, |_| true));
-        assert_ne!(
-            capabilities::degradations() & capabilities::DEGRADED_ALT_STACK_GUARD_UNAVAILABLE,
-            0
-        );
+        assert!(capabilities::degradations()
+            .contains(capabilities::DEGRADED_ALT_STACK_GUARD_UNAVAILABLE));
     }
 
     #[test]
@@ -864,9 +889,7 @@ mod tests {
             .expect("test lock poisoned");
         let idx = sig_index(libc::SIGSEGV).expect("SIGSEGV index");
 
-        REPEAT_FAULT_PC[idx].store(0, Ordering::Relaxed);
-        REPEAT_FAULT_ADDR[idx].store(0, Ordering::Relaxed);
-        REPEAT_FAULT_COUNT[idx].store(0, Ordering::Relaxed);
+        REPEAT_FAULT[idx].reset();
 
         assert!(!app_return_repeated_fault(idx, 0x1234, 0));
         assert!(app_return_repeated_fault(idx, 0x1234, 0));
@@ -884,12 +907,12 @@ mod tests {
             receiver_path: b"/bin/cat",
             ..SignalSafeInitConfig::default()
         };
-        assert!(init(&config));
+        assert_eq!(init_result(&config), InitResult::Enabled);
         assert!(state::INSTALLED.load(Ordering::Acquire));
         assert_eq!(init_result(&config), InitResult::AlreadyInitialized);
         shutdown();
         assert!(!state::INSTALLED.load(Ordering::Acquire));
-        assert!(init(&config));
+        assert_eq!(init_result(&config), InitResult::Enabled);
         assert!(state::INSTALLED.load(Ordering::Acquire));
         shutdown();
         assert!(!state::INSTALLED.load(Ordering::Acquire));

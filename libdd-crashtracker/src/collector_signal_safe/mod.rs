@@ -23,19 +23,18 @@
 //! crash-signal mask in effect; a nested crash on another managed signal is deferred until the
 //! app handler returns.
 
-use crate::protocol;
-
 mod backtrace;
-mod capabilities;
+pub(crate) mod capabilities;
 mod config;
 mod emitter;
 mod fmt;
 mod handler;
 mod policy;
 mod report;
-mod signal_names;
 mod state;
 mod sys;
+
+use crate::shared::signal_names;
 
 #[cfg(test)]
 pub(crate) static TEST_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -46,15 +45,7 @@ pub(crate) use emitter::SliceSink;
 pub(crate) use emitter::{emit_report, Sink};
 #[cfg(test)]
 pub(crate) use fmt::hex_addr;
-pub(crate) use fmt::write_i32;
-pub use handler::{
-    bootstrap_complete, init, init_from_env, init_from_env_result, init_result, shutdown,
-    InitResult,
-};
-pub(crate) use policy::{
-    app_handler_is_real, app_recovered, chain_action, disposition_of, is_genuine_fault,
-    should_run_app_first, ChainAction,
-};
+pub use handler::{bootstrap_complete, init_from_env_result, init_result, shutdown, InitResult};
 pub(crate) use report::{CrashContext, Report, SignalInfo, SECTION_BUF_CAPACITY};
 #[cfg(test)]
 pub(crate) use signal_names::*;
@@ -63,11 +54,11 @@ pub use state::{set_stage, Stage};
 pub use sys::cstr_bytes_bounded;
 
 pub fn capability_bits() -> u32 {
-    capabilities::get()
+    capabilities::get().bits()
 }
 
 pub fn degradation_bits() -> u32 {
-    capabilities::degradations()
+    capabilities::degradations().bits()
 }
 
 pub fn owned_signal_count() -> u32 {
@@ -119,8 +110,8 @@ mod tests {
             platform: "linux",
             stage_name: "application",
             stackwalk_method: "fp_pvr",
-            capability_bits: 0x21,
-            degradation_bits: 0,
+            capabilities: capabilities::Capabilities::from_bits(0x21),
+            degradations: capabilities::Degradations::empty(),
         };
 
         let mut buf = [0u8; 4096];
@@ -156,8 +147,8 @@ mod tests {
             platform: "linux",
             stage_name: "application",
             stackwalk_method: "fp_pvr",
-            capability_bits: 0x21,
-            degradation_bits: 0,
+            capabilities: capabilities::Capabilities::from_bits(0x21),
+            degradations: capabilities::Degradations::empty(),
         };
 
         let mut buf = [0u8; 4096];
@@ -269,8 +260,8 @@ mod tests {
             platform: "linux",
             stage_name: "application",
             stackwalk_method: "fp_pvr",
-            capability_bits: 0x21,
-            degradation_bits: capabilities::DEGRADED_REPORT_TO_FD,
+            capabilities: capabilities::Capabilities::from_bits(0x21),
+            degradations: capabilities::DEGRADED_REPORT_TO_FD,
         };
 
         let mut buf = [0u8; 8192];

@@ -4,14 +4,54 @@
 #[cfg_attr(not(feature = "collector_signal-safe"), allow(dead_code))]
 pub fn rust_signal_name(signal: i32) -> &'static str {
     match signal {
+        libc::SIGHUP => "SIGHUP",
+        libc::SIGINT => "SIGINT",
+        libc::SIGQUIT => "SIGQUIT",
+        libc::SIGILL => "SIGILL",
+        libc::SIGTRAP => "SIGTRAP",
         libc::SIGABRT => "SIGABRT",
         libc::SIGBUS => "SIGBUS",
         libc::SIGFPE => "SIGFPE",
-        libc::SIGILL => "SIGILL",
-        libc::SIGQUIT => "SIGQUIT",
+        libc::SIGKILL => "SIGKILL",
+        libc::SIGUSR1 => "SIGUSR1",
         libc::SIGSEGV => "SIGSEGV",
+        libc::SIGUSR2 => "SIGUSR2",
+        libc::SIGPIPE => "SIGPIPE",
+        libc::SIGALRM => "SIGALRM",
+        libc::SIGTERM => "SIGTERM",
+        libc::SIGCHLD => "SIGCHLD",
+        libc::SIGCONT => "SIGCONT",
+        libc::SIGSTOP => "SIGSTOP",
+        libc::SIGTSTP => "SIGTSTP",
+        libc::SIGTTIN => "SIGTTIN",
+        libc::SIGTTOU => "SIGTTOU",
+        libc::SIGURG => "SIGURG",
+        libc::SIGXCPU => "SIGXCPU",
+        libc::SIGXFSZ => "SIGXFSZ",
+        libc::SIGVTALRM => "SIGVTALRM",
+        libc::SIGPROF => "SIGPROF",
+        libc::SIGWINCH => "SIGWINCH",
+        libc::SIGIO => "SIGIO",
         libc::SIGSYS => "SIGSYS",
-        libc::SIGTRAP => "SIGTRAP",
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "emscripten",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "redox",
+            target_os = "haiku"
+        )))]
+        libc::SIGEMT => "SIGEMT",
+        #[cfg(not(any(
+            target_os = "android",
+            target_os = "emscripten",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "redox",
+            target_os = "haiku",
+            target_os = "aix"
+        )))]
+        libc::SIGINFO => "SIGINFO",
         _ => "UNKNOWN",
     }
 }

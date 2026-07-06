@@ -5,28 +5,84 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use super::sys;
 
-pub const RECEIVER_OK: u32 = 1 << 0;
-pub const PROC_VM_READV: u32 = 1 << 1;
-pub const FORK_OK: u32 = 1 << 2;
-pub const DEV_NULL: u32 = 1 << 3;
-pub const PIPE_OK: u32 = 1 << 4;
-pub const REPORT_FD_OK: u32 = 1 << 5;
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Capabilities(u32);
 
-pub const DEGRADED_MISSING_RECEIVER: u32 = 1 << 0;
-pub const DEGRADED_NO_PROC_VM_READV: u32 = 1 << 1;
-pub const DEGRADED_NO_FORK: u32 = 1 << 2;
-pub const DEGRADED_NO_DEV_NULL: u32 = 1 << 3;
-pub const DEGRADED_NO_PIPE: u32 = 1 << 4;
-pub const DEGRADED_PIPE_FAILED: u32 = 1 << 5;
-pub const DEGRADED_FORK_FAILED: u32 = 1 << 6;
-pub const DEGRADED_RECEIVER_UNAVAILABLE: u32 = 1 << 7;
-pub const DEGRADED_REPORT_TO_FD: u32 = 1 << 8;
-pub const DEGRADED_TRUNCATED: u32 = 1 << 9;
-pub const DEGRADED_METADATA_TRUNCATED: u32 = 1 << 10;
-pub const DEGRADED_APP_HANDLER_PRESENT: u32 = 1 << 11;
-pub const DEGRADED_ALT_STACK_GUARD_UNAVAILABLE: u32 = 1 << 12;
+impl Capabilities {
+    pub const fn empty() -> Self {
+        Self(0)
+    }
 
-pub const DEGRADATION_REASONS: &[(u32, &str)] = &[
+    pub const fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    pub const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 != 0
+    }
+
+    fn insert(&mut self, flag: Self) {
+        self.0 |= flag.0;
+    }
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Degradations(u32);
+
+impl Degradations {
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn from_bits(bits: u32) -> Self {
+        Self(bits)
+    }
+
+    pub const fn bits(self) -> u32 {
+        self.0
+    }
+
+    pub const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 != 0
+    }
+
+    pub const fn with(self, flag: Self) -> Self {
+        Self(self.0 | flag.0)
+    }
+
+    fn insert(&mut self, flag: Self) {
+        self.0 |= flag.0;
+    }
+}
+
+pub const RECEIVER_OK: Capabilities = Capabilities::from_bits(1 << 0);
+pub const PROC_VM_READV: Capabilities = Capabilities::from_bits(1 << 1);
+pub const FORK_OK: Capabilities = Capabilities::from_bits(1 << 2);
+pub const DEV_NULL: Capabilities = Capabilities::from_bits(1 << 3);
+pub const PIPE_OK: Capabilities = Capabilities::from_bits(1 << 4);
+pub const REPORT_FD_OK: Capabilities = Capabilities::from_bits(1 << 5);
+
+pub const DEGRADED_MISSING_RECEIVER: Degradations = Degradations::from_bits(1 << 0);
+pub const DEGRADED_NO_PROC_VM_READV: Degradations = Degradations::from_bits(1 << 1);
+pub const DEGRADED_NO_FORK: Degradations = Degradations::from_bits(1 << 2);
+pub const DEGRADED_NO_DEV_NULL: Degradations = Degradations::from_bits(1 << 3);
+pub const DEGRADED_NO_PIPE: Degradations = Degradations::from_bits(1 << 4);
+pub const DEGRADED_PIPE_FAILED: Degradations = Degradations::from_bits(1 << 5);
+pub const DEGRADED_FORK_FAILED: Degradations = Degradations::from_bits(1 << 6);
+pub const DEGRADED_RECEIVER_UNAVAILABLE: Degradations = Degradations::from_bits(1 << 7);
+pub const DEGRADED_REPORT_TO_FD: Degradations = Degradations::from_bits(1 << 8);
+pub const DEGRADED_TRUNCATED: Degradations = Degradations::from_bits(1 << 9);
+pub const DEGRADED_METADATA_TRUNCATED: Degradations = Degradations::from_bits(1 << 10);
+pub const DEGRADED_APP_HANDLER_PRESENT: Degradations = Degradations::from_bits(1 << 11);
+pub const DEGRADED_ALT_STACK_GUARD_UNAVAILABLE: Degradations = Degradations::from_bits(1 << 12);
+
+pub const DEGRADATION_REASONS: &[(Degradations, &str)] = &[
     (DEGRADED_MISSING_RECEIVER, "missing_receiver"),
     (DEGRADED_NO_PROC_VM_READV, "no_process_vm_readv"),
     (DEGRADED_NO_FORK, "no_fork"),
@@ -49,66 +105,66 @@ static CAPABILITIES: AtomicU32 = AtomicU32::new(0);
 static DEGRADATIONS: AtomicU32 = AtomicU32::new(0);
 
 pub fn publish(receiver_path: &[u8], report_fd: i32, probe_seccomp: bool) {
-    let mut caps = 0u32;
-    let mut degraded = 0u32;
+    let mut caps = Capabilities::empty();
+    let mut degraded = Degradations::empty();
 
     if sys::access_executable(receiver_path.as_ptr()) {
-        caps |= RECEIVER_OK;
+        caps.insert(RECEIVER_OK);
     } else {
-        degraded |= DEGRADED_MISSING_RECEIVER;
+        degraded.insert(DEGRADED_MISSING_RECEIVER);
     }
 
     if probe_process_vm_readv() && (!probe_seccomp || probe_process_vm_readv_in_child()) {
-        caps |= PROC_VM_READV;
+        caps.insert(PROC_VM_READV);
     } else {
-        degraded |= DEGRADED_NO_PROC_VM_READV;
+        degraded.insert(DEGRADED_NO_PROC_VM_READV);
     }
 
     if sys::fork_supported() {
-        caps |= FORK_OK;
+        caps.insert(FORK_OK);
     } else {
-        degraded |= DEGRADED_NO_FORK;
+        degraded.insert(DEGRADED_NO_FORK);
     }
 
     let devnull = sys::open_readwrite(c"/dev/null".as_ptr().cast());
     if devnull >= 0 {
-        caps |= DEV_NULL;
+        caps.insert(DEV_NULL);
         sys::close(devnull);
     } else {
-        degraded |= DEGRADED_NO_DEV_NULL;
+        degraded.insert(DEGRADED_NO_DEV_NULL);
     }
 
     let mut fds = [0i32; 2];
     if sys::pipe(&mut fds) {
-        caps |= PIPE_OK;
+        caps.insert(PIPE_OK);
         sys::close(fds[0]);
         sys::close(fds[1]);
     } else {
-        degraded |= DEGRADED_NO_PIPE;
+        degraded.insert(DEGRADED_NO_PIPE);
     }
 
     if sys::fd_valid(report_fd) {
-        caps |= REPORT_FD_OK;
+        caps.insert(REPORT_FD_OK);
     }
 
-    CAPABILITIES.store(caps, Ordering::Release);
-    DEGRADATIONS.store(degraded, Ordering::Release);
+    CAPABILITIES.store(caps.bits(), Ordering::Release);
+    DEGRADATIONS.store(degraded.bits(), Ordering::Release);
 }
 
-pub fn get() -> u32 {
-    CAPABILITIES.load(Ordering::Acquire)
+pub fn get() -> Capabilities {
+    Capabilities::from_bits(CAPABILITIES.load(Ordering::Acquire))
 }
 
-pub fn has(capability: u32) -> bool {
-    get() & capability != 0
+pub fn has(capability: Capabilities) -> bool {
+    get().contains(capability)
 }
 
-pub fn degradations() -> u32 {
-    DEGRADATIONS.load(Ordering::Acquire)
+pub fn degradations() -> Degradations {
+    Degradations::from_bits(DEGRADATIONS.load(Ordering::Acquire))
 }
 
-pub fn note_degraded(reason: u32) {
-    DEGRADATIONS.fetch_or(reason, Ordering::AcqRel);
+pub fn note_degraded(reason: Degradations) {
+    DEGRADATIONS.fetch_or(reason.bits(), Ordering::AcqRel);
 }
 
 fn probe_process_vm_readv() -> bool {
@@ -149,9 +205,9 @@ mod tests {
 
         publish(b"/definitely/missing-signal-safe-receiver\0", -1, false);
 
-        assert_eq!(get() & RECEIVER_OK, 0);
-        assert_ne!(degradations() & DEGRADED_MISSING_RECEIVER, 0);
-        assert_eq!(get() & REPORT_FD_OK, 0);
+        assert!(!get().contains(RECEIVER_OK));
+        assert!(degradations().contains(DEGRADED_MISSING_RECEIVER));
+        assert!(!get().contains(REPORT_FD_OK));
     }
 
     #[test]
@@ -167,6 +223,6 @@ mod tests {
             false,
         );
 
-        assert_ne!(get() & REPORT_FD_OK, 0);
+        assert!(get().contains(REPORT_FD_OK));
     }
 }

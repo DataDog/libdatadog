@@ -52,6 +52,45 @@ pub enum SignalNames {
     UNKNOWN,
 }
 
+impl SignalNames {
+    pub(crate) fn from_name(name: &str) -> Self {
+        match name {
+            "SIGHUP" => Self::SIGHUP,
+            "SIGINT" => Self::SIGINT,
+            "SIGQUIT" => Self::SIGQUIT,
+            "SIGILL" => Self::SIGILL,
+            "SIGTRAP" => Self::SIGTRAP,
+            "SIGABRT" => Self::SIGABRT,
+            "SIGBUS" => Self::SIGBUS,
+            "SIGFPE" => Self::SIGFPE,
+            "SIGKILL" => Self::SIGKILL,
+            "SIGUSR1" => Self::SIGUSR1,
+            "SIGSEGV" => Self::SIGSEGV,
+            "SIGUSR2" => Self::SIGUSR2,
+            "SIGPIPE" => Self::SIGPIPE,
+            "SIGALRM" => Self::SIGALRM,
+            "SIGTERM" => Self::SIGTERM,
+            "SIGCHLD" => Self::SIGCHLD,
+            "SIGCONT" => Self::SIGCONT,
+            "SIGSTOP" => Self::SIGSTOP,
+            "SIGTSTP" => Self::SIGTSTP,
+            "SIGTTIN" => Self::SIGTTIN,
+            "SIGTTOU" => Self::SIGTTOU,
+            "SIGURG" => Self::SIGURG,
+            "SIGXCPU" => Self::SIGXCPU,
+            "SIGXFSZ" => Self::SIGXFSZ,
+            "SIGVTALRM" => Self::SIGVTALRM,
+            "SIGPROF" => Self::SIGPROF,
+            "SIGWINCH" => Self::SIGWINCH,
+            "SIGIO" => Self::SIGIO,
+            "SIGSYS" => Self::SIGSYS,
+            "SIGEMT" => Self::SIGEMT,
+            "SIGINFO" => Self::SIGINFO,
+            _ => Self::UNKNOWN,
+        }
+    }
+}
+
 #[cfg(unix)]
 pub use unix::*;
 
@@ -61,57 +100,7 @@ mod unix {
 
     impl From<libc::c_int> for SignalNames {
         fn from(value: libc::c_int) -> Self {
-            match value {
-                libc::SIGHUP => SignalNames::SIGHUP,
-                libc::SIGINT => SignalNames::SIGINT,
-                libc::SIGQUIT => SignalNames::SIGQUIT,
-                libc::SIGILL => SignalNames::SIGILL,
-                libc::SIGTRAP => SignalNames::SIGTRAP,
-                libc::SIGABRT => SignalNames::SIGABRT,
-                libc::SIGBUS => SignalNames::SIGBUS,
-                libc::SIGFPE => SignalNames::SIGFPE,
-                libc::SIGKILL => SignalNames::SIGKILL,
-                libc::SIGUSR1 => SignalNames::SIGUSR1,
-                libc::SIGSEGV => SignalNames::SIGSEGV,
-                libc::SIGUSR2 => SignalNames::SIGUSR2,
-                libc::SIGPIPE => SignalNames::SIGPIPE,
-                libc::SIGALRM => SignalNames::SIGALRM,
-                libc::SIGTERM => SignalNames::SIGTERM,
-                libc::SIGCHLD => SignalNames::SIGCHLD,
-                libc::SIGCONT => SignalNames::SIGCONT,
-                libc::SIGSTOP => SignalNames::SIGSTOP,
-                libc::SIGTSTP => SignalNames::SIGTSTP,
-                libc::SIGTTIN => SignalNames::SIGTTIN,
-                libc::SIGTTOU => SignalNames::SIGTTOU,
-                libc::SIGURG => SignalNames::SIGURG,
-                libc::SIGXCPU => SignalNames::SIGXCPU,
-                libc::SIGXFSZ => SignalNames::SIGXFSZ,
-                libc::SIGVTALRM => SignalNames::SIGVTALRM,
-                libc::SIGPROF => SignalNames::SIGPROF,
-                libc::SIGWINCH => SignalNames::SIGWINCH,
-                libc::SIGIO => SignalNames::SIGIO,
-                libc::SIGSYS => SignalNames::SIGSYS,
-                #[cfg(not(any(
-                    target_os = "android",
-                    target_os = "emscripten",
-                    target_os = "fuchsia",
-                    target_os = "linux",
-                    target_os = "redox",
-                    target_os = "haiku"
-                )))]
-                libc::SIGEMT => SignalNames::SIGEMT,
-                #[cfg(not(any(
-                    target_os = "android",
-                    target_os = "emscripten",
-                    target_os = "fuchsia",
-                    target_os = "linux",
-                    target_os = "redox",
-                    target_os = "haiku",
-                    target_os = "aix"
-                )))]
-                libc::SIGINFO => SignalNames::SIGINFO,
-                _ => SignalNames::UNKNOWN,
-            }
+            SignalNames::from_name(crate::shared::signal_names::rust_signal_name(value))
         }
     }
 

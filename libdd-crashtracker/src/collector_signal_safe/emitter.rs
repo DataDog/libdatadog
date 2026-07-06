@@ -4,17 +4,24 @@
 use heapless::String as HeaplessString;
 use serde::Serialize;
 
+use super::capabilities::{Capabilities, Degradations};
 use super::fmt::hex_u32;
-use super::fmt::write_i32;
+use super::fmt::{write_i32, I32_BUF_CAPACITY};
 use super::report::{
     CrashContext, Frame, Metadata, ProcInfo, Report, Tag, Tags, MESSAGE_CAPACITY,
     SECTION_BUF_CAPACITY,
 };
-use super::{capabilities, config, protocol, state};
+use super::{capabilities, config, state};
+use crate::protocol;
+use crate::shared::tag_keys;
 
-pub trait Sink {
-    fn put(&mut self, bytes: &[u8]) -> bool;
+pub trait Sink: protocol::ByteSink<Error = ()> {
+    fn put(&mut self, bytes: &[u8]) -> bool {
+        self.write_bytes(bytes).is_ok()
+    }
 }
+
+impl<T: protocol::ByteSink<Error = ()>> Sink for T {}
 
 #[cfg(test)]
 pub struct SliceSink<'a> {
@@ -34,17 +41,19 @@ impl<'a> SliceSink<'a> {
 }
 
 #[cfg(test)]
-impl Sink for SliceSink<'_> {
-    fn put(&mut self, bytes: &[u8]) -> bool {
+impl protocol::ByteSink for SliceSink<'_> {
+    type Error = ();
+
+    fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
         let Some(end) = self.len.checked_add(bytes.len()) else {
-            return false;
+            return Err(());
         };
         if end > self.buf.len() {
-            return false;
+            return Err(());
         }
         self.buf[self.len..end].copy_from_slice(bytes);
         self.len = end;
-        true
+        Ok(())
     }
 }
 
@@ -80,8 +89,8 @@ fn emit_report_sections(
         sink,
         report.stage_name,
         report.stackwalk_method,
-        report.capability_bits,
-        report.degradation_bits,
+        report.capabilities,
+        report.degradations,
     ) {
         return false;
     }
@@ -117,22 +126,29 @@ pub fn emit_json_section<T: Serialize>(
     end: &str,
 ) -> bool {
     let mut buf = [0u8; SECTION_BUF_CAPACITY];
-    match serde_json_core::to_slice(value, &mut buf) {
-        Ok(len) => {
-            put_marker_line(sink, begin)
-                && sink.put(&buf[..len])
-                && sink.put(b"\n")
-                && put_marker_line(sink, end)
-        }
-        Err(_) => false,
-    }
+    protocol::section::<_, ()>(sink, begin, end, |sink| {
+        let len = serde_json_core::to_slice(value, &mut buf).map_err(|_| ())?;
+        sink.write_bytes(&buf[..len])?;
+        sink.write_bytes(b"\n")
+    })
+    .is_ok()
 }
 
 fn emit_config(sink: &mut impl Sink, config_json: &str) -> bool {
-    put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_CONFIG)
-        && sink.put(config_json.as_bytes())
-        && (config_json.ends_with('\n') || sink.put(b"\n"))
-        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_CONFIG)
+    protocol::section::<_, ()>(
+        sink,
+        protocol::DD_CRASHTRACK_BEGIN_CONFIG,
+        protocol::DD_CRASHTRACK_END_CONFIG,
+        |sink| {
+            sink.write_bytes(config_json.as_bytes())?;
+            if config_json.ends_with('\n') {
+                Ok(())
+            } else {
+                sink.write_bytes(b"\n")
+            }
+        },
+    )
+    .is_ok()
 }
 
 fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
@@ -143,28 +159,28 @@ fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
     };
 
     let mut metadata = Metadata::new(report.library_name, report.library_version, report.family);
-    push_tag(&mut metadata.tags, "language", "native")
-        && push_tag(&mut metadata.tags, "runtime", "native")
-        && push_tag(&mut metadata.tags, "is_crash", "true")
-        && push_tag(&mut metadata.tags, "severity", "crash")
-        && push_tag(&mut metadata.tags, "service", service)
-        && push_tag(&mut metadata.tags, "env", report.env)
-        && push_tag(&mut metadata.tags, "version", report.app_version)
-        && push_tag(&mut metadata.tags, "runtime_id", report.runtime_id)
+    push_tag(&mut metadata.tags, tag_keys::LANGUAGE, "native")
+        && push_tag(&mut metadata.tags, tag_keys::RUNTIME, "native")
+        && push_tag(&mut metadata.tags, tag_keys::IS_CRASH, "true")
+        && push_tag(&mut metadata.tags, tag_keys::SEVERITY, "crash")
+        && push_tag(&mut metadata.tags, tag_keys::SERVICE, service)
+        && push_tag(&mut metadata.tags, tag_keys::ENV, report.env)
+        && push_tag(&mut metadata.tags, tag_keys::VERSION, report.app_version)
+        && push_tag(&mut metadata.tags, tag_keys::RUNTIME_ID, report.runtime_id)
         && push_tag(
             &mut metadata.tags,
-            "runtime_version",
+            tag_keys::RUNTIME_VERSION,
             report.library_version,
         )
         && push_tag(
             &mut metadata.tags,
-            "library_version",
+            tag_keys::LIBRARY_VERSION,
             report.library_version,
         )
-        && push_tag(&mut metadata.tags, "platform", report.platform)
+        && push_tag(&mut metadata.tags, tag_keys::PLATFORM, report.platform)
         && push_tag(
             &mut metadata.tags,
-            "injector_version",
+            tag_keys::INJECTOR_VERSION,
             report.library_version,
         )
         && emit_json_section(
@@ -179,30 +195,31 @@ fn emit_additional_tags(
     sink: &mut impl Sink,
     stage: &str,
     stackwalk_method: &str,
-    capability_bits: u32,
-    degradation_bits: u32,
+    capability_bits: Capabilities,
+    degradation_bits: Degradations,
 ) -> bool {
     let mut tags = Tags::new();
-    if !push_tag(&mut tags, "stage", stage) {
+    if !push_tag(&mut tags, tag_keys::STAGE, stage) {
         return false;
     }
-    if !push_tag(&mut tags, "stackwalk_method", stackwalk_method) {
+    if !push_tag(&mut tags, tag_keys::STACKWALK_METHOD, stackwalk_method) {
         return false;
     }
-    let capabilities = hex_u32(capability_bits);
-    if !push_tag(&mut tags, "capabilities", capabilities.as_str()) {
+    let capabilities = hex_u32(capability_bits.bits());
+    if !push_tag(&mut tags, tag_keys::CAPABILITIES, capabilities.as_str()) {
         return false;
     }
-    let degradations = hex_u32(degradation_bits);
-    if !push_tag(&mut tags, "degradations", degradations.as_str()) {
+    let degradations = hex_u32(degradation_bits.bits());
+    if !push_tag(&mut tags, tag_keys::DEGRADATIONS, degradations.as_str()) {
         return false;
     }
     for &(bit, reason) in capabilities::DEGRADATION_REASONS {
-        if degradation_bits & bit != 0 && !push_tag(&mut tags, "report_degraded", reason) {
+        if degradation_bits.contains(bit) && !push_tag(&mut tags, tag_keys::REPORT_DEGRADED, reason)
+        {
             return false;
         }
     }
-    if degradation_bits & capabilities::DEGRADED_APP_HANDLER_PRESENT != 0
+    if degradation_bits.contains(capabilities::DEGRADED_APP_HANDLER_PRESENT)
         && !push_app_handler_present_tags(&mut tags)
     {
         return false;
@@ -224,7 +241,7 @@ fn push_app_handler_present_tags(tags: &mut Tags) -> bool {
         if value.push_str("app_handler_present:").is_err() {
             return false;
         }
-        let mut buf = [0u8; 12];
+        let mut buf = [0u8; I32_BUF_CAPACITY];
         let written = write_i32(sig, &mut buf);
         let Ok(sig) = core::str::from_utf8(&buf[..written]) else {
             return false;
@@ -232,7 +249,7 @@ fn push_app_handler_present_tags(tags: &mut Tags) -> bool {
         if value.push_str(sig).is_err() {
             return false;
         }
-        if !push_tag(tags, "report_degraded", value.as_str()) {
+        if !push_tag(tags, tag_keys::REPORT_DEGRADED, value.as_str()) {
             return false;
         }
     }
@@ -240,32 +257,36 @@ fn push_app_handler_present_tags(tags: &mut Tags) -> bool {
 }
 
 fn emit_kind(sink: &mut impl Sink) -> bool {
-    put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_KIND)
-        && sink.put(b"\"UnixSignal\"\n")
-        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_KIND)
+    protocol::section::<_, ()>(
+        sink,
+        protocol::DD_CRASHTRACK_BEGIN_KIND,
+        protocol::DD_CRASHTRACK_END_KIND,
+        |sink| sink.write_bytes(b"\"UnixSignal\"\n"),
+    )
+    .is_ok()
 }
 
 fn emit_stacktrace(sink: &mut impl Sink, frames: &[usize]) -> bool {
-    if !put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_STACKTRACE) {
-        return false;
-    }
+    protocol::section::<_, ()>(
+        sink,
+        protocol::DD_CRASHTRACK_BEGIN_STACKTRACE,
+        protocol::DD_CRASHTRACK_END_STACKTRACE,
+        |sink| {
+            let mut buf = [0u8; SECTION_BUF_CAPACITY];
+            for ip in frames {
+                if *ip == 0 {
+                    continue;
+                }
 
-    let mut buf = [0u8; SECTION_BUF_CAPACITY];
-    for ip in frames {
-        if *ip == 0 {
-            continue;
-        }
-
-        let frame = Frame::from_ip(*ip);
-        let Ok(len) = serde_json_core::to_slice(&frame, &mut buf) else {
-            return false;
-        };
-        if !(sink.put(&buf[..len]) && sink.put(b"\n")) {
-            return false;
-        }
-    }
-
-    put_marker_line(sink, protocol::DD_CRASHTRACK_END_STACKTRACE)
+                let frame = Frame::from_ip(*ip);
+                let len = serde_json_core::to_slice(&frame, &mut buf).map_err(|_| ())?;
+                sink.write_bytes(&buf[..len])?;
+                sink.write_bytes(b"\n")?;
+            }
+            Ok::<(), ()>(())
+        },
+    )
+    .is_ok()
 }
 
 fn emit_message(
@@ -279,10 +300,16 @@ fn emit_message(
         && message.push_str(" (").is_ok()
         && message.push_str(signal.si_signo_human_readable).is_ok()
         && message.push(')').is_ok()
-        && put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_MESSAGE)
-        && sink.put(message.as_bytes())
-        && sink.put(b"\n")
-        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_MESSAGE)
+        && protocol::section::<_, ()>(
+            sink,
+            protocol::DD_CRASHTRACK_BEGIN_MESSAGE,
+            protocol::DD_CRASHTRACK_END_MESSAGE,
+            |sink| {
+                sink.write_bytes(message.as_bytes())?;
+                sink.write_bytes(b"\n")
+            },
+        )
+        .is_ok()
 }
 
 fn emit_truncated_tail(
@@ -295,14 +322,14 @@ fn emit_truncated_tail(
         sink,
         report.stage_name,
         report.stackwalk_method,
-        report.capability_bits,
-        report.degradation_bits | capabilities::DEGRADED_TRUNCATED,
+        report.capabilities,
+        report.degradations.with(capabilities::DEGRADED_TRUNCATED),
     );
     emit_message(sink, report.stage_name, &context.signal) && emit_done(sink)
 }
 
 fn put_marker_line(sink: &mut impl Sink, marker: &str) -> bool {
-    sink.put(marker.as_bytes()) && sink.put(b"\n")
+    protocol::marker_line::<_, ()>(sink, marker).is_ok()
 }
 
 fn emit_done(sink: &mut impl Sink) -> bool {

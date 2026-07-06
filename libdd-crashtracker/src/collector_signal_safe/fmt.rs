@@ -5,11 +5,14 @@ use heapless::String as HeaplessString;
 
 use super::report::FRAME_IP_CAPACITY;
 
+pub const HEX_U32_CAPACITY: usize = 10;
+pub const I32_BUF_CAPACITY: usize = 12;
+
 pub fn hex_addr(value: usize) -> HeaplessString<FRAME_IP_CAPACITY> {
     hex(value as u64, core::mem::size_of::<usize>() * 2)
 }
 
-pub fn hex_u32(value: u32) -> HeaplessString<10> {
+pub fn hex_u32(value: u32) -> HeaplessString<HEX_U32_CAPACITY> {
     hex(value as u64, 8)
 }
 
@@ -30,7 +33,7 @@ fn hex<const N: usize>(value: u64, digits: usize) -> HeaplessString<N> {
     out
 }
 
-pub fn write_i32(value: i32, out: &mut [u8; 12]) -> usize {
+pub fn write_i32(value: i32, out: &mut [u8; I32_BUF_CAPACITY]) -> usize {
     let mut n = value as i64;
     let negative = n < 0;
     if negative {
@@ -95,7 +98,7 @@ mod tests {
 
     #[test]
     fn integer_debug_writer_handles_sign() {
-        let mut buf = [0u8; 12];
+        let mut buf = [0u8; I32_BUF_CAPACITY];
         let n = write_i32(-123, &mut buf);
         assert_eq!(&buf[..n], b"-123");
         let n = write_i32(42, &mut buf);
