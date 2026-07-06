@@ -147,19 +147,18 @@ pub mod linux {
         // WARNING: do not change the assembly below. See the warning above for amd64, and
         // https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst#general-dynamic.
         core::arch::asm!(
-            "mrs   x2, tpidr_el0",
             "adrp  x0, :tlsdesc:otel_thread_ctx_v1",
             "ldr   x1, [x0, :tlsdesc_lo12:otel_thread_ctx_v1]",
             "add   x0, x0, :tlsdesc_lo12:otel_thread_ctx_v1",
             ".tlsdesccall otel_thread_ctx_v1",
-            // x2 is guaranteed not to be clobbered by the call
             "blr   x1",
-            "add   x0, x2, x0",
-            // .tlsdesccall is not clobbering other registers than `x0`, `x1` and `x30`, which are
-            // already declared as out/clobbered.
+            // Read the thread pointer after the TLSDESC call, mirroring the sequence GCC/Clang
+            // emit. We reuse x1 to avoid register pressure on the surrounding Rust code. It's dead once
+            // the call returns anyway and we already clobbered it at this point.
+            "mrs   x1, tpidr_el0",
+            "add   x0, x1, x0",
             out("x0") ptr,
             out("x1") _,
-            out("x2") _,
             out("x30") _,
         );
         ptr as *mut *mut ThreadContextRecord
