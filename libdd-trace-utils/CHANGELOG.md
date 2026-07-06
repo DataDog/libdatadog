@@ -2,6 +2,37 @@
 
 
 
+## [9.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v8.0.0..libdd-trace-utils-v9.0.0) - 2026-07-06
+
+### Added
+
+- Add agentless export ([#2081](https://github.com/datadog/libdatadog/issues/2081)) - ([48b8243](https://github.com/datadog/libdatadog/commit/48b8243418426ed881173fa184a619962d7aa69f))
+- Add stdout log trace exporter ([#2074](https://github.com/datadog/libdatadog/issues/2074)) - ([c2751ef](https://github.com/datadog/libdatadog/commit/c2751eff7036159127ec52c69130eebf7d9a5a97))
+- OTLP HTTP/protobuf trace export ([#2115](https://github.com/datadog/libdatadog/issues/2115)) - ([4e8e6cc](https://github.com/datadog/libdatadog/commit/4e8e6cc8c0fe083089cc8e57f0fd26667f29941c))
+- Export client-computed span stats as OTLP trace metrics ([#2067](https://github.com/datadog/libdatadog/issues/2067)) - ([cc2d696](https://github.com/datadog/libdatadog/commit/cc2d6963073a6f5f37c31c4429b805760e836906))
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+- Change buffer foundation ([#2046](https://github.com/datadog/libdatadog/issues/2046)) - ([693406c](https://github.com/datadog/libdatadog/commit/693406cc108379b3923751f9c3c0267a24f00845))
+- Export OTLP spans with attribute-level OTel compatibility ([#2091](https://github.com/datadog/libdatadog/issues/2091)) - ([c690b5e](https://github.com/datadog/libdatadog/commit/c690b5e43ccdf5ff84566db4447d416ac8c48ea8))
+- Add v1 span and its encoder ([#2039](https://github.com/datadog/libdatadog/issues/2039)) - ([c7fbf3a](https://github.com/datadog/libdatadog/commit/c7fbf3aa843d3256d353e7aeec13dfb0a8c1f120))
+- Change buffer implementation ([#2055](https://github.com/datadog/libdatadog/issues/2055)) - ([a21b946](https://github.com/datadog/libdatadog/commit/a21b946af7163968906f2730e93e6f56b9051257))
+
+### Changed
+
+- Replace slot index with span_id, fix segment isolation ([#2105](https://github.com/datadog/libdatadog/issues/2105)) - ([5bbf425](https://github.com/datadog/libdatadog/commit/5bbf425da51d69adf655ab5042a68bcedac8d047))
+- Skip slow miri tests ([#2188](https://github.com/datadog/libdatadog/issues/2188)) - ([4b66bd6](https://github.com/datadog/libdatadog/commit/4b66bd62c4d39184c68a58d576d7955f1fb51aaa))
+- Use VecMap for `meta`, `metrics` and `meta_struct` for v04 spans ([#2043](https://github.com/datadog/libdatadog/issues/2043)) - ([74284ca](https://github.com/datadog/libdatadog/commit/74284cac76e9e6f8e4085b0029c851ec8d47b2f4))
+- Submit p0 telemetry in stats ([#2130](https://github.com/datadog/libdatadog/issues/2130)) - ([54bd386](https://github.com/datadog/libdatadog/commit/54bd38625350d27000653278cb2dd835005157da))
+- Add V05 msgpack decode microbenchmark ([#2127](https://github.com/datadog/libdatadog/issues/2127)) - ([ade9d96](https://github.com/datadog/libdatadog/commit/ade9d96eb908b1bcfa224263efb695964130101c))
+- Add VecMap microbenchmarks ([#2126](https://github.com/datadog/libdatadog/issues/2126)) - ([cd90e50](https://github.com/datadog/libdatadog/commit/cd90e50a5b067cf77a3e06641d838bc4c6b62aba))
+- Update protobufs to be in sync with datadog-agent ([#2180](https://github.com/datadog/libdatadog/issues/2180)) - ([b02d454](https://github.com/datadog/libdatadog/commit/b02d454576034ea56becbd61411ff2f831a89562))
+- Fix timeouts on heavily contended scenarios ([#2093](https://github.com/datadog/libdatadog/issues/2093)) - ([e780619](https://github.com/datadog/libdatadog/commit/e780619d5e0626a8cc161c4cb848057fbbe13533))
+
+### Fixed
+
+- Mark decoded span maps as deduped ([#2110](https://github.com/datadog/libdatadog/issues/2110)) - ([8907887](https://github.com/datadog/libdatadog/commit/8907887c56605bee49b2ee06040bda1aea99ec47))
+
+
+
 ## [8.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-utils-v7.0.0..libdd-trace-utils-v8.0.0) - 2026-06-08
 
 ### Changed
