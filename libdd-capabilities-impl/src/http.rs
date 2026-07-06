@@ -29,9 +29,7 @@ mod native {
     }
 
     /// Write `body` as a newline-terminated record to the file referenced by `uri` (which must
-    /// have a `file://` scheme), then return a synthetic 202 response. The same on-disk format
-    /// the pre-capability telemetry worker used when configured with a `file://` endpoint, so
-    /// downstream tests that diff against the recorded payload bytes keep working.
+    /// have a `file://` scheme), then return a synthetic 202 response.
     fn write_to_file_endpoint(
         uri: &http::Uri,
         body: bytes::Bytes,
