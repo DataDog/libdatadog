@@ -165,7 +165,7 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     /// backend only re-sends config top-targets when their version changes; on a
     /// config root rotation rust-tuf purges its trusted top-targets and must
     /// re-fetch them from the remote repo, so we cache and re-serve the last copy
-    /// to avoid wedging (incident-45734).
+    /// to avoid being stuck (incident-45734).
     last_config_top_targets: Option<remoteconfig::TopMeta>,
     hostname: String,
     agent_uuid_override: Option<String>,
@@ -577,7 +577,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         // rust-tuf purges its trusted top-targets whenever the
         // config root rotates and then re-fetches them from the remote repo; if
         // we wipe the remote repo (below) and the backend sent none, that
-        // re-fetch finds nothing and `update()` wedges (incident-45734). Re-serve
+        // re-fetch finds nothing and `update()` is stuck (incident-45734). Re-serve
         // the last cached copy when the response omits them.
         let config_top_targets = if metas.top_targets.is_some() {
             &metas.top_targets
@@ -931,6 +931,15 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
     }
     if !pattern.contains('*') {
         return pattern == segment;
+    }
+
+    let wildcard_count = pattern.as_bytes().iter().filter(|c| **c == b'*').count();
+    if wildcard_count == 1 {
+        let Some((start, end)) = pattern.split_once('*') else {
+            // unreachable in practice, if wildcard_count == 1 then we always have two parts in the pattern
+            return false;
+        };
+        return segment.starts_with(start) && segment.ends_with(end);
     }
 
     // General case: literals split by `*`, anchored at both ends.
@@ -1432,7 +1441,9 @@ mod tests {
         assert!(super::segment_matches("foo*bar", "foo123bar"));
         assert!(super::segment_matches("foo*", "foobar"));
         assert!(super::segment_matches("*bar", "foobar"));
+        assert!(super::segment_matches("ba*bar k*g of the *elepha*ts*", "babar king of the elephants"));
         assert!(!super::segment_matches("foo*bar", "fobar"));
+        assert!(!super::segment_matches(" *foobar**", "fobar"));
         // `*` does not cross `/`.
         assert!(!m("foo/bar", "foo*bar"));
     }
@@ -1450,4 +1461,4 @@ mod tests {
 }
 
 #[cfg(test)]
-mod recovery_tests;
+mod integration_tests;

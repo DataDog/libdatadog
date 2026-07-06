@@ -1,11 +1,12 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Regression tests for libdd #17: reset TUF clients on error and don't wipe
-//! config top-targets on a root rotation. Mirrors the datadog-agent uptane
+//! Mirrors the datadog-agent uptane
 //! `client_test.go` harness (generate signed config + director repos, feed a
 //! `LatestConfigsResponse` to the client), but drives libdatadog's
 //! `fetch_config`/`apply` path through a mock HTTP capability.
+//! 
+//! Test root rotation, and different input shapes
 #![allow(clippy::unwrap_used)]
 
 use super::*;
@@ -142,7 +143,7 @@ async fn build_v1(key: &Ed25519PrivateKey) -> RawSignedMetadataSet<Json> {
 
 /// Rotate only the root (v1 -> v2), keeping the same keys. rust-tuf's
 /// `update_root` purges all non-root trusted metadata on this bump, which is
-/// what triggers the top-targets re-fetch the wedge test exercises.
+/// what triggers the top-targets re-fetch the stuck test exercises.
 async fn rotate_root(
     key: &Ed25519PrivateKey,
     prev: &RawSignedMetadataSet<Json>,
@@ -268,7 +269,7 @@ fn config_snapshot_version(f: &AgentlessFetcher<MockHttp>) -> Option<u32> {
 
 /// incident-45734: a config **root rotation** where the backend omits the
 /// (unchanged) top-targets must still converge. Before the fix the wipe drops
-/// the top-targets and `update()` wedges; the cache re-serves them.
+/// the top-targets and `update()` is stuck; the cache re-serves them.
 #[tokio::test]
 async fn root_rotation_without_top_targets_still_converges() {
     let config_key = new_key();
@@ -339,7 +340,7 @@ async fn root_rotation_without_top_targets_still_converges() {
 /// D-F1: an `apply()` that fails *after* advancing the config trusted DB must
 /// leave the fetcher recoverable. The reset rebuilds the clients from the
 /// pinned roots, so the next poll reports the clean (embedded) versions and
-/// converges — no wedge from a partially-advanced trusted DB.
+/// converges — no stuck from a partially-advanced trusted DB.
 #[tokio::test]
 async fn apply_error_resets_and_recovers() {
     let config_key = new_key();
@@ -518,7 +519,7 @@ async fn build_director_with_targets(
 /// consults it to drop unparseable/unknown-product targets before they reach
 /// `active_targets`, so `collect_handles` never sees a path it can't serve.
 #[tokio::test]
-async fn unknown_product_target_does_not_wedge_known_targets() {
+async fn unknown_product_target_is_not_stuck_known_targets() {
     let config_key = new_key();
     let product_key = new_key();
     let director_key = new_key();
@@ -565,7 +566,7 @@ async fn unknown_product_target_does_not_wedge_known_targets() {
     let res = f
         .fetch_config(dummy_client(), &cache)
         .await
-        .expect("a config-authorized unknown-product target must not wedge the fetch");
+        .expect("a config-authorized unknown-product target must not stuck the fetch");
 
     // The cache knows it cannot serve the unknown-product path.
     assert!(cache.is_parseable_path(known_path));
@@ -580,10 +581,10 @@ async fn unknown_product_target_does_not_wedge_known_targets() {
         "only the known-product target should be active"
     );
 
-    // The active batch is fully servable: `collect_handles` succeeds (no wedge).
+    // The active batch is fully servable: `collect_handles` succeeds (no stuck).
     let handles = cache
         .collect_handles(&res.targets)
-        .expect("active batch must not wedge collect_handles");
+        .expect("active batch must not stuck collect_handles");
     assert_eq!(handles.len(), 1, "only the known target should be served");
 }
 
