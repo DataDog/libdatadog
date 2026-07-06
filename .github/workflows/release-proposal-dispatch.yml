@@ -985,16 +985,38 @@ jobs:
           if [ "${#PR_TITLE}" -gt 100 ]; then
             PR_TITLE="${PR_TITLE:0:97}..."
           fi
-          gh pr create \
-            --head "$BRANCH_NAME" \
-            --title "$PR_TITLE" \
-            --body-file /tmp/pr-body.md \
-            --label "release-proposal" \
-            --label "skip-metadata-check" \
-            --label "skip-changelog-check" \
-            --label "skip-pr-title-semver-check" \
-            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
-            --draft
+          
+          if gh pr create \
+              --head "$BRANCH_NAME" \
+              --title "$PR_TITLE" \
+              --body-file /tmp/pr-body.md \
+              --label "release-proposal" \
+              --label "skip-metadata-check" \
+              --label "skip-changelog-check" \
+              --label "skip-pr-title-semver-check" \
+              --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
+              --draft; then
+            echo "Pull request created."
+          else
+            COMPARE_URL="${{ github.server_url }}/${{ github.repository }}/compare/${{ needs.cargo-release.outputs.ephemeral_branch }}...${BRANCH_NAME}?expand=1"
+            echo "::warning::Automatic PR creation failed; open the PR manually: $COMPARE_URL"
+            {
+              echo "## Release proposal branch pushed"
+              echo ""
+              echo "Automatic PR creation failed (the token may not be permitted to create PRs). Open it manually:"
+              echo ""
+              echo "- **Head:** \`$BRANCH_NAME\`"
+              echo "- **Base:** \`${{ needs.cargo-release.outputs.ephemeral_branch }}\`"
+              echo "- **Suggested title:** \`$PR_TITLE\`"
+              echo "- [Open the PR creation form]($COMPARE_URL)"
+              echo ""
+              echo "<details><summary>Suggested PR body</summary>"
+              echo ""
+              cat /tmp/pr-body.md
+              echo ""
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Cleanup on failure
         if: failure() && (needs.cargo-release.outputs.branch_name != '' || needs.cargo-release.outputs.ephemeral_branch != '')
