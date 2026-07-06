@@ -254,11 +254,11 @@ fn dummy_client() -> remoteconfig::Client {
     }
 }
 
-fn config_root_version(f: &AgentlessFetcher<MockHttp>) -> u32 {
+fn config_root_version(f: &AgentlessFetcher<MockHttp>) -> u64 {
     f.config_client.database().trusted_root().version()
 }
 
-fn config_snapshot_version(f: &AgentlessFetcher<MockHttp>) -> Option<u32> {
+fn config_snapshot_version(f: &AgentlessFetcher<MockHttp>) -> Option<u64> {
     f.config_client
         .database()
         .trusted_snapshot()

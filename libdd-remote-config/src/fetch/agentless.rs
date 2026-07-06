@@ -396,11 +396,10 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             .config_client
             .database()
             .trusted_snapshot()
-            .map_or(0, |s| u64::from(s.version()));
-        let current_config_root_version =
-            u64::from(self.config_client.database().trusted_root().version());
+            .map_or(0, |s| s.version());
+        let current_config_root_version = self.config_client.database().trusted_root().version();
         let current_director_root_version =
-            u64::from(self.director_client.database().trusted_root().version());
+            self.director_client.database().trusted_root().version();
 
         let all_products = c.products.iter().fold(HashSet::new(), |mut acc, p| {
             acc.get_or_insert_with(p, String::clone);
@@ -478,14 +477,13 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         // which we currently do not parse.
 
         Ok(ClientResponse {
-            root_version: u64::from(self.config_client.database().trusted_root().version()),
-            target_version: u64::from(
-                self.config_client
-                    .database()
-                    .trusted_targets()
-                    .ok_or(anyhow::anyhow!("Missing target data"))?
-                    .version(),
-            ),
+            root_version: self.config_client.database().trusted_root().version(),
+            target_version: self
+                .config_client
+                .database()
+                .trusted_targets()
+                .ok_or(anyhow::anyhow!("Missing target data"))?
+                .version(),
             opaque_backend_state: self.opaque_backend_state.clone(),
             targets: active_targets,
             refresh_interval: self.refresh_interval,
@@ -989,20 +987,9 @@ where
     T: IntoIterator<Item = &'a remoteconfig::TopMeta> + 'a,
 {
     for tm in tms {
-        // TODO(RC): rust-tuf represents all metadata versions as `u32`, so we
-        // cannot faithfully store versions above `u32::MAX`. It is crucial to
-        // modify rust-tuf to accept `u64` versions before shipping; until then we
-        // error explicitly instead of silently truncating the high 32 bits.
-        let version = u32::try_from(tm.version).map_err(|_| {
-            format_err!(
-                "metadata version {} exceeds u32::MAX; rust-tuf must be updated to \
-                 support u64 versions",
-                tm.version
-            )
-        })?;
         repo.store_metadata(
             path,
-            MetadataVersion::Number(version),
+            MetadataVersion::Number(tm.version),
             &mut tm.raw.as_slice(),
         )
         .await?;
@@ -1442,7 +1429,10 @@ mod tests {
         assert!(super::segment_matches("foo*bar", "foo123bar"));
         assert!(super::segment_matches("foo*", "foobar"));
         assert!(super::segment_matches("*bar", "foobar"));
-        assert!(super::segment_matches("ba*bar k*g of the *elepha*ts*", "babar king of the elephants"));
+        assert!(super::segment_matches(
+            "ba*bar k*g of the *elepha*ts*",
+            "babar king of the elephants"
+        ));
         assert!(!super::segment_matches("foo*bar", "fobar"));
         assert!(!super::segment_matches(" *foobar**", "fobar"));
         // `*` does not cross `/`.

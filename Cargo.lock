@@ -6260,7 +6260,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 [[package]]
 name = "tuf"
 version = "0.3.0-beta10"
-source = "git+https://github.com/DataDog/rust-tuf/?tag=0.3.0-beta10-opw-3#9e8d6077b0e67f13233ad0a347bb7d640705da04"
+source = "git+https://github.com/DataDog/rust-tuf/?rev=42fc5b6ac1fe13a997b0e4d0235f0964c18da3fa#42fc5b6ac1fe13a997b0e4d0235f0964c18da3fa"
 dependencies = [
  "chrono",
  "data-encoding",
