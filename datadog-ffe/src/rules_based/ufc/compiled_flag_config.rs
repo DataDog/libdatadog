@@ -51,6 +51,7 @@ pub(crate) struct Allocation {
 #[derive(Debug)]
 pub(crate) struct Split {
     pub shards: Vec<Shard>,
+    pub has_shards: bool,
     pub variation_key: Str,
     pub value: AssignmentValue,
     pub serial_id: Option<i32>,
@@ -85,8 +86,9 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
                 (
                     key,
                     Option::from(flag)
-                        .ok_or(EvaluationError::ConfigurationParseError)
-                        .and_then(compile_flag),
+                        .ok_or(EvaluationError::FlagConfigurationInvalid)
+                        .and_then(compile_flag)
+                        .map_err(per_flag_config_error),
                 )
             })
             .collect();
@@ -96,6 +98,13 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
             environment: config.environment,
             flags,
         }
+    }
+}
+
+fn per_flag_config_error(err: EvaluationError) -> EvaluationError {
+    match err {
+        EvaluationError::ConfigurationParseError => EvaluationError::FlagConfigurationInvalid,
+        err => err,
     }
 }
 
@@ -150,6 +159,7 @@ fn compile_split(
     split: SplitWire,
     variation_values: &HashMap<Str, AssignmentValue>,
 ) -> Result<Split, EvaluationError> {
+    let has_shards = !split.shards.is_empty();
     let shards = split
         .shards
         .into_iter()
@@ -167,6 +177,7 @@ fn compile_split(
 
     Ok(Split {
         shards,
+        has_shards,
         variation_key: split.variation_key,
         value: result,
         serial_id: split.serial_id,

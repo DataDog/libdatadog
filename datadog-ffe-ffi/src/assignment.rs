@@ -370,6 +370,7 @@ impl From<&ResolutionDetails> for Reason {
             Ok(assignment) => assignment.reason.into(),
             Err(EvaluationError::FlagDisabled) => Reason::Disabled,
             Err(EvaluationError::DefaultAllocationNull) => Reason::Default,
+            Err(EvaluationError::FlagConfigurationInvalid) => Reason::Default,
             Err(_) => Reason::Error,
         }
     }
@@ -379,6 +380,7 @@ impl From<AssignmentReason> for Reason {
         match value {
             AssignmentReason::TargetingMatch => Reason::TargetingMatch,
             AssignmentReason::Split => Reason::Split,
+            AssignmentReason::Default => Reason::Default,
             AssignmentReason::Static => Reason::Static,
         }
     }
@@ -407,6 +409,7 @@ impl From<&EvaluationError> for ErrorCode {
             EvaluationError::TypeMismatch { .. } => ErrorCode::TypeMismatch,
             EvaluationError::TargetingKeyMissing => ErrorCode::TargetingKeyMissing,
             EvaluationError::ConfigurationParseError => ErrorCode::ParseError,
+            EvaluationError::FlagConfigurationInvalid => ErrorCode::Ok,
             EvaluationError::ConfigurationMissing => ErrorCode::ProviderNotReady,
             EvaluationError::FlagUnrecognizedOrDisabled => ErrorCode::FlagNotFound,
             EvaluationError::FlagDisabled => ErrorCode::Ok,

@@ -10,6 +10,7 @@
 pub mod example_interface;
 pub mod handles;
 
+pub mod one_way_shared_memory;
 pub mod platform;
 pub mod rate_limiter;
 pub mod shm_stats;

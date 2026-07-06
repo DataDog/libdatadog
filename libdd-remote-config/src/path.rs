@@ -13,7 +13,18 @@ pub enum RemoteConfigSource {
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    Eq,
+    Hash,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+)]
 pub enum RemoteConfigProduct {
     AgentConfig,
     AgentTask,
@@ -24,6 +35,7 @@ pub enum RemoteConfigProduct {
     AsmFeatures,
     FfeFlags,
     LiveDebugger,
+    LiveDebuggerSymbolDb,
 }
 
 impl Display for RemoteConfigProduct {
@@ -38,6 +50,7 @@ impl Display for RemoteConfigProduct {
             RemoteConfigProduct::AsmFeatures => "ASM_FEATURES",
             RemoteConfigProduct::FfeFlags => "FFE_FLAGS",
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
+            RemoteConfigProduct::LiveDebuggerSymbolDb => "LIVE_DEBUGGING_SYMBOL_DB",
         };
         write!(f, "{str}")
     }
@@ -88,6 +101,7 @@ impl RemoteConfigPath {
                 "ASM_FEATURES" => RemoteConfigProduct::AsmFeatures,
                 "FFE_FLAGS" => RemoteConfigProduct::FfeFlags,
                 "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
+                "LIVE_DEBUGGING_SYMBOL_DB" => RemoteConfigProduct::LiveDebuggerSymbolDb,
                 product => anyhow::bail!("Unknown product {}", product),
             },
             config_id: parts[parts.len() - 2],

@@ -50,7 +50,7 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
-use libdd_telemetry::config::Config;
+use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
 
@@ -478,7 +478,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 .unwrap_or("unknown-service");
             let env = entry.get().env.as_deref().unwrap_or("none");
 
-            let process_tags = session.process_tags.lock_or_panic().clone();
+            let process_tags = session.process_tags_with_svc_source();
 
             // Pre-compute session config so both the primary and retry get_or_create calls
             // can use it without re-locking the session.
@@ -709,7 +709,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 libdd_telemetry::config::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
-            cfg.set_endpoint(endpoint).ok();
+            cfg.set_endpoint(TelemetryEndpoint {
+                url: Some(endpoint.url.to_string()),
+                api_key: endpoint.api_key.as_deref().map(str::to_owned),
+                test_token: endpoint.test_token.as_deref().map(str::to_owned),
+                timeout_ms: endpoint.timeout_ms,
+                use_system_resolver: endpoint.use_system_resolver,
+            })
+            .ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             cfg.telemetry_extended_heartbeat_interval =
                 config.telemetry_extended_heartbeat_interval;
@@ -763,8 +770,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
             } else {
                 config.hostname.clone()
             },
-            process_tags: config
-                .process_tags
+            process_tags: session
+                .process_tags_with_svc_source()
                 .iter()
                 .map(|t| t.to_string())
                 .collect::<Vec<_>>()
@@ -828,6 +835,29 @@ impl SidecarInterface for ConnectionSidecarHandler {
             .unwrap_or_default();
         let session = self.server.get_session(session_id);
         *session.process_tags.lock_or_panic() = process_tags;
+        session.refresh_stats_process_tags();
+    }
+
+    async fn set_session_default_service_name(&self, _peer: PeerCredentials, name: Option<String>) {
+        let session_id = self
+            .session_id
+            .get()
+            .map(|s| s.as_str())
+            .unwrap_or_default();
+        let session = self.server.get_session(session_id);
+        *session.auto_resolved_service_name.lock_or_panic() = name;
+        session.refresh_stats_process_tags();
+    }
+
+    async fn set_session_user_service_defined(&self, _peer: PeerCredentials, is_defined: bool) {
+        let session_id = self
+            .session_id
+            .get()
+            .map(|s| s.as_str())
+            .unwrap_or_default();
+        let session = self.server.get_session(session_id);
+        *session.user_service_defined.lock_or_panic() = is_defined;
+        session.refresh_stats_process_tags();
     }
 
     async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {
@@ -1013,7 +1043,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             &self.server.remote_configs,
             &session,
             instance_id,
-            0u64,
+            !0u64, // no need for a notification here, just a config update
             notify_target,
             dynamic_instrumentation_state,
         );
@@ -1066,6 +1096,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 error!("Failed flushing traces: {e:?}");
             }
             flush_all_stats_now(&self.server.span_concentrators).await;
+            debug!("Finished executing flush() for traces and stats")
         }
         if options.telemetry {
             let workers: Vec<_> = {

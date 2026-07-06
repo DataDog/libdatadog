@@ -45,6 +45,8 @@ pub(crate) struct SessionInfo {
     pub(crate) pid: Arc<AtomicI32>,
     pub(crate) remote_config_enabled: Arc<Mutex<bool>>,
     pub(crate) process_tags: Arc<Mutex<Vec<Tag>>>,
+    pub(crate) auto_resolved_service_name: Arc<Mutex<Option<String>>>,
+    pub(crate) user_service_defined: Arc<Mutex<bool>>,
     pub(crate) stats_config: Arc<Mutex<Option<crate::service::stats_flusher::StatsConfig>>>,
     otlp_metrics_endpoint: Arc<Mutex<Option<Endpoint>>>,
 }
@@ -129,6 +131,31 @@ impl SessionInfo {
 
     pub(crate) fn lock_runtimes(&self) -> MutexGuard<'_, HashMap<String, RuntimeInfo>> {
         self.runtimes.lock_or_panic()
+    }
+
+    pub(crate) fn process_tags_with_svc_source(&self) -> Vec<Tag> {
+        let mut tags = self.process_tags.lock_or_panic().clone();
+        if *self.user_service_defined.lock_or_panic() {
+            if let Ok(tag) = Tag::new("svc.user", "true") {
+                tags.push(tag);
+            }
+        } else if let Some(name) = self.auto_resolved_service_name.lock_or_panic().as_ref() {
+            if let Ok(tag) = Tag::new("svc.auto", name.clone()) {
+                tags.push(tag);
+            }
+        }
+        tags
+    }
+
+    pub(crate) fn refresh_stats_process_tags(&self) {
+        if let Some(stats) = self.stats_config.lock_or_panic().as_mut() {
+            stats.process_tags = self
+                .process_tags_with_svc_source()
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+        }
     }
 
     pub(crate) fn get_telemetry_config(

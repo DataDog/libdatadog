@@ -2,35 +2,14 @@ name: Release - Open a release proposal PR
 on:
   workflow_dispatch:
     inputs:
-      crate:
-        description: Crate to release
+      crates:
+        description: >
+          Crate(s) to release, comma-separated (e.g. "libdd-common" or "libdd-common, libdd-telemetry"). Trailing and repeated commas are ignored.
+          Each selected crate is released along with its workspace dependencies (other libdd-* crates it depends on).
+          Hotfix releases (main_start_ref matching hotfix/<crate>/<N>.x.x) accept a single crate only.
         required: true
-        type: choice
-        options:
-          - libdd-alloc
-          - libdd-capabilities
-          - libdd-capabilities-impl
-          - libdd-common
-          - libdd-crashtracker
-          - libdd-data-pipeline
-          - libdd-ddsketch
-          - libdd-dogstatsd-client
-          - libdd-http-client
-          - libdd-library-config
-          - libdd-log
-          - libdd-otel-thread-ctx
-          - libdd-profiling
-          - libdd-profiling-protobuf
-          - libdd-sampling
-          - libdd-shared-runtime
-          - libdd-telemetry
-          - libdd-tinybytes
-          - libdd-trace-normalization
-          - libdd-trace-obfuscation
-          - libdd-trace-protobuf
-          - libdd-trace-stats
-          - libdd-trace-utils
-          - libdd-tracer-flare
+        type: string
+        default: ''
       main_start_ref:
         description: >
           Optional git ref to cut the release from: commit SHA (short or full), branch name,
@@ -58,8 +37,92 @@ env:
   HOTFIX_REF_PATTERN: '^hotfix/[^/]+/[0-9]+\.x\.x$'
 
 jobs:
+  validate-inputs:
+    runs-on: ubuntu-latest
+    outputs:
+      crates: ${{ steps.normalize.outputs.crates }}
+      crates_display: ${{ steps.normalize.outputs.crates_display }}
+      crates_branch: ${{ steps.normalize.outputs.crates_branch }}
+      count: ${{ steps.normalize.outputs.count }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Normalize and validate crate list
+        id: normalize
+        env:
+          RAW_CRATES: ${{ inputs.crates }}
+          RAW_MAIN_START_REF: ${{ inputs.main_start_ref }}
+          HOTFIX_REF_PATTERN: ${{ env.HOTFIX_REF_PATTERN }}
+        run: |
+          set -euo pipefail
+
+          # Comma-separated list; strip per-element whitespace, drop empties (handles
+          # trailing/repeated commas), dedupe, sort for stable downstream order. Crate names
+          # have no internal whitespace, so per-line whitespace removal is safe.
+          # Use command substitution (not process substitution) so set -e/pipefail catches failures.
+          NORMALIZED=$(printf '%s\n' "$RAW_CRATES" | tr ',' '\n' | sed 's/[[:space:]]//g; /^$/d' | sort -u)
+          mapfile -t CRATES <<< "$NORMALIZED"
+          # An empty NORMALIZED produces a single empty-string element via <<<; drop it.
+          if [ "${#CRATES[@]}" -eq 1 ] && [ -z "${CRATES[0]}" ]; then
+            CRATES=()
+          fi
+
+          if [ "${#CRATES[@]}" -eq 0 ]; then
+            echo "Error: 'crates' input is empty after normalization." >&2
+            exit 1
+          fi
+
+          METADATA=$(cargo metadata --no-deps --format-version=1)
+          AVAILABLE_LIST=$(jq -r '
+            .packages[]
+            | select(.publish == null or (.publish | type == "array" and length > 0))
+            | .name
+          ' <<< "$METADATA" | sort -u)
+          mapfile -t AVAILABLE <<< "$AVAILABLE_LIST"
+
+          UNKNOWN=()
+          for c in "${CRATES[@]}"; do
+            if ! printf '%s\n' "${AVAILABLE[@]}" | grep -qxF "$c"; then
+              UNKNOWN+=("$c")
+            fi
+          done
+          if [ "${#UNKNOWN[@]}" -gt 0 ]; then
+            echo "Error: unknown or unpublishable crate(s): ${UNKNOWN[*]}" >&2
+            echo "Available crates:" >&2
+            printf '  - %s\n' "${AVAILABLE[@]}" >&2
+            exit 1
+          fi
+
+          REF="$(echo "$RAW_MAIN_START_REF" | tr -d '[:space:]')"
+          if [[ -n "$REF" && "$REF" =~ $HOTFIX_REF_PATTERN ]] && [ "${#CRATES[@]}" -gt 1 ]; then
+            echo "Error: hotfix releases (main_start_ref=$REF) accept only a single crate; got ${#CRATES[@]}: ${CRATES[*]}" >&2
+            exit 1
+          fi
+
+          CRATES_SPACE="${CRATES[*]}"
+          CRATES_DISPLAY=$(IFS=,; echo "${CRATES[*]}")
+          CRATES_DISPLAY=${CRATES_DISPLAY//,/, }
+          # Branch segment: keep the path concise when many crates are bundled.
+          if [ "${#CRATES[@]}" -eq 1 ]; then
+            CRATES_BRANCH="${CRATES[0]}"
+          else
+            CRATES_BRANCH="${CRATES[0]}-$(( ${#CRATES[@]} - 1 ))-more"
+          fi
+
+          echo "Normalized crates: $CRATES_SPACE"
+          echo "Display:           $CRATES_DISPLAY"
+          echo "Branch segment:    $CRATES_BRANCH"
+          echo "Count:             ${#CRATES[@]}"
+
+          {
+            echo "crates=$CRATES_SPACE"
+            echo "crates_display=$CRATES_DISPLAY"
+            echo "crates_branch=$CRATES_BRANCH"
+            echo "count=${#CRATES[@]}"
+          } >> "$GITHUB_OUTPUT"
+
   check-proposal-ongoing:
     runs-on: ubuntu-latest
+    needs: validate-inputs
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
@@ -115,7 +178,7 @@ jobs:
       id-token: write # Enable OIDC
       pull-requests: write
       contents: write
-    needs: check-membership
+    needs: [check-membership, validate-inputs]
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: 1.92.0
@@ -141,7 +204,7 @@ jobs:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
       - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
         with:
-          tool: cargo-public-api@0.50.2
+          tool: cargo-public-api@0.52.0
       - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
         with:
           tool: cargo-release
@@ -150,7 +213,7 @@ jobs:
           tool: git-cliff
       - uses: taiki-e/cache-cargo-install-action@7447f04c51f2ba27ca35e7f1e28fab848c5b3ba7 # 2.3.1
         with:
-          tool: cargo-semver-checks@0.45.0
+          tool: cargo-semver-checks@0.48.0
       
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
@@ -330,7 +393,7 @@ jobs:
             echo "ephemeral_branch=$EPHEMERAL_BRANCH" >> "$GITHUB_OUTPUT"
             echo "is_hotfix=true" >> "$GITHUB_OUTPUT"
           else
-            EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
+            EPHEMERAL_BRANCH="${{ env.RELEASE_BRANCH_PREFIX }}/${{ needs.validate-inputs.outputs.crates_branch }}/$TIMESTAMP"
             git checkout -b "$EPHEMERAL_BRANCH"
             git push origin "$EPHEMERAL_BRANCH"
             echo "Ephemeral release branch created: $EPHEMERAL_BRANCH branch ($(git rev-parse --short HEAD))"
@@ -340,11 +403,14 @@ jobs:
           echo "timestamp=$TIMESTAMP" >> "$GITHUB_OUTPUT"
 
       - name: Get publication order for crate and dependencies
+        env:
+          CRATES: ${{ needs.validate-inputs.outputs.crates }}
         run: |
-          echo "Getting publication order for ${{ inputs.crate }}..."
-          
-          # Get the publication order as JSON and save to file
-          "${WORKFLOW_SCRIPTS_ROOT}/publication-order.sh" --format=json "${{ inputs.crate }}" > /tmp/crates.json
+          echo "Getting publication order for ${{ needs.validate-inputs.outputs.crates_display }}..."
+
+          # CRATES is a space-separated list validated upstream; word-splitting is intentional.
+          # shellcheck disable=SC2086
+          "${WORKFLOW_SCRIPTS_ROOT}/publication-order.sh" --format=json $CRATES > /tmp/crates.json
           echo "Publication order:"
           cat /tmp/crates.json
       
@@ -379,7 +445,7 @@ jobs:
 
           git checkout "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"
           TIMESTAMP="${{ steps.ephemeral-branch.outputs.timestamp }}"
-          BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ inputs.crate }}/$TIMESTAMP"
+          BRANCH_NAME="${{ env.PROPOSAL_BRANCH_PREFIX }}/${{ needs.validate-inputs.outputs.crates_branch }}/$TIMESTAMP"
           git checkout -b "$BRANCH_NAME"
           git push origin "$BRANCH_NAME" --tags
           echo "Branch created: $BRANCH_NAME from ${{ steps.ephemeral-branch.outputs.ephemeral_branch }} branch"
@@ -741,7 +807,7 @@ jobs:
       is_hotfix: ${{ steps.ephemeral-branch.outputs.is_hotfix }}
           
   create-pr:
-    needs: cargo-release
+    needs: [cargo-release, validate-inputs]
     runs-on: ubuntu-latest
     permissions:
       id-token: write # Enable OIDC
@@ -772,6 +838,7 @@ jobs:
           BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
           PROPOSAL_BRANCH_PREFIX: ${{ env.PROPOSAL_BRANCH_PREFIX }}
           RELEASE_BRANCH_PREFIX: ${{ env.RELEASE_BRANCH_PREFIX }}
+          CRATES_COUNT: ${{ needs.validate-inputs.outputs.count }}
         run: |
           BRANCH_NAME="${{ needs.cargo-release.outputs.branch_name }}"
           EPHEMERAL_BRANCH="${{ needs.cargo-release.outputs.ephemeral_branch }}"
@@ -820,19 +887,29 @@ jobs:
 
           COMMITS_AND_API_BODY=$(jq -nr --slurpfile api /tmp/api-changes-with-major-bumps.json "$JQ_FILTER")
 
-          PR_BODY="# Release proposal for ${{ inputs.crate }} and its dependencies
+          if [ "$CRATES_COUNT" -gt 1 ]; then
+            POSSESSIVE="their"
+          else
+            POSSESSIVE="its"
+          fi
+
+          PR_BODY="# Release proposal for ${{ needs.validate-inputs.outputs.crates_display }} and $POSSESSIVE dependencies
 
           This PR contains version bumps based on public API changes and commits since last release.
 
           ${HOTFIX_NOTE}${NON_DEFAULT}${COMMITS_AND_API_BODY}"
-          
+
           echo "$PR_BODY" > /tmp/pr-body.md
           echo "PR body written to /tmp/pr-body.md (length: $(wc -c < /tmp/pr-body.md) bytes)"
 
-          # NOTE: the PR title is used to filter gitlab CI jobs. If you change it, you need to update the gitlab CI job filter.
+          # NOTE: the PR title must start with 'chore(release): proposal for'. Downstream tooling matches on that prefix.
+          PR_TITLE="chore(release): proposal for ${{ needs.validate-inputs.outputs.crates_display }}"
+          if [ "${#PR_TITLE}" -gt 100 ]; then
+            PR_TITLE="${PR_TITLE:0:97}..."
+          fi
           gh pr create \
             --head "$BRANCH_NAME" \
-            --title "chore(release): proposal for ${{ inputs.crate }}" \
+            --title "$PR_TITLE" \
             --body-file /tmp/pr-body.md \
             --label "release-proposal" \
             --label "skip-metadata-check" \

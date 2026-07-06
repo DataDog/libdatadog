@@ -27,6 +27,8 @@ pub enum MetricKind {
     ChunksSent,
     /// trace_chunks_dropped metric (reason: p0_drop)
     ChunksDroppedP0,
+    /// trace_chunks_dropped metric (reason: trace_filters)
+    ChunksDroppedByTraceFilter,
     /// trace_chunks_dropped metric (reason: serialization_error)
     ChunksDroppedSerializationError,
     /// trace_chunks_dropped metric (reason: send_failure)
@@ -101,6 +103,15 @@ const METRICS: &[Metric] = &[
         metric_type: MetricType::Count,
         namespace: MetricNamespace::Tracers,
         tags: &[tag!["src_library", "libdatadog"], tag!["reason", "p0_drop"]],
+    },
+    Metric {
+        name: CHUNKS_DROPPED_STR,
+        metric_type: MetricType::Count,
+        namespace: MetricNamespace::Tracers,
+        tags: &[
+            tag!["src_library", "libdatadog"],
+            tag!["reason", "trace_filters"],
+        ],
     },
     Metric {
         name: CHUNKS_DROPPED_STR,

@@ -1,0 +1,36 @@
+[
+  [
+    {
+      "service": "test-service",
+      "name": "passes_filters_first",
+      "resource": "test",
+      "trace_id": 1,
+      "span_id": 1,
+      "start": 0,
+      "duration": 5,
+      "meta": {
+        "my_require_tag": "true"
+      },
+      "metrics": {
+        "_top_level": 1.0
+      }
+    }
+  ],
+  [
+    {
+      "service": "test-service",
+      "name": "passes_filters_last",
+      "resource": "test2",
+      "trace_id": 1,
+      "span_id": 1,
+      "start": 0,
+      "duration": 5,
+      "meta": {
+        "my_require_tag": "true"
+      },
+      "metrics": {
+        "_top_level": 1.0
+      }
+    }
+  ]
+]

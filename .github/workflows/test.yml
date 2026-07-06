@@ -154,6 +154,13 @@ jobs:
               cargo nextest run -p libdd-http-client --no-default-features --features hyper-backend,https --profile ci --verbose
             fi
           fi
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-common --no-default-features --features fips"
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if echo "$PACKAGES" | grep -q "libdd-common"; then
+            cargo nextest run -p libdd-common --no-default-features --features fips --profile ci --verbose
+          fi
         env:
           RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --all-features"

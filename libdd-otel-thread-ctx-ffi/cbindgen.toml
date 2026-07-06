@@ -21,6 +21,10 @@ include = ["libdd-common-ffi", "libdd-otel-thread-ctx"]
 prefix = "ddog_"
 renaming_overrides_prefixing = true
 
+[export.rename]
+"VoidResult" = "ddog_VoidResult"
+"Error" = "ddog_Error"
+
 [export.mangle]
 rename_types = "PascalCase"
 
