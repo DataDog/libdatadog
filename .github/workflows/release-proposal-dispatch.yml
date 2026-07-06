@@ -759,8 +759,17 @@ jobs:
                 RELEASE_DATE=$(date +%Y-%m-%d)
                 DEP_LINES=$(echo "$MAJOR_BUMPS" | jq -r '.[] | "- Bump `\(.dependency)` to a new major version (`\(.previous_req)` → `\(.current_req)`)"')
 
+                # Match git-cliff's header (see cliff.toml): link the version to a compare view
+                # against the previous tag when one exists.
+                REMOTE_URL="https://github.com/datadog/libdatadog"
+                if [ -n "$TAG" ] && [ "$TAG" != "null" ]; then
+                  HEADER="## [$VERSION]($REMOTE_URL/compare/$TAG..$NEXT_TAG) - $RELEASE_DATE"
+                else
+                  HEADER="## [$VERSION] - $RELEASE_DATE"
+                fi
+
                 ENTRY_FILE=$(mktemp /tmp/changelog-entry-XXXXXX.md)
-                printf '## %s - %s\n\n### Changed\n\n%s\n\n' "$VERSION" "$RELEASE_DATE" "$DEP_LINES" > "$ENTRY_FILE"
+                printf '%s\n\n### Changed\n\n%s\n\n' "$HEADER" "$DEP_LINES" > "$ENTRY_FILE"
 
                 if [ -f "$CRATE_PATH/CHANGELOG.md" ]; then
                   # Insert the new section above the first existing release section (newest-first),
