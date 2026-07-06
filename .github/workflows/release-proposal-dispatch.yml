@@ -881,6 +881,9 @@ jobs:
       is_hotfix: ${{ steps.ephemeral-branch.outputs.is_hotfix }}
           
   create-pr:
+    # Without an explicit condition, the skipped check-membership job (on bypass runs) propagates
+    # its "skipped" status transitively through cargo-release to here. Gate on the direct needs instead.
+    if: ${{ !cancelled() && needs.cargo-release.result == 'success' && needs.validate-inputs.result == 'success' }}
     needs: [cargo-release, validate-inputs]
     runs-on: ubuntu-latest
     permissions:
