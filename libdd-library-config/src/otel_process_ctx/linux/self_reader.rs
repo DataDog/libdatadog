@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
+    cell::Cell,
     fs::File,
     io::{self, BufRead, BufReader},
+    os::fd::{AsRawFd, FromRawFd, OwnedFd},
     ptr::{self, NonNull},
     sync::atomic::{fence, Ordering},
 };
@@ -27,13 +29,13 @@ static LIVE_SELF_READERS: AtomicUsize = AtomicUsize::new(0);
 pub struct ProcessContextSelfReader {
     pid: libc::pid_t,
     header_ptr: NonNull<MappingHeader>,
+    pipe: Cell<Option<CopyPipe>>,
 }
 
-// SAFETY: ProcessContextSelfReader doesn't rely on thread local state and
-// only references static memory -- owns nothing.
+// SAFETY: ProcessContextSelfReader doesn't rely on thread local state;
+// mapping header is a pointer, but it's assumed to be a static mapping
 unsafe impl Send for ProcessContextSelfReader {}
-// SAFETY: ProcessContextSelfReader doesn't modify anything
-unsafe impl Sync for ProcessContextSelfReader {}
+// we do not implement Sync because of the Cell
 
 impl ProcessContextSelfReader {
     /// Locates the OTEL_CTX mapping in `/proc/self/maps`.
@@ -44,6 +46,7 @@ impl ProcessContextSelfReader {
         let reader = Self {
             pid,
             header_ptr: Self::header_ptr_from_addr(mapping_addr)?,
+            pipe: Cell::new(None),
         };
         #[cfg(debug_assertions)]
         LIVE_SELF_READERS.fetch_add(1, Ordering::Relaxed);
@@ -106,8 +109,7 @@ impl ProcessContextSelfReader {
             ));
         }
 
-        let payload_bytes =
-            Self::read_process_memory(self.pid, payload_ptr, payload_size as usize)?;
+        let payload_bytes = self.read_process_memory(payload_ptr, payload_size as usize)?;
 
         // pairs with the first release fence on update() to ensure that, if we read data
         // updated after the initial published time, we at least see the published
@@ -183,52 +185,35 @@ impl ProcessContextSelfReader {
         )
     }
 
-    /// Reads `len` bytes from `addr` in the address space of `pid` via `process_vm_readv(2)`.
+    /// Copies `len` bytes from `addr` through a pipe.
     ///
-    /// Returns [`ErrorKind::WouldBlock`] for retryable races where the remote memory is no
-    /// longer mapped or only partially readable. The kernel reports the former as
-    /// [`libc::EFAULT`] from `pin_user_pages_remote()` and the latter as a short read (see
-    /// `process_vm_rw_core()` in `mm/process_vm_access.c`).
-    fn read_process_memory(pid: libc::pid_t, addr: *const u8, len: usize) -> io::Result<Vec<u8>> {
+    /// `write(2)` copies from the source address in kernel space, so unmapped/reclaimed source
+    /// memory is reported as an error or a short write instead of raising `SIGSEGV`.
+    fn read_process_memory(&self, addr: *const u8, len: usize) -> io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());
         }
 
-        let mut buf = vec![0u8; len];
-        let local_iov = libc::iovec {
-            iov_base: buf.as_mut_ptr().cast(),
-            iov_len: len,
-        };
-        let remote_iov = libc::iovec {
-            iov_base: addr.cast_mut().cast(),
-            iov_len: len,
+        let pipe = match self.pipe.take() {
+            Some(pipe) => pipe,
+            None => CopyPipe::new()?,
         };
 
-        // SAFETY: `buf` and `addr` each span `len` bytes for the duration of the syscall.
-        let nbytes = unsafe { libc::process_vm_readv(pid, &local_iov, 1, &remote_iov, 1, 0) };
-
-        if nbytes < 0 {
-            let err = io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::EFAULT) {
-                return Err(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "process context payload was unmapped during read",
-                ));
+        match pipe.copy_via_pipe(addr, len) {
+            Ok(buf) => {
+                self.pipe.set(Some(pipe));
+                Ok(buf)
             }
-            return Err(io::Error::new(
-                err.kind(),
-                format!("failed to read process context payload: {err}"),
-            ));
+            Err(PipeCopyError { err, pipe_dirty }) => {
+                if !pipe_dirty {
+                    // The pipe does not hold bytes from an aborted transfer
+                    // Save it as a sort of cache
+                    // Note that we're not Sync
+                    self.pipe.set(Some(pipe));
+                }
+                Err(err)
+            }
         }
-
-        if nbytes as usize != len {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "incomplete read of process context payload",
-            ));
-        }
-
-        Ok(buf)
     }
 }
 
@@ -244,9 +229,252 @@ pub(super) fn live_reader_count() -> usize {
     LIVE_SELF_READERS.load(Ordering::Relaxed)
 }
 
+/// A cached pipe used to probe-copy process memory via `write(2)`.
+///
+/// Invariant: the pipe is empty between calls to `CopyPipe::copy_via_pipe`.
+struct CopyPipe {
+    read_fd: OwnedFd,
+    write_fd: OwnedFd,
+    capacity: usize,
+}
+
+impl CopyPipe {
+    fn new() -> io::Result<Self> {
+        let mut fds = [0; 2];
+        // SAFETY: `fds` points to space for the two file descriptors returned by pipe2.
+        let ret = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
+        if ret != 0 {
+            let err = io::Error::last_os_error();
+            return Err(io::Error::new(
+                err.kind(),
+                format!("failed to create process context payload pipe: {err}"),
+            ));
+        }
+
+        // SAFETY: pipe2 initialized both file descriptors on success and ownership is
+        // transferred to OwnedFd exactly once.
+        let (read_fd, write_fd) =
+            unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+
+        // SAFETY: `write_fd` is a valid pipe file descriptor.
+        let capacity = unsafe { libc::fcntl(write_fd.as_raw_fd(), libc::F_GETPIPE_SZ) };
+        if capacity < 0 {
+            let err = io::Error::last_os_error();
+            return Err(io::Error::new(
+                err.kind(),
+                format!("failed to query process context payload pipe capacity: {err}"),
+            ));
+        }
+        if capacity == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "process context payload pipe has zero capacity",
+            ));
+        }
+
+        Ok(Self {
+            read_fd,
+            write_fd,
+            capacity: capacity as usize,
+        })
+    }
+
+    fn copy_via_pipe(&self, addr: *const u8, len: usize) -> Result<Vec<u8>, PipeCopyError> {
+        // The buffer is filled sequentially from the pipe; `buf[..offset]` is always initialized,
+        // so there is no need to zero it up front.
+        let mut buf: Vec<u8> = Vec::with_capacity(len);
+        let mut offset = 0;
+
+        while offset < len {
+            let chunk_len = (len - offset).min(self.capacity);
+            let chunk_addr = addr.wrapping_add(offset);
+
+            // SAFETY: `write` copies from `chunk_addr` in kernel space without dereferencing it in
+            // Rust. Invalid user memory is reported by the kernel as EFAULT (nothing copied) or a
+            // short write (fault partway through).
+            let nbytes = loop {
+                let result =
+                    unsafe { libc::write(self.write_fd.as_raw_fd(), chunk_addr.cast(), chunk_len) };
+                if result > 0 {
+                    break result as usize;
+                }
+                if result == 0 {
+                    return Err(PipeCopyError {
+                        err: io::Error::new(
+                            io::ErrorKind::WriteZero,
+                            "zero-length write while copying process context payload into pipe",
+                        ),
+                        pipe_dirty: false,
+                    });
+                }
+
+                let err = io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    // EFAULT is only returned when the fault occurs before any byte is copied, so
+                    // the pipe is still empty.
+                    Some(libc::EFAULT) => {
+                        return Err(PipeCopyError {
+                            err: io::Error::new(
+                                io::ErrorKind::WouldBlock,
+                                "process context payload was unmapped during read",
+                            ),
+                            pipe_dirty: false,
+                        });
+                    }
+                    _ => {
+                        return Err(PipeCopyError {
+                            err: io::Error::new(
+                                err.kind(),
+                                format!("failed to copy process context payload into pipe: {err}"),
+                            ),
+                            pipe_dirty: false,
+                        });
+                    }
+                }
+            };
+
+            // A short write (`nbytes < chunk_len`) means the kernel copy stopped partway — either a
+            // fault or a signal after partial transfer; the two are indistinguishable here. Drain
+            // the bytes that made it and retry the remainder: `offset` advances by `nbytes`, so the
+            // next write starts exactly at the stop point. If the source really is unmapped, that
+            // write fails with EFAULT before copying anything, and we report it then. Since
+            // `nbytes >= 1`, progress is guaranteed and the loop terminates.
+            //
+            // Draining exactly `nbytes` every iteration also keeps the pipe empty before each
+            // write, so `chunk_len <= capacity` guarantees writes never block.
+            let mut drained = 0;
+            while drained < nbytes {
+                // SAFETY: `buf` owns `len` bytes of writable capacity and
+                // `offset + nbytes <= len`, so the destination range is valid.
+                let result = unsafe {
+                    libc::read(
+                        self.read_fd.as_raw_fd(),
+                        buf.as_mut_ptr().add(offset + drained).cast(),
+                        nbytes - drained,
+                    )
+                };
+                if result > 0 {
+                    drained += result as usize;
+                    continue;
+                }
+
+                if result == 0 {
+                    // Unreachable in practice: this process holds the write end open, so the pipe
+                    // cannot report EOF
+                    return Err(PipeCopyError {
+                        err: io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "pipe reported EOF while draining process context payload",
+                        ),
+                        pipe_dirty: true,
+                    });
+                }
+
+                let err = io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR) => continue,
+                    _ => {
+                        return Err(PipeCopyError {
+                            err: io::Error::new(
+                                err.kind(),
+                                format!("failed to drain process context payload from pipe: {err}"),
+                            ),
+                            // Undrained bytes may remain in the pipe.
+                            pipe_dirty: true,
+                        });
+                    }
+                }
+            }
+
+            offset += nbytes;
+        }
+
+        // SAFETY: the loop exits with `offset == len`, and every byte of `buf[..offset]` was
+        // initialized by the pipe reads above.
+        unsafe { buf.set_len(len) };
+        Ok(buf)
+    }
+}
+
+/// Error from [`copy_via_pipe`], carrying whether the pipe may still hold undrained bytes.
+struct PipeCopyError {
+    err: io::Error,
+    /// If true, the pipe may contain leftover bytes and must not be reused.
+    pipe_dirty: bool,
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io;
+
     use super::ProcessContextSelfReader;
+
+    fn with_published_mapping(f: impl FnOnce()) {
+        super::super::publish_raw_payload(b"setup".to_vec()).expect("publish should succeed");
+        f();
+        unsafe {
+            super::super::unpublish().expect("unpublish should succeed");
+        }
+    }
+
+    fn page_size() -> usize {
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        assert!(page_size > 0, "page size query should succeed");
+        page_size as usize
+    }
+
+    fn map_anonymous_page() -> *mut u8 {
+        let page_size = page_size();
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                page_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        assert_ne!(
+            ptr,
+            libc::MAP_FAILED,
+            "anonymous page mapping should succeed"
+        );
+        ptr.cast()
+    }
+
+    fn unmap_page(ptr: *mut u8) {
+        let page_size = page_size();
+        let ret = unsafe { libc::munmap(ptr.cast(), page_size) };
+        assert_eq!(ret, 0, "page unmap should succeed");
+    }
+
+    struct MappedPage(*mut u8);
+
+    impl MappedPage {
+        fn new() -> Self {
+            Self(map_anonymous_page())
+        }
+
+        fn as_ptr(&self) -> *const u8 {
+            self.0.cast()
+        }
+    }
+
+    impl Drop for MappedPage {
+        fn drop(&mut self) {
+            unmap_page(self.0);
+        }
+    }
+
+    fn assert_unmapped_read_error(err: io::Error) {
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+        assert!(
+            err.to_string().contains("unmapped"),
+            "unexpected error message: {err}"
+        );
+    }
 
     #[test]
     fn is_named_otel_mapping_matches_exact_mapping_name() {
@@ -269,5 +497,68 @@ mod tests {
         assert!(!ProcessContextSelfReader::is_named_otel_mapping(
             "7f000000-7f001000 rw-p 00000000 00:00 0 [anon:OTEL_CTX_old]"
         ));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_process_memory_copies_valid_memory() {
+        with_published_mapping(|| {
+            let payload = b"example process context payload";
+
+            let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+            let copy = reader
+                .read_process_memory(payload.as_ptr(), payload.len())
+                .expect("payload copy through pipe should succeed");
+
+            assert_eq!(copy, payload);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_process_memory_copies_more_than_pipe_capacity() {
+        with_published_mapping(|| {
+            const LEN: usize = 256 * 1024;
+            let payload: Vec<_> = (0..LEN).map(|i| i as u8).collect();
+
+            let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+            let copy = reader
+                .read_process_memory(payload.as_ptr(), payload.len())
+                .expect("large payload copy through pipe should succeed");
+
+            assert_eq!(copy, payload);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_process_memory_fails_on_unmapped_address() {
+        with_published_mapping(|| {
+            let ptr = map_anonymous_page();
+            unmap_page(ptr);
+
+            let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+            let err = reader
+                .read_process_memory(ptr.cast(), 1)
+                .expect_err("read from unmapped address should fail");
+
+            assert_unmapped_read_error(err);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_process_memory_fails_when_range_extends_past_mapped_page() {
+        with_published_mapping(|| {
+            let page = MappedPage::new();
+            let len = page_size() + 1;
+
+            let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+            let err = reader
+                .read_process_memory(page.as_ptr(), len)
+                .expect_err("read past mapped page should fail");
+
+            assert_unmapped_read_error(err);
+        });
     }
 }

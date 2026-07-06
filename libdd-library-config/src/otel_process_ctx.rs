@@ -20,9 +20,10 @@
 //!
 //! Process context sharing also crosses Rust's memory model boundary. In-process header fields
 //! that can change during publication are atomics, while payload bytes are copied with
-//! `process_vm_readv`; that syscall turns accesses to reclaimed payload memory that has been
-//! unmapped into a syscall error or short read instead of a segfault, but its ordering relative to
-//! the publisher has to be reasoned about at the OS/architecture level rather than only in Rust.
+//! `write(2)` into a pipe before decoding; that syscall turns accesses to reclaimed payload memory
+//! that has been unmapped into a syscall error or short write instead of a segfault, but its
+//! ordering relative to the publisher has to be reasoned about at the OS/architecture level rather
+//! than only in Rust.
 
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]
