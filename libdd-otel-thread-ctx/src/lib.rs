@@ -114,6 +114,7 @@ pub mod linux {
     #[inline(always)]
     unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
         let ptr: usize;
+        //
         // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
         // rely on these exact relocation-bearing instruction patterns for TLS relaxation,
         // especially when this crate is linked statically. Harmless-looking rewrites can hide part
@@ -123,6 +124,14 @@ pub mod linux {
             "leaq otel_thread_ctx_v1@tlsdesc(%rip), %rax",
             "call *otel_thread_ctx_v1@TLSCALL(%rax)",
             "addq %fs:0, %rax",
+            // There is a call instruction, but the whole point of TLSDESC is to use a fast calling
+            // convention. GCC's x86-64 port assumes that FLAGS_REG and RAX are changed while all
+            // other registers are preserved[^1]. LLVM similarly only clobbers RAX[^2] (and flags).
+            // So we don't need to clobber additional registers or to use `clobber_abi` here (which
+            // would negate most of the advantage of TLSDESC).
+            //
+            // [^1]: https://maskray.me/blog/2021-02-14-all-about-thread-local-storage
+            // [^2]: https://raw.githubusercontent.com/llvm/llvm-project/main/llvm/lib/Target/X86/X86InstrCompiler.td
             out("rax") ptr,
             options(att_syntax),
         );
@@ -145,6 +154,8 @@ pub mod linux {
             // x1 is guaranteed not to be clobbered by the call
             "blr   x2",
             "add   x0, x1, x0",
+            // As for x86, tlsdesccall is not clobbering other registers than `x0`, `x1` and `x30`,
+            // which are already declared as out.
             out("x0") ptr,
             out("x1") _,
             out("x2") _,
