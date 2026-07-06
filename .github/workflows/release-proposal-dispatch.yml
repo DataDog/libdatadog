@@ -641,11 +641,15 @@ jobs:
           echo "Major-bump audit input:"
           jq . /tmp/major-bumps-input.json
 
-          # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch the job checkout.
+          # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch
+          # the job checkout. Check it out at the ref actually being released (the ephemeral release
+          # branch tip captured before version bumps), NOT github.sha: for a hotfix or older-ref
+          # release those differ, and auditing against current main could major-bump a crate for a
+          # dependency requirement change that is not present in the branch being released.
           MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
-          WF_SHA="${{ github.sha }}"
+          RELEASE_SHA=$(cat /tmp/release_head_sha)
 
-          git worktree add --detach "$MAJOR_BUMPS_WT" "$WF_SHA"
+          git worktree add --detach "$MAJOR_BUMPS_WT" "$RELEASE_SHA"
           set +e
           ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/major-bumps-input.json ) \
             > /tmp/api-changes-with-major-bumps-pre-commit.json
