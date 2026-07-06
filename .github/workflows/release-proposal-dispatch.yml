@@ -145,6 +145,7 @@ jobs:
           fi
 
   check-membership:
+    if: ${{ !inputs.bypass_standard_checks }}
     permissions:
       id-token: write # Enable OIDC
     runs-on: ubuntu-latest
@@ -174,6 +175,8 @@ jobs:
           fi
 
   cargo-release:
+    # check-membership is skipped on bypass runs; allow that, but never run if it actually failed.
+    if: ${{ !cancelled() && needs.validate-inputs.result == 'success' && (needs.check-membership.result == 'success' || needs.check-membership.result == 'skipped') }}
     permissions:
       id-token: write # Enable OIDC
       pull-requests: write
@@ -217,13 +220,14 @@ jobs:
       
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
+        if: ${{ !inputs.bypass_standard_checks }}
         with:
           scope: DataDog/libdatadog
-          policy: self.write.pr    
+          policy: self.write.pr
 
       - name: Configure Git for signing
         env:
-          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GH_TOKEN: ${{ inputs.bypass_standard_checks && github.token || steps.octo-sts.outputs.token }}
           GITHUB_ACTOR: ${{ github.actor }}
         run: |
           # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
@@ -830,13 +834,18 @@ jobs:
           COMMITS=$(git log --reverse "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
-      - name: Push commits
+      - name: Push commits (verified)
+        if: ${{ !inputs.bypass_standard_checks }}
         uses: DataDog/commit-headless@action/v2.0.3
         with:
           branch: ${{ steps.proposal-branch.outputs.branch_name }}
           head-sha: ${{ steps.commits-since-release.outputs.release_head_sha }}
           command: push
           commits: "${{ steps.generate-changelogs.outputs.commits }}"
+
+      - name: Push commits (plain, testing only)
+        if: ${{ inputs.bypass_standard_checks }}
+        run: git push origin "HEAD:refs/heads/${{ steps.proposal-branch.outputs.branch_name }}"
 
       - name: Upload release data
         uses: actions/upload-artifact@v4
@@ -891,13 +900,14 @@ jobs:
 
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
+        if: ${{ !inputs.bypass_standard_checks }}
         with:
           scope: DataDog/libdatadog
           policy: self.write.pr
 
       - name: Create a PR
         env:
-          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GH_TOKEN: ${{ inputs.bypass_standard_checks && github.token || steps.octo-sts.outputs.token }}
           MAIN_START_REF: ${{ inputs.main_start_ref }}
           MAIN_BRANCH: ${{ env.MAIN_BRANCH }}
           BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
