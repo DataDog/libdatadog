@@ -86,8 +86,11 @@ mod signal_owner;
 // Keep this module private to avoid exposing blazesym to users of the crate
 #[cfg(all(
     unix,
-    feature = "std",
-    any(feature = "collector", feature = "receiver")
+    any(
+        feature = "collector",
+        feature = "receiver",
+        feature = "collector_signal-safe"
+    )
 ))]
 #[cfg(not(feature = "benchmarking"))]
 mod shared;

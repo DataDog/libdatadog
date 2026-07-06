@@ -11,7 +11,7 @@ use super::state::{self, sig_index, BeginInitError, Stage};
 use super::sys::{self, FdSink};
 use super::{
     app_handler_is_real, app_recovered, chain_action, is_genuine_fault, should_run_app_first,
-    ChainAction, CrashContext, Disposition, Report, SignalInfo,
+    write_i32, ChainAction, CrashContext, Disposition, Report, SignalInfo,
 };
 use super::{backtrace, capabilities};
 use crate::signal_owner::{self, SignalOwner};
@@ -21,12 +21,24 @@ const EXIT_CODE_FAILURE: i32 = 125;
 const REAP_KILL_TIMEOUT_MS: i64 = 500;
 const REAP_WAIT_INTERVAL_MS: i32 = 100;
 const ALT_STACK_SIZE: usize = 64 * 1024;
+const ALT_STACK_GUARD_SIZE: usize = 4096;
 
-struct AltStackStorage(UnsafeCell<[u8; ALT_STACK_SIZE]>);
+const _: () = assert!(super::SECTION_BUF_CAPACITY <= ALT_STACK_SIZE / 8);
+
+#[repr(C, align(4096))]
+struct AltStackLayout {
+    guard: [u8; ALT_STACK_GUARD_SIZE],
+    usable: [u8; ALT_STACK_SIZE],
+}
+
+struct AltStackStorage(UnsafeCell<AltStackLayout>);
 
 unsafe impl Sync for AltStackStorage {}
 
-static ALT_STACK: AltStackStorage = AltStackStorage(UnsafeCell::new([0; ALT_STACK_SIZE]));
+static ALT_STACK: AltStackStorage = AltStackStorage(UnsafeCell::new(AltStackLayout {
+    guard: [0; ALT_STACK_GUARD_SIZE],
+    usable: [0; ALT_STACK_SIZE],
+}));
 
 #[derive(Clone, Copy)]
 struct Target {
@@ -40,6 +52,8 @@ static REPEAT_FAULT_PC: [AtomicUsize; state::NSIG] = [const { AtomicUsize::new(0
 static REPEAT_FAULT_ADDR: [AtomicUsize; state::NSIG] = [const { AtomicUsize::new(0) }; state::NSIG];
 static REPEAT_FAULT_COUNT: [AtomicUsize; state::NSIG] =
     [const { AtomicUsize::new(0) }; state::NSIG];
+/// Prevents recursive crash collection. Reset only during explicit shutdown/re-init lifecycle.
+static COLLECTING: AtomicBool = AtomicBool::new(false);
 
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -129,6 +143,7 @@ pub fn shutdown() {
     state::set_stage(Stage::CrashtrackerUninstall);
     state::HANDLERS_ENABLED.store(false, Ordering::Release);
     uninstall_all_handlers();
+    COLLECTING.store(false, Ordering::Relaxed);
     state::INSTALLED.store(false, Ordering::Release);
     signal_owner::release(SignalOwner::SignalSafeCollector);
     state::reset_init();
@@ -241,37 +256,6 @@ fn crash_debug(msg: &[u8], sig: i32) {
     let _ = super::Sink::put(&mut sink, b"\n");
 }
 
-fn write_i32(value: i32, out: &mut [u8; 12]) -> usize {
-    let mut n = value as i64;
-    let negative = n < 0;
-    if negative {
-        n = n.wrapping_neg();
-    }
-
-    let mut tmp = [0u8; 11];
-    let mut len = 0usize;
-    loop {
-        tmp[len] = b'0' + (n % 10) as u8;
-        len += 1;
-        n /= 10;
-        if n == 0 {
-            break;
-        }
-    }
-
-    let mut off = 0usize;
-    if negative {
-        out[0] = b'-';
-        off = 1;
-    }
-    let mut i = 0usize;
-    while i < len {
-        out[off + i] = tmp[len - i - 1];
-        i += 1;
-    }
-    off + len
-}
-
 fn sanitize_clone(mut keep_fd: i32, close_stdio_without_devnull: bool) -> i32 {
     if (libc::STDIN_FILENO..=libc::STDERR_FILENO).contains(&keep_fd) {
         let relocated = sys::fcntl_dupfd(keep_fd, libc::STDERR_FILENO + 1);
@@ -284,13 +268,19 @@ fn sanitize_clone(mut keep_fd: i32, close_stdio_without_devnull: bool) -> i32 {
 
     reset_handlers_to_default();
 
-    let devnull = sys::open_readwrite(c"/dev/null".as_ptr().cast());
-    if devnull >= 0 {
-        let _ = sys::dup2(devnull, libc::STDIN_FILENO);
-        let _ = sys::dup2(devnull, libc::STDOUT_FILENO);
-        let _ = sys::dup2(devnull, libc::STDERR_FILENO);
-        if devnull > libc::STDERR_FILENO {
-            sys::close(devnull);
+    if capabilities::has(capabilities::DEV_NULL) {
+        let devnull = sys::open_readwrite(c"/dev/null".as_ptr().cast());
+        if devnull >= 0 {
+            let _ = sys::dup2(devnull, libc::STDIN_FILENO);
+            let _ = sys::dup2(devnull, libc::STDOUT_FILENO);
+            let _ = sys::dup2(devnull, libc::STDERR_FILENO);
+            if devnull > libc::STDERR_FILENO {
+                sys::close(devnull);
+            }
+        } else if close_stdio_without_devnull {
+            sys::close(libc::STDIN_FILENO);
+            sys::close(libc::STDOUT_FILENO);
+            sys::close(libc::STDERR_FILENO);
         }
     } else if close_stdio_without_devnull {
         sys::close(libc::STDIN_FILENO);
@@ -334,12 +324,31 @@ fn install_alt_stack_if_requested() -> bool {
         return true;
     }
 
+    install_alt_stack_with(sys::mprotect_none, install_sigaltstack)
+}
+
+fn install_alt_stack_with(
+    mprotect_none: fn(*mut u8, usize) -> bool,
+    sigaltstack: fn(&libc::stack_t) -> bool,
+) -> bool {
+    let layout = ALT_STACK.0.get();
+    let guard = unsafe { core::ptr::addr_of_mut!((*layout).guard).cast::<u8>() };
+    let usable = unsafe { core::ptr::addr_of_mut!((*layout).usable).cast::<c_void>() };
+    if !mprotect_none(guard, ALT_STACK_GUARD_SIZE) {
+        capabilities::note_degraded(capabilities::DEGRADED_ALT_STACK_GUARD_UNAVAILABLE);
+        crash_debug(b"alt stack guard unavailable", -1);
+    }
+
     let stack = libc::stack_t {
-        ss_sp: ALT_STACK.0.get().cast(),
+        ss_sp: usable,
         ss_flags: 0,
         ss_size: ALT_STACK_SIZE,
     };
-    unsafe { libc::sigaltstack(&stack, null_mut()) == 0 }
+    sigaltstack(&stack)
+}
+
+fn install_sigaltstack(stack: &libc::stack_t) -> bool {
+    unsafe { libc::sigaltstack(stack, null_mut()) == 0 }
 }
 
 fn strip_loader_injection_env() {
@@ -515,8 +524,9 @@ fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontex
     let report_fd = state::REPORT_FD.load(Ordering::Relaxed);
 
     let direct_report = |reason: u32| {
-        capabilities::note_degraded(reason | capabilities::DEGRADED_REPORT_TO_FD);
-        if report_fd >= 0 {
+        capabilities::note_degraded(reason);
+        if capabilities::has(capabilities::REPORT_FD_OK) {
+            capabilities::note_degraded(capabilities::DEGRADED_REPORT_TO_FD);
             let _ = emit_crash_report(
                 report_fd, sig, si_code, has_info, si_addr, pid, tid, ucontext, false,
             );
@@ -660,11 +670,8 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
         0
     };
     let genuine_fault = is_genuine_fault(has_info, si_code, si_pid, self_pid);
-    if genuine_fault {
-        static COLLECTING: AtomicBool = AtomicBool::new(false);
-        if !COLLECTING.swap(true, Ordering::Relaxed) {
-            collect_crash(sig, si_code, has_info, si_addr, ucontext);
-        }
+    if genuine_fault && !COLLECTING.swap(true, Ordering::Relaxed) {
+        collect_crash(sig, si_code, has_info, si_addr, ucontext);
     }
 
     sys::set_errno(saved_errno);
@@ -691,7 +698,7 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
             }
         }
         ChainAction::Resume => {
-            if disarmed_on_entry && !genuine_fault {
+            if disarmed_on_entry {
                 restore_our_handler(sig);
             }
         }
@@ -761,14 +768,6 @@ fn query_sigaction(sig: c_int, out: *mut libc::sigaction) -> bool {
     unsafe { libc::sigaction(sig, null_mut(), out) == 0 }
 }
 
-fn is_default_handler(sig: c_int) -> bool {
-    let mut cur: libc::sigaction = unsafe { core::mem::zeroed() };
-    if !query_sigaction(sig, &mut cur) {
-        return false;
-    }
-    cur.sa_sigaction == libc::SIG_DFL
-}
-
 fn is_our_handler(sig: c_int) -> bool {
     let mut cur: libc::sigaction = unsafe { core::mem::zeroed() };
     if !query_sigaction(sig, &mut cur) {
@@ -803,7 +802,18 @@ fn restore_our_handler(sig: c_int) {
 }
 
 fn install_crash_handler(sig: c_int) {
-    if !is_default_handler(sig) {
+    let mut cur: libc::sigaction = unsafe { core::mem::zeroed() };
+    if !query_sigaction(sig, &mut cur) {
+        return;
+    }
+    if cur.sa_sigaction != libc::SIG_DFL {
+        if app_handler_is_real(cur.sa_sigaction as *mut c_void) {
+            if let Some(i) = sig_index(sig) {
+                state::APP_HANDLER_PRESENT[i].store(true, Ordering::Relaxed);
+            }
+            capabilities::note_degraded(capabilities::DEGRADED_APP_HANDLER_PRESENT);
+            crash_debug(b"app handler present", sig);
+        }
         return;
     }
 
@@ -859,17 +869,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn integer_debug_writer_handles_sign() {
-        let mut buf = [0u8; 12];
-        let n = write_i32(-123, &mut buf);
-        assert_eq!(&buf[..n], b"-123");
-        let n = write_i32(42, &mut buf);
-        assert_eq!(&buf[..n], b"42");
-        let n = write_i32(i32::MIN, &mut buf);
-        assert_eq!(&buf[..n], b"-2147483648");
-    }
-
-    #[test]
     fn app_chain_guard_distinguishes_recursion_from_unwind() {
         let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
             .lock()
@@ -884,6 +883,20 @@ mod tests {
         assert!(enter_app_chain(123, 1_100));
         leave_app_chain(123, 1_100);
         assert_eq!(APP_CHAIN_TID.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn alt_stack_guard_failure_is_degraded_but_not_fatal() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+
+        capabilities::publish(b"/definitely/missing-signal-safe-receiver\0", -1, false);
+        assert!(install_alt_stack_with(|_, _| false, |_| true));
+        assert_ne!(
+            capabilities::degradations() & capabilities::DEGRADED_ALT_STACK_GUARD_UNAVAILABLE,
+            0
+        );
     }
 
     #[test]

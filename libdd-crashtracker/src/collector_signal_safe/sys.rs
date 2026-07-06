@@ -350,6 +350,17 @@ mod raw {
         }
     }
 
+    pub fn mprotect_none(addr: *mut u8, len: usize) -> bool {
+        unsafe {
+            syscall3(
+                libc::SYS_mprotect,
+                addr as usize,
+                len,
+                libc::PROT_NONE as usize,
+            ) == 0
+        }
+    }
+
     pub fn fork_supported() -> bool {
         true
     }
@@ -523,6 +534,10 @@ mod raw {
         unsafe { libc::access(path.cast(), libc::X_OK) == 0 }
     }
 
+    pub fn mprotect_none(addr: *mut u8, len: usize) -> bool {
+        unsafe { libc::mprotect(addr.cast(), len, libc::PROT_NONE) == 0 }
+    }
+
     pub fn fork_supported() -> bool {
         false
     }
@@ -596,8 +611,8 @@ mod raw {
 
 pub use raw::{
     access_executable, close, close_range_from, dup2, exit_process, fcntl_dupfd, fd_valid,
-    fork_raw, fork_supported, getpid, gettid, kill, monotonic_nanos, open_readwrite, pipe,
-    poll_sleep_ms, read_own_mem, waitpid_nohang_status, write,
+    fork_raw, fork_supported, getpid, gettid, kill, monotonic_nanos, mprotect_none, open_readwrite,
+    pipe, poll_sleep_ms, read_own_mem, waitpid_nohang_status, write,
 };
 
 pub fn waitpid_nohang(pid: i32) -> i32 {

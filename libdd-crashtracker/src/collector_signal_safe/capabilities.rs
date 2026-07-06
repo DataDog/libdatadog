@@ -22,6 +22,9 @@ pub const DEGRADED_FORK_FAILED: u32 = 1 << 6;
 pub const DEGRADED_RECEIVER_UNAVAILABLE: u32 = 1 << 7;
 pub const DEGRADED_REPORT_TO_FD: u32 = 1 << 8;
 pub const DEGRADED_TRUNCATED: u32 = 1 << 9;
+pub const DEGRADED_METADATA_TRUNCATED: u32 = 1 << 10;
+pub const DEGRADED_APP_HANDLER_PRESENT: u32 = 1 << 11;
+pub const DEGRADED_ALT_STACK_GUARD_UNAVAILABLE: u32 = 1 << 12;
 
 pub const DEGRADATION_REASONS: &[(u32, &str)] = &[
     (DEGRADED_MISSING_RECEIVER, "missing_receiver"),
@@ -34,12 +37,18 @@ pub const DEGRADATION_REASONS: &[(u32, &str)] = &[
     (DEGRADED_RECEIVER_UNAVAILABLE, "receiver_unavailable"),
     (DEGRADED_REPORT_TO_FD, "report_to_fd"),
     (DEGRADED_TRUNCATED, "truncated"),
+    (DEGRADED_METADATA_TRUNCATED, "metadata_truncated"),
+    (DEGRADED_APP_HANDLER_PRESENT, "app_handler_present"),
+    (
+        DEGRADED_ALT_STACK_GUARD_UNAVAILABLE,
+        "alt_stack_guard_unavailable",
+    ),
 ];
 
 static CAPABILITIES: AtomicU32 = AtomicU32::new(0);
 static DEGRADATIONS: AtomicU32 = AtomicU32::new(0);
 
-pub fn publish(receiver_path: &[u8], report_fd: i32) {
+pub fn publish(receiver_path: &[u8], report_fd: i32, probe_seccomp: bool) {
     let mut caps = 0u32;
     let mut degraded = 0u32;
 
@@ -49,7 +58,7 @@ pub fn publish(receiver_path: &[u8], report_fd: i32) {
         degraded |= DEGRADED_MISSING_RECEIVER;
     }
 
-    if probe_process_vm_readv() {
+    if probe_process_vm_readv() && (!probe_seccomp || probe_process_vm_readv_in_child()) {
         caps |= PROC_VM_READV;
     } else {
         degraded |= DEGRADED_NO_PROC_VM_READV;
@@ -108,6 +117,43 @@ fn probe_process_vm_readv() -> bool {
     sys::read_own_mem(sys::getpid(), (&src as *const u8) as usize, &mut dst) && dst[0] == src
 }
 
+fn probe_process_vm_readv_in_child() -> bool {
+    if !sys::fork_supported() {
+        return true;
+    }
+
+    let child = unsafe { sys::fork_raw() };
+    if child == 0 {
+        sys::exit_process(if probe_process_vm_readv() { 0 } else { 1 });
+    }
+    if child < 0 {
+        return true;
+    }
+
+    const PROBE_TIMEOUT_MS: i64 = 100;
+    const PROBE_POLL_MS: i32 = 10;
+    let start = sys::monotonic_nanos();
+    loop {
+        let mut status = 0i32;
+        let waited = sys::waitpid_nohang_status(child as i32, &mut status);
+        if waited == child as i32 {
+            return libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
+        }
+        if waited < 0 {
+            return true;
+        }
+
+        let elapsed_ms = (sys::monotonic_nanos() - start) / 1_000_000;
+        if elapsed_ms >= PROBE_TIMEOUT_MS {
+            let _ = sys::kill(child as i32, libc::SIGKILL);
+            let mut status = 0i32;
+            let _ = sys::waitpid_nohang_status(child as i32, &mut status);
+            return true;
+        }
+        sys::poll_sleep_ms(PROBE_POLL_MS);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,7 +165,7 @@ mod tests {
             .lock()
             .expect("test lock poisoned");
 
-        publish(b"/definitely/missing-signal-safe-receiver\0", -1);
+        publish(b"/definitely/missing-signal-safe-receiver\0", -1, false);
 
         assert_eq!(get() & RECEIVER_OK, 0);
         assert_ne!(degradations() & DEGRADED_MISSING_RECEIVER, 0);
@@ -136,6 +182,7 @@ mod tests {
         publish(
             b"/definitely/missing-signal-safe-receiver\0",
             file.as_raw_fd(),
+            false,
         );
 
         assert_ne!(get() & REPORT_FD_OK, 0);

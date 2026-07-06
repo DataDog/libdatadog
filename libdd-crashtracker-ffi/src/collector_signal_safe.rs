@@ -44,6 +44,7 @@ pub struct SignalSafeConfig {
     pub receiver_timeout_secs: u32,
     pub max_frames: usize,
     pub close_fds_on_receiver: bool,
+    pub probe_seccomp: bool,
 }
 
 #[repr(C)]
@@ -114,6 +115,7 @@ pub unsafe extern "C" fn ddog_crasht_signal_safe_init(
             receiver_timeout_secs: config.receiver_timeout_secs,
             max_frames: config.max_frames,
             close_fds_on_receiver: config.close_fds_on_receiver,
+            probe_seccomp: config.probe_seccomp,
         }))
     })
 }

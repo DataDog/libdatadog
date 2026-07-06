@@ -3,6 +3,9 @@
 
 use std::time::Duration;
 
+use super::defaults::DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS;
+
 pub use crate::protocol::*;
 
-pub const DD_CRASHTRACK_DEFAULT_TIMEOUT: Duration = Duration::from_millis(5_000);
+pub const DD_CRASHTRACK_DEFAULT_TIMEOUT: Duration =
+    Duration::from_secs(DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS as u64);

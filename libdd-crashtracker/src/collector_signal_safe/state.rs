@@ -105,6 +105,7 @@ pub fn meta_mut() -> &'static mut Meta {
 pub static ORIG_FN: [AtomicPtr<c_void>; NSIG] = [const { AtomicPtr::new(null_mut()) }; NSIG];
 pub static ORIG_FLAGS: [AtomicI32; NSIG] = [const { AtomicI32::new(0) }; NSIG];
 pub static OWN_SIGNAL: [AtomicBool; NSIG] = [const { AtomicBool::new(false) }; NSIG];
+pub static APP_HANDLER_PRESENT: [AtomicBool; NSIG] = [const { AtomicBool::new(false) }; NSIG];
 
 struct SigMaskStorage(UnsafeCell<[MaybeUninit<libc::sigset_t>; NSIG]>);
 
@@ -180,6 +181,7 @@ pub fn clear_signal_state() {
         ORIG_FN[i].store(null_mut(), Ordering::Relaxed);
         ORIG_FLAGS[i].store(0, Ordering::Relaxed);
         OWN_SIGNAL[i].store(false, Ordering::Relaxed);
+        APP_HANDLER_PRESENT[i].store(false, Ordering::Relaxed);
         i += 1;
     }
 }
@@ -200,4 +202,10 @@ pub fn owned_signal_count() -> u32 {
         i += 1;
     }
     count
+}
+
+pub fn app_handler_present(sig: i32) -> bool {
+    sig_index(sig)
+        .map(|i| APP_HANDLER_PRESENT[i].load(Ordering::Acquire))
+        .unwrap_or(false)
 }

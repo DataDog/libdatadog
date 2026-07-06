@@ -9,13 +9,12 @@ use crate::{
     collector::signal_handler_manager::register_crash_handlers,
     crash_info::Metadata,
     reset_counters,
-    shared::configuration::CrashtrackerReceiverConfig,
+    shared::{configuration::CrashtrackerReceiverConfig, signals::LEGACY_DEFAULT_SIGNALS},
     signal_owner::{self, SignalOwner},
     update_config, update_metadata, CrashtrackerConfiguration,
 };
 
-pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
-    [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
+pub static DEFAULT_SYMBOLS: [libc::c_int; 4] = LEGACY_DEFAULT_SIGNALS;
 
 pub fn default_signals() -> Vec<libc::c_int> {
     Vec::from(DEFAULT_SYMBOLS)

@@ -6,7 +6,7 @@ use crate::{ensure_non_null_out_parameter, ArcHandle, ProfileError, ProfileStatu
 use anyhow::Context;
 use function_name::named;
 use libdd_common_ffi::slice::{AsBytes, ByteSlice, CharSlice, Slice};
-use libdd_common_ffi::{wrap_with_ffi_result, Error, Handle, Timespec, ToInner};
+use libdd_common_ffi::{wrap_with_ffi_result, Error, Timespec};
 use libdd_profiling::api::{self, ManagedStringId};
 use libdd_profiling::profiles::datatypes::{ProfilesDictionary, StringId2};
 use libdd_profiling::{api2, internal};
@@ -49,6 +49,47 @@ impl Drop for Profile {
     }
 }
 
+/// Represents a serialized profile. Do not access its member for any reason, only use
+/// the C API functions on this struct.
+#[repr(C)]
+pub struct EncodedProfile {
+    // This may be null, but if not it will point to a valid EncodedProfile.
+    inner: *mut internal::EncodedProfile,
+}
+
+impl EncodedProfile {
+    pub(crate) fn take(&mut self) -> anyhow::Result<Box<internal::EncodedProfile>> {
+        let raw = std::mem::replace(&mut self.inner, std::ptr::null_mut());
+        anyhow::ensure!(
+            !raw.is_null(),
+            "inner pointer was null, indicates use after free"
+        );
+        Ok(unsafe { Box::from_raw(raw) })
+    }
+
+    fn to_inner_mut(&mut self) -> anyhow::Result<&mut internal::EncodedProfile> {
+        unsafe {
+            self.inner
+                .as_mut()
+                .context("inner pointer was null, indicates use after free")
+        }
+    }
+}
+
+impl From<internal::EncodedProfile> for EncodedProfile {
+    fn from(value: internal::EncodedProfile) -> Self {
+        Self {
+            inner: Box::into_raw(Box::new(value)),
+        }
+    }
+}
+
+impl Drop for EncodedProfile {
+    fn drop(&mut self) {
+        drop(self.take())
+    }
+}
+
 /// A generic result type for when a profiling operation may fail, but there's
 /// nothing to return in the case of success.
 #[allow(dead_code)]
@@ -83,7 +124,7 @@ pub enum ProfileNewResult {
 #[allow(dead_code)]
 #[repr(C)]
 pub enum SerializeResult {
-    Ok(Handle<internal::EncodedProfile>),
+    Ok(EncodedProfile),
     Err(Error),
 }
 
@@ -829,13 +870,11 @@ unsafe fn add_upscaling_rule(
 /// valid reference also means that it hasn't already been dropped or exported (do not
 /// call this twice on the same object).
 #[no_mangle]
-pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
-    profile: *mut Handle<internal::EncodedProfile>,
-) {
+pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(profile: *mut EncodedProfile) {
     // Technically, this function has been designed so if it's double-dropped
     // then it's okay, but it's not something that should be relied on.
-    if !profile.is_null() {
-        drop((*profile).take())
+    if let Some(profile) = unsafe { profile.as_mut() } {
+        drop(profile.take())
     }
 }
 
@@ -848,10 +887,17 @@ pub unsafe extern "C" fn ddog_prof_EncodedProfile_drop(
 #[must_use]
 #[named]
 pub unsafe extern "C" fn ddog_prof_EncodedProfile_bytes<'a>(
-    mut encoded_profile: *mut Handle<internal::EncodedProfile>,
+    encoded_profile: *mut EncodedProfile,
 ) -> libdd_common_ffi::Result<ByteSlice<'a>> {
     wrap_with_ffi_result!({
-        let slice = encoded_profile.to_inner_mut()?.buffer.as_slice();
+        let slice = unsafe {
+            encoded_profile
+                .as_mut()
+                .context("Null pointer")?
+                .to_inner_mut()?
+                .buffer
+                .as_slice()
+        };
         // Rountdtrip through raw pointers to avoid Rust complaining about lifetimes.
         let byte_slice = ByteSlice::from_raw_parts(slice.as_ptr(), slice.len());
         anyhow::Ok(byte_slice)

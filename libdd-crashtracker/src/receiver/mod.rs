@@ -179,4 +179,69 @@ mod tests {
 
         Ok(())
     }
+
+    #[cfg(feature = "collector_signal-safe")]
+    #[test]
+    fn signal_safe_signal_names_stay_receiver_compatible() -> anyhow::Result<()> {
+        use crate::collector_signal_safe as signal_safe;
+
+        let signals = [
+            (libc::SIGSEGV, SignalNames::SIGSEGV),
+            (libc::SIGABRT, SignalNames::SIGABRT),
+            (libc::SIGBUS, SignalNames::SIGBUS),
+            (libc::SIGILL, SignalNames::SIGILL),
+            (libc::SIGFPE, SignalNames::SIGFPE),
+        ];
+        for (signum, expected) in signals {
+            let siginfo = siginfo_from_signal_safe_names(signum, signal_safe::SI_USER)?;
+            assert_eq!(siginfo.si_signo_human_readable, expected);
+            assert_eq!(siginfo.si_code_human_readable, SiCodes::SI_USER);
+        }
+
+        let sicodes = [
+            (
+                libc::SIGSEGV,
+                signal_safe::SEGV_MAPERR,
+                SiCodes::SEGV_MAPERR,
+            ),
+            (
+                libc::SIGSEGV,
+                signal_safe::SEGV_ACCERR,
+                SiCodes::SEGV_ACCERR,
+            ),
+            (libc::SIGBUS, signal_safe::BUS_ADRALN, SiCodes::BUS_ADRALN),
+            (libc::SIGBUS, signal_safe::BUS_ADRERR, SiCodes::BUS_ADRERR),
+            (libc::SIGBUS, signal_safe::BUS_OBJERR, SiCodes::BUS_OBJERR),
+            (libc::SIGILL, signal_safe::ILL_ILLOPC, SiCodes::ILL_ILLOPC),
+            (libc::SIGILL, signal_safe::ILL_ILLOPN, SiCodes::ILL_ILLOPN),
+            (libc::SIGILL, signal_safe::ILL_ILLADR, SiCodes::ILL_ILLADR),
+            (libc::SIGILL, signal_safe::ILL_ILLTRP, SiCodes::ILL_ILLTRP),
+            (libc::SIGILL, signal_safe::ILL_PRVOPC, SiCodes::ILL_PRVOPC),
+            (libc::SIGILL, signal_safe::ILL_PRVREG, SiCodes::ILL_PRVREG),
+            (libc::SIGILL, signal_safe::ILL_COPROC, SiCodes::ILL_COPROC),
+            (libc::SIGILL, signal_safe::ILL_BADSTK, SiCodes::ILL_BADSTK),
+            (libc::SIGFPE, signal_safe::FPE_INTDIV, SiCodes::UNKNOWN),
+        ];
+        for (signum, si_code, expected) in sicodes {
+            let siginfo = siginfo_from_signal_safe_names(signum, si_code)?;
+            assert_eq!(siginfo.si_code_human_readable, expected);
+        }
+
+        let siginfo = siginfo_from_signal_safe_names(libc::SIGSEGV, 999)?;
+        assert_eq!(siginfo.si_code_human_readable, SiCodes::UNKNOWN);
+        Ok(())
+    }
+
+    #[cfg(feature = "collector_signal-safe")]
+    fn siginfo_from_signal_safe_names(signum: i32, si_code: i32) -> anyhow::Result<SigInfo> {
+        use crate::collector_signal_safe as signal_safe;
+
+        Ok(serde_json::from_value(serde_json::json!({
+            "si_addr": null,
+            "si_code": si_code,
+            "si_code_human_readable": signal_safe::rust_si_code_name(signum, si_code),
+            "si_signo": signum,
+            "si_signo_human_readable": signal_safe::rust_signal_name(signum),
+        }))?)
+    }
 }

@@ -1,13 +1,16 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::fmt::Write;
 use core::sync::atomic::Ordering::Relaxed;
 
 use heapless::String as HeaplessString;
+use serde::Serialize;
 
 use super::state::meta_mut;
 use super::{capabilities, state, sys};
+use crate::shared::{
+    defaults::DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS, signals::SIGNAL_SAFE_CRASH_SIGNALS,
+};
 
 // Compatibility preset for the existing C-tracer consumer. New integrators should pass
 // explicit metadata through SignalSafeInitConfig instead of relying on these defaults.
@@ -30,20 +33,14 @@ pub const COMPAT_LIBRARY_NAME: &str = "dd-trace-c";
 pub const COMPAT_LIBRARY_FAMILY: &str = "native";
 pub const COMPAT_DEFAULT_SERVICE: &str = "dd-trace-c";
 
-pub const RECEIVER_TIMEOUT_SECS: u32 = 5;
+pub const RECEIVER_TIMEOUT_SECS: u32 = DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS;
 pub const RECEIVER_TIMEOUT_SECS_MAX: u32 = 60;
 pub const COLLECTOR_REAP_MS: i32 = 500;
 pub const RECEIVER_TIMEOUT_GRACE_MS: i32 = 1000;
 pub const BACKTRACE_LEVELS_DEFAULT: usize = 32;
 pub const BACKTRACE_LEVELS_MAX: usize = 64;
 
-pub const CRASH_SIGNALS: [i32; 5] = [
-    libc::SIGSEGV,
-    libc::SIGABRT,
-    libc::SIGBUS,
-    libc::SIGILL,
-    libc::SIGFPE,
-];
+pub const CRASH_SIGNALS: [i32; 5] = SIGNAL_SAFE_CRASH_SIGNALS;
 
 pub const CONFIG_JSON_BUF_SIZE: usize = 2048;
 
@@ -83,6 +80,7 @@ pub struct SignalSafeInitConfig<'a> {
     pub receiver_timeout_secs: u32,
     pub max_frames: usize,
     pub close_fds_on_receiver: bool,
+    pub probe_seccomp: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -116,8 +114,28 @@ impl<'a> Default for SignalSafeInitConfig<'a> {
             receiver_timeout_secs: RECEIVER_TIMEOUT_SECS,
             max_frames: BACKTRACE_LEVELS_DEFAULT,
             close_fds_on_receiver: true,
+            probe_seccomp: false,
         }
     }
+}
+
+#[derive(Serialize)]
+struct WireConfig<'a> {
+    additional_files: [&'a str; 0],
+    create_alt_stack: bool,
+    use_alt_stack: bool,
+    demangle_names: bool,
+    endpoint: Option<()>,
+    resolve_frames: &'a str,
+    signals: &'a [i32],
+    timeout: WireTimeout,
+    unix_socket_path: Option<()>,
+}
+
+#[derive(Serialize)]
+struct WireTimeout {
+    secs: u32,
+    nanos: u32,
 }
 
 pub fn build_config_json(
@@ -125,42 +143,29 @@ pub fn build_config_json(
     config: &SignalSafeInitConfig<'_>,
 ) -> bool {
     out.clear();
-    if out
-        .push_str("{\"additional_files\":[],\"create_alt_stack\":")
-        .is_err()
-    {
-        return false;
-    }
-    if write!(out, "{}", config.create_alt_stack).is_err()
-        || out.push_str(",\"use_alt_stack\":").is_err()
-        || write!(out, "{}", config.use_alt_stack).is_err()
-        || out
-            .push_str(
-                ",\"demangle_names\":true,\
-                 \"endpoint\":null,\
-                 \"resolve_frames\":\"EnabledWithSymbolsInReceiver\",\
-                 \"signals\":[",
-            )
-            .is_err()
-    {
-        return false;
-    }
+    let wire = WireConfig {
+        additional_files: [],
+        create_alt_stack: config.create_alt_stack,
+        use_alt_stack: config.use_alt_stack,
+        demangle_names: true,
+        endpoint: None,
+        resolve_frames: "EnabledWithSymbolsInReceiver",
+        signals: &CRASH_SIGNALS,
+        timeout: WireTimeout {
+            secs: normalized_receiver_timeout_secs(config.receiver_timeout_secs),
+            nanos: 0,
+        },
+        unix_socket_path: None,
+    };
 
-    for (i, sig) in CRASH_SIGNALS.iter().enumerate() {
-        if i > 0 && out.push(',').is_err() {
-            return false;
-        }
-        if write!(out, "{sig}").is_err() {
-            return false;
-        }
-    }
-
-    writeln!(
-        out,
-        "],\"timeout\":{{\"secs\":{},\"nanos\":0}},\"unix_socket_path\":null}}",
-        normalized_receiver_timeout_secs(config.receiver_timeout_secs)
-    )
-    .is_ok()
+    let mut buf = [0u8; CONFIG_JSON_BUF_SIZE];
+    let Ok(len) = serde_json_core::to_slice(&wire, &mut buf) else {
+        return false;
+    };
+    let Ok(json) = core::str::from_utf8(&buf[..len]) else {
+        return false;
+    };
+    out.push_str(json).is_ok() && out.push('\n').is_ok()
 }
 
 pub fn prepare(config: &SignalSafeInitConfig<'_>) -> bool {
@@ -175,30 +180,31 @@ pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareEr
         return Err(PrepareError::Failed);
     }
 
-    set_str(&mut m.service, config.service);
-    set_str(&mut m.env, config.env);
-    set_str(&mut m.app_version, config.app_version);
-    set_str(&mut m.runtime_id, config.runtime_id);
-    set_str(&mut m.platform, config.platform);
+    let mut metadata_truncated = false;
+    metadata_truncated |= !set_str(&mut m.service, config.service);
+    metadata_truncated |= !set_str(&mut m.env, config.env);
+    metadata_truncated |= !set_str(&mut m.app_version, config.app_version);
+    metadata_truncated |= !set_str(&mut m.runtime_id, config.runtime_id);
+    metadata_truncated |= !set_str(&mut m.platform, config.platform);
     if m.platform.is_empty() {
-        set_str(&mut m.platform, b"host");
+        metadata_truncated |= !set_str(&mut m.platform, b"host");
     }
-    set_str_or(
+    metadata_truncated |= !set_str_or(
         &mut m.library_name,
         config.library_name,
         COMPAT_LIBRARY_NAME.as_bytes(),
     );
-    set_str_or(
+    metadata_truncated |= !set_str_or(
         &mut m.library_version,
         config.library_version,
         COMPAT_LIBRARY_VERSION.as_bytes(),
     );
-    set_str_or(
+    metadata_truncated |= !set_str_or(
         &mut m.family,
         config.family,
         COMPAT_LIBRARY_FAMILY.as_bytes(),
     );
-    set_str_or(
+    metadata_truncated |= !set_str_or(
         &mut m.default_service,
         config.default_service,
         COMPAT_DEFAULT_SERVICE.as_bytes(),
@@ -227,7 +233,14 @@ pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareEr
         Relaxed,
     );
     state::MAX_FRAMES.store(normalized_max_frames(config.max_frames), Relaxed);
-    capabilities::publish(m.process_path.as_slice(), config.report_fd);
+    capabilities::publish(
+        m.process_path.as_slice(),
+        config.report_fd,
+        config.probe_seccomp,
+    );
+    if metadata_truncated {
+        capabilities::note_degraded(capabilities::DEGRADED_METADATA_TRUNCATED);
+    }
     Ok(())
 }
 
@@ -261,6 +274,7 @@ pub fn prepare_from_env_result() -> Result<(), PrepareError> {
         force_on_top: is_true(env_get(b"DD_CRASHTRACKING_ALWAYS_ON_TOP\0")),
         only_bootstrap: is_true(env_get(b"DD_CRASHTRACKING_ONLY_BOOTSTRAP\0")),
         debug_logging,
+        probe_seccomp: is_true(env_get(b"DD_CRASHTRACKING_PROBE_SECCOMP\0")),
         ..SignalSafeInitConfig::default()
     })
 }
@@ -297,22 +311,23 @@ fn normalized_max_frames(value: usize) -> usize {
     }
 }
 
-fn set_str<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8]) {
+fn set_str<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8]) -> bool {
     dst.clear();
     if let Ok(s) = core::str::from_utf8(src) {
         for ch in s.chars() {
             if dst.push(ch).is_err() {
-                break;
+                return false;
             }
         }
     }
+    true
 }
 
-fn set_str_or<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8], default: &[u8]) {
+fn set_str_or<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8], default: &[u8]) -> bool {
     if src.is_empty() {
-        set_str(dst, default);
+        set_str(dst, default)
     } else {
-        set_str(dst, src);
+        set_str(dst, src)
     }
 }
 
@@ -424,6 +439,9 @@ fn parse_log_level(v: Option<&[u8]>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::format;
+    use std::string::ToString;
+    use std::vec::Vec;
 
     #[test]
     fn config_json_contains_receiver_contract() {
@@ -432,14 +450,26 @@ mod tests {
             &mut out,
             &SignalSafeInitConfig::default()
         ));
+        let signals = CRASH_SIGNALS
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
         assert_eq!(
             out.as_str(),
-            "{\"additional_files\":[],\"create_alt_stack\":false,\"use_alt_stack\":false,\
-             \"demangle_names\":true,\"endpoint\":null,\
-             \"resolve_frames\":\"EnabledWithSymbolsInReceiver\",\
-             \"signals\":[11,6,10,4,8],\"timeout\":{\"secs\":5,\"nanos\":0},\
-             \"unix_socket_path\":null}\n"
+            format!(
+                "{{\"additional_files\":[],\"create_alt_stack\":false,\"use_alt_stack\":false,\
+                 \"demangle_names\":true,\"endpoint\":null,\
+                 \"resolve_frames\":\"EnabledWithSymbolsInReceiver\",\
+                 \"signals\":[{signals}],\"timeout\":{{\"secs\":5,\"nanos\":0}},\
+                 \"unix_socket_path\":null}}\n"
+            )
         );
+        assert!(CRASH_SIGNALS.contains(&libc::SIGSEGV));
+        assert!(CRASH_SIGNALS.contains(&libc::SIGABRT));
+        assert!(CRASH_SIGNALS.contains(&libc::SIGBUS));
+        assert!(CRASH_SIGNALS.contains(&libc::SIGILL));
+        assert!(CRASH_SIGNALS.contains(&libc::SIGFPE));
     }
 
     #[test]
@@ -518,5 +548,24 @@ mod tests {
         assert!(state::FORCE_ON_TOP.load(Relaxed));
         assert!(state::ONLY_BOOTSTRAP.load(Relaxed));
         assert!(state::DEBUG_LOG.load(Relaxed));
+    }
+
+    #[test]
+    fn prepare_marks_metadata_truncation_degraded() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+        let oversized_service = "s".repeat(300);
+
+        assert!(prepare(&SignalSafeInitConfig {
+            receiver_path: b"/definitely/missing-signal-safe-receiver",
+            service: oversized_service.as_bytes(),
+            ..SignalSafeInitConfig::default()
+        }));
+
+        assert_ne!(
+            capabilities::degradations() & capabilities::DEGRADED_METADATA_TRUNCATED,
+            0
+        );
     }
 }

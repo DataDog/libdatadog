@@ -23,18 +23,17 @@
 //! crash-signal mask in effect; a nested crash on another managed signal is deferred until the
 //! app handler returns.
 
-use core::ffi::c_void;
-use core::fmt::Write;
-
-use heapless::{String as HeaplessString, Vec as HeaplessVec};
-use serde::Serialize;
-
 use crate::protocol;
 
 mod backtrace;
 mod capabilities;
 mod config;
+mod emitter;
+mod fmt;
 mod handler;
+mod policy;
+mod report;
+mod signal_names;
 mod state;
 mod sys;
 
@@ -42,21 +41,26 @@ mod sys;
 pub(crate) static TEST_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub use config::{build_config_json, prepare, prepare_from_env, SignalSafeInitConfig};
+pub use emitter::{
+    emit_json_section, emit_minimal_report, emit_report, emit_report_with_metadata, push_tag, Sink,
+    SliceSink,
+};
+pub use fmt::{hex_addr, hex_u32, write_i32};
 pub use handler::{
     bootstrap_complete, init, init_from_env, init_from_env_result, init_result, shutdown,
     InitResult,
 };
+pub use policy::{
+    app_handler_is_real, app_recovered, chain_action, disposition_of, is_genuine_fault,
+    should_run_app_first, ChainAction, Disposition, SignalContext,
+};
+pub use report::{
+    CrashContext, Frame, Metadata, ProcInfo, Report, SignalInfo, Tag, Tags, FRAME_IP_CAPACITY,
+    MAX_TAGS, MESSAGE_CAPACITY, SECTION_BUF_CAPACITY, TAG_CAPACITY,
+};
+pub use signal_names::*;
 pub use state::{set_stage, Stage};
 pub use sys::FdSink;
-
-pub const SECTION_BUF_CAPACITY: usize = 4096;
-pub const TAG_CAPACITY: usize = 288;
-pub const MAX_TAGS: usize = 20;
-pub const FRAME_IP_CAPACITY: usize = 2 + core::mem::size_of::<usize>() * 2;
-pub const MESSAGE_CAPACITY: usize = 192;
-
-pub type Tag = HeaplessString<TAG_CAPACITY>;
-pub type Tags = HeaplessVec<Tag, MAX_TAGS>;
 
 pub fn capability_bits() -> u32 {
     capabilities::get()
@@ -74,608 +78,12 @@ pub fn owns_signal(sig: i32) -> bool {
     state::owns_signal(sig)
 }
 
-pub trait Sink {
-    fn put(&mut self, bytes: &[u8]) -> bool;
-}
-
-pub struct SliceSink<'a> {
-    buf: &'a mut [u8],
-    len: usize,
-}
-
-impl<'a> SliceSink<'a> {
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        Self { buf, len: 0 }
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        &self.buf[..self.len]
-    }
-
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-}
-
-impl Sink for SliceSink<'_> {
-    fn put(&mut self, bytes: &[u8]) -> bool {
-        let Some(end) = self.len.checked_add(bytes.len()) else {
-            return false;
-        };
-        if end > self.buf.len() {
-            return false;
-        }
-        self.buf[self.len..end].copy_from_slice(bytes);
-        self.len = end;
-        true
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Disposition {
-    Default,
-    Ignore,
-    Handler,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ChainAction {
-    InvokeApp,
-    RestoreDefaultAndRefault,
-    RestoreDefaultAndReraise,
-    Resume,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SignalContext {
-    pub has_siginfo: bool,
-    pub si_code: i32,
-    pub si_pid: i32,
-    pub self_pid: i32,
-}
-
-impl SignalContext {
-    pub fn is_genuine_fault(self) -> bool {
-        is_genuine_fault(self.has_siginfo, self.si_code, self.si_pid, self.self_pid)
-    }
-}
-
-pub fn disposition_of(handler: *mut c_void) -> Disposition {
-    match handler as usize {
-        SIG_DFL_VALUE => Disposition::Default,
-        SIG_IGN_VALUE => Disposition::Ignore,
-        _ => Disposition::Handler,
-    }
-}
-
-pub fn app_handler_is_real(handler: *mut c_void) -> bool {
-    matches!(disposition_of(handler), Disposition::Handler)
-}
-
-pub fn should_run_app_first(force_on_top: bool, app_is_real: bool) -> bool {
-    !force_on_top && app_is_real
-}
-
-pub fn app_recovered(handler_after: *mut c_void) -> bool {
-    disposition_of(handler_after) != Disposition::Default
-}
-
-pub fn is_genuine_fault(has_siginfo: bool, si_code: i32, si_pid: i32, self_pid: i32) -> bool {
-    if !has_siginfo {
-        return false;
-    }
-    if si_code != SI_USER && si_code != SI_TKILL {
-        return true;
-    }
-    si_pid == self_pid
-}
-
-pub fn chain_action(disposition: Disposition, has_siginfo: bool, si_code: i32) -> ChainAction {
-    match disposition {
-        Disposition::Ignore => ChainAction::Resume,
-        Disposition::Handler => ChainAction::InvokeApp,
-        Disposition::Default if has_siginfo && si_code > 0 => ChainAction::RestoreDefaultAndRefault,
-        Disposition::Default => ChainAction::RestoreDefaultAndReraise,
-    }
-}
-
-#[derive(Serialize)]
-pub struct Metadata<'a> {
-    pub library_name: &'a str,
-    pub library_version: &'a str,
-    pub family: &'a str,
-    pub tags: Tags,
-}
-
-impl<'a> Metadata<'a> {
-    pub fn new(library_name: &'a str, library_version: &'a str, family: &'a str) -> Self {
-        Self {
-            library_name,
-            library_version,
-            family,
-            tags: Tags::new(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-pub struct SignalInfo {
-    pub si_signo: i32,
-    pub si_code: i32,
-    pub si_signo_human_readable: &'static str,
-    pub si_code_human_readable: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub si_addr: Option<HeaplessString<FRAME_IP_CAPACITY>>,
-}
-
-impl SignalInfo {
-    pub fn new(si_signo: i32, si_code: i32, si_addr: usize, has_siginfo: bool) -> Self {
-        let si_addr = if has_siginfo && signal_has_address(si_signo) {
-            Some(hex_addr(si_addr))
-        } else {
-            None
-        };
-
-        Self {
-            si_signo,
-            si_code,
-            si_signo_human_readable: rust_signal_name(si_signo),
-            si_code_human_readable: rust_si_code_name(si_signo, si_code),
-            si_addr,
-        }
-    }
-}
-
-#[derive(Serialize)]
-pub struct ProcInfo {
-    pub pid: i32,
-    pub tid: i32,
-}
-
-#[derive(Serialize)]
-pub struct Frame {
-    pub ip: HeaplessString<FRAME_IP_CAPACITY>,
-}
-
-impl Frame {
-    pub fn from_ip(ip: usize) -> Self {
-        Self { ip: hex_addr(ip) }
-    }
-}
-
-pub struct CrashContext<'a> {
-    pub signal: SignalInfo,
-    pub pid: i32,
-    pub tid: i32,
-    pub frames: &'a [usize],
-}
-
-pub struct Report<'a> {
-    pub config_json: &'a str,
-    pub library_name: &'a str,
-    pub library_version: &'a str,
-    pub family: &'a str,
-    pub default_service: &'a str,
-    pub service: &'a str,
-    pub env: &'a str,
-    pub app_version: &'a str,
-    pub runtime_id: &'a str,
-    pub platform: &'a str,
-    pub stage_name: &'a str,
-    pub stackwalk_method: &'a str,
-    pub capability_bits: u32,
-    pub degradation_bits: u32,
-}
-
-pub fn push_tag(tags: &mut Tags, key: &str, value: &str) -> bool {
-    if value.is_empty() {
-        return true;
-    }
-
-    let mut tag = Tag::new();
-    tag.push_str(key).is_ok()
-        && tag.push(':').is_ok()
-        && tag.push_str(value).is_ok()
-        && tags.push(tag).is_ok()
-}
-
-pub fn emit_report(sink: &mut impl Sink, report: &Report<'_>, context: &CrashContext<'_>) -> bool {
-    if !emit_config(sink, report.config_json)
-        || !emit_metadata(sink, report)
-        || !emit_additional_tags(
-            sink,
-            report.stage_name,
-            report.stackwalk_method,
-            report.capability_bits,
-            report.degradation_bits,
-        )
-        || !emit_kind(sink)
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
-            &context.signal,
-            protocol::DD_CRASHTRACK_END_SIGINFO,
-        )
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
-            &ProcInfo {
-                pid: context.pid,
-                tid: context.tid,
-            },
-            protocol::DD_CRASHTRACK_END_PROCINFO,
-        )
-        || !emit_stacktrace(sink, context.frames)
-    {
-        return emit_truncated_tail(sink, report, context);
-    }
-
-    emit_message(sink, report.stage_name, &context.signal) && emit_done(sink)
-}
-
-pub fn emit_report_with_metadata(
-    sink: &mut impl Sink,
-    config_json: &str,
-    metadata: &Metadata<'_>,
-    stage_name: &str,
-    context: &CrashContext<'_>,
-) -> bool {
-    if !emit_config(sink, config_json)
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_METADATA,
-            metadata,
-            protocol::DD_CRASHTRACK_END_METADATA,
-        )
-        || !emit_additional_tags(sink, stage_name, "fp_pvr", 0, 0)
-        || !emit_kind(sink)
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
-            &context.signal,
-            protocol::DD_CRASHTRACK_END_SIGINFO,
-        )
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
-            &ProcInfo {
-                pid: context.pid,
-                tid: context.tid,
-            },
-            protocol::DD_CRASHTRACK_END_PROCINFO,
-        )
-        || !emit_stacktrace(sink, context.frames)
-    {
-        capabilities::note_degraded(capabilities::DEGRADED_TRUNCATED);
-        let _ = emit_additional_tags(
-            sink,
-            stage_name,
-            "fp_pvr",
-            0,
-            capabilities::DEGRADED_TRUNCATED,
-        );
-        return emit_message(sink, stage_name, &context.signal) && emit_done(sink);
-    }
-
-    emit_message(sink, stage_name, &context.signal) && emit_done(sink)
-}
-
-pub fn emit_minimal_report(
-    sink: &mut impl Sink,
-    config_json: &str,
-    metadata: &Metadata<'_>,
-    signal: &SignalInfo,
-) -> bool {
-    emit_config(sink, config_json)
-        && emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_METADATA,
-            metadata,
-            protocol::DD_CRASHTRACK_END_METADATA,
-        )
-        && emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
-            signal,
-            protocol::DD_CRASHTRACK_END_SIGINFO,
-        )
-        && emit_done(sink)
-}
-
-pub fn emit_json_section<T: Serialize>(
-    sink: &mut impl Sink,
-    begin: &str,
-    value: &T,
-    end: &str,
-) -> bool {
-    let mut buf = [0u8; SECTION_BUF_CAPACITY];
-    match serde_json_core::to_slice(value, &mut buf) {
-        Ok(len) => {
-            put_marker_line(sink, begin)
-                && sink.put(&buf[..len])
-                && sink.put(b"\n")
-                && put_marker_line(sink, end)
-        }
-        Err(_) => false,
-    }
-}
-
-pub fn rust_signal_name(signal: i32) -> &'static str {
-    match signal {
-        libc::SIGABRT => "SIGABRT",
-        libc::SIGBUS => "SIGBUS",
-        libc::SIGFPE => "SIGFPE",
-        libc::SIGILL => "SIGILL",
-        libc::SIGQUIT => "SIGQUIT",
-        libc::SIGSEGV => "SIGSEGV",
-        libc::SIGSYS => "SIGSYS",
-        libc::SIGTRAP => "SIGTRAP",
-        _ => "UNKNOWN",
-    }
-}
-
-pub fn rust_si_code_name(signal: i32, si_code: i32) -> &'static str {
-    match si_code {
-        SI_USER => "SI_USER",
-        SI_KERNEL => "SI_KERNEL",
-        SI_QUEUE => "SI_QUEUE",
-        SI_TIMER => "SI_TIMER",
-        SI_MESGQ => "SI_MESGQ",
-        SI_ASYNCIO => "SI_ASYNCIO",
-        SI_SIGIO => "SI_SIGIO",
-        SI_TKILL => "SI_TKILL",
-        _ => signal_specific_si_code_name(signal, si_code),
-    }
-}
-
-pub fn signal_has_address(signal: i32) -> bool {
-    matches!(
-        signal,
-        libc::SIGBUS | libc::SIGFPE | libc::SIGILL | libc::SIGSEGV | libc::SIGTRAP
-    )
-}
-
-pub fn hex_addr(value: usize) -> HeaplessString<FRAME_IP_CAPACITY> {
-    let mut out = HeaplessString::new();
-    let _ = out.push_str("0x");
-
-    for shift in (0..core::mem::size_of::<usize>() * 2).rev() {
-        let nibble = ((value >> (shift * 4)) & 0xf) as u8;
-        let ch = if nibble < 10 {
-            b'0' + nibble
-        } else {
-            b'a' + (nibble - 10)
-        };
-        let _ = out.push(ch as char);
-    }
-
-    out
-}
-
-fn emit_config(sink: &mut impl Sink, config_json: &str) -> bool {
-    put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_CONFIG)
-        && sink.put(config_json.as_bytes())
-        && (config_json.ends_with('\n') || sink.put(b"\n"))
-        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_CONFIG)
-}
-
-fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
-    let service = if report.service.is_empty() {
-        report.default_service
-    } else {
-        report.service
-    };
-
-    let mut metadata = Metadata::new(report.library_name, report.library_version, report.family);
-    push_tag(&mut metadata.tags, "language", "native")
-        && push_tag(&mut metadata.tags, "runtime", "native")
-        && push_tag(&mut metadata.tags, "is_crash", "true")
-        && push_tag(&mut metadata.tags, "severity", "crash")
-        && push_tag(&mut metadata.tags, "service", service)
-        && push_tag(&mut metadata.tags, "env", report.env)
-        && push_tag(&mut metadata.tags, "version", report.app_version)
-        && push_tag(&mut metadata.tags, "runtime_id", report.runtime_id)
-        && push_tag(
-            &mut metadata.tags,
-            "runtime_version",
-            report.library_version,
-        )
-        && push_tag(
-            &mut metadata.tags,
-            "library_version",
-            report.library_version,
-        )
-        && push_tag(&mut metadata.tags, "platform", report.platform)
-        && push_tag(
-            &mut metadata.tags,
-            "injector_version",
-            report.library_version,
-        )
-        && emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_METADATA,
-            &metadata,
-            protocol::DD_CRASHTRACK_END_METADATA,
-        )
-}
-
-fn emit_additional_tags(
-    sink: &mut impl Sink,
-    stage: &str,
-    stackwalk_method: &str,
-    capability_bits: u32,
-    degradation_bits: u32,
-) -> bool {
-    let mut tags = Tags::new();
-    if !push_tag(&mut tags, "stage", stage) {
-        return false;
-    }
-    if !push_tag(&mut tags, "stackwalk_method", stackwalk_method) {
-        return false;
-    }
-    let capabilities = hex_u32(capability_bits);
-    if !push_tag(&mut tags, "capabilities", capabilities.as_str()) {
-        return false;
-    }
-    let degradations = hex_u32(degradation_bits);
-    if !push_tag(&mut tags, "degradations", degradations.as_str()) {
-        return false;
-    }
-    for &(bit, reason) in capabilities::DEGRADATION_REASONS {
-        if degradation_bits & bit != 0 && !push_tag(&mut tags, "report_degraded", reason) {
-            return false;
-        }
-    }
-    emit_json_section(
-        sink,
-        protocol::DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS,
-        &tags,
-        protocol::DD_CRASHTRACK_END_ADDITIONAL_TAGS,
-    )
-}
-
-fn emit_kind(sink: &mut impl Sink) -> bool {
-    put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_KIND)
-        && sink.put(b"\"UnixSignal\"\n")
-        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_KIND)
-}
-
-fn hex_u32(value: u32) -> HeaplessString<10> {
-    let mut out = HeaplessString::new();
-    let _ = write!(out, "0x{value:08x}");
-    out
-}
-
-fn emit_stacktrace(sink: &mut impl Sink, frames: &[usize]) -> bool {
-    if !put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_STACKTRACE) {
-        return false;
-    }
-
-    for ip in frames {
-        if *ip == 0 {
-            continue;
-        }
-
-        let frame = Frame::from_ip(*ip);
-        let mut buf = [0u8; SECTION_BUF_CAPACITY];
-        let Ok(len) = serde_json_core::to_slice(&frame, &mut buf) else {
-            return false;
-        };
-        if !(sink.put(&buf[..len]) && sink.put(b"\n")) {
-            return false;
-        }
-    }
-
-    put_marker_line(sink, protocol::DD_CRASHTRACK_END_STACKTRACE)
-}
-
-fn emit_message(sink: &mut impl Sink, stage_name: &str, signal: &SignalInfo) -> bool {
-    let mut message = HeaplessString::<MESSAGE_CAPACITY>::new();
-    message.push_str("Crash during ").is_ok()
-        && message.push_str(stage_name).is_ok()
-        && message.push_str(" (").is_ok()
-        && message.push_str(signal.si_signo_human_readable).is_ok()
-        && message.push(')').is_ok()
-        && put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_MESSAGE)
-        && sink.put(message.as_bytes())
-        && sink.put(b"\n")
-        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_MESSAGE)
-}
-
-fn emit_truncated_tail(
-    sink: &mut impl Sink,
-    report: &Report<'_>,
-    context: &CrashContext<'_>,
-) -> bool {
-    capabilities::note_degraded(capabilities::DEGRADED_TRUNCATED);
-    let _ = emit_additional_tags(
-        sink,
-        report.stage_name,
-        report.stackwalk_method,
-        report.capability_bits,
-        report.degradation_bits | capabilities::DEGRADED_TRUNCATED,
-    );
-    emit_message(sink, report.stage_name, &context.signal) && emit_done(sink)
-}
-
-fn put_marker_line(sink: &mut impl Sink, marker: &str) -> bool {
-    sink.put(marker.as_bytes()) && sink.put(b"\n")
-}
-
-fn emit_done(sink: &mut impl Sink) -> bool {
-    put_marker_line(sink, protocol::DD_CRASHTRACK_DONE)
-}
-
-fn signal_specific_si_code_name(signal: i32, si_code: i32) -> &'static str {
-    match signal {
-        libc::SIGSEGV => match si_code {
-            SEGV_MAPERR => "SEGV_MAPERR",
-            SEGV_ACCERR => "SEGV_ACCERR",
-            _ => "UNKNOWN",
-        },
-        libc::SIGBUS => match si_code {
-            BUS_ADRALN => "BUS_ADRALN",
-            BUS_ADRERR => "BUS_ADRERR",
-            BUS_OBJERR => "BUS_OBJERR",
-            _ => "UNKNOWN",
-        },
-        libc::SIGILL => match si_code {
-            ILL_ILLOPC => "ILL_ILLOPC",
-            ILL_ILLOPN => "ILL_ILLOPN",
-            ILL_ILLADR => "ILL_ILLADR",
-            ILL_ILLTRP => "ILL_ILLTRP",
-            ILL_PRVOPC => "ILL_PRVOPC",
-            ILL_PRVREG => "ILL_PRVREG",
-            ILL_COPROC => "ILL_COPROC",
-            ILL_BADSTK => "ILL_BADSTK",
-            _ => "UNKNOWN",
-        },
-        _ => "UNKNOWN",
-    }
-}
-
-const SIG_DFL_VALUE: usize = 0;
-const SIG_IGN_VALUE: usize = 1;
-
-pub const SI_USER: i32 = 0;
-pub const SI_KERNEL: i32 = 128;
-pub const SI_QUEUE: i32 = -1;
-pub const SI_TIMER: i32 = -2;
-pub const SI_MESGQ: i32 = -3;
-pub const SI_ASYNCIO: i32 = -4;
-pub const SI_SIGIO: i32 = -5;
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub const SI_TKILL: i32 = -6;
-
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-// Non-Linux platforms do not define SI_TKILL; use a sentinel that cannot match a real si_code.
-pub const SI_TKILL: i32 = i32::MIN;
-
-pub const SEGV_MAPERR: i32 = 1;
-pub const SEGV_ACCERR: i32 = 2;
-
-pub const BUS_ADRALN: i32 = 1;
-pub const BUS_ADRERR: i32 = 2;
-pub const BUS_OBJERR: i32 = 3;
-
-pub const ILL_ILLOPC: i32 = 1;
-pub const ILL_ILLOPN: i32 = 2;
-pub const ILL_ILLADR: i32 = 3;
-pub const ILL_ILLTRP: i32 = 4;
-pub const ILL_PRVOPC: i32 = 5;
-pub const ILL_PRVREG: i32 = 6;
-pub const ILL_COPROC: i32 = 7;
-pub const ILL_BADSTK: i32 = 8;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::borrow::ToOwned;
     use std::str;
+    use std::string::String;
 
     #[test]
     fn slice_sink_reports_capacity_failure() {
@@ -685,116 +93,6 @@ mod tests {
         assert!(sink.put(b"abc"));
         assert!(!sink.put(b"d"));
         assert_eq!(sink.as_slice(), b"abc");
-    }
-
-    #[test]
-    fn dispositions_match_sigaction_sentinels() {
-        let dfl = SIG_DFL_VALUE as *mut c_void;
-        let ign = SIG_IGN_VALUE as *mut c_void;
-        let handler = 0x1234usize as *mut c_void;
-
-        assert_eq!(disposition_of(dfl), Disposition::Default);
-        assert_eq!(disposition_of(core::ptr::null_mut()), Disposition::Default);
-        assert_eq!(disposition_of(ign), Disposition::Ignore);
-        assert_eq!(disposition_of(handler), Disposition::Handler);
-        assert!(!app_handler_is_real(dfl));
-        assert!(!app_handler_is_real(ign));
-        assert!(app_handler_is_real(handler));
-    }
-
-    #[test]
-    fn handler_policy_tracks_application_recovery() {
-        let dfl = SIG_DFL_VALUE as *mut c_void;
-        let ign = SIG_IGN_VALUE as *mut c_void;
-        let handler = 0x1234usize as *mut c_void;
-
-        assert!(should_run_app_first(false, true));
-        assert!(!should_run_app_first(true, true));
-        assert!(!should_run_app_first(false, false));
-
-        assert!(app_recovered(handler));
-        assert!(app_recovered(ign));
-        assert!(!app_recovered(dfl));
-    }
-
-    #[test]
-    fn disposition_based_chain_action_resumes_ignored_signals() {
-        assert_eq!(
-            chain_action(Disposition::Ignore, true, SEGV_MAPERR),
-            ChainAction::Resume
-        );
-    }
-
-    #[test]
-    fn genuine_fault_filter_ignores_external_async_signal() {
-        let ctx = SignalContext {
-            has_siginfo: true,
-            si_code: SI_USER,
-            si_pid: 7,
-            self_pid: 9,
-        };
-
-        assert!(!ctx.is_genuine_fault());
-    }
-
-    #[test]
-    fn genuine_fault_filter_accepts_self_sent_async_signal() {
-        let ctx = SignalContext {
-            has_siginfo: true,
-            si_code: SI_USER,
-            si_pid: 9,
-            self_pid: 9,
-        };
-
-        assert!(ctx.is_genuine_fault());
-    }
-
-    #[test]
-    fn chain_action_matches_default_signal_semantics() {
-        assert_eq!(
-            chain_action(Disposition::Default, true, SEGV_MAPERR),
-            ChainAction::RestoreDefaultAndRefault
-        );
-        assert_eq!(
-            chain_action(Disposition::Default, true, SI_USER),
-            ChainAction::RestoreDefaultAndReraise
-        );
-        assert_eq!(
-            chain_action(Disposition::Handler, true, SEGV_MAPERR),
-            ChainAction::InvokeApp
-        );
-    }
-
-    #[test]
-    fn signal_names_cover_common_native_faults() {
-        assert_eq!(rust_signal_name(libc::SIGSEGV), "SIGSEGV");
-        assert_eq!(rust_si_code_name(libc::SIGSEGV, SEGV_MAPERR), "SEGV_MAPERR");
-        assert_eq!(rust_si_code_name(libc::SIGBUS, BUS_ADRALN), "BUS_ADRALN");
-        assert_eq!(rust_si_code_name(libc::SIGILL, ILL_ILLOPC), "ILL_ILLOPC");
-        assert_eq!(rust_si_code_name(libc::SIGSEGV, SI_USER), "SI_USER");
-        assert_eq!(rust_si_code_name(libc::SIGSEGV, 999), "UNKNOWN");
-        assert_eq!(rust_signal_name(999), "UNKNOWN");
-    }
-
-    #[test]
-    fn hex_addr_covers_boundaries() {
-        let zero = hex_addr(0);
-        assert_eq!(zero.len(), FRAME_IP_CAPACITY);
-        assert!(zero
-            .as_str()
-            .strip_prefix("0x")
-            .unwrap()
-            .bytes()
-            .all(|b| b == b'0'));
-
-        let max = hex_addr(usize::MAX);
-        assert_eq!(max.len(), FRAME_IP_CAPACITY);
-        assert!(max
-            .as_str()
-            .strip_prefix("0x")
-            .unwrap()
-            .bytes()
-            .all(|b| b == b'f'));
     }
 
     #[test]
@@ -967,6 +265,58 @@ mod tests {
         assert!(!stacktrace.contains(hex_addr(0).as_str()));
         assert_eq!(message.trim(), "Crash during application (SIGSEGV)");
         assert!(report.ends_with("DD_CRASHTRACK_DONE\n"));
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn emitted_wire_matches_golden_fixture() {
+        let emitted = golden_report();
+        assert_eq!(
+            emitted,
+            include_str!("../../tests/fixtures/signal_safe_report.golden")
+        );
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    #[ignore = "regenerates the signal-safe emitted-wire golden fixture"]
+    fn regenerate_signal_safe_report_golden() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/signal_safe_report.golden");
+        std::fs::write(path, golden_report()).expect("write signal-safe golden fixture");
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    fn golden_report() -> String {
+        let signal = SignalInfo::new(libc::SIGSEGV, SEGV_MAPERR, 0x1234, true);
+        let frames = [0x10usize, 0x20usize];
+        let context = CrashContext {
+            signal,
+            pid: 123,
+            tid: 456,
+            frames: &frames,
+        };
+        let report = Report {
+            config_json: "{\"resolve_frames\":\"Disabled\"}",
+            library_name: "dd-test",
+            library_version: "1.2.3",
+            family: "native",
+            default_service: "default-service",
+            service: "svc",
+            env: "prod",
+            app_version: "v1",
+            runtime_id: "rid",
+            platform: "linux",
+            stage_name: "application",
+            stackwalk_method: "fp_pvr",
+            capability_bits: 0x21,
+            degradation_bits: capabilities::DEGRADED_REPORT_TO_FD,
+        };
+
+        let mut buf = [0u8; 8192];
+        let mut sink = SliceSink::new(&mut buf);
+        assert!(emit_report(&mut sink, &report, &context));
+        str::from_utf8(sink.as_slice()).unwrap().to_owned()
     }
 
     fn section<'a>(report: &'a str, begin: &str, end: &str) -> &'a str {

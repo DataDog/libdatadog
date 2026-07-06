@@ -111,8 +111,43 @@ pub mod headers {
         new_content_parts
     }
 
+    fn definition_key(def: &str) -> String {
+        let mut body = def.trim_start();
+        if body.starts_with("/**") {
+            if let Some(end) = body.find("*/") {
+                body = body[end + 2..].trim_start();
+            }
+        }
+
+        if let Some(rest) = body.strip_prefix('#') {
+            let mut words = rest.split_whitespace();
+            if matches!(words.next(), Some("define")) {
+                if let Some(name) = words.next() {
+                    return format!("#define {name}");
+                }
+            }
+        }
+
+        if body.starts_with("typedef") {
+            let stem = body.trim_end().trim_end_matches(';').trim_end();
+            let name: String = stem
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            if !name.is_empty() {
+                return format!("typedef {name}");
+            }
+        }
+
+        def.to_owned()
+    }
+
     pub fn dedup_headers(base: &str, headers: &[&str]) {
-        let mut unique_child_defs: Vec<String> = Vec::new();
+        let mut unique_child_defs: Vec<(String, String)> = Vec::new();
         let mut present = HashSet::new();
 
         for child_def in headers.iter().flat_map(|p| {
@@ -129,11 +164,12 @@ pub mod headers {
                 .map(|m| m.str.to_owned())
                 .collect::<Vec<_>>()
         }) {
-            if present.contains(&child_def) {
+            let key = definition_key(&child_def);
+            if present.contains(&key) {
                 continue;
             }
-            unique_child_defs.push(child_def.clone());
-            present.insert(child_def);
+            unique_child_defs.push((key.clone(), child_def));
+            present.insert(key);
         }
 
         let base_header = OpenOptions::new()
@@ -144,11 +180,11 @@ pub mod headers {
 
         let base_header_content = read(&mut BufReader::new(&base_header));
         let base_defs = collect_definitions(&base_header_content);
-        let base_defs_set: HashSet<_> = base_defs.iter().map(|s| s.str).collect();
+        let base_defs_set: HashSet<_> = base_defs.iter().map(|s| definition_key(s.str)).collect();
 
         let mut base_new_parts = vec![&base_header_content[..base_defs.last().unwrap().end]];
-        for child_def in &unique_child_defs {
-            if base_defs_set.contains(child_def.as_str()) {
+        for (key, child_def) in &unique_child_defs {
+            if base_defs_set.contains(key) {
                 continue;
             }
             base_new_parts.push(child_def);
@@ -253,6 +289,33 @@ typedef union my_union {
 "#;
             let expected = vec![input];
             test_regex_match(input, expected);
+        }
+
+        #[test]
+        fn definition_key_deduplicates_equivalent_typedef_names() {
+            let base = r"/**
+ * Holds the raw parts of a Rust Vec; it should only be created from Rust,
+ * never from C.
+ */
+typedef struct ddog_Vec_Tag {
+  const struct ddog_Tag *ptr;
+  uintptr_t len;
+  uintptr_t capacity;
+} ddog_Vec_Tag;
+";
+            let child = r"/**
+ * Holds the raw parts of a Rust Vec; it should only be created from Rust,
+ * never from C.
+ */
+typedef struct ddog_Vec_Tag {
+  const ddog_Tag *ptr;
+  uintptr_t len;
+  uintptr_t capacity;
+} ddog_Vec_Tag;
+";
+
+            assert_eq!(definition_key(base), "typedef ddog_Vec_Tag");
+            assert_eq!(definition_key(child), "typedef ddog_Vec_Tag");
         }
 
         #[test]
