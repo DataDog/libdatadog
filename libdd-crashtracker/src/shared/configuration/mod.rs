@@ -3,9 +3,9 @@
 //
 mod builder;
 pub use builder::CrashtrackerConfigurationBuilder;
+use core::time::Duration;
 use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 /// Stacktrace collection occurs in the context of a crashing process.
 /// If the stack is sufficiently corruputed, it is possible (but unlikely),

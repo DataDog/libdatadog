@@ -84,7 +84,7 @@ fn is_being_traced_internal(mut file: File) -> io::Result<bool> {
 #[cfg(target_os = "linux")]
 fn check_tracer_pid_line(line: &[u8], marker: &[u8]) -> io::Result<Option<bool>> {
     if line.starts_with(marker) && line.len() > marker.len() {
-        if let Ok(line_str) = std::str::from_utf8(line) {
+        if let Ok(line_str) = core::str::from_utf8(line) {
             let tracer_pid = line_str.split_whitespace().nth(1).unwrap_or("0");
             return Ok(Some(tracer_pid != "0"));
         }
@@ -114,7 +114,7 @@ pub fn alt_fork() -> libc::pid_t {
         syscall(
             SYS_clone,
             (CLONE_CHILD_CLEARTID | CLONE_CHILD_SETTID | SIGCHLD | extra_flags) as c_ulong,
-            std::ptr::null_mut::<c_void>(),
+            core::ptr::null_mut::<c_void>(),
             &mut _ptid as *mut pid_t,
             &mut _ctid as *mut pid_t,
             0 as c_ulong,
