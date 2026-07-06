@@ -1,14 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::ffi::c_char;
 use core::fmt::Write;
 use core::sync::atomic::Ordering::Relaxed;
 
 use heapless::String as HeaplessString;
 
 use super::state::meta_mut;
-use super::{capabilities, state};
+use super::{capabilities, state, sys};
 
 // Compatibility preset for the existing C-tracer consumer. New integrators should pass
 // explicit metadata through SignalSafeInitConfig instead of relying on these defaults.
@@ -32,6 +31,7 @@ pub const COMPAT_LIBRARY_FAMILY: &str = "native";
 pub const COMPAT_DEFAULT_SERVICE: &str = "dd-trace-c";
 
 pub const RECEIVER_TIMEOUT_SECS: u32 = 5;
+pub const RECEIVER_TIMEOUT_SECS_MAX: u32 = 60;
 pub const COLLECTOR_REAP_MS: i32 = 500;
 pub const RECEIVER_TIMEOUT_GRACE_MS: i32 = 1000;
 pub const BACKTRACE_LEVELS_DEFAULT: usize = 32;
@@ -71,6 +71,12 @@ pub struct SignalSafeInitConfig<'a> {
     pub receiver_timeout_secs: u32,
     pub max_frames: usize,
     pub close_fds_on_receiver: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PrepareError {
+    InvalidConfig,
+    Failed,
 }
 
 impl<'a> Default for SignalSafeInitConfig<'a> {
@@ -146,9 +152,15 @@ pub fn build_config_json(
 }
 
 pub fn prepare(config: &SignalSafeInitConfig<'_>) -> bool {
+    prepare_result(config).is_ok()
+}
+
+pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
+    validate(config)?;
+
     let m = meta_mut();
     if !build_config_json(&mut m.config_json, config) {
-        return false;
+        return Err(PrepareError::Failed);
     }
 
     set_str(&mut m.service, config.service);
@@ -181,7 +193,7 @@ pub fn prepare(config: &SignalSafeInitConfig<'_>) -> bool {
     );
 
     if !set_receiver_path(&mut m.process_path, config.receiver_path) {
-        return false;
+        return Err(PrepareError::InvalidConfig);
     }
 
     state::FORCE_ON_TOP.store(config.force_on_top, Relaxed);
@@ -204,12 +216,16 @@ pub fn prepare(config: &SignalSafeInitConfig<'_>) -> bool {
     );
     state::MAX_FRAMES.store(normalized_max_frames(config.max_frames), Relaxed);
     capabilities::publish(m.process_path.as_slice(), config.report_fd);
-    true
+    Ok(())
 }
 
 pub fn prepare_from_env() -> bool {
+    prepare_from_env_result().is_ok()
+}
+
+pub fn prepare_from_env_result() -> Result<(), PrepareError> {
     if disabled_by_env() {
-        return false;
+        return Err(PrepareError::InvalidConfig);
     }
 
     // Prefer the neutral runtime receiver path name. DD_TRACE_C_CRASHTRACKER_PROCESS is
@@ -223,7 +239,7 @@ pub fn prepare_from_env() -> bool {
         .unwrap_or(b"host");
     let debug_logging = parse_log_level(env_get(b"DD_TRACE_LOG_LEVEL\0")) >= DD_LOG_DEBUG;
 
-    prepare(&SignalSafeInitConfig {
+    prepare_result(&SignalSafeInitConfig {
         receiver_path,
         service: env_get(b"DD_SERVICE\0").unwrap_or(&[]),
         env: env_get(b"DD_ENV\0").unwrap_or(&[]),
@@ -244,6 +260,8 @@ pub fn disabled_by_env() -> bool {
 fn normalized_receiver_timeout_secs(value: u32) -> u32 {
     if value == 0 {
         RECEIVER_TIMEOUT_SECS
+    } else if value > RECEIVER_TIMEOUT_SECS_MAX {
+        RECEIVER_TIMEOUT_SECS_MAX
     } else {
         value
     }
@@ -299,21 +317,29 @@ fn set_receiver_path(dst: &mut heapless::Vec<u8, 513>, path: &[u8]) -> bool {
     dst.extend_from_slice(selected).is_ok() && dst.push(0).is_ok()
 }
 
-pub unsafe fn cstr_bytes<'a>(p: *const c_char) -> &'a [u8] {
-    let mut len = 0usize;
-    while core::ptr::read_volatile(p.add(len)) != 0 {
-        len += 1;
-    }
-    core::slice::from_raw_parts(p.cast(), len)
+fn env_get(name_nul: &[u8]) -> Option<&'static [u8]> {
+    sys::env_get(name_nul)
 }
 
-fn env_get(name_nul: &[u8]) -> Option<&'static [u8]> {
-    let p = unsafe { libc::getenv(name_nul.as_ptr().cast()) };
-    if p.is_null() {
-        None
-    } else {
-        Some(unsafe { cstr_bytes(p) })
+fn validate(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
+    if config.create_alt_stack && !config.use_alt_stack {
+        return Err(PrepareError::InvalidConfig);
     }
+
+    let receiver_path = if config.receiver_path.is_empty() {
+        DEFAULT_RECEIVER_PATH.as_bytes()
+    } else {
+        config.receiver_path
+    };
+    if receiver_path.len() >= 513 {
+        return Err(PrepareError::InvalidConfig);
+    }
+
+    if config.report_fd >= 0 && !sys::fd_valid(config.report_fd) {
+        return Err(PrepareError::InvalidConfig);
+    }
+
+    Ok(())
 }
 
 fn eq(a: &[u8], b: &[u8]) -> bool {
@@ -398,6 +424,42 @@ mod tests {
         assert!(out.contains("\"resolve_frames\":\"EnabledWithSymbolsInReceiver\""));
         assert!(out.contains("\"unix_socket_path\":null"));
         assert!(out.ends_with('\n'));
+    }
+
+    #[test]
+    fn timeout_seconds_are_clamped() {
+        assert_eq!(normalized_receiver_timeout_secs(0), RECEIVER_TIMEOUT_SECS);
+        assert_eq!(normalized_receiver_timeout_secs(1), 1);
+        assert_eq!(
+            normalized_receiver_timeout_secs(RECEIVER_TIMEOUT_SECS_MAX + 1),
+            RECEIVER_TIMEOUT_SECS_MAX
+        );
+    }
+
+    #[test]
+    fn validate_rejects_pointless_alt_stack_configuration() {
+        assert_eq!(
+            validate(&SignalSafeInitConfig {
+                create_alt_stack: true,
+                use_alt_stack: false,
+                ..SignalSafeInitConfig::default()
+            }),
+            Err(PrepareError::InvalidConfig)
+        );
+    }
+
+    #[test]
+    fn env_get_walks_environ_without_getenv() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+
+        std::env::set_var("DD_SIGNAL_SAFE_ENV_GET_TEST", "walked");
+        assert_eq!(
+            env_get(b"DD_SIGNAL_SAFE_ENV_GET_TEST\0"),
+            Some(&b"walked"[..])
+        );
+        std::env::remove_var("DD_SIGNAL_SAFE_ENV_GET_TEST");
     }
 
     #[test]

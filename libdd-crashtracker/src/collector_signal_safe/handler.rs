@@ -4,10 +4,10 @@
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr::null_mut;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
-use super::config::{self, SignalSafeInitConfig};
-use super::state::{self, sig_index, Stage};
+use super::config::{self, PrepareError, SignalSafeInitConfig};
+use super::state::{self, sig_index, BeginInitError, Stage};
 use super::sys::{self, FdSink};
 use super::{
     app_handler_is_real, app_recovered, chain_action, is_genuine_fault, should_run_app_first,
@@ -16,6 +16,7 @@ use super::{
 use super::{backtrace, capabilities};
 use crate::signal_owner::{self, SignalOwner};
 
+// Used only by forked children; 125 matches the existing shell-like "cannot exec" convention.
 const EXIT_CODE_FAILURE: i32 = 125;
 const REAP_KILL_TIMEOUT_MS: i64 = 500;
 const REAP_WAIT_INTERVAL_MS: i32 = 100;
@@ -27,15 +28,18 @@ unsafe impl Sync for AltStackStorage {}
 
 static ALT_STACK: AltStackStorage = AltStackStorage(UnsafeCell::new([0; ALT_STACK_SIZE]));
 
-unsafe extern "C" {
-    static mut environ: *mut *mut c_char;
-}
-
 #[derive(Clone, Copy)]
 struct Target {
     fn_ptr: *mut c_void,
     flags: i32,
 }
+
+static APP_CHAIN_TID: AtomicI32 = AtomicI32::new(0);
+static APP_CHAIN_STACK: AtomicUsize = AtomicUsize::new(0);
+static REPEAT_FAULT_PC: [AtomicUsize; state::NSIG] = [const { AtomicUsize::new(0) }; state::NSIG];
+static REPEAT_FAULT_ADDR: [AtomicUsize; state::NSIG] = [const { AtomicUsize::new(0) }; state::NSIG];
+static REPEAT_FAULT_COUNT: [AtomicUsize; state::NSIG] =
+    [const { AtomicUsize::new(0) }; state::NSIG];
 
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +47,9 @@ pub enum InitResult {
     Enabled = 0,
     DisabledByConfig = 1,
     Failed = 2,
+    AlreadyInitialized = 3,
+    OwnerConflict = 4,
+    InvalidConfig = 5,
 }
 
 pub fn init(config: &SignalSafeInitConfig<'_>) -> bool {
@@ -50,17 +57,18 @@ pub fn init(config: &SignalSafeInitConfig<'_>) -> bool {
 }
 
 pub fn init_result(config: &SignalSafeInitConfig<'_>) -> InitResult {
-    if !state::begin_init() {
-        return InitResult::Failed;
+    let begin = state::begin_init();
+    if let Err(err) = begin {
+        return begin_init_error(err);
     }
     if !signal_owner::acquire(SignalOwner::SignalSafeCollector) {
         state::fail_init();
-        return InitResult::Failed;
+        return InitResult::OwnerConflict;
     }
-    if !config::prepare(config) {
+    if let Err(err) = config::prepare_result(config) {
         signal_owner::release(SignalOwner::SignalSafeCollector);
         state::fail_init();
-        return InitResult::Failed;
+        return prepare_error(err);
     }
     if !install_alt_stack_if_requested() {
         signal_owner::release(SignalOwner::SignalSafeCollector);
@@ -83,17 +91,18 @@ pub fn init_from_env_result() -> InitResult {
     if config::disabled_by_env() {
         return InitResult::DisabledByConfig;
     }
-    if !state::begin_init() {
-        return InitResult::Failed;
+    let begin = state::begin_init();
+    if let Err(err) = begin {
+        return begin_init_error(err);
     }
     if !signal_owner::acquire(SignalOwner::SignalSafeCollector) {
         state::fail_init();
-        return InitResult::Failed;
+        return InitResult::OwnerConflict;
     }
-    if !config::prepare_from_env() {
+    if let Err(err) = config::prepare_from_env_result() {
         signal_owner::release(SignalOwner::SignalSafeCollector);
         state::fail_init();
-        return InitResult::Failed;
+        return prepare_error(err);
     }
     if !install_alt_stack_if_requested() {
         signal_owner::release(SignalOwner::SignalSafeCollector);
@@ -122,6 +131,21 @@ pub fn shutdown() {
     uninstall_all_handlers();
     state::INSTALLED.store(false, Ordering::Release);
     signal_owner::release(SignalOwner::SignalSafeCollector);
+    state::reset_init();
+}
+
+fn begin_init_error(err: BeginInitError) -> InitResult {
+    match err {
+        BeginInitError::AlreadyInitialized => InitResult::AlreadyInitialized,
+        BeginInitError::Busy => InitResult::Failed,
+    }
+}
+
+fn prepare_error(err: PrepareError) -> InitResult {
+    match err {
+        PrepareError::InvalidConfig => InitResult::InvalidConfig,
+        PrepareError::Failed => InitResult::Failed,
+    }
 }
 
 fn effective_target(idx: usize) -> Target {
@@ -144,6 +168,60 @@ unsafe fn invoke_handler(
     } else {
         let f: extern "C" fn(c_int) = core::mem::transmute(t.fn_ptr);
         f(sig);
+    }
+}
+
+/// Tracks app-first handler invocation without relying on cleanup after the call.
+///
+/// A recovering app handler may leave this frame via siglongjmp, so a simple boolean would stay
+/// set forever. Supported Unix targets use downward-growing stacks: a nested crash inside the app
+/// handler has a stack address below the recorded frame, while a later signal after longjmp has
+/// unwound above it. Different-thread entries skip app-first while the earlier handler is active.
+fn enter_app_chain(tid: i32, stack_pos: usize) -> bool {
+    let owner = APP_CHAIN_TID.load(Ordering::Relaxed);
+    if owner == 0 {
+        APP_CHAIN_STACK.store(stack_pos, Ordering::Relaxed);
+        APP_CHAIN_TID.store(tid, Ordering::Relaxed);
+        return true;
+    }
+
+    if owner != tid {
+        return false;
+    }
+
+    let recorded = APP_CHAIN_STACK.load(Ordering::Relaxed);
+    if stack_pos > recorded {
+        APP_CHAIN_STACK.store(stack_pos, Ordering::Relaxed);
+        APP_CHAIN_TID.store(tid, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
+}
+
+fn leave_app_chain(tid: i32, stack_pos: usize) {
+    if APP_CHAIN_TID.load(Ordering::Relaxed) == tid
+        && APP_CHAIN_STACK.load(Ordering::Relaxed) == stack_pos
+    {
+        APP_CHAIN_STACK.store(0, Ordering::Relaxed);
+        APP_CHAIN_TID.store(0, Ordering::Relaxed);
+    }
+}
+
+fn app_return_repeated_fault(idx: usize, pc: usize, addr: usize) -> bool {
+    if pc == 0 {
+        return false;
+    }
+
+    let last_pc = REPEAT_FAULT_PC[idx].load(Ordering::Relaxed);
+    let last_addr = REPEAT_FAULT_ADDR[idx].load(Ordering::Relaxed);
+    if last_pc == pc && last_addr == addr {
+        REPEAT_FAULT_COUNT[idx].fetch_add(1, Ordering::Relaxed) + 1 >= 2
+    } else {
+        REPEAT_FAULT_ADDR[idx].store(addr, Ordering::Relaxed);
+        REPEAT_FAULT_COUNT[idx].store(1, Ordering::Relaxed);
+        REPEAT_FAULT_PC[idx].store(pc, Ordering::Relaxed);
+        false
     }
 }
 
@@ -194,7 +272,7 @@ fn write_i32(value: i32, out: &mut [u8; 12]) -> usize {
     off + len
 }
 
-fn sanitize_clone(mut keep_fd: i32) -> i32 {
+fn sanitize_clone(mut keep_fd: i32, close_stdio_without_devnull: bool) -> i32 {
     if (libc::STDIN_FILENO..=libc::STDERR_FILENO).contains(&keep_fd) {
         let relocated = sys::fcntl_dupfd(keep_fd, libc::STDERR_FILENO + 1);
         if relocated < 0 {
@@ -214,6 +292,10 @@ fn sanitize_clone(mut keep_fd: i32) -> i32 {
         if devnull > libc::STDERR_FILENO {
             sys::close(devnull);
         }
+    } else if close_stdio_without_devnull {
+        sys::close(libc::STDIN_FILENO);
+        sys::close(libc::STDOUT_FILENO);
+        sys::close(libc::STDERR_FILENO);
     }
     keep_fd
 }
@@ -261,7 +343,7 @@ fn install_alt_stack_if_requested() -> bool {
 }
 
 fn strip_loader_injection_env() {
-    let env = unsafe { environ };
+    let env = sys::environ_ptr();
     if env.is_null() {
         return;
     }
@@ -271,7 +353,7 @@ fn strip_loader_injection_env() {
         let mut dst = env;
         while !(*src).is_null() {
             let entry = *src;
-            let injected = PREFIXES.iter().any(|p| cstr_starts_with(entry, p));
+            let injected = PREFIXES.iter().any(|p| sys::cstr_starts_with(entry, p));
             if !injected {
                 *dst = entry;
                 dst = dst.add(1);
@@ -282,27 +364,18 @@ fn strip_loader_injection_env() {
     }
 }
 
-unsafe fn cstr_starts_with(s: *const c_char, prefix: &[u8]) -> bool {
-    let mut i = 0usize;
-    while i < prefix.len() {
-        let c = *s.add(i);
-        if c == 0 || c as u8 != prefix[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
 fn receiver_child(read_fd: i32, write_fd: i32) -> ! {
     sys::close(write_fd);
-    let read_fd = sanitize_clone(read_fd);
+    let read_fd = sanitize_clone(read_fd, true);
     if read_fd < 0 {
         sys::exit_process(EXIT_CODE_FAILURE);
     }
     if read_fd != libc::STDIN_FILENO {
         let _ = sys::dup2(read_fd, libc::STDIN_FILENO);
         sys::close(read_fd);
+    }
+    if state::CLOSE_FDS_ON_RECEIVER.load(Ordering::Relaxed) {
+        let _ = sys::close_range_from(libc::STDERR_FILENO + 1);
     }
     strip_loader_injection_env();
 
@@ -331,7 +404,7 @@ fn collector_child(
     ucontext: *mut c_void,
 ) -> ! {
     sys::close(read_fd);
-    let write_fd = sanitize_clone(write_fd);
+    let write_fd = sanitize_clone(write_fd, false);
     if write_fd < 0 {
         sys::exit_process(EXIT_CODE_FAILURE);
     }
@@ -387,6 +460,7 @@ fn emit_crash_report(
         platform: meta.platform.as_str(),
         stage_name: state::current_stage_name(),
         stackwalk_method,
+        capability_bits: capabilities::get(),
         degradation_bits: capabilities::degradations(),
     };
     let context = CrashContext {
@@ -404,18 +478,19 @@ fn emit_crash_report(
     emitted
 }
 
-fn reap_or_kill(pid: i32, timeout_ms: i64, kill_process: bool) {
+fn reap_or_kill(pid: i32, timeout_ms: i64, kill_process: bool) -> Option<i32> {
     let start = sys::monotonic_nanos();
     loop {
-        let waited = sys::waitpid_nohang(pid);
+        let mut status = 0i32;
+        let waited = sys::waitpid_nohang_status(pid, &mut status);
         if waited == pid {
-            return;
+            return Some(status);
         }
         if waited < 0 {
             if waited != -libc::ECHILD {
                 crash_debug(b"waitpid failed", -1);
             }
-            return;
+            return None;
         }
 
         sys::poll_sleep_ms(REAP_WAIT_INTERVAL_MS);
@@ -423,11 +498,15 @@ fn reap_or_kill(pid: i32, timeout_ms: i64, kill_process: bool) {
         if elapsed_ms >= timeout_ms {
             if kill_process {
                 let _ = sys::kill(pid, libc::SIGKILL);
-                reap_or_kill(pid, REAP_KILL_TIMEOUT_MS, false);
+                return reap_or_kill(pid, REAP_KILL_TIMEOUT_MS, false);
             }
-            return;
+            return None;
         }
     }
+}
+
+fn exited_with(status: i32, code: i32) -> bool {
+    libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == code
 }
 
 fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontext: *mut c_void) {
@@ -495,7 +574,7 @@ fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontex
     sys::close(write_fd);
 
     if collector > 0 {
-        reap_or_kill(
+        let _ = reap_or_kill(
             collector as i32,
             state::COLLECTOR_REAP_MS.load(Ordering::Relaxed) as i64,
             true,
@@ -505,11 +584,15 @@ fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontex
         direct_report(capabilities::DEGRADED_FORK_FAILED);
     }
     if receiver > 0 {
-        reap_or_kill(
+        let receiver_status = reap_or_kill(
             receiver as i32,
             state::RECEIVER_TIMEOUT_MS.load(Ordering::Relaxed) as i64,
             true,
         );
+        if receiver_status.is_some_and(|status| exited_with(status, EXIT_CODE_FAILURE)) {
+            crash_debug(b"receiver exec failed", sig);
+            direct_report(capabilities::DEGRADED_RECEIVER_UNAVAILABLE);
+        }
     }
 }
 
@@ -520,14 +603,18 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
 
     let saved_errno = sys::errno();
     crash_debug(b"handler entered", sig);
-    if state::DISARM_ON_ENTRY.load(Ordering::Relaxed) {
-        let _ = reset_signal_to_default(sig);
-    }
+    let disarmed_on_entry =
+        state::DISARM_ON_ENTRY.load(Ordering::Relaxed) && reset_signal_to_default(sig);
 
     let idx = sig_index(sig);
     let has_info = !info.is_null();
     let si_code = if has_info {
         unsafe { (*info).si_code }
+    } else {
+        0
+    };
+    let si_addr = if has_info {
+        unsafe { siginfo_addr(info) }
     } else {
         0
     };
@@ -537,19 +624,31 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
         let target = effective_target(i);
         let app_is_real = app_handler_is_real(target.fn_ptr);
         if should_run_app_first(force_on_top, app_is_real) {
-            static IN_APP_CHAIN: AtomicBool = AtomicBool::new(false);
-            if !IN_APP_CHAIN.swap(true, Ordering::Relaxed) {
+            let stack_marker = 0u8;
+            let stack_pos = (&stack_marker as *const u8) as usize;
+            let tid = sys::gettid();
+            if enter_app_chain(tid, stack_pos) {
                 sys::set_errno(saved_errno);
                 // If the application handler recovers with siglongjmp, no code after this call
                 // runs. Keep this path free of Drop-dependent state.
                 unsafe { invoke_handler(&target, sig, info, ucontext) };
 
                 let handler_after = live_handler_for_recovery(sig).unwrap_or(target.fn_ptr);
-                IN_APP_CHAIN.store(false, Ordering::Relaxed);
+                leave_app_chain(tid, stack_pos);
                 if app_recovered(handler_after) {
-                    sys::set_errno(saved_errno);
-                    return;
+                    let pc = backtrace::instruction_pointer(ucontext);
+                    if app_return_repeated_fault(i, pc, si_addr) {
+                        crash_debug(b"app handler returned without recovery", sig);
+                    } else {
+                        if disarmed_on_entry {
+                            restore_our_handler(sig);
+                        }
+                        sys::set_errno(saved_errno);
+                        return;
+                    }
                 }
+            } else {
+                crash_debug(b"app handler recursion detected", sig);
             }
         }
     }
@@ -560,14 +659,10 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
     } else {
         0
     };
-    if is_genuine_fault(has_info, si_code, si_pid, self_pid) {
+    let genuine_fault = is_genuine_fault(has_info, si_code, si_pid, self_pid);
+    if genuine_fault {
         static COLLECTING: AtomicBool = AtomicBool::new(false);
         if !COLLECTING.swap(true, Ordering::Relaxed) {
-            let si_addr = if has_info {
-                unsafe { siginfo_addr(info) }
-            } else {
-                0
-            };
             collect_crash(sig, si_code, has_info, si_addr, ucontext);
         }
     }
@@ -595,8 +690,15 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
                 }
             }
         }
-        ChainAction::Resume => {}
+        ChainAction::Resume => {
+            if disarmed_on_entry && !genuine_fault {
+                restore_our_handler(sig);
+            }
+        }
         ChainAction::InvokeApp => unsafe {
+            if disarmed_on_entry && !genuine_fault {
+                restore_our_handler(sig);
+            }
             invoke_handler(&target, sig, info, ucontext);
         },
     }
@@ -675,11 +777,7 @@ fn is_our_handler(sig: c_int) -> bool {
     cur.sa_flags & libc::SA_SIGINFO != 0 && cur.sa_sigaction == crash_handler as *const () as usize
 }
 
-fn install_crash_handler(sig: c_int) {
-    if !is_default_handler(sig) {
-        return;
-    }
-
+fn build_crash_sigaction() -> libc::sigaction {
     let mut sa: libc::sigaction = unsafe { core::mem::zeroed() };
     sa.sa_sigaction = crash_handler as *const () as usize;
     sa.sa_flags = libc::SA_SIGINFO;
@@ -694,7 +792,22 @@ fn install_crash_handler(sig: c_int) {
             }
         }
     }
+    sa
+}
 
+fn restore_our_handler(sig: c_int) {
+    let sa = build_crash_sigaction();
+    unsafe {
+        let _ = libc::sigaction(sig, &sa, null_mut());
+    }
+}
+
+fn install_crash_handler(sig: c_int) {
+    if !is_default_handler(sig) {
+        return;
+    }
+
+    let sa = build_crash_sigaction();
     let mut old: libc::sigaction = unsafe { core::mem::zeroed() };
     if unsafe { libc::sigaction(sig, &sa, &mut old) } != 0 {
         return;
@@ -703,6 +816,7 @@ fn install_crash_handler(sig: c_int) {
     if let Some(i) = sig_index(sig) {
         state::ORIG_FN[i].store(old.sa_sigaction as *mut c_void, Ordering::Relaxed);
         state::ORIG_FLAGS[i].store(old.sa_flags, Ordering::Relaxed);
+        state::store_orig_mask(i, &old.sa_mask);
         state::OWN_SIGNAL[i].store(true, Ordering::Relaxed);
     }
 }
@@ -720,7 +834,7 @@ fn uninstall_crash_handler(sig: c_int) {
     restore.sa_sigaction = target.fn_ptr as usize;
     restore.sa_flags = target.flags;
     unsafe {
-        libc::sigemptyset(&mut restore.sa_mask);
+        state::load_orig_mask(i, &mut restore.sa_mask);
         if libc::sigaction(sig, &restore, null_mut()) == 0 {
             state::OWN_SIGNAL[i].store(false, Ordering::Relaxed);
         }
@@ -751,6 +865,41 @@ mod tests {
         assert_eq!(&buf[..n], b"-123");
         let n = write_i32(42, &mut buf);
         assert_eq!(&buf[..n], b"42");
+        let n = write_i32(i32::MIN, &mut buf);
+        assert_eq!(&buf[..n], b"-2147483648");
+    }
+
+    #[test]
+    fn app_chain_guard_distinguishes_recursion_from_unwind() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+
+        APP_CHAIN_TID.store(0, Ordering::Relaxed);
+        APP_CHAIN_STACK.store(0, Ordering::Relaxed);
+
+        assert!(enter_app_chain(123, 1_000));
+        assert!(!enter_app_chain(123, 900));
+        assert!(!enter_app_chain(456, 1_100));
+        assert!(enter_app_chain(123, 1_100));
+        leave_app_chain(123, 1_100);
+        assert_eq!(APP_CHAIN_TID.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn repeated_app_return_trips_on_second_same_fault() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+        let idx = sig_index(libc::SIGSEGV).expect("SIGSEGV index");
+
+        REPEAT_FAULT_PC[idx].store(0, Ordering::Relaxed);
+        REPEAT_FAULT_ADDR[idx].store(0, Ordering::Relaxed);
+        REPEAT_FAULT_COUNT[idx].store(0, Ordering::Relaxed);
+
+        assert!(!app_return_repeated_fault(idx, 0x1234, 0));
+        assert!(app_return_repeated_fault(idx, 0x1234, 0));
+        assert!(!app_return_repeated_fault(idx, 0x5678, 0));
     }
 
     #[cfg(not(feature = "collector"))]
@@ -764,6 +913,11 @@ mod tests {
             receiver_path: b"/bin/cat",
             ..SignalSafeInitConfig::default()
         };
+        assert!(init(&config));
+        assert!(state::INSTALLED.load(Ordering::Acquire));
+        assert_eq!(init_result(&config), InitResult::AlreadyInitialized);
+        shutdown();
+        assert!(!state::INSTALLED.load(Ordering::Acquire));
         assert!(init(&config));
         assert!(state::INSTALLED.load(Ordering::Acquire));
         shutdown();

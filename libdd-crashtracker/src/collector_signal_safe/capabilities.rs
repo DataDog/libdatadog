@@ -76,7 +76,7 @@ pub fn publish(receiver_path: &[u8], report_fd: i32) {
         degraded |= DEGRADED_NO_PIPE;
     }
 
-    if report_fd >= 0 {
+    if sys::fd_valid(report_fd) {
         caps |= REPORT_FD_OK;
     }
 

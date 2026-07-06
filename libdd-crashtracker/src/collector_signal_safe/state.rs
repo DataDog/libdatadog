@@ -3,6 +3,7 @@
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
+use core::mem::MaybeUninit;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering};
 
@@ -10,6 +11,7 @@ use heapless::{String as HeaplessString, Vec as HeaplessVec};
 
 use super::config::CONFIG_JSON_BUF_SIZE;
 
+// Raw signal numbers index these arrays. 128 covers Linux and BSD/macOS signal ranges used here.
 pub const NSIG: usize = 128;
 
 #[inline]
@@ -58,19 +60,26 @@ static META: StaticMeta = StaticMeta(UnsafeCell::new(Meta::new()));
 const INIT_UNINIT: i32 = 0;
 const INIT_INITIALIZING: i32 = 1;
 const INIT_READY: i32 = 2;
-const INIT_FAILED: i32 = 3;
 
 static INIT_STATE: AtomicI32 = AtomicI32::new(INIT_UNINIT);
 
-pub fn begin_init() -> bool {
-    INIT_STATE
-        .compare_exchange(
-            INIT_UNINIT,
-            INIT_INITIALIZING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        )
-        .is_ok()
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BeginInitError {
+    AlreadyInitialized,
+    Busy,
+}
+
+pub fn begin_init() -> Result<(), BeginInitError> {
+    match INIT_STATE.compare_exchange(
+        INIT_UNINIT,
+        INIT_INITIALIZING,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => Ok(()),
+        Err(INIT_READY) => Err(BeginInitError::AlreadyInitialized),
+        Err(_) => Err(BeginInitError::Busy),
+    }
 }
 
 pub fn finish_init() {
@@ -78,7 +87,11 @@ pub fn finish_init() {
 }
 
 pub fn fail_init() {
-    INIT_STATE.store(INIT_FAILED, Ordering::Release);
+    INIT_STATE.store(INIT_UNINIT, Ordering::Release);
+}
+
+pub fn reset_init() {
+    INIT_STATE.store(INIT_UNINIT, Ordering::Release);
 }
 
 pub fn meta() -> &'static Meta {
@@ -92,6 +105,25 @@ pub fn meta_mut() -> &'static mut Meta {
 pub static ORIG_FN: [AtomicPtr<c_void>; NSIG] = [const { AtomicPtr::new(null_mut()) }; NSIG];
 pub static ORIG_FLAGS: [AtomicI32; NSIG] = [const { AtomicI32::new(0) }; NSIG];
 pub static OWN_SIGNAL: [AtomicBool; NSIG] = [const { AtomicBool::new(false) }; NSIG];
+
+struct SigMaskStorage(UnsafeCell<[MaybeUninit<libc::sigset_t>; NSIG]>);
+
+unsafe impl Sync for SigMaskStorage {}
+
+static ORIG_MASKS: SigMaskStorage =
+    SigMaskStorage(UnsafeCell::new([const { MaybeUninit::uninit() }; NSIG]));
+
+pub fn store_orig_mask(idx: usize, mask: &libc::sigset_t) {
+    unsafe {
+        (*ORIG_MASKS.0.get())[idx].as_mut_ptr().write(*mask);
+    }
+}
+
+pub fn load_orig_mask(idx: usize, out: &mut libc::sigset_t) {
+    unsafe {
+        out.clone_from(&*(*ORIG_MASKS.0.get())[idx].as_ptr());
+    }
+}
 
 pub static HANDLERS_ENABLED: AtomicBool = AtomicBool::new(false);
 pub static FORCE_ON_TOP: AtomicBool = AtomicBool::new(false);

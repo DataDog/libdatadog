@@ -4,14 +4,17 @@
 
 set -euo pipefail
 
-cargo build -p libdd-crashtracker --no-default-features --features collector_signal-safe --lib
+target_dir="${CARGO_TARGET_DIR:-target/signal-safe-guard}"
+CARGO_TARGET_DIR="${target_dir}" cargo build -p libdd-crashtracker --no-default-features --features collector_signal-safe --lib
 
 artifacts=()
 while IFS= read -r artifact; do
   artifacts+=("${artifact}")
-done < <(find target/debug/deps -maxdepth 1 \( \
+done < <(find "${target_dir}/debug/deps" -maxdepth 1 \( \
   -name 'liblibdd_crashtracker*.rlib' -o \
-  -name 'librustix*.rlib' \
+  -name 'librustix*.rlib' -o \
+  -name 'libheapless*.rlib' -o \
+  -name 'libserde_json_core*.rlib' \
 \) -print)
 
 if [[ "${#artifacts[@]}" -eq 0 ]]; then

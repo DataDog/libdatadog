@@ -3,9 +3,16 @@
 
 #![allow(dead_code)]
 
+use core::ffi::c_char;
+
 use super::Sink;
 
 const MAX_WRITE_RETRIES: u32 = 10;
+const CSTR_MAX_LEN: usize = 4096;
+
+unsafe extern "C" {
+    static mut environ: *mut *mut c_char;
+}
 
 pub struct FdSink {
     fd: i32,
@@ -293,6 +300,22 @@ mod raw {
         }
     }
 
+    pub fn fd_valid(fd: i32) -> bool {
+        fd >= 0 && unsafe { syscall3(libc::SYS_fcntl, fd as usize, libc::F_GETFD as usize, 0) >= 0 }
+    }
+
+    pub fn close_range_from(first_fd: i32) -> bool {
+        first_fd >= 0
+            && unsafe {
+                syscall3(
+                    libc::SYS_close_range,
+                    first_fd as usize,
+                    u32::MAX as usize,
+                    0,
+                ) == 0
+            }
+    }
+
     pub fn pipe(fds: &mut [i32; 2]) -> bool {
         match rustix::pipe::pipe() {
             Ok((read_fd, write_fd)) => {
@@ -386,13 +409,12 @@ mod raw {
         unsafe { syscall2(libc::SYS_kill, pid as usize, sig as usize) as i32 }
     }
 
-    pub fn waitpid_nohang(pid: i32) -> i32 {
-        let mut status = 0i32;
+    pub fn waitpid_nohang_status(pid: i32, status: &mut i32) -> i32 {
         unsafe {
             syscall4(
                 libc::SYS_wait4,
                 pid as usize,
-                (&mut status as *mut i32) as usize,
+                (status as *mut i32) as usize,
                 libc::WNOHANG as usize,
                 0,
             ) as i32
@@ -481,6 +503,14 @@ mod raw {
         unsafe { libc::fcntl(fd, libc::F_DUPFD, min_fd) }
     }
 
+    pub fn fd_valid(fd: i32) -> bool {
+        fd >= 0 && unsafe { libc::fcntl(fd, libc::F_GETFD) >= 0 }
+    }
+
+    pub fn close_range_from(_first_fd: i32) -> bool {
+        false
+    }
+
     pub fn pipe(fds: &mut [i32; 2]) -> bool {
         unsafe { libc::pipe(fds.as_mut_ptr()) == 0 }
     }
@@ -530,9 +560,8 @@ mod raw {
         unsafe { libc::kill(pid, sig) }
     }
 
-    pub fn waitpid_nohang(pid: i32) -> i32 {
-        let mut status = 0i32;
-        let ret = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+    pub fn waitpid_nohang_status(pid: i32, status: &mut i32) -> i32 {
+        let ret = unsafe { libc::waitpid(pid, status, libc::WNOHANG) };
         if ret < 0 {
             -super::errno()
         } else {
@@ -566,10 +595,84 @@ mod raw {
 }
 
 pub use raw::{
-    access_executable, close, dup2, exit_process, fcntl_dupfd, fork_raw, fork_supported, getpid,
-    gettid, kill, monotonic_nanos, open_readwrite, pipe, poll_sleep_ms, read_own_mem,
-    waitpid_nohang, write,
+    access_executable, close, close_range_from, dup2, exit_process, fcntl_dupfd, fd_valid,
+    fork_raw, fork_supported, getpid, gettid, kill, monotonic_nanos, open_readwrite, pipe,
+    poll_sleep_ms, read_own_mem, waitpid_nohang_status, write,
 };
+
+pub fn waitpid_nohang(pid: i32) -> i32 {
+    let mut status = 0i32;
+    waitpid_nohang_status(pid, &mut status)
+}
+
+pub fn env_get(name_nul: &[u8]) -> Option<&'static [u8]> {
+    if name_nul.is_empty() || name_nul[name_nul.len() - 1] != 0 {
+        return None;
+    }
+
+    let name = &name_nul[..name_nul.len() - 1];
+    let env = unsafe { environ };
+    if env.is_null() {
+        return None;
+    }
+
+    unsafe {
+        let mut cur = env;
+        while !(*cur).is_null() {
+            let entry = *cur;
+            if let Some(value) = env_entry_value(entry, name) {
+                return Some(cstr_bytes_bounded(value));
+            }
+            cur = cur.add(1);
+        }
+    }
+    None
+}
+
+pub fn environ_ptr() -> *mut *mut c_char {
+    unsafe { environ }
+}
+
+pub unsafe fn cstr_bytes_bounded<'a>(p: *const c_char) -> &'a [u8] {
+    if p.is_null() {
+        return &[];
+    }
+
+    let mut len = 0usize;
+    while len < CSTR_MAX_LEN && *p.add(len) != 0 {
+        len += 1;
+    }
+    core::slice::from_raw_parts(p.cast(), len)
+}
+
+pub unsafe fn cstr_starts_with(s: *const c_char, prefix: &[u8]) -> bool {
+    let mut i = 0usize;
+    while i < prefix.len() {
+        let c = *s.add(i);
+        if c == 0 || c as u8 != prefix[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+unsafe fn env_entry_value(entry: *const c_char, name: &[u8]) -> Option<*const c_char> {
+    let mut i = 0usize;
+    while i < name.len() {
+        let c = *entry.add(i);
+        if c == 0 || c as u8 != name[i] {
+            return None;
+        }
+        i += 1;
+    }
+
+    if *entry.add(name.len()) as u8 == b'=' {
+        Some(entry.add(name.len() + 1))
+    } else {
+        None
+    }
+}
 
 pub fn errno() -> i32 {
     unsafe { *errno_location() }

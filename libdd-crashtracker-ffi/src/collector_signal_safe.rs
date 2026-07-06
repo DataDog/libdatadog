@@ -1,12 +1,15 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::{c_char, CStr};
+use std::ffi::c_char;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use libdd_crashtracker::collector_signal_safe::{
-    bootstrap_complete, capability_bits, init_from_env_result, init_result, owned_signal_count,
-    owns_signal, set_stage, shutdown, InitResult, SignalSafeInitConfig, Stage,
+    bootstrap_complete, capability_bits, degradation_bits, init_from_env_result, init_result,
+    owned_signal_count, owns_signal, set_stage, shutdown, InitResult, SignalSafeInitConfig, Stage,
 };
+
+const CSTR_MAX_LEN: usize = 4096;
 
 #[repr(C)]
 pub struct SignalSafeConfig {
@@ -40,6 +43,9 @@ pub enum SignalSafeInitResult {
     Enabled = 0,
     DisabledByConfig = 1,
     Failed = 2,
+    AlreadyInitialized = 3,
+    OwnerConflict = 4,
+    InvalidConfig = 5,
 }
 
 #[repr(C)]
@@ -58,7 +64,7 @@ pub enum SignalSafeStage {
 
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_init_from_env() -> SignalSafeInitResult {
-    init_result_to_ffi(init_from_env_result())
+    ffi_result(|| init_result_to_ffi(init_from_env_result()))
 }
 
 /// Initialize the signal-safe crashtracker with explicitly provided metadata.
@@ -71,74 +77,83 @@ pub extern "C" fn ddog_crasht_signal_safe_init_from_env() -> SignalSafeInitResul
 pub unsafe extern "C" fn ddog_crasht_signal_safe_init(
     config: *const SignalSafeConfig,
 ) -> SignalSafeInitResult {
-    let Some(config) = config.as_ref() else {
-        return SignalSafeInitResult::Failed;
-    };
+    ffi_result(|| {
+        let Some(config) = config.as_ref() else {
+            return SignalSafeInitResult::Failed;
+        };
 
-    init_result_to_ffi(init_result(&SignalSafeInitConfig {
-        receiver_path: cstr_bytes(config.receiver_path),
-        service: cstr_bytes(config.service),
-        env: cstr_bytes(config.env),
-        app_version: cstr_bytes(config.app_version),
-        runtime_id: cstr_bytes(config.runtime_id),
-        platform: cstr_bytes(config.platform),
-        library_name: cstr_bytes(config.library_name),
-        library_version: cstr_bytes(config.library_version),
-        family: cstr_bytes(config.family),
-        default_service: cstr_bytes(config.default_service),
-        force_on_top: config.force_on_top,
-        only_bootstrap: config.only_bootstrap,
-        debug_logging: config.debug_logging,
-        create_alt_stack: config.create_alt_stack,
-        use_alt_stack: config.use_alt_stack,
-        block_signals: config.block_signals,
-        disarm_on_entry: config.disarm_on_entry,
-        report_fd: config.report_fd,
-        collector_reap_ms: config.collector_reap_ms,
-        receiver_timeout_secs: config.receiver_timeout_secs,
-        max_frames: config.max_frames,
-        close_fds_on_receiver: config.close_fds_on_receiver,
-    }))
+        init_result_to_ffi(init_result(&SignalSafeInitConfig {
+            receiver_path: cstr_bytes(config.receiver_path),
+            service: cstr_bytes(config.service),
+            env: cstr_bytes(config.env),
+            app_version: cstr_bytes(config.app_version),
+            runtime_id: cstr_bytes(config.runtime_id),
+            platform: cstr_bytes(config.platform),
+            library_name: cstr_bytes(config.library_name),
+            library_version: cstr_bytes(config.library_version),
+            family: cstr_bytes(config.family),
+            default_service: cstr_bytes(config.default_service),
+            force_on_top: config.force_on_top,
+            only_bootstrap: config.only_bootstrap,
+            debug_logging: config.debug_logging,
+            create_alt_stack: config.create_alt_stack,
+            use_alt_stack: config.use_alt_stack,
+            block_signals: config.block_signals,
+            disarm_on_entry: config.disarm_on_entry,
+            report_fd: config.report_fd,
+            collector_reap_ms: config.collector_reap_ms,
+            receiver_timeout_secs: config.receiver_timeout_secs,
+            max_frames: config.max_frames,
+            close_fds_on_receiver: config.close_fds_on_receiver,
+        }))
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_bootstrap_complete() {
-    bootstrap_complete();
+    ffi_void(bootstrap_complete);
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_shutdown() {
-    shutdown();
+    ffi_void(shutdown);
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_set_stage(stage: SignalSafeStage) {
-    set_stage(match stage {
-        SignalSafeStage::Uninitialized => Stage::Uninitialized,
-        SignalSafeStage::CrashtrackerInit => Stage::CrashtrackerInit,
-        SignalSafeStage::PlatformInit => Stage::PlatformInit,
-        SignalSafeStage::LanguageInit => Stage::LanguageInit,
-        SignalSafeStage::PluginLoading => Stage::PluginLoading,
-        SignalSafeStage::InjectionMetadataSend => Stage::InjectionMetadataSend,
-        SignalSafeStage::HttpClientSend => Stage::HttpClientSend,
-        SignalSafeStage::Application => Stage::Application,
-        SignalSafeStage::CrashtrackerUninstall => Stage::CrashtrackerUninstall,
+    ffi_void(|| {
+        set_stage(match stage {
+            SignalSafeStage::Uninitialized => Stage::Uninitialized,
+            SignalSafeStage::CrashtrackerInit => Stage::CrashtrackerInit,
+            SignalSafeStage::PlatformInit => Stage::PlatformInit,
+            SignalSafeStage::LanguageInit => Stage::LanguageInit,
+            SignalSafeStage::PluginLoading => Stage::PluginLoading,
+            SignalSafeStage::InjectionMetadataSend => Stage::InjectionMetadataSend,
+            SignalSafeStage::HttpClientSend => Stage::HttpClientSend,
+            SignalSafeStage::Application => Stage::Application,
+            SignalSafeStage::CrashtrackerUninstall => Stage::CrashtrackerUninstall,
+        });
     });
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_capabilities() -> u32 {
-    capability_bits()
+    ffi_u32(capability_bits)
+}
+
+#[no_mangle]
+pub extern "C" fn ddog_crasht_signal_safe_degradations() -> u32 {
+    ffi_u32(degradation_bits)
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_owned_signal_count() -> u32 {
-    owned_signal_count()
+    ffi_u32(owned_signal_count)
 }
 
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_owns_signal(signum: i32) -> bool {
-    owns_signal(signum)
+    catch_unwind(AssertUnwindSafe(|| owns_signal(signum))).unwrap_or(false)
 }
 
 fn init_result_to_ffi(result: InitResult) -> SignalSafeInitResult {
@@ -146,13 +161,65 @@ fn init_result_to_ffi(result: InitResult) -> SignalSafeInitResult {
         InitResult::Enabled => SignalSafeInitResult::Enabled,
         InitResult::DisabledByConfig => SignalSafeInitResult::DisabledByConfig,
         InitResult::Failed => SignalSafeInitResult::Failed,
+        InitResult::AlreadyInitialized => SignalSafeInitResult::AlreadyInitialized,
+        InitResult::OwnerConflict => SignalSafeInitResult::OwnerConflict,
+        InitResult::InvalidConfig => SignalSafeInitResult::InvalidConfig,
     }
+}
+
+fn ffi_result(f: impl FnOnce() -> SignalSafeInitResult) -> SignalSafeInitResult {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or(SignalSafeInitResult::Failed)
+}
+
+fn ffi_void(f: impl FnOnce()) {
+    let _ = catch_unwind(AssertUnwindSafe(f));
+}
+
+fn ffi_u32(f: impl FnOnce() -> u32) -> u32 {
+    catch_unwind(AssertUnwindSafe(f)).unwrap_or(0)
 }
 
 unsafe fn cstr_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
     if ptr.is_null() {
         &[]
     } else {
-        CStr::from_ptr(ptr).to_bytes()
+        let mut len = 0usize;
+        while len < CSTR_MAX_LEN && *ptr.add(len) != 0 {
+            len += 1;
+        }
+        std::slice::from_raw_parts(ptr.cast(), len)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ffi_init_result_values_match_library_values() {
+        assert_eq!(
+            SignalSafeInitResult::Enabled as i32,
+            InitResult::Enabled as i32
+        );
+        assert_eq!(
+            SignalSafeInitResult::DisabledByConfig as i32,
+            InitResult::DisabledByConfig as i32
+        );
+        assert_eq!(
+            SignalSafeInitResult::Failed as i32,
+            InitResult::Failed as i32
+        );
+        assert_eq!(
+            SignalSafeInitResult::AlreadyInitialized as i32,
+            InitResult::AlreadyInitialized as i32
+        );
+        assert_eq!(
+            SignalSafeInitResult::OwnerConflict as i32,
+            InitResult::OwnerConflict as i32
+        );
+        assert_eq!(
+            SignalSafeInitResult::InvalidConfig as i32,
+            InitResult::InvalidConfig as i32
+        );
     }
 }

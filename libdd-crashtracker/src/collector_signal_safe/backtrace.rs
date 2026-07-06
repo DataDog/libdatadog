@@ -94,6 +94,21 @@ fn arch_seed(_uc: &libc::ucontext_t, _out: &mut [usize]) -> (usize, usize) {
     (0, 0)
 }
 
+pub fn instruction_pointer(ucontext: *const c_void) -> usize {
+    if ucontext.is_null() {
+        return 0;
+    }
+
+    let uc = unsafe { &*(ucontext as *const libc::ucontext_t) };
+    let mut out = [0usize; 1];
+    let (n, _) = arch_seed(uc, &mut out);
+    if n == 0 {
+        0
+    } else {
+        out[0]
+    }
+}
+
 pub fn backtrace_from_ucontext(
     out: &mut [usize],
     ucontext: *const c_void,

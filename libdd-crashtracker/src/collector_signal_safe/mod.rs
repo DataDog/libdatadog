@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::ffi::c_void;
+use core::fmt::Write;
 
 use heapless::{String as HeaplessString, Vec as HeaplessVec};
 use serde::Serialize;
@@ -242,6 +243,7 @@ pub struct Report<'a> {
     pub platform: &'a str,
     pub stage_name: &'a str,
     pub stackwalk_method: &'a str,
+    pub capability_bits: u32,
     pub degradation_bits: u32,
 }
 
@@ -264,6 +266,7 @@ pub fn emit_report(sink: &mut impl Sink, report: &Report<'_>, context: &CrashCon
             sink,
             report.stage_name,
             report.stackwalk_method,
+            report.capability_bits,
             report.degradation_bits,
         )
         && emit_kind(sink)
@@ -301,7 +304,7 @@ pub fn emit_report_with_metadata(
             metadata,
             b"DD_CRASHTRACK_END_METADATA\n",
         )
-        && emit_additional_tags(sink, stage_name, "fp_pvr", 0)
+        && emit_additional_tags(sink, stage_name, "fp_pvr", 0, 0)
         && emit_kind(sink)
         && emit_json_section(
             sink,
@@ -461,6 +464,7 @@ fn emit_additional_tags(
     sink: &mut impl Sink,
     stage: &str,
     stackwalk_method: &str,
+    capability_bits: u32,
     degradation_bits: u32,
 ) -> bool {
     let mut tags = Tags::new();
@@ -468,6 +472,14 @@ fn emit_additional_tags(
         return false;
     }
     if !push_tag(&mut tags, "stackwalk_method", stackwalk_method) {
+        return false;
+    }
+    let capabilities = hex_u32(capability_bits);
+    if !push_tag(&mut tags, "capabilities", capabilities.as_str()) {
+        return false;
+    }
+    let degradations = hex_u32(degradation_bits);
+    if !push_tag(&mut tags, "degradations", degradations.as_str()) {
         return false;
     }
     for &(bit, reason) in capabilities::DEGRADATION_REASONS {
@@ -485,6 +497,12 @@ fn emit_additional_tags(
 
 fn emit_kind(sink: &mut impl Sink) -> bool {
     sink.put(b"DD_CRASHTRACK_BEGIN_KIND\n\"UnixSignal\"\nDD_CRASHTRACK_END_KIND\n")
+}
+
+fn hex_u32(value: u32) -> HeaplessString<10> {
+    let mut out = HeaplessString::new();
+    let _ = write!(out, "0x{value:08x}");
+    out
 }
 
 fn emit_stacktrace(sink: &mut impl Sink, frames: &[usize]) -> bool {
@@ -749,6 +767,7 @@ mod tests {
             platform: "linux",
             stage_name: "application",
             stackwalk_method: "fp_pvr",
+            capability_bits: 0x21,
             degradation_bits: 0,
         };
 
@@ -806,6 +825,9 @@ mod tests {
         assert_eq!(metadata["tags"][5], "env:prod");
         assert_eq!(metadata["tags"][6], "version:v1");
         assert_eq!(tags[0], "stage:application");
+        assert_eq!(tags[1], "stackwalk_method:fp_pvr");
+        assert_eq!(tags[2], "capabilities:0x00000021");
+        assert_eq!(tags[3], "degradations:0x00000000");
         assert_eq!(kind, "UnixSignal");
         assert_eq!(procinfo["pid"], 123);
         assert_eq!(procinfo["tid"], 456);
