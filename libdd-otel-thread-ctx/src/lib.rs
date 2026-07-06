@@ -64,10 +64,25 @@
 //! `atomic_signal_fence`) to keep field writes boxed between the `valid = 0` and `valid = 1`
 //! stores during in-place updates.
 
+// The `linux` module below resolves the TLS slot with TLSDESC inline assembly that is only written
+// for x86_64 and aarch64. Reject any other architecture on Linux at compile time. On non-Linux
+// targets the `linux` module is not compiled, so there's no such constraint.
+#[cfg(all(
+    target_os = "linux",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+compile_error!(
+    "Unsupported architecture for otel-thread-ctx on Linux. Only x86_64 and aarch64 are currently \
+     supported."
+);
+
 #[cfg(all(target_os = "linux", feature = "sanity-check"))]
 pub mod sanity_check;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub mod linux {
     use std::{
         mem,
@@ -82,10 +97,6 @@ pub mod linux {
     // Stable `rustc` cannot select the TLS dialect for a `#[thread_local]` static, so we declare
     // the symbol directly in assembly (an 8-byte, zero-initialised slot in `.tbss`) and resolve
     // its per-thread address through TLSDESC in [`tls_slot`].
-    #[cfg(all(
-        target_os = "linux",
-        any(target_arch = "x86_64", target_arch = "aarch64")
-    ))]
     core::arch::global_asm!(
         ".section .tbss,\"awT\",@nobits",
         ".globl otel_thread_ctx_v1",
