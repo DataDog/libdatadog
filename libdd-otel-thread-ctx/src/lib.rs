@@ -187,7 +187,7 @@ pub mod linux {
         /// Build a record with the given trace id, span id and attributes. The
         /// `local_root_span_id` is a distinguished attribute with special handling for
         /// convenience, but it ends up as other attributes in `attrs_data`.
-        fn new(
+        pub fn new(
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
@@ -351,7 +351,8 @@ pub mod linux {
 
     impl ThreadContext {
         /// Create a new thread context with the given trace/span IDs and encoded attributes.
-        pub fn new(
+        #[inline]
+        fn new(
             trace_id: [u8; 16],
             span_id: [u8; 8],
             local_root_span_id: [u8; 8],
@@ -363,19 +364,6 @@ pub mod linux {
                 local_root_span_id,
                 attrs,
             ))
-        }
-
-        /// Update this context in-place. Sets `valid = 0` before the update and `valid = 1` after,
-        /// so a reader that fires between the two writes sees an inconsistent record and skips it.
-        /// Compiler fences prevent the compiler from reordering field writes outside that window.
-        pub fn update(
-            &mut self,
-            trace_id: [u8; 16],
-            span_id: [u8; 8],
-            local_root_span_id: [u8; 8],
-            attrs: &[(u8, &str)],
-        ) {
-            self.0.update(trace_id, span_id, local_root_span_id, attrs);
         }
     }
 
@@ -393,6 +381,7 @@ pub mod linux {
 
     impl OwnedThreadContext {
         /// Create a new thread context with the given trace/span IDs and encoded attributes.
+        #[inline]
         pub fn new(
             trace_id: [u8; 16],
             span_id: [u8; 8],
@@ -418,6 +407,7 @@ pub mod linux {
         /// Turn this thread context into an opaque pointer to the underlying [`ThreadContext`].
         /// The pointer must be reconstructed through [`Self::from_opaque_ptr`] in order to be
         /// properly dropped, or the record will leak.
+        #[inline]
         pub fn into_opaque_ptr(self) -> NonNull<ThreadContext> {
             let mdrop = mem::ManuallyDrop::new(self);
             mdrop.0.cast()
@@ -433,6 +423,7 @@ pub mod linux {
         ///   calls on the returned [`OwnedThreadContext`]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
+        #[inline]
         unsafe fn from_ptr(ptr: NonNull<ThreadContextRecord>) -> Self {
             Self(ptr)
         }
@@ -447,6 +438,7 @@ pub mod linux {
         ///   calls on the returned [`OwnedThreadContext`]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
+        #[inline]
         pub unsafe fn from_opaque_ptr(ptr: NonNull<ThreadContext>) -> Self {
             Self(ptr.cast())
         }
@@ -456,6 +448,7 @@ pub mod linux {
         ///
         /// `valid` is already `1` since construction, so any reader that observes the new pointer
         /// also observes `valid = 1`.
+        #[inline]
         pub fn attach(self) -> Option<OwnedThreadContext> {
             let prev = ThreadContextRecord::attach_raw(self.into_ptr().as_ptr());
             // Safety: a non-null value in the slot came from a prior `into_ptr` call.
@@ -559,6 +552,10 @@ pub mod linux {
     /// one should not call [OwnedThreadContext::update] after installing a shared context.
     ///
     /// TODO: statically prevent this situation.
+    ///
+    /// Cloning is cheap: it only bumps the underlying `Arc`'s strong count. The record itself is
+    /// shared immutably, so several clones can be attached on different threads concurrently.
+    #[derive(Clone)]
     pub struct SharedThreadContext(Arc<ThreadContext>);
 
     impl From<Arc<ThreadContext>> for SharedThreadContext {
