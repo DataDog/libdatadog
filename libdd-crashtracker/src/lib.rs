@@ -54,10 +54,12 @@
 #[cfg(all(not(unix), feature = "collector_signal-safe"))]
 compile_error!("The collector_signal-safe feature is only supported on Unix targets.");
 
+extern crate alloc;
+
 #[cfg(all(test, not(feature = "std")))]
 extern crate std;
 
-#[cfg(all(unix, feature = "std", feature = "collector"))]
+#[cfg(all(unix, feature = "collector"))]
 mod collector;
 #[cfg(all(unix, feature = "collector_signal-safe"))]
 pub mod collector_signal_safe;

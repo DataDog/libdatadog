@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::Duration;
+use core::time::Duration;
 
 use super::defaults::DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS;
 

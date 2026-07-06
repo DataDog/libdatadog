@@ -3,9 +3,9 @@
 //
 mod builder;
 pub use builder::CrashtrackerConfigurationBuilder;
+use core::time::Duration;
 use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 pub use super::stacktrace_collection::StacktraceCollection;
 

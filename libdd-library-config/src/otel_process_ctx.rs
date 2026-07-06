@@ -14,16 +14,16 @@
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]
 pub mod linux {
-    use std::{
+    use core::{
         ffi::{c_void, CStr},
-        mem::ManuallyDrop,
-        os::fd::{AsRawFd, FromRawFd, OwnedFd},
+        mem::{swap, ManuallyDrop},
         ptr::{self, addr_of_mut},
-        sync::{
-            atomic::{fence, AtomicU64, Ordering},
-            Mutex, MutexGuard,
-        },
+        sync::atomic::{fence, AtomicU64, Ordering},
         time::Duration,
+    };
+    use std::{
+        os::fd::{AsRawFd, FromRawFd, OwnedFd},
+        sync::{Mutex, MutexGuard},
     };
 
     use anyhow::Context;
@@ -435,7 +435,7 @@ pub mod linux {
                 //
                 // To do so, we get the old handler back in `local_handler` and prevent `mapping`
                 // from being dropped specifically.
-                std::mem::swap(&mut local_handler, handler);
+                swap(&mut local_handler, handler);
                 let _: ManuallyDrop<MemMapping> = ManuallyDrop::new(local_handler.mapping);
 
                 Ok(())
@@ -466,11 +466,14 @@ pub mod linux {
     mod tests {
         use super::MappingHeader;
         use anyhow::ensure;
+        use core::{
+            ptr::{self, addr_of_mut},
+            sync::atomic::{fence, AtomicU64, Ordering},
+            time::Duration,
+        };
         use std::{
             fs::File,
             io::{BufRead, BufReader},
-            ptr::{self, addr_of_mut},
-            sync::atomic::{fence, AtomicU64, Ordering},
         };
 
         /// Parses the start address from a /proc/self/maps line
@@ -553,7 +556,7 @@ pub mod linux {
             let mapping_addr = find_otel_mapping()?;
             let header_ptr = verify_mapping_at(mapping_addr)?;
             // Safety: the pointer returned by `verify_mapping_at` points to an initialized header
-            Ok(unsafe { std::ptr::read(header_ptr) })
+            Ok(unsafe { ptr::read(header_ptr) })
         }
 
         #[test]
@@ -569,7 +572,7 @@ pub mod linux {
             // Safety: the published context must have put valid bytes of size payload_size in the
             // context if the signature check succeded.
             let read_payload = unsafe {
-                std::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
+                core::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
             };
 
             assert!(header.signature == *super::SIGNATURE, "wrong signature");
@@ -589,7 +592,7 @@ pub mod linux {
 
             let published_at_ns_v1 = header.monotonic_published_at_ns;
             // Ensure the clock advances so the updated timestamp is strictly greater
-            std::thread::sleep(std::time::Duration::from_nanos(10));
+            std::thread::sleep(Duration::from_nanos(10));
 
             super::publish_raw_payload(payload_v2.as_bytes().to_vec())
                 .expect("couldn't update the process context");
@@ -598,7 +601,7 @@ pub mod linux {
             // Safety: the published context must have put valid bytes of size payload_size in the
             // context if the signature check succeded.
             let read_payload = unsafe {
-                std::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
+                core::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
             };
 
             assert!(header.signature == *super::SIGNATURE, "wrong signature");
