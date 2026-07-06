@@ -7,7 +7,7 @@ use serde::Serialize;
 use super::fmt::hex_u32;
 use super::fmt::write_i32;
 use super::report::{
-    CrashContext, Frame, Metadata, ProcInfo, Report, Tag, Tags, MESSAGE_CAPACITY,
+    CrashContext, Frame, Metadata, ProcInfo, Report, SignalInfo, Tag, Tags, MESSAGE_CAPACITY,
     SECTION_BUF_CAPACITY,
 };
 use super::{capabilities, config, protocol, state};
@@ -53,6 +53,28 @@ impl Sink for SliceSink<'_> {
     }
 }
 
+struct AdditionalTags<'a> {
+    stage: &'a str,
+    stackwalk_method: &'a str,
+    capability_bits: u32,
+    degradation_bits: u32,
+}
+
+enum MetadataSource<'a> {
+    Report(&'a Report<'a>),
+    Provided(&'a Metadata<'a>),
+}
+
+struct SectionSequence<'a> {
+    config_json: &'a str,
+    metadata: MetadataSource<'a>,
+    additional_tags: Option<AdditionalTags<'a>>,
+    emit_kind: bool,
+    signal: &'a SignalInfo,
+    procinfo: Option<ProcInfo>,
+    frames: Option<&'a [usize]>,
+}
+
 pub fn push_tag(tags: &mut Tags, key: &str, value: &str) -> bool {
     if value.is_empty() {
         return true;
@@ -66,33 +88,26 @@ pub fn push_tag(tags: &mut Tags, key: &str, value: &str) -> bool {
 }
 
 pub fn emit_report(sink: &mut impl Sink, report: &Report<'_>, context: &CrashContext<'_>) -> bool {
-    if !emit_config(sink, report.config_json)
-        || !emit_metadata(sink, report)
-        || !emit_additional_tags(
-            sink,
-            report.stage_name,
-            report.stackwalk_method,
-            report.capability_bits,
-            report.degradation_bits,
-        )
-        || !emit_kind(sink)
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
-            &context.signal,
-            protocol::DD_CRASHTRACK_END_SIGINFO,
-        )
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
-            &ProcInfo {
+    if !emit_section_sequence(
+        sink,
+        SectionSequence {
+            config_json: report.config_json,
+            metadata: MetadataSource::Report(report),
+            additional_tags: Some(AdditionalTags {
+                stage: report.stage_name,
+                stackwalk_method: report.stackwalk_method,
+                capability_bits: report.capability_bits,
+                degradation_bits: report.degradation_bits,
+            }),
+            emit_kind: true,
+            signal: &context.signal,
+            procinfo: Some(ProcInfo {
                 pid: context.pid,
                 tid: context.tid,
-            },
-            protocol::DD_CRASHTRACK_END_PROCINFO,
-        )
-        || !emit_stacktrace(sink, context.frames)
-    {
+            }),
+            frames: Some(context.frames),
+        },
+    ) {
         return emit_truncated_tail(sink, report, context);
     }
 
@@ -106,32 +121,26 @@ pub fn emit_report_with_metadata(
     stage_name: &str,
     context: &CrashContext<'_>,
 ) -> bool {
-    if !emit_config(sink, config_json)
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_METADATA,
-            metadata,
-            protocol::DD_CRASHTRACK_END_METADATA,
-        )
-        || !emit_additional_tags(sink, stage_name, "fp_pvr", 0, 0)
-        || !emit_kind(sink)
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
-            &context.signal,
-            protocol::DD_CRASHTRACK_END_SIGINFO,
-        )
-        || !emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
-            &ProcInfo {
+    if !emit_section_sequence(
+        sink,
+        SectionSequence {
+            config_json,
+            metadata: MetadataSource::Provided(metadata),
+            additional_tags: Some(AdditionalTags {
+                stage: stage_name,
+                stackwalk_method: "fp_pvr",
+                capability_bits: 0,
+                degradation_bits: 0,
+            }),
+            emit_kind: true,
+            signal: &context.signal,
+            procinfo: Some(ProcInfo {
                 pid: context.pid,
                 tid: context.tid,
-            },
-            protocol::DD_CRASHTRACK_END_PROCINFO,
-        )
-        || !emit_stacktrace(sink, context.frames)
-    {
+            }),
+            frames: Some(context.frames),
+        },
+    ) {
         capabilities::note_degraded(capabilities::DEGRADED_TRUNCATED);
         let _ = emit_additional_tags(
             sink,
@@ -150,22 +159,82 @@ pub fn emit_minimal_report(
     sink: &mut impl Sink,
     config_json: &str,
     metadata: &Metadata<'_>,
-    signal: &super::report::SignalInfo,
+    signal: &SignalInfo,
 ) -> bool {
-    emit_config(sink, config_json)
-        && emit_json_section(
+    emit_section_sequence(
+        sink,
+        SectionSequence {
+            config_json,
+            metadata: MetadataSource::Provided(metadata),
+            additional_tags: None,
+            emit_kind: false,
+            signal,
+            procinfo: None,
+            frames: None,
+        },
+    ) && emit_done(sink)
+}
+
+fn emit_section_sequence(sink: &mut impl Sink, sequence: SectionSequence<'_>) -> bool {
+    if !emit_config(sink, sequence.config_json) || !emit_metadata_source(sink, sequence.metadata) {
+        return false;
+    }
+
+    if let Some(tags) = sequence.additional_tags {
+        if !emit_additional_tags(
+            sink,
+            tags.stage,
+            tags.stackwalk_method,
+            tags.capability_bits,
+            tags.degradation_bits,
+        ) {
+            return false;
+        }
+    }
+
+    if sequence.emit_kind && !emit_kind(sink) {
+        return false;
+    }
+
+    if !emit_json_section(
+        sink,
+        protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
+        sequence.signal,
+        protocol::DD_CRASHTRACK_END_SIGINFO,
+    ) {
+        return false;
+    }
+
+    if let Some(procinfo) = sequence.procinfo {
+        if !emit_json_section(
+            sink,
+            protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
+            &procinfo,
+            protocol::DD_CRASHTRACK_END_PROCINFO,
+        ) {
+            return false;
+        }
+    }
+
+    if let Some(frames) = sequence.frames {
+        if !emit_stacktrace(sink, frames) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn emit_metadata_source(sink: &mut impl Sink, metadata: MetadataSource<'_>) -> bool {
+    match metadata {
+        MetadataSource::Report(report) => emit_metadata(sink, report),
+        MetadataSource::Provided(metadata) => emit_json_section(
             sink,
             protocol::DD_CRASHTRACK_BEGIN_METADATA,
             metadata,
             protocol::DD_CRASHTRACK_END_METADATA,
-        )
-        && emit_json_section(
-            sink,
-            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
-            signal,
-            protocol::DD_CRASHTRACK_END_SIGINFO,
-        )
-        && emit_done(sink)
+        ),
+    }
 }
 
 pub fn emit_json_section<T: Serialize>(

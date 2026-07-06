@@ -369,20 +369,6 @@ fn validate(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
     Ok(())
 }
 
-fn eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0usize;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
 fn eq_ic(a: &[u8], lower: &[u8]) -> bool {
     if a.len() != lower.len() {
         return false;
@@ -399,14 +385,14 @@ fn eq_ic(a: &[u8], lower: &[u8]) -> bool {
 
 fn is_false(v: Option<&[u8]>) -> bool {
     match v {
-        Some(s) => eq(s, b"0") || eq_ic(s, b"false") || eq_ic(s, b"f"),
+        Some(s) => s == b"0" || eq_ic(s, b"false") || eq_ic(s, b"f"),
         None => false,
     }
 }
 
 fn is_true(v: Option<&[u8]>) -> bool {
     match v {
-        Some(s) => eq(s, b"1") || eq_ic(s, b"true") || eq_ic(s, b"t"),
+        Some(s) => s == b"1" || eq_ic(s, b"true") || eq_ic(s, b"t"),
         None => false,
     }
 }
@@ -427,7 +413,7 @@ fn parse_log_level(v: Option<&[u8]>) -> i32 {
                 (b"trace", 5),
             ];
             for (name, level) in LEVELS {
-                if eq(s, name) {
+                if s == name {
                     return level;
                 }
             }

@@ -1,8 +1,6 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#![allow(dead_code)]
-
 use core::ffi::c_char;
 
 use super::Sink;
@@ -62,20 +60,6 @@ mod raw {
     #[inline]
     unsafe fn borrowed_fd(fd: i32) -> BorrowedFd<'static> {
         BorrowedFd::borrow_raw(fd)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[inline]
-    unsafe fn syscall0(nr: i64) -> isize {
-        let ret: isize;
-        asm!(
-            "syscall",
-            inlateout("rax") nr as isize => ret,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack, preserves_flags),
-        );
-        ret
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -168,19 +152,6 @@ mod raw {
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack, preserves_flags),
-        );
-        ret
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[inline]
-    unsafe fn syscall0(nr: i64) -> isize {
-        let ret: isize;
-        asm!(
-            "svc 0",
-            in("x8") nr,
-            lateout("x0") ret,
-            options(nostack),
         );
         ret
     }
@@ -443,12 +414,6 @@ mod raw {
         let _ = rustix::thread::nanosleep(&ts);
     }
 
-    #[repr(C)]
-    struct KernelTimespec {
-        tv_sec: i64,
-        tv_nsec: i64,
-    }
-
     pub fn monotonic_nanos() -> i64 {
         let ts = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
         ts.tv_sec
@@ -615,11 +580,6 @@ pub use raw::{
     pipe, poll_sleep_ms, read_own_mem, waitpid_nohang_status, write,
 };
 
-pub fn waitpid_nohang(pid: i32) -> i32 {
-    let mut status = 0i32;
-    waitpid_nohang_status(pid, &mut status)
-}
-
 pub fn env_get(name_nul: &[u8]) -> Option<&'static [u8]> {
     if name_nul.is_empty() || name_nul[name_nul.len() - 1] != 0 {
         return None;
@@ -648,6 +608,11 @@ pub fn environ_ptr() -> *mut *mut c_char {
     unsafe { environ }
 }
 
+/// Reads bytes from a NUL-terminated C string, capped at the signal-safe maximum length.
+///
+/// # Safety
+/// `p` must be null or point to readable memory containing a NUL byte within `CSTR_MAX_LEN`
+/// bytes. The returned slice borrows from `p` and must not outlive that memory.
 pub unsafe fn cstr_bytes_bounded<'a>(p: *const c_char) -> &'a [u8] {
     if p.is_null() {
         return &[];

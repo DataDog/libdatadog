@@ -71,30 +71,7 @@ pub fn init(config: &SignalSafeInitConfig<'_>) -> bool {
 }
 
 pub fn init_result(config: &SignalSafeInitConfig<'_>) -> InitResult {
-    let begin = state::begin_init();
-    if let Err(err) = begin {
-        return begin_init_error(err);
-    }
-    if !signal_owner::acquire(SignalOwner::SignalSafeCollector) {
-        state::fail_init();
-        return InitResult::OwnerConflict;
-    }
-    if let Err(err) = config::prepare_result(config) {
-        signal_owner::release(SignalOwner::SignalSafeCollector);
-        state::fail_init();
-        return prepare_error(err);
-    }
-    if !install_alt_stack_if_requested() {
-        signal_owner::release(SignalOwner::SignalSafeCollector);
-        state::fail_init();
-        return InitResult::Failed;
-    }
-    install_all_handlers();
-    state::set_stage(Stage::CrashtrackerInit);
-    state::INSTALLED.store(true, Ordering::Release);
-    state::finish_init();
-    state::HANDLERS_ENABLED.store(true, Ordering::Release);
-    InitResult::Enabled
+    init_with_prepare(|| config::prepare_result(config))
 }
 
 pub fn init_from_env() -> bool {
@@ -105,6 +82,10 @@ pub fn init_from_env_result() -> InitResult {
     if config::disabled_by_env() {
         return InitResult::DisabledByConfig;
     }
+    init_with_prepare(config::prepare_from_env_result)
+}
+
+fn init_with_prepare(prepare: impl FnOnce() -> Result<(), PrepareError>) -> InitResult {
     let begin = state::begin_init();
     if let Err(err) = begin {
         return begin_init_error(err);
@@ -113,7 +94,7 @@ pub fn init_from_env_result() -> InitResult {
         state::fail_init();
         return InitResult::OwnerConflict;
     }
-    if let Err(err) = config::prepare_from_env_result() {
+    if let Err(err) = prepare() {
         signal_owner::release(SignalOwner::SignalSafeCollector);
         state::fail_init();
         return prepare_error(err);
@@ -266,7 +247,7 @@ fn sanitize_clone(mut keep_fd: i32, close_stdio_without_devnull: bool) -> i32 {
         keep_fd = relocated;
     }
 
-    reset_handlers_to_default();
+    let _ = reset_signals_to_default(&config::CRASH_SIGNALS);
 
     if capabilities::has(capabilities::DEV_NULL) {
         let devnull = sys::open_readwrite(c"/dev/null".as_ptr().cast());
@@ -290,26 +271,17 @@ fn sanitize_clone(mut keep_fd: i32, close_stdio_without_devnull: bool) -> i32 {
     keep_fd
 }
 
-fn reset_handlers_to_default() {
+fn reset_signals_to_default(signals: &[c_int]) -> bool {
     let mut dfl: libc::sigaction = unsafe { core::mem::zeroed() };
     dfl.sa_sigaction = libc::SIG_DFL;
     unsafe {
         libc::sigemptyset(&mut dfl.sa_mask);
     }
-    for &sig in &config::CRASH_SIGNALS {
-        unsafe {
-            let _ = libc::sigaction(sig, &dfl, null_mut());
-        }
+    let mut ok = true;
+    for &sig in signals {
+        ok &= unsafe { libc::sigaction(sig, &dfl, null_mut()) == 0 };
     }
-}
-
-fn reset_signal_to_default(sig: c_int) -> bool {
-    let mut dfl: libc::sigaction = unsafe { core::mem::zeroed() };
-    dfl.sa_sigaction = libc::SIG_DFL;
-    unsafe {
-        libc::sigemptyset(&mut dfl.sa_mask);
-        libc::sigaction(sig, &dfl, null_mut()) == 0
-    }
+    ok
 }
 
 unsafe fn unblock_signal(sig: c_int) {
@@ -614,7 +586,7 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
     let saved_errno = sys::errno();
     crash_debug(b"handler entered", sig);
     let disarmed_on_entry =
-        state::DISARM_ON_ENTRY.load(Ordering::Relaxed) && reset_signal_to_default(sig);
+        state::DISARM_ON_ENTRY.load(Ordering::Relaxed) && reset_signals_to_default(&[sig]);
 
     let idx = sig_index(sig);
     let has_info = !info.is_null();
@@ -686,7 +658,7 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
     let action = chain_action(disposition_of_target(target.fn_ptr), has_info, si_code);
     match action {
         ChainAction::RestoreDefaultAndRefault | ChainAction::RestoreDefaultAndReraise => {
-            if !reset_signal_to_default(sig) {
+            if !reset_signals_to_default(&[sig]) {
                 sys::exit_process(EXIT_CODE_FAILURE);
             }
             unsafe {

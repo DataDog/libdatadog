@@ -6,27 +6,18 @@ use heapless::String as HeaplessString;
 use super::report::FRAME_IP_CAPACITY;
 
 pub fn hex_addr(value: usize) -> HeaplessString<FRAME_IP_CAPACITY> {
-    let mut out = HeaplessString::new();
-    let _ = out.push_str("0x");
-
-    for shift in (0..core::mem::size_of::<usize>() * 2).rev() {
-        let nibble = ((value >> (shift * 4)) & 0xf) as u8;
-        let ch = if nibble < 10 {
-            b'0' + nibble
-        } else {
-            b'a' + (nibble - 10)
-        };
-        let _ = out.push(ch as char);
-    }
-
-    out
+    hex(value as u64, core::mem::size_of::<usize>() * 2)
 }
 
 pub fn hex_u32(value: u32) -> HeaplessString<10> {
+    hex(value as u64, 8)
+}
+
+fn hex<const N: usize>(value: u64, digits: usize) -> HeaplessString<N> {
     let mut out = HeaplessString::new();
     let _ = out.push_str("0x");
 
-    for shift in (0..8).rev() {
+    for shift in (0..digits).rev() {
         let nibble = ((value >> (shift * 4)) & 0xf) as u8;
         let ch = if nibble < 10 {
             b'0' + nibble

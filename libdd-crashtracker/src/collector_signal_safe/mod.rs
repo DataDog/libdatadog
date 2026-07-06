@@ -52,7 +52,7 @@ pub use handler::{
 };
 pub use policy::{
     app_handler_is_real, app_recovered, chain_action, disposition_of, is_genuine_fault,
-    should_run_app_first, ChainAction, Disposition, SignalContext,
+    should_run_app_first, ChainAction, Disposition,
 };
 pub use report::{
     CrashContext, Frame, Metadata, ProcInfo, Report, SignalInfo, Tag, Tags, FRAME_IP_CAPACITY,
@@ -60,6 +60,8 @@ pub use report::{
 };
 pub use signal_names::*;
 pub use state::{set_stage, Stage};
+#[doc(hidden)]
+pub use sys::cstr_bytes_bounded;
 pub use sys::FdSink;
 
 pub fn capability_bits() -> u32 {

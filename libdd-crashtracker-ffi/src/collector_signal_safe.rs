@@ -5,11 +5,10 @@ use std::ffi::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use libdd_crashtracker::collector_signal_safe::{
-    bootstrap_complete, capability_bits, degradation_bits, init_from_env_result, init_result,
-    owned_signal_count, owns_signal, set_stage, shutdown, InitResult, SignalSafeInitConfig, Stage,
+    bootstrap_complete, capability_bits, cstr_bytes_bounded, degradation_bits,
+    init_from_env_result, init_result, owned_signal_count, owns_signal, set_stage, shutdown,
+    InitResult, SignalSafeInitConfig, Stage,
 };
-
-const CSTR_MAX_LEN: usize = 4096;
 
 #[repr(C)]
 pub struct SignalSafeConfig {
@@ -191,15 +190,7 @@ fn ffi_u32(f: impl FnOnce() -> u32) -> u32 {
 }
 
 unsafe fn cstr_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
-    if ptr.is_null() {
-        &[]
-    } else {
-        let mut len = 0usize;
-        while len < CSTR_MAX_LEN && *ptr.add(len) != 0 {
-            len += 1;
-        }
-        std::slice::from_raw_parts(ptr.cast(), len)
-    }
+    unsafe { cstr_bytes_bounded(ptr) }
 }
 
 #[cfg(test)]

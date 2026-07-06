@@ -23,20 +23,6 @@ pub enum ChainAction {
     Resume,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SignalContext {
-    pub has_siginfo: bool,
-    pub si_code: i32,
-    pub si_pid: i32,
-    pub self_pid: i32,
-}
-
-impl SignalContext {
-    pub fn is_genuine_fault(self) -> bool {
-        is_genuine_fault(self.has_siginfo, self.si_code, self.si_pid, self.self_pid)
-    }
-}
-
 pub fn disposition_of(handler: *mut c_void) -> Disposition {
     match handler as usize {
         SIG_DFL_VALUE => Disposition::Default,
@@ -121,26 +107,12 @@ mod tests {
 
     #[test]
     fn genuine_fault_filter_ignores_external_async_signal() {
-        let ctx = SignalContext {
-            has_siginfo: true,
-            si_code: SI_USER,
-            si_pid: 7,
-            self_pid: 9,
-        };
-
-        assert!(!ctx.is_genuine_fault());
+        assert!(!is_genuine_fault(true, SI_USER, 7, 9));
     }
 
     #[test]
     fn genuine_fault_filter_accepts_self_sent_async_signal() {
-        let ctx = SignalContext {
-            has_siginfo: true,
-            si_code: SI_USER,
-            si_pid: 9,
-            self_pid: 9,
-        };
-
-        assert!(ctx.is_genuine_fault());
+        assert!(is_genuine_fault(true, SI_USER, 9, 9));
     }
 
     #[test]
