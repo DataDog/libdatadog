@@ -175,13 +175,16 @@ jobs:
           fi
 
   cargo-release:
-    # check-membership is skipped on bypass runs; allow that, but never run if it actually failed.
-    if: ${{ !cancelled() && needs.validate-inputs.result == 'success' && (needs.check-membership.result == 'success' || needs.check-membership.result == 'skipped') }}
+    # Run only when the upstream guards actually passed. check-membership is skipped on bypass runs
+    # (its own `if`), so accept a skipped membership ONLY when bypassing. A membership skipped for
+    # any other reason (e.g. check-proposal-ongoing failing) must NOT let the release through, so we
+    # also require check-proposal-ongoing to have succeeded.
+    if: ${{ !cancelled() && needs.validate-inputs.result == 'success' && needs.check-proposal-ongoing.result == 'success' && (needs.check-membership.result == 'success' || (inputs.bypass_standard_checks && needs.check-membership.result == 'skipped')) }}
     permissions:
       id-token: write # Enable OIDC
       pull-requests: write
       contents: write
-    needs: [check-membership, validate-inputs]
+    needs: [check-proposal-ongoing, check-membership, validate-inputs]
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: 1.92.0
