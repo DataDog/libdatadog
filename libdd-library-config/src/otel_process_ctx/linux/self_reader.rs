@@ -476,27 +476,25 @@ mod tests {
         );
     }
 
+    fn assert_is_otel_mapping(line: &str) {
+        assert!(ProcessContextSelfReader::is_named_otel_mapping(line));
+    }
+
+    fn assert_is_not_otel_mapping(line: &str) {
+        assert!(!ProcessContextSelfReader::is_named_otel_mapping(line));
+    }
+
     #[test]
     fn is_named_otel_mapping_matches_exact_mapping_name() {
-        assert!(ProcessContextSelfReader::is_named_otel_mapping(
-            "7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX"
-        ));
-        assert!(ProcessContextSelfReader::is_named_otel_mapping(
-            "7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX (deleted)"
-        ));
-        assert!(ProcessContextSelfReader::is_named_otel_mapping(
-            "7f000000-7f001000 rw-p 00000000 00:00 0 [anon_shmem:OTEL_CTX]"
-        ));
-        assert!(ProcessContextSelfReader::is_named_otel_mapping(
-            "7f000000-7f001000 rw-p 00000000 00:00 0 [anon:OTEL_CTX]"
-        ));
+        assert_is_otel_mapping("7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX");
+        assert_is_otel_mapping("7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX (deleted)");
+        assert_is_otel_mapping("7f000000-7f001000 rw-p 00000000 00:00 0 [anon_shmem:OTEL_CTX]");
+        assert_is_otel_mapping("7f000000-7f001000 rw-p 00000000 00:00 0 [anon:OTEL_CTX]");
 
-        assert!(!ProcessContextSelfReader::is_named_otel_mapping(
-            "7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX_BACKUP"
-        ));
-        assert!(!ProcessContextSelfReader::is_named_otel_mapping(
-            "7f000000-7f001000 rw-p 00000000 00:00 0 [anon:OTEL_CTX_old]"
-        ));
+        assert_is_not_otel_mapping(
+            "7f000000-7f001000 rw-p 00000000 00:00 0 /memfd:OTEL_CTX_BACKUP",
+        );
+        assert_is_not_otel_mapping("7f000000-7f001000 rw-p 00000000 00:00 0 [anon:OTEL_CTX_old]");
     }
 
     #[test]
