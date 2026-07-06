@@ -433,12 +433,6 @@ pub mod linux {
         })
     }
 
-    /// Reads and decodes the current process's OTel process context.
-    /// To read multiple times, construct a new reader with [`ProcessContextSelfReader::new()`].
-    pub fn read() -> io::Result<ProcessContext> {
-        ProcessContextSelfReader::new()?.read()
-    }
-
     fn string_array(value: &AnyValue) -> Option<Vec<String>> {
         let any_value::Value::ArrayValue(array) = value.value.as_ref()? else {
             return None;
@@ -473,11 +467,6 @@ pub mod linux {
             .and_then(|resource| find_attr(&resource.attributes, key))
             .or_else(|| find_attr(&context.extra_attributes, key))
             .and_then(string_array)
-    }
-
-    /// Reads the current process context and returns its thread-local attribute key map.
-    pub fn read_threadlocal_attribute_key_map() -> io::Result<Option<Vec<String>>> {
-        Ok(threadlocal_attribute_key_map(&read()?))
     }
 
     /// Publishes or updates the process context for it to be visible by external readers.
@@ -635,7 +624,10 @@ pub mod linux {
             };
 
             super::publish(&context).expect("couldn't publish the process context");
-            let read_context = super::read().expect("couldn't read back the process context");
+            let read_context = super::ProcessContextSelfReader::new()
+                .expect("couldn't create process context reader")
+                .read()
+                .expect("couldn't read back the process context");
             unsafe {
                 super::unpublish().expect("couldn't unpublish the context");
             }
