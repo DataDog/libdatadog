@@ -36,6 +36,7 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
+use futures::stream::{FuturesUnordered, StreamExt};
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
@@ -57,7 +58,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
-use futures::stream::{FuturesUnordered, StreamExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -252,7 +252,7 @@ pub struct TraceExporter<
     serializer: TraceSerializer,
     shared_runtime: Arc<R>,
     /// None if dogstatsd is disabled
-    dogstatsd: Option<Client>,
+    dogstatsd: Option<Arc<Client>>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     client_side_stats: StatsComputationConfig,
@@ -349,8 +349,7 @@ impl<
             handles.push(telemetry);
         }
 
-        let mut futures: FuturesUnordered<_> =
-            handles.into_iter().map(|h| h.stop()).collect();
+        let mut futures: FuturesUnordered<_> = handles.into_iter().map(|h| h.stop()).collect();
 
         while let Some(result) = futures.next().await {
             if let Err(e) = result {
@@ -460,6 +459,16 @@ impl<
                     metadata: &self.metadata,
                     endpoint_url: &self.endpoint.url,
                     shared_runtime: &*self.shared_runtime,
+                    stats_cardinality_limit: self.client_side_stats.stats_cardinality_limit,
+                    dogstatsd: if self.health_metrics_enabled {
+                        self.dogstatsd.clone()
+                    } else {
+                        None
+                    },
+                    #[cfg(feature = "telemetry")]
+                    telemetry: self.telemetry.as_ref().map(|t| t.clone_handle()),
+                    #[cfg(not(feature = "telemetry"))]
+                    _phantom: std::marker::PhantomData,
                 };
                 stats::handle_stats_disabled_by_agent(
                     &ctx,
@@ -543,7 +552,7 @@ impl<
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
         if self.health_metrics_enabled {
-            let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
+            let emitter = MetricsEmitter::new(self.dogstatsd.as_deref(), &self.common_stats_tags);
             emitter.emit(metric, custom_tags);
         }
     }
@@ -551,7 +560,7 @@ impl<
     /// Emit all health metrics from a SendResult
     fn emit_send_result(&self, result: &SendResult) {
         if self.health_metrics_enabled {
-            let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
+            let emitter = MetricsEmitter::new(self.dogstatsd.as_deref(), &self.common_stats_tags);
             emitter.emit_from_send_result(result);
         }
     }

@@ -1409,6 +1409,7 @@ mod tests {
             .1
     }
 
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_includes_dd_session_id() {
         let req = test_worker(Some("sess".into()), None, None)
@@ -1422,6 +1423,7 @@ mod tests {
         assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
     }
 
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_omits_root_session_id_when_same_as_session_id() {
         let req = test_worker(
@@ -1446,6 +1448,7 @@ mod tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_omits_parent_session_id_when_same_as_session_id() {
         let req = test_worker(
@@ -1470,6 +1473,7 @@ mod tests {
         assert!(req.headers().get(DD_PARENT_SESSION_ID).is_none());
     }
 
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_omits_session_family_without_valid_session_id() {
         let assert_no_session_headers = |req: &http::Request<bytes::Bytes>| {
@@ -1493,6 +1497,7 @@ mod tests {
         assert_no_session_headers(&req);
     }
 
+    #[cfg_attr(miri, ignore)] // reqwest in build_worker
     #[test]
     fn telemetry_http_includes_dd_session_root_and_parent_session_ids() {
         let req = test_worker(
@@ -1675,6 +1680,7 @@ mod tests {
         }
 
         /// After reset(), pending buffered telemetry and dedupe history is cleared.
+        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_clears_buffered_data() {
             let (handle, mut worker) = build_test_worker();
@@ -1760,6 +1766,7 @@ mod tests {
         }
 
         /// After reset(), actions queued in the mailbox before the fork are discarded.
+        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_drains_mailbox() {
             let (handle, mut worker) = build_test_worker();
@@ -1801,6 +1808,7 @@ mod tests {
         }
 
         /// After reset(), the worker accepts new telemetry and processes it normally.
+        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_worker_accepts_new_data_after_reset() {
             let (handle, mut worker) = build_test_worker();
@@ -1828,6 +1836,7 @@ mod tests {
         }
 
         /// After reset(), lifecycle state needed to keep periodic flushing alive is preserved.
+        #[cfg_attr(miri, ignore)] // reqwest in build_worker
         #[tokio::test]
         async fn test_reset_preserves_started_and_deadlines() {
             let (_handle, mut worker) = build_test_worker();

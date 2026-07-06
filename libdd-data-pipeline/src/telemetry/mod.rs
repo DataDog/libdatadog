@@ -365,6 +365,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))?;
         Ok(())
     }
+
+    /// Clone the telemetry handle
+    pub fn clone_handle(&self) -> TelemetryWorkerHandle<C> {
+        self.worker.clone()
+    }
 }
 
 #[cfg(test)]

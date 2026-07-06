@@ -30,6 +30,7 @@ struct Testcase {
     expected: libdd_trace_protobuf::pb::Span,
 }
 
+#[cfg_attr(miri, ignore)] // large fixture suite, prohibitively slow under Miri
 #[test]
 fn test_obfuscate_span() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

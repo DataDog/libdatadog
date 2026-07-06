@@ -39,10 +39,22 @@ pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
 /// Context struct that groups immutable parameters used by stats functions
-pub(crate) struct StatsContext<'a, R: SharedRuntime> {
+pub(crate) struct StatsContext<
+    'a,
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+> {
     pub metadata: &'a TracerMetadata,
     pub endpoint_url: &'a http::Uri,
     pub shared_runtime: &'a R,
+    pub stats_cardinality_limit: Option<usize>,
+    /// Optional DogStatsD client forwarded to the [`StatsExporter`].
+    pub dogstatsd: Option<std::sync::Arc<libdd_dogstatsd_client::Client>>,
+    /// Optional telemetry handle forwarded to the [`StatsExporter`].
+    #[cfg(feature = "telemetry")]
+    pub telemetry: Option<libdd_telemetry::worker::TelemetryWorkerHandle<C>>,
+    #[cfg(not(feature = "telemetry"))]
+    pub(crate) _phantom: std::marker::PhantomData<fn() -> C>,
 }
 
 #[derive(Debug)]
@@ -63,6 +75,7 @@ pub(crate) enum StatsComputationStatus {
 #[derive(Debug)]
 pub(crate) struct StatsComputationConfig {
     pub(crate) status: ArcSwap<StatsComputationStatus>,
+    pub(crate) stats_cardinality_limit: Option<usize>,
     #[cfg(feature = "stats-obfuscation")]
     pub(crate) obfuscation_config: SharedStatsComputationObfuscationConfig,
     /// Builder-level opt-in. When false, stats obfuscation stays off
@@ -110,7 +123,7 @@ pub(crate) fn start_stats_computation<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 >(
-    ctx: &StatsContext<R>,
+    ctx: &StatsContext<C, R>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
     capabilities: C,
@@ -124,7 +137,7 @@ pub(crate) fn start_stats_computation<
             SystemTime::now(),
             span_kinds,
             peer_tags,
-            None,
+            ctx.stats_cardinality_limit,
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),
         )));
@@ -138,7 +151,7 @@ fn create_and_start_stats_worker<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 >(
-    ctx: &StatsContext<R>,
+    ctx: &StatsContext<C, R>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
@@ -155,8 +168,8 @@ fn create_and_start_stats_worker<
         #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
         #[cfg(feature = "telemetry")]
-        None,
-        None,
+        ctx.telemetry.clone(),
+        ctx.dogstatsd.clone(),
     );
     let worker_handle = ctx
         .shared_runtime
@@ -199,7 +212,7 @@ pub(crate) fn handle_stats_disabled_by_agent<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 >(
-    ctx: &StatsContext<R>,
+    ctx: &StatsContext<C, R>,
     agent_info: &Arc<AgentInfo>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
