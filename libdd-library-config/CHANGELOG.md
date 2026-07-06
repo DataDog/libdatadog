@@ -2,6 +2,18 @@
 
 
 
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v2.0.0..libdd-library-config-v3.0.0) - 2026-07-06
+
+### Added
+
+- Caller-supplied threadlocal schema and extra process-context attributes ([#2162](https://github.com/datadog/libdatadog/issues/2162)) - ([7cdeb78](https://github.com/datadog/libdatadog/commit/7cdeb7896e92d1ba38bde495934e112dac2eda25))
+
+### Fixed
+
+- Put the threadlocal attributes at the right place in the context ([#2167](https://github.com/datadog/libdatadog/issues/2167)) - ([3630553](https://github.com/datadog/libdatadog/commit/36305534667a75c3125ad92c092829449439b324))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-library-config-v1.1.0..libdd-library-config-v2.0.0) - 2026-05-26
 
 ### Added
