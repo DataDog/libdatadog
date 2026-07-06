@@ -2999,6 +2999,7 @@ dependencies = [
  "criterion",
  "duplicate 2.0.1",
  "either",
+ "futures",
  "getrandom 0.2.15",
  "http",
  "http-body-util",
