@@ -2,6 +2,14 @@
 
 
 
+## [2.1.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v2.0.0..libdd-trace-normalization-v2.1.0) - 2026-07-06
+
+### Added
+
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v1.0.3..libdd-trace-normalization-v2.0.0) - 2026-03-25
 
 ### Changed
