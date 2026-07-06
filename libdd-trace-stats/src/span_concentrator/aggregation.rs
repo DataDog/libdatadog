@@ -431,6 +431,9 @@ pub(super) struct StatsBucket {
     max_entries: usize,
     /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
     collapsed_count: u64,
+    #[cfg(feature = "stats-obfuscation")]
+    /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays constant per bucket
+    pub(super) obfuscated: bool,
 }
 
 impl StatsBucket {
@@ -438,12 +441,18 @@ impl StatsBucket {
     ///
     /// `max_entries` is the maximum number of distinct aggregation keys the bucket will hold.
     /// Once the limit is reached, new distinct keys are collapsed into the overflow sentinel key.
-    pub(super) fn new(start_timestamp: u64, max_entries: usize) -> Self {
+    pub(super) fn new(
+        start_timestamp: u64,
+        max_entries: usize,
+        #[cfg(feature = "stats-obfuscation")] obfuscation_enabled: bool,
+    ) -> Self {
         Self {
             data: HashMap::new(),
             start: start_timestamp,
             max_entries,
             collapsed_count: 0,
+            #[cfg(feature = "stats-obfuscation")]
+            obfuscated: obfuscation_enabled,
         }
     }
 

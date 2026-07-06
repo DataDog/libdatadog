@@ -107,7 +107,7 @@ fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
     agent_info
         .info
         .obfuscation_version
-        .is_some_and(|v| v >= 1 && v <= SUPPORTED_OBFUSCATION_VERSION)
+        .is_some_and(|v| v >= 1 && v == SUPPORTED_OBFUSCATION_VERSION)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -258,6 +258,7 @@ fn update_obfuscation_config(
     ) {
         let obfuscation_active =
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
+        // FIXME: there is more than this to obfuscation config
         let sql_obfuscation_mode = (|| {
             agent_info
                 .info

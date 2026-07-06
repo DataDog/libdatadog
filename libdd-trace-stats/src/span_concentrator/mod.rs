@@ -190,7 +190,23 @@ impl SpanConcentrator {
         if bucket_timestamp < self.oldest_timestamp {
             bucket_timestamp = self.oldest_timestamp;
         }
-        let obfuscated_resource = self.compute_obfuscated_span(span);
+
+        let target_bucket = self.buckets.entry(bucket_timestamp).or_insert_with(|| {
+            StatsBucket::new(
+                bucket_timestamp,
+                self.max_entries_per_bucket,
+                #[cfg(feature = "stats-obfuscation")]
+                self.obfuscation_config.load().enabled,
+            )
+        });
+        #[cfg(feature = "stats-obfuscation")]
+        let obfuscated_resource = Self::compute_obfuscated_span(
+            target_bucket.obfuscated,
+            self.obfuscation_config.load().sql_obfuscation_mode,
+            span,
+        );
+        #[cfg(not(feature = "stats-obfuscation"))]
+        let obfuscated_resource: Option<String> = None;
         let agg_key = match obfuscated_resource.as_deref() {
             Some(res) => BorrowedAggregationKey::from_obfuscated_span(
                 res,
@@ -199,29 +215,27 @@ impl SpanConcentrator {
             ),
             None => BorrowedAggregationKey::from_span(span, self.peer_tag_keys.as_slice()),
         };
-        self.buckets
-            .entry(bucket_timestamp)
-            .or_insert_with(|| StatsBucket::new(bucket_timestamp, self.max_entries_per_bucket))
-            .insert(
-                agg_key,
-                span.duration(),
-                span.is_error(),
-                span.has_top_level(),
-            );
+        target_bucket.insert(
+            agg_key,
+            span.duration(),
+            span.is_error(),
+            span.has_top_level(),
+        );
     }
 
+    #[cfg(feature = "stats-obfuscation")]
     fn compute_obfuscated_span<'a>(
-        &self,
+        obfuscate: bool,
+        sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
         #[allow(unused)] span: &'a impl StatSpan<'a>,
     ) -> Option<String> {
-        #[cfg(feature = "stats-obfuscation")]
-        if self.obfuscation_config.load().enabled {
+        if obfuscate {
             let dbms_hint: Option<&str> = span.get_meta("db.type");
             return libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
                 span.r#type(),
                 span.resource(),
                 dbms_hint,
-                self.obfuscation_config.load().sql_obfuscation_mode,
+                sql_obfuscation_mode,
             );
         }
         None
