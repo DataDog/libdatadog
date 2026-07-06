@@ -936,7 +936,8 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
     let wildcard_count = pattern.as_bytes().iter().filter(|c| **c == b'*').count();
     if wildcard_count == 1 {
         let Some((start, end)) = pattern.split_once('*') else {
-            // unreachable in practice, if wildcard_count == 1 then we always have two parts in the pattern
+            // unreachable in practice, if wildcard_count == 1 then we always have two parts in the
+            // pattern
             return false;
         };
         return segment.starts_with(start) && segment.ends_with(end);
