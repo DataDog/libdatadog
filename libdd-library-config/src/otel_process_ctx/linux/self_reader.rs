@@ -177,7 +177,10 @@ impl ProcessContextSelfReader {
         // The OTel process context spec says to search for entries whose names start with
         // these prefixes. In `/proc/<pid>/maps`, however, the optional ` (deleted)` suffix is
         // emitted as a separate token, so the mapping-name token itself should match exactly.
-        name == "/memfd:OTEL_CTX" || name == "[anon_shmem:OTEL_CTX]" || name == "[anon:OTEL_CTX]"
+        matches!(
+            name,
+            "/memfd:OTEL_CTX" | "[anon_shmem:OTEL_CTX]" | "[anon:OTEL_CTX]"
+        )
     }
 
     /// Reads `len` bytes from `addr` in the address space of `pid` via `process_vm_readv(2)`.
