@@ -74,7 +74,7 @@ pub fn emit_report(sink: &mut impl Sink, report: &Report<'_>, context: &CrashCon
         return emit_truncated_tail(sink, report, context);
     }
 
-    emit_message(sink, report.stage_name, &context.signal) && emit_done(sink)
+    emit_message(sink, &context.signal) && emit_done(sink)
 }
 
 fn emit_report_sections(
@@ -87,7 +87,6 @@ fn emit_report_sections(
     }
     if !emit_additional_tags(
         sink,
-        report.stage_name,
         report.stackwalk_method,
         report.capabilities,
         report.degradations,
@@ -193,15 +192,11 @@ fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
 
 fn emit_additional_tags(
     sink: &mut impl Sink,
-    stage: &str,
     stackwalk_method: &str,
     capability_bits: Capabilities,
     degradation_bits: Degradations,
 ) -> bool {
     let mut tags = Tags::new();
-    if !push_tag(&mut tags, tag_keys::STAGE, stage) {
-        return false;
-    }
     if !push_tag(&mut tags, tag_keys::STACKWALK_METHOD, stackwalk_method) {
         return false;
     }
@@ -289,15 +284,9 @@ fn emit_stacktrace(sink: &mut impl Sink, frames: &[usize]) -> bool {
     .is_ok()
 }
 
-fn emit_message(
-    sink: &mut impl Sink,
-    stage_name: &str,
-    signal: &super::report::SignalInfo,
-) -> bool {
+fn emit_message(sink: &mut impl Sink, signal: &super::report::SignalInfo) -> bool {
     let mut message = HeaplessString::<MESSAGE_CAPACITY>::new();
-    message.push_str("Crash during ").is_ok()
-        && message.push_str(stage_name).is_ok()
-        && message.push_str(" (").is_ok()
+    message.push_str("Crash (").is_ok()
         && message.push_str(signal.si_signo_human_readable).is_ok()
         && message.push(')').is_ok()
         && protocol::section::<_, ()>(
@@ -320,12 +309,11 @@ fn emit_truncated_tail(
     capabilities::note_degraded(capabilities::DEGRADED_TRUNCATED);
     let _ = emit_additional_tags(
         sink,
-        report.stage_name,
         report.stackwalk_method,
         report.capabilities,
         report.degradations.with(capabilities::DEGRADED_TRUNCATED),
     );
-    emit_message(sink, report.stage_name, &context.signal) && emit_done(sink)
+    emit_message(sink, &context.signal) && emit_done(sink)
 }
 
 fn put_marker_line(sink: &mut impl Sink, marker: &str) -> bool {

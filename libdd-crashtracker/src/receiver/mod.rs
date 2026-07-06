@@ -140,7 +140,6 @@ mod tests {
             app_version: "v1",
             runtime_id: "rid",
             platform: "linux",
-            stage_name: "application",
             stackwalk_method: "fp_pvr",
             capabilities: Capabilities::from_bits(0x21),
             degradations: Degradations::from_bits(1 << 8), // DEGRADED_REPORT_TO_FD
@@ -175,7 +174,6 @@ mod tests {
             .experimental
             .expect("additional tags parsed")
             .additional_tags;
-        assert!(tags.iter().any(|tag| tag == "stage:application"));
         assert!(tags.iter().any(|tag| tag == "stackwalk_method:fp_pvr"));
         assert!(tags.iter().any(|tag| tag == "report_degraded:report_to_fd"));
 

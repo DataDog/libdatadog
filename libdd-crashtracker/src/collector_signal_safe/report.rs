@@ -99,7 +99,6 @@ pub struct Report<'a> {
     pub app_version: &'a str,
     pub runtime_id: &'a str,
     pub platform: &'a str,
-    pub stage_name: &'a str,
     pub stackwalk_method: &'a str,
     pub capabilities: Capabilities,
     pub degradations: Degradations,

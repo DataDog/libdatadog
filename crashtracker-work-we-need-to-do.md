@@ -42,7 +42,7 @@ Current libdatadog still has `std`, `nix`, `UnixStream`, `File`, `serde_json`, `
 Status as of 2026-07-06:
 
 - Implemented a separate `collector_signal-safe` path that can coexist with the standard collector feature, with a runtime signal-owner guard so only one collector arms crash signal handlers.
-- Added single-shot signal-safe initialization, release/acquire publication for handler enablement, fixed metadata snapshots, stage tags, and configurable integrator metadata. The C-tracer defaults are now a compatibility preset rather than hardcoded report fields.
+- Added single-shot signal-safe initialization, release/acquire publication for handler enablement, fixed metadata snapshots, and configurable integrator metadata. The C-tracer defaults are now a compatibility preset rather than hardcoded report fields.
 - Fixed the app-first recovery check by re-reading the live handler after the app handler returns, and kept the app-handler call path free of `Drop`-dependent state.
 - Added init-time capability probes and report degradation tags for missing receiver, missing `process_vm_readv`, no fork support, `/dev/null`, pipe availability, and report-to-fd fallback.
 - Replaced broad non-Linux forking with an explicit degraded no-fork policy. Linux x86_64/aarch64 keeps raw `clone(SIGCHLD)` for fork-based collection; other Unix targets can emit a minimal report to a pre-opened fd.
@@ -186,9 +186,9 @@ Work needed:
 
 ### 6. Add whole-process lifetime and teardown semantics
 
-dd-trace-c keeps crashtracking armed for the whole process by default. `crashtracker_uninstall()` runs at the end of bootstrap, but unless `DD_CRASHTRACKING_ONLY_BOOTSTRAP=true`, it only changes the stage to `application`. The destructor calls `crashtracker_shutdown()` and force-restores handlers so unloaded code is not left installed as a signal handler.
+dd-trace-c keeps crashtracking armed for the whole process by default. Bootstrap-only configuration tears it down at the end of bootstrap; otherwise the destructor calls `crashtracker_shutdown()` and force-restores handlers so unloaded code is not left installed as a signal handler.
 
-Current libdatadog has `enable()`/`disable()`, but `disable()` does not restore old handlers and there is no equivalent stage-aware uninstall/shutdown contract.
+Current libdatadog has `enable()`/`disable()`, but `disable()` does not restore old handlers and there is no equivalent preload uninstall/shutdown contract.
 
 Without interposition, a disabled libdatadog handler can only chain to the handler displaced at install time. It cannot see a handler registered later by the application. That caveat belongs with the lifecycle work and reinforces the need for `sigaction`/`signal` virtualization.
 
@@ -201,34 +201,7 @@ Work needed:
 - Leave interposition transparent after teardown, or provide safe hook removal if available.
 - Ensure no handler can dangle into unloaded code.
 
-### 7. Add stage tracking and crash stage tags
-
-dd-trace-c tracks crash stages in an atomic `sig_atomic_t`:
-
-- `uninitialized`
-- `crashtracker_init`
-- `platform_init`
-- `language_init`
-- `plugin_loading`
-- `injection_metadata_send`
-- `http_client_send`
-- `application`
-- `crashtracker_uninstall`
-
-The crash report includes:
-
-- message: `Crash during <stage> (<SIGNAL>)`
-- additional tag: `stage:<stage>`
-
-Work needed:
-
-- Add a libdatadog-owned or integration-owned stage API.
-- Make stage reads signal-safe and race-free.
-- Add scoped stage guards for normal code paths.
-- Include the stage in the emitted message and additional tags.
-- Add tests that crashes during init, HTTP send, and application runtime are labeled correctly.
-
-### 8. Add dd-trace-c env-driven preload configuration
+### 7. Add dd-trace-c env-driven preload configuration
 
 dd-trace-c crashtracking can initialize from env without a language tracer constructing a `CrashtrackerConfiguration`.
 
@@ -262,7 +235,7 @@ Work needed:
 - Keep the config JSON stable and test it as a wire contract.
 - Decide how to preserve libdatadog's general rule against hidden env reads for normal library callers while still supporting preload bootstrap.
 
-### 9. Add receiver path discovery and loader-env scrubbing
+### 8. Add receiver path discovery and loader-env scrubbing
 
 dd-trace-c receiver path lookup order:
 
@@ -283,7 +256,7 @@ Work needed:
 - Ensure the receiver process does not inherit `LD_PRELOAD` or `LD_AUDIT`: strip them in the child if inheriting `environ`, or exclude them while constructing the explicit receiver env list.
 - Add tests for explicit override, sibling suffixed receiver, sibling plain receiver, baked default, and preload recursion prevention.
 
-### 10. Align metadata tags with dd-trace-c/dd-trace-py
+### 9. Align metadata tags with dd-trace-c/dd-trace-py
 
 dd-trace-c emits metadata with:
 
@@ -313,7 +286,7 @@ Work needed:
 - Derive the default service name without doing signal-path work.
 - Test telemetry/log tags and crash-report metadata against dd-trace-c expectations.
 
-### 11. Make Linux unwinding optional and add a signal-safe fallback
+### 10. Make Linux unwinding optional and add a signal-safe fallback
 
 Current libdatadog has Linux local libunwind in the forked collector and remote libunwind in the receiver. dd-trace-c's current `crashtracker_native` does not use libunwind in the collector; it walks frame pointers from `ucontext` and probes frame records with `process_vm_readv` on itself. The old C implementation used a `sigsetjmp`/`siglongjmp` recovery handler around raw frame-pointer reads; the Rust port replaced that with `process_vm_readv` so corrupt frame pointers return `EFAULT` instead of crashing the collector.
 
@@ -330,7 +303,7 @@ Work needed:
 - Decide whether `EnabledWithInprocessSymbols` is allowed in the signal/fork-child path for preload use. It likely should not be the default there.
 - Add tests for null ucontext, corrupt frame pointer, seccomp-denied memory probe if practical, and fallback without libunwind.
 
-### 12. Align signal set and si_code wire behavior
+### 11. Align signal set and si_code wire behavior
 
 dd-trace-c manages `SIGSEGV`, `SIGABRT`, `SIGBUS`, `SIGILL`, and `SIGFPE`. Current libdatadog defaults are `SIGBUS`, `SIGABRT`, `SIGSEGV`, and `SIGILL`; `SIGFPE` is not included by default.
 
@@ -343,7 +316,7 @@ Work needed:
 - Add tests for `SIGFPE` reporting and receiver parsing.
 - Keep emitted signal and si_code strings compatible with receiver enum names.
 
-### 13. Add signal-safe debug logging
+### 12. Add signal-safe debug logging
 
 dd-trace-c has a debug path that formats into a fixed stack buffer and calls `dd_trace_log_write_signal` exactly once. It is gated by a cached `DD_TRACE_LOG_LEVEL` read from init.
 
@@ -356,7 +329,7 @@ Work needed:
 
 ## P1 work
 
-### 14. Make the wire emitter deterministic and allocation-free for preload
+### 13. Make the wire emitter deterministic and allocation-free for preload
 
 dd-trace-c's preload collector emits a minimal stream:
 
@@ -380,7 +353,7 @@ Work needed:
 - Keep section names compatible. The receiver already accepts dd-trace-c's `PROCESSINFO` spelling; add a golden round-trip test instead of treating this as parser work.
 - Decide how to preserve crash-ping enrichment if metadata is emitted before message.
 
-### 15. Preserve and test fd/socket protocol choices
+### 14. Preserve and test fd/socket protocol choices
 
 dd-trace-c uses `pipe()` and execs the receiver with the read end on stdin. libdatadog's general collector uses `socketpair()` and wraps it in `UnixStream`.
 
@@ -391,7 +364,7 @@ Work needed:
 - Ensure EOF signaling and receiver completion are deterministic.
 - Add tests for closed stdio descriptors, low-numbered pipe/socket fds, `EINTR` write retries, short writes, and receiver EOF.
 
-### 16. Packaging and build integration
+### 15. Packaging and build integration
 
 dd-trace-c builds and ships:
 
@@ -409,11 +382,11 @@ Work needed:
 - Add receiver size checks if libdatadog owns the sidecar packaging.
 - Keep old-glibc load behavior intact; avoid hard `libdl` symbols.
 
-### 17. API boundaries and ownership
+### 16. API boundaries and ownership
 
 There are two plausible designs:
 
-- Put the generic signal-safe collector in libdatadog and let integrations provide metadata, stage, receiver-path, and hook-engine adapters.
+- Put the generic signal-safe collector in libdatadog and let integrations provide metadata, receiver-path, and hook-engine adapters.
 - Put only reusable primitives in libdatadog and keep dd-trace-c's preload-specific policy in dd-trace-c.
 
 Either way, libdatadog needs a clearer split between:
@@ -434,7 +407,7 @@ Work needed:
 
 ## P2 work
 
-### 18. Backfill integration tests from dd-trace-c
+### 17. Backfill integration tests from dd-trace-c
 
 Port or mirror these dd-trace-c `test/agentapi/crashtracker_preload_test.go` scenarios:
 
@@ -463,7 +436,7 @@ Add new libdatadog-specific tests for:
 - golden preload wire round-trip through the receiver, including `PROCESSINFO`
 - forked collector has no allocator/logging/std calls on the hot path, including no `eprintln!`, no `std::fs::File`, and no `dlsym`
 
-### 19. Keep existing libdatadog strengths
+### 18. Keep existing libdatadog strengths
 
 While adding dd-trace-c parity, avoid regressing current libdatadog functionality:
 
@@ -485,7 +458,7 @@ Preload mode can be smaller and stricter than general mode, but the two should s
 3. Add allocation-free minimal emitter and golden wire tests.
 4. Add frame-pointer/process_vm_readv fallback and libunwind feature/config split.
 5. Add receiver child env/fd sanitation and bounded reap semantics.
-6. Add stage and metadata builders.
+6. Add preload metadata builders.
 7. Add sigaction/signal virtualization and Mode A/Mode B. Do not implement Mode A before the virtualized effective-handler state exists.
 8. Add preload env init and receiver path discovery.
 9. Port dd-trace-c integration tests.
@@ -501,4 +474,4 @@ Highest risk missing pieces:
 4. No Mode A app-first policy for managed-runtime recovery.
 5. Default-disposition chaining via `raise` instead of re-fault for synchronous kernel faults.
 6. Receiver exec environment can recurse under `LD_PRELOAD`/`LD_AUDIT` unless the receiver env is sanitized or explicitly built without loader vars.
-7. Preload metadata/stage/report shape is not available as a libdatadog helper.
+7. Preload metadata/report shape is not available as a libdatadog helper.

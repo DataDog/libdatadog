@@ -6,8 +6,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use libdd_crashtracker::collector_signal_safe::{
     bootstrap_complete, capability_bits, cstr_bytes_bounded, degradation_bits,
-    init_from_env_result, init_result, owned_signal_count, owns_signal, set_stage, shutdown,
-    InitResult, SignalSafeInitConfig, Stage,
+    init_from_env_result, init_result, owned_signal_count, owns_signal, shutdown, InitResult,
+    SignalSafeInitConfig,
 };
 
 #[repr(C)]
@@ -55,36 +55,6 @@ pub enum SignalSafeInitResult {
     AlreadyInitialized = 3,
     OwnerConflict = 4,
     InvalidConfig = 5,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub enum SignalSafeStage {
-    Uninitialized = 0,
-    CrashtrackerInit = 1,
-    PlatformInit = 2,
-    LanguageInit = 3,
-    PluginLoading = 4,
-    InjectionMetadataSend = 5,
-    HttpClientSend = 6,
-    Application = 7,
-    CrashtrackerUninstall = 8,
-}
-
-impl From<SignalSafeStage> for Stage {
-    fn from(stage: SignalSafeStage) -> Self {
-        match stage {
-            SignalSafeStage::Uninitialized => Stage::Uninitialized,
-            SignalSafeStage::CrashtrackerInit => Stage::CrashtrackerInit,
-            SignalSafeStage::PlatformInit => Stage::PlatformInit,
-            SignalSafeStage::LanguageInit => Stage::LanguageInit,
-            SignalSafeStage::PluginLoading => Stage::PluginLoading,
-            SignalSafeStage::InjectionMetadataSend => Stage::InjectionMetadataSend,
-            SignalSafeStage::HttpClientSend => Stage::HttpClientSend,
-            SignalSafeStage::Application => Stage::Application,
-            SignalSafeStage::CrashtrackerUninstall => Stage::CrashtrackerUninstall,
-        }
-    }
 }
 
 #[no_mangle]
@@ -143,11 +113,6 @@ pub extern "C" fn ddog_crasht_signal_safe_bootstrap_complete() {
 #[no_mangle]
 pub extern "C" fn ddog_crasht_signal_safe_shutdown() {
     ffi_void(shutdown);
-}
-
-#[no_mangle]
-pub extern "C" fn ddog_crasht_signal_safe_set_stage(stage: SignalSafeStage) {
-    ffi_void(|| set_stage(stage.into()));
 }
 
 #[no_mangle]

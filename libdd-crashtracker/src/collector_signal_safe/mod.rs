@@ -49,7 +49,6 @@ pub use handler::{bootstrap_complete, init_from_env_result, init_result, shutdow
 pub(crate) use report::{CrashContext, Report, SignalInfo, SECTION_BUF_CAPACITY};
 #[cfg(test)]
 pub(crate) use signal_names::*;
-pub use state::{set_stage, Stage};
 #[doc(hidden)]
 pub use sys::cstr_bytes_bounded;
 
@@ -72,9 +71,9 @@ pub fn owns_signal(sig: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::borrow::ToOwned;
-    use std::str;
-    use std::string::String;
+    use alloc::borrow::ToOwned;
+    use alloc::string::String;
+    use core::str;
 
     #[test]
     fn slice_sink_reports_capacity_failure() {
@@ -108,7 +107,6 @@ mod tests {
             app_version: "v1",
             runtime_id: "rid",
             platform: "linux",
-            stage_name: "application",
             stackwalk_method: "fp_pvr",
             capabilities: capabilities::Capabilities::from_bits(0x21),
             degradations: capabilities::Degradations::empty(),
@@ -145,7 +143,6 @@ mod tests {
             app_version: "v1",
             runtime_id: "rid",
             platform: "linux",
-            stage_name: "application",
             stackwalk_method: "fp_pvr",
             capabilities: capabilities::Capabilities::from_bits(0x21),
             degradations: capabilities::Degradations::empty(),
@@ -204,17 +201,16 @@ mod tests {
         );
         assert_eq!(metadata["tags"][5], "env:prod");
         assert_eq!(metadata["tags"][6], "version:v1");
-        assert_eq!(tags[0], "stage:application");
-        assert_eq!(tags[1], "stackwalk_method:fp_pvr");
-        assert_eq!(tags[2], "capabilities:0x00000021");
-        assert_eq!(tags[3], "degradations:0x00000000");
+        assert_eq!(tags[0], "stackwalk_method:fp_pvr");
+        assert_eq!(tags[1], "capabilities:0x00000021");
+        assert_eq!(tags[2], "degradations:0x00000000");
         assert_eq!(kind, "UnixSignal");
         assert_eq!(procinfo["pid"], 123);
         assert_eq!(procinfo["tid"], 456);
         assert!(stacktrace.contains(hex_addr(0x10).as_str()));
         assert!(stacktrace.contains(hex_addr(0x20).as_str()));
         assert!(!stacktrace.contains(hex_addr(0).as_str()));
-        assert_eq!(message.trim(), "Crash during application (SIGSEGV)");
+        assert_eq!(message.trim(), "Crash (SIGSEGV)");
         assert!(report.ends_with("DD_CRASHTRACK_DONE\n"));
     }
 
@@ -258,7 +254,6 @@ mod tests {
             app_version: "v1",
             runtime_id: "rid",
             platform: "linux",
-            stage_name: "application",
             stackwalk_method: "fp_pvr",
             capabilities: capabilities::Capabilities::from_bits(0x21),
             degradations: capabilities::DEGRADED_REPORT_TO_FD,

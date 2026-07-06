@@ -12,7 +12,7 @@ use super::policy::{
     app_handler_is_real, app_recovered, chain_action, disposition_of, is_genuine_fault,
     should_run_app_first, ChainAction,
 };
-use super::state::{self, sig_index, BeginInitError, Stage};
+use super::state::{self, sig_index, BeginInitError};
 use super::sys::{self, FdSink};
 use super::{backtrace, capabilities};
 use super::{CrashContext, Report, SignalInfo};
@@ -160,7 +160,6 @@ fn init_with_prepare(prepare: impl FnOnce() -> Result<(), PrepareError>) -> Init
         return InitResult::Failed;
     }
     install_all_handlers();
-    state::set_stage(Stage::CrashtrackerInit);
     state::INSTALLED.store(true, Ordering::Release);
     state::finish_init();
     state::HANDLERS_ENABLED.store(true, Ordering::Release);
@@ -170,13 +169,10 @@ fn init_with_prepare(prepare: impl FnOnce() -> Result<(), PrepareError>) -> Init
 pub fn bootstrap_complete() {
     if state::ONLY_BOOTSTRAP.load(Ordering::Relaxed) {
         shutdown();
-    } else {
-        state::set_stage(Stage::Application);
     }
 }
 
 pub fn shutdown() {
-    state::set_stage(Stage::CrashtrackerUninstall);
     state::HANDLERS_ENABLED.store(false, Ordering::Release);
     uninstall_all_handlers();
     COLLECTING.store(false, Ordering::Relaxed);
@@ -466,7 +462,6 @@ fn emit_crash_report(write_fd: i32, event: CrashEvent, close_when_done: bool) ->
         app_version: meta.app_version.as_str(),
         runtime_id,
         platform: meta.platform.as_str(),
-        stage_name: state::current_stage_name(),
         stackwalk_method,
         capabilities: capabilities::get(),
         degradations: capabilities::degradations(),

@@ -20,7 +20,6 @@ pub const PROFILER_VERSION: &str = "profiler_version";
 pub const PLATFORM: &str = "platform";
 pub const INJECTOR_VERSION: &str = "injector_version";
 pub const PROCESS_TAGS: &str = "process_tags";
-pub const STAGE: &str = "stage";
 pub const STACKWALK_METHOD: &str = "stackwalk_method";
 pub const CAPABILITIES: &str = "capabilities";
 pub const DEGRADATIONS: &str = "degradations";

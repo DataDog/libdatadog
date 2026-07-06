@@ -12,8 +12,8 @@ use std::process::Command;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use libdd_crashtracker::collector_signal_safe::init_from_env_result;
 use libdd_crashtracker::collector_signal_safe::{
-    bootstrap_complete, init_result, owned_signal_count, owns_signal, set_stage, InitResult,
-    SignalSafeInitConfig, Stage,
+    bootstrap_complete, init_result, owned_signal_count, owns_signal, InitResult,
+    SignalSafeInitConfig,
 };
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -25,7 +25,6 @@ fn signal_safe_receiver_child_process() {
 
     assert_eq!(init_from_env_result(), InitResult::Enabled);
     bootstrap_complete();
-    set_stage(Stage::Application);
 
     std::process::abort();
 }
@@ -50,22 +49,7 @@ fn signal_safe_report_fd_child_process() {
         InitResult::Enabled
     );
     bootstrap_complete();
-    set_stage(Stage::Application);
 
-    std::process::abort();
-}
-
-#[test]
-fn signal_safe_stage_child_process() {
-    let Some(report) = std::env::var_os("DD_SIGNAL_SAFE_E2E_STAGE_CHILD") else {
-        return;
-    };
-    let stage = std::env::var("DD_SIGNAL_SAFE_E2E_STAGE").expect("stage");
-
-    let _report = init_report_fd(report, b"/definitely/missing-signal-safe-receiver", false);
-    if stage == "application" {
-        bootstrap_complete();
-    }
     std::process::abort();
 }
 
@@ -90,7 +74,6 @@ fn signal_safe_receiver_deleted_child_process() {
 
     let _report = init_report_fd(report, receiver.as_encoded_bytes(), false);
     bootstrap_complete();
-    set_stage(Stage::Application);
     fs::remove_file(receiver).expect("remove receiver");
     std::process::abort();
 }
@@ -107,7 +90,6 @@ fn signal_safe_preexisting_app_handler_child_process() {
     assert!(owns_signal(libc::SIGABRT));
     assert!(owned_signal_count() < 5);
     bootstrap_complete();
-    set_stage(Stage::Application);
     std::process::abort();
 }
 
@@ -170,15 +152,6 @@ fn signal_safe_crash_writes_report_to_fd_when_degraded() {
     assert!(report.contains("\"si_signo_human_readable\":\"SIGABRT\""));
     assert!(report.contains("\"report_degraded:missing_receiver\""));
     assert!(report.contains("\"report_degraded:report_to_fd\""));
-}
-
-#[test]
-fn signal_safe_stage_tags_track_bootstrap_completion() {
-    let init_report = run_stage_child("crashtracker_init");
-    assert!(init_report.contains("\"stage:crashtracker_init\""));
-
-    let application_report = run_stage_child("application");
-    assert!(application_report.contains("\"stage:application\""));
 }
 
 #[test]
@@ -256,24 +229,6 @@ fn signal_safe_preexisting_app_handler_is_reported_without_internal_state_setup(
     )));
 }
 
-fn run_stage_child(stage: &str) -> String {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let report = temp.path().join("report.txt");
-
-    let current_exe = std::env::current_exe().expect("current_exe");
-    let status = Command::new(current_exe)
-        .arg("--exact")
-        .arg("signal_safe_stage_child_process")
-        .arg("--nocapture")
-        .env("DD_SIGNAL_SAFE_E2E_STAGE_CHILD", &report)
-        .env("DD_SIGNAL_SAFE_E2E_STAGE", stage)
-        .status()
-        .expect("spawn child");
-
-    assert!(!status.success(), "child should terminate via signal");
-    fs::read_to_string(&report).expect("read crash report")
-}
-
 fn init_report_fd(
     report_path: impl AsRef<std::path::Path>,
     receiver_path: &[u8],
@@ -299,12 +254,12 @@ fn init_report_fd(
 extern "C" fn noop_handler(_: libc::c_int) {}
 
 fn install_noop_handler(signal: libc::c_int) {
-    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    let mut action: libc::sigaction = unsafe { core::mem::zeroed() };
     action.sa_sigaction = noop_handler as *const () as usize;
     action.sa_flags = 0;
     unsafe {
         libc::sigemptyset(&mut action.sa_mask);
-        assert_eq!(libc::sigaction(signal, &action, std::ptr::null_mut()), 0);
+        assert_eq!(libc::sigaction(signal, &action, core::ptr::null_mut()), 0);
     }
 }
 

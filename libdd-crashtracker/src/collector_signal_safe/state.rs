@@ -193,67 +193,6 @@ pub static COLLECTOR_REAP_MS: AtomicI32 = AtomicI32::new(500);
 pub static RECEIVER_TIMEOUT_MS: AtomicI32 = AtomicI32::new(6_000);
 pub static MAX_FRAMES: AtomicUsize = AtomicUsize::new(32);
 
-#[repr(i32)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Stage {
-    Uninitialized = 0,
-    CrashtrackerInit = 1,
-    PlatformInit = 2,
-    LanguageInit = 3,
-    PluginLoading = 4,
-    InjectionMetadataSend = 5,
-    HttpClientSend = 6,
-    Application = 7,
-    CrashtrackerUninstall = 8,
-}
-
-impl Stage {
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Uninitialized => "uninitialized",
-            Self::CrashtrackerInit => "crashtracker_init",
-            Self::PlatformInit => "platform_init",
-            Self::LanguageInit => "language_init",
-            Self::PluginLoading => "plugin_loading",
-            Self::InjectionMetadataSend => "injection_metadata_send",
-            Self::HttpClientSend => "http_client_send",
-            Self::Application => "application",
-            Self::CrashtrackerUninstall => "crashtracker_uninstall",
-        }
-    }
-}
-
-impl TryFrom<i32> for Stage {
-    type Error = ();
-
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::Uninitialized),
-            1 => Ok(Self::CrashtrackerInit),
-            2 => Ok(Self::PlatformInit),
-            3 => Ok(Self::LanguageInit),
-            4 => Ok(Self::PluginLoading),
-            5 => Ok(Self::InjectionMetadataSend),
-            6 => Ok(Self::HttpClientSend),
-            7 => Ok(Self::Application),
-            8 => Ok(Self::CrashtrackerUninstall),
-            _ => Err(()),
-        }
-    }
-}
-
-static STAGE: AtomicI32 = AtomicI32::new(Stage::Uninitialized as i32);
-
-pub fn set_stage(stage: Stage) {
-    STAGE.store(stage as i32, Ordering::Relaxed);
-}
-
-pub fn current_stage_name() -> &'static str {
-    Stage::try_from(STAGE.load(Ordering::Relaxed))
-        .unwrap_or(Stage::Uninitialized)
-        .name()
-}
-
 pub fn clear_signal_state() {
     for slot in &SIGNAL_SLOTS {
         slot.clear();

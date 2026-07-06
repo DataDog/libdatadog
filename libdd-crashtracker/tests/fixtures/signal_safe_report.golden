@@ -5,7 +5,7 @@ DD_CRASHTRACK_BEGIN_METADATA
 {"library_name":"dd-test","library_version":"1.2.3","family":"native","tags":["language:native","runtime:native","is_crash:true","severity:crash","service:svc","env:prod","version:v1","runtime_id:rid","runtime_version:1.2.3","library_version:1.2.3","platform:linux","injector_version:1.2.3"]}
 DD_CRASHTRACK_END_METADATA
 DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS
-["stage:application","stackwalk_method:fp_pvr","capabilities:0x00000021","degradations:0x00000100","report_degraded:report_to_fd"]
+["stackwalk_method:fp_pvr","capabilities:0x00000021","degradations:0x00000100","report_degraded:report_to_fd"]
 DD_CRASHTRACK_END_ADDITIONAL_TAGS
 DD_CRASHTRACK_BEGIN_KIND
 "UnixSignal"
@@ -21,6 +21,6 @@ DD_CRASHTRACK_BEGIN_STACKTRACE
 {"ip":"0x0000000000000020"}
 DD_CRASHTRACK_END_STACKTRACE
 DD_CRASHTRACK_BEGIN_MESSAGE
-Crash during application (SIGSEGV)
+Crash (SIGSEGV)
 DD_CRASHTRACK_END_MESSAGE
 DD_CRASHTRACK_DONE

@@ -421,9 +421,9 @@ fn parse_log_level(v: Option<&[u8]>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
+    use alloc::vec::Vec;
     use std::format;
-    use std::string::ToString;
-    use std::vec::Vec;
 
     #[test]
     fn config_json_contains_receiver_contract() {
