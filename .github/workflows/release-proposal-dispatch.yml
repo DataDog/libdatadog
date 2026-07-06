@@ -1006,9 +1006,12 @@ jobs:
               --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
               --draft; then
             echo "Pull request created."
-          else
+          elif [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then
+            # Bypass/testing runs use the default GITHUB_TOKEN, which often cannot create PRs (org
+            # disables "Allow GitHub Actions to create and approve pull requests"). Don't fail the
+            # run for that; print a manual-open link instead. Standard runs fall through and fail.
             COMPARE_URL="${{ github.server_url }}/${{ github.repository }}/compare/${{ needs.cargo-release.outputs.ephemeral_branch }}...${BRANCH_NAME}?expand=1"
-            echo "::warning::Automatic PR creation failed; open the PR manually: $COMPARE_URL"
+            echo "::warning::Automatic PR creation failed on a bypass run; open the PR manually: $COMPARE_URL"
             {
               echo "## Release proposal branch pushed"
               echo ""
@@ -1025,6 +1028,11 @@ jobs:
               echo ""
               echo "</details>"
             } >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Standard run: PR creation must succeed. Fail so the cleanup-on-failure step removes the
+            # pushed branches and the failure stays visible for retry.
+            echo "::error::Failed to create the release proposal PR." >&2
+            exit 1
           fi
 
       - name: Cleanup on failure
