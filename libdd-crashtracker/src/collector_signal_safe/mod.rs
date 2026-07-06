@@ -1,11 +1,35 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Signal-safe Unix crash collection.
+//!
+//! `init` takes explicit caller-provided configuration and does not read environment variables.
+//! `init_from_env` is the preload/bootstrap compatibility entry point and is the only path that
+//! reads `DD_CRASHTRACKING_*`, `DD_SERVICE`, `DD_ENV`, `DD_VERSION`, and `DD_RUNTIME_ID`.
+//!
+//! Support matrix:
+//!
+//! | Target | fork collection | stackwalk | fallback |
+//! | --- | --- | --- | --- |
+//! | Linux x86_64/aarch64 | raw `clone(SIGCHLD)` | frame-pointer walk + `process_vm_readv` | `report_fd` |
+//! | other Linux arches | no | no | `report_fd` |
+//! | macOS/iOS | no | no | `report_fd` with siginfo-only minimal reports |
+//! | non-Unix | unsupported | unsupported | compile error |
+//!
+//! `create_alt_stack` installs the built-in alternate signal stack only for the init thread.
+//! `use_alt_stack` may be used with a caller-installed per-thread alternate stack. Stack-overflow
+//! crashes on threads without an alternate stack are collected on the faulting thread's stack.
+//! When `block_signals` is enabled, app handlers invoked from this handler run with the
+//! crash-signal mask in effect; a nested crash on another managed signal is deferred until the
+//! app handler returns.
+
 use core::ffi::c_void;
 use core::fmt::Write;
 
 use heapless::{String as HeaplessString, Vec as HeaplessVec};
 use serde::Serialize;
+
+use crate::protocol;
 
 mod backtrace;
 mod capabilities;
@@ -260,34 +284,37 @@ pub fn push_tag(tags: &mut Tags, key: &str, value: &str) -> bool {
 }
 
 pub fn emit_report(sink: &mut impl Sink, report: &Report<'_>, context: &CrashContext<'_>) -> bool {
-    emit_config(sink, report.config_json)
-        && emit_metadata(sink, report)
-        && emit_additional_tags(
+    if !emit_config(sink, report.config_json)
+        || !emit_metadata(sink, report)
+        || !emit_additional_tags(
             sink,
             report.stage_name,
             report.stackwalk_method,
             report.capability_bits,
             report.degradation_bits,
         )
-        && emit_kind(sink)
-        && emit_json_section(
+        || !emit_kind(sink)
+        || !emit_json_section(
             sink,
-            b"DD_CRASHTRACK_BEGIN_SIGINFO\n",
+            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
             &context.signal,
-            b"DD_CRASHTRACK_END_SIGINFO\n",
+            protocol::DD_CRASHTRACK_END_SIGINFO,
         )
-        && emit_json_section(
+        || !emit_json_section(
             sink,
-            b"DD_CRASHTRACK_BEGIN_PROCESSINFO\n",
+            protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
             &ProcInfo {
                 pid: context.pid,
                 tid: context.tid,
             },
-            b"DD_CRASHTRACK_END_PROCESSINFO\n",
+            protocol::DD_CRASHTRACK_END_PROCINFO,
         )
-        && emit_stacktrace(sink, context.frames)
-        && emit_message(sink, report.stage_name, &context.signal)
-        && sink.put(b"DD_CRASHTRACK_DONE\n")
+        || !emit_stacktrace(sink, context.frames)
+    {
+        return emit_truncated_tail(sink, report, context);
+    }
+
+    emit_message(sink, report.stage_name, &context.signal) && emit_done(sink)
 }
 
 pub fn emit_report_with_metadata(
@@ -297,33 +324,44 @@ pub fn emit_report_with_metadata(
     stage_name: &str,
     context: &CrashContext<'_>,
 ) -> bool {
-    emit_config(sink, config_json)
-        && emit_json_section(
+    if !emit_config(sink, config_json)
+        || !emit_json_section(
             sink,
-            b"DD_CRASHTRACK_BEGIN_METADATA\n",
+            protocol::DD_CRASHTRACK_BEGIN_METADATA,
             metadata,
-            b"DD_CRASHTRACK_END_METADATA\n",
+            protocol::DD_CRASHTRACK_END_METADATA,
         )
-        && emit_additional_tags(sink, stage_name, "fp_pvr", 0, 0)
-        && emit_kind(sink)
-        && emit_json_section(
+        || !emit_additional_tags(sink, stage_name, "fp_pvr", 0, 0)
+        || !emit_kind(sink)
+        || !emit_json_section(
             sink,
-            b"DD_CRASHTRACK_BEGIN_SIGINFO\n",
+            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
             &context.signal,
-            b"DD_CRASHTRACK_END_SIGINFO\n",
+            protocol::DD_CRASHTRACK_END_SIGINFO,
         )
-        && emit_json_section(
+        || !emit_json_section(
             sink,
-            b"DD_CRASHTRACK_BEGIN_PROCESSINFO\n",
+            protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
             &ProcInfo {
                 pid: context.pid,
                 tid: context.tid,
             },
-            b"DD_CRASHTRACK_END_PROCESSINFO\n",
+            protocol::DD_CRASHTRACK_END_PROCINFO,
         )
-        && emit_stacktrace(sink, context.frames)
-        && emit_message(sink, stage_name, &context.signal)
-        && sink.put(b"DD_CRASHTRACK_DONE\n")
+        || !emit_stacktrace(sink, context.frames)
+    {
+        capabilities::note_degraded(capabilities::DEGRADED_TRUNCATED);
+        let _ = emit_additional_tags(
+            sink,
+            stage_name,
+            "fp_pvr",
+            0,
+            capabilities::DEGRADED_TRUNCATED,
+        );
+        return emit_message(sink, stage_name, &context.signal) && emit_done(sink);
+    }
+
+    emit_message(sink, stage_name, &context.signal) && emit_done(sink)
 }
 
 pub fn emit_minimal_report(
@@ -335,28 +373,33 @@ pub fn emit_minimal_report(
     emit_config(sink, config_json)
         && emit_json_section(
             sink,
-            b"DD_CRASHTRACK_BEGIN_METADATA\n",
+            protocol::DD_CRASHTRACK_BEGIN_METADATA,
             metadata,
-            b"DD_CRASHTRACK_END_METADATA\n",
+            protocol::DD_CRASHTRACK_END_METADATA,
         )
         && emit_json_section(
             sink,
-            b"DD_CRASHTRACK_BEGIN_SIGINFO\n",
+            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
             signal,
-            b"DD_CRASHTRACK_END_SIGINFO\n",
+            protocol::DD_CRASHTRACK_END_SIGINFO,
         )
-        && sink.put(b"DD_CRASHTRACK_DONE\n")
+        && emit_done(sink)
 }
 
 pub fn emit_json_section<T: Serialize>(
     sink: &mut impl Sink,
-    begin: &[u8],
+    begin: &str,
     value: &T,
-    end: &[u8],
+    end: &str,
 ) -> bool {
     let mut buf = [0u8; SECTION_BUF_CAPACITY];
     match serde_json_core::to_slice(value, &mut buf) {
-        Ok(len) => sink.put(begin) && sink.put(&buf[..len]) && sink.put(b"\n") && sink.put(end),
+        Ok(len) => {
+            put_marker_line(sink, begin)
+                && sink.put(&buf[..len])
+                && sink.put(b"\n")
+                && put_marker_line(sink, end)
+        }
         Err(_) => false,
     }
 }
@@ -371,7 +414,7 @@ pub fn rust_signal_name(signal: i32) -> &'static str {
         libc::SIGSEGV => "SIGSEGV",
         libc::SIGSYS => "SIGSYS",
         libc::SIGTRAP => "SIGTRAP",
-        _ => "<unknown>",
+        _ => "UNKNOWN",
     }
 }
 
@@ -414,10 +457,10 @@ pub fn hex_addr(value: usize) -> HeaplessString<FRAME_IP_CAPACITY> {
 }
 
 fn emit_config(sink: &mut impl Sink, config_json: &str) -> bool {
-    sink.put(b"DD_CRASHTRACK_BEGIN_CONFIG\n")
+    put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_CONFIG)
         && sink.put(config_json.as_bytes())
         && (config_json.ends_with('\n') || sink.put(b"\n"))
-        && sink.put(b"DD_CRASHTRACK_END_CONFIG\n")
+        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_CONFIG)
 }
 
 fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
@@ -454,9 +497,9 @@ fn emit_metadata(sink: &mut impl Sink, report: &Report<'_>) -> bool {
         )
         && emit_json_section(
             sink,
-            b"DD_CRASHTRACK_BEGIN_METADATA\n",
+            protocol::DD_CRASHTRACK_BEGIN_METADATA,
             &metadata,
-            b"DD_CRASHTRACK_END_METADATA\n",
+            protocol::DD_CRASHTRACK_END_METADATA,
         )
 }
 
@@ -489,14 +532,16 @@ fn emit_additional_tags(
     }
     emit_json_section(
         sink,
-        b"DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS\n",
+        protocol::DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS,
         &tags,
-        b"DD_CRASHTRACK_END_ADDITIONAL_TAGS\n",
+        protocol::DD_CRASHTRACK_END_ADDITIONAL_TAGS,
     )
 }
 
 fn emit_kind(sink: &mut impl Sink) -> bool {
-    sink.put(b"DD_CRASHTRACK_BEGIN_KIND\n\"UnixSignal\"\nDD_CRASHTRACK_END_KIND\n")
+    put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_KIND)
+        && sink.put(b"\"UnixSignal\"\n")
+        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_KIND)
 }
 
 fn hex_u32(value: u32) -> HeaplessString<10> {
@@ -506,7 +551,7 @@ fn hex_u32(value: u32) -> HeaplessString<10> {
 }
 
 fn emit_stacktrace(sink: &mut impl Sink, frames: &[usize]) -> bool {
-    if !sink.put(b"DD_CRASHTRACK_BEGIN_STACKTRACE\n") {
+    if !put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_STACKTRACE) {
         return false;
     }
 
@@ -525,7 +570,7 @@ fn emit_stacktrace(sink: &mut impl Sink, frames: &[usize]) -> bool {
         }
     }
 
-    sink.put(b"DD_CRASHTRACK_END_STACKTRACE\n")
+    put_marker_line(sink, protocol::DD_CRASHTRACK_END_STACKTRACE)
 }
 
 fn emit_message(sink: &mut impl Sink, stage_name: &str, signal: &SignalInfo) -> bool {
@@ -535,9 +580,34 @@ fn emit_message(sink: &mut impl Sink, stage_name: &str, signal: &SignalInfo) -> 
         && message.push_str(" (").is_ok()
         && message.push_str(signal.si_signo_human_readable).is_ok()
         && message.push(')').is_ok()
-        && sink.put(b"DD_CRASHTRACK_BEGIN_MESSAGE\n")
+        && put_marker_line(sink, protocol::DD_CRASHTRACK_BEGIN_MESSAGE)
         && sink.put(message.as_bytes())
-        && sink.put(b"\nDD_CRASHTRACK_END_MESSAGE\n")
+        && sink.put(b"\n")
+        && put_marker_line(sink, protocol::DD_CRASHTRACK_END_MESSAGE)
+}
+
+fn emit_truncated_tail(
+    sink: &mut impl Sink,
+    report: &Report<'_>,
+    context: &CrashContext<'_>,
+) -> bool {
+    capabilities::note_degraded(capabilities::DEGRADED_TRUNCATED);
+    let _ = emit_additional_tags(
+        sink,
+        report.stage_name,
+        report.stackwalk_method,
+        report.capability_bits,
+        report.degradation_bits | capabilities::DEGRADED_TRUNCATED,
+    );
+    emit_message(sink, report.stage_name, &context.signal) && emit_done(sink)
+}
+
+fn put_marker_line(sink: &mut impl Sink, marker: &str) -> bool {
+    sink.put(marker.as_bytes()) && sink.put(b"\n")
+}
+
+fn emit_done(sink: &mut impl Sink) -> bool {
+    put_marker_line(sink, protocol::DD_CRASHTRACK_DONE)
 }
 
 fn signal_specific_si_code_name(signal: i32, si_code: i32) -> &'static str {
@@ -545,13 +615,13 @@ fn signal_specific_si_code_name(signal: i32, si_code: i32) -> &'static str {
         libc::SIGSEGV => match si_code {
             SEGV_MAPERR => "SEGV_MAPERR",
             SEGV_ACCERR => "SEGV_ACCERR",
-            _ => "<unknown>",
+            _ => "UNKNOWN",
         },
         libc::SIGBUS => match si_code {
             BUS_ADRALN => "BUS_ADRALN",
             BUS_ADRERR => "BUS_ADRERR",
             BUS_OBJERR => "BUS_OBJERR",
-            _ => "<unknown>",
+            _ => "UNKNOWN",
         },
         libc::SIGILL => match si_code {
             ILL_ILLOPC => "ILL_ILLOPC",
@@ -562,9 +632,9 @@ fn signal_specific_si_code_name(signal: i32, si_code: i32) -> &'static str {
             ILL_PRVREG => "ILL_PRVREG",
             ILL_COPROC => "ILL_COPROC",
             ILL_BADSTK => "ILL_BADSTK",
-            _ => "<unknown>",
+            _ => "UNKNOWN",
         },
-        _ => "<unknown>",
+        _ => "UNKNOWN",
     }
 }
 
@@ -583,6 +653,7 @@ pub const SI_SIGIO: i32 = -5;
 pub const SI_TKILL: i32 = -6;
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
+// Non-Linux platforms do not define SI_TKILL; use a sentinel that cannot match a real si_code.
 pub const SI_TKILL: i32 = i32::MIN;
 
 pub const SEGV_MAPERR: i32 = 1;
@@ -701,7 +772,29 @@ mod tests {
         assert_eq!(rust_si_code_name(libc::SIGBUS, BUS_ADRALN), "BUS_ADRALN");
         assert_eq!(rust_si_code_name(libc::SIGILL, ILL_ILLOPC), "ILL_ILLOPC");
         assert_eq!(rust_si_code_name(libc::SIGSEGV, SI_USER), "SI_USER");
-        assert_eq!(rust_si_code_name(libc::SIGSEGV, 999), "<unknown>");
+        assert_eq!(rust_si_code_name(libc::SIGSEGV, 999), "UNKNOWN");
+        assert_eq!(rust_signal_name(999), "UNKNOWN");
+    }
+
+    #[test]
+    fn hex_addr_covers_boundaries() {
+        let zero = hex_addr(0);
+        assert_eq!(zero.len(), FRAME_IP_CAPACITY);
+        assert!(zero
+            .as_str()
+            .strip_prefix("0x")
+            .unwrap()
+            .bytes()
+            .all(|b| b == b'0'));
+
+        let max = hex_addr(usize::MAX);
+        assert_eq!(max.len(), FRAME_IP_CAPACITY);
+        assert!(max
+            .as_str()
+            .strip_prefix("0x")
+            .unwrap()
+            .bytes()
+            .all(|b| b == b'f'));
     }
 
     #[test]
@@ -741,6 +834,44 @@ mod tests {
         assert_eq!(signal["si_signo_human_readable"], "SIGSEGV");
         assert_eq!(signal["si_code_human_readable"], "SEGV_MAPERR");
         assert_eq!(signal["si_addr"], hex_addr(0x1234).as_str());
+        assert!(report.ends_with("DD_CRASHTRACK_DONE\n"));
+    }
+
+    #[test]
+    fn oversized_metadata_still_terminates_report_with_degradation() {
+        let signal = SignalInfo::new(libc::SIGSEGV, SEGV_ACCERR, 0x4321, true);
+        let frames = [0x10usize];
+        let context = CrashContext {
+            signal,
+            pid: 123,
+            tid: 456,
+            frames: &frames,
+        };
+        let oversized_library_name = "x".repeat(SECTION_BUF_CAPACITY);
+        let report = Report {
+            config_json: "{\"resolve_frames\":\"Disabled\"}",
+            library_name: &oversized_library_name,
+            library_version: "golden-1.0",
+            family: config::COMPAT_LIBRARY_FAMILY,
+            default_service: config::COMPAT_DEFAULT_SERVICE,
+            service: "",
+            env: "prod",
+            app_version: "v1",
+            runtime_id: "rid",
+            platform: "linux",
+            stage_name: "application",
+            stackwalk_method: "fp_pvr",
+            capability_bits: 0x21,
+            degradation_bits: 0,
+        };
+
+        let mut buf = [0u8; 4096];
+        let mut sink = SliceSink::new(&mut buf);
+        assert!(emit_report(&mut sink, &report, &context));
+
+        let report = str::from_utf8(sink.as_slice()).unwrap();
+        assert!(report.contains("\"report_degraded:truncated\""));
+        assert!(report.contains("DD_CRASHTRACK_BEGIN_MESSAGE\n"));
         assert!(report.ends_with("DD_CRASHTRACK_DONE\n"));
     }
 

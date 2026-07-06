@@ -49,6 +49,7 @@ pub const CONFIG_JSON_BUF_SIZE: usize = 2048;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SignalSafeInitConfig<'a> {
+    /// Receiver executable path. Empty uses the compatibility default.
     pub receiver_path: &'a [u8],
     pub service: &'a [u8],
     pub env: &'a [u8],
@@ -62,8 +63,19 @@ pub struct SignalSafeInitConfig<'a> {
     pub force_on_top: bool,
     pub only_bootstrap: bool,
     pub debug_logging: bool,
+    /// Install the built-in alternate signal stack on the init thread.
+    ///
+    /// This stack is per-thread kernel state. Other threads must install their own alternate
+    /// stack before `use_alt_stack` can protect stack-overflow crashes on those threads.
     pub create_alt_stack: bool,
+    /// Register crash handlers with `SA_ONSTACK`.
+    ///
+    /// This may be used with `create_alt_stack` or with a caller-provided alternate stack already
+    /// installed on the current thread.
     pub use_alt_stack: bool,
+    /// Add all managed crash signals to the handler mask.
+    ///
+    /// Application handlers invoked by the signal-safe handler run with this mask in effect.
     pub block_signals: bool,
     pub disarm_on_entry: bool,
     pub report_fd: i32,
@@ -420,10 +432,14 @@ mod tests {
             &mut out,
             &SignalSafeInitConfig::default()
         ));
-        assert!(out.contains("\"additional_files\":[]"));
-        assert!(out.contains("\"resolve_frames\":\"EnabledWithSymbolsInReceiver\""));
-        assert!(out.contains("\"unix_socket_path\":null"));
-        assert!(out.ends_with('\n'));
+        assert_eq!(
+            out.as_str(),
+            "{\"additional_files\":[],\"create_alt_stack\":false,\"use_alt_stack\":false,\
+             \"demangle_names\":true,\"endpoint\":null,\
+             \"resolve_frames\":\"EnabledWithSymbolsInReceiver\",\
+             \"signals\":[11,6,10,4,8],\"timeout\":{\"secs\":5,\"nanos\":0},\
+             \"unix_socket_path\":null}\n"
+        );
     }
 
     #[test]

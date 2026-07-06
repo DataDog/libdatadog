@@ -105,4 +105,78 @@ mod tests {
         join_handle2.await??;
         Ok(())
     }
+
+    #[cfg(feature = "collector_signal-safe")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn signal_safe_emitted_report_round_trips_through_receiver_parser() -> anyhow::Result<()>
+    {
+        use crate::collector_signal_safe as signal_safe;
+
+        let config = CrashtrackerConfiguration::builder()
+            .signals(default_signals())
+            .timeout(Duration::from_secs(3))
+            .build()?;
+        let config_json = serde_json::to_string(&config)?;
+        let signal =
+            signal_safe::SignalInfo::new(libc::SIGSEGV, signal_safe::SEGV_MAPERR, 0x1234, true);
+        let frames = [0x10usize, 0x20usize];
+        let context = signal_safe::CrashContext {
+            signal,
+            pid: std::process::id() as i32,
+            tid: std::process::id() as i32,
+            frames: &frames,
+        };
+        let report = signal_safe::Report {
+            config_json: &config_json,
+            library_name: "dd-test",
+            library_version: "1.2.3",
+            family: "native",
+            default_service: "default-service",
+            service: "svc",
+            env: "prod",
+            app_version: "v1",
+            runtime_id: "rid",
+            platform: "linux",
+            stage_name: "application",
+            stackwalk_method: "fp_pvr",
+            capability_bits: 0x21,
+            degradation_bits: 1 << 8, // DEGRADED_REPORT_TO_FD
+        };
+
+        let mut buf = [0u8; 8192];
+        let mut sink = signal_safe::SliceSink::new(&mut buf);
+        assert!(signal_safe::emit_report(&mut sink, &report, &context));
+        let emitted = sink.as_slice().to_vec();
+
+        let (mut sender, receiver) = tokio::net::UnixStream::pair()?;
+        let writer = tokio::spawn(async move {
+            sender.write_all(&emitted).await?;
+            sender.shutdown().await
+        });
+
+        let parsed = receive_report_from_stream(Duration::from_secs(2), BufReader::new(receiver))
+            .await?
+            .expect("signal-safe report should parse");
+        writer.await??;
+
+        let (_config, crashinfo) = parsed;
+        assert_eq!(crashinfo.error.kind, ErrorKind::UnixSignal);
+        assert_eq!(crashinfo.metadata.library_name, "dd-test");
+        assert_eq!(crashinfo.metadata.tags[4], "service:svc");
+
+        let sig_info = crashinfo.sig_info.expect("siginfo parsed");
+        assert_eq!(sig_info.si_signo_human_readable, SignalNames::SIGSEGV);
+        assert_eq!(sig_info.si_code_human_readable, SiCodes::SEGV_MAPERR);
+
+        let tags = crashinfo
+            .experimental
+            .expect("additional tags parsed")
+            .additional_tags;
+        assert!(tags.iter().any(|tag| tag == "stage:application"));
+        assert!(tags.iter().any(|tag| tag == "stackwalk_method:fp_pvr"));
+        assert!(tags.iter().any(|tag| tag == "report_degraded:report_to_fd"));
+
+        Ok(())
+    }
 }

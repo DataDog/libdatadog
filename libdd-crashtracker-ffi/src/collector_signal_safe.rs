@@ -26,8 +26,17 @@ pub struct SignalSafeConfig {
     pub force_on_top: bool,
     pub only_bootstrap: bool,
     pub debug_logging: bool,
+    /// Installs the built-in alternate signal stack on the init thread only.
+    ///
+    /// Signal alternate stacks are per-thread kernel state. Stack-overflow crashes on other
+    /// threads require those threads to install their own alternate stacks.
     pub create_alt_stack: bool,
+    /// Registers crash handlers with SA_ONSTACK.
+    ///
+    /// This may be used with create_alt_stack or with a caller-provided alternate stack already
+    /// installed on the current thread.
     pub use_alt_stack: bool,
+    /// Runs app handlers invoked from the signal-safe handler with managed crash signals blocked.
     pub block_signals: bool,
     pub disarm_on_entry: bool,
     pub report_fd: i32,

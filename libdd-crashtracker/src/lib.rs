@@ -67,6 +67,15 @@ mod collector_windows;
 mod common;
 #[cfg(feature = "std")]
 mod crash_info;
+#[cfg(all(
+    unix,
+    any(
+        feature = "collector",
+        feature = "receiver",
+        feature = "collector_signal-safe"
+    )
+))]
+mod protocol;
 #[cfg(all(unix, feature = "std", feature = "receiver"))]
 mod receiver;
 #[cfg(feature = "std")]

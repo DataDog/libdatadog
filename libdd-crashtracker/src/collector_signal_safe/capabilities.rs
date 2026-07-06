@@ -21,6 +21,7 @@ pub const DEGRADED_PIPE_FAILED: u32 = 1 << 5;
 pub const DEGRADED_FORK_FAILED: u32 = 1 << 6;
 pub const DEGRADED_RECEIVER_UNAVAILABLE: u32 = 1 << 7;
 pub const DEGRADED_REPORT_TO_FD: u32 = 1 << 8;
+pub const DEGRADED_TRUNCATED: u32 = 1 << 9;
 
 pub const DEGRADATION_REASONS: &[(u32, &str)] = &[
     (DEGRADED_MISSING_RECEIVER, "missing_receiver"),
@@ -32,6 +33,7 @@ pub const DEGRADATION_REASONS: &[(u32, &str)] = &[
     (DEGRADED_FORK_FAILED, "fork_failed"),
     (DEGRADED_RECEIVER_UNAVAILABLE, "receiver_unavailable"),
     (DEGRADED_REPORT_TO_FD, "report_to_fd"),
+    (DEGRADED_TRUNCATED, "truncated"),
 ];
 
 static CAPABILITIES: AtomicU32 = AtomicU32::new(0);
@@ -104,4 +106,38 @@ fn probe_process_vm_readv() -> bool {
     let src = 0x5au8;
     let mut dst = [0u8; 1];
     sys::read_own_mem(sys::getpid(), (&src as *const u8) as usize, &mut dst) && dst[0] == src
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::fd::AsRawFd;
+
+    #[test]
+    fn publish_reports_missing_receiver_degradation() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+
+        publish(b"/definitely/missing-signal-safe-receiver\0", -1);
+
+        assert_eq!(get() & RECEIVER_OK, 0);
+        assert_ne!(degradations() & DEGRADED_MISSING_RECEIVER, 0);
+        assert_eq!(get() & REPORT_FD_OK, 0);
+    }
+
+    #[test]
+    fn publish_marks_valid_report_fd() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+        let file = tempfile::tempfile().expect("tempfile");
+
+        publish(
+            b"/definitely/missing-signal-safe-receiver\0",
+            file.as_raw_fd(),
+        );
+
+        assert_ne!(get() & REPORT_FD_OK, 0);
+    }
 }
