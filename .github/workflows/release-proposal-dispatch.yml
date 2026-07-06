@@ -145,6 +145,7 @@ jobs:
           fi
 
   check-membership:
+    if: ${{ !inputs.bypass_standard_checks }}
     permissions:
       id-token: write # Enable OIDC
     runs-on: ubuntu-latest
@@ -174,11 +175,16 @@ jobs:
           fi
 
   cargo-release:
+    # Run only when the upstream guards actually passed. check-membership is skipped on bypass runs
+    # (its own `if`), so accept a skipped membership ONLY when bypassing. A membership skipped for
+    # any other reason (e.g. check-proposal-ongoing failing) must NOT let the release through, so we
+    # also require check-proposal-ongoing to have succeeded.
+    if: ${{ !cancelled() && needs.validate-inputs.result == 'success' && needs.check-proposal-ongoing.result == 'success' && (needs.check-membership.result == 'success' || (inputs.bypass_standard_checks && needs.check-membership.result == 'skipped')) }}
     permissions:
       id-token: write # Enable OIDC
       pull-requests: write
       contents: write
-    needs: [check-membership, validate-inputs]
+    needs: [check-proposal-ongoing, check-membership, validate-inputs]
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: 1.92.0
@@ -217,13 +223,14 @@ jobs:
       
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
+        if: ${{ !inputs.bypass_standard_checks }}
         with:
           scope: DataDog/libdatadog
-          policy: self.write.pr    
+          policy: self.write.pr
 
       - name: Configure Git for signing
         env:
-          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GH_TOKEN: ${{ inputs.bypass_standard_checks && github.token || steps.octo-sts.outputs.token }}
           GITHUB_ACTOR: ${{ github.actor }}
         run: |
           # GET /user is not allowed with installation tokens; use GET /users/ACTOR (who triggered the workflow).
@@ -466,6 +473,9 @@ jobs:
           # Initialize results array
           echo "[]" > /tmp/api-changes.json
 
+          # Crates with no commits of their own are not released here, but recorded as candidates:
+          echo "[]" > /tmp/pending-major-only.json
+
           # Use release branch tip from when we ran commits-since-release (same ref the script used).
           # Avoids tag/merge-base resolution failures after switching to the new proposal branch.
           ORIGINAL_HEAD=$(cat /tmp/release_head_sha)
@@ -483,10 +493,17 @@ jobs:
             COMMITS=$(echo "$crate" | jq -r '.commits')
             INITIAL_RELEASE=false
 
-            # if there are no commits and there is an existing tag, skip the release                                                                                      
-            # (new crates with no previous tag proceed to the initial release path)
-            if [ "$COMMITS" = "[]" ] && [ "$TAG_EXISTS" = "true" ]; then                                                                                                  
-              echo "No commits since last release for $NAME, skipping release"
+            # if there are no commits and there is an existing tag, do not release the crate here.
+            # but record it as a pending candidate
+            if [ "$COMMITS" = "[]" ] && [ "$TAG_EXISTS" = "true" ]; then
+              VERSION=$(echo "$crate" | jq -r '.version')
+              echo "No commits since last release for $NAME; deferring to the libdd-* major-bump check"
+              jq --arg name "$NAME" \
+                --arg tag "$TAG" \
+                --arg version "$VERSION" \
+                --arg path "$CRATE_PATH" \
+                '. += [{"name": $name, "level": "none", "tag": $tag, "prev_tag": $tag, "version": $version, "range": "", "commits": [], "path": $path, "initial_release": "false", "pending_release": "true"}]' \
+                /tmp/pending-major-only.json > /tmp/pending-major-only.tmp && mv /tmp/pending-major-only.tmp /tmp/pending-major-only.json
               continue
             fi
 
@@ -600,10 +617,15 @@ jobs:
               /tmp/api-changes.json > /tmp/api-changes.tmp && mv /tmp/api-changes.tmp /tmp/api-changes.json
           done
 
-          # Check if there are commits to push
+          # Check if there are commits to push or pending
           if git diff --quiet "${{ steps.ephemeral-branch.outputs.ephemeral_branch }}"; then
-            echo "No changes to push. Cancelling the workflow."
-            exit 1
+            PENDING_COUNT=$(jq 'length' /tmp/pending-major-only.json)
+            if [ "$PENDING_COUNT" -gt 0 ]; then
+              echo "No direct version bumps yet, but $PENDING_COUNT crate(s) are pending libdd-* major-bump evaluation; continuing."
+            else
+              echo "No changes to push. Cancelling the workflow."
+              exit 1
+            fi
           fi
 
           # Output the results
@@ -615,13 +637,24 @@ jobs:
           set -euo pipefail
           BRANCH_NAME="${{ steps.proposal-branch.outputs.branch_name }}"
 
-          # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch the job checkout.
-          MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
-          WF_SHA="${{ github.sha }}"
+          # Audit input: crates released in the previous step (api-changes.json) plus the pending
+          # no-commit candidates. The pending rows carry "pending_release": "true" so we can tell
+          # them apart below; every row is checked the same way for direct libdd-* major bumps.
+          jq -s '.[0] + .[1]' /tmp/api-changes.json /tmp/pending-major-only.json > /tmp/major-bumps-input.json
+          echo "Major-bump audit input:"
+          jq . /tmp/major-bumps-input.json
 
-          git worktree add --detach "$MAJOR_BUMPS_WT" "$WF_SHA"
+          # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch
+          # the job checkout. Check it out at the ref actually being released (the ephemeral release
+          # branch tip captured before version bumps), NOT github.sha: for a hotfix or older-ref
+          # release those differ, and auditing against current main could major-bump a crate for a
+          # dependency requirement change that is not present in the branch being released.
+          MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
+          RELEASE_SHA=$(cat /tmp/release_head_sha)
+
+          git worktree add --detach "$MAJOR_BUMPS_WT" "$RELEASE_SHA"
           set +e
-          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/api-changes.json ) \
+          ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/major-bumps-input.json ) \
             > /tmp/api-changes-with-major-bumps-pre-commit.json
           MB_RC=$?
           git worktree remove --force "$MAJOR_BUMPS_WT" || true
@@ -633,42 +666,57 @@ jobs:
             exit "$MB_RC"
           fi
 
-          # Full same crate list as api-changes.json; rows updated in place when a major bump is applied.
-          cp /tmp/api-changes-with-major-bumps-pre-commit.json /tmp/api-changes-with-major-bumps.json
+          # Seed the result with every already-released crate. Pending crates are appended below
+          # only if they earn a major bump; those that do not stay out of the release entirely.
+          jq '[.[] | select(.pending_release != "true") | del(.pending_release)]' \
+            /tmp/api-changes-with-major-bumps-pre-commit.json > /tmp/api-changes-with-major-bumps.json
 
-          # iterate over the major bumps and check the major bumps and update the version
+          # iterate over the crates and, where a direct libdd-* dependency had a major bump, update the version
           jq -c '.[]' /tmp/api-changes-with-major-bumps-pre-commit.json | while read -r bump; do
             NAME=$(echo "$bump" | jq -r '.name')
             LEVEL=$(echo "$bump" | jq -r '.level')
             PREV_TAG=$(echo "$bump" | jq -r '.prev_tag')
             TAG=$(echo "$bump" | jq -r '.tag')
             VERSION=$(echo "$bump" | jq -r '.version')
+            PENDING=$(echo "$bump" | jq -r '.pending_release // "false"')
             MAJOR_BUMPS=$(echo "$bump" | jq -c '.major_bumps')
 
-            if [ "$MAJOR_BUMPS" != "[]" ]; then
-              # Already bumped at major in the API semver step; do not bump major again for libdd-* propagation.
-              if [ "$LEVEL" = "major" ]; then
-                echo "Skipping $NAME: already bumped at major level in the previous step (major_bumps: $MAJOR_BUMPS)"
-              else
-                echo "Updating version for $NAME with major bumps: $MAJOR_BUMPS"
-                cargo release version -p "$NAME" --prev-tag-name "$PREV_TAG" --allow-branch "$BRANCH_NAME" -x major --no-confirm
-                
-                git commit -am "chore(release): update version for $NAME with major bumps"
-
-                NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
-                NEXT_TAG="$NAME-v$NEXT_VERSION"
-
-                echo "Updating tag $TAG to $NEXT_TAG and version $VERSION to $NEXT_VERSION for $NAME"
-
-                jq --arg name "$NAME" \
-                  --arg nl "major" \
-                  --arg version "$NEXT_VERSION" \
-                  --arg tag "$NEXT_TAG" \
-                  'map(if .name == $name then . + {level: $nl, version: $version, tag: $tag} else . end)' \
-                  /tmp/api-changes-with-major-bumps.json > /tmp/api-changes-with-major-bumps.tmp \
-                  && mv /tmp/api-changes-with-major-bumps.tmp /tmp/api-changes-with-major-bumps.json
+            if [ "$MAJOR_BUMPS" = "[]" ]; then
+              if [ "$PENDING" = "true" ]; then
+                echo "No commits and no direct dependency major bumps for $NAME, keeping it out of the release"
               fi
+              continue
             fi
+
+            # A crate already bumped to major in the previous step needs nothing more. Pending
+            # crates always have level "none" here, so this only short-circuits released crates.
+            if [ "$LEVEL" = "major" ]; then
+              echo "Skipping $NAME: already bumped at major level in the previous step (major_bumps: $MAJOR_BUMPS)"
+              continue
+            fi
+
+            # Bump to major: either a pending (no-commit) crate whose direct dependency went major,
+            # or a released crate bumped below major in the previous step. Both are handled the same.
+            echo "Bumping $NAME to major due to direct dependency major bumps: $MAJOR_BUMPS"
+            cargo release version -p "$NAME" --prev-tag-name "$PREV_TAG" --allow-branch "$BRANCH_NAME" -x major --no-confirm
+
+            git commit -am "chore(release): update version for $NAME with major bumps"
+
+            NEXT_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r --arg name "$NAME" '.packages[] | select(.name == $name) | .version')
+            NEXT_TAG="$NAME-v$NEXT_VERSION"
+
+            echo "Updating tag $TAG to $NEXT_TAG and version $VERSION to $NEXT_VERSION for $NAME"
+
+            # Released crates are already in the result (seeded above): update them in place. Pending
+            # crates are not: append them. The row is derived from the audit entry either way.
+            ROW=$(echo "$bump" | jq --arg version "$NEXT_VERSION" --arg tag "$NEXT_TAG" \
+              'del(.pending_release) | . + {level: "major", version: $version, tag: $tag}')
+            jq --argjson row "$ROW" \
+              'if any(.[]; .name == $row.name)
+               then map(if .name == $row.name then $row else . end)
+               else . + [$row] end' \
+              /tmp/api-changes-with-major-bumps.json > /tmp/api-changes-with-major-bumps.tmp \
+              && mv /tmp/api-changes-with-major-bumps.tmp /tmp/api-changes-with-major-bumps.json
           done
 
           # Output the results
@@ -692,6 +740,7 @@ jobs:
             VERSION=$(echo "$bump" | jq -r '.version')
             CRATE_PATH=$(echo "$bump" | jq -r '.path')
             INITIAL_RELEASE=$(echo "$bump" | jq -r '.initial_release')
+            MAJOR_BUMPS=$(echo "$bump" | jq -c '.major_bumps // []')
 
             if [ "$INITIAL_RELEASE" = "true" ]; then
               echo "Initial release for $NAME"
@@ -712,7 +761,43 @@ jobs:
 
             # FIXME: $COMMITS could be empty if there are no commits since last release
             if [ "$COMMITS" = "[]" ]; then
-              echo "No commits since last release for $NAME, skipping CHANGELOG generation"
+              if [ "$MAJOR_BUMPS" != "[]" ] && [ "$MAJOR_BUMPS" != "null" ]; then
+                echo "No commits for $NAME but direct dependency major bumps; writing a minimal CHANGELOG entry"
+                RELEASE_DATE=$(date +%Y-%m-%d)
+                DEP_LINES=$(echo "$MAJOR_BUMPS" | jq -r '.[] | "- Bump `\(.dependency)` to a new major version (`\(.previous_req)` → `\(.current_req)`)"')
+
+                # Match git-cliff's header (see cliff.toml): link the version to a compare view
+                # against the previous tag when one exists.
+                REMOTE_URL="https://github.com/datadog/libdatadog"
+                if [ -n "$TAG" ] && [ "$TAG" != "null" ]; then
+                  HEADER="## [$VERSION]($REMOTE_URL/compare/$TAG..$NEXT_TAG) - $RELEASE_DATE"
+                else
+                  HEADER="## [$VERSION] - $RELEASE_DATE"
+                fi
+
+                ENTRY_FILE=$(mktemp /tmp/changelog-entry-XXXXXX.md)
+                printf '%s\n\n### Changed\n\n%s\n\n' "$HEADER" "$DEP_LINES" > "$ENTRY_FILE"
+
+                if [ -f "$CRATE_PATH/CHANGELOG.md" ]; then
+                  # Insert the new section above the first existing release section (newest-first),
+                  # mirroring git-cliff --prepend placement and leaving the rest of the file intact.
+                  awk 'NR==FNR { e = e $0 ORS; next }
+                       !inserted && /^## / { printf "%s", e; inserted=1 }
+                       { print }
+                       END { if (!inserted) printf "%s", e }' \
+                    "$ENTRY_FILE" "$CRATE_PATH/CHANGELOG.md" > "$CRATE_PATH/CHANGELOG.md.tmp"
+                  mv "$CRATE_PATH/CHANGELOG.md.tmp" "$CRATE_PATH/CHANGELOG.md"
+                else
+                  printf '# Changelog\n\n\n' > "$CRATE_PATH/CHANGELOG.md"
+                  cat "$ENTRY_FILE" >> "$CRATE_PATH/CHANGELOG.md"
+                fi
+                rm -f "$ENTRY_FILE"
+
+                git add "$CRATE_PATH/CHANGELOG.md"
+                git commit -m "chore(release): update CHANGELOG.md for $NAME"
+              else
+                echo "No commits since last release for $NAME, skipping CHANGELOG generation"
+              fi
               continue
             fi
 
@@ -765,13 +850,18 @@ jobs:
           COMMITS=$(git log --reverse "$ORIGINAL_HEAD".. --format='%H' | tr '\n' ' ' | xargs)
           echo "commits=$COMMITS" >> $GITHUB_OUTPUT
 
-      - name: Push commits
+      - name: Push commits (verified)
+        if: ${{ !inputs.bypass_standard_checks }}
         uses: DataDog/commit-headless@action/v2.0.3
         with:
           branch: ${{ steps.proposal-branch.outputs.branch_name }}
           head-sha: ${{ steps.commits-since-release.outputs.release_head_sha }}
           command: push
           commits: "${{ steps.generate-changelogs.outputs.commits }}"
+
+      - name: Push commits (plain, testing only)
+        if: ${{ inputs.bypass_standard_checks }}
+        run: git push origin "HEAD:refs/heads/${{ steps.proposal-branch.outputs.branch_name }}"
 
       - name: Upload release data
         uses: actions/upload-artifact@v4
@@ -807,6 +897,9 @@ jobs:
       is_hotfix: ${{ steps.ephemeral-branch.outputs.is_hotfix }}
           
   create-pr:
+    # Without an explicit condition, the skipped check-membership job (on bypass runs) propagates
+    # its "skipped" status transitively through cargo-release to here. Gate on the direct needs instead.
+    if: ${{ !cancelled() && needs.cargo-release.result == 'success' && needs.validate-inputs.result == 'success' }}
     needs: [cargo-release, validate-inputs]
     runs-on: ubuntu-latest
     permissions:
@@ -826,13 +919,14 @@ jobs:
 
       - uses: DataDog/dd-octo-sts-action@acaa02eee7e3bb0839e4272dacb37b8f3b58ba80 # v1.0.3
         id: octo-sts
+        if: ${{ !inputs.bypass_standard_checks }}
         with:
           scope: DataDog/libdatadog
           policy: self.write.pr
 
       - name: Create a PR
         env:
-          GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
+          GH_TOKEN: ${{ inputs.bypass_standard_checks && github.token || steps.octo-sts.outputs.token }}
           MAIN_START_REF: ${{ inputs.main_start_ref }}
           MAIN_BRANCH: ${{ env.MAIN_BRANCH }}
           BYPASS_STANDARD_CHECKS: ${{ inputs.bypass_standard_checks }}
@@ -907,16 +1001,46 @@ jobs:
           if [ "${#PR_TITLE}" -gt 100 ]; then
             PR_TITLE="${PR_TITLE:0:97}..."
           fi
-          gh pr create \
-            --head "$BRANCH_NAME" \
-            --title "$PR_TITLE" \
-            --body-file /tmp/pr-body.md \
-            --label "release-proposal" \
-            --label "skip-metadata-check" \
-            --label "skip-changelog-check" \
-            --label "skip-pr-title-semver-check" \
-            --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
-            --draft
+          
+          if gh pr create \
+              --head "$BRANCH_NAME" \
+              --title "$PR_TITLE" \
+              --body-file /tmp/pr-body.md \
+              --label "release-proposal" \
+              --label "skip-metadata-check" \
+              --label "skip-changelog-check" \
+              --label "skip-pr-title-semver-check" \
+              --base "${{ needs.cargo-release.outputs.ephemeral_branch }}" \
+              --draft; then
+            echo "Pull request created."
+          elif [ "$BYPASS_STANDARD_CHECKS" = "true" ]; then
+            # Bypass/testing runs use the default GITHUB_TOKEN, which often cannot create PRs (org
+            # disables "Allow GitHub Actions to create and approve pull requests"). Don't fail the
+            # run for that; print a manual-open link instead. Standard runs fall through and fail.
+            COMPARE_URL="${{ github.server_url }}/${{ github.repository }}/compare/${{ needs.cargo-release.outputs.ephemeral_branch }}...${BRANCH_NAME}?expand=1"
+            echo "::warning::Automatic PR creation failed on a bypass run; open the PR manually: $COMPARE_URL"
+            {
+              echo "## Release proposal branch pushed"
+              echo ""
+              echo "Automatic PR creation failed (the token may not be permitted to create PRs). Open it manually:"
+              echo ""
+              echo "- **Head:** \`$BRANCH_NAME\`"
+              echo "- **Base:** \`${{ needs.cargo-release.outputs.ephemeral_branch }}\`"
+              echo "- **Suggested title:** \`$PR_TITLE\`"
+              echo "- [Open the PR creation form]($COMPARE_URL)"
+              echo ""
+              echo "<details><summary>Suggested PR body</summary>"
+              echo ""
+              cat /tmp/pr-body.md
+              echo ""
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Standard run: PR creation must succeed. Fail so the cleanup-on-failure step removes the
+            # pushed branches and the failure stays visible for retry.
+            echo "::error::Failed to create the release proposal PR." >&2
+            exit 1
+          fi
 
       - name: Cleanup on failure
         if: failure() && (needs.cargo-release.outputs.branch_name != '' || needs.cargo-release.outputs.ephemeral_branch != '')
