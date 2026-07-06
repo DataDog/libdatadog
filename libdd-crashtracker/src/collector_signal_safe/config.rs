@@ -168,10 +168,6 @@ pub fn build_config_json(
     out.push_str(json).is_ok() && out.push('\n').is_ok()
 }
 
-pub fn prepare(config: &SignalSafeInitConfig<'_>) -> bool {
-    prepare_result(config).is_ok()
-}
-
 pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
     validate(config)?;
 
@@ -242,10 +238,6 @@ pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareEr
         capabilities::note_degraded(capabilities::DEGRADED_METADATA_TRUNCATED);
     }
     Ok(())
-}
-
-pub fn prepare_from_env() -> bool {
-    prepare_from_env_result().is_ok()
 }
 
 pub fn prepare_from_env_result() -> Result<(), PrepareError> {
@@ -511,7 +503,7 @@ mod tests {
             .lock()
             .expect("test lock poisoned");
 
-        assert!(prepare(&SignalSafeInitConfig {
+        assert!(prepare_result(&SignalSafeInitConfig {
             receiver_path: b"/tmp/receiver",
             service: b"svc",
             env: b"prod",
@@ -522,7 +514,8 @@ mod tests {
             only_bootstrap: true,
             debug_logging: true,
             ..SignalSafeInitConfig::default()
-        }));
+        })
+        .is_ok());
 
         let meta = state::meta();
         assert_eq!(meta.service.as_str(), "svc");
@@ -543,11 +536,12 @@ mod tests {
             .expect("test lock poisoned");
         let oversized_service = "s".repeat(300);
 
-        assert!(prepare(&SignalSafeInitConfig {
+        assert!(prepare_result(&SignalSafeInitConfig {
             receiver_path: b"/definitely/missing-signal-safe-receiver",
             service: oversized_service.as_bytes(),
             ..SignalSafeInitConfig::default()
-        }));
+        })
+        .is_ok());
 
         assert_ne!(
             capabilities::degradations() & capabilities::DEGRADED_METADATA_TRUNCATED,

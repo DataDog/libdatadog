@@ -3,7 +3,7 @@
 
 use core::ffi::c_void;
 
-use super::signal_names::{SI_TKILL, SI_USER};
+use super::signal_names::{SI_ASYNCIO, SI_MESGQ, SI_QUEUE, SI_SIGIO, SI_TIMER, SI_TKILL, SI_USER};
 
 const SIG_DFL_VALUE: usize = 0;
 const SIG_IGN_VALUE: usize = 1;
@@ -57,9 +57,22 @@ pub fn chain_action(disposition: Disposition, has_siginfo: bool, si_code: i32) -
     match disposition {
         Disposition::Ignore => ChainAction::Resume,
         Disposition::Handler => ChainAction::InvokeApp,
-        Disposition::Default if has_siginfo && si_code > 0 => ChainAction::RestoreDefaultAndRefault,
+        Disposition::Default if should_refault(has_siginfo, si_code) => {
+            ChainAction::RestoreDefaultAndRefault
+        }
         Disposition::Default => ChainAction::RestoreDefaultAndReraise,
     }
+}
+
+fn should_refault(has_siginfo: bool, si_code: i32) -> bool {
+    has_siginfo && si_code > 0 && !is_async_si_code(si_code)
+}
+
+fn is_async_si_code(si_code: i32) -> bool {
+    matches!(
+        si_code,
+        SI_USER | SI_QUEUE | SI_TIMER | SI_MESGQ | SI_ASYNCIO | SI_SIGIO | SI_TKILL
+    )
 }
 
 #[cfg(test)]

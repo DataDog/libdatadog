@@ -130,27 +130,9 @@ fn probe_process_vm_readv_in_child() -> bool {
         return true;
     }
 
-    const PROBE_TIMEOUT_MS: i64 = 100;
-    const PROBE_POLL_MS: i32 = 10;
-    let start = sys::monotonic_nanos();
-    loop {
-        let mut status = 0i32;
-        let waited = sys::waitpid_nohang_status(child as i32, &mut status);
-        if waited == child as i32 {
-            return libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
-        }
-        if waited < 0 {
-            return true;
-        }
-
-        let elapsed_ms = (sys::monotonic_nanos() - start) / 1_000_000;
-        if elapsed_ms >= PROBE_TIMEOUT_MS {
-            let _ = sys::kill(child as i32, libc::SIGKILL);
-            let mut status = 0i32;
-            let _ = sys::waitpid_nohang_status(child as i32, &mut status);
-            return true;
-        }
-        sys::poll_sleep_ms(PROBE_POLL_MS);
+    match sys::reap_child(child as i32, 100, 10, true, 10) {
+        sys::ChildReap::Reaped(status) => libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+        sys::ChildReap::NoChild | sys::ChildReap::WaitFailed(_) | sys::ChildReap::TimedOut => true,
     }
 }
 

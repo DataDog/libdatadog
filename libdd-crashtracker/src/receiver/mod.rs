@@ -220,7 +220,7 @@ mod tests {
             (libc::SIGILL, signal_safe::ILL_PRVREG, SiCodes::ILL_PRVREG),
             (libc::SIGILL, signal_safe::ILL_COPROC, SiCodes::ILL_COPROC),
             (libc::SIGILL, signal_safe::ILL_BADSTK, SiCodes::ILL_BADSTK),
-            (libc::SIGFPE, signal_safe::FPE_INTDIV, SiCodes::UNKNOWN),
+            (libc::SIGFPE, signal_safe::FPE_INTDIV, SiCodes::FPE_INTDIV),
         ];
         for (signum, si_code, expected) in sicodes {
             let siginfo = siginfo_from_signal_safe_names(signum, si_code)?;

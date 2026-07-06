@@ -40,29 +40,27 @@ mod sys;
 #[cfg(test)]
 pub(crate) static TEST_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub use config::{build_config_json, prepare, prepare_from_env, SignalSafeInitConfig};
-pub use emitter::{
-    emit_json_section, emit_minimal_report, emit_report, emit_report_with_metadata, push_tag, Sink,
-    SliceSink,
-};
-pub use fmt::{hex_addr, hex_u32, write_i32};
+pub use config::SignalSafeInitConfig;
+#[cfg(test)]
+pub(crate) use emitter::SliceSink;
+pub(crate) use emitter::{emit_report, Sink};
+#[cfg(test)]
+pub(crate) use fmt::hex_addr;
+pub(crate) use fmt::write_i32;
 pub use handler::{
     bootstrap_complete, init, init_from_env, init_from_env_result, init_result, shutdown,
     InitResult,
 };
-pub use policy::{
+pub(crate) use policy::{
     app_handler_is_real, app_recovered, chain_action, disposition_of, is_genuine_fault,
-    should_run_app_first, ChainAction, Disposition,
+    should_run_app_first, ChainAction,
 };
-pub use report::{
-    CrashContext, Frame, Metadata, ProcInfo, Report, SignalInfo, Tag, Tags, FRAME_IP_CAPACITY,
-    MAX_TAGS, MESSAGE_CAPACITY, SECTION_BUF_CAPACITY, TAG_CAPACITY,
-};
-pub use signal_names::*;
+pub(crate) use report::{CrashContext, Report, SignalInfo, SECTION_BUF_CAPACITY};
+#[cfg(test)]
+pub(crate) use signal_names::*;
 pub use state::{set_stage, Stage};
 #[doc(hidden)]
 pub use sys::cstr_bytes_bounded;
-pub use sys::FdSink;
 
 pub fn capability_bits() -> u32 {
     capabilities::get()
@@ -95,46 +93,6 @@ mod tests {
         assert!(sink.put(b"abc"));
         assert!(!sink.put(b"d"));
         assert_eq!(sink.as_slice(), b"abc");
-    }
-
-    #[test]
-    fn minimal_report_emits_json_sections() {
-        let mut metadata = Metadata::new("lib", "1.0.0", "native");
-        assert!(push_tag(&mut metadata.tags, "stage", "application"));
-
-        let signal = SignalInfo::new(libc::SIGSEGV, SEGV_MAPERR, 0x1234, true);
-
-        let mut buf = [0u8; 1024];
-        let mut sink = SliceSink::new(&mut buf);
-        assert!(emit_minimal_report(
-            &mut sink,
-            "{\"resolve_frames\":\"Disabled\"}",
-            &metadata,
-            &signal
-        ));
-
-        let report = str::from_utf8(sink.as_slice()).unwrap();
-        let metadata = section(
-            report,
-            "DD_CRASHTRACK_BEGIN_METADATA\n",
-            "DD_CRASHTRACK_END_METADATA\n",
-        );
-        let signal = section(
-            report,
-            "DD_CRASHTRACK_BEGIN_SIGINFO\n",
-            "DD_CRASHTRACK_END_SIGINFO\n",
-        );
-
-        let metadata: serde_json::Value = serde_json::from_str(metadata.trim()).unwrap();
-        let signal: serde_json::Value = serde_json::from_str(signal.trim()).unwrap();
-
-        assert_eq!(metadata["library_name"], "lib");
-        assert_eq!(metadata["tags"][0], "stage:application");
-        assert_eq!(signal["si_signo"], libc::SIGSEGV);
-        assert_eq!(signal["si_signo_human_readable"], "SIGSEGV");
-        assert_eq!(signal["si_code_human_readable"], "SEGV_MAPERR");
-        assert_eq!(signal["si_addr"], hex_addr(0x1234).as_str());
-        assert!(report.ends_with("DD_CRASHTRACK_DONE\n"));
     }
 
     #[test]

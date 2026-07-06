@@ -4,6 +4,7 @@
 //! This module holds constants/structures that are shared between the collector and receiver
 
 pub(crate) mod defaults;
+pub(crate) mod signal_names;
 pub(crate) mod signals;
 
 #[cfg(feature = "std")]

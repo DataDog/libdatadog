@@ -11,7 +11,7 @@ use super::state::{self, sig_index, BeginInitError, Stage};
 use super::sys::{self, FdSink};
 use super::{
     app_handler_is_real, app_recovered, chain_action, is_genuine_fault, should_run_app_first,
-    write_i32, ChainAction, CrashContext, Disposition, Report, SignalInfo,
+    write_i32, ChainAction, CrashContext, Report, SignalInfo,
 };
 use super::{backtrace, capabilities};
 use crate::signal_owner::{self, SignalOwner};
@@ -259,16 +259,18 @@ fn sanitize_clone(mut keep_fd: i32, close_stdio_without_devnull: bool) -> i32 {
                 sys::close(devnull);
             }
         } else if close_stdio_without_devnull {
-            sys::close(libc::STDIN_FILENO);
-            sys::close(libc::STDOUT_FILENO);
-            sys::close(libc::STDERR_FILENO);
+            close_stdio();
         }
     } else if close_stdio_without_devnull {
-        sys::close(libc::STDIN_FILENO);
-        sys::close(libc::STDOUT_FILENO);
-        sys::close(libc::STDERR_FILENO);
+        close_stdio();
     }
     keep_fd
+}
+
+fn close_stdio() {
+    sys::close(libc::STDIN_FILENO);
+    sys::close(libc::STDOUT_FILENO);
+    sys::close(libc::STDERR_FILENO);
 }
 
 fn reset_signals_to_default(signals: &[c_int]) -> bool {
@@ -460,29 +462,19 @@ fn emit_crash_report(
 }
 
 fn reap_or_kill(pid: i32, timeout_ms: i64, kill_process: bool) -> Option<i32> {
-    let start = sys::monotonic_nanos();
-    loop {
-        let mut status = 0i32;
-        let waited = sys::waitpid_nohang_status(pid, &mut status);
-        if waited == pid {
-            return Some(status);
+    match sys::reap_child(
+        pid,
+        timeout_ms,
+        REAP_WAIT_INTERVAL_MS,
+        kill_process,
+        REAP_KILL_TIMEOUT_MS,
+    ) {
+        sys::ChildReap::Reaped(status) => Some(status),
+        sys::ChildReap::WaitFailed(_) => {
+            crash_debug(b"waitpid failed", -1);
+            None
         }
-        if waited < 0 {
-            if waited != -libc::ECHILD {
-                crash_debug(b"waitpid failed", -1);
-            }
-            return None;
-        }
-
-        sys::poll_sleep_ms(REAP_WAIT_INTERVAL_MS);
-        let elapsed_ms = (sys::monotonic_nanos() - start) / 1_000_000;
-        if elapsed_ms >= timeout_ms {
-            if kill_process {
-                let _ = sys::kill(pid, libc::SIGKILL);
-                return reap_or_kill(pid, REAP_KILL_TIMEOUT_MS, false);
-            }
-            return None;
-        }
+        sys::ChildReap::NoChild | sys::ChildReap::TimedOut => None,
     }
 }
 
@@ -655,7 +647,7 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
             flags: 0,
         },
     };
-    let action = chain_action(disposition_of_target(target.fn_ptr), has_info, si_code);
+    let action = chain_action(super::disposition_of(target.fn_ptr), has_info, si_code);
     match action {
         ChainAction::RestoreDefaultAndRefault | ChainAction::RestoreDefaultAndReraise => {
             if !reset_signals_to_default(&[sig]) {
@@ -683,17 +675,8 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
     }
 }
 
-fn disposition_of_target(handler: *mut c_void) -> Disposition {
-    super::disposition_of(handler)
-}
-
 fn live_handler_for_recovery(sig: c_int) -> Option<*mut c_void> {
-    let mut cur: libc::sigaction = unsafe { core::mem::zeroed() };
-    if query_sigaction(sig, &mut cur) {
-        Some(cur.sa_sigaction as *mut c_void)
-    } else {
-        None
-    }
+    query_sigaction(sig).map(|cur| cur.sa_sigaction as *mut c_void)
 }
 
 #[cfg(any(
@@ -736,15 +719,19 @@ unsafe fn siginfo_addr(_info: *mut libc::siginfo_t) -> usize {
     0
 }
 
-fn query_sigaction(sig: c_int, out: *mut libc::sigaction) -> bool {
-    unsafe { libc::sigaction(sig, null_mut(), out) == 0 }
+fn query_sigaction(sig: c_int) -> Option<libc::sigaction> {
+    let mut out: libc::sigaction = unsafe { core::mem::zeroed() };
+    if unsafe { libc::sigaction(sig, null_mut(), &mut out) } == 0 {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 fn is_our_handler(sig: c_int) -> bool {
-    let mut cur: libc::sigaction = unsafe { core::mem::zeroed() };
-    if !query_sigaction(sig, &mut cur) {
+    let Some(cur) = query_sigaction(sig) else {
         return false;
-    }
+    };
     cur.sa_flags & libc::SA_SIGINFO != 0 && cur.sa_sigaction == crash_handler as *const () as usize
 }
 
@@ -774,10 +761,9 @@ fn restore_our_handler(sig: c_int) {
 }
 
 fn install_crash_handler(sig: c_int) {
-    let mut cur: libc::sigaction = unsafe { core::mem::zeroed() };
-    if !query_sigaction(sig, &mut cur) {
+    let Some(cur) = query_sigaction(sig) else {
         return;
-    }
+    };
     if cur.sa_sigaction != libc::SIG_DFL {
         if app_handler_is_real(cur.sa_sigaction as *mut c_void) {
             if let Some(i) = sig_index(sig) {

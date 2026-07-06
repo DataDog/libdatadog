@@ -49,7 +49,8 @@ impl Sink for FdSink {
 ))]
 mod raw {
     use core::arch::asm;
-    use core::ffi::c_void;
+    use core::ffi::{c_void, CStr};
+    use core::num::NonZeroI32;
     use rustix::fd::{BorrowedFd, IntoRawFd};
 
     #[inline]
@@ -79,22 +80,6 @@ mod raw {
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
-    unsafe fn syscall2(nr: i64, a0: usize, a1: usize) -> isize {
-        let ret: isize;
-        asm!(
-            "syscall",
-            inlateout("rax") nr as isize => ret,
-            in("rdi") a0,
-            in("rsi") a1,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack, preserves_flags),
-        );
-        ret
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[inline]
     unsafe fn syscall3(nr: i64, a0: usize, a1: usize, a2: usize) -> isize {
         let ret: isize;
         asm!(
@@ -103,24 +88,6 @@ mod raw {
             in("rdi") a0,
             in("rsi") a1,
             in("rdx") a2,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack, preserves_flags),
-        );
-        ret
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[inline]
-    unsafe fn syscall4(nr: i64, a0: usize, a1: usize, a2: usize, a3: usize) -> isize {
-        let ret: isize;
-        asm!(
-            "syscall",
-            inlateout("rax") nr as isize => ret,
-            in("rdi") a0,
-            in("rsi") a1,
-            in("rdx") a2,
-            in("r10") a3,
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack, preserves_flags),
@@ -171,20 +138,6 @@ mod raw {
 
     #[cfg(target_arch = "aarch64")]
     #[inline]
-    unsafe fn syscall2(nr: i64, a0: usize, a1: usize) -> isize {
-        let ret: isize;
-        asm!(
-            "svc 0",
-            in("x8") nr,
-            inlateout("x0") a0 => ret,
-            in("x1") a1,
-            options(nostack),
-        );
-        ret
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[inline]
     unsafe fn syscall3(nr: i64, a0: usize, a1: usize, a2: usize) -> isize {
         let ret: isize;
         asm!(
@@ -193,22 +146,6 @@ mod raw {
             inlateout("x0") a0 => ret,
             in("x1") a1,
             in("x2") a2,
-            options(nostack),
-        );
-        ret
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[inline]
-    unsafe fn syscall4(nr: i64, a0: usize, a1: usize, a2: usize, a3: usize) -> isize {
-        let ret: isize;
-        asm!(
-            "svc 0",
-            in("x8") nr,
-            inlateout("x0") a0 => ret,
-            in("x1") a1,
-            in("x2") a2,
-            in("x3") a3,
             options(nostack),
         );
         ret
@@ -261,18 +198,17 @@ mod raw {
     }
 
     pub fn fcntl_dupfd(fd: i32, min_fd: i32) -> i32 {
-        unsafe {
-            syscall3(
-                libc::SYS_fcntl,
-                fd as usize,
-                libc::F_DUPFD as usize,
-                min_fd as usize,
-            ) as i32
+        match rustix::io::fcntl_dupfd_cloexec(unsafe { borrowed_fd(fd) }, min_fd) {
+            Ok(fd) => match rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::empty()) {
+                Ok(()) => fd.into_raw_fd(),
+                Err(err) => neg_errno(err) as i32,
+            },
+            Err(err) => neg_errno(err) as i32,
         }
     }
 
     pub fn fd_valid(fd: i32) -> bool {
-        fd >= 0 && unsafe { syscall3(libc::SYS_fcntl, fd as usize, libc::F_GETFD as usize, 0) >= 0 }
+        fd >= 0 && rustix::io::fcntl_getfd(unsafe { borrowed_fd(fd) }).is_ok()
     }
 
     pub fn close_range_from(first_fd: i32) -> bool {
@@ -299,37 +235,32 @@ mod raw {
     }
 
     pub fn open_readwrite(path: *const u8) -> i32 {
-        unsafe {
-            syscall4(
-                libc::SYS_openat,
-                libc::AT_FDCWD as usize,
-                path as usize,
-                libc::O_RDWR as usize,
-                0,
-            ) as i32
+        let path = unsafe { CStr::from_ptr(path.cast()) };
+        match rustix::fs::openat(
+            rustix::fs::CWD,
+            path,
+            rustix::fs::OFlags::RDWR,
+            rustix::fs::Mode::empty(),
+        ) {
+            Ok(fd) => fd.into_raw_fd(),
+            Err(err) => neg_errno(err) as i32,
         }
     }
 
     pub fn access_executable(path: *const u8) -> bool {
-        unsafe {
-            syscall3(
-                libc::SYS_faccessat,
-                libc::AT_FDCWD as usize,
-                path as usize,
-                libc::X_OK as usize,
-            ) == 0
-        }
+        let path = unsafe { CStr::from_ptr(path.cast()) };
+        rustix::fs::accessat(
+            rustix::fs::CWD,
+            path,
+            rustix::fs::Access::EXEC_OK,
+            rustix::fs::AtFlags::empty(),
+        )
+        .is_ok()
     }
 
     pub fn mprotect_none(addr: *mut u8, len: usize) -> bool {
-        unsafe {
-            syscall3(
-                libc::SYS_mprotect,
-                addr as usize,
-                len,
-                libc::PROT_NONE as usize,
-            ) == 0
-        }
+        unsafe { rustix::mm::mprotect(addr.cast(), len, rustix::mm::MprotectFlags::empty()) }
+            .is_ok()
     }
 
     pub fn fork_supported() -> bool {
@@ -388,18 +319,30 @@ mod raw {
     }
 
     pub fn kill(pid: i32, sig: i32) -> i32 {
-        unsafe { syscall2(libc::SYS_kill, pid as usize, sig as usize) as i32 }
+        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+            return -(libc::EINVAL);
+        };
+        let Some(sig) = NonZeroI32::new(sig) else {
+            return -(libc::EINVAL);
+        };
+        let sig = unsafe { rustix::process::Signal::from_raw_nonzero_unchecked(sig) };
+        match rustix::process::kill_process(pid, sig) {
+            Ok(()) => 0,
+            Err(err) => neg_errno(err) as i32,
+        }
     }
 
     pub fn waitpid_nohang_status(pid: i32, status: &mut i32) -> i32 {
-        unsafe {
-            syscall4(
-                libc::SYS_wait4,
-                pid as usize,
-                (status as *mut i32) as usize,
-                libc::WNOHANG as usize,
-                0,
-            ) as i32
+        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+            return -(libc::EINVAL);
+        };
+        match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
+            Ok(Some((waited, wait_status))) => {
+                *status = wait_status.as_raw();
+                waited.as_raw_pid()
+            }
+            Ok(None) => 0,
+            Err(err) => neg_errno(err) as i32,
         }
     }
 
@@ -421,18 +364,12 @@ mod raw {
             .wrapping_add(ts.tv_nsec as i64)
     }
 
-    #[repr(C)]
-    struct IoVec {
-        iov_base: *mut c_void,
-        iov_len: usize,
-    }
-
     pub fn read_own_mem(pid: i32, src: usize, dst: &mut [u8]) -> bool {
-        let local = IoVec {
+        let local = libc::iovec {
             iov_base: dst.as_mut_ptr() as *mut c_void,
             iov_len: dst.len(),
         };
-        let remote = IoVec {
+        let remote = libc::iovec {
             iov_base: src as *mut c_void,
             iov_len: dst.len(),
         };
@@ -440,9 +377,9 @@ mod raw {
             syscall6(
                 libc::SYS_process_vm_readv,
                 pid as usize,
-                &local as *const IoVec as usize,
+                &local as *const libc::iovec as usize,
                 1,
-                &remote as *const IoVec as usize,
+                &remote as *const libc::iovec as usize,
                 1,
                 0,
             )
@@ -456,18 +393,30 @@ mod raw {
     any(target_arch = "x86_64", target_arch = "aarch64")
 )))]
 mod raw {
+    use core::ffi::CStr;
+    use core::num::NonZeroI32;
+    use rustix::fd::{BorrowedFd, IntoRawFd};
+
+    #[inline]
+    fn neg_errno(err: rustix::io::Errno) -> i32 {
+        -err.raw_os_error()
+    }
+
+    #[inline]
+    unsafe fn borrowed_fd(fd: i32) -> BorrowedFd<'static> {
+        BorrowedFd::borrow_raw(fd)
+    }
+
     pub fn write(fd: i32, bytes: &[u8]) -> isize {
-        let ret = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
-        if ret < 0 {
-            -(super::errno() as isize)
-        } else {
-            ret
+        match rustix::io::write(unsafe { borrowed_fd(fd) }, bytes) {
+            Ok(n) => n as isize,
+            Err(err) => -(err.raw_os_error() as isize),
         }
     }
 
     pub fn close(fd: i32) {
         unsafe {
-            let _ = libc::close(fd);
+            rustix::io::close(fd);
         }
     }
 
@@ -476,11 +425,17 @@ mod raw {
     }
 
     pub fn fcntl_dupfd(fd: i32, min_fd: i32) -> i32 {
-        unsafe { libc::fcntl(fd, libc::F_DUPFD, min_fd) }
+        match rustix::io::fcntl_dupfd_cloexec(unsafe { borrowed_fd(fd) }, min_fd) {
+            Ok(fd) => match rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::empty()) {
+                Ok(()) => fd.into_raw_fd(),
+                Err(err) => neg_errno(err),
+            },
+            Err(err) => neg_errno(err),
+        }
     }
 
     pub fn fd_valid(fd: i32) -> bool {
-        fd >= 0 && unsafe { libc::fcntl(fd, libc::F_GETFD) >= 0 }
+        fd >= 0 && rustix::io::fcntl_getfd(unsafe { borrowed_fd(fd) }).is_ok()
     }
 
     pub fn close_range_from(_first_fd: i32) -> bool {
@@ -488,19 +443,43 @@ mod raw {
     }
 
     pub fn pipe(fds: &mut [i32; 2]) -> bool {
-        unsafe { libc::pipe(fds.as_mut_ptr()) == 0 }
+        match rustix::pipe::pipe() {
+            Ok((read_fd, write_fd)) => {
+                fds[0] = read_fd.into_raw_fd();
+                fds[1] = write_fd.into_raw_fd();
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     pub fn open_readwrite(path: *const u8) -> i32 {
-        unsafe { libc::open(path.cast(), libc::O_RDWR) }
+        let path = unsafe { CStr::from_ptr(path.cast()) };
+        match rustix::fs::openat(
+            rustix::fs::CWD,
+            path,
+            rustix::fs::OFlags::RDWR,
+            rustix::fs::Mode::empty(),
+        ) {
+            Ok(fd) => fd.into_raw_fd(),
+            Err(err) => neg_errno(err),
+        }
     }
 
     pub fn access_executable(path: *const u8) -> bool {
-        unsafe { libc::access(path.cast(), libc::X_OK) == 0 }
+        let path = unsafe { CStr::from_ptr(path.cast()) };
+        rustix::fs::accessat(
+            rustix::fs::CWD,
+            path,
+            rustix::fs::Access::EXEC_OK,
+            rustix::fs::AtFlags::empty(),
+        )
+        .is_ok()
     }
 
     pub fn mprotect_none(addr: *mut u8, len: usize) -> bool {
-        unsafe { libc::mprotect(addr.cast(), len, libc::PROT_NONE) == 0 }
+        unsafe { rustix::mm::mprotect(addr.cast(), len, rustix::mm::MprotectFlags::empty()) }
+            .is_ok()
     }
 
     pub fn fork_supported() -> bool {
@@ -518,7 +497,7 @@ mod raw {
     }
 
     pub fn getpid() -> i32 {
-        unsafe { libc::getpid() }
+        rustix::process::getpid().as_raw_pid()
     }
 
     pub fn gettid() -> i32 {
@@ -537,36 +516,49 @@ mod raw {
     }
 
     pub fn kill(pid: i32, sig: i32) -> i32 {
-        unsafe { libc::kill(pid, sig) }
+        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+            return -libc::EINVAL;
+        };
+        let Some(sig) = NonZeroI32::new(sig) else {
+            return -libc::EINVAL;
+        };
+        let sig = unsafe { rustix::process::Signal::from_raw_nonzero_unchecked(sig) };
+        match rustix::process::kill_process(pid, sig) {
+            Ok(()) => 0,
+            Err(err) => neg_errno(err),
+        }
     }
 
     pub fn waitpid_nohang_status(pid: i32, status: &mut i32) -> i32 {
-        let ret = unsafe { libc::waitpid(pid, status, libc::WNOHANG) };
-        if ret < 0 {
-            -super::errno()
-        } else {
-            ret
+        let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+            return -libc::EINVAL;
+        };
+        match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
+            Ok(Some((waited, wait_status))) => {
+                *status = wait_status.as_raw();
+                waited.as_raw_pid()
+            }
+            Ok(None) => 0,
+            Err(err) => neg_errno(err),
         }
     }
 
     pub fn poll_sleep_ms(timeout_ms: i32) {
-        unsafe {
-            let _ = libc::poll(core::ptr::null_mut(), 0, timeout_ms);
+        if timeout_ms <= 0 {
+            return;
         }
+        let ts = rustix::thread::Timespec {
+            tv_sec: (timeout_ms / 1000) as i64,
+            tv_nsec: ((timeout_ms % 1000) as i64) * 1_000_000,
+        };
+        let _ = rustix::thread::nanosleep(&ts);
     }
 
     pub fn monotonic_nanos() -> i64 {
-        let mut ts = libc::timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        };
-        let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-        if rc != 0 {
-            return 0;
-        }
+        let ts = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
         ts.tv_sec
             .wrapping_mul(1_000_000_000)
-            .wrapping_add(ts.tv_nsec)
+            .wrapping_add(ts.tv_nsec as i64)
     }
 
     pub fn read_own_mem(_pid: i32, _src: usize, _dst: &mut [u8]) -> bool {
@@ -579,6 +571,59 @@ pub use raw::{
     fork_raw, fork_supported, getpid, gettid, kill, monotonic_nanos, mprotect_none, open_readwrite,
     pipe, poll_sleep_ms, read_own_mem, waitpid_nohang_status, write,
 };
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum ChildReap {
+    Reaped(i32),
+    NoChild,
+    WaitFailed(i32),
+    TimedOut,
+}
+
+pub fn reap_child(
+    pid: i32,
+    timeout_ms: i64,
+    poll_ms: i32,
+    kill_on_timeout: bool,
+    kill_timeout_ms: i64,
+) -> ChildReap {
+    let mut remaining_timeout_ms = timeout_ms;
+    let mut should_kill = kill_on_timeout;
+    loop {
+        match wait_child_until(pid, remaining_timeout_ms, poll_ms) {
+            ChildReap::TimedOut if should_kill => {
+                let _ = kill(pid, libc::SIGKILL);
+                remaining_timeout_ms = kill_timeout_ms;
+                should_kill = false;
+            }
+            result => return result,
+        }
+    }
+}
+
+fn wait_child_until(pid: i32, timeout_ms: i64, poll_ms: i32) -> ChildReap {
+    let start = monotonic_nanos();
+    loop {
+        let mut status = 0i32;
+        let waited = waitpid_nohang_status(pid, &mut status);
+        if waited == pid {
+            return ChildReap::Reaped(status);
+        }
+        if waited < 0 {
+            return if waited == -libc::ECHILD {
+                ChildReap::NoChild
+            } else {
+                ChildReap::WaitFailed(-waited)
+            };
+        }
+
+        poll_sleep_ms(poll_ms);
+        let elapsed_ms = (monotonic_nanos() - start) / 1_000_000;
+        if elapsed_ms >= timeout_ms {
+            return ChildReap::TimedOut;
+        }
+    }
+}
 
 pub fn env_get(name_nul: &[u8]) -> Option<&'static [u8]> {
     if name_nul.is_empty() || name_nul[name_nul.len() - 1] != 0 {
