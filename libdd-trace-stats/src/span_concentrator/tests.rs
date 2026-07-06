@@ -2608,6 +2608,85 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
 }
 
 #[test]
+fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
+    // 101 two-byte characters: 202 bytes but only 101 chars, well under the 200-character cap.
+    let now = SystemTime::now();
+    let ok_value = "é".repeat(101);
+    let meta = [("region", ok_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets.0[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &[format!("region:{ok_value}")]);
+}
+
+#[test]
+fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocked_value() {
+    // 201 two-byte characters exceeds the 200-character cap even though earlier bytes-based
+    // checks would have let a 201-char, sub-200-byte value like this through incorrectly.
+    let now = SystemTime::now();
+    let long_value = "é".repeat(201);
+    let meta = [("region", long_value.as_str())];
+    let mut spans = vec![get_test_span_with_meta(
+        now,
+        1,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /foo",
+        0,
+        &meta,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.add_span(&spans[0]);
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false);
+    let tags = &buckets.0[0].stats[0].additional_metric_tags;
+    assert_eq!(tags, &["region:tracer_blocked_value"]);
+}
+
+#[test]
 fn test_normalize_additional_metric_tag_keys_sort() {
     let keys = vec![
         "region".to_string(),
