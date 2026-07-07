@@ -21,10 +21,21 @@
 //!
 //! ```no_run
 //! libdd_heap_gotter::install_heap_overrides();
-//! // ... application runs; malloc/free/calloc/realloc/etc. flow through
-//! //     libdd-heap-sampler and emit ddheap:alloc / ddheap:free USDTs ...
-//! libdd_heap_gotter::restore_heap_overrides();
+//! // ... application runs for the rest of its life; malloc/free/calloc/
+//! //     realloc/etc. flow through libdd-heap-sampler and emit
+//! //     ddheap:alloc / ddheap:free USDTs ...
 //! ```
+//!
+//! # Installation is permanent (there is no uninstall)
+//!
+//! There is intentionally no way to remove the overrides once installed:
+//! the hooks stay in place for the life of the process. Sampled
+//! allocations carry an inline header (x86-64) or pointer tag (arm64)
+//! that only our `free`/`realloc` hooks know how to unwrap. If we
+//! unpatched those hooks while any tagged allocation were still live, its
+//! eventual free would hand an offset/tagged pointer straight to the real
+//! allocator and corrupt the heap - and we cannot know when the last
+//! tagged allocation has been freed.
 //!
 //! # Features
 //!
@@ -56,8 +67,8 @@ use std::sync::{Mutex, MutexGuard, TryLockError};
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 use elf::SymbolOverrides;
 
-/// Holds the SymbolOverrides registry across calls to `install` / `update`
-/// / `restore`. Guarded globally because GOT patching mutates process-wide
+/// Holds the SymbolOverrides registry across calls to `install` /
+/// `update`. Guarded globally because GOT patching mutates process-wide
 /// state.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 static GLOBAL_OVERRIDES: Mutex<Option<SymbolOverrides>> = Mutex::new(None);
@@ -131,22 +142,6 @@ pub fn update_heap_overrides() {
 /// See the Linux variant above.
 #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
 pub fn update_heap_overrides() {}
-
-/// Revert every GOT entry we patched. After this call, the process is
-/// once again calling the real allocator symbols directly. No-op on
-/// non-Linux targets.
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-pub fn restore_heap_overrides() {
-    let mut guard = lock_global_overrides();
-    if let Some(so) = guard.as_mut() {
-        so.restore_overrides();
-    }
-    *guard = None;
-}
-
-/// See the Linux variant above.
-#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
-pub fn restore_heap_overrides() {}
 
 /// Return whether heap GOT overrides are currently installed. Always
 /// returns `false` on non-Linux targets, since `install_heap_overrides`

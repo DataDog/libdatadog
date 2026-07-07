@@ -8,6 +8,12 @@
 //! These tests mutate global process state (GOT entries), so they must
 //! not run in parallel with each other. The `#[serial]` attribute
 //! enforces that.
+//!
+//! Installation is permanent - there is no un-install - so a test can't
+//! return the process to a pristine state afterward. Isolation therefore
+//! relies on nextest running each test in its own process (which CI does,
+//! including the coverage job). Under a shared-process runner (`cargo
+//! test`) a prior test's install would leak into later ones.
 
 // Integration tests invoke GOT-patching machinery for real
 // (dl_iterate_phdr + mprotect), which miri can't execute.
@@ -22,7 +28,7 @@ use serial_test::serial;
 /// crash should occur when malloc/free go through the patched GOT.
 #[test]
 #[serial]
-fn install_and_restore_keeps_heap_functional() {
+fn install_keeps_heap_functional() {
     extern "C" {
         fn malloc(size: usize) -> *mut c_void;
     }
@@ -36,14 +42,6 @@ fn install_and_restore_keeps_heap_functional() {
     unsafe {
         let p = malloc(64);
         assert!(!p.is_null(), "malloc returned NULL post-install");
-        libc::free(p);
-    }
-
-    libdd_heap_gotter::restore_heap_overrides();
-
-    unsafe {
-        let p = malloc(64);
-        assert!(!p.is_null(), "malloc returned NULL post-restore");
         libc::free(p);
     }
 }
@@ -90,14 +88,7 @@ fn install_produces_sampled_allocations() {
         // Free via libc::free which goes through gotter_free; it
         // handles the tagged pointer correctly (check + free raw).
         libc::free(p);
-
-        // Disable sampling before restore. The forced interval=1 leaves
-        // remaining_bytes close to zero, so simply restoring the default
-        // interval can still let restore-time internal allocations sample.
-        (*tl).sampling_interval = 0;
     }
-
-    libdd_heap_gotter::restore_heap_overrides();
 }
 
 /// Confirm realloc(NULL, size) goes through the sampler-side allocation
@@ -128,10 +119,7 @@ fn realloc_null_produces_sampled_allocation() {
         );
 
         libc::free(p);
-        (*tl).sampling_interval = 0;
     }
-
-    libdd_heap_gotter::restore_heap_overrides();
 }
 
 /// On x86-64, page-aligned allocations must pass through unsampled.
@@ -165,10 +153,7 @@ fn page_aligned_allocations_are_unsampled() {
         );
 
         libc::free(p);
-        (*tl).sampling_interval = 0;
     }
-
-    libdd_heap_gotter::restore_heap_overrides();
 }
 
 /// Same as above but for realloc: confirm a sampled allocation that
@@ -223,10 +208,7 @@ fn realloc_of_sampled_allocation_preserves_data() {
         }
 
         libc::free(p2 as *mut c_void);
-        (*tl).sampling_interval = 0;
     }
-
-    libdd_heap_gotter::restore_heap_overrides();
 }
 
 /// Allocate `size` bytes at `align` through the (hooked) libc. Uses
@@ -341,14 +323,7 @@ fn realloc_stress_across_alignments_preserves_data() {
 
             libc::free(p as *mut c_void);
         }
-
-        // Disable sampling before restore so restore-time internal
-        // allocations aren't tagged (freed through the unpatched GOT
-        // afterwards would SIGABRT on x86_64).
-        (*tl).sampling_interval = 0;
     }
-
-    libdd_heap_gotter::restore_heap_overrides();
 
     // Only meaningful with live-heap tracking on; without it nothing is
     // flagged, so the realloc/free stress still exercises the passthrough
@@ -360,63 +335,4 @@ fn realloc_stress_across_alignments_preserves_data() {
     );
     #[cfg(not(feature = "live-heap"))]
     let _ = saw_sampled;
-}
-
-/// Confirm that after restore, allocations are no longer sampled.
-#[cfg(feature = "live-heap")]
-#[test]
-#[serial]
-fn restore_stops_sampling() {
-    let installed = libdd_heap_gotter::install_heap_overrides();
-    assert!(installed);
-
-    unsafe {
-        let tl = dd_tl_state_get_or_init();
-        assert!(!tl.is_null());
-
-        // Confirm sampling works while installed.
-        (*tl).sampling_interval = 1;
-        (*tl).remaining_bytes = 0;
-        (*tl).remaining_bytes_initialized = true;
-
-        let p = libc::malloc(64);
-        assert!(!p.is_null());
-        let mut raw: *mut c_void = std::ptr::null_mut();
-        let mut offset: usize = 0;
-        let sampled = dd_sample_flag_peek(p, &mut raw, &mut offset);
-        assert!(sampled, "expected sampling while installed");
-        libc::free(p);
-
-        // Disable sampling before restore so internal allocations
-        // during restore don't get tagged (they'd be freed through
-        // the unpatched GOT afterwards, causing SIGABRT on x86_64).
-        (*tl).sampling_interval = 0;
-    }
-
-    libdd_heap_gotter::restore_heap_overrides();
-
-    // After restore, malloc should return a plain pointer with no
-    // sample flag, even if the sampler TLS is configured to sample
-    // every allocation. The GOT should no longer route malloc through
-    // the sampler.
-    unsafe {
-        let tl = dd_tl_state_get_or_init();
-        assert!(!tl.is_null());
-        (*tl).sampling_interval = 1;
-        (*tl).remaining_bytes = 0;
-        (*tl).remaining_bytes_initialized = true;
-
-        let p = libc::malloc(128);
-        assert!(!p.is_null());
-
-        let mut raw: *mut c_void = std::ptr::null_mut();
-        let mut offset: usize = 0;
-        let sampled = dd_sample_flag_peek(p, &mut raw, &mut offset);
-        assert!(
-            !sampled,
-            "expected malloc to return an unsampled pointer after restore"
-        );
-
-        libc::free(p);
-    }
 }

@@ -6,18 +6,19 @@ C FFI bindings for `libdd-heap-gotter`.
 
 `libdd-heap-gotter-ffi` exposes a small C ABI for installing heap-profiling GOT table interposition from language runtimes such as Python and Ruby.
 
-The API installs hooks for supported allocator symbols, updates hooks after new libraries are loaded, and restores patched GOT entries when profiling is disabled.
+The API installs hooks for supported allocator symbols and updates them after new libraries are loaded.
 
 ## API
 
 - `ddog_heap_gotter_install()` - install heap GOT overrides in the current process.
 - `ddog_heap_gotter_update()` - re-scan loaded libraries and patch newly introduced GOT entries.
-- `ddog_heap_gotter_restore()` - restore every GOT entry patched by install/update.
 - `ddog_heap_gotter_is_installed()` - return whether overrides are currently installed.
+
+Installation is permanent - there is deliberately no uninstall to avoid problems associated with tagged memory!
 
 ## Important lifetime note
 
-The shared library containing these hooks must remain loaded while overrides are installed. Patched GOT entries point at functions in this library, so unloading it before calling `ddog_heap_gotter_restore()` can leave dangling function pointers and crash the process.
+The shared library containing these hooks must remain loaded for the life of the process. Patched GOT entries point at functions in this library, so unloading it would leave dangling function pointers and crash the process.
 
 TODO: consider hooking `dlclose` too, so we can at least partially protect against unloading this library while its hooks are still installed.
 

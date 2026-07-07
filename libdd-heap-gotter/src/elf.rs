@@ -366,33 +366,6 @@ fn iterate_libraries(mut callback: impl FnMut(&dl_phdr_info, bool) -> bool) {
     }
 }
 
-unsafe fn library_name(info: &dl_phdr_info) -> String {
-    if info.dlpi_name.is_null() {
-        String::new()
-    } else {
-        CStr::from_ptr(info.dlpi_name)
-            .to_string_lossy()
-            .into_owned()
-    }
-}
-
-fn loaded_library_name_at_base(base: usize) -> Option<String> {
-    let mut found = None;
-    iterate_libraries(|info, _| unsafe {
-        if info.dlpi_addr as usize == base {
-            found = Some(library_name(info));
-            true
-        } else {
-            false
-        }
-    });
-    found
-}
-
-fn should_restore_library(expected_name: &str, current_name: Option<&str>) -> bool {
-    current_name == Some(expected_name)
-}
-
 /// A single /proc/self/maps entry: address range + current protection flags.
 #[derive(Clone, Copy)]
 struct MapEntry {
@@ -515,11 +488,6 @@ impl Drop for PageProtGuard {
     }
 }
 
-/// Read one GOT entry without assuming pointer alignment.
-unsafe fn read_entry(addr: usize) -> usize {
-    std::ptr::read_unaligned(addr as *const usize)
-}
-
 #[derive(Clone, Copy)]
 pub struct LookupResult {
     pub address: usize,
@@ -557,14 +525,19 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
     found
 }
 
-/// Per-library revert info: GOT addr -> original value at that addr.
+/// Per-library bookkeeping for the GOT re-scan. We never un-patch (see
+/// the crate docs on why un-installing can't be done safely), so this
+/// records nothing about how to revert - only enough to avoid
+/// re-processing a library on later `dlopen`-triggered rescans and to
+/// detect base-address reuse.
 #[derive(Default)]
-struct LibraryRevertInfo {
+struct PatchedLibrary {
     /// Identifies the library at this base address, so we can detect
     /// base-address reuse after a `dlclose` + `dlopen` places a
     /// different library at the same load address.
     library_name: String,
-    old_value_per_address: HashMap<usize, usize>,
+    /// Set each pass in which this library was seen; used to drop entries
+    /// for libraries that have since been unloaded.
     processed: bool,
 }
 
@@ -585,10 +558,10 @@ struct OverrideInfo {
     do_not_override_this_symbol: usize,
 }
 
-/// Holds the override table and the per-library revert info needed to undo writes.
+/// Holds the override table and per-library bookkeeping for GOT rescans.
 pub struct SymbolOverrides {
     overrides: HashMap<String, OverrideInfo>,
-    revert_info_per_library: HashMap<usize, LibraryRevertInfo>,
+    patched_libraries: HashMap<usize, PatchedLibrary>,
     last_seen_nb_libs: i32,
 }
 
@@ -602,7 +575,7 @@ impl SymbolOverrides {
     pub fn new() -> Self {
         Self {
             overrides: HashMap::new(),
-            revert_info_per_library: HashMap::new(),
+            patched_libraries: HashMap::new(),
             // -1 is the "never scanned" sentinel; a derived Default would
             // use 0 (a valid library count) and could wrongly skip the
             // first update_overrides, so Default must go through new().
@@ -665,7 +638,7 @@ impl SymbolOverrides {
         }
         self.last_seen_nb_libs = nb_loaded;
 
-        for v in self.revert_info_per_library.values_mut() {
+        for v in self.patched_libraries.values_mut() {
             v.processed = false;
         }
 
@@ -702,47 +675,10 @@ impl SymbolOverrides {
         // `guard` restores page protections when it drops at end of scope.
 
         // Drop any tracked libraries that have been unloaded.
-        self.revert_info_per_library.retain(|_, v| v.processed);
+        self.patched_libraries.retain(|_, v| v.processed);
     }
 
-    /// Restore every GOT entry we touched.
-    pub fn restore_overrides(&mut self) {
-        self.restore_overrides_with_lookup(loaded_library_name_at_base);
-    }
-
-    fn restore_overrides_with_lookup(
-        &mut self,
-        mut loaded_name_at_base: impl FnMut(usize) -> Option<String>,
-    ) -> usize {
-        let info_per_lib = std::mem::take(&mut self.revert_info_per_library);
-        let mut guard = None;
-        let mut restored_libraries = 0;
-        for (base, revert) in info_per_lib {
-            // A tracked library may have been dlclose'd since the last update,
-            // and its address range may even have been reused by a different
-            // mapping. Only write old GOT values back when the same library is
-            // still loaded at the original base address.
-            if !should_restore_library(
-                revert.library_name.as_str(),
-                loaded_name_at_base(base).as_deref(),
-            ) {
-                continue;
-            }
-
-            restored_libraries += 1;
-            let guard = guard.get_or_insert_with(PageProtGuard::new);
-            for (addr, old) in revert.old_value_per_address {
-                unsafe { guard.override_entry(addr, old) };
-            }
-        }
-        // `guard` (if created) restores page protections when the Option
-        // drops at end of scope.
-        self.last_seen_nb_libs = -1;
-        restored_libraries
-    }
-
-    /// Patch every override-matching GOT entry in one loaded library,
-    /// recording the original values so they can be restored later. Skips
+    /// Patch every override-matching GOT entry in one loaded library. Skips
     /// libraries already processed this pass and handles base-address reuse
     /// (a `dlclose` + `dlopen` placing a different library at the same base).
     ///
@@ -762,16 +698,12 @@ impl SymbolOverrides {
         // Detect base-address reuse: a previous `dlclose` may have freed
         // the load address, and a later `dlopen` can place a different
         // library at the same address. If the name differs from what we
-        // recorded, the stored `old_value_per_address` refers to memory
-        // that is either unmapped or now belongs to the new library, so
-        // we must not try to restore it. Drop the stale entry and treat
-        // this as a fresh library.
-        let entry_is_new = match self.revert_info_per_library.entry(dyn_info.base_address) {
+        // recorded, treat this as a fresh library so its GOT gets patched.
+        let entry_is_new = match self.patched_libraries.entry(dyn_info.base_address) {
             std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(LibraryRevertInfo {
-                    library_name: library_name.clone(),
+                e.insert(PatchedLibrary {
+                    library_name,
                     processed: true,
-                    ..Default::default()
                 });
                 true
             }
@@ -779,10 +711,9 @@ impl SymbolOverrides {
                 if e.get().library_name != library_name =>
             {
                 // Base-address reuse: replace the stale entry.
-                e.insert(LibraryRevertInfo {
-                    library_name: library_name.clone(),
+                e.insert(PatchedLibrary {
+                    library_name,
                     processed: true,
-                    ..Default::default()
                 });
                 true
             }
@@ -795,12 +726,6 @@ impl SymbolOverrides {
             return;
         }
 
-        // Hand-managed split borrow so we can pass &overrides + &mut revert.
-        let revert = self
-            .revert_info_per_library
-            .get_mut(&dyn_info.base_address)
-            .unwrap();
-
         if !dyn_info.rels.is_null() {
             let relocs = std::slice::from_raw_parts(dyn_info.rels, dyn_info.rels_count);
             for reloc in relocs {
@@ -809,7 +734,6 @@ impl SymbolOverrides {
                     dyn_info,
                     elf64_r_sym(reloc.r_info) as u32,
                     reloc.r_offset as usize,
-                    revert,
                     guard,
                 );
             }
@@ -828,7 +752,6 @@ impl SymbolOverrides {
                     dyn_info,
                     elf64_r_sym(reloc.r_info) as u32,
                     reloc.r_offset as usize,
-                    revert,
                     guard,
                 );
             }
@@ -836,8 +759,7 @@ impl SymbolOverrides {
     }
 
     /// Resolve one relocation's symbol name and, if it matches a registered
-    /// override, record its current GOT value and rewrite the entry at
-    /// `r_offset` to point at the hook.
+    /// override, rewrite the GOT entry at `r_offset` to point at the hook.
     ///
     /// # Safety
     ///
@@ -851,7 +773,6 @@ impl SymbolOverrides {
         dyn_info: &DynamicInfo,
         sym_index: u32,
         r_offset: usize,
-        revert: &mut LibraryRevertInfo,
         guard: &mut PageProtGuard,
     ) {
         // st_name -> string in strtab. Walk lazily: we look up the
@@ -880,10 +801,8 @@ impl SymbolOverrides {
         if addr == ov.do_not_override_this_symbol {
             return;
         }
-        if revert.old_value_per_address.contains_key(&addr) {
-            return;
-        }
-        revert.old_value_per_address.insert(addr, read_entry(addr));
+        // Re-patching an already-hooked entry with the same hook address is
+        // idempotent, so no per-entry dedup is needed.
         guard.override_entry(addr, ov.new_symbol);
     }
 }
@@ -895,19 +814,6 @@ fn elf64_r_sym(info: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn restore_library_requires_same_live_name() {
-        assert!(should_restore_library(
-            "/tmp/libfoo.so",
-            Some("/tmp/libfoo.so")
-        ));
-        assert!(!should_restore_library("/tmp/libfoo.so", None));
-        assert!(!should_restore_library(
-            "/tmp/libfoo.so",
-            Some("/tmp/libbar.so")
-        ));
-    }
 
     #[test]
     fn page_prot_guard_finds_original_mapping_protection() {
@@ -932,45 +838,5 @@ mod tests {
         assert_eq!(guard.original_prot(0x1fff), Some(PROT_READ));
         assert_eq!(guard.original_prot(0x2000), Some(PROT_READ | PROT_EXEC));
         assert_eq!(guard.original_prot(0x3000), None);
-    }
-
-    #[test]
-    fn restore_overrides_skips_unloaded_or_reused_libraries() {
-        let mut overrides = SymbolOverrides::new();
-        overrides.revert_info_per_library.insert(
-            0x1000,
-            LibraryRevertInfo {
-                library_name: "/tmp/libfoo.so".to_string(),
-                old_value_per_address: HashMap::new(),
-                processed: true,
-            },
-        );
-        overrides.revert_info_per_library.insert(
-            0x2000,
-            LibraryRevertInfo {
-                library_name: "/tmp/libbar.so".to_string(),
-                old_value_per_address: HashMap::new(),
-                processed: true,
-            },
-        );
-        overrides.revert_info_per_library.insert(
-            0x3000,
-            LibraryRevertInfo {
-                library_name: "/tmp/libbaz.so".to_string(),
-                old_value_per_address: HashMap::new(),
-                processed: true,
-            },
-        );
-
-        let restored = overrides.restore_overrides_with_lookup(|base| match base {
-            0x1000 => Some("/tmp/libfoo.so".to_string()),
-            0x2000 => Some("/tmp/different.so".to_string()),
-            0x3000 => None,
-            _ => unreachable!(),
-        });
-
-        assert_eq!(restored, 1);
-        assert!(overrides.revert_info_per_library.is_empty());
-        assert_eq!(overrides.last_seen_nb_libs, -1);
     }
 }

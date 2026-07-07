@@ -38,7 +38,6 @@ mod linux {
     const LIB_NAME: &str = "liblibdd_heap_gotter_ffi.so";
 
     type InstallFn = unsafe extern "C" fn() -> VoidResult;
-    type RestoreFn = unsafe extern "C" fn() -> VoidResult;
     type IsInstalledFn = unsafe extern "C" fn() -> bool;
 
     struct DlopenHandle(*mut libc::c_void);
@@ -119,7 +118,6 @@ mod linux {
         let lib = DlopenHandle::open(&lib_path)?;
 
         let install: InstallFn = unsafe { lib.symbol(c"ddog_heap_gotter_install")? };
-        let restore: RestoreFn = unsafe { lib.symbol(c"ddog_heap_gotter_restore")? };
         let is_installed: IsInstalledFn = unsafe { lib.symbol(c"ddog_heap_gotter_is_installed")? };
 
         println!("pre-install is_installed={}", unsafe { is_installed() });
@@ -136,13 +134,11 @@ mod linux {
             sleep(Duration::from_secs(1));
         }
 
-        check(unsafe { restore() }, "ddog_heap_gotter_restore")?;
-        println!("post-restore is_installed={}", unsafe { is_installed() });
-
-        // Keep `lib` alive until after restore. The GOT entries patched by install point at
-        // functions in this cdylib; dropping/dlclosing it while installed can leave
-        // dangling function pointers.
-        drop(lib);
+        // Installation is permanent - there is no un-install. The GOT entries
+        // patched by install point at functions in this cdylib, so it must stay
+        // loaded for the life of the process; unloading it would leave dangling
+        // function pointers. Leak the handle to make that explicit.
+        std::mem::forget(lib);
         Ok(())
     }
 } // mod linux

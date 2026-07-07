@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! C FFI bindings for [`libdd_heap_gotter`]. Exposes install / update /
-//! restore / is-installed entry points as `extern "C"` functions so
-//! language runtimes (Python, Ruby, …) can drive GOT-based heap
-//! profiling from their own native extension code.
+//! is-installed entry points as `extern "C"` functions so language
+//! runtimes (Python, Ruby, …) can drive GOT-based heap profiling from
+//! their own native extension code.
 
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
@@ -25,9 +25,10 @@ use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 
 /// Install GOT overrides for supported heap-allocation symbols in the current process.
 ///
-/// The library containing these hooks must remain loaded until
-/// `ddog_heap_gotter_restore` has been called. GOT entries are patched to point at
-/// functions in this library, so unloading it while installed can leave dangling function pointers.
+/// Installation is permanent: there is no un-install (see [`libdd_heap_gotter`]
+/// for why). GOT entries are patched to point at functions in this library, so
+/// the library containing these hooks must remain loaded for the life of the
+/// process; unloading it would leave dangling function pointers.
 ///
 /// On non-Linux targets this returns an error indicating that nothing
 /// could be installed; the rest of the API can still be called safely.
@@ -51,19 +52,6 @@ pub extern "C" fn ddog_heap_gotter_install() -> VoidResult {
 pub extern "C" fn ddog_heap_gotter_update() -> VoidResult {
     wrap_with_void_ffi_result!({
         libdd_heap_gotter::update_heap_overrides();
-    })
-}
-
-/// Restore every GOT entry patched by `ddog_heap_gotter_install`.
-///
-/// Call this before unloading the shared library that provides the gotter hooks. No-op on
-/// non-Linux targets.
-#[no_mangle]
-#[must_use]
-#[named]
-pub extern "C" fn ddog_heap_gotter_restore() -> VoidResult {
-    wrap_with_void_ffi_result!({
-        libdd_heap_gotter::restore_heap_overrides();
     })
 }
 
