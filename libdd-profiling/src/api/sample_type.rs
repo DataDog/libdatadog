@@ -12,6 +12,15 @@ use super::ValueType;
 /// - **dd-trace-dotnet**: Sample type definitions for allocations, locks, CPU, walltime,
 ///   exceptions, live objects, HTTP requests
 /// - **pprof-nodejs**: `profile-serializer.ts` (value type functions)
+///
+/// # Adding new types
+///
+/// To prototype a new profile type without a libdatadog release, use
+/// [`crate::internal::Profile::try_new_with_value_types`] (Rust) or the
+/// `create_with_value_types` CXX / `ddog_prof_Profile_new_custom` C functions
+/// with a raw `(type, unit)` string pair.
+/// Once the type is stable and agreed upon across profiler teams, add a
+/// variant here so callers can use the type-safe path.
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator, strum::EnumIter))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -74,10 +83,14 @@ pub enum SampleType {
     WallTime,
     /// Legacy: Use `WallTime` instead for consistency with naming scheme
     WallLegacy,
-
-    // Experimental sample types for testing and development.
+    /// Deprecated: use `Profile::try_new_with_value_types` with a descriptive raw `(type, unit)`
+    /// pair instead. This fixed name cannot distinguish multiple custom count measurements.
     ExperimentalCount,
+    /// Deprecated: use `Profile::try_new_with_value_types` with a descriptive raw `(type, unit)`
+    /// pair instead. This fixed name cannot distinguish multiple custom time measurements.
     ExperimentalNanoseconds,
+    /// Deprecated: use `Profile::try_new_with_value_types` with a descriptive raw `(type, unit)`
+    /// pair instead. This fixed name cannot distinguish multiple custom byte measurements.
     ExperimentalBytes,
 }
 

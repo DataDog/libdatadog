@@ -26,8 +26,7 @@ pub mod ffi {
     //   live objects, HTTP requests)
     // - pprof-nodejs (profile-serializer.ts value type functions)
     //
-    // Experimental variants allow profilers to use custom sample types for testing
-    // and development without modifying this enum. They map to fixed (type, unit) pairs.
+    // To use a type not yet in this enum, call create_with_value_types() instead.
     //
     // LEGACY VARIANTS (prefer alternatives for consistency):
     // - CpuLegacy (use CpuTime)
@@ -88,14 +87,32 @@ pub mod ffi {
         Timeline,
         WallSamples,
         WallTime,
-        WallLegacy, // LEGACY: Use WallTime instead
-        ExperimentalCount,
-        ExperimentalNanoseconds,
-        ExperimentalBytes,
+        WallLegacy,              // LEGACY: Use WallTime instead
+        ExperimentalCount,       // DEPRECATED: Use create_with_value_types instead
+        ExperimentalNanoseconds, // DEPRECATED: Use create_with_value_types instead
+        ExperimentalBytes,       // DEPRECATED: Use create_with_value_types instead
     }
 
     struct Period {
         value_type: SampleType,
+        value: i64,
+    }
+
+    /// A raw (type, unit) pair for profile types not yet in the [`SampleType`] enum.
+    ///
+    /// Strings are copied during profile construction. This is the escape hatch for
+    /// prototyping new profile types without a libdatadog release.
+    ///
+    /// # Stability note
+    /// Once a custom type is agreed upon across profiler teams, add it to
+    /// [`SampleType`] and migrate callers to [`Profile::create`] instead.
+    struct CustomValueType<'a> {
+        type_: &'a str,
+        unit: &'a str,
+    }
+
+    struct CustomPeriod<'a> {
+        value_type: CustomValueType<'a>,
         value: i64,
     }
 
@@ -159,6 +176,26 @@ pub mod ffi {
         // Static factory methods for Profile
         #[Self = "Profile"]
         fn create(sample_types: Vec<SampleType>, period: &Period) -> Result<Box<Profile>>;
+
+        /// Create a profile using raw `(type, unit)` string pairs.
+        ///
+        /// Use this when the desired profile type is not yet in [`SampleType`].
+        /// Strings are copied during profile construction.
+        ///
+        /// # Stability note
+        /// Once the type is stable, add it to [`SampleType`] and switch to
+        /// [`Profile::create`].
+        #[Self = "Profile"]
+        fn create_with_value_types(
+            sample_types: Vec<CustomValueType>,
+            period: &CustomPeriod,
+        ) -> Result<Box<Profile>>;
+
+        /// Create a profile using raw `(type, unit)` string pairs and no period.
+        #[Self = "Profile"]
+        fn create_with_value_types_no_period(
+            sample_types: Vec<CustomValueType>,
+        ) -> Result<Box<Profile>>;
 
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
@@ -524,6 +561,12 @@ pub struct Profile {
 }
 
 impl Profile {
+    fn owned_value_type(type_: &str, unit: &str) -> api::ValueType<'static> {
+        let type_: &'static str = Box::leak(type_.to_string().into_boxed_str());
+        let unit: &'static str = Box::leak(unit.to_string().into_boxed_str());
+        api::ValueType::new(type_, unit)
+    }
+
     pub fn create(
         sample_types: Vec<ffi::SampleType>,
         period: &ffi::Period,
@@ -538,6 +581,40 @@ impl Profile {
         // Profile::try_new interns the strings
         let inner = internal::Profile::try_new(&types, Some(period_value))?;
 
+        Ok(Box::new(Profile { inner }))
+    }
+
+    /// Create a profile with raw `(type, unit)` string pairs.
+    ///
+    /// This is the escape hatch for profile types not yet in [`ffi::SampleType`].
+    /// Use [`Profile::create`] once the type has been promoted to [`ffi::SampleType`].
+    pub fn create_with_value_types(
+        sample_types: Vec<ffi::CustomValueType<'_>>,
+        period: &ffi::CustomPeriod<'_>,
+    ) -> anyhow::Result<Box<Profile>> {
+        let vts: Vec<api::ValueType<'static>> = sample_types
+            .iter()
+            .map(|st| Self::owned_value_type(st.type_, st.unit))
+            .collect();
+        let period_value = (
+            Self::owned_value_type(period.value_type.type_, period.value_type.unit),
+            period.value,
+        );
+
+        let inner = internal::Profile::try_new_with_value_types(&vts, Some(period_value))?;
+        Ok(Box::new(Profile { inner }))
+    }
+
+    /// Create a profile with raw `(type, unit)` string pairs and no period.
+    pub fn create_with_value_types_no_period(
+        sample_types: Vec<ffi::CustomValueType<'_>>,
+    ) -> anyhow::Result<Box<Profile>> {
+        let vts: Vec<api::ValueType<'static>> = sample_types
+            .iter()
+            .map(|st| Self::owned_value_type(st.type_, st.unit))
+            .collect();
+
+        let inner = internal::Profile::try_new_with_value_types(&vts, None)?;
         Ok(Box::new(Profile { inner }))
     }
 

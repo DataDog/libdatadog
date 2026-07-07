@@ -21,9 +21,8 @@ int main() {
             .value = 60
         };
         
-        // Create profile with predefined sample types
-        // Note: ExperimentalCount, ExperimentalNanoseconds, and ExperimentalBytes
-        // are available for custom profiling metrics
+        // Create profile with predefined sample types. For prototyping a type
+        // not yet in SampleType, use Profile::create_with_value_types instead.
         auto profile = Profile::create({SampleType::WallTime}, period);
         std::cout << "✅ Profile created" << std::endl;
         

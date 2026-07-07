@@ -45,8 +45,8 @@ pub struct Profile {
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
-    period: Option<api::Period>,
-    sample_types: Box<[api::SampleType]>,
+    period: Option<(api::ValueType<'static>, i64)>,
+    sample_types: Box<[api::ValueType<'static>]>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -383,6 +383,16 @@ impl Profile {
         Self::try_new(sample_types, period).unwrap()
     }
 
+    /// Test helper for the raw value-type path.
+    #[cfg(test)]
+    pub fn new_with_value_types(
+        sample_types: &[api::ValueType<'static>],
+        period: Option<(api::ValueType<'static>, i64)>,
+    ) -> Self {
+        #[allow(clippy::unwrap_used)]
+        Self::try_new_with_value_types(sample_types, period).unwrap()
+    }
+
     /// Tries to create a profile with the given `period`.
     /// Initializes the string table to hold common strings such as:
     ///  - "" (the empty string)
@@ -397,7 +407,17 @@ impl Profile {
         sample_types: &[api::SampleType],
         period: Option<api::Period>,
     ) -> io::Result<Self> {
-        Self::try_new_internal(period, sample_types.to_vec().into_boxed_slice(), None, None)
+        Self::try_new_internal(
+            period.map(|p| (api::ValueType::from(p.sample_type), p.value)),
+            sample_types
+                .iter()
+                .copied()
+                .map(api::ValueType::from)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            None,
+            None,
+        )
     }
 
     /// Tries to create a profile with the given period and sample types.
@@ -409,8 +429,13 @@ impl Profile {
         profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
     ) -> io::Result<Self> {
         Self::try_new_internal(
-            period,
-            sample_types.to_vec().into_boxed_slice(),
+            period.map(|p| (api::ValueType::from(p.sample_type), p.value)),
+            sample_types
+                .iter()
+                .copied()
+                .map(api::ValueType::from)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
             None,
             Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
         )
@@ -423,10 +448,50 @@ impl Profile {
         string_storage: Arc<Mutex<ManagedStringStorage>>,
     ) -> io::Result<Self> {
         Self::try_new_internal(
-            period,
-            sample_types.to_vec().into_boxed_slice(),
+            period.map(|p| (api::ValueType::from(p.sample_type), p.value)),
+            sample_types
+                .iter()
+                .copied()
+                .map(api::ValueType::from)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
             Some(string_storage),
             None,
+        )
+    }
+
+    /// Creates a profile using raw `(type, unit)` string pairs, bypassing the
+    /// [`SampleType`][api::SampleType] enum.
+    ///
+    /// This is the escape hatch for **prototyping** new profile types before
+    /// they are added to [`SampleType`][api::SampleType].  The string slices
+    /// must have `'static` lifetime (string literals are the typical case).
+    ///
+    /// # Stability note
+    /// Once a custom type is stable and agreed upon across profiler teams,
+    /// add a variant to [`SampleType`][api::SampleType] and migrate callers
+    /// to [`Profile::try_new`] instead.
+    pub fn try_new_with_value_types(
+        sample_types: &[api::ValueType<'static>],
+        period: Option<(api::ValueType<'static>, i64)>,
+    ) -> io::Result<Self> {
+        Self::try_new_internal(period, sample_types.to_vec().into_boxed_slice(), None, None)
+    }
+
+    /// Like [`Profile::try_new_with_value_types`] but with a shared dictionary.
+    ///
+    /// # Stability note
+    /// Prefer [`Profile::try_new_with_dictionary`] once the types are stable.
+    pub fn try_new_with_value_types_and_dictionary(
+        sample_types: &[api::ValueType<'static>],
+        period: Option<(api::ValueType<'static>, i64)>,
+        profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
+    ) -> io::Result<Self> {
+        Self::try_new_internal(
+            period,
+            sample_types.to_vec().into_boxed_slice(),
+            None,
+            Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
         )
     }
 
@@ -451,7 +516,7 @@ impl Profile {
 
         let mut profile = Profile::try_new_internal(
             self.period,
-            self.sample_types.clone(),
+            self.sample_types.clone(), // Box<[ValueType<'static>]> is cheap to clone (static strs)
             self.string_storage.clone(),
             profiles_dictionary_translator,
         )
@@ -611,16 +676,16 @@ impl Profile {
         // so we must serialize `Sample` before `SampleType`.
         // Clone to avoid holding an immutable borrow of `self.sample_types` while interning.
         let sample_types = self.sample_types.clone();
-        for sample_type in sample_types.iter().copied() {
-            let sample_type = self.intern_sample_type(sample_type);
-            Record::<_, 1, NO_OPT_ZERO>::from(sample_type).encode(writer)?;
+        for vt in sample_types.iter().copied() {
+            let vt = self.intern_value_type(vt);
+            Record::<_, 1, NO_OPT_ZERO>::from(vt).encode(writer)?;
         }
 
         // Period type needs string interning, which must happen before we start moving fields out
         // of `self`. (Many fields below are consumed via `into_iter()`.)
         let period_type_and_value: Option<(ValueType, i64)> = self
             .period
-            .map(|period| (self.intern_sample_type(period.sample_type), period.value));
+            .map(|(vt, value)| (self.intern_value_type(vt), value));
 
         for (offset, item) in self.mappings.into_iter().enumerate() {
             let mapping = protobuf::Mapping {
@@ -843,8 +908,7 @@ impl Profile {
     }
 
     #[inline(always)]
-    fn intern_sample_type(&mut self, sample_type: api::SampleType) -> ValueType {
-        let vt: api::ValueType<'static> = sample_type.into();
+    fn intern_value_type(&mut self, vt: api::ValueType<'static>) -> ValueType {
         ValueType {
             r#type: Record::from(self.intern(vt.r#type)),
             unit: Record::from(self.intern(vt.unit)),
@@ -940,8 +1004,8 @@ impl Profile {
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
     fn try_new_internal(
-        period: Option<api::Period>,
-        sample_types: Box<[api::SampleType]>,
+        period: Option<(api::ValueType<'static>, i64)>,
+        sample_types: Box<[api::ValueType<'static>]>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
@@ -1387,8 +1451,9 @@ mod api_tests {
             .reset_and_return_previous()
             .expect("reset to succeed");
 
-        assert_eq!(profile.period, Some(period));
-        assert_eq!(prev.period, Some(period));
+        let expected_period = Some((api::ValueType::from(period.sample_type), period.value));
+        assert_eq!(profile.period, expected_period);
+        assert_eq!(prev.period, expected_period);
     }
 
     #[test]
@@ -3103,5 +3168,130 @@ mod api_tests {
             .downcast_ref::<io::Error>()
             .expect("Expected serialization error to be an io::Error");
         assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    // -----------------------------------------------------------------------
+    // Custom value type tests
+    // -----------------------------------------------------------------------
+
+    /// Basic smoke test: a profile created with custom types serializes without
+    /// error and round-trips the type/unit strings through pprof.
+    #[test]
+    fn custom_value_types_round_trip() -> anyhow::Result<()> {
+        const MEMORY_BREAKDOWN: api::ValueType<'static> =
+            api::ValueType::new("memory-breakdown", "bytes");
+
+        let period = (MEMORY_BREAKDOWN, 4096_i64);
+        let mut profile = Profile::new_with_value_types(&[MEMORY_BREAKDOWN], Some(period));
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: &[4096],
+            labels: vec![],
+        };
+        profile.try_add_sample(sample, None)?;
+
+        let pprof = roundtrip_to_pprof(profile)?;
+
+        // Verify the custom sample type is present in the serialized pprof.
+        let st_strings: Vec<(&str, &str)> = pprof
+            .sample_types
+            .iter()
+            .map(|st| {
+                (
+                    string_table_fetch(&pprof, st.r#type).as_str(),
+                    string_table_fetch(&pprof, st.unit).as_str(),
+                )
+            })
+            .collect();
+
+        assert_eq!(st_strings, vec![("memory-breakdown", "bytes")]);
+
+        // Verify the period type.
+        let period_type = pprof.period_type.expect("period type should be present");
+        assert_eq!(
+            string_table_fetch(&pprof, period_type.r#type).as_str(),
+            "memory-breakdown"
+        );
+        assert_eq!(
+            string_table_fetch(&pprof, period_type.unit).as_str(),
+            "bytes"
+        );
+
+        Ok(())
+    }
+
+    /// Custom types survive a profile reset: the new profile keeps the same
+    /// (type, unit) strings.
+    #[test]
+    fn custom_value_types_survive_reset() -> anyhow::Result<()> {
+        const MEMORY_BREAKDOWN: api::ValueType<'static> =
+            api::ValueType::new("memory-breakdown", "bytes");
+
+        let mut profile = Profile::new_with_value_types(&[MEMORY_BREAKDOWN], None);
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: &[1024],
+            labels: vec![],
+        };
+        profile.try_add_sample(sample, None)?;
+        profile.reset_and_return_previous()?; // discards old, keeps type config
+
+        // Profile is now empty but should still accept samples with the same
+        // value count.
+        let sample2 = api::Sample {
+            locations: vec![],
+            values: &[2048],
+            labels: vec![],
+        };
+        profile.try_add_sample(sample2, None)?;
+
+        let pprof = roundtrip_to_pprof(profile)?;
+        let st_strings: Vec<&str> = pprof
+            .sample_types
+            .iter()
+            .map(|st| string_table_fetch(&pprof, st.r#type).as_str())
+            .collect();
+        assert_eq!(st_strings, vec!["memory-breakdown"]);
+
+        Ok(())
+    }
+
+    /// A profile created with custom types rejects samples that have the wrong
+    /// number of values (same guard as for SampleType-based profiles).
+    #[test]
+    fn custom_value_types_wrong_value_count_is_rejected() {
+        const T: api::ValueType<'static> = api::ValueType::new("my-custom-type", "count");
+        let mut profile = Profile::new_with_value_types(&[T], None);
+
+        let bad_sample = api::Sample {
+            locations: vec![],
+            values: &[1, 2], // two values, but only one type declared
+            labels: vec![],
+        };
+        assert!(
+            profile.try_add_sample(bad_sample, None).is_err(),
+            "expected error for mismatched value count"
+        );
+    }
+
+    /// SampleType-based and value-type-based profiles produce identical pprof
+    /// output for the same well-known type.
+    #[test]
+    fn custom_value_types_match_sample_type_output() -> anyhow::Result<()> {
+        // Build profile via the SampleType enum path.
+        let enum_profile = Profile::new(&[api::SampleType::WallTime], None);
+        let enum_pprof = roundtrip_to_pprof(enum_profile)?;
+
+        // Build profile via the raw ValueType path using the same type/unit.
+        let vt = api::ValueType::from(api::SampleType::WallTime);
+        let vt_profile = Profile::new_with_value_types(&[vt], None);
+        let vt_pprof = roundtrip_to_pprof(vt_profile)?;
+
+        // Both should produce identical sample_types in the pprof output.
+        assert_eq!(enum_pprof.sample_types, vt_pprof.sample_types);
+
+        Ok(())
     }
 }
