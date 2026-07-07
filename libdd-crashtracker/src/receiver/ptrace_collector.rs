@@ -598,4 +598,45 @@ mod tests {
         barrier.wait();
         handle.join().unwrap();
     }
+
+    /// Regression test: a thread blocked in poll() passed as crashing_tid must not
+    /// be ptraced. Previously, PTRACE_INTERRUPT would fire inside the signal handler's
+    /// poll() call causing an EINTR loop that hung the receiver indefinitely.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn stream_excludes_crashing_tid_blocked_in_poll() {
+        let mut pipe_fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+        let [read_fd, write_fd] = pipe_fds;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let handle = std::thread::spawn(move || {
+            tx.send(current_tid()).unwrap();
+            let mut pfd = libc::pollfd { fd: read_fd, events: libc::POLLHUP, revents: 0 };
+            unsafe { libc::poll(&mut pfd, 1, 10_000) };
+            unsafe { libc::close(read_fd) };
+        });
+
+        let blocking_tid = rx.recv().unwrap();
+
+        let mut seen_blocking = false;
+        let _ = stream_thread_contexts(
+            std::process::id() as libc::pid_t,
+            blocking_tid,
+            64,
+            Duration::from_secs(5),
+            crate::StacktraceCollection::Disabled,
+            |tid, _ctx| {
+                if tid == blocking_tid {
+                    seen_blocking = true;
+                }
+            },
+        );
+
+        assert!(!seen_blocking, "thread blocked in poll() must not be ptraced as crashing_tid");
+
+        unsafe { libc::close(write_fd) };
+        handle.join().unwrap();
+    }
 }
