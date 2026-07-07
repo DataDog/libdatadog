@@ -39,6 +39,14 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
     #[cfg(target_os = "linux")]
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // when sampling is disabled via
+        // DD_HEAP_SAMPLING_ENABLED, forward straight to the inner allocator
+        // so we're indistinguishable from an unwrapped allocator. realloc /
+        // alloc_zeroed are inherited from GlobalAlloc and dispatch back
+        // through alloc/dealloc, so they pass through too.
+        if !libdd_heap_sampler::heap_sampling_enabled() {
+            return self.inner.alloc(layout);
+        }
         let req = dd_allocation_requested(layout.size(), layout.align());
         // Sampled paths may bump the size for inline flag storage;
         // forward the returned size to the inner allocator verbatim.
@@ -56,6 +64,10 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
     #[cfg(target_os = "linux")]
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // Honour bypass
+        if !libdd_heap_sampler::heap_sampling_enabled() {
+            return self.inner.dealloc(ptr, layout);
+        }
         let freed = dd_allocation_freed(ptr.cast(), layout.size(), layout.align());
         let inner_layout = Layout::from_size_align_unchecked(freed.size, layout.align());
         self.inner.dealloc(freed.ptr.cast(), inner_layout);

@@ -32,6 +32,111 @@ mod sys {
 #[cfg(target_os = "linux")]
 pub use sys::*;
 
+/// Name of the environment variable that toggles heap sampling.
+pub const DD_HEAP_SAMPLING_ENABLED: &str = "DD_HEAP_SAMPLING_ENABLED";
+
+/// Whether heap sampling is enabled for this process. Users of this
+/// library can use this to check if they should setup allocation tracking
+/// or not.
+///
+/// Reads [`DD_HEAP_SAMPLING_ENABLED`] once and caches the result: sampling
+/// is enabled by default and disabled only when the variable is set to a
+/// falsey value (`0`, `false`, `no`, `off`, case-insensitive). Consumers
+/// (the GOT interposer, the `GlobalAlloc` wrapper) use this as a
+/// short-circuit so that a disabled sampler is as close as possible to not
+/// being installed at all.
+///
+/// The lookup uses `getenv` rather than [`std::env::var`] specifically so it
+/// performs no heap allocation so that our consumers don't have to worry about
+/// re-entrancy.
+pub fn heap_sampling_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(read_heap_sampling_enabled)
+}
+
+/// Interpret a raw environment-variable value. `None` (unset) enables
+/// sampling; a value equal to `0`/`false`/`no`/`off` (case-insensitive)
+/// disables it; anything else enables it. Split out from the `getenv`
+/// lookup so the policy is unit-testable without touching process state or
+/// the process-wide cache in [`heap_sampling_enabled`].
+fn parse_heap_sampling_enabled(value: Option<&[u8]>) -> bool {
+    match value {
+        None => true,
+        Some(bytes) => {
+            !(bytes.eq_ignore_ascii_case(b"0")
+                || bytes.eq_ignore_ascii_case(b"false")
+                || bytes.eq_ignore_ascii_case(b"no")
+                || bytes.eq_ignore_ascii_case(b"off"))
+        }
+    }
+}
+
+#[cfg(unix)]
+fn read_heap_sampling_enabled() -> bool {
+    use core::ffi::{c_char, CStr};
+
+    extern "C" {
+        fn getenv(name: *const c_char) -> *mut c_char;
+    }
+
+    const NAME: &[u8] = b"DD_HEAP_SAMPLING_ENABLED\0";
+
+    // SAFETY: NAME is a valid NUL-terminated C string; getenv returns either
+    // NULL or a pointer to a NUL-terminated string in the process
+    // environment, which we only read. No allocation occurs, so this is safe
+    // to call from inside a GlobalAlloc hot path.
+    unsafe {
+        let value = getenv(NAME.as_ptr().cast());
+        let bytes = (!value.is_null()).then(|| CStr::from_ptr(value).to_bytes());
+        parse_heap_sampling_enabled(bytes)
+    }
+}
+
+#[cfg(not(unix))]
+fn read_heap_sampling_enabled() -> bool {
+    // Sampling only exists on Linux; elsewhere this is moot and defaults on.
+    true
+}
+
+// Pure-logic tests for the env-var policy; no FFI, safe on every target
+// and under miri.
+#[cfg(test)]
+mod sampling_flag_tests {
+    use super::parse_heap_sampling_enabled;
+
+    #[test]
+    fn unset_defaults_to_enabled() {
+        assert!(parse_heap_sampling_enabled(None));
+    }
+
+    #[test]
+    fn falsey_values_disable() {
+        for v in [
+            &b"0"[..],
+            b"false",
+            b"FALSE",
+            b"False",
+            b"no",
+            b"NO",
+            b"off",
+            b"Off",
+        ] {
+            assert!(
+                !parse_heap_sampling_enabled(Some(v)),
+                "{v:?} should disable"
+            );
+        }
+    }
+
+    #[test]
+    fn truthy_and_unrecognized_values_enable() {
+        for v in [&b"1"[..], b"true", b"TRUE", b"yes", b"on", b"", b"maybe"] {
+            assert!(parse_heap_sampling_enabled(Some(v)), "{v:?} should enable");
+        }
+    }
+}
+
 // Tests exercise the C/FFI sampler primitives directly; miri can't
 // execute foreign code, so skip the whole module under miri.
 #[cfg(all(test, target_os = "linux", not(miri)))]

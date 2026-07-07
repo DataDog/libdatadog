@@ -77,6 +77,15 @@ fn lock_global_overrides() -> MutexGuard<'static, Option<SymbolOverrides>> {
 /// portable equivalent outside ELF64 + `dl_iterate_phdr`.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn install_heap_overrides() -> bool {
+    // if sampling is disabled via
+    // DD_HEAP_SAMPLING_ENABLED, don't touch the GOT at all. The process
+    // keeps calling the real allocator symbols directly, exactly as if
+    // this crate had never been installed. Returns false (nothing
+    // overridden), consistent with the "couldn't install" return.
+    if !libdd_heap_sampler::heap_sampling_enabled() {
+        return false;
+    }
+
     let mut guard = lock_global_overrides();
     if guard.is_none() {
         let mut so = SymbolOverrides::new();

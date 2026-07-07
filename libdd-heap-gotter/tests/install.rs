@@ -277,17 +277,6 @@ fn realloc_stress_across_alignments_preserves_data() {
             ^ 0x5A
     }
 
-    // Number of times to repeat the whole alignment matrix. Default 1 keeps
-    // the committed test fast; a soak run can crank it (the crash this guards
-    // against is heap-reuse-dependent and only shows up after tens of
-    // thousands of realloc/free operations) via
-    // REALLOC_STRESS_REPEAT=20000. Read before the sampled window so the
-    // env lookup's own allocation isn't sampled.
-    let repeat: usize = std::env::var("REALLOC_STRESS_REPEAT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1);
-
     let installed = libdd_heap_gotter::install_heap_overrides();
     assert!(installed);
 
@@ -305,52 +294,50 @@ fn realloc_stress_across_alignments_preserves_data() {
         (*tl).remaining_bytes = 0;
         (*tl).remaining_bytes_initialized = true;
 
-        for _rep in 0..repeat {
-            for (seed, &align) in ALIGNMENTS.iter().enumerate() {
-                let mut size = SIZE_WALK[0];
+        for (seed, &align) in ALIGNMENTS.iter().enumerate() {
+            let mut size = SIZE_WALK[0];
 
-                let mut p = alloc_aligned(align, size) as *mut u8;
-                assert!(!p.is_null(), "alloc failed (align={align}, size={size})");
+            let mut p = alloc_aligned(align, size) as *mut u8;
+            assert!(!p.is_null(), "alloc failed (align={align}, size={size})");
 
-                // Record whether this block was actually sampled (peek is
-                // non-destructive, so it's safe before the realloc walk).
-                let mut raw: *mut c_void = std::ptr::null_mut();
-                let mut offset: usize = 0;
-                if dd_sample_flag_peek(p as *mut c_void, &mut raw, &mut offset) {
-                    saw_sampled = true;
-                }
-
-                for i in 0..size {
-                    *p.add(i) = pattern_byte(seed, i);
-                }
-
-                for &new_size in &SIZE_WALK[1..] {
-                    let p2 = libc::realloc(p as *mut c_void, new_size) as *mut u8;
-                    assert!(
-                        !p2.is_null(),
-                        "realloc failed (align={align}, {size}->{new_size})"
-                    );
-
-                    // The overlapping prefix must survive the realloc.
-                    let preserved = size.min(new_size);
-                    for i in 0..preserved {
-                        assert_eq!(
-                            *p2.add(i),
-                            pattern_byte(seed, i),
-                            "corruption at byte {i} (align={align}, {size}->{new_size})"
-                        );
-                    }
-                    // Repaint the whole new region for the next realloc to keep.
-                    for i in 0..new_size {
-                        *p2.add(i) = pattern_byte(seed, i);
-                    }
-
-                    p = p2;
-                    size = new_size;
-                }
-
-                libc::free(p as *mut c_void);
+            // Record whether this block was actually sampled (peek is
+            // non-destructive, so it's safe before the realloc walk).
+            let mut raw: *mut c_void = std::ptr::null_mut();
+            let mut offset: usize = 0;
+            if dd_sample_flag_peek(p as *mut c_void, &mut raw, &mut offset) {
+                saw_sampled = true;
             }
+
+            for i in 0..size {
+                *p.add(i) = pattern_byte(seed, i);
+            }
+
+            for &new_size in &SIZE_WALK[1..] {
+                let p2 = libc::realloc(p as *mut c_void, new_size) as *mut u8;
+                assert!(
+                    !p2.is_null(),
+                    "realloc failed (align={align}, {size}->{new_size})"
+                );
+
+                // The overlapping prefix must survive the realloc.
+                let preserved = size.min(new_size);
+                for i in 0..preserved {
+                    assert_eq!(
+                        *p2.add(i),
+                        pattern_byte(seed, i),
+                        "corruption at byte {i} (align={align}, {size}->{new_size})"
+                    );
+                }
+                // Repaint the whole new region for the next realloc to keep.
+                for i in 0..new_size {
+                    *p2.add(i) = pattern_byte(seed, i);
+                }
+
+                p = p2;
+                size = new_size;
+            }
+
+            libc::free(p as *mut c_void);
         }
 
         // Disable sampling before restore so restore-time internal
