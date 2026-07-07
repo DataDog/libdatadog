@@ -2,6 +2,14 @@
 
 
 
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v2.0.0..libdd-capabilities-impl-v3.0.0) - 2026-07-07
+
+### Added
+
+- Add stdout log trace exporter ([#2074](https://github.com/datadog/libdatadog/issues/2074)) - ([c2751ef](https://github.com/datadog/libdatadog/commit/c2751eff7036159127ec52c69130eebf7d9a5a97))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v1.0.0..libdd-capabilities-impl-v2.0.0) - 2026-05-15
 
 ### Added

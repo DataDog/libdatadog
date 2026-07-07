@@ -2847,7 +2847,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2857,7 +2857,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "bytes",
  "http",
@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "5.0.0"
+version = "5.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2986,7 +2986,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "criterion",
  "prost",
@@ -3068,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3099,7 +3099,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3264,7 +3264,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3295,7 +3295,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3307,7 +3307,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3332,7 +3332,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "5.0.1"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3389,7 +3389,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3401,7 +3401,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3418,7 +3418,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "3.0.2"
+version = "4.0.0"
 dependencies = [
  "bolero",
  "prost",
@@ -3432,7 +3432,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3461,7 +3461,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
