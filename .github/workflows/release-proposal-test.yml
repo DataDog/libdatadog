@@ -16,6 +16,14 @@ jobs:
     outputs:
       upload_artifact: ${{ steps.package-crates.outputs.upload_artifact }}
     steps:
+      - name: Exclude from Green CI
+        env:
+          DATADOG_SITE: datadoghq.com
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: |
+          npm install -g @datadog/datadog-ci
+          datadog-ci tag --level pipeline --tags green_ci.excluded:true
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           fetch-depth: 0

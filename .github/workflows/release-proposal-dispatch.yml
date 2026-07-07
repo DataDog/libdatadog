@@ -45,6 +45,14 @@ jobs:
       crates_branch: ${{ steps.normalize.outputs.crates_branch }}
       count: ${{ steps.normalize.outputs.count }}
     steps:
+      - name: Exclude from Green CI
+        env:
+          DATADOG_SITE: datadoghq.com
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: |
+          npm install -g @datadog/datadog-ci
+          datadog-ci tag --level pipeline --tags green_ci.excluded:true
+
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Normalize and validate crate list
         id: normalize
