@@ -316,10 +316,6 @@ fn emit_truncated_tail(
     emit_message(sink, &context.signal) && emit_done(sink)
 }
 
-fn put_marker_line(sink: &mut impl Sink, marker: &str) -> bool {
-    protocol::marker_line::<_, ()>(sink, marker).is_ok()
-}
-
 fn emit_done(sink: &mut impl Sink) -> bool {
-    put_marker_line(sink, protocol::DD_CRASHTRACK_DONE)
+    protocol::marker_line::<_, ()>(sink, protocol::DD_CRASHTRACK_DONE).is_ok()
 }

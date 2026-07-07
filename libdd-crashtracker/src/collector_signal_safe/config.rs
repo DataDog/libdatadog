@@ -35,6 +35,9 @@ pub const COMPAT_LIBRARY_NAME: &str = "dd-trace-c";
 pub const COMPAT_LIBRARY_FAMILY: &str = "native";
 pub const COMPAT_DEFAULT_SERVICE: &str = "dd-trace-c";
 
+/// Capacity for signal-safe filesystem path buffers (PATH_MAX + trailing NUL).
+pub const PATH_CAPACITY: usize = 513;
+
 pub const RECEIVER_TIMEOUT_SECS: u32 = DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS;
 pub const RECEIVER_TIMEOUT_SECS_MAX: u32 = 60;
 pub const COLLECTOR_REAP_MS: i32 = 500;
@@ -327,7 +330,7 @@ fn set_str_or<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8], default: 
     }
 }
 
-fn set_receiver_path(dst: &mut heapless::Vec<u8, 513>, path: &[u8]) -> bool {
+fn set_receiver_path(dst: &mut heapless::Vec<u8, PATH_CAPACITY>, path: &[u8]) -> bool {
     dst.clear();
     let selected = if path.is_empty() {
         DEFAULT_RECEIVER_PATH.as_bytes()
@@ -354,7 +357,7 @@ fn validate(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
     } else {
         config.receiver_path
     };
-    if receiver_path.len() >= 513 {
+    if receiver_path.len() >= PATH_CAPACITY {
         return Err(PrepareError::InvalidConfig);
     }
 
@@ -365,30 +368,16 @@ fn validate(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
     Ok(())
 }
 
-fn eq_ic(a: &[u8], lower: &[u8]) -> bool {
-    if a.len() != lower.len() {
-        return false;
-    }
-    let mut i = 0usize;
-    while i < a.len() {
-        if a[i].to_ascii_lowercase() != lower[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
 fn is_false(v: Option<&[u8]>) -> bool {
     match v {
-        Some(s) => s == b"0" || eq_ic(s, b"false") || eq_ic(s, b"f"),
+        Some(s) => s == b"0" || s.eq_ignore_ascii_case(b"false") || s.eq_ignore_ascii_case(b"f"),
         None => false,
     }
 }
 
 fn is_true(v: Option<&[u8]>) -> bool {
     match v {
-        Some(s) => s == b"1" || eq_ic(s, b"true") || eq_ic(s, b"t"),
+        Some(s) => s == b"1" || s.eq_ignore_ascii_case(b"true") || s.eq_ignore_ascii_case(b"t"),
         None => false,
     }
 }

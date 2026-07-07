@@ -289,17 +289,17 @@ fn sanitize_clone(mut keep_fd: i32, close_stdio_without_devnull: bool) -> i32 {
 
     let _ = reset_signals_to_default(&config::CRASH_SIGNALS);
 
-    if capabilities::has(capabilities::DEV_NULL) {
-        let devnull = sys::open_readwrite(c"/dev/null".as_ptr().cast());
-        if devnull >= 0 {
-            let _ = sys::dup2(devnull, libc::STDIN_FILENO);
-            let _ = sys::dup2(devnull, libc::STDOUT_FILENO);
-            let _ = sys::dup2(devnull, libc::STDERR_FILENO);
-            if devnull > libc::STDERR_FILENO {
-                sys::close(devnull);
-            }
-        } else if close_stdio_without_devnull {
-            close_stdio();
+    let devnull = if capabilities::has(capabilities::DEV_NULL) {
+        sys::open_readwrite(c"/dev/null".as_ptr().cast())
+    } else {
+        -1
+    };
+    if devnull >= 0 {
+        let _ = sys::dup2(devnull, libc::STDIN_FILENO);
+        let _ = sys::dup2(devnull, libc::STDOUT_FILENO);
+        let _ = sys::dup2(devnull, libc::STDERR_FILENO);
+        if devnull > libc::STDERR_FILENO {
+            sys::close(devnull);
         }
     } else if close_stdio_without_devnull {
         close_stdio();
@@ -497,8 +497,14 @@ fn exited_with(status: i32, code: i32) -> bool {
     libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == code
 }
 
-fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontext: *mut c_void) {
-    let pid = sys::getpid();
+fn collect_crash(
+    sig: i32,
+    si_code: i32,
+    has_info: bool,
+    si_addr: usize,
+    ucontext: *mut c_void,
+    pid: i32,
+) {
     let tid = sys::gettid();
     let report_fd = state::REPORT_FD.load(Ordering::Relaxed);
     let event = CrashEvent {
@@ -549,19 +555,17 @@ fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontex
     if receiver == 0 {
         receiver_child(read_fd, write_fd);
     }
-
-    let collector: isize;
-    if receiver > 0 {
-        collector = unsafe { sys::fork_raw() };
-        if collector == 0 {
-            collector_child(read_fd, write_fd, event);
-        }
-    } else {
+    if receiver < 0 {
         crash_debug(b"receiver fork failed", sig);
         sys::close(read_fd);
         sys::close(write_fd);
         direct_report(capabilities::DEGRADED_FORK_FAILED);
         return;
+    }
+
+    let collector = unsafe { sys::fork_raw() };
+    if collector == 0 {
+        collector_child(read_fd, write_fd, event);
     }
 
     sys::close(read_fd);
@@ -573,20 +577,19 @@ fn collect_crash(sig: i32, si_code: i32, has_info: bool, si_addr: usize, ucontex
             state::COLLECTOR_REAP_MS.load(Ordering::Relaxed) as i64,
             true,
         );
-    } else if receiver > 0 {
+    } else {
         crash_debug(b"collector fork failed", sig);
         direct_report(capabilities::DEGRADED_FORK_FAILED);
     }
-    if receiver > 0 {
-        let receiver_status = reap_or_kill(
-            receiver as i32,
-            state::RECEIVER_TIMEOUT_MS.load(Ordering::Relaxed) as i64,
-            true,
-        );
-        if receiver_status.is_some_and(|status| exited_with(status, EXIT_CODE_FAILURE)) {
-            crash_debug(b"receiver exec failed", sig);
-            direct_report(capabilities::DEGRADED_RECEIVER_UNAVAILABLE);
-        }
+
+    let receiver_status = reap_or_kill(
+        receiver as i32,
+        state::RECEIVER_TIMEOUT_MS.load(Ordering::Relaxed) as i64,
+        true,
+    );
+    if receiver_status.is_some_and(|status| exited_with(status, EXIT_CODE_FAILURE)) {
+        crash_debug(b"receiver exec failed", sig);
+        direct_report(capabilities::DEGRADED_RECEIVER_UNAVAILABLE);
     }
 }
 
@@ -655,7 +658,7 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
     };
     let genuine_fault = is_genuine_fault(has_info, si_code, si_pid, self_pid);
     if genuine_fault && !COLLECTING.swap(true, Ordering::Relaxed) {
-        collect_crash(sig, si_code, has_info, si_addr, ucontext);
+        collect_crash(sig, si_code, has_info, si_addr, ucontext, self_pid);
     }
 
     sys::set_errno(saved_errno);

@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering
 use heapless::{String as HeaplessString, Vec as HeaplessVec};
 use thiserror::Error;
 
-use super::config::CONFIG_JSON_BUF_SIZE;
+use super::config::{CONFIG_JSON_BUF_SIZE, PATH_CAPACITY};
 
 // Raw signal numbers index these arrays. 128 covers Linux and BSD/macOS signal ranges used here.
 pub const NSIG: usize = 128;
@@ -27,7 +27,7 @@ pub struct Meta {
     pub app_version: HeaplessString<256>,
     pub platform: HeaplessString<256>,
     pub runtime_id: HeaplessString<64>,
-    pub process_path: HeaplessVec<u8, 513>,
+    pub process_path: HeaplessVec<u8, PATH_CAPACITY>,
     pub library_name: HeaplessString<128>,
     pub library_version: HeaplessString<128>,
     pub family: HeaplessString<128>,
