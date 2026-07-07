@@ -328,6 +328,11 @@ impl TelemetryClient {
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
             .await;
     }
+
+    /// Clone the telemetry handle
+    pub fn clone_handle(&self) -> TelemetryWorkerHandle {
+        self.worker.clone()
+    }
 }
 
 #[cfg(test)]
