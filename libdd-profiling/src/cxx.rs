@@ -111,6 +111,17 @@ pub mod ffi {
         unit: &'a str,
     }
 
+    /// Profile-level sampling period expressed as a raw `(type, unit)` pair.
+    ///
+    /// This is not per-sample-type metadata. It describes the sampling
+    /// distance/cadence for the whole profile, while profile duration describes
+    /// the upload or reporting window. Use `create_with_value_types_no_period`
+    /// when the custom type has no meaningful sampling cadence.
+    ///
+    /// The raw period form exists for future/custom profile types whose
+    /// sampling trigger is not yet represented by `SampleType`, and for
+    /// compatibility with formats such as OpenTelemetry Profiles where each
+    /// profile has a single sample type and period.
     struct CustomPeriod<'a> {
         value_type: CustomValueType<'a>,
         value: i64,
@@ -182,6 +193,12 @@ pub mod ffi {
         /// Use this when the desired profile type is not yet in [`SampleType`].
         /// Strings are copied during profile construction.
         ///
+        /// The period is profile-level sampling metadata, not per-sample-type
+        /// metadata. It describes the sampling distance/cadence; profile
+        /// duration describes the upload or reporting window. Use
+        /// `create_with_value_types_no_period` when there is no meaningful
+        /// sampling cadence for the custom type.
+        ///
         /// # Stability note
         /// Once the type is stable, add it to [`SampleType`] and switch to
         /// [`Profile::create`].
@@ -192,6 +209,8 @@ pub mod ffi {
         ) -> Result<Box<Profile>>;
 
         /// Create a profile using raw `(type, unit)` string pairs and no period.
+        ///
+        /// Use this when the custom type has no meaningful sampling cadence.
         #[Self = "Profile"]
         fn create_with_value_types_no_period(
             sample_types: Vec<CustomValueType>,

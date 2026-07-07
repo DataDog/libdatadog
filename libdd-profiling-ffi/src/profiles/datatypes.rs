@@ -121,8 +121,19 @@ pub struct CustomValueType<'a> {
     pub unit: CharSlice<'a>,
 }
 
-/// Period expressed as a raw (type, unit) string pair for use with
-/// [`ddog_prof_Profile_new_custom`].
+/// Profile-level sampling period expressed as a raw (type, unit) string pair
+/// for use with [`ddog_prof_Profile_new_custom`].
+///
+/// This is not per-sample-type metadata. It describes the sampling
+/// distance/cadence for the whole profile (for example, every 10ms of CPU
+/// time), while profile duration describes the upload or reporting window.
+/// Pass `NULL` to [`ddog_prof_Profile_new_custom`] when the custom type has no
+/// meaningful sampling cadence.
+///
+/// The raw period form exists for future/custom profile types whose sampling
+/// trigger is not yet represented by [`SampleType`], and for compatibility with
+/// formats such as OpenTelemetry Profiles where each profile has a single
+/// sample type and period.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct CustomPeriod<'a> {
@@ -444,7 +455,9 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
 /// # Arguments
 /// * `sample_types` - Slice of [`CustomValueType`].  Every `type_str` and `unit` pointer must be
 ///   valid for the lifetime of the program (C string literals are the typical case).
-/// * `period` - Optional period.  Same lifetime requirement as `sample_types`.
+/// * `period` - Optional profile-level sampling period.  This is not per-sample-type metadata; pass
+///   `None`/`NULL` when the custom type has no meaningful sampling cadence.  Same lifetime
+///   requirement as `sample_types`.
 ///
 /// # Safety
 /// All slices must have pointers that are suitably aligned for their type and

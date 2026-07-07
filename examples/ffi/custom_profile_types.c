@@ -40,8 +40,12 @@ int main(void) {
       .len = sizeof(sample_types) / sizeof(sample_types[0]),
   };
 
-  // The profile period is optional.  Pass NULL when there is no meaningful
-  // sampling interval to report for the custom type.
+  // The profile period is optional and is profile-level sampling metadata, not
+  // per-sample-type metadata. It describes the sampling distance/cadence; the
+  // profile duration describes the upload/reporting window.
+  //
+  // memory-breakdown is a point-in-time byte measurement in this example, so
+  // there is no meaningful sampling cadence to report and we pass NULL.
 
   // -------------------------------------------------------------------------
   // 2. Create the profile.

@@ -467,6 +467,18 @@ impl Profile {
     /// they are added to [`SampleType`][api::SampleType].  The string slices
     /// must have `'static` lifetime (string literals are the typical case).
     ///
+    /// # Period
+    /// The `period` is profile-level sampling metadata, not per-sample-type
+    /// metadata. It describes the sampling distance/cadence (for example,
+    /// every 10ms of CPU time), while the profile duration describes the upload
+    /// or reporting window. Pass `None` when the custom type has no meaningful
+    /// sampling cadence.
+    ///
+    /// The raw period form exists for future/custom profile types whose
+    /// sampling trigger is not yet represented by [`SampleType`][api::SampleType],
+    /// and for compatibility with formats such as OpenTelemetry Profiles where
+    /// each profile has a single sample type and period.
+    ///
     /// # Stability note
     /// Once a custom type is stable and agreed upon across profiler teams,
     /// add a variant to [`SampleType`][api::SampleType] and migrate callers
