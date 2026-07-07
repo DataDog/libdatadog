@@ -95,8 +95,10 @@ fn read_heap_sampling_enabled() -> bool {
 
 #[cfg(not(unix))]
 fn read_heap_sampling_enabled() -> bool {
-    // Sampling only exists on Linux; elsewhere this is moot and defaults on.
-    true
+    // Sampling only exists on Linux; elsewhere there's no environment block to
+    // read, so this is moot. Route through the shared policy (None -> enabled)
+    // so parse_heap_sampling_enabled isn't dead code on non-unix targets.
+    parse_heap_sampling_enabled(None)
 }
 
 // Pure-logic tests for the env-var policy; no FFI, safe on every target
