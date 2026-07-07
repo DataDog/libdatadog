@@ -7,6 +7,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+// WIP: temporary no-op to trigger a scoped benchmark run (APMSP-3723 OOM/mis-report repro; revert before merge)
 pub mod agentless_encoder;
 pub mod config_utils;
 pub mod json_log_encoder;
