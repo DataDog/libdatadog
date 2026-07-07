@@ -26,8 +26,6 @@ data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
-# Enables the signal-safe in-process collection of crash-info
-crashtracker-collector-signal-safe = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector_signal-safe"]
 # Enables the use of this library to receiver crash-info from a suitable collector
 crashtracker-receiver = ["crashtracker-ffi", "libdd-crashtracker-ffi/receiver"]
 demangler = ["crashtracker-ffi", "libdd-crashtracker-ffi/demangler"]

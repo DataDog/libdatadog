@@ -26,8 +26,6 @@ cbindgen = ["build_common/cbindgen"]
 regex-lite = ["libdd-common-ffi/regex-lite"]
 # Enables the in-process collection of crash-info
 collector = ["std", "libdd-crashtracker/collector"]
-# Enables the signal-safe in-process collection of crash-info
-collector_signal-safe = ["libdd-crashtracker/collector_signal-safe"]
 collector_windows = ["std", "libdd-crashtracker/collector_windows"]
 demangler = ["std", "dep:symbolic-demangle", "dep:symbolic-common"]
 # Enables the use of this library to receiver crash-info from a suitable collector

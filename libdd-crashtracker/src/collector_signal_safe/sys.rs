@@ -1,9 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use core::ffi::{c_char, CStr};
-
-const CSTR_MAX_LEN: usize = 4096;
+use core::ffi::c_char;
 
 unsafe extern "C" {
     static mut environ: *mut *mut c_char;
@@ -501,54 +499,8 @@ fn wait_child_until(pid: i32, timeout_ms: i64, poll_ms: i32) -> ChildReap {
     }
 }
 
-pub fn env_get(name_nul: &[u8]) -> Option<&'static [u8]> {
-    if name_nul.is_empty() || name_nul[name_nul.len() - 1] != 0 {
-        return None;
-    }
-
-    let name = &name_nul[..name_nul.len() - 1];
-    let env = unsafe { environ };
-    if env.is_null() {
-        return None;
-    }
-
-    unsafe {
-        let mut cur = env;
-        while !(*cur).is_null() {
-            let entry = *cur;
-            if let Some(value) = env_entry_value(entry, name) {
-                return Some(cstr_bytes_bounded(value));
-            }
-            cur = cur.add(1);
-        }
-    }
-    None
-}
-
 pub fn environ_ptr() -> *mut *mut c_char {
     unsafe { environ }
-}
-
-/// Reads bytes from a NUL-terminated C string, capped at the signal-safe maximum length.
-///
-/// # Safety
-/// `p` must be null or point to readable memory containing a NUL byte within `CSTR_MAX_LEN`
-/// bytes. The returned slice borrows from `p` and must not outlive that memory.
-pub unsafe fn cstr_bytes_bounded<'a>(p: *const c_char) -> &'a [u8] {
-    if p.is_null() {
-        return &[];
-    }
-
-    let mut len = 0usize;
-    while len < CSTR_MAX_LEN && *p.add(len) != 0 {
-        len += 1;
-    }
-    if len == CSTR_MAX_LEN {
-        return core::slice::from_raw_parts(p.cast(), len);
-    }
-
-    let bytes = core::slice::from_raw_parts(p.cast(), len + 1);
-    CStr::from_bytes_with_nul_unchecked(bytes).to_bytes()
 }
 
 pub unsafe fn cstr_has_prefix(s: *const c_char, prefix: &[u8]) -> bool {
@@ -561,18 +513,6 @@ pub unsafe fn cstr_has_prefix(s: *const c_char, prefix: &[u8]) -> bool {
         i += 1;
     }
     true
-}
-
-unsafe fn env_entry_value(entry: *const c_char, name: &[u8]) -> Option<*const c_char> {
-    if !cstr_has_prefix(entry, name) {
-        return None;
-    }
-
-    if *entry.add(name.len()) as u8 == b'=' {
-        Some(entry.add(name.len() + 1))
-    } else {
-        None
-    }
 }
 
 pub fn errno() -> i32 {

@@ -12,12 +12,9 @@ use libdd_common_ffi::{
 };
 use libdd_profiling::exporter;
 use libdd_profiling::exporter::{ExporterManager, ProfileExporter};
-#[cfg(test)]
-use libdd_profiling::internal::EncodedProfile as InternalEncodedProfile;
+use libdd_profiling::internal::EncodedProfile;
 use std::borrow::Cow;
 use std::str::FromStr;
-
-use crate::profiles::EncodedProfile;
 
 type TokioCancellationToken = tokio_util::sync::CancellationToken;
 
@@ -283,7 +280,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_init_runtime(
 #[named]
 pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
     mut exporter: *mut Handle<ProfileExporter>,
-    profile: *mut EncodedProfile,
+    mut profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
     optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
     optional_process_tags: Option<&CharSlice>,
@@ -293,9 +290,7 @@ pub unsafe extern "C" fn ddog_prof_Exporter_send_blocking(
 ) -> Result<HttpStatus> {
     wrap_with_ffi_result!({
         let exporter = exporter.to_inner_mut()?;
-        let profile = *unsafe { profile.as_mut() }
-            .context("Null pointer")?
-            .take()?;
+        let profile = *profile.take()?;
         let files_to_compress_and_export = try_into_vec_files(files_to_compress_and_export)?;
         let tags = try_clone_optional_tags(optional_additional_tags)?;
         let process_tags_str = optional_process_tags
@@ -438,7 +433,7 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_new(
 #[named]
 pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
     mut manager: *mut Handle<ExporterManager>,
-    profile: *mut EncodedProfile,
+    mut profile: *mut Handle<EncodedProfile>,
     files_to_compress_and_export: Slice<File>,
     optional_additional_tags: Option<&libdd_common_ffi::Vec<Tag>>,
     optional_process_tags: Option<&CharSlice>,
@@ -447,9 +442,7 @@ pub unsafe extern "C" fn ddog_prof_ExporterManager_queue(
 ) -> VoidResult {
     wrap_with_void_ffi_result!({
         let manager = manager.to_inner_mut()?;
-        let profile = *unsafe { profile.as_mut() }
-            .context("Null pointer")?
-            .take()?;
+        let profile = *profile.take()?;
         let files_to_compress_and_export = try_into_vec_files(files_to_compress_and_export)?;
         let tags = try_clone_optional_tags(optional_additional_tags)?;
         let process_tags_str = optional_process_tags
@@ -613,7 +606,7 @@ mod tests {
         }
         .unwrap();
 
-        let profile = &mut InternalEncodedProfile::test_instance().unwrap().into();
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
 
         // This should fail with a connection error since there's no server,
         // but it validates that the function works end-to-end
@@ -682,7 +675,7 @@ mod tests {
         let mut manager = unsafe { ddog_prof_ExporterManager_new(&mut exporter) }.unwrap();
 
         // Queue a profile
-        let profile = &mut InternalEncodedProfile::test_instance().unwrap().into();
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
         // Should succeed
         unsafe {
             ddog_prof_ExporterManager_queue(
@@ -747,7 +740,7 @@ mod tests {
         }
         .unwrap();
 
-        let profile = &mut InternalEncodedProfile::test_instance().unwrap().into();
+        let profile = &mut EncodedProfile::test_instance().unwrap().into();
 
         let raw_internal_metadata = CharSlice::from(r#"{"test": "value"}"#);
         let raw_info = CharSlice::from(r#"{"runtime": {"engine": "test"}}"#);

@@ -76,9 +76,6 @@ if(NOT WIN32)
 
   add_executable(crashtracking_unhandled_exception crashtracking_unhandled_exception.c)
   target_link_libraries(crashtracking_unhandled_exception PRIVATE Datadog::Profiling)
-
-  add_executable(signal_safe_crashtracking signal_safe_crashtracking.c)
-  target_link_libraries(signal_safe_crashtracking PRIVATE Datadog::Profiling)
 endif()
 
 add_executable(trace_exporter trace_exporter.c)

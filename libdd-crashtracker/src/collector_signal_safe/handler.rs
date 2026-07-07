@@ -122,7 +122,6 @@ static COLLECTING: AtomicBool = AtomicBool::new(false);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InitResult {
     Enabled = 0,
-    DisabledByConfig = 1,
     Failed = 2,
     AlreadyInitialized = 3,
     OwnerConflict = 4,
@@ -131,13 +130,6 @@ pub enum InitResult {
 
 pub fn init_result(config: &SignalSafeInitConfig<'_>) -> InitResult {
     init_with_prepare(|| config::prepare_result(config))
-}
-
-pub fn init_from_env_result() -> InitResult {
-    if config::disabled_by_env() {
-        return InitResult::DisabledByConfig;
-    }
-    init_with_prepare(config::prepare_from_env_result)
 }
 
 fn init_with_prepare(prepare: impl FnOnce() -> Result<(), PrepareError>) -> InitResult {
@@ -504,8 +496,8 @@ fn collect_crash(
     si_addr: usize,
     ucontext: *mut c_void,
     pid: i32,
+    tid: i32,
 ) {
-    let tid = sys::gettid();
     let report_fd = state::REPORT_FD.load(Ordering::Relaxed);
     let event = CrashEvent {
         sig,
@@ -616,6 +608,11 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
         0
     };
 
+    // Identity of the crashing thread, resolved once and reused by the app-handler chain guard
+    // and the crash collection below.
+    let self_pid = sys::getpid();
+    let tid = sys::gettid();
+
     let force_on_top = state::FORCE_ON_TOP.load(Ordering::Relaxed);
     if let Some(i) = idx {
         let target = effective_target(i);
@@ -623,7 +620,6 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
         if should_run_app_first(force_on_top, app_is_real) {
             let stack_marker = 0u8;
             let stack_pos = (&stack_marker as *const u8) as usize;
-            let tid = sys::gettid();
             if enter_app_chain(tid, stack_pos) {
                 sys::set_errno(saved_errno);
                 // If the application handler recovers with siglongjmp, no code after this call
@@ -650,7 +646,6 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
         }
     }
 
-    let self_pid = sys::getpid();
     let si_pid = if has_info {
         unsafe { siginfo_pid(info) }
     } else {
@@ -658,7 +653,7 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
     };
     let genuine_fault = is_genuine_fault(has_info, si_code, si_pid, self_pid);
     if genuine_fault && !COLLECTING.swap(true, Ordering::Relaxed) {
-        collect_crash(sig, si_code, has_info, si_addr, ucontext, self_pid);
+        collect_crash(sig, si_code, has_info, si_addr, ucontext, self_pid, tid);
     }
 
     sys::set_errno(saved_errno);

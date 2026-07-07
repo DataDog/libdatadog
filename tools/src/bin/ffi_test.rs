@@ -139,24 +139,14 @@ struct ExpectedCrash {
 fn expected_crashes() -> &'static HashMap<&'static str, ExpectedCrash> {
     static MAP: OnceLock<HashMap<&'static str, ExpectedCrash>> = OnceLock::new();
     MAP.get_or_init(|| {
-        HashMap::from([
-            (
-                "crashtracking",
-                ExpectedCrash {
-                    #[cfg(unix)]
-                    signal: 11, // SIGSEGV
-                    output_file: "crashreport.json",
-                },
-            ),
-            (
-                "signal_safe_crashtracking",
-                ExpectedCrash {
-                    #[cfg(unix)]
-                    signal: 6, // SIGABRT
-                    output_file: "signal_safe_crashreport.txt",
-                },
-            ),
-        ])
+        HashMap::from([(
+            "crashtracking",
+            ExpectedCrash {
+                #[cfg(unix)]
+                signal: 11, // SIGSEGV
+                output_file: "crashreport.json",
+            },
+        )])
     })
 }
 
@@ -228,7 +218,7 @@ fn base_env_vars(_project_root: &Path) -> Vec<(String, String)> {
 /// receiver binary) can find them without hard-coding paths.
 fn per_test_env(name: &str, project_root: &Path, work_dir: &Path) -> Vec<(String, String)> {
     match name {
-        "crashtracking" | "signal_safe_crashtracking" => {
+        "crashtracking" => {
             let (receiver, lib_dir) = find_receiver_paths(project_root);
             let (search_var, search_val) = library_search_path_env(&lib_dir);
             vec![

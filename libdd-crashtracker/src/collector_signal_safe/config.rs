@@ -8,32 +8,20 @@ use serde::Serialize;
 use thiserror::Error;
 
 use super::state::meta_mut;
-use super::{capabilities, state, sys};
+use super::{capabilities, state};
 use crate::shared::{
     defaults::DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS, signals::SIGNAL_SAFE_CRASH_SIGNALS,
     stacktrace_collection::StacktraceCollection,
 };
 
-// Compatibility preset for the existing C-tracer consumer. New integrators should pass
-// explicit metadata through SignalSafeInitConfig instead of relying on these defaults.
-pub const COMPAT_LIBRARY_VERSION: &str = match option_env!("DD_TRACE_C_VERSION") {
-    Some(v) => v,
-    None => "dev",
-};
-
-// Prefer the neutral build-time receiver path name. The DD_TRACE_C_* name remains as a
-// lower-priority compatibility alias for existing C-tracer package builds.
-const DEFAULT_RECEIVER_PATH: &str = match option_env!("DD_CRASHTRACKING_RECEIVER_PATH") {
-    Some(p) => p,
-    None => match option_env!("DD_TRACE_C_CRASHTRACKER_PROCESS_PATH") {
-        Some(p) => p,
-        None => "/opt/datadog-packages/datadog-apm-library-c/stable/process-crash-receiver",
-    },
-};
-
-pub const COMPAT_LIBRARY_NAME: &str = "dd-trace-c";
-pub const COMPAT_LIBRARY_FAMILY: &str = "native";
-pub const COMPAT_DEFAULT_SERVICE: &str = "dd-trace-c";
+// Default metadata used only when the caller leaves a `SignalSafeInitConfig` field empty. The
+// library reads no environment (neither at build time nor at runtime): a consumer populates the
+// config struct with its own identity. These neutral placeholders keep any single consumer's
+// name out of the shared crate.
+pub const DEFAULT_LIBRARY_NAME: &str = "unknown-library";
+pub const DEFAULT_LIBRARY_VERSION: &str = "unknown";
+pub const DEFAULT_LIBRARY_FAMILY: &str = "native";
+pub const DEFAULT_SERVICE: &str = "unknown-service";
 
 /// Capacity for signal-safe filesystem path buffers (PATH_MAX + trailing NUL).
 pub const PATH_CAPACITY: usize = 513;
@@ -51,7 +39,8 @@ pub const CONFIG_JSON_BUF_SIZE: usize = 2048;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SignalSafeInitConfig<'a> {
-    /// Receiver executable path. Empty uses the compatibility default.
+    /// Receiver executable path. When empty, no receiver is spawned and collection degrades to
+    /// the `report_fd` fallback.
     pub receiver_path: &'a [u8],
     pub service: &'a [u8],
     pub env: &'a [u8],
@@ -105,10 +94,10 @@ impl<'a> Default for SignalSafeInitConfig<'a> {
             app_version: &[],
             runtime_id: &[],
             platform: &[],
-            library_name: COMPAT_LIBRARY_NAME.as_bytes(),
-            library_version: COMPAT_LIBRARY_VERSION.as_bytes(),
-            family: COMPAT_LIBRARY_FAMILY.as_bytes(),
-            default_service: COMPAT_DEFAULT_SERVICE.as_bytes(),
+            library_name: DEFAULT_LIBRARY_NAME.as_bytes(),
+            library_version: DEFAULT_LIBRARY_VERSION.as_bytes(),
+            family: DEFAULT_LIBRARY_FAMILY.as_bytes(),
+            default_service: DEFAULT_SERVICE.as_bytes(),
             force_on_top: false,
             only_bootstrap: false,
             debug_logging: false,
@@ -195,22 +184,22 @@ pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareEr
     metadata_truncated |= !set_str_or(
         &mut m.library_name,
         config.library_name,
-        COMPAT_LIBRARY_NAME.as_bytes(),
+        DEFAULT_LIBRARY_NAME.as_bytes(),
     );
     metadata_truncated |= !set_str_or(
         &mut m.library_version,
         config.library_version,
-        COMPAT_LIBRARY_VERSION.as_bytes(),
+        DEFAULT_LIBRARY_VERSION.as_bytes(),
     );
     metadata_truncated |= !set_str_or(
         &mut m.family,
         config.family,
-        COMPAT_LIBRARY_FAMILY.as_bytes(),
+        DEFAULT_LIBRARY_FAMILY.as_bytes(),
     );
     metadata_truncated |= !set_str_or(
         &mut m.default_service,
         config.default_service,
-        COMPAT_DEFAULT_SERVICE.as_bytes(),
+        DEFAULT_SERVICE.as_bytes(),
     );
 
     if !set_receiver_path(&mut m.process_path, config.receiver_path) {
@@ -245,41 +234,6 @@ pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareEr
         capabilities::note_degraded(capabilities::DEGRADED_METADATA_TRUNCATED);
     }
     Ok(())
-}
-
-pub fn prepare_from_env_result() -> Result<(), PrepareError> {
-    if disabled_by_env() {
-        return Err(PrepareError::InvalidConfig);
-    }
-
-    // Prefer the neutral runtime receiver path name. DD_TRACE_C_CRASHTRACKER_PROCESS is
-    // retained as a lower-priority compatibility alias for existing deployments.
-    let receiver_path = env_get(b"DD_CRASHTRACKING_RECEIVER_PATH\0")
-        .or_else(|| env_get(b"DD_TRACE_C_CRASHTRACKER_PROCESS\0"))
-        .filter(|v| !v.is_empty())
-        .unwrap_or(DEFAULT_RECEIVER_PATH.as_bytes());
-    let platform = env_get(b"DD_INJECT_SENDER_TYPE\0")
-        .filter(|v| !v.is_empty())
-        .unwrap_or(b"host");
-    let debug_logging = parse_log_level(env_get(b"DD_TRACE_LOG_LEVEL\0")) >= DD_LOG_DEBUG;
-
-    prepare_result(&SignalSafeInitConfig {
-        receiver_path,
-        service: env_get(b"DD_SERVICE\0").unwrap_or(&[]),
-        env: env_get(b"DD_ENV\0").unwrap_or(&[]),
-        app_version: env_get(b"DD_VERSION\0").unwrap_or(&[]),
-        runtime_id: env_get(b"DD_RUNTIME_ID\0").unwrap_or(&[]),
-        platform,
-        force_on_top: is_true(env_get(b"DD_CRASHTRACKING_ALWAYS_ON_TOP\0")),
-        only_bootstrap: is_true(env_get(b"DD_CRASHTRACKING_ONLY_BOOTSTRAP\0")),
-        debug_logging,
-        probe_seccomp: is_true(env_get(b"DD_CRASHTRACKING_PROBE_SECCOMP\0")),
-        ..SignalSafeInitConfig::default()
-    })
-}
-
-pub fn disabled_by_env() -> bool {
-    is_false(env_get(b"DD_CRASHTRACKING_ENABLED\0"))
 }
 
 fn normalized_receiver_timeout_secs(value: u32) -> u32 {
@@ -332,19 +286,10 @@ fn set_str_or<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8], default: 
 
 fn set_receiver_path(dst: &mut heapless::Vec<u8, PATH_CAPACITY>, path: &[u8]) -> bool {
     dst.clear();
-    let selected = if path.is_empty() {
-        DEFAULT_RECEIVER_PATH.as_bytes()
-    } else {
-        path
-    };
-    if selected.len() >= dst.capacity() {
+    if path.len() >= dst.capacity() {
         return false;
     }
-    dst.extend_from_slice(selected).is_ok() && dst.push(0).is_ok()
-}
-
-fn env_get(name_nul: &[u8]) -> Option<&'static [u8]> {
-    sys::env_get(name_nul)
+    dst.extend_from_slice(path).is_ok() && dst.push(0).is_ok()
 }
 
 fn validate(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
@@ -352,59 +297,14 @@ fn validate(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
         return Err(PrepareError::InvalidConfig);
     }
 
-    let receiver_path = if config.receiver_path.is_empty() {
-        DEFAULT_RECEIVER_PATH.as_bytes()
-    } else {
-        config.receiver_path
-    };
-    if receiver_path.len() >= PATH_CAPACITY {
+    if config.receiver_path.len() >= PATH_CAPACITY {
         return Err(PrepareError::InvalidConfig);
     }
 
-    if config.report_fd >= 0 && !sys::fd_valid(config.report_fd) {
-        return Err(PrepareError::InvalidConfig);
-    }
-
+    // `report_fd` validity is probed by `capabilities::publish`, which records its absence as a
+    // degradation rather than failing init: the fd is only the degraded-mode fallback, so a bad
+    // one must not take down the primary fork/receiver path.
     Ok(())
-}
-
-fn is_false(v: Option<&[u8]>) -> bool {
-    match v {
-        Some(s) => s == b"0" || s.eq_ignore_ascii_case(b"false") || s.eq_ignore_ascii_case(b"f"),
-        None => false,
-    }
-}
-
-fn is_true(v: Option<&[u8]>) -> bool {
-    match v {
-        Some(s) => s == b"1" || s.eq_ignore_ascii_case(b"true") || s.eq_ignore_ascii_case(b"t"),
-        None => false,
-    }
-}
-
-const DD_LOG_INFO: i32 = 3;
-const DD_LOG_DEBUG: i32 = 4;
-
-fn parse_log_level(v: Option<&[u8]>) -> i32 {
-    match v {
-        None => DD_LOG_INFO,
-        Some(s) => {
-            const LEVELS: [(&[u8], i32); 6] = [
-                (b"off", 0),
-                (b"error", 1),
-                (b"warn", 2),
-                (b"info", 3),
-                (b"debug", 4),
-                (b"trace", 5),
-            ];
-            for (name, level) in LEVELS {
-                if s == name {
-                    return level;
-                }
-            }
-            DD_LOG_INFO
-        }
-    }
 }
 
 #[cfg(test)]
@@ -463,31 +363,6 @@ mod tests {
             }),
             Err(PrepareError::InvalidConfig)
         );
-    }
-
-    #[test]
-    fn env_get_walks_environ_without_getenv() {
-        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
-            .lock()
-            .expect("test lock poisoned");
-
-        std::env::set_var("DD_SIGNAL_SAFE_ENV_GET_TEST", "walked");
-        assert_eq!(
-            env_get(b"DD_SIGNAL_SAFE_ENV_GET_TEST\0"),
-            Some(&b"walked"[..])
-        );
-        std::env::remove_var("DD_SIGNAL_SAFE_ENV_GET_TEST");
-    }
-
-    #[test]
-    fn bool_and_log_parsing_matches_compatibility_inputs() {
-        assert!(is_false(Some(b"FALSE")));
-        assert!(is_false(Some(b"0")));
-        assert!(!is_false(Some(b"true")));
-        assert!(is_true(Some(b"TrUe")));
-        assert!(is_true(Some(b"1")));
-        assert_eq!(parse_log_level(Some(b"debug")), DD_LOG_DEBUG);
-        assert_eq!(parse_log_level(Some(b"DEBUG")), DD_LOG_INFO);
     }
 
     #[test]

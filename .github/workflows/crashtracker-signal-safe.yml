@@ -36,8 +36,6 @@ jobs:
           tool: nextest@0.9.96
       - name: Check signal-safe collector
         run: cargo check -p libdd-crashtracker --no-default-features --features collector_signal-safe
-      - name: Check signal-safe FFI
-        run: cargo check -p libdd-crashtracker-ffi --no-default-features --features collector_signal-safe
       - name: Check aarch64 signal-safe collector
         run: cargo check -p libdd-crashtracker --target aarch64-unknown-linux-gnu --no-default-features --features collector_signal-safe
       - name: Clippy signal-safe collector

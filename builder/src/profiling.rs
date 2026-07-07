@@ -132,9 +132,7 @@ impl Module for Profiling {
     fn build(&self) -> Result<()> {
         let features = self.features.to_string() + "," + "cbindgen";
         #[cfg(feature = "crashtracker")]
-        let features = features.add(
-            ",crashtracker-collector,crashtracker-collector-signal-safe,crashtracker-receiver,demangler",
-        );
+        let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
 
         // Using rustc instead of build in order to overcome issues with LTO optimization.
         let mut cargo_args = vec![

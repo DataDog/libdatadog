@@ -9,8 +9,6 @@
 
 #[cfg(all(unix, feature = "collector"))]
 mod collector;
-#[cfg(all(unix, feature = "collector_signal-safe"))]
-mod collector_signal_safe;
 #[cfg(all(windows, feature = "collector_windows"))]
 mod collector_windows;
 #[cfg(feature = "std")]
@@ -23,8 +21,6 @@ mod receiver;
 mod runtime_callback;
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::*;
-#[cfg(all(unix, feature = "collector_signal-safe"))]
-pub use collector_signal_safe::*;
 #[cfg(all(windows, feature = "collector_windows"))]
 pub use collector_windows::api::ddog_crasht_init_windows;
 #[cfg(feature = "std")]

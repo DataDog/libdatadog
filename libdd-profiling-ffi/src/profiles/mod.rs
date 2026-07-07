@@ -6,8 +6,6 @@ mod interning_api;
 mod profiles_dictionary;
 mod utf8;
 
-pub(crate) use datatypes::EncodedProfile;
-
 #[macro_export]
 macro_rules! ensure_non_null_out_parameter {
     ($expr:expr) => {

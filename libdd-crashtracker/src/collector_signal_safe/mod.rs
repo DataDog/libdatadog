@@ -3,9 +3,8 @@
 
 //! Signal-safe Unix crash collection.
 //!
-//! `init` takes explicit caller-provided configuration and does not read environment variables.
-//! `init_from_env` is the preload/bootstrap compatibility entry point and is the only path that
-//! reads `DD_CRASHTRACKING_*`, `DD_SERVICE`, `DD_ENV`, `DD_VERSION`, and `DD_RUNTIME_ID`.
+//! `init` takes explicit caller-provided configuration. The collector reads no environment
+//! variables of its own; the consumer populates [`SignalSafeInitConfig`] with the values it wants.
 //!
 //! Support matrix:
 //!
@@ -45,12 +44,10 @@ pub(crate) use emitter::SliceSink;
 pub(crate) use emitter::{emit_report, Sink};
 #[cfg(test)]
 pub(crate) use fmt::hex_addr;
-pub use handler::{bootstrap_complete, init_from_env_result, init_result, shutdown, InitResult};
+pub use handler::{bootstrap_complete, init_result, shutdown, InitResult};
 pub(crate) use report::{CrashContext, Report, SignalInfo, SECTION_BUF_CAPACITY};
 #[cfg(test)]
 pub(crate) use signal_names::*;
-#[doc(hidden)]
-pub use sys::cstr_bytes_bounded;
 
 pub fn capability_bits() -> u32 {
     capabilities::get().bits()
@@ -100,8 +97,8 @@ mod tests {
             config_json: "{\"resolve_frames\":\"Disabled\"}",
             library_name: &oversized_library_name,
             library_version: "golden-1.0",
-            family: config::COMPAT_LIBRARY_FAMILY,
-            default_service: config::COMPAT_DEFAULT_SERVICE,
+            family: config::DEFAULT_LIBRARY_FAMILY,
+            default_service: config::DEFAULT_SERVICE,
             service: "",
             env: "prod",
             app_version: "v1",
@@ -134,10 +131,10 @@ mod tests {
         };
         let report = Report {
             config_json: "{\"resolve_frames\":\"Disabled\"}",
-            library_name: config::COMPAT_LIBRARY_NAME,
+            library_name: config::DEFAULT_LIBRARY_NAME,
             library_version: "golden-1.0",
-            family: config::COMPAT_LIBRARY_FAMILY,
-            default_service: config::COMPAT_DEFAULT_SERVICE,
+            family: config::DEFAULT_LIBRARY_FAMILY,
+            default_service: config::DEFAULT_SERVICE,
             service: "",
             env: "prod",
             app_version: "v1",
@@ -189,7 +186,7 @@ mod tests {
         let kind: serde_json::Value = serde_json::from_str(kind.trim()).unwrap();
         let procinfo: serde_json::Value = serde_json::from_str(procinfo.trim()).unwrap();
 
-        assert_eq!(metadata["library_name"], config::COMPAT_LIBRARY_NAME);
+        assert_eq!(metadata["library_name"], config::DEFAULT_LIBRARY_NAME);
         assert_eq!(metadata["library_version"], "golden-1.0");
         assert_eq!(metadata["tags"][0], "language:native");
         assert_eq!(
@@ -197,7 +194,7 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .strip_prefix("service:"),
-            Some(config::COMPAT_DEFAULT_SERVICE)
+            Some(config::DEFAULT_SERVICE)
         );
         assert_eq!(metadata["tags"][5], "env:prod");
         assert_eq!(metadata["tags"][6], "version:v1");

@@ -9,8 +9,6 @@ use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use libdd_crashtracker::collector_signal_safe::init_from_env_result;
 use libdd_crashtracker::collector_signal_safe::{
     bootstrap_complete, init_result, owned_signal_count, owns_signal, InitResult,
     SignalSafeInitConfig,
@@ -22,8 +20,19 @@ fn signal_safe_receiver_child_process() {
     if std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER_CHILD").is_none() {
         return;
     }
+    let receiver = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER").expect("receiver");
 
-    assert_eq!(init_from_env_result(), InitResult::Enabled);
+    assert_eq!(
+        init_result(&SignalSafeInitConfig {
+            receiver_path: receiver.as_encoded_bytes(),
+            service: b"signal-safe-e2e",
+            env: b"test",
+            app_version: b"1",
+            runtime_id: b"00000000-0000-0000-0000-000000000001",
+            ..SignalSafeInitConfig::default()
+        }),
+        InitResult::Enabled
+    );
     bootstrap_complete();
 
     std::process::abort();
@@ -116,11 +125,7 @@ fn signal_safe_crash_writes_report_through_receiver() {
         .arg("--nocapture")
         .env("DD_SIGNAL_SAFE_E2E_RECEIVER_CHILD", "1")
         .env("DD_SIGNAL_SAFE_E2E_REPORT", &report)
-        .env("DD_TRACE_C_CRASHTRACKER_PROCESS", &receiver)
-        .env("DD_SERVICE", "signal-safe-e2e")
-        .env("DD_ENV", "test")
-        .env("DD_VERSION", "1")
-        .env("DD_RUNTIME_ID", "00000000-0000-0000-0000-000000000001")
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER", &receiver)
         .status()
         .expect("spawn child");
 
