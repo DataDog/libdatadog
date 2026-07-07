@@ -33,7 +33,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 tokio-util = "0.7.11"
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
 libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
-libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime", default-features = false }
+libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-telemetry = { version = "5.0.1", path = "../libdd-telemetry", default-features = false, optional = true}
 libdd-trace-protobuf = { version = "4.0.0", path = "../libdd-trace-protobuf" }
 libdd-trace-normalization = { version = "2.1.0", path = "../libdd-trace-normalization" }
@@ -66,7 +66,7 @@ path = "benches/trace_buffer.rs"
 [dev-dependencies]
 libdd-capabilities-impl = { version = "2.1.0", path = "../libdd-capabilities-impl" }
 libdd-log = { path = "../libdd-log" }
-libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime" }
+libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime" }
 regex = "1.5"
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5.1"
