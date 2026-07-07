@@ -1,6 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Same-process reader for the OTEL process context mapping.
+//!
+//! The reader copies payload bytes with `write(2)` into a pipe before decoding. That syscall
+//! turns accesses to reclaimed payload memory that has been unmapped into a syscall error or short
+//! write instead of a segfault, but its ordering relative to the publisher has to be reasoned about
+//! at the OS/architecture level rather than only in Rust.
+
 use std::{
     cell::Cell,
     fs::File,
@@ -13,7 +20,9 @@ use std::{
 #[cfg(debug_assertions)]
 use std::sync::atomic::AtomicUsize;
 
-use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
+use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
+    any_value, AnyValue, KeyValue, ProcessContext,
+};
 use prost::Message;
 
 use super::{MappingHeader, PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
@@ -129,6 +138,42 @@ impl ProcessContextSelfReader {
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
 
         Ok(context)
+    }
+
+    /// Returns the thread-local attribute key map from a decoded process context.
+    pub fn threadlocal_attribute_key_map(context: &ProcessContext) -> Option<Vec<String>> {
+        let key = "threadlocal.attribute_key_map";
+
+        context
+            .resource
+            .as_ref()
+            .and_then(|resource| Self::find_attr(&resource.attributes, key))
+            .or_else(|| Self::find_attr(&context.extra_attributes, key))
+            .and_then(Self::string_array)
+    }
+
+    fn string_array(value: &AnyValue) -> Option<Vec<String>> {
+        let any_value::Value::ArrayValue(array) = value.value.as_ref()? else {
+            return None;
+        };
+
+        array
+            .values
+            .iter()
+            .map(|value| match value.value.as_ref()? {
+                any_value::Value::StringValue(value) => Some(value.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // The process context only carries a small resource/extra attribute set, so a linear scan
+    // keeps this helper allocation-free and simpler than building a temporary index.
+    fn find_attr<'a>(attrs: &'a [KeyValue], key: &str) -> Option<&'a AnyValue> {
+        attrs
+            .iter()
+            .find(|attr| attr.key == key)
+            .and_then(|attr| attr.value.as_ref())
     }
 
     fn header_ptr_from_addr(mapping_addr: usize) -> io::Result<NonNull<MappingHeader>> {

@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implementation of the publisher and same-process reader parts of the [OTEL process
+//! Implementation of the Linux parts of the [OTEL process
 //! context specification](https://github.com/open-telemetry/opentelemetry-specification/pull/4719).
 //!
 //! The update/read protocol is seqlock-style: the publisher marks the mapping as unavailable,
@@ -17,13 +17,6 @@
 //! reader-visible version. Updates force that timestamp to advance so readers can detect torn
 //! reads even when the clock returns the same value twice. Concurrent writers are rejected, and
 //! retry policy is left to the reader's caller.
-//!
-//! Process context sharing also crosses Rust's memory model boundary. In-process header fields
-//! that can change during publication are atomics, while payload bytes are copied with
-//! `write(2)` into a pipe before decoding; that syscall turns accesses to reclaimed payload memory
-//! that has been unmapped into a syscall error or short write instead of a segfault, but its
-//! ordering relative to the publisher has to be reasoned about at the OS/architecture level rather
-//! than only in Rust.
 
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]
@@ -41,9 +34,7 @@ pub mod linux {
         time::Duration,
     };
 
-    use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
-        any_value, AnyValue, KeyValue, ProcessContext,
-    };
+    use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
     use prost::Message;
 
     mod self_reader;
@@ -434,42 +425,6 @@ pub mod linux {
         })
     }
 
-    fn string_array(value: &AnyValue) -> Option<Vec<String>> {
-        let any_value::Value::ArrayValue(array) = value.value.as_ref()? else {
-            return None;
-        };
-
-        array
-            .values
-            .iter()
-            .map(|value| match value.value.as_ref()? {
-                any_value::Value::StringValue(value) => Some(value.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    // The process context only carries a small resource/extra attribute set, so a linear scan
-    // keeps this helper allocation-free and simpler than building a temporary index.
-    fn find_attr<'a>(attrs: &'a [KeyValue], key: &str) -> Option<&'a AnyValue> {
-        attrs
-            .iter()
-            .find(|attr| attr.key == key)
-            .and_then(|attr| attr.value.as_ref())
-    }
-
-    /// Returns the thread-local attribute key map from a decoded process context.
-    pub fn threadlocal_attribute_key_map(context: &ProcessContext) -> Option<Vec<String>> {
-        let key = "threadlocal.attribute_key_map";
-
-        context
-            .resource
-            .as_ref()
-            .and_then(|resource| find_attr(&resource.attributes, key))
-            .or_else(|| find_attr(&context.extra_attributes, key))
-            .and_then(string_array)
-    }
-
     /// Publishes or updates the process context for it to be visible by external readers.
     ///
     /// If any of the following condition holds:
@@ -578,7 +533,10 @@ pub mod linux {
         use std::io;
         use std::sync::atomic::Ordering;
 
-        use super::{any_value, AnyValue, KeyValue, MappingHeader, ProcessContext};
+        use super::{MappingHeader, ProcessContext};
+        use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
+            any_value, AnyValue, KeyValue,
+        };
 
         struct MappingHeaderSnapshot {
             signature: [u8; 8],
