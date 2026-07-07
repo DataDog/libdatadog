@@ -8,6 +8,9 @@ use crate::fetch::{
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
 use std::sync::Arc;
+use std::time::Duration;
+
+const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Simple implementation
 pub struct SingleFetcher<S: FileStorage> {
@@ -16,7 +19,7 @@ pub struct SingleFetcher<S: FileStorage> {
     product_capabilities: ConfigProductCapabilities,
     runtime_id: String,
     client_id: String,
-    opaque_state: ConfigClientState,
+    client_state: ConfigClientState,
 }
 
 #[derive(Clone, Debug)]
@@ -27,12 +30,18 @@ pub struct ConfigOptions {
 }
 
 impl<S: FileStorage> SingleFetcher<S> {
-    pub fn new(sink: S, target: Target, runtime_id: String, options: ConfigOptions) -> Self {
-        SingleFetcher {
+    pub async fn new(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+    ) -> anyhow::Result<Self> {
+        Ok(SingleFetcher {
             fetcher: ConfigFetcher::new(
                 sink,
                 Arc::new(ConfigFetcherState::new(options.invariants)),
-            ),
+            )
+            .await?,
             target: Arc::new(target),
             product_capabilities: ConfigProductCapabilities::new(
                 options.products,
@@ -40,8 +49,30 @@ impl<S: FileStorage> SingleFetcher<S> {
             ),
             runtime_id,
             client_id: uuid::Uuid::new_v4().to_string(),
-            opaque_state: ConfigClientState::default(),
-        }
+            client_state: ConfigClientState::default(),
+        })
+    }
+
+    pub fn new_no_agentless(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+    ) -> anyhow::Result<Self> {
+        Ok(SingleFetcher {
+            fetcher: futures::executor::block_on(ConfigFetcher::new(
+                sink,
+                Arc::new(ConfigFetcherState::new(options.invariants)),
+            ))?,
+            target: Arc::new(target),
+            product_capabilities: ConfigProductCapabilities::new(
+                options.products,
+                options.capabilities,
+            ),
+            runtime_id,
+            client_id: uuid::Uuid::new_v4().to_string(),
+            client_state: ConfigClientState::default(),
+        })
     }
 
     pub fn with_client_id(mut self, client_id: String) -> Self {
@@ -57,13 +88,22 @@ impl<S: FileStorage> SingleFetcher<S> {
                 &self.target,
                 &self.product_capabilities,
                 self.client_id.as_str(),
-                &mut self.opaque_state,
+                &mut self.client_state,
             )
             .await
     }
 
-    pub fn get_client_id(&self) -> &String {
+    pub fn get_client_id(&self) -> &str {
         &self.client_id
+    }
+
+    /// Returns the server-recommended interval before the next poll.
+    /// In agentless mode this is updated after every successful fetch.
+    /// In agent mode it returns the default of 5 seconds.
+    pub fn get_refresh_interval(&self) -> Duration {
+        self.client_state
+            .server_recommended_refresh_interval()
+            .unwrap_or(DEFAULT_REFRESH_INTERVAL)
     }
 
     /// Accesses the underlying file storage (the [`ConfigFetcher`]'s `file_storage`).
@@ -80,7 +120,7 @@ impl<S: FileStorage> SingleFetcher<S> {
     /// Sent to the agent on each subsequent poll so it can route configs targeting those
     /// services to this client. Replace-semantics: the new vec fully overrides the previous one.
     pub fn set_extra_services(&mut self, services: Vec<String>) {
-        self.opaque_state.set_extra_services(services);
+        self.client_state.set_extra_services(services);
     }
 
     /// Replace the set of subscribed products and capabilities.
@@ -108,11 +148,28 @@ impl<S: FileStorage> SingleChangesFetcher<S>
 where
     S::StoredFile: FilePath,
 {
-    pub fn new(sink: S, target: Target, runtime_id: String, options: ConfigOptions) -> Self {
-        SingleChangesFetcher {
+    pub async fn new(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+    ) -> anyhow::Result<Self> {
+        Ok(SingleChangesFetcher {
             changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new(sink, target, runtime_id, options),
-        }
+            fetcher: SingleFetcher::new(sink, target, runtime_id, options).await?,
+        })
+    }
+
+    pub fn new_no_agentless(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+    ) -> anyhow::Result<Self> {
+        Ok(SingleChangesFetcher {
+            changes: ChangeTracker::default(),
+            fetcher: SingleFetcher::new_no_agentless(sink, target, runtime_id, options)?,
+        })
     }
 
     pub fn with_client_id(mut self, client_id: String) -> Self {
@@ -133,8 +190,14 @@ where
         })
     }
 
-    pub fn get_client_id(&self) -> &String {
+    pub fn get_client_id(&self) -> &str {
         self.fetcher.get_client_id()
+    }
+
+    /// Returns the interval before the next poll.
+    /// See [`SingleFetcher::get_refresh_interval`].
+    pub fn get_refresh_interval(&self) -> Duration {
+        self.fetcher.get_refresh_interval()
     }
 
     /// Sets the apply state on a stored file.
