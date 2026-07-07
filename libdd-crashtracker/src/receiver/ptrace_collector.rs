@@ -371,12 +371,13 @@ const STOP_TIMEOUT_PER_THREAD: Duration = Duration::from_millis(50);
 
 /// Stream thread contexts to a callback one at a time.
 ///
-/// For each thread in the process the callback receives the TID and an optional
+/// For each non-crashing thread the callback receives the TID and an optional
 /// `CapturedThreadContext` (None if attachment or unwinding failed).
 ///
-/// The `crashing_tid` is always processed first (regardless of `/proc` iteration
-/// order) to guarantee it appears in the output even when the `max_threads` cap
-/// truncates collection.
+/// The crashing thread is excluded: it is executing a signal handler on the
+/// alternate signal stack, so ptrace-based unwinding cannot traverse the signal
+/// frame and consistently crashes the receiver. The crash-site registers are
+/// already captured from the signal context before this function is called.
 ///
 /// Two deadlines bound collection:
 /// - An *overall* deadline derived from `timeout`, shared across all threads.
@@ -398,7 +399,14 @@ where
     F: FnMut(libc::pid_t, Option<&CapturedThreadContext>),
 {
     let overall_deadline = Instant::now() + timeout;
-    let tids = enumerate_threads(parent_pid)?;
+    // Exclude the crashing thread: it is blocked in the signal handler waiting
+    // for the receiver to finish. Ptracing it from the receiver causes PTRACE_INTERRUPT
+    // to fire inside the signal handler, and libunwind cannot walk the alternate
+    // signal stack through the signal frame, consistently crashing the receiver.
+    let tids: Vec<_> = enumerate_threads(parent_pid)?
+        .into_iter()
+        .filter(|&tid| tid != crashing_tid)
+        .collect();
     let total_eligible = tids.len();
     let mut processed = 0;
 
@@ -410,19 +418,7 @@ where
         return Ok(true); // treat as incomplete; nothing was collected
     };
 
-    // Process the crashing thread first so it is never dropped by the cap.
-    if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let stop_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
-        let context =
-            capture_thread_context(crashing_tid, resolve_frames, addr_space, stop_deadline).ok();
-        callback(crashing_tid, context.as_ref());
-        processed += 1;
-    }
-
     for tid in tids {
-        if tid == crashing_tid {
-            continue;
-        }
         let now = Instant::now();
         if now >= overall_deadline || processed >= max_threads {
             break;
@@ -556,8 +552,7 @@ mod tests {
             |_tid, _ctx| collected += 1,
         );
 
-        // max_threads=2 but crashing_tid is always included, so up to 3
-        assert!(collected <= 3, "collected {collected}, expected <= 3");
+        assert!(collected <= 2, "collected {collected}, expected <= 2");
         for h in handles {
             h.join().unwrap();
         }
@@ -565,7 +560,7 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn stream_includes_all_threads() {
+    fn stream_excludes_crashing_tid() {
         let barrier = Arc::new(Barrier::new(2));
         let b: Arc<Barrier> = Arc::clone(&barrier);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -580,6 +575,7 @@ mod tests {
         let mut seen_worker = false;
         let mut seen_self = false;
         let self_tid = current_tid();
+        // Declare the current thread as the crashing TID; it must be skipped.
         let _ = stream_thread_contexts(
             std::process::id() as libc::pid_t,
             self_tid,
@@ -597,7 +593,7 @@ mod tests {
         );
 
         assert!(seen_worker, "worker thread should appear in callbacks");
-        assert!(seen_self, "current thread should appear in callbacks");
+        assert!(!seen_self, "crashing_tid should not appear in callbacks");
 
         barrier.wait();
         handle.join().unwrap();
