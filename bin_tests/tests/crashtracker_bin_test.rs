@@ -21,7 +21,8 @@ use bin_tests::{
     ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StackFrame,
+    StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -2042,6 +2043,169 @@ fn crash_tracking_empty_endpoint() {
     assert_telemetry_message(telemetry_crash_report.1.as_bytes(), "null_deref");
 
     let _ = child.wait();
+}
+
+/// Verifies graceful degradation: when the receiver's timeout fires before the collector
+/// sends all data, the receiver still uploads a partial crash report (incomplete=true)
+/// rather than silently discarding everything collected up to that point.
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(unix)]
+fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
+    use libdd_crashtracker::ErrorKind;
+    use std::time::{Duration, Instant};
+
+    let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+
+    let config = CrashtrackerConfiguration::builder()
+        .create_alt_stack(true)
+        .demangle_names(false)
+        .resolve_frames(StacktraceCollection::WithoutSymbols)
+        .signals(libdd_crashtracker::default_signals())
+        .timeout(Duration::from_millis(500))
+        .use_alt_stack(true)
+        .build()?;
+
+    let metadata = Metadata {
+        library_name: "libdatadog".to_owned(),
+        library_version: "1.0.0".to_owned(),
+        family: "native".to_owned(),
+        tags: vec![
+            "service:foo".into(),
+            "service_version:bar".into(),
+            "runtime-id:xyz".into(),
+            "language:native".into(),
+        ],
+    };
+
+    let siginfo = SigInfo {
+        si_addr: None,
+        si_code: 1,
+        si_code_human_readable: SiCodes::SEGV_MAPERR,
+        si_signo: libc::SIGSEGV,
+        si_signo_human_readable: SignalNames::SIGSEGV,
+    };
+
+    let socket_path = fixtures.output_dir.join("trace_agent.socket");
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        .context("binding mock agent socket")?;
+    listener
+        .set_nonblocking(true)
+        .context("setting socket nonblocking")?;
+
+    let mut child = process::Command::new(&artifacts[&receiver])
+        .stdin(process::Stdio::piped())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .env(
+            "DD_TRACE_AGENT_URL",
+            format!("unix://{}", socket_path.display()),
+        )
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", "500")
+        .spawn()
+        .context("spawning receiver")?;
+
+    let mut stdin = std::io::BufWriter::new(child.stdin.take().context("child stdin missing")?);
+
+    // Two stack frames to include in the partial trace.
+    let frame0 = StackFrame {
+        ip: Some("0x00007f1234560000".to_owned()),
+        function: Some("crash_site".to_owned()),
+        file: Some("src/lib.rs".to_owned()),
+        line: Some(42),
+        ..StackFrame::default()
+    };
+    let frame1 = StackFrame {
+        ip: Some("0x00007f1234561000".to_owned()),
+        function: Some("caller_fn".to_owned()),
+        file: Some("src/main.rs".to_owned()),
+        line: Some(10),
+        ..StackFrame::default()
+    };
+
+    // Send config, kind, metadata, siginfo, then begin a stacktrace with two frames
+    // but deliberately omit DD_CRASHTRACK_END_STACKTRACE and DD_CRASHTRACK_DONE.
+    // The receiver blocks mid-stacktrace and times out after ~500ms.
+    for line in [
+        "DD_CRASHTRACK_BEGIN_CONFIG".to_string(),
+        serde_json::to_string(&config)?,
+        "DD_CRASHTRACK_END_CONFIG".to_string(),
+        "DD_CRASHTRACK_BEGIN_KIND".to_string(),
+        serde_json::to_string(&ErrorKind::UnixSignal)?,
+        "DD_CRASHTRACK_END_KIND".to_string(),
+        "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
+        serde_json::to_string(&metadata)?,
+        "DD_CRASHTRACK_END_METADATA".to_string(),
+        "DD_CRASHTRACK_BEGIN_SIGINFO".to_string(),
+        serde_json::to_string(&siginfo)?,
+        "DD_CRASHTRACK_END_SIGINFO".to_string(),
+        "DD_CRASHTRACK_BEGIN_STACKTRACE".to_string(),
+        serde_json::to_string(&frame0)?,
+        serde_json::to_string(&frame1)?,
+        // no DD_CRASHTRACK_END_STACKTRACE so the receiver times out mid-stacktrace
+    ] {
+        writeln!(stdin, "{line}")?;
+    }
+    stdin.flush()?;
+    // stdin stays open so the receiver keeps blocking on the next read.
+    // The accept loop below runs while the receiver is waiting.
+
+    // The receiver times out ~500ms after the first line arrives, then uploads what it has.
+    let mut found_incomplete_report = false;
+    let mut found_timeout_log = false;
+    let mut found_crash_frame = false;
+    let deadline = Instant::now() + Duration::from_secs(3);
+
+    while Instant::now() < deadline {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let body = read_http_request_body(&mut stream);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                if body.contains("receiver_issue:timeout") {
+                    found_timeout_log = true;
+                }
+                if body.contains("crash_site") {
+                    found_crash_frame = true;
+                }
+                // The crash report telemetry carries is_crash:true; incomplete:true
+                // indicates the report was cut short by the timeout.
+                if body.contains("is_crash:true") && body.contains("incomplete:true") {
+                    found_incomplete_report = true;
+                }
+                if found_incomplete_report && found_timeout_log && found_crash_frame {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    drop(stdin);
+    let status = child.wait()?;
+    assert!(
+        status.success(),
+        "receiver should exit cleanly after timeout; got: {status:?}"
+    );
+    assert!(
+        found_incomplete_report,
+        "receiver should upload a partial crash report (incomplete=true) on timeout, \
+         not silently drop everything it has collected"
+    );
+    assert!(
+        found_crash_frame,
+        "receiver should contain the crash frame function name `crash_site` in the body on timeout"
+    );
+    assert!(
+        found_timeout_log,
+        "receiver should emit a receiver_issue:timeout debug telemetry log when read times out"
+    );
+
+    Ok(())
 }
 
 #[test]

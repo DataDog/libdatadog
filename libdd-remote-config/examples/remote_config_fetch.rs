@@ -1,7 +1,6 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use libdd_remote_config::file_change_tracker::{Change, FilePath};
@@ -90,13 +89,13 @@ async fn main() {
         // For more complicated use cases, like needing to store data in shared memory, a custom
         // FileStorage implementation is recommended
         ParsedFileStorage::default(),
-        Target {
-            service: SERVICE.to_string(),
-            env: ENV.to_string(),
-            app_version: VERSION.to_string(),
-            tags: vec![Tag::new("test", "value").unwrap()],
-            process_tags: vec![],
-        },
+        Target::new(
+            SERVICE.to_string(),
+            ENV.to_string(),
+            VERSION.to_string(),
+            vec!["test:value".to_string()],
+            vec![],
+        ),
         RUNTIME_ID.to_string(),
         ConfigOptions {
             invariants: ConfigInvariants {

@@ -2276,7 +2276,7 @@ fn normalize_plan_sql(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{DbmsKind, SqlObfuscateConfig, SqlObfuscationMode};
-    use std::fmt::Write;
+    use core::fmt::Write;
 
     #[test]
     fn test_sql_obfuscation() {
@@ -3302,6 +3302,7 @@ mod tests {
         ("-012345678", "?"),
     ];
 
+    #[cfg_attr(miri, ignore)] // large fixture suite, prohibitively slow under Miri
     #[test]
     fn test_sql_obfuscation_suite() {
         let mut errors = String::new();

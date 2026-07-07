@@ -30,7 +30,6 @@
 //!
 //! Without `DD_API_KEY` / `DD_SITE`, this example exits — agentless mode is required.
 
-use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use libdd_remote_config::file_storage::ParsedFileStorage;
@@ -119,13 +118,13 @@ async fn run_one_iteration(
     #[cfg(feature = "agentless")] agentless: Option<AgentlessConfig>,
     #[cfg(not(feature = "agentless"))] agentless: Option<std::convert::Infallible>,
 ) -> anyhow::Result<(Sample, Sample, Sample)> {
-    let target = Target {
-        service: SERVICE.to_string(),
-        env: ENV.to_string(),
-        app_version: VERSION.to_string(),
-        tags: vec![Tag::new("bench", "true").unwrap()],
-        process_tags: vec![],
-    };
+    let target = Target::new(
+        SERVICE.to_string(),
+        ENV.to_string(),
+        VERSION.to_string(),
+        vec!["bench:true".to_string()],
+        vec![],
+    );
 
     let options = ConfigOptions {
         invariants: ConfigInvariants {
