@@ -20,9 +20,9 @@ OUTPUT_DIR="${1:-}"
 
 pushd "${PROJECT_DIR}" > /dev/null
 
-# Some bench targets need crate-specific features enabled; when scoping the run to a subset of
-# crates we must pass only the features for the selected crates (cargo errors on --features for a
-# crate that isn't part of the selection).
+# The single source of truth for which crate-specific features each crate's benchmarks need.
+# When scoping a run we must pass only the features for the selected crates (cargo errors on
+# --features for a crate that isn't part of the selection).
 bench_features_for_crate() {
   case "$1" in
     libdd-crashtracker) echo "libdd-crashtracker/benchmarking" ;;
@@ -32,29 +32,34 @@ bench_features_for_crate() {
   esac
 }
 
-# Run benchmarks
+# Run benchmarks.
 message "Running benchmarks"
+
 # BENCH_PACKAGES (optional, space-separated crate names) scopes the run to specific crates -- set by
-# the GitLab benchmarks job so a PR only benchmarks the crates it impacts. When empty (e.g. on main)
-# the full workspace is benchmarked.
-if [[ -n "${BENCH_PACKAGES:-}" ]]; then
-  package_args=()
-  features=()
-  for crate in ${BENCH_PACKAGES}; do
-    package_args+=(-p "${crate}")
-    for feature in $(bench_features_for_crate "${crate}"); do
-      features+=("${feature}")
-    done
-  done
-  feature_args=()
-  if (( ${#features[@]} > 0 )); then
-    feature_args=(--features "$(IFS=,; echo "${features[*]}")")
-  fi
-  message "Benchmarking selected crates: ${BENCH_PACKAGES}"
-  cargo bench "${package_args[@]}" "${feature_args[@]}" -- --warm-up-time 1 --measurement-time 5 --sample-size=200
-else
-  cargo bench --workspace --features libdd-crashtracker/benchmarking,libdd-sampling/v04_span,libdd-sampling/bench-internals,libdd-trace-utils/bench-internals -- --warm-up-time 1 --measurement-time 5 --sample-size=200
+# the GitLab benchmarks job so a PR only benchmarks the crates it impacts. When empty (e.g. a local
+# run) default to every crate that declares a benchmark target, which is equivalent to --workspace.
+if [[ -z "${BENCH_PACKAGES:-}" ]]; then
+  BENCH_PACKAGES="$(cargo metadata --no-deps --format-version 1 \
+    | jq -r '.packages[] | select(any(.targets[]?; .kind[]? == "bench")) | .name' | tr '\n' ' ')"
 fi
+
+# Build the package and feature arguments from a single code path so the feature set always comes
+# from bench_features_for_crate (no separate hardcoded list to drift out of sync).
+package_args=()
+features=()
+for crate in ${BENCH_PACKAGES}; do
+  package_args+=(-p "${crate}")
+  for feature in $(bench_features_for_crate "${crate}"); do
+    features+=("${feature}")
+  done
+done
+feature_args=()
+if (( ${#features[@]} > 0 )); then
+  feature_args=(--features "$(IFS=,; echo "${features[*]}")")
+fi
+
+message "Benchmarking crates: ${BENCH_PACKAGES}"
+cargo bench "${package_args[@]}" "${feature_args[@]}" -- --warm-up-time 1 --measurement-time 5 --sample-size=200
 message "Finished running benchmarks"
 
 # Copy the benchmark results to the output directory
