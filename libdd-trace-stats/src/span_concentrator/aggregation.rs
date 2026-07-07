@@ -432,7 +432,8 @@ pub(super) struct StatsBucket {
     /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
     collapsed_count: u64,
     #[cfg(feature = "stats-obfuscation")]
-    /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays constant per bucket
+    /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
+    /// constant per bucket
     pub(super) obfuscated: bool,
 }
 
