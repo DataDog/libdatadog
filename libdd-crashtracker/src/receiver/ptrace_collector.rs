@@ -399,10 +399,9 @@ where
     F: FnMut(libc::pid_t, Option<&CapturedThreadContext>),
 {
     let overall_deadline = Instant::now() + timeout;
-    // Exclude the crashing thread: it is blocked in the signal handler waiting
-    // for the receiver to finish. Ptracing it from the receiver causes PTRACE_INTERRUPT
-    // to fire inside the signal handler, and libunwind cannot walk the alternate
-    // signal stack through the signal frame, consistently crashing the receiver.
+    // Skip the crashing thread: it is blocked in poll() in its signal handler.
+    // PTRACE_INTERRUPT would cause an EINTR loop and libunwind cannot walk the
+    // alternate signal stack. Crash-site registers are captured separately.
     let tids: Vec<_> = enumerate_threads(parent_pid)?
         .into_iter()
         .filter(|&tid| tid != crashing_tid)
@@ -558,18 +557,15 @@ mod tests {
         }
     }
 
-    /// Regression test: a thread blocked in poll() passed as crashing_tid must not
-    /// be ptraced. Previously, PTRACE_INTERRUPT would fire inside the signal handler's
-    /// poll() call causing an EINTR loop that hung the receiver indefinitely.
+    // Regression: crashing_tid blocked in poll() must not be ptraced.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn stream_excludes_crashing_tid_blocked_in_poll() {
-        let mut pipe_fds = [0i32; 2];
-        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
-        let [read_fd, write_fd] = pipe_fds;
+        let mut fds = [0i32; 2];
+        unsafe { libc::pipe(fds.as_mut_ptr()) };
+        let [read_fd, write_fd] = fds;
 
         let (tx, rx) = std::sync::mpsc::channel();
-
         let handle = std::thread::spawn(move || {
             tx.send(current_tid()).unwrap();
             let mut pfd = libc::pollfd { fd: read_fd, events: libc::POLLHUP, revents: 0 };
@@ -578,22 +574,16 @@ mod tests {
         });
 
         let blocking_tid = rx.recv().unwrap();
-
-        let mut seen_blocking = false;
+        let mut seen = false;
         let _ = stream_thread_contexts(
             std::process::id() as libc::pid_t,
             blocking_tid,
             64,
             Duration::from_secs(5),
             crate::StacktraceCollection::Disabled,
-            |tid, _ctx| {
-                if tid == blocking_tid {
-                    seen_blocking = true;
-                }
-            },
+            |tid, _| seen |= tid == blocking_tid,
         );
-
-        assert!(!seen_blocking, "thread blocked in poll() must not be ptraced as crashing_tid");
+        assert!(!seen);
 
         unsafe { libc::close(write_fd) };
         handle.join().unwrap();
