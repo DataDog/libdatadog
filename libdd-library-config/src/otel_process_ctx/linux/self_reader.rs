@@ -472,12 +472,11 @@ mod tests {
         page_size as usize
     }
 
-    fn map_anonymous_page() -> *mut u8 {
-        let page_size = page_size();
+    fn map_anonymous(len: usize) -> *mut u8 {
         let ptr = unsafe {
             libc::mmap(
                 ptr::null_mut(),
-                page_size,
+                len,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
                 -1,
@@ -492,19 +491,22 @@ mod tests {
         ptr.cast()
     }
 
-    fn unmap_page(ptr: *mut u8) {
-        let page_size = page_size();
-        let ret = unsafe { libc::munmap(ptr.cast(), page_size) };
+    fn map_anonymous_page() -> *mut u8 {
+        map_anonymous(page_size())
+    }
+
+    fn unmap(ptr: *mut u8, len: usize) {
+        let ret = unsafe { libc::munmap(ptr.cast(), len) };
         assert_eq!(ret, 0, "page unmap should succeed");
+    }
+
+    fn unmap_page(ptr: *mut u8) {
+        unmap(ptr, page_size());
     }
 
     struct MappedPage(*mut u8);
 
     impl MappedPage {
-        fn new() -> Self {
-            Self(map_anonymous_page())
-        }
-
         fn as_ptr(&self) -> *const u8 {
             self.0.cast()
         }
@@ -596,12 +598,16 @@ mod tests {
     #[serial_test::serial]
     fn read_process_memory_fails_when_range_extends_past_mapped_page() {
         with_published_mapping(|| {
-            let page = MappedPage::new();
-            let len = page_size() + 1;
+            let page_size = page_size();
+            let pages = map_anonymous(page_size * 2);
+            let second_page = pages.wrapping_add(page_size);
+            unmap_page(second_page);
+            let first_page = MappedPage(pages);
+            let len = page_size + 1;
 
             let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
             let err = reader
-                .read_process_memory(page.as_ptr(), len)
+                .read_process_memory(first_page.as_ptr(), len)
                 .expect_err("read past mapped page should fail");
 
             assert_unmapped_read_error(err);
