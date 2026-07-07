@@ -182,7 +182,6 @@ pub static HANDLERS_ENABLED: AtomicBool = AtomicBool::new(false);
 pub static FORCE_ON_TOP: AtomicBool = AtomicBool::new(false);
 pub static ONLY_BOOTSTRAP: AtomicBool = AtomicBool::new(false);
 pub static DEBUG_LOG: AtomicBool = AtomicBool::new(false);
-pub static INSTALLED: AtomicBool = AtomicBool::new(false);
 pub static CREATE_ALT_STACK: AtomicBool = AtomicBool::new(false);
 pub static USE_ALT_STACK: AtomicBool = AtomicBool::new(false);
 pub static BLOCK_SIGNALS: AtomicBool = AtomicBool::new(true);

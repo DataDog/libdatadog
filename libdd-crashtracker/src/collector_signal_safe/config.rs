@@ -22,6 +22,7 @@ pub const DEFAULT_LIBRARY_NAME: &str = "unknown-library";
 pub const DEFAULT_LIBRARY_VERSION: &str = "unknown";
 pub const DEFAULT_LIBRARY_FAMILY: &str = "native";
 pub const DEFAULT_SERVICE: &str = "unknown-service";
+pub const DEFAULT_RUNTIME_ID: &str = "00000000-0000-0000-0000-000000000000";
 
 /// Capacity for signal-safe filesystem path buffers (PATH_MAX + trailing NUL).
 pub const PATH_CAPACITY: usize = 513;
@@ -176,7 +177,11 @@ pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareEr
     metadata_truncated |= !set_str(&mut m.service, config.service);
     metadata_truncated |= !set_str(&mut m.env, config.env);
     metadata_truncated |= !set_str(&mut m.app_version, config.app_version);
-    metadata_truncated |= !set_str(&mut m.runtime_id, config.runtime_id);
+    metadata_truncated |= !set_str_or(
+        &mut m.runtime_id,
+        config.runtime_id,
+        DEFAULT_RUNTIME_ID.as_bytes(),
+    );
     metadata_truncated |= !set_str(&mut m.platform, config.platform);
     if m.platform.is_empty() {
         metadata_truncated |= !set_str(&mut m.platform, b"host");

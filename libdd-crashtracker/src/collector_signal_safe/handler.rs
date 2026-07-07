@@ -155,7 +155,6 @@ fn init_with_prepare(prepare: impl FnOnce() -> Result<(), PrepareError>) -> Init
         return err;
     }
     install_all_handlers();
-    state::INSTALLED.store(true, Ordering::Release);
     state::finish_init();
     state::HANDLERS_ENABLED.store(true, Ordering::Release);
     InitResult::Enabled
@@ -171,7 +170,6 @@ pub fn shutdown() {
     state::HANDLERS_ENABLED.store(false, Ordering::Release);
     uninstall_all_handlers();
     COLLECTING.store(false, Ordering::Relaxed);
-    state::INSTALLED.store(false, Ordering::Release);
     signal_owner::release(SignalOwner::SignalSafeCollector);
     state::reset_init();
 }
@@ -473,11 +471,6 @@ fn emit_crash_report(write_fd: i32, event: CrashEvent, close_when_done: bool) ->
     };
 
     let meta = state::meta();
-    let runtime_id = if meta.runtime_id.is_empty() {
-        "00000000-0000-0000-0000-000000000000"
-    } else {
-        meta.runtime_id.as_str()
-    };
     let report = Report {
         config_json: meta.config_json.as_str(),
         library_name: meta.library_name.as_str(),
@@ -487,7 +480,7 @@ fn emit_crash_report(write_fd: i32, event: CrashEvent, close_when_done: bool) ->
         service: meta.service.as_str(),
         env: meta.env.as_str(),
         app_version: meta.app_version.as_str(),
-        runtime_id,
+        runtime_id: meta.runtime_id.as_str(),
         platform: meta.platform.as_str(),
         stackwalk_method,
         capabilities: caps,
@@ -497,10 +490,13 @@ fn emit_crash_report(write_fd: i32, event: CrashEvent, close_when_done: bool) ->
 
     let mut sink = FdSink::new(write_fd);
     let emitted = super::emit_report(&mut sink, &report, &context);
+    // Flush the staged bytes before the fd is closed, otherwise the report is
+    // lost on close.
+    let flushed = sink.flush();
     if close_when_done {
         sys::close(write_fd);
     }
-    emitted
+    emitted && flushed
 }
 
 fn reap_or_kill(pid: i32, timeout_ms: i64, kill_process: bool) -> Option<i32> {
@@ -553,20 +549,28 @@ fn collect_crash(
         }
     };
 
-    if !caps.contains(capabilities::FORK_OK) {
-        crash_debug(b"fork unavailable", sig);
-        direct_report(capabilities::DEGRADED_NO_FORK);
-        return;
-    }
-    if !caps.contains(capabilities::RECEIVER_OK) {
-        crash_debug(b"receiver unavailable", sig);
-        direct_report(capabilities::DEGRADED_RECEIVER_UNAVAILABLE);
-        return;
-    }
-    if !caps.contains(capabilities::PIPE_OK) {
-        crash_debug(b"pipe unavailable", sig);
-        direct_report(capabilities::DEGRADED_NO_PIPE);
-        return;
+    for (cap, msg, reason) in [
+        (
+            capabilities::FORK_OK,
+            &b"fork unavailable"[..],
+            capabilities::DEGRADED_NO_FORK,
+        ),
+        (
+            capabilities::RECEIVER_OK,
+            &b"receiver unavailable"[..],
+            capabilities::DEGRADED_RECEIVER_UNAVAILABLE,
+        ),
+        (
+            capabilities::PIPE_OK,
+            &b"pipe unavailable"[..],
+            capabilities::DEGRADED_NO_PIPE,
+        ),
+    ] {
+        if !caps.contains(cap) {
+            crash_debug(msg, sig);
+            direct_report(reason);
+            return;
+        }
     }
 
     let mut fds = [0i32; 2];
@@ -939,13 +943,13 @@ mod tests {
             ..SignalSafeInitConfig::default()
         };
         assert_eq!(init_result(&config), InitResult::Enabled);
-        assert!(state::INSTALLED.load(Ordering::Acquire));
+        assert!(state::HANDLERS_ENABLED.load(Ordering::Acquire));
         assert_eq!(init_result(&config), InitResult::AlreadyInitialized);
         shutdown();
-        assert!(!state::INSTALLED.load(Ordering::Acquire));
+        assert!(!state::HANDLERS_ENABLED.load(Ordering::Acquire));
         assert_eq!(init_result(&config), InitResult::Enabled);
-        assert!(state::INSTALLED.load(Ordering::Acquire));
+        assert!(state::HANDLERS_ENABLED.load(Ordering::Acquire));
         shutdown();
-        assert!(!state::INSTALLED.load(Ordering::Acquire));
+        assert!(!state::HANDLERS_ENABLED.load(Ordering::Acquire));
     }
 }

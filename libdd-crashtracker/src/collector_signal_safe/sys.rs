@@ -7,13 +7,47 @@ unsafe extern "C" {
     static mut environ: *mut *mut c_char;
 }
 
+/// Staging buffer size for `FdSink`. Report emission issues many tiny
+/// `write_bytes` calls -- every marker, body, and trailing newline is a
+/// separate call -- so staging coalesces a full report into a handful of
+/// `write(2)` syscalls on the crash path instead of dozens. Sized to match the
+/// section buffer so it inherits the same alt-stack budget (asserted in
+/// `handler`); the two buffers can be live at once during emission.
+const FD_SINK_BUF_CAPACITY: usize = super::report::SECTION_BUF_CAPACITY;
+
+/// Buffered writer over a raw fd. `write_bytes` stages into a fixed inline
+/// buffer and only issues a syscall when the buffer would overflow; callers
+/// must `flush` before the fd is closed to emit the remainder. Drop flushes as
+/// a safety net so a forgotten `flush` never silently drops data.
 pub struct FdSink {
     fd: i32,
+    buf: [u8; FD_SINK_BUF_CAPACITY],
+    len: usize,
 }
 
 impl FdSink {
     pub fn new(fd: i32) -> Self {
-        Self { fd }
+        Self {
+            fd,
+            buf: [0u8; FD_SINK_BUF_CAPACITY],
+            len: 0,
+        }
+    }
+
+    /// Write everything currently staged to the fd and reset the buffer.
+    /// Returns `false` if the underlying write failed.
+    pub fn flush(&mut self) -> bool {
+        let ok = write_all(self.fd, &self.buf[..self.len]);
+        self.len = 0;
+        ok
+    }
+}
+
+impl Drop for FdSink {
+    fn drop(&mut self) {
+        if self.len > 0 {
+            let _ = self.flush();
+        }
     }
 }
 
@@ -21,17 +55,40 @@ impl crate::protocol::ByteSink for FdSink {
     type Error = ();
 
     fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), Self::Error> {
-        let mut off = 0usize;
-        while off < bytes.len() {
-            let n = write(self.fd, &bytes[off..]);
-            if n > 0 {
-                off += n as usize;
-                continue;
+        // Bytes larger than the whole buffer can never be staged: flush what is
+        // already staged (to preserve ordering), then write them straight out.
+        if bytes.len() > self.buf.len() {
+            if self.len > 0 && !self.flush() {
+                return Err(());
             }
+            return if write_all(self.fd, bytes) {
+                Ok(())
+            } else {
+                Err(())
+            };
+        }
+        // Otherwise stage them, flushing first if they would not fit alongside
+        // what is already buffered.
+        if self.len + bytes.len() > self.buf.len() && !self.flush() {
             return Err(());
         }
+        self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+        self.len += bytes.len();
         Ok(())
     }
+}
+
+fn write_all(fd: i32, bytes: &[u8]) -> bool {
+    let mut off = 0usize;
+    while off < bytes.len() {
+        let n = write(fd, &bytes[off..]);
+        if n > 0 {
+            off += n as usize;
+            continue;
+        }
+        return false;
+    }
+    true
 }
 
 mod raw_common {
@@ -504,6 +561,7 @@ mod tests {
         assert!(pipe(&mut fds));
         let mut sink = FdSink::new(fds[1]);
         assert!(sink.put(b"abc"));
+        assert!(sink.flush());
         close(fds[1]);
 
         let mut out = [0u8; 3];
@@ -511,5 +569,43 @@ mod tests {
         close(fds[0]);
         assert_eq!(n, 3);
         assert_eq!(&out, b"abc");
+    }
+
+    #[test]
+    fn fd_sink_coalesces_and_handles_overflow() {
+        let mut fds = [0i32; 2];
+        assert!(pipe(&mut fds));
+        let mut sink = FdSink::new(fds[1]);
+
+        // Small writes that together exceed the staging buffer must auto-flush
+        // mid-stream; a single write larger than the buffer takes the direct
+        // path. Kept well under the pipe capacity so no writer blocks.
+        let small = [b'a'; 100];
+        let small_total = FD_SINK_BUF_CAPACITY + 500;
+        let mut written = 0usize;
+        while written < small_total {
+            assert!(sink.put(&small));
+            written += small.len();
+        }
+        let big = [b'b'; FD_SINK_BUF_CAPACITY + 1];
+        assert!(sink.put(&big));
+        assert!(sink.flush());
+        close(fds[1]);
+
+        let expected = written + big.len();
+        let mut out = [0u8; 4 * FD_SINK_BUF_CAPACITY];
+        let mut got = 0usize;
+        loop {
+            let n = unsafe { libc::read(fds[0], out[got..].as_mut_ptr().cast(), out.len() - got) };
+            if n <= 0 {
+                break;
+            }
+            got += n as usize;
+        }
+        close(fds[0]);
+
+        assert_eq!(got, expected);
+        assert!(out[..written].iter().all(|&b| b == b'a'));
+        assert!(out[written..expected].iter().all(|&b| b == b'b'));
     }
 }
