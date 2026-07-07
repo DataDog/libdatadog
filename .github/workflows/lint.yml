@@ -149,8 +149,8 @@ jobs:
         run: |
           if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
             export AWS_LC_FIPS_SYS_NO_ASM=1
-            export CARGO_NET_GIT_FETCH_WITH_CLI=true
-            git config --global core.longpaths true
+            # Pre fetch deps as doing with clippy fails
+            cargo fetch --workspace
           fi
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
             cargo clippy --workspace --all-targets --all-features -- -D warnings
