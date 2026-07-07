@@ -111,3 +111,5 @@ fips = [
 ]
 test-utils = []
 regex-lite = ["libdd-common/regex-lite"]
+# Enable zstd compression for the agentless trace intake sender.
+compression = ["libdd-trace-utils/compression"]

@@ -48,7 +48,7 @@ use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
+    send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
@@ -733,6 +733,7 @@ impl<
             mp_payload,
             &headers,
             &strategy,
+            CompressionStrategy::None,
         )
         .await;
 

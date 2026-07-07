@@ -7,6 +7,9 @@
 mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
+mod compression;
+pub use compression::CompressionStrategy;
+
 use bytes::Bytes;
 use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
@@ -92,6 +95,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
     payload: Vec<u8>,
     headers: &HeaderMap,
     retry_strategy: &RetryStrategy,
+    compression_strategy: CompressionStrategy,
 ) -> SendWithRetryResult {
     let mut request_attempt = 0;
     let timeout = Duration::from_millis(target.timeout_ms);
@@ -103,7 +107,9 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
         "Sending with retry"
     );
 
-    let payload = Bytes::from(payload);
+    let (compressed, compression_strategy) = compression::compress(payload, compression_strategy);
+    let payload = Bytes::from(compressed);
+
     loop {
         request_attempt += 1;
 
@@ -120,6 +126,10 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
             target.set_standard_headers(builder, concat!("Tracer/", env!("CARGO_PKG_VERSION")));
         for (key, value) in headers {
             builder = builder.header(key, value);
+        }
+        // headers_mut is only None if the builder is in an error state
+        if let Some(h) = builder.headers_mut() {
+            compression::add_headers(h, compression_strategy);
         }
         let req = match builder.body(payload.clone()) {
             Ok(r) => r,
@@ -281,6 +291,7 @@ mod tests {
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(result.is_err(), "Expected an error result");
@@ -330,6 +341,7 @@ mod tests {
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(
@@ -375,6 +387,7 @@ mod tests {
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(
@@ -424,6 +437,7 @@ mod tests {
                 vec![0, 1, 2, 3],
                 &HeaderMap::new(),
                 &strategy,
+                CompressionStrategy::None,
             )
             .await;
             assert!(
