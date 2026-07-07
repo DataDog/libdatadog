@@ -20,9 +20,13 @@ compute_impacted_crates:
     name: $BASE_CI_IMAGE
   needs: []
   rules:
-    # main runs the full suite, so nothing to compute there; downstream jobs mark the dependency
-    # optional. Same for merge-queue branches (benchmarks is skipped there) and scheduled runs.
+    # Nothing to compute where benchmarks won't consume it: main runs the full suite, and
+    # release/hotfix/merge-queue/scheduled pipelines don't run benchmarks at all.
     - if: '$CI_COMMIT_BRANCH == "main"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^(release|hotfix)\//'
+      when: never
+    - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^(release|hotfix)\//'
       when: never
     - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
       when: never
@@ -35,11 +39,18 @@ compute_impacted_crates:
   # A failure leaves the outputs absent; downstream jobs then fall back to running everything.
   allow_failure: true
   script:
-    - git fetch --no-tags origin main
-    - (cd .github/actions && cargo build --release -p crates-reporter)
-    - export GITHUB_OUTPUT="$(mktemp)"
-    - ./.github/actions/target/release/crates-reporter main || echo "status=skipped" >> "$GITHUB_OUTPUT"
+    # Always emit impacted-crates.env and changed_files.txt, even if crate detection fails -- that
+    # way the benchmarks job always receives its needed artifacts and falls back to the full suite
+    # (IMPACTED_STATUS=skipped) instead of erroring on a missing archive.
     - |
+      export GITHUB_OUTPUT="$(mktemp)"
+      git fetch --no-tags origin main || :
+      if (cd .github/actions && cargo build --release -p crates-reporter) \
+         && ./.github/actions/target/release/crates-reporter main; then
+        :
+      else
+        echo "status=skipped" >> "$GITHUB_OUTPUT"
+      fi
       # Surface the crates-reporter outputs as dotenv variables for downstream jobs.
       AFFECTED_CRATES=$(sed -n 's/^affected_crates=//p' "$GITHUB_OUTPUT" | tail -n1)
       IMPACTED_STATUS=$(sed -n 's/^status=//p' "$GITHUB_OUTPUT" | tail -n1)
@@ -49,6 +60,7 @@ compute_impacted_crates:
       # Record the changed files so downstream jobs can make path-based decisions.
       git diff --name-only origin/main...HEAD > changed_files.txt || : > changed_files.txt
   artifacts:
+    when: always
     reports:
       dotenv: impacted-crates.env
     paths:

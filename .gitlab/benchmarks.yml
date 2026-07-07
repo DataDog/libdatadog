@@ -3,6 +3,21 @@ variables:
   # The Dockerfile to this image is located at:
   # https://github.com/DataDog/benchmarking-platform/tree/libdatadog/benchmarks
 
+# Shared rules for the benchmark jobs: skip merge-queue and release/hotfix branches (whether they
+# arrive as a branch pipeline or an external PR), and run the full suite on main. Release/hotfix are
+# version bumps + merge-backs of code already benchmarked on its originating PR and on main, so
+# re-running here would add nothing.
+.benchmark_run_rules: &benchmark_run_rules
+  - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
+    when: never
+  - if: '$CI_COMMIT_BRANCH =~ /^(release|hotfix)\//'
+    when: never
+  - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^(release|hotfix)\//'
+    when: never
+  - if: '$CI_COMMIT_BRANCH == "main"'
+    interruptible: false
+  - interruptible: true
+
 # The benchmark suite is sharded across parallel jobs to reduce wall-clock time. Each shard runs
 # both candidate and baseline for its assigned crates on the same runner (so the comparison stays
 # noise-controlled), then benchmarks_combine merges the shards' results into a single PR comment.
@@ -10,19 +25,13 @@ benchmarks:
   parallel: 2
   tags: ["runner:apm-k8s-tweaked-metal"]
   needs:
-    # Not created on main/release/hotfix (full suite) -- hence optional.
+    # Not created on main (which runs the full suite) -- hence optional.
     - job: compute_impacted_crates
       artifacts: true
       optional: true
   image:
     name: $BASE_CI_IMAGE
-  rules:
-    # Don't run on merge-queue working branches
-    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
-      when: never
-    - if: $CI_COMMIT_BRANCH == "main"
-      interruptible: false
-    - interruptible: true
+  rules: *benchmark_run_rules
   timeout: 80m
   script:
     # Decide which crates THIS shard benchmarks. Runs first, while $CI_PROJECT_DIR is the libdatadog
@@ -34,6 +43,8 @@ benchmarks:
       case "$DECISION" in
         SKIP)
           echo "Shard ${CI_NODE_INDEX:-1}/${CI_NODE_TOTAL:-1}: nothing to benchmark."
+          # Still emit an (empty) artifact dir so benchmarks_combine's needs:artifacts is satisfied.
+          mkdir -p "${CI_PROJECT_DIR}/reports-${CI_NODE_INDEX:-1}"
           exit 0
           ;;
         FULL)
@@ -103,12 +114,7 @@ benchmarks_combine:
       optional: true
   image:
     name: $BASE_CI_IMAGE
-  rules:
-    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
-      when: never
-    - if: $CI_COMMIT_BRANCH == "main"
-      interruptible: false
-    - interruptible: true
+  rules: *benchmark_run_rules
   script:
     - |
       if ! ls -d "${CI_PROJECT_DIR}"/reports-*/ >/dev/null 2>&1; then

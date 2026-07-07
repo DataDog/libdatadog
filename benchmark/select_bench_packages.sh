@@ -46,24 +46,36 @@ all_bench="$(printf '%s' "${bench_json:-[]}" | jq -r '.[]?' 2>/dev/null | tr '\n
 
 # Determine the full set of crates to benchmark (before sharding).
 packages=""
-if [ "${CI_COMMIT_BRANCH:-}" = "main" ]; then
-  log "main -> full benchmark suite."
-  packages="$all_bench"
-elif [ "${IMPACTED_STATUS:-}" != "success" ] || [ -z "${AFFECTED_CRATES:-}" ] || [ -z "$all_bench" ]; then
-  log "Impacted crates undetermined -> full benchmark suite."
-  packages="$all_bench"
-elif grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml)' changed_files.txt 2>/dev/null; then
-  log "Benchmark infrastructure changed -> full benchmark suite."
-  packages="$all_bench"
-else
-  packages="$(jq -nr --argjson a "$AFFECTED_CRATES" --argjson b "$bench_json" \
-    '($a - ($a - $b)) | .[]' 2>/dev/null | tr '\n' ' ')"
-  if [ -z "$(printf '%s' "$packages" | tr -d '[:space:]')" ]; then
-    echo "SKIP"
-    exit 0
-  fi
-  log "Impacted benchmarked crates: $packages"
-fi
+case "${CI_COMMIT_BRANCH:-}" in
+  main)
+    # main always runs the full suite. (release/hotfix and merge-queue never reach this script --
+    # benchmarks.yml skips them entirely.)
+    log "main -> full benchmark suite."
+    packages="$all_bench"
+    ;;
+  *)
+    if [ "${IMPACTED_STATUS:-}" != "success" ] || [ -z "${AFFECTED_CRATES:-}" ] || [ -z "$all_bench" ]; then
+      log "Impacted crates undetermined -> full benchmark suite."
+      packages="$all_bench"
+    elif grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml)' changed_files.txt 2>/dev/null; then
+      log "Benchmark infrastructure changed -> full benchmark suite."
+      packages="$all_bench"
+    elif grep -qE '^(Cargo\.lock|Cargo\.toml|rust-toolchain\.toml|nightly-toolchain\.toml)$' changed_files.txt 2>/dev/null; then
+      # Workspace-level dependency or toolchain changes can affect the performance of every crate,
+      # even though crates-reporter maps them to no member crate.
+      log "Workspace-level dependency/toolchain change -> full benchmark suite."
+      packages="$all_bench"
+    else
+      packages="$(jq -nr --argjson a "$AFFECTED_CRATES" --argjson b "$bench_json" \
+        '($a - ($a - $b)) | .[]' 2>/dev/null | tr '\n' ' ')"
+      if [ -z "$(printf '%s' "$packages" | tr -d '[:space:]')" ]; then
+        echo "SKIP"
+        exit 0
+      fi
+      log "Impacted benchmarked crates: $packages"
+    fi
+    ;;
+esac
 
 # If the crate list could not be determined, fall back to a single full-workspace run
 # on shard 1 only (so we don't run the whole workspace on every shard).
