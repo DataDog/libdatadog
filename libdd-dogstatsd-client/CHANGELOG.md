@@ -2,6 +2,12 @@
 
 
 
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v3.0.0..libdd-dogstatsd-client-v4.0.0) - 2026-07-07
+
+### Changed
+
+- Bump `libdd-common` to a new major version (`^4.1.0` → `^5.1.0`)
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-dogstatsd-client-v2.0.0..libdd-dogstatsd-client-v3.0.0) - 2026-05-18
 
 ### Fixed
