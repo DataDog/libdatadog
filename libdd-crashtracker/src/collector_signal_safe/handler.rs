@@ -141,15 +141,18 @@ fn init_with_prepare(prepare: impl FnOnce() -> Result<(), PrepareError>) -> Init
         state::reset_init();
         return InitResult::OwnerConflict;
     }
-    if let Err(err) = prepare() {
+    // Once ownership is acquired, every failure must release it and reset init state.
+    let acquired = (|| {
+        prepare().map_err(InitResult::from)?;
+        if !install_alt_stack_if_requested() {
+            return Err(InitResult::Failed);
+        }
+        Ok(())
+    })();
+    if let Err(err) = acquired {
         signal_owner::release(SignalOwner::SignalSafeCollector);
         state::reset_init();
-        return err.into();
-    }
-    if !install_alt_stack_if_requested() {
-        signal_owner::release(SignalOwner::SignalSafeCollector);
-        state::reset_init();
-        return InitResult::Failed;
+        return err;
     }
     install_all_handlers();
     state::INSTALLED.store(true, Ordering::Release);
@@ -422,7 +425,8 @@ fn emit_crash_report(write_fd: i32, event: CrashEvent, close_when_done: bool) ->
     let max_frames = state::MAX_FRAMES
         .load(Ordering::Relaxed)
         .min(config::BACKTRACE_LEVELS_MAX);
-    let can_walk = capabilities::has(capabilities::PROC_VM_READV);
+    let caps = capabilities::get();
+    let can_walk = caps.contains(capabilities::PROC_VM_READV);
     let n = backtrace::backtrace_from_ucontext(
         &mut frames[..max_frames],
         event.ucontext,
@@ -455,7 +459,7 @@ fn emit_crash_report(write_fd: i32, event: CrashEvent, close_when_done: bool) ->
         runtime_id,
         platform: meta.platform.as_str(),
         stackwalk_method,
-        capabilities: capabilities::get(),
+        capabilities: caps,
         degradations: capabilities::degradations(),
     };
     let context = event.context(&frames[..n]);
@@ -499,6 +503,7 @@ fn collect_crash(
     tid: i32,
 ) {
     let report_fd = state::REPORT_FD.load(Ordering::Relaxed);
+    let caps = capabilities::get();
     let event = CrashEvent {
         sig,
         si_code,
@@ -511,23 +516,23 @@ fn collect_crash(
 
     let direct_report = |reason: capabilities::Degradations| {
         capabilities::note_degraded(reason);
-        if capabilities::has(capabilities::REPORT_FD_OK) {
+        if caps.contains(capabilities::REPORT_FD_OK) {
             capabilities::note_degraded(capabilities::DEGRADED_REPORT_TO_FD);
             let _ = emit_crash_report(report_fd, event, false);
         }
     };
 
-    if !capabilities::has(capabilities::FORK_OK) {
+    if !caps.contains(capabilities::FORK_OK) {
         crash_debug(b"fork unavailable", sig);
         direct_report(capabilities::DEGRADED_NO_FORK);
         return;
     }
-    if !capabilities::has(capabilities::RECEIVER_OK) {
+    if !caps.contains(capabilities::RECEIVER_OK) {
         crash_debug(b"receiver unavailable", sig);
         direct_report(capabilities::DEGRADED_RECEIVER_UNAVAILABLE);
         return;
     }
-    if !capabilities::has(capabilities::PIPE_OK) {
+    if !caps.contains(capabilities::PIPE_OK) {
         crash_debug(b"pipe unavailable", sig);
         direct_report(capabilities::DEGRADED_NO_PIPE);
         return;
@@ -613,9 +618,18 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
     let self_pid = sys::getpid();
     let tid = sys::gettid();
 
+    // The installed target is immutable while the handler runs, so resolve it once and reuse it for
+    // both the app-first chain and the final chaining decision below.
+    let target = match idx {
+        Some(i) => effective_target(i),
+        None => Target {
+            fn_ptr: core::ptr::null_mut(),
+            flags: 0,
+        },
+    };
+
     let force_on_top = state::FORCE_ON_TOP.load(Ordering::Relaxed);
     if let Some(i) = idx {
-        let target = effective_target(i);
         let app_is_real = app_handler_is_real(target.fn_ptr);
         if should_run_app_first(force_on_top, app_is_real) {
             let stack_marker = 0u8;
@@ -658,13 +672,6 @@ extern "C" fn crash_handler(sig: c_int, info: *mut libc::siginfo_t, ucontext: *m
 
     sys::set_errno(saved_errno);
 
-    let target = match idx {
-        Some(i) => effective_target(i),
-        None => Target {
-            fn_ptr: core::ptr::null_mut(),
-            flags: 0,
-        },
-    };
     let action = chain_action(disposition_of(target.fn_ptr), has_info, si_code);
     match action {
         ChainAction::RestoreDefaultAndRefault | ChainAction::RestoreDefaultAndReraise => {

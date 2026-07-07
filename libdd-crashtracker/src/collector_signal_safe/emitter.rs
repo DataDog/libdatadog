@@ -82,40 +82,31 @@ fn emit_report_sections(
     report: &Report<'_>,
     context: &CrashContext<'_>,
 ) -> bool {
-    if !emit_config(sink, report.config_json) || !emit_metadata(sink, report) {
-        return false;
-    }
-    if !emit_additional_tags(
-        sink,
-        report.stackwalk_method,
-        report.capabilities,
-        report.degradations,
-    ) {
-        return false;
-    }
-    if !emit_kind(sink) {
-        return false;
-    }
-    if !emit_json_section(
-        sink,
-        protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
-        &context.signal,
-        protocol::DD_CRASHTRACK_END_SIGINFO,
-    ) {
-        return false;
-    }
-    if !emit_json_section(
-        sink,
-        protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
-        &ProcInfo {
-            pid: context.pid,
-            tid: context.tid,
-        },
-        protocol::DD_CRASHTRACK_END_PROCINFO,
-    ) {
-        return false;
-    }
-    emit_stacktrace(sink, context.frames)
+    emit_config(sink, report.config_json)
+        && emit_metadata(sink, report)
+        && emit_additional_tags(
+            sink,
+            report.stackwalk_method,
+            report.capabilities,
+            report.degradations,
+        )
+        && emit_kind(sink)
+        && emit_json_section(
+            sink,
+            protocol::DD_CRASHTRACK_BEGIN_SIGINFO,
+            &context.signal,
+            protocol::DD_CRASHTRACK_END_SIGINFO,
+        )
+        && emit_json_section(
+            sink,
+            protocol::DD_CRASHTRACK_BEGIN_PROCINFO,
+            &ProcInfo {
+                pid: context.pid,
+                tid: context.tid,
+            },
+            protocol::DD_CRASHTRACK_END_PROCINFO,
+        )
+        && emit_stacktrace(sink, context.frames)
 }
 
 pub fn emit_json_section<T: Serialize>(

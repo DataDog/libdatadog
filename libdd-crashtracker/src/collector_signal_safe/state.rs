@@ -200,9 +200,7 @@ pub fn clear_signal_state() {
 }
 
 pub fn owns_signal(sig: i32) -> bool {
-    sig_index(sig)
-        .map(|i| signal_slot(i).owns_signal())
-        .unwrap_or(false)
+    sig_index(sig).is_some_and(|i| signal_slot(i).owns_signal())
 }
 
 pub fn owned_signal_count() -> u32 {
@@ -213,7 +211,5 @@ pub fn owned_signal_count() -> u32 {
 }
 
 pub fn app_handler_present(sig: i32) -> bool {
-    sig_index(sig)
-        .map(|i| signal_slot(i).app_handler_present())
-        .unwrap_or(false)
+    sig_index(sig).is_some_and(|i| signal_slot(i).app_handler_present())
 }
