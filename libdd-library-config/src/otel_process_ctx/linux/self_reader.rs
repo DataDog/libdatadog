@@ -65,6 +65,9 @@ impl ProcessContextSelfReader {
     }
 
     /// Reads and decodes the current process's OTel process context.
+    ///
+    /// Returns [`io::ErrorKind::WouldBlock`] if a writer is currently publishing or updating the
+    /// context, or if the context changed while it was being read. Callers may retry later.
     pub fn read(&self) -> io::Result<ProcessContext> {
         // SAFETY: getpid() is always safe to call.
         let current_pid = unsafe { libc::getpid() };
@@ -453,7 +456,7 @@ struct PipeCopyError {
 
 #[cfg(test)]
 mod tests {
-    use core::ptr;
+    use core::{ptr, sync::atomic::Ordering};
     use std::io;
 
     use super::ProcessContextSelfReader;
@@ -532,6 +535,34 @@ mod tests {
 
     fn assert_is_not_otel_mapping(line: &str) {
         assert!(!ProcessContextSelfReader::is_named_otel_mapping(line));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn read_returns_would_block_while_context_is_being_updated() {
+        with_published_mapping(|| {
+            let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+            // SAFETY: the mapping was published by this test before being read.
+            let header = unsafe { reader.header_ptr.as_ref() };
+            let published_at_ns = header
+                .monotonic_published_at_ns
+                .swap(super::UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
+
+            let err = reader
+                .read()
+                .expect_err("read should report writer in progress");
+
+            assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+            assert!(
+                err.to_string().contains("currently being updated"),
+                "unexpected error message: {err}"
+            );
+
+            header
+                .monotonic_published_at_ns
+                .store(published_at_ns, Ordering::Relaxed);
+            drop(reader);
+        });
     }
 
     #[test]
