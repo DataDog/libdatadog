@@ -459,10 +459,13 @@ pub fn environ_ptr() -> *mut *mut c_char {
 }
 
 pub unsafe fn cstr_has_prefix(s: *const c_char, prefix: &[u8]) -> bool {
+    // Read as bytes so the comparison doesn't depend on `c_char`'s platform-varying signedness
+    // (`i8` on x86_64/macOS, `u8` on aarch64-linux).
+    let bytes = s.cast::<u8>();
     let mut i = 0usize;
     while i < prefix.len() {
-        let c = *s.add(i);
-        if c == 0 || c as u8 != prefix[i] {
+        let c = *bytes.add(i);
+        if c == 0 || c != prefix[i] {
             return false;
         }
         i += 1;
