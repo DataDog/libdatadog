@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::slice::{AsBytes, SliceConversionError};
+use core::fmt::{Debug, Display, Formatter};
+use core::hash::{Hash, Hasher};
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 use core::slice;
 use serde::ser::Error;
 use serde::Serializer;
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::marker::PhantomData;
 use std::os::raw::c_char;
-use std::ptr::NonNull;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -34,7 +34,7 @@ impl<'a, T: 'a> core::ops::Deref for MutSlice<'a, T> {
 }
 
 impl<T: Debug> Debug for MutSlice<'_, T> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         self.as_slice().fmt(f)
     }
 }
@@ -175,8 +175,8 @@ impl<'a, T> Display for MutSlice<'a, T>
 where
     MutSlice<'a, T>: AsBytes<'a>,
 {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.try_to_utf8().map_err(|_| std::fmt::Error)?)
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.try_to_utf8().map_err(|_| core::fmt::Error)?)
     }
 }
 
@@ -202,7 +202,7 @@ impl<'a> From<&'a mut str> for MutSlice<'a, c_char> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ptr;
+    use core::ptr;
 
     #[derive(Debug, Eq, PartialEq)]
     struct Foo(i64);

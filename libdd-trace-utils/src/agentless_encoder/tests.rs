@@ -30,6 +30,7 @@ fn json_from_bytes(b: &[u8]) -> Value {
     serde_json::from_slice(b).expect("payload must be valid JSON")
 }
 
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn top_level_payload_shape_and_metadata() {
     let span: Span<BytesData> = Span {
@@ -81,6 +82,7 @@ fn top_level_payload_shape_and_metadata() {
     assert_eq!(meta["_dd.compute_stats"], "1");
 }
 
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn resource_defaults_to_name_when_empty() {
     let span: Span<BytesData> = Span {
@@ -100,6 +102,7 @@ fn resource_defaults_to_name_when_empty() {
     assert_eq!(s["resource"], "op");
 }
 
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn keeps_existing_dd_p_tid_in_meta() {
     // When the tracer already supplies `_dd.p.tid`, the encoder must pass it
@@ -128,6 +131,7 @@ fn keeps_existing_dd_p_tid_in_meta() {
     assert_eq!(meta["some.tag"], "kept");
 }
 
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn span_links_serialised_into_meta_as_json_string() {
     // Span links are JSON-stringified and stored in meta["_dd.span_links"];
@@ -174,6 +178,7 @@ fn span_links_serialised_into_meta_as_json_string() {
     assert_eq!(link_obj["tracestate"], "dd=s:1");
 }
 
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn span_events_serialised_into_meta_as_json_string() {
     // Span events are JSON-stringified and stored in meta["events"];
@@ -212,6 +217,7 @@ fn span_events_serialised_into_meta_as_json_string() {
     assert_eq!(evt["attributes"]["exception.message"], "timeout");
 }
 
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn top_level_only_for_first_span_when_parent_in_other_service() {
     // Trace with two spans, parent in different service.
@@ -270,6 +276,7 @@ fn top_level_only_for_first_span_when_parent_in_other_service() {
     assert!(spans[2]["meta"].get("_dd.compute_stats").is_none());
 }
 
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
     // `meta_struct` values are msgpack-encoded objects in memory. On the
@@ -327,6 +334,7 @@ fn meta_struct_msgpack_values_are_inlined_as_json_objects() {
     assert_eq!(inlined["list"], serde_json::json!([1, 2, 3]));
 }
 
+#[cfg_attr(miri, ignore)] // serde_json/rmp_serde overhead is prohibitively slow under Miri
 #[test]
 fn meta_struct_field_omitted_when_empty() {
     // No meta_struct entries -> the field is not emitted at all.

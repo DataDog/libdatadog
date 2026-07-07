@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use std::{fmt::Write, time::SystemTime};
+use core::fmt::Write;
+use std::time::SystemTime;
 
 use crate::{ErrorKind, SigInfo};
 
@@ -372,7 +373,7 @@ impl TelemetryCrashUploader {
             .body(serde_json::to_string(&payload)?.into())?;
 
         tokio::time::timeout(
-            std::time::Duration::from_millis({
+            core::time::Duration::from_millis({
                 if let Some(endp) = self.cfg.endpoint() {
                     endp.timeout_ms
                 } else {
