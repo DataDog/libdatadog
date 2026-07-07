@@ -531,10 +531,6 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                 return Err(e);
             }
         };
-        dbg!(
-            debug_latest_configs_response(&response),
-            &prefetched_org_uuid
-        );
         self.consecutive_failures = 0;
 
         let active_targets = match self.apply(&response, cache, prefetched_org_uuid).await {
@@ -838,7 +834,6 @@ fn parse_rc_response<T: prost::Message + Default>(
     response: http::Response<Bytes>,
 ) -> anyhow::Result<T> {
     let status = response.status().as_u16();
-    dbg!(response.headers());
     let body = response.into_body();
     if !(200..300).contains(&status) {
         bail!(
