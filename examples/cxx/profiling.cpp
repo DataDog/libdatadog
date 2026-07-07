@@ -22,7 +22,8 @@ int main() {
         };
         
         // Create profile with predefined sample types. For prototyping a type
-        // not yet in SampleType, use Profile::create_with_value_types instead.
+        // not yet in SampleType, use Custom1..Custom5 and configure the slot
+        // with Profile::set_custom_sample_type before serialization.
         auto profile = Profile::create({SampleType::WallTime}, period);
         std::cout << "✅ Profile created" << std::endl;
         

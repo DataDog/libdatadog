@@ -105,42 +105,6 @@ pub use api::SampleType;
 /// The FFI Period is identical to the API Period.
 pub use api::Period;
 
-/// A raw (type, unit) pair for profile types not yet in [`SampleType`].
-///
-/// Both `type_str` and `unit` must point to program-lifetime memory (C string
-/// literals are the typical case).  This is the escape hatch for prototyping
-/// new profile types without a libdatadog release.
-///
-/// # Stability note
-/// Once a custom type is agreed upon across profiler teams, add it to
-/// [`SampleType`] and migrate callers to [`ddog_prof_Profile_new`] instead.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct CustomValueType<'a> {
-    pub type_str: CharSlice<'a>,
-    pub unit: CharSlice<'a>,
-}
-
-/// Profile-level sampling period expressed as a raw (type, unit) string pair
-/// for use with [`ddog_prof_Profile_new_custom`].
-///
-/// This is not per-sample-type metadata. It describes the sampling
-/// distance/cadence for the whole profile (for example, every 10ms of CPU
-/// time), while profile duration describes the upload or reporting window.
-/// Pass `NULL` to [`ddog_prof_Profile_new_custom`] when the custom type has no
-/// meaningful sampling cadence.
-///
-/// The raw period form exists for future/custom profile types whose sampling
-/// trigger is not yet represented by [`SampleType`], and for compatibility with
-/// formats such as OpenTelemetry Profiles where each profile has a single
-/// sample type and period.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct CustomPeriod<'a> {
-    pub value_type: CustomValueType<'a>,
-    pub value: i64,
-}
-
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct Label<'a> {
@@ -445,81 +409,6 @@ pub unsafe extern "C" fn ddog_prof_Profile_new(
     profile_new(sample_types, period, None)
 }
 
-/// Create a new profile using raw `(type, unit)` string pairs, bypassing the
-/// [`SampleType`] enum.  Must call `ddog_prof_Profile_drop` when done.
-///
-/// Use this when the desired profile type is not yet in [`SampleType`].  Once
-/// the type is stable add it to [`SampleType`] and switch to
-/// [`ddog_prof_Profile_new`].
-///
-/// # Arguments
-/// * `sample_types` - Slice of [`CustomValueType`].  Every `type_str` and `unit` pointer must be
-///   valid for the lifetime of the program (C string literals are the typical case).
-/// * `period` - Optional profile-level sampling period.  This is not per-sample-type metadata; pass
-///   `None`/`NULL` when the custom type has no meaningful sampling cadence.  Same lifetime
-///   requirement as `sample_types`.
-///
-/// # Safety
-/// All slices must have pointers that are suitably aligned for their type and
-/// must have the correct number of elements.  The string pointers inside each
-/// [`CustomValueType`] must point to valid UTF-8 memory that lives at least as
-/// long as the program (i.e. string literals).
-#[no_mangle]
-#[must_use]
-pub unsafe extern "C" fn ddog_prof_Profile_new_custom(
-    sample_types: Slice<CustomValueType<'_>>,
-    period: Option<&CustomPeriod<'_>>,
-) -> ProfileNewResult {
-    // SAFETY: Profile type strings are program-lifetime constants (string
-    // literals).  Extending to 'static is sound because the strings must
-    // outlive the Profile, and a Profile is always dropped before the program
-    // exits.  The caller documents this requirement.
-    unsafe fn to_static_str(slice: CharSlice<'_>) -> Result<&'static str, anyhow::Error> {
-        let s = slice
-            .try_to_utf8()
-            .map_err(|e| anyhow::anyhow!("invalid UTF-8 in profile type string: {}", e))?;
-        Ok(std::mem::transmute::<&str, &'static str>(s))
-    }
-
-    let raw_types = match sample_types.try_as_slice() {
-        Ok(s) => s,
-        Err(e) => return ProfileNewResult::Err(anyhow::Error::from(e).into()),
-    };
-
-    let mut vts: Vec<api::ValueType<'static>> = Vec::with_capacity(raw_types.len());
-    for ct in raw_types {
-        let ty = match to_static_str(ct.type_str) {
-            Ok(s) => s,
-            Err(e) => return ProfileNewResult::Err(e.into()),
-        };
-        let unit = match to_static_str(ct.unit) {
-            Ok(s) => s,
-            Err(e) => return ProfileNewResult::Err(e.into()),
-        };
-        vts.push(api::ValueType::new(ty, unit));
-    }
-
-    let period_vt = match period {
-        None => None,
-        Some(p) => {
-            let ty = match to_static_str(p.value_type.type_str) {
-                Ok(s) => s,
-                Err(e) => return ProfileNewResult::Err(e.into()),
-            };
-            let unit = match to_static_str(p.value_type.unit) {
-                Ok(s) => s,
-                Err(e) => return ProfileNewResult::Err(e.into()),
-            };
-            Some((api::ValueType::new(ty, unit), p.value))
-        }
-    };
-
-    match internal::Profile::try_new_with_value_types(&vts, period_vt) {
-        Ok(inner) => ProfileNewResult::Ok(Profile::new(inner)),
-        Err(e) => ProfileNewResult::Err(anyhow::Error::from(e).into()),
-    }
-}
-
 /// Create a new profile with the given sample types. Must call
 /// `ddog_prof_Profile_drop` when you are done with the profile.
 ///
@@ -617,6 +506,46 @@ unsafe fn profile_new(
         }
         Err(err) => ProfileNewResult::Err(err.into()),
     }
+}
+
+/// Configure one of the custom sample type slots (`Custom1` through `Custom5`)
+/// with its concrete `(type, unit)` string pair.
+///
+/// Use this after creating a profile with a custom slot in its `sample_types`
+/// or `period`. The strings are copied during this call. A profile that uses a
+/// custom slot must configure it before serialization.
+///
+/// # Safety
+/// The `profile` ptr must point to a valid Profile object created by this
+/// module. The `type_str` and `unit` slices must point to valid UTF-8 memory for
+/// the duration of this call.
+#[no_mangle]
+#[must_use]
+pub unsafe extern "C" fn ddog_prof_Profile_set_custom_sample_type(
+    profile: *mut Profile,
+    slot: SampleType,
+    type_str: CharSlice,
+    unit: CharSlice,
+) -> ProfileResult {
+    (|| {
+        let profile = profile_ptr_to_inner(profile)?;
+        let type_str: &'static str = Box::leak(
+            type_str
+                .try_to_utf8()
+                .context("invalid UTF-8 in custom profile type")?
+                .to_string()
+                .into_boxed_str(),
+        );
+        let unit: &'static str = Box::leak(
+            unit.try_to_utf8()
+                .context("invalid UTF-8 in custom profile unit")?
+                .to_string()
+                .into_boxed_str(),
+        );
+        profile.set_custom_sample_type(slot, api::ValueType::new(type_str, unit))
+    })()
+    .context("ddog_prof_Profile_set_custom_sample_type failed")
+    .into()
 }
 
 /// # Safety
@@ -1068,15 +997,19 @@ mod tests {
     }
 
     #[test]
-    fn profile_new_custom_accepts_raw_value_type_without_period() -> Result<(), Error> {
+    fn profile_set_custom_sample_type_accepts_slot() -> Result<(), Error> {
         unsafe {
-            let sample_type = CustomValueType {
-                type_str: "memory-breakdown".into(),
-                unit: "bytes".into(),
-            };
-            let mut profile = Result::from(ddog_prof_Profile_new_custom(
+            let sample_type = SampleType::Custom1;
+            let mut profile = Result::from(ddog_prof_Profile_new(
                 Slice::from_raw_parts(&sample_type, 1),
                 None,
+            ))?;
+
+            Result::from(ddog_prof_Profile_set_custom_sample_type(
+                &mut profile,
+                SampleType::Custom1,
+                "memory-breakdown".into(),
+                "bytes".into(),
             ))?;
 
             let values = [4096_i64];
@@ -1092,31 +1025,49 @@ mod tests {
     }
 
     #[test]
-    fn profile_new_custom_invalid_sample_types_slice_returns_err() {
+    fn profile_set_custom_sample_type_rejects_non_custom_slot() -> Result<(), Error> {
         unsafe {
-            let bad_slice: Slice<'_, CustomValueType<'_>> =
-                Slice::from_raw_parts(std::ptr::null(), 1);
-            let result = ddog_prof_Profile_new_custom(bad_slice, None);
-            assert!(
-                matches!(result, ProfileNewResult::Err(_)),
-                "expected Err for null pointer with non-zero length (SliceConversionError::NullPointer)"
+            let sample_type = SampleType::CpuSamples;
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))?;
+            let result = ddog_prof_Profile_set_custom_sample_type(
+                &mut profile,
+                SampleType::CpuSamples,
+                "memory-breakdown".into(),
+                "bytes".into(),
             );
+            assert!(
+                matches!(result, ProfileResult::Err(_)),
+                "expected Err when configuring a non-custom slot"
+            );
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
         }
     }
 
     #[test]
-    fn profile_new_custom_invalid_utf8_returns_err() {
+    fn profile_set_custom_sample_type_invalid_utf8_returns_err() -> Result<(), Error> {
         unsafe {
+            let sample_type = SampleType::Custom1;
+            let mut profile = Result::from(ddog_prof_Profile_new(
+                Slice::from_raw_parts(&sample_type, 1),
+                None,
+            ))?;
             let invalid = [0xff_u8 as std::ffi::c_char];
-            let sample_type = CustomValueType {
-                type_str: Slice::from_raw_parts(invalid.as_ptr(), invalid.len()),
-                unit: "bytes".into(),
-            };
-            let result = ddog_prof_Profile_new_custom(Slice::from_raw_parts(&sample_type, 1), None);
+            let result = ddog_prof_Profile_set_custom_sample_type(
+                &mut profile,
+                SampleType::Custom1,
+                Slice::from_raw_parts(invalid.as_ptr(), invalid.len()),
+                "bytes".into(),
+            );
             assert!(
-                matches!(result, ProfileNewResult::Err(_)),
+                matches!(result, ProfileResult::Err(_)),
                 "expected Err for invalid UTF-8 in custom profile type"
             );
+            ddog_prof_Profile_drop(&mut profile);
+            Ok(())
         }
     }
 

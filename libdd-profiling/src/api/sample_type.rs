@@ -15,12 +15,11 @@ use super::ValueType;
 ///
 /// # Adding new types
 ///
-/// To prototype a new profile type without a libdatadog release, use
-/// [`crate::internal::Profile::try_new_with_value_types`] (Rust) or the
-/// `create_with_value_types` CXX / `ddog_prof_Profile_new_custom` C functions
-/// with a raw `(type, unit)` string pair.
-/// Once the type is stable and agreed upon across profiler teams, add a
-/// variant here so callers can use the type-safe path.
+/// To prototype a new profile type without a libdatadog release, use one of
+/// the `Custom1` through `Custom5` slots and configure its concrete `(type,
+/// unit)` string pair on the profile before serialization. Once the type is
+/// stable and agreed upon across profiler teams, add a dedicated variant here
+/// so callers can use the type-safe path.
 #[cfg_attr(test, derive(bolero::generator::TypeGenerator, strum::EnumIter))]
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -83,15 +82,35 @@ pub enum SampleType {
     WallTime,
     /// Legacy: Use `WallTime` instead for consistency with naming scheme
     WallLegacy,
-    /// Deprecated: use `Profile::try_new_with_value_types` with a descriptive raw `(type, unit)`
-    /// pair instead. This fixed name cannot distinguish multiple custom count measurements.
-    ExperimentalCount,
-    /// Deprecated: use `Profile::try_new_with_value_types` with a descriptive raw `(type, unit)`
-    /// pair instead. This fixed name cannot distinguish multiple custom time measurements.
-    ExperimentalNanoseconds,
-    /// Deprecated: use `Profile::try_new_with_value_types` with a descriptive raw `(type, unit)`
-    /// pair instead. This fixed name cannot distinguish multiple custom byte measurements.
-    ExperimentalBytes,
+    /// Custom profile type slot. Configure its concrete `(type, unit)` on the profile before
+    /// serialization.
+    Custom1,
+    /// Custom profile type slot. Configure its concrete `(type, unit)` on the profile before
+    /// serialization.
+    Custom2,
+    /// Custom profile type slot. Configure its concrete `(type, unit)` on the profile before
+    /// serialization.
+    Custom3,
+    /// Custom profile type slot. Configure its concrete `(type, unit)` on the profile before
+    /// serialization.
+    Custom4,
+    /// Custom profile type slot. Configure its concrete `(type, unit)` on the profile before
+    /// serialization.
+    Custom5,
+}
+
+impl SampleType {
+    #[inline(always)]
+    pub fn is_custom(self) -> bool {
+        matches!(
+            self,
+            SampleType::Custom1
+                | SampleType::Custom2
+                | SampleType::Custom3
+                | SampleType::Custom4
+                | SampleType::Custom5
+        )
+    }
 }
 
 impl From<&SampleType> for ValueType<'static> {
@@ -173,11 +192,11 @@ impl From<SampleType> for ValueType<'static> {
             SampleType::WallSamples => ValueType::new("wall-samples", "count"),
             SampleType::WallTime => ValueType::new("wall-time", "nanoseconds"),
             SampleType::WallLegacy => ValueType::new("wall", "nanoseconds"),
-            SampleType::ExperimentalCount => ValueType::new("experimental-count", "count"),
-            SampleType::ExperimentalNanoseconds => {
-                ValueType::new("experimental-nanoseconds", "nanoseconds")
-            }
-            SampleType::ExperimentalBytes => ValueType::new("experimental-bytes", "bytes"),
+            SampleType::Custom1 => ValueType::new("custom-1", "count"),
+            SampleType::Custom2 => ValueType::new("custom-2", "count"),
+            SampleType::Custom3 => ValueType::new("custom-3", "count"),
+            SampleType::Custom4 => ValueType::new("custom-4", "count"),
+            SampleType::Custom5 => ValueType::new("custom-5", "count"),
         }
     }
 }
@@ -239,9 +258,11 @@ impl<'a> TryFrom<ValueType<'a>> for SampleType {
             ("wall-samples", "count") => SampleType::WallSamples,
             ("wall-time", "nanoseconds") => SampleType::WallTime,
             ("wall", "nanoseconds") => SampleType::WallLegacy,
-            ("experimental-count", "count") => SampleType::ExperimentalCount,
-            ("experimental-nanoseconds", "nanoseconds") => SampleType::ExperimentalNanoseconds,
-            ("experimental-bytes", "bytes") => SampleType::ExperimentalBytes,
+            ("custom-1", "count") => SampleType::Custom1,
+            ("custom-2", "count") => SampleType::Custom2,
+            ("custom-3", "count") => SampleType::Custom3,
+            ("custom-4", "count") => SampleType::Custom4,
+            ("custom-5", "count") => SampleType::Custom5,
             _ => anyhow::bail!("Unknown sample type: ({}, {})", vt.r#type, vt.unit),
         })
     }

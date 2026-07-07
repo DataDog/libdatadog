@@ -17,6 +17,7 @@ type SamplesAndEndpointInfo<'pprof> = (
     Vec<(Option<Timestamp>, api::Sample<'pprof>)>,
     Vec<(u64, &'pprof str)>,
 );
+type CustomTypeMappings = Vec<(api::SampleType, api::ValueType<'static>)>;
 
 pub struct Replayer<'pprof> {
     pub profile_index: ProfileIndex<'pprof>,
@@ -24,8 +25,9 @@ pub struct Replayer<'pprof> {
     pub start_time: SystemTime,
     pub duration: Duration,
     pub end_time: SystemTime, // start_time + duration
-    pub sample_types: Vec<api::ValueType<'static>>,
-    pub period: Option<(api::ValueType<'static>, i64)>,
+    pub sample_types: Vec<api::SampleType>,
+    pub period: Option<api::Period>,
+    pub custom_type_mappings: CustomTypeMappings,
     pub endpoints: Vec<(u64, &'pprof str)>,
     pub samples: Vec<(Option<Timestamp>, api::Sample<'pprof>)>,
 }
@@ -55,48 +57,72 @@ impl<'pprof> Replayer<'pprof> {
         }
     }
 
-    /// Convert a (type_str, unit) pair read from a pprof file into a
-    /// `ValueType<'static>`.
-    ///
-    /// Known types are resolved through [`api::SampleType`] so the returned
-    /// references point to existing static string literals (zero allocation).
-    /// Strings that are not yet in the enum – i.e. custom / prototype types –
-    /// are promoted to `'static` via [`Box::leak`].  The replayer is a
-    /// short-lived tool; the bounded number of leaked allocations is acceptable.
-    fn to_static_value_type(type_str: &str, unit: &str) -> api::ValueType<'static> {
+    fn custom_slots() -> [api::SampleType; 5] {
+        [
+            api::SampleType::Custom1,
+            api::SampleType::Custom2,
+            api::SampleType::Custom3,
+            api::SampleType::Custom4,
+            api::SampleType::Custom5,
+        ]
+    }
+
+    fn resolve_sample_type(
+        type_str: &str,
+        unit: &str,
+        custom_type_mappings: &mut CustomTypeMappings,
+    ) -> anyhow::Result<api::SampleType> {
         let borrowed = api::ValueType::new(type_str, unit);
-        // Fast path: resolve via the stable enum (returns 'static string literals).
-        if let Ok(st) = api::SampleType::try_from(borrowed) {
-            return api::ValueType::from(st);
+        if let Ok(sample_type) = api::SampleType::try_from(borrowed) {
+            return Ok(sample_type);
         }
-        // Slow path: custom type not yet in the enum – own the strings.
-        let ty: &'static str = Box::leak(type_str.to_string().into_boxed_str());
+
+        if let Some((slot, _)) = custom_type_mappings
+            .iter()
+            .find(|(_, value_type)| value_type.r#type == type_str && value_type.unit == unit)
+        {
+            return Ok(*slot);
+        }
+
+        let slots = Self::custom_slots();
+        let slot = *slots
+            .get(custom_type_mappings.len())
+            .ok_or_else(|| anyhow::anyhow!("pprof uses more than 5 custom sample types"))?;
+        let type_str: &'static str = Box::leak(type_str.to_string().into_boxed_str());
         let unit: &'static str = Box::leak(unit.to_string().into_boxed_str());
-        api::ValueType::new(ty, unit)
+        custom_type_mappings.push((slot, api::ValueType::new(type_str, unit)));
+        Ok(slot)
     }
 
     fn sample_types<'a>(
         profile_index: &'a ProfileIndex<'pprof>,
-    ) -> anyhow::Result<Vec<api::ValueType<'static>>> {
+        custom_type_mappings: &mut CustomTypeMappings,
+    ) -> anyhow::Result<Vec<api::SampleType>> {
         let mut sample_types = Vec::with_capacity(profile_index.pprof.sample_types.len());
         for sample_type in profile_index.pprof.sample_types.iter() {
             let type_str = profile_index.get_string(sample_type.r#type)?;
             let unit = profile_index.get_string(sample_type.unit)?;
-            sample_types.push(Self::to_static_value_type(type_str, unit));
+            sample_types.push(Self::resolve_sample_type(
+                type_str,
+                unit,
+                custom_type_mappings,
+            )?);
         }
         Ok(sample_types)
     }
 
     fn period<'a>(
         profile_index: &'a ProfileIndex<'pprof>,
-    ) -> anyhow::Result<Option<(api::ValueType<'static>, i64)>> {
+        custom_type_mappings: &mut CustomTypeMappings,
+    ) -> anyhow::Result<Option<api::Period>> {
         let value = profile_index.pprof.period;
 
         match profile_index.pprof.period_type {
             Some(period_type) => {
                 let type_str = profile_index.get_string(period_type.r#type)?;
                 let unit = profile_index.get_string(period_type.unit)?;
-                Ok(Some((Self::to_static_value_type(type_str, unit), value)))
+                let sample_type = Self::resolve_sample_type(type_str, unit, custom_type_mappings)?;
+                Ok(Some(api::Period { sample_type, value }))
             }
             None => Ok(None),
         }
@@ -271,8 +297,9 @@ impl<'pprof> TryFrom<&'pprof prost_impls::Profile> for Replayer<'pprof> {
         let start_time = Self::start_time(pprof);
         let duration = Self::duration(pprof)?;
         let end_time = start_time.add(duration);
-        let sample_types = Self::sample_types(&profile_index)?;
-        let period = Self::period(&profile_index)?;
+        let mut custom_type_mappings = Vec::new();
+        let sample_types = Self::sample_types(&profile_index, &mut custom_type_mappings)?;
+        let period = Self::period(&profile_index, &mut custom_type_mappings)?;
         let (samples, endpoints) = Self::samples(&profile_index)?;
 
         Ok(Self {
@@ -282,6 +309,7 @@ impl<'pprof> TryFrom<&'pprof prost_impls::Profile> for Replayer<'pprof> {
             end_time,
             sample_types,
             period,
+            custom_type_mappings,
             endpoints,
             samples,
         })
