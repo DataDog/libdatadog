@@ -83,7 +83,7 @@ pub async fn send_flag_evaluation_batch<C: HttpClientCapability + SleepCapabilit
     };
 
     if result.dropped_oversized_rows > 0 {
-        log::debug!(
+        log::warn!(
             "ffe flagevaluation sender dropped {} flag evaluation row(s) because they exceeded the {} byte EVP payload limit after degradation",
             result.dropped_oversized_rows,
             config.payload_size_limit
@@ -139,7 +139,7 @@ async fn send_payload<C: HttpClientCapability + SleepCapability>(
             let status = resp.status();
             if !status.is_success() {
                 let body_preview = truncate(resp.body().as_ref(), 256);
-                log::debug!("ffe flagevaluation sender non-2xx response {status}: {body_preview}");
+                log::warn!("ffe flagevaluation sender non-2xx response {status}: {body_preview}");
             } else {
                 log::debug!(
                     "ffe flagevaluation sender sent flag evaluation batch, status={status}"
@@ -390,7 +390,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn failure_paths_log_at_debug_level() {
+    async fn delivery_loss_paths_log_at_warn_level() {
         start_log_capture();
 
         let server = MockServer::start_async().await;
@@ -429,9 +429,9 @@ mod tests {
             assert!(
                 records
                     .iter()
-                    .any(|record| record.level == log::Level::Debug
+                    .any(|record| record.level == log::Level::Warn
                         && record.message.contains(pattern)),
-                "expected debug log containing {pattern:?}; got {:?}",
+                "expected warn log containing {pattern:?}; got {:?}",
                 records
                     .iter()
                     .map(|record| (&record.level, &record.message))
@@ -440,9 +440,9 @@ mod tests {
             assert!(
                 !records
                     .iter()
-                    .any(|record| record.level == log::Level::Warn
+                    .any(|record| record.level == log::Level::Debug
                         && record.message.contains(pattern)),
-                "expected no warn log containing {pattern:?}"
+                "expected no debug log containing {pattern:?}"
             );
         }
     }

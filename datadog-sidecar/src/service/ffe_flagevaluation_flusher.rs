@@ -6,7 +6,7 @@
 //!
 //! Protocol: `POST /evp_proxy/v2/api/v2/flagevaluation` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. Fire-and-forget: non-2xx
-//! responses and network errors are logged at `debug` and dropped
+//! responses are logged at `warn`, network errors at `debug`, and dropped
 //! (matches dd-trace-go behaviour). No agent capability gate.
 
 use crate::service::{FfeFlagEvaluationBatch, FfeTelemetryContext};
