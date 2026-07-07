@@ -299,6 +299,31 @@ mod tests {
         assert_eq!(freed.size, requested_bumped_size(user_size, alignment));
     }
 
+    // When a sampled block is realloc'd to a size so large that reserving
+    // room for its header would overflow SIZE_MAX, prepare() must still
+    // forward the RAW pointer to the underlying realloc - not the offset
+    // user pointer, which is mid-chunk and would corrupt the heap. Drives
+    // prepare() directly, so the oversized request is never made.
+    #[cfg(all(target_arch = "x86_64", feature = "live-heap"))]
+    #[test]
+    fn realloc_prepare_oversized_sampled_uses_raw_pointer() {
+        let mut buf = vec![0u8; 256];
+        let raw = buf.as_mut_ptr() as *mut c_void;
+
+        // Flag the block: stamps the header and returns user = raw + offset.
+        let user = unsafe { dd_sample_flag_apply(raw, 16) };
+        assert_ne!(
+            user, raw,
+            "apply should offset the user pointer past the header"
+        );
+
+        let prep = unsafe { dd_allocation_realloc_prepare(user, usize::MAX) };
+        assert_eq!(
+            prep.raw_ptr, raw,
+            "oversized sampled realloc must forward old_raw, not the user pointer"
+        );
+    }
+
     #[test]
     fn tl_state_init_populates_state() {
         std::thread::spawn(|| unsafe {

@@ -78,6 +78,10 @@ dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size)
      * before falling through to passthrough, otherwise a later free
      * would not recover old_raw. */
     if (new_size > SIZE_MAX - old_offset) {
+        /* Hand the real realloc old_raw, not the offset user pointer, so
+         * this doomed oversized request fails cleanly instead of corrupting
+         * the heap. */
+        out.raw_ptr = old_raw;
 #if defined(__x86_64__)
         void *hdr = (char *)old_user - DD_HEADER_BYTES;
         uint64_t m = DD_MAGIC;
