@@ -343,7 +343,7 @@ impl TraceExporterBuilder {
 
         let info_endpoint = Endpoint::from_url(add_path(&agent_url, INFO_ENDPOINT));
         let (info_fetcher, info_response_observer) =
-            AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_secs(5 * 60));
+            AgentInfoFetcher::<C>::new(info_endpoint, Duration::from_millis(100));
         let info_fetcher_handle =
             shared_runtime
                 .spawn_worker(info_fetcher, false)
