@@ -448,7 +448,8 @@ fn read_proc_maps() -> Vec<MapEntry> {
 /// restored them, weakening RELRO for the process lifetime. This guard
 /// mprotects each unique page once (RW), lets the caller write as
 /// many entries as it needs, then mprotects each page back to what
-/// `/proc/self/maps` reported at guard-construction time.
+/// `/proc/self/maps` reported at guard-construction time when it is
+/// dropped (including on panic or early return).
 struct PageProtGuard {
     page_size: usize,
     maps: Vec<MapEntry>,
@@ -499,9 +500,13 @@ impl PageProtGuard {
         std::ptr::write_unaligned(addr as *mut usize, new_value);
         true
     }
+}
 
-    /// Restore every touched page to its original protection.
-    fn finish(mut self) {
+impl Drop for PageProtGuard {
+    /// Restore every touched page to its original protection. Runs on
+    /// scope exit - including panic or early return - so page protections
+    /// are never left weakened even if a patching pass bails out midway.
+    fn drop(&mut self) {
         for (aligned, orig) in self.touched.drain() {
             // Best-effort: nothing sensible to do on failure other than
             // leave the page RW, which is the pre-fix behavior.
@@ -581,11 +586,16 @@ struct OverrideInfo {
 }
 
 /// Holds the override table and the per-library revert info needed to undo writes.
-#[derive(Default)]
 pub struct SymbolOverrides {
     overrides: HashMap<String, OverrideInfo>,
     revert_info_per_library: HashMap<usize, LibraryRevertInfo>,
     last_seen_nb_libs: i32,
+}
+
+impl Default for SymbolOverrides {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SymbolOverrides {
@@ -593,6 +603,9 @@ impl SymbolOverrides {
         Self {
             overrides: HashMap::new(),
             revert_info_per_library: HashMap::new(),
+            // -1 is the "never scanned" sentinel; a derived Default would
+            // use 0 (a valid library count) and could wrongly skip the
+            // first update_overrides, so Default must go through new().
             last_seen_nb_libs: -1,
         }
     }
@@ -686,7 +699,7 @@ impl SymbolOverrides {
             false
         });
 
-        guard.finish();
+        // `guard` restores page protections when it drops at end of scope.
 
         // Drop any tracked libraries that have been unloaded.
         self.revert_info_per_library.retain(|_, v| v.processed);
@@ -722,13 +735,24 @@ impl SymbolOverrides {
                 unsafe { guard.override_entry(addr, old) };
             }
         }
-        if let Some(guard) = guard {
-            guard.finish();
-        }
+        // `guard` (if created) restores page protections when the Option
+        // drops at end of scope.
         self.last_seen_nb_libs = -1;
         restored_libraries
     }
 
+    /// Patch every override-matching GOT entry in one loaded library,
+    /// recording the original values so they can be restored later. Skips
+    /// libraries already processed this pass and handles base-address reuse
+    /// (a `dlclose` + `dlopen` placing a different library at the same base).
+    ///
+    /// # Safety
+    ///
+    /// `dyn_info` must have been produced by [`DynamicInfo::from_phdr`] for a
+    /// library that is currently loaded, so its symtab/strtab/relocation
+    /// pointers are valid and the object is still mapped at
+    /// `dyn_info.base_address`. Call only from inside [`iterate_libraries`],
+    /// while `dl_iterate_phdr` holds the loader lock.
     unsafe fn apply_to_library(
         &mut self,
         dyn_info: &DynamicInfo,
@@ -751,19 +775,20 @@ impl SymbolOverrides {
                 });
                 true
             }
+            std::collections::hash_map::Entry::Occupied(mut e)
+                if e.get().library_name != library_name =>
+            {
+                // Base-address reuse: replace the stale entry.
+                e.insert(LibraryRevertInfo {
+                    library_name: library_name.clone(),
+                    processed: true,
+                    ..Default::default()
+                });
+                true
+            }
             std::collections::hash_map::Entry::Occupied(mut e) => {
-                if e.get().library_name != library_name {
-                    // Base-address reuse: replace the stale entry.
-                    e.insert(LibraryRevertInfo {
-                        library_name: library_name.clone(),
-                        processed: true,
-                        ..Default::default()
-                    });
-                    true
-                } else {
-                    e.get_mut().processed = true;
-                    false
-                }
+                e.get_mut().processed = true;
+                false
             }
         };
         if !entry_is_new {
@@ -810,6 +835,17 @@ impl SymbolOverrides {
         }
     }
 
+    /// Resolve one relocation's symbol name and, if it matches a registered
+    /// override, record its current GOT value and rewrite the entry at
+    /// `r_offset` to point at the hook.
+    ///
+    /// # Safety
+    ///
+    /// `dyn_info` must be valid for a currently-loaded object (see
+    /// [`Self::apply_to_library`]); `sym_index` and `r_offset` must come from
+    /// that object's own relocation table; and `guard` must belong to the
+    /// current patching pass. Dereferences `dyn_info`'s symtab/strtab and
+    /// writes process memory through `guard`.
     unsafe fn process_relocation(
         overrides: &HashMap<String, OverrideInfo>,
         dyn_info: &DynamicInfo,

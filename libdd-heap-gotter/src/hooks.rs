@@ -49,10 +49,22 @@ unsafe fn load_fn<T>(slot: &AtomicUsize) -> Option<T> {
         // SAFETY: caller guarantees T is the right `extern "C" fn(...)`
         // type and that `v` was written by `apply_overrides` with a
         // function of that signature.
+        //
+        // transmute_copy, not transmute: `transmute::<usize, T>` won't
+        // compile for a generic T because the size-equality check runs
+        // before monomorphization, so the compiler can't prove
+        // `size_of::<T>() == size_of::<usize>()`. Every T here is a
+        // pointer-sized fn pointer, so copying `size_of::<T>()` bytes is
+        // sound.
         Some(core::mem::transmute_copy::<usize, T>(&v))
     }
 }
 
+// These mirror the C-standard / POSIX ABI signatures of the hooked
+// functions (malloc(size_t), free(void*), ...). That ABI is effectively
+// frozen, and a C function's signature can't be introspected at runtime,
+// so there is no runtime guard against drift - correctness relies on the
+// standardized ABI staying put.
 /// Signature of the real `malloc`.
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 /// Signature of the real `free`.
@@ -97,9 +109,10 @@ pub unsafe extern "C" fn gotter_free(ptr: *mut c_void) {
     let Some(real): Option<FreeFn> = load_fn(&ORIG_FREE) else {
         return;
     };
-    if ptr.is_null() {
-        return;
-    }
+    // Forward unconditionally, including free(NULL): the sampler's check
+    // rejects NULL without dereferencing (returns it unchanged), and
+    // free(NULL) is a defined no-op - forwarding preserves whatever the
+    // real allocator does rather than assuming.
     let freed = dd_allocation_freed(ptr, 0, 0);
     real(freed.ptr);
 }
