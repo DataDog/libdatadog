@@ -13,7 +13,7 @@ autobenches = false
 arc-swap.workspace = true
 anyhow = "1.0"
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
-libdd-common = { version = "5.0.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch" }
 libdd-dogstatsd-client = { version = "3.0.0", path = "../libdd-dogstatsd-client", default-features = false, optional = true }
 libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime", default-features = false }
