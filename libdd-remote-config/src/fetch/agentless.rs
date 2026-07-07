@@ -167,6 +167,11 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     /// re-fetch them from the remote repo, so we cache and re-serve the last copy
     /// to avoid being stuck (incident-45734).
     last_config_top_targets: Option<remoteconfig::TopMeta>,
+    /// Org UUID pinned to a config root version. Root rotation forces a
+    /// re-fetch, so a bad pin clears itself on the next rotation.
+    org_uuid: Option<OrgUuidBinding>,
+    /// Whether the one-shot org-UUID prefetch has run. Cleared by `reset()`.
+    org_data_prefetched: bool,
     hostname: String,
     agent_uuid_override: Option<String>,
     products: HashSet<String>,
@@ -174,6 +179,12 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     /// Number of consecutive `fetch_config` failures. Reset to 0 on success.
     consecutive_failures: u32,
     endpoint: Endpoint,
+}
+
+#[derive(Debug, Clone)]
+struct OrgUuidBinding {
+    config_root_version: u64,
+    uuid: String,
 }
 
 #[derive(Debug)]
@@ -283,6 +294,8 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             config_root_bytes,
             director_root_bytes,
             last_config_top_targets: None,
+            org_uuid: None,
+            org_data_prefetched: false,
             hostname: cfg.hostname,
             agent_uuid_override: cfg.agent_uuid,
             products: HashSet::new(),
@@ -335,6 +348,54 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         self.products.clear();
         self.opaque_backend_state.clear();
         self.last_config_top_targets = None;
+        self.org_uuid = None;
+        self.org_data_prefetched = false;
+        Ok(())
+    }
+
+    /// Check the config snapshot's `custom.org_uuid` against the UUID served
+    /// by `/api/v0.1/org`. No snapshot custom => skip.
+    ///
+    /// The pinned UUID is keyed by the config trusted-root version, so a root
+    /// rotation forces a fresh fetch. `prefetched` reuses the first-poll
+    /// concurrent fetch; otherwise the UUID is fetched here.
+    async fn verify_org_uuid(&mut self, prefetched: Option<String>) -> anyhow::Result<()> {
+        let Some(expected) = self
+            .config_client
+            .database()
+            .trusted_snapshot()
+            .ok_or_else(|| format_err!("org UUID check failed: missing trusted snapshot"))?
+            .additional_fields()
+            .get("custom")
+            .and_then(|c| c.get("org_uuid"))
+            .and_then(Value::as_str)
+        else {
+            return Ok(());
+        };
+
+        let root_version = self.config_client.database().trusted_root().version();
+
+        let stored: &str = match self.org_uuid.as_ref() {
+            Some(b) if b.config_root_version == root_version => &b.uuid,
+            _ => {
+                let uuid = match prefetched {
+                    Some(u) => u,
+                    None => self.get_org_data().await?.uuid,
+                };
+                &self
+                    .org_uuid
+                    .insert(OrgUuidBinding {
+                        config_root_version: root_version,
+                        uuid,
+                    })
+                    .uuid
+            }
+        };
+
+        anyhow::ensure!(
+            stored == expected,
+            "org UUID mismatch: intake={stored} snapshot={expected}"
+        );
         Ok(())
     }
 
@@ -446,16 +507,37 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                 .unwrap_or_else(|| libdd_common::machine_id::get_machine_id())
                 .to_owned(),
         };
-        let response = match self.get_latest_config(request).await {
+        // During first poll only fetch org data in parallel with the config request
+        // to hide its latency. Later polls (and prefetch failures) fall back to
+        // the sequential fetch in `verify_org_uuid`.
+        let (response_result, prefetched_org_uuid) = if !self.org_data_prefetched {
+            self.org_data_prefetched = true;
+            let (r, org) = futures::join!(self.get_latest_config(request), self.get_org_data());
+            let org_uuid = match org {
+                Ok(d) => Some(d.uuid),
+                Err(e) => {
+                    debug!("org data prefetch failed, will fetch lazily: {e:#}");
+                    None
+                }
+            };
+            (r, org_uuid)
+        } else {
+            (self.get_latest_config(request).await, None)
+        };
+        let response = match response_result {
             Ok(r) => r,
             Err(e) => {
                 self.consecutive_failures = self.consecutive_failures.saturating_add(1);
                 return Err(e);
             }
         };
+        dbg!(
+            debug_latest_configs_response(&response),
+            &prefetched_org_uuid
+        );
         self.consecutive_failures = 0;
 
-        let active_targets = match self.apply(&response, cache).await {
+        let active_targets = match self.apply(&response, cache, prefetched_org_uuid).await {
             Ok(t) => t,
             Err(e) => {
                 // On any `apply()` failure the trusted databases may have been advanced
@@ -468,6 +550,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                 return Err(e);
             }
         };
+
         self.products = all_products;
 
         // TODO:
@@ -554,6 +637,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         &mut self,
         response: &remoteconfig::LatestConfigsResponse,
         cache: &TargetCache<'_, S>,
+        prefetched_org_uuid: Option<String>,
     ) -> anyhow::Result<Vec<ClientTargetRef>> {
         // At a high level,  we're populating the "remote" repos with the metadata
         // that we received from upstream (which does not validate it), and then using the clients'
@@ -639,6 +723,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         // Enforce that each director-announced target is also authorized by the
         // config repo's per-product delegated keys, not just the single director key.
         verify_director_against_config(&self.config_client, &self.director_client)?;
+        self.verify_org_uuid(prefetched_org_uuid).await?;
 
         let targets: Vec<TrustedTarget<'_>> = trusted_targets(&self.director_client)?
             .filter(|t| {
@@ -753,6 +838,7 @@ fn parse_rc_response<T: prost::Message + Default>(
     response: http::Response<Bytes>,
 ) -> anyhow::Result<T> {
     let status = response.status().as_u16();
+    dbg!(response.headers());
     let body = response.into_body();
     if !(200..300).contains(&status) {
         bail!(
@@ -761,7 +847,6 @@ fn parse_rc_response<T: prost::Message + Default>(
             String::from_utf8_lossy(&body)
         )
     }
-
     Ok(T::decode(body)?)
 }
 

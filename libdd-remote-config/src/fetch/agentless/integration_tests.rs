@@ -21,8 +21,8 @@ use tuf::crypto::{Ed25519PrivateKey, HashAlgorithm, PrivateKey};
 use tuf::database::Database;
 use tuf::interchange::Json;
 use tuf::metadata::{
-    Delegation, MetadataDescription, MetadataPath, RawSignedMetadataSet, TargetPath,
-    TargetsMetadataBuilder,
+    Delegation, MetadataDescription, MetadataPath, RawSignedMetadataSet, SignedMetadata,
+    SnapshotMetadata, TargetPath, TargetsMetadataBuilder, TimestampMetadataBuilder,
 };
 use tuf::repo_builder::RepoBuilder;
 use tuf::repository::EphemeralRepository;
@@ -33,6 +33,12 @@ use tuf::repository::EphemeralRepository;
 struct MockHttp {
     responses: Arc<Mutex<VecDeque<Vec<u8>>>>,
     requests: Arc<Mutex<Vec<remoteconfig::LatestConfigsRequest>>>,
+    /// UUID returned for GET /api/v0.1/org. Some tests want to change it mid-run
+    /// (e.g. serve a mismatching UUID) so this is a Mutex, not an atomic snapshot.
+    org_uuid: Arc<Mutex<String>>,
+    /// Count of GET /api/v0.1/org requests observed, used to assert the
+    /// concurrent prefetch (poll 1) and the lazy re-fetch (post root-rotation).
+    org_requests: Arc<Mutex<u32>>,
 }
 
 impl MockHttp {
@@ -40,6 +46,8 @@ impl MockHttp {
         Self {
             responses: Arc::new(Mutex::new(VecDeque::new())),
             requests: Arc::new(Mutex::new(Vec::new())),
+            org_uuid: Arc::new(Mutex::new(String::new())),
+            org_requests: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -52,6 +60,14 @@ impl MockHttp {
 
     fn request_at(&self, i: usize) -> remoteconfig::LatestConfigsRequest {
         self.requests.lock().unwrap()[i].clone()
+    }
+
+    fn set_org_uuid(&self, uuid: &str) {
+        *self.org_uuid.lock().unwrap() = uuid.to_string();
+    }
+
+    fn org_request_count(&self) -> u32 {
+        *self.org_requests.lock().unwrap()
     }
 }
 
@@ -67,7 +83,21 @@ impl HttpClientCapability for MockHttp {
     ) -> impl Future<Output = Result<http::Response<Bytes>, HttpError>> + MaybeSend {
         let responses = self.responses.clone();
         let requests = self.requests.clone();
+        let org_uuid = self.org_uuid.clone();
+        let org_requests = self.org_requests.clone();
+        // Capture the path off the request before moving the body.
+        let path = req.uri().path().to_owned();
         async move {
+            if path == "/api/v0.1/org" {
+                *org_requests.lock().unwrap() += 1;
+                let resp = remoteconfig::OrgDataResponse {
+                    uuid: org_uuid.lock().unwrap().clone(),
+                };
+                return Ok(http::Response::builder()
+                    .status(200)
+                    .body(Bytes::from(resp.encode_to_vec()))
+                    .unwrap());
+            }
             let body = req.into_body();
             if let Ok(parsed) = remoteconfig::LatestConfigsRequest::decode(body) {
                 requests.lock().unwrap().push(parsed);
@@ -238,6 +268,8 @@ async fn fetcher(
         config_root_bytes: Cow::Owned(config_root),
         director_root_bytes: Cow::Owned(director_root),
         last_config_top_targets: None,
+        org_uuid: None,
+        org_data_prefetched: false,
         hostname: "test-host".to_string(),
         agent_uuid_override: Some("test-uuid".to_string()),
         products: HashSet::new(),
@@ -677,4 +709,190 @@ async fn test_director_hash_superset_is_rejected() {
         msg.contains("hash set mismatch"),
         "expected a hash-set mismatch error, got: {msg}"
     );
+}
+
+/// Build a config snapshot + timestamp pair whose signed snapshot carries
+/// `custom.org_uuid = uuid`. Reuses the (version, expires, meta) already
+/// signed inside `cfg.snapshot()`, adds the custom field, and re-signs with
+/// `config_key`. The timestamp is rebuilt from the new snapshot so its
+/// (length, hash) description stays consistent.
+fn config_snapshot_with_org_uuid(
+    cfg: &RawSignedMetadataSet<Json>,
+    config_key: &Ed25519PrivateKey,
+    uuid: &str,
+) -> (Vec<u8>, Vec<u8>) {
+    // Grab the `signed` object out of the raw snapshot bytes, inject
+    // `custom.org_uuid`, then re-hydrate a `SnapshotMetadata` via serde (the
+    // rust-tuf shim flattens unknown top-level fields into `additional_fields`,
+    // so our injected `custom` object lands in the right place).
+    let mut signed: serde_json::Value =
+        serde_json::from_slice(cfg.snapshot().unwrap().as_bytes()).unwrap();
+    signed
+        .get_mut("signed")
+        .unwrap()
+        .as_object_mut()
+        .unwrap()
+        .insert(
+            "custom".to_string(),
+            serde_json::json!({ "org_uuid": uuid }),
+        );
+    let new_snap: SnapshotMetadata = serde_json::from_value(signed["signed"].clone()).unwrap();
+    let signed_snap = SignedMetadata::<Json, SnapshotMetadata>::new(&new_snap, config_key).unwrap();
+    let raw_snap = signed_snap.to_raw().unwrap().as_bytes().to_vec();
+
+    let signed_ts =
+        TimestampMetadataBuilder::from_snapshot::<Json>(&signed_snap, &[HashAlgorithm::Sha256])
+            .unwrap()
+            .signed::<Json>(config_key)
+            .unwrap();
+    let raw_ts = signed_ts.to_raw().unwrap().as_bytes().to_vec();
+
+    (raw_snap, raw_ts)
+}
+
+/// First-poll happy path: the concurrent org-data prefetch returns the same
+/// UUID that the snapshot pins, so the fetch converges and exactly one org
+/// request was issued.
+#[tokio::test]
+async fn test_org_uuid_match_via_concurrent_prefetch() {
+    let config_key = new_key();
+    let director_key = new_key();
+
+    let cfg1 = build_v1(&config_key).await;
+    let dir1 = build_v1(&director_key).await;
+    let (snap_bytes, ts_bytes) = config_snapshot_with_org_uuid(&cfg1, &config_key, "ORG-1");
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-1");
+    http.push(&response(
+        &[cfg1.root().unwrap().as_bytes()],
+        &ts_bytes,
+        &snap_bytes,
+        Some(cfg1.targets().unwrap().as_bytes()),
+        vec![],
+        &dir1,
+    ));
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg1.root().unwrap().as_bytes().to_vec(),
+        dir1.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    f.fetch_config(dummy_client(), &cache)
+        .await
+        .expect("matching org UUID must not fail the poll");
+
+    // Exactly one org request on the first poll (concurrent prefetch).
+    assert_eq!(http.org_request_count(), 1);
+}
+
+/// Mismatching org UUID must fail the poll AND reset the fetcher, so a
+/// subsequent poll reports the clean (embedded) versions.
+#[tokio::test]
+async fn test_org_uuid_mismatch_fails_and_resets() {
+    let config_key = new_key();
+    let director_key = new_key();
+
+    let cfg1 = build_v1(&config_key).await;
+    let dir1 = build_v1(&director_key).await;
+    let (snap_bytes, ts_bytes) = config_snapshot_with_org_uuid(&cfg1, &config_key, "ORG-EXPECTED");
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-OTHER");
+    http.push(&response(
+        &[cfg1.root().unwrap().as_bytes()],
+        &ts_bytes,
+        &snap_bytes,
+        Some(cfg1.targets().unwrap().as_bytes()),
+        vec![],
+        &dir1,
+    ));
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg1.root().unwrap().as_bytes().to_vec(),
+        dir1.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    let Err(err) = f.fetch_config(dummy_client(), &cache).await else {
+        panic!("mismatching org UUID must fail the poll");
+    };
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("org UUID"),
+        "expected an org-UUID mismatch error, got: {msg}"
+    );
+
+    // Reset restored the pinned-root state.
+    assert_eq!(config_root_version(&f), 1);
+    assert_eq!(config_snapshot_version(&f), None);
+    // The one-shot prefetch flag was rearmed, so a fresh poll would prefetch again.
+    assert!(!f.org_data_prefetched);
+    assert!(f.org_uuid.is_none());
+}
+
+/// A config-root rotation invalidates the pinned UUID (it is keyed by the
+/// config trusted-root version), forcing a fresh /api/v0.1/org fetch on the
+/// next poll.
+#[tokio::test]
+async fn test_org_uuid_refetched_on_root_rotation() {
+    let config_key = new_key();
+    let director_key = new_key();
+
+    let cfg1 = build_v1(&config_key).await;
+    let cfg2 = rotate_root(&config_key, &cfg1).await; // config root v1 -> v2
+    let dir1 = build_v1(&director_key).await;
+    let (snap_bytes, ts_bytes) = config_snapshot_with_org_uuid(&cfg1, &config_key, "ORG-1");
+
+    let http = MockHttp::new();
+    http.set_org_uuid("ORG-1");
+    // Poll 1: config root v1, snapshot pins ORG-1.
+    http.push(&response(
+        &[cfg1.root().unwrap().as_bytes()],
+        &ts_bytes,
+        &snap_bytes,
+        Some(cfg1.targets().unwrap().as_bytes()),
+        vec![],
+        &dir1,
+    ));
+    // Poll 2: config root rotates to v2; same signed snapshot/timestamp
+    // (rust-tuf purges non-root metadata on rotation, so the backend has to
+    // resend them). The pinned UUID binding keyed at root v1 no longer
+    // matches root v2 and forces a fresh /api/v0.1/org fetch.
+    http.push(&response(
+        &[cfg2.root().unwrap().as_bytes()],
+        &ts_bytes,
+        &snap_bytes,
+        Some(cfg1.targets().unwrap().as_bytes()),
+        vec![],
+        &dir1,
+    ));
+
+    let mut f = fetcher(
+        http.clone(),
+        cfg1.root().unwrap().as_bytes().to_vec(),
+        dir1.root().unwrap().as_bytes().to_vec(),
+    )
+    .await;
+    let state = test_state();
+    let storage = NoopStorage;
+    let cache = TargetCache::new(&state, &storage);
+
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 1);
+    assert_eq!(http.org_request_count(), 1); // concurrent prefetch
+
+    f.fetch_config(dummy_client(), &cache).await.unwrap();
+    assert_eq!(config_root_version(&f), 2);
+    // A second org fetch happened lazily because the config root rotated.
+    assert_eq!(http.org_request_count(), 2);
 }
