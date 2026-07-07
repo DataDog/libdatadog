@@ -5,14 +5,14 @@ use super::process_handle::ProcessHandle;
 use libdd_common::timeout::TimeoutManager;
 
 use crate::shared::configuration::CrashtrackerReceiverConfig;
+use core::ptr;
+use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::Ordering::SeqCst;
 use libdd_common::unix_utils::{alt_fork, open_file_or_quiet, terminate, PreparedExecve};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use std::os::unix::io::{IntoRawFd, RawFd};
 use std::os::unix::net::UnixStream;
-use std::ptr;
-use std::sync::atomic::AtomicPtr;
-use std::sync::atomic::Ordering::SeqCst;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReceiverError {
@@ -150,7 +150,7 @@ impl Receiver {
         if !old.is_null() {
             // Safety: This can only come from a box above.
             unsafe {
-                std::mem::drop(Box::from_raw(old));
+                core::mem::drop(Box::from_raw(old));
             }
         }
         Ok(())

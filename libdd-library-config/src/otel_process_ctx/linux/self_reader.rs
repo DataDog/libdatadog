@@ -8,17 +8,19 @@
 //! write instead of a segfault, but its ordering relative to the publisher has to be reasoned about
 //! at the OS/architecture level rather than only in Rust.
 
-use std::{
+use core::{
     cell::Cell,
-    fs::File,
-    io::{self, BufRead, BufReader},
-    os::fd::{AsRawFd, FromRawFd, OwnedFd},
     ptr::{self, NonNull},
     sync::atomic::{fence, Ordering},
 };
+use std::{
+    fs::File,
+    io::{self, BufRead, BufReader},
+    os::fd::{AsRawFd, FromRawFd, OwnedFd},
+};
 
 #[cfg(debug_assertions)]
-use std::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicUsize;
 
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
     any_value, AnyValue, KeyValue, ProcessContext,
@@ -451,6 +453,7 @@ struct PipeCopyError {
 
 #[cfg(test)]
 mod tests {
+    use core::ptr;
     use std::io;
 
     use super::ProcessContextSelfReader;
@@ -473,7 +476,7 @@ mod tests {
         let page_size = page_size();
         let ptr = unsafe {
             libc::mmap(
-                std::ptr::null_mut(),
+                ptr::null_mut(),
                 page_size,
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,

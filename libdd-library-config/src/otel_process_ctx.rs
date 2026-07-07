@@ -21,17 +21,17 @@
 #[cfg(target_os = "linux")]
 #[cfg(target_has_atomic = "64")]
 pub mod linux {
-    use std::{
+    use core::{
         ffi::{c_void, CStr},
-        io,
-        mem::{size_of, ManuallyDrop},
-        os::fd::{AsRawFd, FromRawFd, OwnedFd},
+        mem::{size_of, swap, ManuallyDrop},
         ptr::{self, NonNull},
-        sync::{
-            atomic::{fence, AtomicPtr, AtomicU32, AtomicU64, Ordering},
-            Mutex, MutexGuard,
-        },
+        sync::atomic::{fence, AtomicPtr, AtomicU32, AtomicU64, Ordering},
         time::Duration,
+    };
+    use std::{
+        io,
+        os::fd::{AsRawFd, FromRawFd, OwnedFd},
+        sync::{Mutex, MutexGuard},
     };
 
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::ProcessContext;
@@ -69,7 +69,7 @@ pub mod linux {
     // mandated by the OTel process context spec:
     // https://github.com/open-telemetry/opentelemetry-specification/blob/main/oteps/profiles/4719-process-ctx.md
     const _: () = {
-        use std::mem::{offset_of, size_of};
+        use core::mem::{offset_of, size_of};
         assert!(offset_of!(MappingHeader, signature) == 0);
         assert!(offset_of!(MappingHeader, version) == 8);
         assert!(offset_of!(MappingHeader, payload_size) == 12);
@@ -467,7 +467,7 @@ pub mod linux {
                 //
                 // To do so, we get the old handler back in `local_handler` and prevent `mapping`
                 // from being dropped specifically.
-                std::mem::swap(&mut local_handler, handler);
+                swap(&mut local_handler, handler);
                 let _: ManuallyDrop<MemMapping> = ManuallyDrop::new(local_handler.mapping);
 
                 Ok(())
@@ -530,8 +530,8 @@ pub mod linux {
     #[cfg(test)]
     #[serial_test::serial]
     mod tests {
+        use core::{ptr, sync::atomic::Ordering, time::Duration};
         use std::io;
-        use std::sync::atomic::Ordering;
 
         use super::{MappingHeader, ProcessContext};
         use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
@@ -556,7 +556,7 @@ pub mod linux {
         /// extract or use as it is as a generic Rust OTel process context reader.
         fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
             let mapping_addr = super::ProcessContextSelfReader::find_otel_mapping()?;
-            let header_ptr: *const MappingHeader = std::ptr::with_exposed_provenance(mapping_addr);
+            let header_ptr: *const MappingHeader = ptr::with_exposed_provenance(mapping_addr);
             // SAFETY: the mapping was published by this test before being read.
             let header = unsafe { &*header_ptr };
             Ok(MappingHeaderSnapshot {
@@ -607,7 +607,7 @@ pub mod linux {
             // SAFETY: the published context must have put valid bytes of size payload_size in the
             // context if the signature check succeded.
             let read_payload = unsafe {
-                std::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
+                core::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
             };
 
             assert!(header.signature == *super::SIGNATURE, "wrong signature");
@@ -627,7 +627,7 @@ pub mod linux {
 
             let published_at_ns_v1 = header.monotonic_published_at_ns;
             // Ensure the clock advances so the updated timestamp is strictly greater
-            std::thread::sleep(std::time::Duration::from_nanos(10));
+            std::thread::sleep(Duration::from_nanos(10));
 
             super::publish_raw_payload(payload_v2.as_bytes().to_vec())
                 .expect("couldn't update the process context");
@@ -636,7 +636,7 @@ pub mod linux {
             // SAFETY: the published context must have put valid bytes of size payload_size in the
             // context if the signature check succeded.
             let read_payload = unsafe {
-                std::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
+                core::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
             };
 
             assert!(header.signature == *super::SIGNATURE, "wrong signature");
