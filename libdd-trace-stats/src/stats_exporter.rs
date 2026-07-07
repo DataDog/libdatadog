@@ -354,6 +354,17 @@ mod tests {
     }
 
     fn get_test_concentrator() -> SpanConcentrator {
+        get_test_concentrator_with_obfuscation_config(
+            #[cfg(feature = "stats-obfuscation")]
+            None,
+        )
+    }
+
+    fn get_test_concentrator_with_obfuscation_config(
+        #[cfg(feature = "stats-obfuscation")] obfuscation_config: Option<
+            crate::span_concentrator::SharedStatsComputationObfuscationConfig,
+        >,
+    ) -> SpanConcentrator {
         let mut concentrator = SpanConcentrator::new(
             BUCKETS_DURATION,
             // Make sure the oldest bucket will be flushed on next send
@@ -362,7 +373,7 @@ mod tests {
             vec![],
             None,
             #[cfg(feature = "stats-obfuscation")]
-            None,
+            obfuscation_config,
         );
         let mut trace = vec![];
 
@@ -574,6 +585,9 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_stats_with_obfuscation_header() {
+        use crate::span_concentrator::StatsComputationObfuscationConfig;
+        use arc_swap::ArcSwap;
+
         let server = MockServer::start_async().await;
 
         let mock = server
@@ -587,9 +601,16 @@ mod tests {
             })
             .await;
 
+        let concentrator = get_test_concentrator_with_obfuscation_config(Some(Arc::new(
+            ArcSwap::from_pointee(StatsComputationObfuscationConfig {
+                enabled: true,
+                ..Default::default()
+            }),
+        )));
+
         let stats_exporter = StatsExporter::new(
             BUCKETS_DURATION,
-            Arc::new(Mutex::new(get_test_concentrator())),
+            Arc::new(Mutex::new(concentrator)),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
