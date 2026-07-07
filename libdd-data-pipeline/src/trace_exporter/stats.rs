@@ -256,7 +256,7 @@ fn update_obfuscation_config(
     ) {
         let obfuscation_active =
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
-        // FIXME: there is more than this to obfuscation config
+        // FIXME(APMSP-3720): there is more than this to obfuscation config
         let sql_obfuscation_mode = (|| {
             agent_info
                 .info

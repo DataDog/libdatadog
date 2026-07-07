@@ -176,6 +176,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
         // We flush twice with `force_flush` so that if we have a mix of obfuscated and unobfuscated
         // buckets, both get flushed in separate payloads
         let flush_count = if force_flush { 2 } else { 1 };
+        let mut sent_stats = false;
         for _ in 0..flush_count {
             let (payload, collapsed_spans, buckets_obfuscated) = self.flush(force_flush);
 
@@ -195,7 +196,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             }
 
             if payload.stats.is_empty() {
-                return Ok(false);
+                continue;
             }
             let body = rmp_serde::encode::to_vec_named(&payload)?;
 
@@ -226,14 +227,14 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             .await;
 
             match result {
-                Ok(_) => {}
+                Ok(_) => {sent_stats = true;}
                 Err(err) => {
                     error!(?err, "Error with the StateExporter when sending stats");
                     anyhow::bail!("Failed to send stats: {err}");
                 }
             }
         }
-        Ok(true)
+        Ok(sent_stats)
     }
 
     /// Flush stats from the concentrator into a payload
