@@ -52,11 +52,9 @@ if [ "${CI_COMMIT_BRANCH:-}" = "main" ]; then
 elif [ "${IMPACTED_STATUS:-}" != "success" ] || [ -z "${AFFECTED_CRATES:-}" ] || [ -z "$all_bench" ]; then
   log "Impacted crates undetermined -> full benchmark suite."
   packages="$all_bench"
-# TEMP (DO NOT MERGE): infra-change guard disabled so this branch scopes to the impacted crates
-# (for testing) even though it modifies the benchmark infra itself. Restore before merging.
-# elif grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml)' changed_files.txt 2>/dev/null; then
-#   log "Benchmark infrastructure changed -> full benchmark suite."
-#   packages="$all_bench"
+elif grep -qE '^(benchmark/|\.gitlab/benchmarks\.yml|\.gitlab/impacted-crates\.yml)' changed_files.txt 2>/dev/null; then
+  log "Benchmark infrastructure changed -> full benchmark suite."
+  packages="$all_bench"
 else
   packages="$(jq -nr --argjson a "$AFFECTED_CRATES" --argjson b "$bench_json" \
     '($a - ($a - $b)) | .[]' 2>/dev/null | tr '\n' ' ')"
