@@ -31,7 +31,7 @@ tracing = { version = "0.1", default-features = false }
 async-trait = "0.1.85"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { version = "2.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-capabilities-impl = { version = "2.1.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [lib]
 bench = false
