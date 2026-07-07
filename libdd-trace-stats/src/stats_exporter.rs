@@ -227,7 +227,9 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             .await;
 
             match result {
-                Ok(_) => {sent_stats = true;}
+                Ok(_) => {
+                    sent_stats = true;
+                }
                 Err(err) => {
                     error!(?err, "Error with the StateExporter when sending stats");
                     anyhow::bail!("Failed to send stats: {err}");
