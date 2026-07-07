@@ -276,4 +276,32 @@ pub struct TracerPayload {
     /// chunks specifies list of containing trace chunks.
     #[prost(message, repeated, tag = "11")]
     pub chunks: ::prost::alloc::vec::Vec<TraceChunk>,
+    /// containerDebug holds debug information about the container tags resolution.
+    #[prost(message, optional, tag = "12")]
+    pub container_debug: ::core::option::Option<ContainerDebug>,
+}
+/// ContainerDebug holds debug information about the container tags resolution process.
+#[derive(Deserialize, Serialize, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ContainerDebug {
+    /// error specifies any error that occurred during container tag resolution.
+    #[prost(string, tag = "1")]
+    #[serde(default)]
+    pub error: ::prost::alloc::string::String,
+    /// latencyMs specifies the latency in milliseconds of the container tag resolution.
+    #[prost(int64, tag = "2")]
+    #[serde(default)]
+    pub latency_ms: i64,
+    /// wasBuffered specifies whether the payload was buffered while waiting for container tags.
+    #[prost(bool, tag = "3")]
+    #[serde(default)]
+    pub was_buffered: bool,
+    /// bufferMs specifies how long the payload was buffered in milliseconds.
+    #[prost(int64, tag = "4")]
+    #[serde(default)]
+    pub buffer_ms: i64,
+    /// bufferEvictionReason specifies why the payload was evicted from the buffer.
+    #[prost(string, tag = "5")]
+    #[serde(default)]
+    pub buffer_eviction_reason: ::prost::alloc::string::String,
 }

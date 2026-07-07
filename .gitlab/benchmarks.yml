@@ -9,6 +9,9 @@ benchmarks:
   image:
     name: $BASE_CI_IMAGE
   rules:
+    # Don't run on merge-queue working branches
+    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
+      when: never
     - if: $CI_COMMIT_BRANCH == "main"
       interruptible: false
     - interruptible: true
