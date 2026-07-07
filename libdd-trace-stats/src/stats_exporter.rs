@@ -316,8 +316,6 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "stats-obfuscation")]
-    use crate::span_concentrator::StatsComputationObfuscationConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
@@ -573,8 +571,6 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_stats_with_obfuscation_header() {
-        use arc_swap::ArcSwap;
-
         let server = MockServer::start_async().await;
 
         let mock = server
