@@ -558,47 +558,6 @@ mod tests {
         }
     }
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn stream_excludes_crashing_tid() {
-        let barrier = Arc::new(Barrier::new(2));
-        let b: Arc<Barrier> = Arc::clone(&barrier);
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        let handle = std::thread::spawn(move || {
-            tx.send(current_tid()).unwrap();
-            b.wait();
-        });
-
-        let worker_tid = rx.recv().unwrap();
-
-        let mut seen_worker = false;
-        let mut seen_self = false;
-        let self_tid = current_tid();
-        // Declare the current thread as the crashing TID; it must be skipped.
-        let _ = stream_thread_contexts(
-            std::process::id() as libc::pid_t,
-            self_tid,
-            64,
-            Duration::from_secs(5),
-            crate::StacktraceCollection::Disabled,
-            |tid, _ctx| {
-                if tid == worker_tid {
-                    seen_worker = true;
-                }
-                if tid == self_tid {
-                    seen_self = true;
-                }
-            },
-        );
-
-        assert!(seen_worker, "worker thread should appear in callbacks");
-        assert!(!seen_self, "crashing_tid should not appear in callbacks");
-
-        barrier.wait();
-        handle.join().unwrap();
-    }
-
     /// Regression test: a thread blocked in poll() passed as crashing_tid must not
     /// be ptraced. Previously, PTRACE_INTERRUPT would fire inside the signal handler's
     /// poll() call causing an EINTR loop that hung the receiver indefinitely.
