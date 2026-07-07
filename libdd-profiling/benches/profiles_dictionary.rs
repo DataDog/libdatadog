@@ -7,10 +7,11 @@ use std::sync::Barrier;
 use std::thread;
 use std::time::Duration;
 
+// 1-2 threads matches expected profiler usage; higher counts stress contention behavior.
 const THREAD_COUNTS: [usize; 4] = [1, 2, 4, 16];
 const STRINGS_PER_THREAD: usize = 1024;
 // Bound one generated function-name component so the input has repeated
-// function-like fragments while each full string stays unique.
+// function-like fragments, with some full strings shared across workers.
 const FUNCTION_NAME_VARIANTS: usize = 97;
 const STRING_SHAPE_VARIANTS: usize = 4;
 // Knuth/Fibonacci multiplicative hash constant, used only to vary synthetic input.
@@ -71,8 +72,8 @@ fn insert_dictionary_strings_concurrently(strings: &[Vec<String>]) -> ProfilesDi
     dict
 }
 
-pub fn bench_profiles_dictionary(c: &mut Criterion) {
-    let mut group = c.benchmark_group("profiles_dictionary/unique_string_inserts");
+pub fn bench_profile_string_inserts(c: &mut Criterion) {
+    let mut group = c.benchmark_group("profiles_dictionary/profile_string_inserts");
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
@@ -99,4 +100,4 @@ pub fn bench_profiles_dictionary(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_profiles_dictionary);
+criterion_group!(benches, bench_profile_string_inserts);
