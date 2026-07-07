@@ -170,8 +170,6 @@ fn create_and_start_stats_worker<
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         capabilities.clone(),
         #[cfg(feature = "stats-obfuscation")]
-        client_side_stats.obfuscation_config.clone(),
-        #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
         #[cfg(feature = "telemetry")]
         ctx.telemetry.clone(),

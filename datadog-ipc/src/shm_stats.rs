@@ -820,8 +820,8 @@ impl ShmSpanConcentrator {
 }
 
 impl FlushableConcentrator for ShmSpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64) {
-        (self.drain_buckets(force), 0)
+    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64, bool) {
+        (self.drain_buckets(force), 0, false)
     }
 }
 

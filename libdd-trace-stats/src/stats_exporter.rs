@@ -9,8 +9,6 @@ use std::{
     time,
 };
 
-#[cfg(feature = "stats-obfuscation")]
-use crate::span_concentrator::SharedStatsComputationObfuscationConfig;
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
@@ -96,8 +94,6 @@ pub struct StatsExporter<
     sequence_id: AtomicU64,
     capabilities: Cap,
     #[cfg(feature = "stats-obfuscation")]
-    obfuscation_config: SharedStatsComputationObfuscationConfig,
-    #[cfg(feature = "stats-obfuscation")]
     supported_obfuscation_version: &'static str,
     /// Optional telemetry handle and context key.
     #[cfg(feature = "telemetry")]
@@ -127,8 +123,6 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
         meta: StatsMetadata,
         endpoint: Endpoint,
         capabilities: Cap,
-        #[cfg(feature = "stats-obfuscation")]
-        obfuscation_config: SharedStatsComputationObfuscationConfig,
         #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
         #[cfg(feature = "telemetry")] telemetry: Option<
             libdd_telemetry::worker::TelemetryWorkerHandle,
@@ -153,8 +147,6 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             meta,
             sequence_id: AtomicU64::new(0),
             capabilities,
-            #[cfg(feature = "stats-obfuscation")]
-            obfuscation_config,
             #[cfg(feature = "stats-obfuscation")]
             supported_obfuscation_version,
             #[cfg(feature = "telemetry")]
@@ -181,59 +173,67 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     /// case stats cannot be flushed since the concentrator might be corrupted.
     /// Returns `Ok(true)` if stats were sent, `Ok(false)` if the concentrator had nothing to send.
     pub async fn send(&self, force_flush: bool) -> anyhow::Result<bool> {
-        let (payload, collapsed_spans) = self.flush(force_flush);
+        // We flush twice with `force_flush` so that if we have a mix of obfuscated and unobfuscated
+        // buckets, both get flushed in separate payloads
+        let flush_count = if force_flush { 2 } else { 1 };
+        for _ in 0..flush_count {
+            let (payload, collapsed_spans, buckets_obfuscated) = self.flush(force_flush);
 
-        if collapsed_spans > 0 {
-            #[cfg(feature = "telemetry")]
-            if let Some((handle, key)) = &self.telemetry {
-                let _ = handle.add_point(collapsed_spans as f64, key, vec![]);
+            if collapsed_spans > 0 {
+                #[cfg(feature = "telemetry")]
+                if let Some((handle, key)) = &self.telemetry {
+                    let _ = handle.add_point(collapsed_spans as f64, key, vec![]);
+                }
+                #[cfg(feature = "dogstatsd")]
+                if let Some(client) = &self.dogstatsd {
+                    client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                        COLLAPSED_SPANS_HEALTH_METRIC,
+                        collapsed_spans as i64,
+                        [tag!("collapsed_spans", "whole_key")].iter(),
+                    )]);
+                }
             }
-            #[cfg(feature = "dogstatsd")]
-            if let Some(client) = &self.dogstatsd {
-                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                    COLLAPSED_SPANS_HEALTH_METRIC,
-                    collapsed_spans as i64,
-                    [tag!("collapsed_spans", "whole_key")].iter(),
-                )]);
+
+            if payload.stats.is_empty() {
+                return Ok(false);
             }
-        }
+            let body = rmp_serde::encode::to_vec_named(&payload)?;
 
-        if payload.stats.is_empty() {
-            return Ok(false);
-        }
-        let body = rmp_serde::encode::to_vec_named(&payload)?;
+            let mut headers: http::HeaderMap = TracerHeaderTags::from(&self.meta).into();
 
-        let mut headers: http::HeaderMap = TracerHeaderTags::from(&self.meta).into();
-
-        headers.insert(
-            http::header::CONTENT_TYPE,
-            libdd_common::header::APPLICATION_MSGPACK,
-        );
-
-        #[cfg(feature = "stats-obfuscation")]
-        if self.obfuscation_config.load().enabled {
             headers.insert(
-                http::HeaderName::from_static("datadog-obfuscation-version"),
-                http::HeaderValue::from_static(self.supported_obfuscation_version),
+                http::header::CONTENT_TYPE,
+                libdd_common::header::APPLICATION_MSGPACK,
             );
-        }
 
-        let result = send_with_retry(
-            &self.capabilities,
-            &self.endpoint,
-            body,
-            &headers,
-            &RetryStrategy::default(),
-        )
-        .await;
+            #[cfg(feature = "stats-obfuscation")]
+            if buckets_obfuscated {
+                headers.insert(
+                    http::HeaderName::from_static("datadog-obfuscation-version"),
+                    http::HeaderValue::from_static(self.supported_obfuscation_version),
+                );
+            }
+            #[cfg(not(feature = "stats-obfuscation"))]
+            let _ = buckets_obfuscated;
 
-        match result {
-            Ok(_) => Ok(true),
-            Err(err) => {
-                error!(?err, "Error with the StateExporter when sending stats");
-                anyhow::bail!("Failed to send stats: {err}");
+            let result = send_with_retry(
+                &self.capabilities,
+                &self.endpoint,
+                body,
+                &headers,
+                &RetryStrategy::default(),
+            )
+            .await;
+
+            match result {
+                Ok(_) => {}
+                Err(err) => {
+                    error!(?err, "Error with the StateExporter when sending stats");
+                    anyhow::bail!("Failed to send stats: {err}");
+                }
             }
         }
+        Ok(true)
     }
 
     /// Flush stats from the concentrator into a payload
@@ -245,13 +245,13 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     /// # Panic
     /// Will panic if another thread panicked while holding the concentrator lock in which
     /// case stats cannot be flushed since the concentrator might be corrupted.
-    fn flush(&self, force_flush: bool) -> (pb::ClientStatsPayload, u64) {
+    fn flush(&self, force_flush: bool) -> (pb::ClientStatsPayload, u64, bool) {
         let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
         #[allow(clippy::unwrap_used)]
-        let (buckets, collapsed_spans) =
+        let (buckets, collapsed_spans, buckets_obfuscated) =
             self.concentrator.lock().unwrap().flush_buckets(force_flush);
         let payload = encode_stats_payload(&self.meta, sequence, buckets);
-        (payload, collapsed_spans)
+        (payload, collapsed_spans, buckets_obfuscated)
     }
 }
 
@@ -404,8 +404,6 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
-            StatsComputationObfuscationConfig::disabled(),
-            #[cfg(feature = "stats-obfuscation")]
             "1",
             #[cfg(feature = "telemetry")]
             None,
@@ -438,8 +436,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            #[cfg(feature = "stats-obfuscation")]
-            StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
             #[cfg(feature = "telemetry")]
@@ -481,8 +477,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             caps.clone(),
-            #[cfg(feature = "stats-obfuscation")]
-            StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
             #[cfg(feature = "telemetry")]
@@ -530,8 +524,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             caps.clone(),
-            #[cfg(feature = "stats-obfuscation")]
-            StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
             #[cfg(feature = "telemetry")]
@@ -602,11 +594,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            #[cfg(feature = "stats-obfuscation")]
-            Arc::new(ArcSwap::from_pointee(StatsComputationObfuscationConfig {
-                enabled: true,
-                ..Default::default()
-            })),
             #[cfg(feature = "stats-obfuscation")]
             "1",
             #[cfg(feature = "telemetry")]
@@ -703,8 +690,6 @@ mod tests {
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
             #[cfg(feature = "stats-obfuscation")]
-            StatsComputationObfuscationConfig::disabled(),
-            #[cfg(feature = "stats-obfuscation")]
             "1",
             #[cfg(feature = "telemetry")]
             None,
@@ -753,8 +738,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            #[cfg(feature = "stats-obfuscation")]
-            StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
             #[cfg(feature = "telemetry")]
@@ -805,8 +788,6 @@ mod tests {
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
-            #[cfg(feature = "stats-obfuscation")]
-            StatsComputationObfuscationConfig::disabled(),
             #[cfg(feature = "stats-obfuscation")]
             "1",
             #[cfg(feature = "telemetry")]
