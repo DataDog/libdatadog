@@ -7,6 +7,7 @@ mod tracing_integration_tests {
     use libdd_data_pipeline::trace_exporter::{
         TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat,
     };
+    use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_trace_utils::span::v05::dict::SharedDict;
     use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
     use libdd_trace_utils::test_utils::{create_test_json_span, create_test_v05_span};
@@ -113,7 +114,7 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<NativeCapabilities>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
@@ -167,7 +168,7 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<NativeCapabilities>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
@@ -215,7 +216,7 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<NativeCapabilities>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
@@ -294,7 +295,7 @@ mod tracing_integration_tests {
         test_agent.start_session(snapshot_name, None).await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<NativeCapabilities>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")
@@ -379,7 +380,7 @@ mod tracing_integration_tests {
             .await;
 
         let task_result = task::spawn_blocking(move || {
-            let mut builder = TraceExporter::<NativeCapabilities>::builder();
+            let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
             builder
                 .set_url(url.to_string().as_ref())
                 .set_language("test-lang")

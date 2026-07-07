@@ -17,7 +17,6 @@ use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
-use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
@@ -263,13 +262,13 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             tracer_version: tracer_version.to_utf8_lossy().into(),
             endpoint: endpoint.clone(),
         },
-        &Arc::new(Target {
-            service: service_name.to_utf8_lossy().into(),
-            env: env_name.to_utf8_lossy().into(),
-            app_version: app_version.to_utf8_lossy().into(),
-            tags: tags.as_slice().to_vec(),
-            process_tags: vec![],
-        }),
+        &Arc::new(Target::new(
+            service_name.to_utf8_lossy().to_string(),
+            env_name.to_utf8_lossy().to_string(),
+            app_version.to_utf8_lossy().to_string(),
+            tags.as_slice().iter().map(|t| t.to_string()).collect(),
+            vec![],
+        )),
     ))
 }
 
@@ -746,6 +745,43 @@ pub unsafe extern "C" fn ddog_sidecar_session_set_process_tags(
     try_c!(blocking::set_session_process_tags(
         transport,
         process_tags.to_vec(),
+    ));
+
+    MaybeError::None
+}
+
+/// Records the tracer's auto-resolved default service name for the session
+/// (process-bound; sidecar emits `svc.auto:<name>` when `DD_SERVICE` is not
+/// currently set for the active request). Pass an empty `CharSlice` to clear.
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_session_set_default_service_name(
+    transport: &mut Box<SidecarTransport>,
+    default_service_name: ffi::CharSlice,
+) -> MaybeError {
+    let name = if default_service_name.is_empty() {
+        None
+    } else {
+        Some(default_service_name.to_utf8_lossy().into_owned())
+    };
+    try_c!(blocking::set_session_default_service_name(transport, name));
+
+    MaybeError::None
+}
+
+/// Records whether `DD_SERVICE` is currently set for the session (per-request
+/// mutable; refresh on each RINIT). When `true` the sidecar emits
+/// `svc.user:true`; when `false` it falls back to the previously-recorded
+/// `svc.auto:<name>` (if any).
+#[no_mangle]
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn ddog_sidecar_session_set_user_service_defined(
+    transport: &mut Box<SidecarTransport>,
+    is_user_defined: bool,
+) -> MaybeError {
+    try_c!(blocking::set_session_user_service_defined(
+        transport,
+        is_user_defined,
     ));
 
     MaybeError::None
@@ -1575,21 +1611,6 @@ pub extern "C" fn ddog_sidecar_reconnect(
     factory: unsafe extern "C" fn() -> Option<Box<SidecarTransport>>,
 ) {
     transport.reconnect(|| unsafe { factory() });
-}
-
-/// Return the path of the crashtracker unix domain socket.
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_get_crashtracker_unix_socket_path() -> ffi::CharSlice<'static>
-{
-    let socket_path = crashtracker_unix_socket_path();
-    let str = socket_path.to_str().unwrap_or_default();
-
-    let size = str.len();
-    let malloced = libc::malloc(size) as *mut u8;
-    let buf = slice::from_raw_parts_mut(malloced, size);
-    buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
 }
 
 /// Gets an agent info reader.

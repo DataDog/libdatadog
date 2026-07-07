@@ -34,9 +34,10 @@ impl Behavior for Test {
     }
 
     fn post(&self, _output_dir: &Path) -> anyhow::Result<()> {
-        let barrier = Arc::new(Barrier::new(THREAD_COUNT + 1));
+        let barrier = Arc::new(Barrier::new(THREAD_COUNT));
 
-        for i in 0..THREAD_COUNT {
+        // Make space for the crashing thread
+        for i in 0..(THREAD_COUNT - 1) {
             let barrier = Arc::clone(&barrier);
             std::thread::Builder::new()
                 .name(format!("worker-{i}"))

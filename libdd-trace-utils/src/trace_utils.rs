@@ -318,6 +318,7 @@ pub(crate) fn construct_tracer_payload(
         language_version: tracer_tags.lang_version.to_string(),
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),
+        container_debug: None,
     }
 }
 
@@ -331,6 +332,7 @@ pub(crate) fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayloa
         .then(a.runtime_id.cmp(&b.runtime_id))
         .then(a.env.cmp(&b.env))
         .then(a.app_version.cmp(&b.app_version))
+        .then(a.container_debug.cmp(&b.container_debug))
 }
 
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
@@ -742,6 +744,7 @@ mod tests {
                     env: "".to_string(),
                     hostname: "".to_string(),
                     app_version: "".to_string(),
+                    container_debug: None,
                 }]),
                 TracerHeaderTags::default(),
                 &Endpoint::default(),

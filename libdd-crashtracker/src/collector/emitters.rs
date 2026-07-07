@@ -212,7 +212,7 @@ unsafe fn emit_backtrace_via_libunwind(
 
     // SAFETY: UnwCursor is a repr(C) struct of plain integers (`[u64; 127]`);
     // all-zeros is a valid bit pattern
-    let mut cursor: UnwCursor = unsafe { std::mem::zeroed() };
+    let mut cursor: UnwCursor = unsafe { core::mem::zeroed() };
 
     // SAFETY: `cursor` is zeroed and is valid for initialization.
     // `ucontext` was checked non-null above and points to the kernel-saved
@@ -244,7 +244,7 @@ unsafe fn emit_backtrace_via_libunwind(
 
         // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
         // all-zeros (null pointers, zero integers) is a valid representation
-        let mut dl_info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        let mut dl_info: libc::Dl_info = unsafe { core::mem::zeroed() };
         // SAFETY: `ip` is a code address obtained from the unwinder.
         // dladdr only reads ld.so internal tables (no allocation, no locks)
         // making it safe to call from a signal handler
@@ -266,13 +266,13 @@ unsafe fn emit_backtrace_via_libunwind(
                     &mut cursor,
                     name_buf.as_mut_ptr(),
                     name_buf.len(),
-                    std::ptr::null_mut(),
+                    core::ptr::null_mut(),
                 )
             } == 0
             {
                 // SAFETY: unw_get_proc_name returned 0 (success), guaranteeing
                 // a NUL-terminated string was written into name_buf.
-                let name = unsafe { std::ffi::CStr::from_ptr(name_buf.as_ptr()) };
+                let name = unsafe { core::ffi::CStr::from_ptr(name_buf.as_ptr()) };
                 if let Ok(s) = name.to_str() {
                     write!(w, ", \"function\": \"{s}\"")?;
                 }
@@ -340,10 +340,10 @@ unsafe fn emit_macos_backtrace_from_ucontext(
 
     const MAX_FRAMES: usize = 512;
     for _ in 0..MAX_FRAMES {
-        if fp == 0 || fp % std::mem::align_of::<usize>() != 0 {
+        if fp == 0 || fp % core::mem::align_of::<usize>() != 0 {
             break;
         }
-        if !in_stack_bounds(fp, 2 * std::mem::size_of::<usize>()) {
+        if !in_stack_bounds(fp, 2 * core::mem::size_of::<usize>()) {
             break;
         }
         // SAFETY: `fp` is non-zero, properly aligned, and the two-word frame
@@ -351,7 +351,7 @@ unsafe fn emit_macos_backtrace_from_ucontext(
         // bounds (checked by in_stack_bounds above). After fork(), the child
         // has a copy-on-write view of the parent's stack memory.
         let next_fp = unsafe { *(fp as *const usize) };
-        let return_addr = unsafe { *((fp + std::mem::size_of::<usize>()) as *const usize) };
+        let return_addr = unsafe { *((fp + core::mem::size_of::<usize>()) as *const usize) };
         if return_addr == 0 {
             break;
         }
@@ -372,7 +372,7 @@ unsafe fn emit_macos_backtrace_from_ucontext(
 unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), EmitterError> {
     // SAFETY: Dl_info is a repr(C) struct of pointers and integers;
     // all-zeros (null pointers, zero integers) is a valid representation.
-    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    let mut info: libc::Dl_info = unsafe { core::mem::zeroed() };
     // SAFETY: dladdr only reads dyld's internal data structures (no
     // allocation, no Mach IPC) making it async-signal-safe. `ip` is a code
     // address from the unwound stack or kernel-saved registers.
@@ -391,7 +391,7 @@ unsafe fn emit_frame_with_dladdr(w: &mut impl Write, ip: usize) -> Result<(), Em
             // SAFETY: dladdr returned non-zero and dli_sname is non-null, so
             // it points to a valid NUL-terminated C string in the shared
             // library's string table (static lifetime, read-only).
-            let name = unsafe { std::ffi::CStr::from_ptr(info.dli_sname) };
+            let name = unsafe { core::ffi::CStr::from_ptr(info.dli_sname) };
             if let Ok(s) = name.to_str() {
                 write!(w, ", \"function\": \"{s}\"")?;
             }
@@ -445,12 +445,56 @@ fn emit_metadata(w: &mut impl Write, metadata_str: &str) -> Result<(), EmitterEr
     Ok(())
 }
 
+/// Write message content to the wire, escaping newlines and neutralizing sentinel
+/// prefixes with no allocation, as this is called in the signal handler path.
+///
+/// The receiver's state machine splits input on newlines and treats any line
+/// starting with `DD_CRASHTRACK_` as a protocol sentinel. If unsanitized
+/// user-controlled content (an exception message passed through the FFI)
+/// contains embedded newlines or sentinel-like text, it can break out of the
+/// message block and inject arbitrary protocol sections, including a config
+/// section that controls which endpoint receives the crash upload and arbitrary files
+/// to include in the crash report.
+///
+/// This function streams directly to `w`:
+/// 1. Escapes real `\n`/`\r` to `\\n`/`\\r` so the content stays on one wire line (the receiver
+///    reverses this by replacing `\\n`/`\\r` with `\n`/`\r`)
+/// 2. Prefixes with a space if the content starts with `DD_CRASHTRACK_` to prevent the receiver
+///    from matching it as a sentinel
+/// 3. Terminates with a newline
+fn write_sanitized_message_line(w: &mut impl Write, message: &str) -> Result<(), EmitterError> {
+    if message.starts_with("DD_CRASHTRACK_") {
+        w.write_all(b" ")?;
+    }
+    let bytes = message.as_bytes();
+    let mut start = 0;
+    for (i, &byte) in bytes.iter().enumerate() {
+        let escape: Option<&[u8]> = match byte {
+            b'\n' => Some(b"\\n"),
+            b'\r' => Some(b"\\r"),
+            _ => None,
+        };
+        if let Some(replacement) = escape {
+            if start < i {
+                w.write_all(&bytes[start..i])?;
+            }
+            w.write_all(replacement)?;
+            start = i + 1;
+        }
+    }
+    if start < bytes.len() {
+        w.write_all(&bytes[start..])?;
+    }
+    w.write_all(b"\n")?;
+    Ok(())
+}
+
 fn emit_message(w: &mut impl Write, message_ptr: *mut String) -> Result<(), EmitterError> {
     if !message_ptr.is_null() {
         let message = unsafe { &*message_ptr };
         if !message.trim().is_empty() {
             writeln!(w, "{DD_CRASHTRACK_BEGIN_MESSAGE}")?;
-            writeln!(w, "{message}")?;
+            write_sanitized_message_line(w, message)?;
             writeln!(w, "{DD_CRASHTRACK_END_MESSAGE}")?;
             w.flush()?;
         }
@@ -748,10 +792,9 @@ mod tests {
     use crate::StackFrame;
 
     use super::*;
-    use std::str;
+    use alloc::str;
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_complete_stacktrace() {
         // new_incomplete() starts with incomplete: true, which push_frame requires
         let mut stacktrace = StackTrace::new_incomplete();
@@ -783,15 +826,13 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_nullptr() {
         let mut buf = Vec::new();
-        emit_message(&mut buf, std::ptr::null_mut()).expect("to work ;-)");
+        emit_message(&mut buf, core::ptr::null_mut()).expect("to work ;-)");
         assert!(buf.is_empty());
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message() {
         let message = "test message";
         let message_ptr = Box::into_raw(Box::new(message.to_string()));
@@ -806,7 +847,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_empty_string() {
         let empty_message = String::new();
         let message_ptr = Box::into_raw(Box::new(empty_message));
@@ -821,7 +861,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_whitespace_only() {
         // Whitespace-only messages should not be emitted
         let whitespace_message = "   \n\t  ".to_string();
@@ -837,7 +876,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_with_leading_trailing_whitespace() {
         // Messages with content and whitespace should be emitted (with the whitespace)
         let message_with_whitespace = "  error message  ".to_string();
@@ -856,7 +894,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_with_newlines() {
         let message_with_newlines = "line1\nline2\nline3".to_string();
         let message_ptr = Box::into_raw(Box::new(message_with_newlines));
@@ -869,11 +906,16 @@ mod tests {
         assert!(out.contains("line2"));
         assert!(out.contains("line3"));
 
+        // Newlines must be escaped on the wire so the message stays on one
+        // protocol line and cannot inject sentinel-delimited sections.
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3, "BEGIN_MESSAGE, content, END_MESSAGE");
+        assert!(lines[1].contains("line1\\nline2\\nline3"));
+
         unsafe { drop(Box::from_raw(message_ptr)) };
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_message_unicode() {
         let unicode_message = "Hello 世界 🦀 Rust!".to_string();
         let message_ptr = Box::into_raw(Box::new(unicode_message.clone()));
@@ -889,7 +931,7 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
+    // #[cfg_attr(miri, ignore)]
     fn test_emit_procinfo() {
         let pid = unsafe { libc::getpid() };
         let tid = unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t };
@@ -905,7 +947,93 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
+    fn test_emit_message_sentinel_injection_via_newline() {
+        // An attacker-controlled error_type/message containing newlines and sentinel
+        // strings could break out of the MESSAGE block and inject a CONFIG section
+        // that controls the crash upload endpoint.
+        let malicious = format!(
+            "innocent prefix\n{}\n{}\n{{\"endpoint\":\"https://evil.example\"}}\n{}\n{}",
+            DD_CRASHTRACK_END_MESSAGE,
+            DD_CRASHTRACK_BEGIN_CONFIG,
+            DD_CRASHTRACK_END_CONFIG,
+            DD_CRASHTRACK_DONE,
+        );
+        let message_ptr = Box::into_raw(Box::new(malicious));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        let lines: Vec<&str> = out.lines().collect();
+        // Must be exactly 3 wire lines: BEGIN, content, END
+        assert_eq!(
+            lines.len(),
+            3,
+            "sentinel injection must not create extra lines"
+        );
+        assert_eq!(lines[0], DD_CRASHTRACK_BEGIN_MESSAGE);
+        assert_eq!(lines[2], DD_CRASHTRACK_END_MESSAGE);
+
+        // The injected sentinels must NOT appear as separate lines
+        assert!(
+            !lines.contains(&DD_CRASHTRACK_BEGIN_CONFIG),
+            "injected BEGIN_CONFIG must not appear as a wire line"
+        );
+        assert!(
+            !lines.contains(&DD_CRASHTRACK_DONE),
+            "injected DONE must not appear as a wire line"
+        );
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    fn test_emit_message_content_starting_with_sentinel_prefix() {
+        let sentinel_message = format!("{} extra data", DD_CRASHTRACK_END_MESSAGE);
+        let message_ptr = Box::into_raw(Box::new(sentinel_message));
+        let mut buf = Vec::new();
+
+        emit_message(&mut buf, message_ptr).expect("to work");
+        let out = str::from_utf8(&buf).expect("to be valid UTF8");
+
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 3);
+        // The content line shouldn't start with the sentinel
+        assert!(
+            !lines[1].starts_with(DD_CRASHTRACK_END_MESSAGE),
+            "content line must not start with DD_CRASHTRACK_END_MESSAGE, got: {}",
+            lines[1]
+        );
+
+        unsafe { drop(Box::from_raw(message_ptr)) };
+    }
+
+    #[test]
+    fn test_write_sanitized_message_line_basic() {
+        let mut buf = Vec::new();
+        write_sanitized_message_line(&mut buf, "hello").unwrap();
+        assert_eq!(buf, b"hello\n");
+
+        buf.clear();
+        write_sanitized_message_line(&mut buf, "line1\nline2").unwrap();
+        assert_eq!(buf, b"line1\\nline2\n");
+
+        buf.clear();
+        write_sanitized_message_line(&mut buf, "a\r\nb").unwrap();
+        assert_eq!(buf, b"a\\r\\nb\n");
+    }
+
+    #[test]
+    fn test_write_sanitized_message_line_sentinel_prefix() {
+        let input = format!("{} injected", DD_CRASHTRACK_END_MESSAGE);
+        let mut buf = Vec::new();
+        write_sanitized_message_line(&mut buf, &input).unwrap();
+        let out = str::from_utf8(&buf).unwrap();
+        assert!(!out.starts_with(DD_CRASHTRACK_END_MESSAGE));
+        assert!(out.starts_with(' '));
+    }
+
+    #[test]
     fn test_emit_message_very_long() {
         let long_message = "x".repeat(100000); // 100KB
         let message_ptr = Box::into_raw(Box::new(long_message.clone()));
@@ -923,14 +1051,13 @@ mod tests {
     // The core unwinding logic is tested in the libunwind crate.
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_backtrace_via_libunwind_null_ucontext() {
         let mut buf = Vec::new();
         unsafe {
             emit_backtrace_via_libunwind(
                 &mut buf,
                 StacktraceCollection::WithoutSymbols,
-                std::ptr::null(),
+                core::ptr::null(),
             )
             .expect("should handle null ucontext gracefully");
         }
@@ -944,7 +1071,7 @@ mod tests {
     fn test_emit_backtrace_via_libunwind_unw_init_failure() {
         // Test that when unw_init_local2 fails (e.g., with invalid context),
         // the function returns Ok(()) gracefully without writing anything
-        let context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        let context: libc::ucontext_t = unsafe { core::mem::zeroed() };
         let mut buf = Vec::new();
 
         unsafe {
@@ -961,10 +1088,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_null_pointer() {
         let mut buf = Vec::new();
-        let result = emit_ucontext(&mut buf, std::ptr::null());
+        let result = emit_ucontext(&mut buf, core::ptr::null());
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), EmitterError::NullUcontext));
@@ -973,10 +1099,9 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_linux_valid() {
         // Create a minimal valid ucontext_t with zeroed register values
-        let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+        let mut context: libc::ucontext_t = unsafe { core::mem::zeroed() };
 
         // Set up some test register values
         #[cfg(target_arch = "x86_64")]
@@ -1065,10 +1190,10 @@ mod tests {
     fn test_emit_ucontext_macos_valid() {
         use libc::__darwin_ucontext;
         // Create a minimal valid ucontext_t for macOS
-        let mut context: __darwin_ucontext = unsafe { std::mem::zeroed() };
+        let mut context: __darwin_ucontext = unsafe { core::mem::zeroed() };
 
         // On macOS, we need to allocate mcontext and set up the pointer
-        let mut mcontext: libc::__darwin_mcontext64 = unsafe { std::mem::zeroed() };
+        let mut mcontext: libc::__darwin_mcontext64 = unsafe { core::mem::zeroed() };
         context.uc_mcontext = &mut mcontext as *mut libc::__darwin_mcontext64;
 
         // Set up some test register values
@@ -1142,8 +1267,8 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_emit_ucontext_macos_null_mcontext() {
         // Test the fallback case when mcontext is null
-        let mut context: libc::ucontext_t = unsafe { std::mem::zeroed() };
-        context.uc_mcontext = std::ptr::null_mut(); // Explicitly set to null
+        let mut context: libc::ucontext_t = unsafe { core::mem::zeroed() };
+        context.uc_mcontext = core::ptr::null_mut(); // Explicitly set to null
 
         let mut buf = Vec::new();
         emit_ucontext(&mut buf, &context).expect("emit_ucontext should succeed with null mcontext");

@@ -703,7 +703,7 @@ fn get_telemetry_client(
         return None;
     };
 
-    let process_tags = session.process_tags.lock_or_panic().clone();
+    let process_tags = session.process_tags_with_svc_source();
 
     Some(sidecar.telemetry_clients.get_or_create(
         service_name,

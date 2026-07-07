@@ -26,6 +26,7 @@ required-features = ["bench-internals"]
 [dependencies]
 anyhow = "1.0"
 base64 = "0.22"
+hex = "0.4"
 hyper = { workspace = true, optional = true, default-features = false }
 "http" = "1"
 "http-body" = "1"
@@ -35,6 +36,7 @@ prost = "0.14.1"
 rmp-serde = "1.3.0"
 tracing = { version = "0.1", default-features = false }
 serde_json = "1.0"
+serde-transcode = "1.1"
 futures = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["macros"] }
 rand = "0.8.5"
