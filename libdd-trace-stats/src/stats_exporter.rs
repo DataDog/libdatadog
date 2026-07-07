@@ -231,7 +231,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
                     sent_stats = true;
                 }
                 Err(err) => {
-                    error!(?err, "Error with the StateExporter when sending stats");
+                    error!(?err, "Error with the StatsExporter when sending stats");
                     anyhow::bail!("Failed to send stats: {err}");
                 }
             }
