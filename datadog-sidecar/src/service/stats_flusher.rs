@@ -111,6 +111,8 @@ fn make_exporter(
         s.meta.clone(),
         endpoint,
         NativeCapabilities::new_client(),
+        #[cfg(feature = "stats-obfuscation")]
+        "0",
         None,
         None,
     )
