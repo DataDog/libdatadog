@@ -260,8 +260,8 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         // Pick the default trust roots based on the endpoint's host and overrides
         let site = endpoint
             .url
-            .authority()
-            .map(|a| Site::from_host(a.as_str()))
+            .host()
+            .map(Site::from_host)
             .unwrap_or(Site::Prod);
 
         let config_root_bytes: Cow<'static, [u8]> = match cfg.config_root_override_path.as_deref() {
