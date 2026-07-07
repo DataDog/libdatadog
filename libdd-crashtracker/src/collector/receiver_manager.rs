@@ -6,13 +6,11 @@ use libdd_common::timeout::TimeoutManager;
 
 use crate::shared::configuration::CrashtrackerReceiverConfig;
 use core::ptr;
-use core::sync::atomic::AtomicPtr;
-use core::sync::atomic::Ordering::SeqCst;
+use core::sync::atomic::{AtomicPtr, Ordering::SeqCst};
 use libdd_common::unix_utils::{alt_fork, open_file_or_quiet, terminate, PreparedExecve};
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet};
 use nix::sys::socket;
 use std::os::unix::io::{IntoRawFd, RawFd};
-use std::os::unix::net::UnixStream;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReceiverError {
@@ -40,27 +38,22 @@ pub(crate) struct Receiver {
 }
 
 impl Receiver {
-    pub(crate) fn from_socket(unix_socket_path: &str) -> Result<Self, ReceiverError> {
+    fn from_connector(
+        unix_socket_path: &str,
+        connector: fn(&str) -> RawFd,
+    ) -> Result<Self, ReceiverError> {
         // Creates a fake "Receiver", which can be waited on like a normal receiver.
         // This is intended to support configurations where the collector is speaking to a
         // long-lived, async receiver process.
         if unix_socket_path.is_empty() {
             return Err(ReceiverError::NoReceiverPath);
         }
-        #[cfg(target_os = "linux")]
-        let unix_stream = if unix_socket_path.starts_with(['.', '/']) {
-            UnixStream::connect(unix_socket_path)
-        } else {
-            use std::os::linux::net::SocketAddrExt;
-            let addr = std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path)
-                .map_err(ReceiverError::ConnectionError)?;
-            UnixStream::connect_addr(&addr)
-        };
-        #[cfg(not(target_os = "linux"))]
-        let unix_stream = UnixStream::connect(unix_socket_path);
-        let uds_fd = unix_stream
-            .map_err(ReceiverError::ConnectionError)?
-            .into_raw_fd();
+        let uds_fd = connector(unix_socket_path);
+        if uds_fd < 0 {
+            return Err(ReceiverError::ConnectionError(
+                std::io::Error::last_os_error(),
+            ));
+        }
         Ok(Self {
             handle: ProcessHandle::new(uds_fd, None),
         })
@@ -115,7 +108,7 @@ impl Receiver {
         if unix_socket_path.is_empty() {
             Self::spawn_from_stored_config()
         } else {
-            Self::from_socket(unix_socket_path)
+            Self::from_connector(unix_socket_path, config.unix_socket_connector())
         }
     }
 
