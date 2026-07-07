@@ -3,8 +3,8 @@
 
 //! Same-process reader for the OTEL process context mapping.
 //!
-//! The reader copies payload bytes with `write(2)` into a pipe before decoding. That syscall
-//! turns accesses to reclaimed payload memory that has been unmapped into a syscall error or short
+//! The reader copies header and payload bytes with `write(2)` into a pipe before decoding. That
+//! syscall turns accesses to reclaimed memory that has been unmapped into a syscall error or short
 //! write instead of a segfault, but its ordering relative to the publisher has to be reasoned about
 //! at the OS/architecture level rather than only in Rust.
 
@@ -16,6 +16,7 @@ use core::{
 use std::{
     fs::File,
     io::{self, BufRead, BufReader},
+    mem::offset_of,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
 };
 
@@ -78,12 +79,7 @@ impl ProcessContextSelfReader {
             ));
         }
 
-        // SAFETY: `header_ptr` is non-null and points to our own process memory at an address
-        // we found in /proc/self/maps for `self.pid`. The mapping must be readable if it is
-        // listed as the OTel context.
-        let header = unsafe { self.header_ptr.as_ref() };
-
-        let published_at = header.monotonic_published_at_ns.load(Ordering::Acquire);
+        let published_at = self.read_published_at()?;
         if published_at == UNPUBLISHED_OR_UPDATING {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
@@ -91,30 +87,33 @@ impl ProcessContextSelfReader {
             ));
         }
 
-        // `signature` and `version` are initialized before the release store that publishes
-        // a non-zero timestamp. If the acquire load above observed that timestamp, those
-        // writes are visible; if it observed `UNPUBLISHED_OR_UPDATING`, we returned before
-        // reading them. Updates never mutate these fields, so their accesses are race-free.
-        // The seqlock-controlled fields must be loaded atomically because they can change
-        // during an update.
-        let signature = header.signature;
-        let version = header.version;
+        // This is the first read-side seqlock fence. Header and payload copies happen after it;
+        // the second fence below precedes the final timestamp copy.
+        fence(Ordering::SeqCst);
 
-        if signature != *SIGNATURE {
+        let header = self.read_header()?;
+        if header.monotonic_published_at_ns != published_at {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "process context changed while being read",
+            ));
+        }
+
+        if header.signature != *SIGNATURE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "invalid signature in process context mapping",
             ));
         }
-        if version != PROCESS_CTX_VERSION {
+        if header.version != PROCESS_CTX_VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unsupported process context version {version}"),
+                format!("unsupported process context version {}", header.version),
             ));
         }
 
-        let payload_size = header.payload_size.load(Ordering::Relaxed);
-        let payload_ptr = header.payload_ptr.load(Ordering::Relaxed).cast_const();
+        let payload_size = header.payload_size;
+        let payload_ptr = header.payload_ptr;
 
         if payload_ptr.is_null() {
             return Err(io::Error::new(
@@ -125,13 +124,12 @@ impl ProcessContextSelfReader {
 
         let payload_bytes = self.read_process_memory(payload_ptr, payload_size as usize)?;
 
-        // pairs with the first release fence on update() to ensure that, if we read data
-        // updated after the initial published time, we at least see the published
-        // time being set to 0 in the next load of the published time (or we could
-        // see a later time rather than 0)
-        fence(Ordering::Acquire);
+        // This is the second read-side seqlock fence. It pairs with the writer's SeqCst fences so
+        // that, if we copied data updated after the initial published time, the final timestamp
+        // copy sees `UNPUBLISHED_OR_UPDATING` or a later published timestamp.
+        fence(Ordering::SeqCst);
 
-        let published_at_after = header.monotonic_published_at_ns.load(Ordering::Relaxed);
+        let published_at_after = self.read_published_at()?;
         if published_at != published_at_after {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
@@ -235,10 +233,98 @@ impl ProcessContextSelfReader {
         )
     }
 
+    fn read_published_at(&self) -> io::Result<u64> {
+        let timestamp_ptr = self
+            .header_ptr
+            .as_ptr()
+            .cast::<u8>()
+            .wrapping_add(offset_of!(MappingHeader, monotonic_published_at_ns))
+            .cast_const();
+        let bytes = self.read_process_memory(timestamp_ptr, size_of::<u64>())?;
+        Ok(u64::from_ne_bytes(
+            Self::field_bytes::<{ size_of::<u64>() }>(&bytes, 0, "monotonic_published_at_ns")?,
+        ))
+    }
+
+    fn read_header(&self) -> io::Result<MappingHeader> {
+        let bytes = self.read_process_memory(
+            self.header_ptr.as_ptr().cast::<u8>().cast_const(),
+            size_of::<MappingHeader>(),
+        )?;
+        Self::mapping_header_from_bytes(&bytes)
+    }
+
+    fn mapping_header_from_bytes(bytes: &[u8]) -> io::Result<MappingHeader> {
+        if bytes.len() != size_of::<MappingHeader>() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "process context header copy had size {}, expected {}",
+                    bytes.len(),
+                    size_of::<MappingHeader>()
+                ),
+            ));
+        }
+
+        let signature =
+            Self::field_bytes::<8>(bytes, offset_of!(MappingHeader, signature), "signature")?;
+        let version = u32::from_ne_bytes(Self::field_bytes::<{ size_of::<u32>() }>(
+            bytes,
+            offset_of!(MappingHeader, version),
+            "version",
+        )?);
+        let payload_size = u32::from_ne_bytes(Self::field_bytes::<{ size_of::<u32>() }>(
+            bytes,
+            offset_of!(MappingHeader, payload_size),
+            "payload_size",
+        )?);
+        let monotonic_published_at_ns =
+            u64::from_ne_bytes(Self::field_bytes::<{ size_of::<u64>() }>(
+                bytes,
+                offset_of!(MappingHeader, monotonic_published_at_ns),
+                "monotonic_published_at_ns",
+            )?);
+        let payload_addr = usize::from_ne_bytes(Self::field_bytes::<{ size_of::<usize>() }>(
+            bytes,
+            offset_of!(MappingHeader, payload_ptr),
+            "payload_ptr",
+        )?);
+
+        Ok(MappingHeader {
+            signature,
+            version,
+            payload_size,
+            monotonic_published_at_ns,
+            payload_ptr: ptr::with_exposed_provenance(payload_addr),
+        })
+    }
+
+    fn field_bytes<const N: usize>(
+        bytes: &[u8],
+        offset: usize,
+        field: &'static str,
+    ) -> io::Result<[u8; N]> {
+        let end = offset.checked_add(N).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("process context header field {field} offset overflowed"),
+            )
+        })?;
+        let slice = bytes.get(offset..end).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("process context header field {field} is out of bounds"),
+            )
+        })?;
+        let mut out = [0; N];
+        out.copy_from_slice(slice);
+        Ok(out)
+    }
+
     /// Copies `len` bytes from `addr` through a pipe.
     ///
-    /// `write(2)` copies from the source address in kernel space, so unmapped/reclaimed source
-    /// memory is reported as an error or a short write instead of raising `SIGSEGV`.
+    /// `write(2)` copies from the source address in kernel space, so unmapped source memory is
+    /// reported as an error or a short write instead of raising `SIGSEGV`.
     fn read_process_memory(&self, addr: *const u8, len: usize) -> io::Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());
@@ -297,7 +383,7 @@ impl CopyPipe {
             let err = io::Error::last_os_error();
             return Err(io::Error::new(
                 err.kind(),
-                format!("failed to create process context payload pipe: {err}"),
+                format!("failed to create process context copy pipe: {err}"),
             ));
         }
 
@@ -312,13 +398,13 @@ impl CopyPipe {
             let err = io::Error::last_os_error();
             return Err(io::Error::new(
                 err.kind(),
-                format!("failed to query process context payload pipe capacity: {err}"),
+                format!("failed to query process context copy pipe capacity: {err}"),
             ));
         }
         if capacity == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "process context payload pipe has zero capacity",
+                "process context copy pipe has zero capacity",
             ));
         }
 
@@ -352,7 +438,7 @@ impl CopyPipe {
                     return Err(PipeCopyError {
                         err: io::Error::new(
                             io::ErrorKind::WriteZero,
-                            "zero-length write while copying process context payload into pipe",
+                            "zero-length write while copying process context memory into pipe",
                         ),
                         pipe_dirty: false,
                     });
@@ -367,7 +453,7 @@ impl CopyPipe {
                         return Err(PipeCopyError {
                             err: io::Error::new(
                                 io::ErrorKind::WouldBlock,
-                                "process context payload was unmapped during read",
+                                "process context memory was unmapped during read",
                             ),
                             pipe_dirty: false,
                         });
@@ -376,7 +462,7 @@ impl CopyPipe {
                         return Err(PipeCopyError {
                             err: io::Error::new(
                                 err.kind(),
-                                format!("failed to copy process context payload into pipe: {err}"),
+                                format!("failed to copy process context memory into pipe: {err}"),
                             ),
                             pipe_dirty: false,
                         });
@@ -428,7 +514,7 @@ impl CopyPipe {
                         return Err(PipeCopyError {
                             err: io::Error::new(
                                 err.kind(),
-                                format!("failed to drain process context payload from pipe: {err}"),
+                                format!("failed to drain process context memory from pipe: {err}"),
                             ),
                             // Undrained bytes may remain in the pipe.
                             pipe_dirty: true,
@@ -456,7 +542,7 @@ struct PipeCopyError {
 
 #[cfg(test)]
 mod tests {
-    use core::{ptr, sync::atomic::Ordering};
+    use core::ptr;
     use std::io;
 
     use super::ProcessContextSelfReader;
@@ -542,11 +628,14 @@ mod tests {
     fn read_returns_would_block_while_context_is_being_updated() {
         with_published_mapping(|| {
             let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
-            // SAFETY: the mapping was published by this test before being read.
-            let header = unsafe { reader.header_ptr.as_ref() };
-            let published_at_ns = header
-                .monotonic_published_at_ns
-                .swap(super::UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
+            // SAFETY: the mapping was published by this test before being read, and the test is
+            // serial so no writer is concurrently mutating the plain header field.
+            let published_at_ns = unsafe {
+                let header = reader.header_ptr.as_ptr();
+                let published_at_ns = (*header).monotonic_published_at_ns;
+                (*header).monotonic_published_at_ns = super::UNPUBLISHED_OR_UPDATING;
+                published_at_ns
+            };
 
             let err = reader
                 .read()
@@ -558,9 +647,10 @@ mod tests {
                 "unexpected error message: {err}"
             );
 
-            header
-                .monotonic_published_at_ns
-                .store(published_at_ns, Ordering::Relaxed);
+            // SAFETY: same as above.
+            unsafe {
+                (*reader.header_ptr.as_ptr()).monotonic_published_at_ns = published_at_ns;
+            }
             drop(reader);
         });
     }

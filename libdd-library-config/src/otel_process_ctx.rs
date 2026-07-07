@@ -25,7 +25,7 @@ pub mod linux {
         ffi::{c_void, CStr},
         mem::{size_of, swap, ManuallyDrop},
         ptr::{self, NonNull},
-        sync::atomic::{fence, AtomicPtr, AtomicU32, AtomicU64, Ordering},
+        sync::atomic::{fence, Ordering},
         time::Duration,
     };
     use std::{
@@ -52,17 +52,17 @@ pub mod linux {
     /// The header structure written at the start of the mapping. This must match the C
     /// layout of the specification.
     ///
-    /// The seqlock algorithm is inherently racy, so fields that can change during an
-    /// update must be atomic (even if accessed relaxed); otherwise we hit UB. `signature`
-    /// and `version` are intentionally plain fields; see the read-side synchronization comment in
-    /// [`ProcessContextSelfReader::read`] for why their accesses are race-free.
+    /// Header fields intentionally use the plain C layout types specified by OTel. Same-process
+    /// readers copy the header through [`ProcessContextSelfReader`]'s pipe-based reader instead of
+    /// dereferencing this mapping directly.
     #[repr(C)]
+    #[derive(Clone, Copy)]
     struct MappingHeader {
         signature: [u8; 8],
         version: u32,
-        payload_size: AtomicU32,
-        monotonic_published_at_ns: AtomicU64,
-        payload_ptr: AtomicPtr<u8>,
+        payload_size: u32,
+        monotonic_published_at_ns: u64,
+        payload_ptr: *const u8,
     }
 
     // Compile-time verification that MappingHeader matches the field offsets and total size
@@ -77,9 +77,7 @@ pub mod linux {
         assert!(offset_of!(MappingHeader, payload_ptr) == 24);
         assert!(size_of::<MappingHeader>() == 32);
         assert!(core::mem::align_of::<MappingHeader>() == 8);
-        assert!(core::mem::align_of::<AtomicU32>() == core::mem::align_of::<u32>());
-        assert!(core::mem::align_of::<AtomicPtr<u8>>() == core::mem::align_of::<*mut u8>());
-        assert!(size_of::<*mut u8>() == size_of::<libc::c_ulong>());
+        assert!(size_of::<*const u8>() == size_of::<libc::c_ulong>());
     };
 
     /// The shared memory mapped area to publish the context to. The memory region is owned by a
@@ -274,16 +272,11 @@ pub mod linux {
             unsafe {
                 ptr::addr_of_mut!((*header).signature).write(*SIGNATURE);
                 ptr::addr_of_mut!((*header).version).write(PROCESS_CTX_VERSION);
-                (*header)
-                    .payload_size
-                    .store(payload_size, Ordering::Relaxed);
-                (*header)
-                    .payload_ptr
-                    .store(payload.as_ptr().cast_mut(), Ordering::Relaxed);
+                ptr::addr_of_mut!((*header).payload_size).write(payload_size);
+                ptr::addr_of_mut!((*header).payload_ptr).write(payload.as_ptr());
 
-                (*header)
-                    .monotonic_published_at_ns
-                    .store(published_at_ns, Ordering::Release);
+                fence(Ordering::SeqCst);
+                ptr::addr_of_mut!((*header).monotonic_published_at_ns).write(published_at_ns);
             }
 
             // Note that naming must be unconditionally attempted, even on kernels where we might
@@ -319,10 +312,16 @@ pub mod linux {
             // Note: be careful of early return while `monotonic_published_at` is still zero, as
             // this would effectively "lock" any future publishing. Move throwing code above this
             // swap, or properly restore the previous value if the former can't be done.
-            // SAFETY: the mapping is live and valid; the timestamp field is atomic and aligned.
-            let published_at_atomic = unsafe { &(*header).monotonic_published_at_ns };
-            let previous_published_at_ns =
-                published_at_atomic.swap(UNPUBLISHED_OR_UPDATING, Ordering::Acquire);
+            // SAFETY: the mapping is live and valid for writes.
+            // Note: this does not use CAS because we assume the write lock is being held by the
+            // caller.
+            let previous_published_at_ns = unsafe {
+                let previous = (*header).monotonic_published_at_ns;
+                (*header).monotonic_published_at_ns = UNPUBLISHED_OR_UPDATING;
+                previous
+            };
+            // should never happen (publish() and the several update() calls are serialized by the
+            // lock)
             if previous_published_at_ns == UNPUBLISHED_OR_UPDATING {
                 return Err(io::Error::other(
                     "concurrent update of the process context is not supported",
@@ -334,24 +333,26 @@ pub mod linux {
             let monotonic_published_at_ns =
                 monotonic_published_at_ns.max(previous_published_at_ns.saturating_add(1));
 
-            // Pair this with the reader's acquire fence before its second timestamp load. If a
+            // Pair this with the reader's SeqCst fence before its second timestamp copy. If a
             // reader starts from the previous non-zero timestamp but copies data after this update
             // begins, it must not accept that copy as the previous version: its final timestamp
             // check should see `UNPUBLISHED_OR_UPDATING` or the later published timestamp.
-            fence(Ordering::Release);
+            // Note: only needs
+            fence(Ordering::SeqCst);
             self.payload = payload;
 
-            // SAFETY: the mapping is live and valid; the changeable fields are atomic and aligned.
+            // SAFETY: the mapping is live and valid, and the global mutex prevents concurrent
+            // in-process writers from mutating the plain header fields.
             unsafe {
-                (*header)
-                    .payload_ptr
-                    .store(self.payload.as_ptr().cast_mut(), Ordering::Relaxed);
-                (*header)
-                    .payload_size
-                    .store(payload_size, Ordering::Relaxed);
+                (*header).payload_ptr = self.payload.as_ptr();
+                (*header).payload_size = payload_size;
             }
 
-            published_at_atomic.store(monotonic_published_at_ns, Ordering::Release);
+            fence(Ordering::SeqCst);
+            // SAFETY: same as above.
+            unsafe {
+                (*header).monotonic_published_at_ns = monotonic_published_at_ns;
+            }
 
             Ok(())
         }
@@ -509,13 +510,11 @@ pub mod linux {
             // hit an unmapped header, which is why this function is unsafe. The ordering should
             // help out-of-process readers.
             //
-            // SAFETY: the mapping is still live and valid; the timestamp field is atomic
-            // and aligned.
+            // SAFETY: the mapping is still live and valid, and the global mutex prevents
+            // concurrent in-process writers from mutating the plain header fields.
             let header = mapping.start_addr.as_ptr() as *mut MappingHeader;
             unsafe {
-                (*header)
-                    .monotonic_published_at_ns
-                    .store(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
+                (*header).monotonic_published_at_ns = UNPUBLISHED_OR_UPDATING;
             }
             fence(Ordering::Release);
 
