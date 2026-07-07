@@ -530,14 +530,17 @@ pub mod linux {
     #[cfg(test)]
     #[serial_test::serial]
     mod tests {
-        use core::{ptr, sync::atomic::Ordering, time::Duration};
+        use core::{mem::size_of, ptr, time::Duration};
         use std::io;
 
-        use super::{MappingHeader, ProcessContext};
+        use super::ProcessContext;
         use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
             any_value, AnyValue, KeyValue,
         };
+        use prost::Message;
 
+        #[repr(C)]
+        #[derive(Clone, Copy)]
         struct MappingHeaderSnapshot {
             signature: [u8; 8],
             version: u32,
@@ -545,6 +548,18 @@ pub mod linux {
             monotonic_published_at_ns: u64,
             payload_ptr: *const u8,
         }
+
+        const _: () = {
+            use core::mem::{align_of, offset_of};
+
+            assert!(offset_of!(MappingHeaderSnapshot, signature) == 0);
+            assert!(offset_of!(MappingHeaderSnapshot, version) == 8);
+            assert!(offset_of!(MappingHeaderSnapshot, payload_size) == 12);
+            assert!(offset_of!(MappingHeaderSnapshot, monotonic_published_at_ns) == 16);
+            assert!(offset_of!(MappingHeaderSnapshot, payload_ptr) == 24);
+            assert!(size_of::<MappingHeaderSnapshot>() == size_of::<super::MappingHeader>());
+            assert!(align_of::<MappingHeaderSnapshot>() == align_of::<super::MappingHeader>());
+        };
 
         /// Read the process context from the current process.
         ///
@@ -556,16 +571,12 @@ pub mod linux {
         /// extract or use as it is as a generic Rust OTel process context reader.
         fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
             let mapping_addr = super::ProcessContextSelfReader::find_otel_mapping()?;
-            let header_ptr: *const MappingHeader = ptr::with_exposed_provenance(mapping_addr);
-            // SAFETY: the mapping was published by this test before being read.
-            let header = unsafe { &*header_ptr };
-            Ok(MappingHeaderSnapshot {
-                signature: header.signature,
-                version: header.version,
-                payload_size: header.payload_size.load(Ordering::Relaxed),
-                monotonic_published_at_ns: header.monotonic_published_at_ns.load(Ordering::Relaxed),
-                payload_ptr: header.payload_ptr.load(Ordering::Relaxed).cast_const(),
-            })
+            let header_ptr: *const MappingHeaderSnapshot =
+                ptr::with_exposed_provenance(mapping_addr);
+            // SAFETY: the mapping was published by this test before being read; the tests are
+            // serial and don't update the mapping while this snapshot is copied; the layout
+            // assertions above keep this snapshot compatible with the real header.
+            Ok(unsafe { ptr::read(header_ptr) })
         }
 
         #[test]
@@ -583,14 +594,27 @@ pub mod linux {
             };
 
             super::publish(&context).expect("couldn't publish the process context");
-            let read_context = super::ProcessContextSelfReader::new()
-                .expect("couldn't create process context reader")
-                .read()
-                .expect("couldn't read back the process context");
+            let header = read_process_context().expect("couldn't read back the process context");
+            // SAFETY: the published context must have put valid bytes of size payload_size in the
+            // context if the signature check succeded.
+            let read_payload = unsafe {
+                core::slice::from_raw_parts(header.payload_ptr, header.payload_size as usize)
+            };
+            let read_context =
+                ProcessContext::decode(read_payload).expect("couldn't decode the process context");
             unsafe {
                 super::unpublish().expect("couldn't unpublish the context");
             }
 
+            assert!(header.signature == *super::SIGNATURE, "wrong signature");
+            assert!(
+                header.version == super::PROCESS_CTX_VERSION,
+                "wrong context version"
+            );
+            assert!(
+                header.monotonic_published_at_ns > 0,
+                "monotonic_published_at_ns is zero"
+            );
             assert!(read_context == context, "read back a different context");
         }
 
