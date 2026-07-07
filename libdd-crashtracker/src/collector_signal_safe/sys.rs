@@ -180,20 +180,9 @@ mod raw {
         mprotect_none, open_readwrite, pipe, poll_sleep_ms, waitpid_nohang_status, write,
     };
 
-    #[cfg(target_arch = "x86_64")]
-    #[inline]
-    unsafe fn syscall1(nr: i64, a0: usize) -> isize {
-        let ret: isize;
-        asm!(
-            "syscall",
-            inlateout("rax") nr as isize => ret,
-            in("rdi") a0,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack, preserves_flags),
-        );
-        ret
-    }
+    /// Upper bound on the descriptor scan in [`close_range_from`], so a very large (or unlimited)
+    /// `RLIMIT_NOFILE` can't turn the close loop into an unbounded number of syscalls.
+    const CLOSE_FD_SCAN_LIMIT: u64 = 65_536;
 
     #[cfg(target_arch = "x86_64")]
     #[inline]
@@ -236,19 +225,6 @@ mod raw {
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack, preserves_flags),
-        );
-        ret
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    #[inline]
-    unsafe fn syscall1(nr: i64, a0: usize) -> isize {
-        let ret: isize;
-        asm!(
-            "svc 0",
-            in("x8") nr,
-            inlateout("x0") a0 => ret,
-            options(nostack),
         );
         ret
     }
@@ -302,15 +278,22 @@ mod raw {
     }
 
     pub fn close_range_from(first_fd: i32) -> bool {
-        first_fd >= 0
-            && unsafe {
-                syscall3(
-                    libc::SYS_close_range,
-                    first_fd as usize,
-                    u32::MAX as usize,
-                    0,
-                ) == 0
-            }
+        if first_fd < 0 {
+            return false;
+        }
+        // `close_range(2)` only exists on Linux 5.9+, so we can't rely on it (e.g. CentOS 7 runs
+        // 3.10). Close descriptors individually up to the process' `RLIMIT_NOFILE` soft limit,
+        // capped so an unlimited/huge limit can't turn this into millions of syscalls.
+        let limit = rustix::process::getrlimit(rustix::process::Resource::Nofile)
+            .current
+            .map_or(CLOSE_FD_SCAN_LIMIT, |soft| soft.min(CLOSE_FD_SCAN_LIMIT))
+            as i32;
+        let mut fd = first_fd;
+        while fd < limit {
+            close(fd);
+            fd += 1;
+        }
+        true
     }
 
     pub fn fork_supported() -> bool {
@@ -318,46 +301,18 @@ mod raw {
     }
 
     pub unsafe fn fork_raw() -> isize {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let ret: isize;
-            asm!(
-                "syscall",
-                inlateout("rax") libc::SYS_clone as isize => ret,
-                in("rdi") libc::SIGCHLD as usize,
-                in("rsi") 0usize,
-                in("rdx") 0usize,
-                in("r10") 0usize,
-                in("r8") 0usize,
-                lateout("rcx") _,
-                lateout("r11") _,
-                options(nostack),
-            );
-            ret
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            let ret: isize;
-            asm!(
-                "svc 0",
-                in("x8") libc::SYS_clone,
-                inlateout("x0") libc::SIGCHLD as usize => ret,
-                in("x1") 0usize,
-                in("x2") 0usize,
-                in("x3") 0usize,
-                in("x4") 0usize,
-                options(nostack),
-            );
-            ret
+        // `kernel_fork` issues a bare `clone(SIGCHLD)` syscall through rustix's linux_raw backend,
+        // so it never runs libc `pthread_atfork` handlers — the async-signal-safe fork we need on
+        // the crash path. Map its typed result back onto the fork(2) ABI the callers expect.
+        match rustix::runtime::kernel_fork() {
+            Ok(rustix::runtime::Fork::Child(_)) => 0,
+            Ok(rustix::runtime::Fork::ParentOf(pid)) => pid.as_raw_pid() as isize,
+            Err(err) => -(err.raw_os_error() as isize),
         }
     }
 
     pub fn exit_process(code: i32) -> ! {
-        loop {
-            unsafe {
-                syscall1(libc::SYS_exit_group, code as usize);
-            }
-        }
+        rustix::runtime::exit_group(code)
     }
 
     pub fn gettid() -> i32 {
