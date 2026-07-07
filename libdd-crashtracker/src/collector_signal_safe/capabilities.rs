@@ -5,59 +5,44 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use super::sys;
 
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Capabilities(u32);
+/// Declares a `#[repr(transparent)]` u32 bitset newtype with the common flag
+/// operations shared by [`Capabilities`] and [`Degradations`].
+macro_rules! bitset_u32 {
+    ($name:ident) => {
+        #[repr(transparent)]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        pub struct $name(u32);
 
-impl Capabilities {
-    pub const fn empty() -> Self {
-        Self(0)
-    }
+        impl $name {
+            pub const fn empty() -> Self {
+                Self(0)
+            }
 
-    pub const fn from_bits(bits: u32) -> Self {
-        Self(bits)
-    }
+            pub const fn from_bits(bits: u32) -> Self {
+                Self(bits)
+            }
 
-    pub const fn bits(self) -> u32 {
-        self.0
-    }
+            pub const fn bits(self) -> u32 {
+                self.0
+            }
 
-    pub const fn contains(self, flag: Self) -> bool {
-        self.0 & flag.0 != 0
-    }
+            pub const fn contains(self, flag: Self) -> bool {
+                self.0 & flag.0 != 0
+            }
 
-    fn insert(&mut self, flag: Self) {
-        self.0 |= flag.0;
-    }
+            fn insert(&mut self, flag: Self) {
+                self.0 |= flag.0;
+            }
+        }
+    };
 }
 
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Degradations(u32);
+bitset_u32!(Capabilities);
+bitset_u32!(Degradations);
 
 impl Degradations {
-    pub const fn empty() -> Self {
-        Self(0)
-    }
-
-    pub const fn from_bits(bits: u32) -> Self {
-        Self(bits)
-    }
-
-    pub const fn bits(self) -> u32 {
-        self.0
-    }
-
-    pub const fn contains(self, flag: Self) -> bool {
-        self.0 & flag.0 != 0
-    }
-
     pub const fn with(self, flag: Self) -> Self {
         Self(self.0 | flag.0)
-    }
-
-    fn insert(&mut self, flag: Self) {
-        self.0 |= flag.0;
     }
 }
 

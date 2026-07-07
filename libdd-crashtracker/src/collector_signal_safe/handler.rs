@@ -376,7 +376,7 @@ fn strip_loader_injection_env() {
         let mut dst = env;
         while !(*src).is_null() {
             let entry = *src;
-            let injected = PREFIXES.iter().any(|p| sys::cstr_starts_with(entry, p));
+            let injected = PREFIXES.iter().any(|p| sys::cstr_has_prefix(entry, p));
             if !injected {
                 *dst = entry;
                 dst = dst.add(1);

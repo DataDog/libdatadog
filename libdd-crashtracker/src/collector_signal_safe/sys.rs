@@ -551,11 +551,7 @@ pub unsafe fn cstr_bytes_bounded<'a>(p: *const c_char) -> &'a [u8] {
     CStr::from_bytes_with_nul_unchecked(bytes).to_bytes()
 }
 
-pub unsafe fn cstr_starts_with(s: *const c_char, prefix: &[u8]) -> bool {
-    cstr_has_prefix(s, prefix)
-}
-
-unsafe fn cstr_has_prefix(s: *const c_char, prefix: &[u8]) -> bool {
+pub unsafe fn cstr_has_prefix(s: *const c_char, prefix: &[u8]) -> bool {
     let mut i = 0usize;
     while i < prefix.len() {
         let c = *s.add(i);
@@ -589,25 +585,12 @@ pub fn set_errno(errno: i32) {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-unsafe fn errno_location() -> *mut i32 {
-    libc::__errno_location()
-}
-
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 unsafe fn errno_location() -> *mut i32 {
     libc::__error()
 }
 
-#[cfg(all(
-    unix,
-    not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios"
-    ))
-))]
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios"))))]
 unsafe fn errno_location() -> *mut i32 {
     libc::__errno_location()
 }
