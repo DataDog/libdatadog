@@ -531,11 +531,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                 return Err(e);
             }
         };
-        self.consecutive_failures = 0;
 
         let active_targets = match self.apply(&response, cache, prefetched_org_uuid).await {
             Ok(t) => t,
             Err(e) => {
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
                 // On any `apply()` failure the trusted databases may have been advanced
                 // in place and incrementally, leaving them inconsistent with the
                 // versions we would report next poll.
@@ -546,6 +546,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
                 return Err(e);
             }
         };
+        self.consecutive_failures = 0;
 
         self.products = all_products;
 

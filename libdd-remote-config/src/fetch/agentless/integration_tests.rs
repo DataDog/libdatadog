@@ -432,6 +432,9 @@ async fn test_apply_error_resets_and_recovers() {
     f.fetch_config(dummy_client(), &cache).await.unwrap();
     assert_eq!(config_root_version(&f), 1);
     assert_eq!(config_snapshot_version(&f), Some(1));
+    // A fully successful poll leaves the backoff counter at 0.
+    assert_eq!(f.consecutive_failures(), 0);
+    assert_eq!(f.next_backoff(), None);
 
     // Poll 2 fails (after the config root advanced to v2) and resets.
     assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
@@ -441,11 +444,18 @@ async fn test_apply_error_resets_and_recovers() {
     assert!(f.opaque_backend_state.is_empty());
     assert!(f.products.is_empty());
     assert!(f.last_config_top_targets.is_none());
+    // E-1: a successful HTTP fetch that fails `apply()` (verification) must still
+    // count as a failed poll, so the client backs off during sustained
+    // verification failures instead of hot-looping.
+    assert_eq!(f.consecutive_failures(), 1);
 
     // Poll 3 recovers.
     f.fetch_config(dummy_client(), &cache).await.unwrap();
     assert_eq!(config_root_version(&f), 1);
     assert_eq!(config_snapshot_version(&f), Some(1));
+    // A fully successful poll clears the counter again.
+    assert_eq!(f.consecutive_failures(), 0);
+    assert_eq!(f.next_backoff(), None);
 
     // The post-reset poll reported the clean embedded versions, matching the
     // live trusted DB (snapshot 0, root v1) — not the advanced v2.
