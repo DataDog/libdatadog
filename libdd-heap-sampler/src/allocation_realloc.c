@@ -39,6 +39,7 @@ dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size)
         return out;
     }
 
+#if DD_HEAP_LIVE_TRACKING
     void  *old_raw    = NULL;
     size_t old_offset = 0;
     if (!dd_sample_flag_peek(old_user, &old_raw, &old_offset)) {
@@ -92,6 +93,12 @@ dd_realloc_prep_t dd_allocation_realloc_prepare(void *old_user, size_t new_size)
     out.old_offset = old_offset;
     out.kind       = DD_REALLOC_KIND_SAMPLED;
     return out;
+#else
+    /* Live-heap tracking off: existing blocks are never flagged, so there
+     * is no sampled realloc to recover. Pass straight through to the real
+     * realloc. (realloc(NULL, n) already took the ALLOC path above.) */
+    return out;
+#endif
 }
 
 void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_prep_t prep) {
@@ -107,6 +114,7 @@ void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_pre
         return new_raw;
     }
 
+#if DD_HEAP_LIVE_TRACKING
     /* Underlying realloc failed: C says old_user is still live.
      * prepare() cleared the header optimistically, so re-stamp it
      * now so that a later free(old_user) correctly resolves the raw
@@ -141,4 +149,10 @@ void *dd_allocation_realloc_commit(void *old_user, void *new_raw, dd_realloc_pre
      * USDT so the profiler can close the live-heap entry. */
     dd_probe_free(old_user);
     return new_raw;
+#else
+    /* Only ALLOC/FREE/PASSTHROUGH kinds occur without live-heap tracking;
+     * prepare() never produces a sampled teardown. */
+    (void)old_user;
+    return new_raw;
+#endif
 }

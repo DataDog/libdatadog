@@ -26,6 +26,12 @@
 //! libdd_heap_gotter::restore_heap_overrides();
 //! ```
 //!
+//! # Features
+//!
+//! * `live-heap` (off by default) — enables live-heap tracking: interposed allocations are flagged
+//!   and frees are sampled, so a profiler can balance allocs against frees. Off = allocation
+//!   profiling only. (Distinct from the runtime `DD_HEAP_SAMPLING_ENABLED` bypass.)
+//!
 //! # Status
 //!
 //! Initial port. Covers: `malloc`, `free`, `calloc`, `realloc`,

@@ -90,6 +90,15 @@ These implement the native profiling hooks for the various allocators we support
 ### [GOTter `libdd-heap-gotter`](../libdd-heap-gotter)
 GOTter implements our GOT-patching mechanism to wrap (dynamically!) linked allocators in a running process.
 
+## Cargo features
+
+**`live-heap`** (off by default) - enables live-heap tracking. Sampled allocations are flagged and frees are sampled, 
+so a profiler can balance allocs against frees. 
+
+Separately, the runtime env var **`DD_HEAP_SAMPLING_ENABLED`** (`0`/`false`/
+`no`/`off` to disable) bypasses sampling entirely at process start,
+regardless of the compile-time feature.
+
 ## Regenerating bindings
 
 The Rust FFI declarations in `src/generated/bindings.rs` and the

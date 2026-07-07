@@ -30,10 +30,16 @@
 void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req) {
     void *user = raw;
     if (raw != NULL) {
+#if DD_HEAP_LIVE_TRACKING
         /* Apply the sample flag and fire the USDT. We use the user pointer
          * (post-flag) as the USDT argument so the profiler sees the same
          * address the application will. */
         user = dd_sample_flag_apply(raw, req.alignment);
+#else
+        /* Live-heap tracking off: no flagging, so the user pointer is the
+         * raw pointer. The alloc USDT still fires for allocation profiling;
+         * there just won't be a matching free. */
+#endif
         /* Report the application-requested size, not the sampler-bumped
          * size (`req.size`), so heap-size distributions in the profiler
          * aren't skewed by per-sample overhead. */

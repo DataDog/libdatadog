@@ -12,6 +12,11 @@
 //! every other target the wrapper compiles to a transparent pass-through
 //! to the inner allocator.
 //!
+//! # Features
+//!
+//! * `live-heap` (off by default) — enables live-heap tracking: allocations are flagged and frees
+//!   are sampled, so a profiler can balance allocs against frees. Off = allocation profiling only.
+//!
 //! # Example
 //!
 //! ```no_run

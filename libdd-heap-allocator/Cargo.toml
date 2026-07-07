@@ -15,6 +15,12 @@ publish = false
 [lib]
 bench = false
 
+[features]
+# Forward live-heap (retained-heap) tracking down to the sampler. Off by
+# default: a bare SampledAllocator does allocation profiling only. Enable
+# to flag allocations and sample frees. See libdd-heap-sampler.
+live-heap = ["libdd-heap-sampler/live-heap"]
+
 [dependencies]
 libdd-heap-sampler = { path = "../libdd-heap-sampler" }
 

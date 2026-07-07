@@ -110,7 +110,7 @@ static uint64_t sample(dd_tl_state_t *tl) {
  */
 static bool bumped_alloc_size(size_t user_size, size_t alignment,
                               size_t *out_size) {
-#if defined(__x86_64__)
+#if defined(__x86_64__) && DD_HEAP_LIVE_TRACKING
     if (alignment > DD_SAMPLE_ALIGNMENT_CAP) return false;
 
     /* Reserve twice the base offset so x86_apply's page-boundary bump

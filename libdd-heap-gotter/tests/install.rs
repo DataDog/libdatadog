@@ -52,6 +52,7 @@ fn install_and_restore_keeps_heap_functional() {
 /// sampler and produce tagged pointers. We force sampling_interval=1
 /// so every allocation is sampled, then check that libc::malloc returns
 /// a pointer carrying the sample flag.
+#[cfg(feature = "live-heap")]
 #[test]
 #[serial]
 fn install_produces_sampled_allocations() {
@@ -101,6 +102,7 @@ fn install_produces_sampled_allocations() {
 
 /// Confirm realloc(NULL, size) goes through the sampler-side allocation
 /// case, not a gotter-specific special case.
+#[cfg(feature = "live-heap")]
 #[test]
 #[serial]
 fn realloc_null_produces_sampled_allocation() {
@@ -136,7 +138,7 @@ fn realloc_null_produces_sampled_allocation() {
 /// The header checker refuses pointers in the first 16 bytes of a page,
 /// so a sampled 4096-aligned pointer could not be recognised later by
 /// free or realloc.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "live-heap"))]
 #[test]
 #[serial]
 fn page_aligned_allocations_are_unsampled() {
@@ -348,13 +350,20 @@ fn realloc_stress_across_alignments_preserves_data() {
 
     libdd_heap_gotter::restore_heap_overrides();
 
+    // Only meaningful with live-heap tracking on; without it nothing is
+    // flagged, so the realloc/free stress still exercises the passthrough
+    // paths but no allocation is ever "sampled".
+    #[cfg(feature = "live-heap")]
     assert!(
         saw_sampled,
         "expected at least one allocation to be sampled with interval=1"
     );
+    #[cfg(not(feature = "live-heap"))]
+    let _ = saw_sampled;
 }
 
 /// Confirm that after restore, allocations are no longer sampled.
+#[cfg(feature = "live-heap")]
 #[test]
 #[serial]
 fn restore_stops_sampling() {

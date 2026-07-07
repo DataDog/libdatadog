@@ -189,6 +189,25 @@ mod tests {
         }
     }
 
+    // With live-heap tracking compiled out, even a "sampled" allocation
+    // (weight > 0) is never flagged: the created pointer is the raw pointer
+    // unchanged. The alloc USDT still fires (allocation profiling), but
+    // there is no tag/header, so no matching free is expected.
+    #[cfg(not(feature = "live-heap"))]
+    #[test]
+    fn created_does_not_flag_when_live_heap_disabled() {
+        unsafe {
+            let fake = 0xdead_beef_usize as *mut c_void;
+            let req = dd_alloc_req_t {
+                size: 64,
+                user_size: 64,
+                alignment: 8,
+                weight: 5,
+            };
+            assert_eq!(dd_allocation_created(fake, req), fake);
+        }
+    }
+
     #[test]
     fn zero_sampling_interval_disables_sampling() {
         let mut tl = dd_tl_state_t {
@@ -223,7 +242,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "live-heap"))]
     #[test]
     fn sample_flag_check_fast_rejects_invalid_offset() {
         const MAGIC: u64 = 0xfab1eddec0dedca7;
@@ -249,7 +268,7 @@ mod tests {
         assert_eq!(&buf[header_idx..header_idx + 8], &MAGIC.to_ne_bytes());
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "live-heap"))]
     #[test]
     fn freed_slow_size_matches_requested_bump_formula() {
         const HEADER_BYTES: usize = 16;

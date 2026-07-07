@@ -60,10 +60,16 @@ dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
  */
 static inline __attribute__((always_inline))
 dd_alloc_freed_t dd_allocation_freed(void *ptr, size_t size, size_t alignment) {
+#if DD_HEAP_LIVE_TRACKING
     void *raw;
     if (__builtin_expect(dd_sample_flag_check(ptr, &raw), 0)) {
         return dd_allocation_freed_slow(ptr, raw, size, alignment);
     }
+#else
+    /* Live-heap tracking off: nothing is flagged, so there is never a
+     * sampled free to recover. Pass the free straight through. */
+    (void)alignment;
+#endif
 
     dd_alloc_freed_t out = { .ptr = ptr, .size = size };
     return out;

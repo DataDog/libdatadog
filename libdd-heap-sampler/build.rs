@@ -92,10 +92,14 @@ mod linux {
     }
 
     fn compile_c(wrap_path: &Path) {
+        // Translate the `live-heap` cargo feature into a C define.
+        let live_heap = env::var_os("CARGO_FEATURE_LIVE_HEAP").is_some();
+
         let mut build = cc::Build::new();
         build
             .files(SOURCES)
             .file(wrap_path)
+            .define("DD_HEAP_LIVE_TRACKING", if live_heap { "1" } else { "0" })
             .include(".")
             .include("include")
             // See regen::run's matching `-Ivendor` and vendor/README.md.

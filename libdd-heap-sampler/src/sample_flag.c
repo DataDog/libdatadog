@@ -100,12 +100,18 @@ bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out) {
 #endif
 
 bool dd_sample_flag_thread_init(void) {
+#if DD_HEAP_LIVE_TRACKING
     /* prctl returns 0 on success. On failure (older kernel without
      * PR_SET_TAGGED_ADDR_CTRL, seccomp filter blocking it, MTE
      * conflict, ...) tagged pointers would be rejected by the kernel
      * with EFAULT the next time one crosses a syscall. Report failure
      * so the caller disables sampling on this thread. */
     return prctl(PR_SET_TAGGED_ADDR_CTRL, PR_TAGGED_ADDR_ENABLE, 0, 0, 0) == 0;
+#else
+    /* No pointer tagging without live-heap tracking, so the tagged-address
+     * prctl isn't needed; nothing can reject an untagged pointer. */
+    return true;
+#endif
 }
 #else
 bool dd_sample_flag_thread_init(void) {

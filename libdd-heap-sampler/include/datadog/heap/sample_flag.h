@@ -19,6 +19,17 @@
 #include <string.h>
 
 /*
+ * Live-heap tracking master switch. build.rs defines this to 0 or 1 from
+ * the `live-heap` cargo feature. Default to 1 when unset so raw-C
+ * compilation and bindgen (which don't pass -D) see the full-featured
+ * layout. When 0, sampled allocations are not flagged and frees are not
+ * sampled: allocation profiling only. See allocation_*.{h,c}.
+ */
+#ifndef DD_HEAP_LIVE_TRACKING
+#define DD_HEAP_LIVE_TRACKING 1
+#endif
+
+/*
  * Per-thread initialisation required by the flagging scheme.
  * Must be called once per thread before dd_sample_flag_apply/check are used.
  * On arm64 this issues prctl(PR_SET_TAGGED_ADDR_CTRL) so tagged pointers
