@@ -39,6 +39,7 @@ benchmarks:
     # helper prints SKIP (nothing to do), FULL (whole workspace), or a space-separated crate list;
     # BENCH_PACKAGES is consumed by benchmark/run_benchmarks_ci.sh.
     - |
+      set -euo pipefail
       DECISION="$(./benchmark/select_bench_packages.sh "${CI_NODE_INDEX:-1}" "${CI_NODE_TOTAL:-1}")"
       case "$DECISION" in
         SKIP)
@@ -86,6 +87,16 @@ benchmarks:
     - ./steps/analyze-results.sh
     - "./steps/upload-results-to-s3.sh || :"
     - "./steps/upload-results-to-benchmarking-api.sh || :"
+    # Fail loudly if the run produced no candidate results (e.g. a step exited 0 without actually
+    # benchmarking); a legitimate skip exits earlier and never reaches here.
+    - |
+      set -euo pipefail
+      shopt -s nullglob
+      candidate_results=("${ARTIFACTS_DIR}"/candidate/*/benchmark-candidate.converted.json)
+      if (( ${#candidate_results[@]} == 0 )); then
+        echo "ERROR: benchmark run produced no candidate results in ${ARTIFACTS_DIR}" >&2
+        exit 1
+      fi
     # Hand this shard's reports to benchmarks_combine, which posts the single PR comment.
     - mv "${ARTIFACTS_DIR}" "${CI_PROJECT_DIR}/reports-${CI_NODE_INDEX:-1}"
   artifacts:
