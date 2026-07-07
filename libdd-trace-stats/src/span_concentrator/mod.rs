@@ -21,7 +21,8 @@ pub use stat_span::StatSpan;
 /// `StatsExporter` is generic over `C: FlushableConcentrator` so it can work with
 /// both the in-process [`SpanConcentrator`] and the SHM-backed `ShmSpanConcentrator`.
 pub trait FlushableConcentrator {
-    /// Flush time buckets and return them together some metadata.
+    /// Flush time buckets and return them together some metadata. If `force` is true, flush
+    /// all buckets.
     ///
     /// Returns a triplet `(buckets, collapsed_spans, buckets_obfuscated)`
     /// Where
@@ -251,9 +252,13 @@ impl SpanConcentrator {
     /// Flush all stats bucket except for the `buffer_len` most recent. If `force` is true, flush
     /// all buckets.
     ///
-    /// Returns a tuple of `(buckets, collapsed_spans)` where `collapsed_spans` is the total number
-    /// of spans that were collapsed into the overflow sentinel bucket due to cardinality limiting
-    /// across all flushed time buckets.
+    /// Returns a triplet `(buckets, collapsed_spans, buckets_obfuscated)`
+    /// Where
+    ///   - `buckets` are the encoded stats bucket
+    ///   - `collapsed_spans` is the number of spans that were collapsed into the overflow sentinel
+    ///     bucket due to cardinality limiting
+    ///   - `buckets_obfuscated` indicates whether the returned buckets have been obfuscated
+    ///     client-side
     pub fn flush(
         &mut self,
         now: SystemTime,
@@ -265,16 +270,10 @@ impl SpanConcentrator {
     /// Like [`Self::flush`], but also emits exact per-cell scalars alongside each bucket for the
     /// OTLP trace-metrics path. The protobuf bucket inside each [`OtlpStatsBucket`] is identical
     /// to what [`Self::flush`] would produce, so the /v0.6/stats agent path is unaffected.
-    ///
-    /// Returns a tuple of `(buckets, collapsed_spans)` where `collapsed_spans` is the total number
-    /// of spans that were collapsed into the overflow sentinel bucket due to cardinality limiting
-    /// across all flushed time buckets.
-    pub fn flush_with_otlp_exact(
-        &mut self,
-        now: SystemTime,
-        force: bool,
-    ) -> (Vec<OtlpStatsBucket>, u64, bool) {
-        self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact)
+    pub fn flush_with_otlp_exact(&mut self, now: SystemTime, force: bool) -> Vec<OtlpStatsBucket> {
+        let (buckets, _, _) =
+            self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact);
+        buckets
     }
 
     fn drain_due_buckets<T>(
