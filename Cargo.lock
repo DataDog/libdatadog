@@ -3185,6 +3185,8 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "elf",
+ "object 0.36.5",
+ "sha2",
 ]
 
 [[package]]
@@ -3192,10 +3194,8 @@ name = "libdd-otel-thread-ctx-ffi"
 version = "1.0.0"
 dependencies = [
  "build_common",
- "elf",
  "libdd-common-ffi",
  "libdd-otel-thread-ctx",
- "object 0.36.5",
 ]
 
 [[package]]

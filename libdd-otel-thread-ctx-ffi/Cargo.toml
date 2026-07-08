@@ -22,11 +22,22 @@ libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx" }
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 sanity-check = ["dep:libdd-common-ffi", "libdd-otel-thread-ctx/sanity-check"]
+# Gate for the gen_tls_shim_hash binary. Do not build it by default; it's very
+# rarely needed (and maybe won't ever be): only if the corresponding test is
+# failing one day, and we need to update the TLSDESC inline assembly to match
+# what newer versions of clang generate.
+gen-tls-shim-hash = ["libdd-otel-thread-ctx/test-utils"]
+
+# Dev tool to regenerate the TLSDESC golden hash for tests.
+[[bin]]
+name = "gen_tls_shim_hash"
+required-features = ["gen-tls-shim-hash"]
 
 [dev-dependencies]
-elf = "0.7"
-libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", features = ["sanity-check"] }
-object = { version = "0.36", default-features = false, features = ["archive", "read_core"] }
+libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", features = [
+    "sanity-check",
+    "test-utils",
+] }
 
 [build-dependencies]
 build_common = { path = "../build-common" }

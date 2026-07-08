@@ -17,15 +17,16 @@
 //! The simplest pattern, when applicable, is to attach one record and then mutate it in place.
 //! This avoids allocation in the hot path.
 //!
-//! ```ignore
+//! ```rust
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
 //! let span_id  = [1u8; 8];
+//! let local_root_span_id = [2u8; 8];
 //!
 //! // First call allocates a record and attaches it.
-//! ThreadContext::new(trace_id, span_id, &[(0, "first")]).attach();
-//! ThreadContext::update(trace_id, span_id, &[(0, "second")]);
+//! ThreadContext::new(trace_id, span_id, local_root_span_id, &[(0, "first")]).attach();
+//! ThreadContext::update(trace_id, span_id, local_root_span_id, &[(0, "second")]);
 //! ThreadContext::detach();
 //! ```
 //!
@@ -35,15 +36,16 @@
 //! to be saved and restored repeatedly. Could be the case with async-runtimes where several tasks
 //! might run on the same thread, or even move from one thread to another, for example.
 //!
-//! ```ignore
+//! ```rust
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
 //! let span_id  = [1u8; 8];
+//! let local_root_span_id = [2u8; 8];
 //! let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
 //!
 //! // Publish a new context and save the previously attached one (if any).
-//! let ctx = ThreadContext::new(trace_id, span_id, attrs);
+//! let ctx = ThreadContext::new(trace_id, span_id, local_root_span_id, attrs);
 //! let previous = ctx.attach();
 //!
 //! // ... do work inside the span ...
@@ -78,6 +80,9 @@ compile_error!(
 
 #[cfg(all(target_os = "linux", feature = "sanity-check"))]
 pub mod sanity_check;
+
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
 
 #[cfg(all(
     target_os = "linux",
@@ -146,19 +151,18 @@ pub mod linux {
         let ptr: usize;
         // WARNING: do not change the assembly below. See the warning above for amd64, and
         // https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst#general-dynamic.
+        // This code match byte-per-byte what clang generates, and this is verified during tests.
         core::arch::asm!(
             "adrp  x0, :tlsdesc:otel_thread_ctx_v1",
             "ldr   x1, [x0, :tlsdesc_lo12:otel_thread_ctx_v1]",
             "add   x0, x0, :tlsdesc_lo12:otel_thread_ctx_v1",
             ".tlsdesccall otel_thread_ctx_v1",
             "blr   x1",
-            // Read the thread pointer after the TLSDESC call, mirroring the sequence GCC/Clang
-            // emit. We reuse x1 to avoid register pressure on the surrounding Rust code. It's dead once
-            // the call returns anyway and we already clobbered it at this point.
-            "mrs   x1, tpidr_el0",
-            "add   x0, x1, x0",
+            "mrs   x8, tpidr_el0",
+            "add   x0, x8, x0",
             out("x0") ptr,
             out("x1") _,
+            out("x8") _,
             out("x30") _,
         );
         ptr as *mut *mut ThreadContextRecord
