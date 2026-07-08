@@ -463,6 +463,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // gettid() returns a Miri-virtual TID that /proc/self/task/ doesn't list
     fn enumerate_discovers_spawned_thread() {
         let barrier = Arc::new(Barrier::new(2));
         let b = Arc::clone(&barrier);
