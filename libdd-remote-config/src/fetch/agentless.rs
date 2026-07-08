@@ -89,8 +89,7 @@ impl Site {
     }
 }
 
-/// Read a TUF root override from disk, returning the bytes and their parsed
-/// version
+/// Read a TUF root override from disk, returning the bytes
 fn load_root(override_path: &std::path::Path) -> anyhow::Result<Vec<u8>> {
     let bytes = std::fs::read(override_path)
         .map_err(|e| format_err!("failed to read TUF root override at {override_path:?}: {e}"))?;
@@ -562,17 +561,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         })
     }
 
-    /// Query the Remote Config org-status endpoint.
-    ///
-    /// # Errors
-    /// Returns an error if the HTTP request fails or the response cannot be decoded.
-    pub async fn get_org_status(&self) -> anyhow::Result<remoteconfig::OrgStatusResponse> {
-        let path = PathAndQuery::from_static("/api/v0.1/status");
-        let res = self.send_request(Method::GET, path, Bytes::new()).await?;
-        parse_rc_response(res)
-    }
-
-    pub async fn get_org_data(&self) -> anyhow::Result<remoteconfig::OrgDataResponse> {
+    async fn get_org_data(&self) -> anyhow::Result<remoteconfig::OrgDataResponse> {
         let path = PathAndQuery::from_static("/api/v0.1/org");
         let res = self.send_request(Method::GET, path, Bytes::new()).await?;
         parse_rc_response(res)
