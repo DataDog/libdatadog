@@ -358,7 +358,8 @@ impl CopyPipe {
     fn new() -> io::Result<Self> {
         let mut fds = [0; 2];
         // SAFETY: `fds` points to space for the two file descriptors returned by pipe2.
-        let ret = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
+        // `O_NONBLOCK` makes invariant bugs fail with EAGAIN instead of blocking forever.
+        let ret = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) };
         if ret != 0 {
             let err = io::Error::last_os_error();
             return Err(io::Error::new(
@@ -427,6 +428,14 @@ impl CopyPipe {
                 let err = io::Error::last_os_error();
                 match err.raw_os_error() {
                     Some(libc::EINTR) => continue,
+                    Some(errno) if errno == libc::EAGAIN || errno == libc::EWOULDBLOCK => {
+                        return Err(PipeCopyError {
+                            err: io::Error::other(
+                                "process context copy pipe blocked despite capacity-limited write",
+                            ),
+                            pipe_dirty: true,
+                        });
+                    }
                     // EFAULT is only returned when the fault occurs before any byte is copied, so
                     // the pipe is still empty.
                     Some(libc::EFAULT) => {
@@ -458,7 +467,7 @@ impl CopyPipe {
             // `nbytes >= 1`, progress is guaranteed and the loop terminates.
             //
             // Draining exactly `nbytes` every iteration also keeps the pipe empty before each
-            // write, so `chunk_len <= capacity` guarantees writes never block.
+            // write, so `chunk_len <= capacity` should leave every write ready immediately.
             let mut drained = 0;
             while drained < nbytes {
                 // SAFETY: `buf` owns `len` bytes of writable capacity and
@@ -490,6 +499,15 @@ impl CopyPipe {
                 let err = io::Error::last_os_error();
                 match err.raw_os_error() {
                     Some(libc::EINTR) => continue,
+                    Some(errno) if errno == libc::EAGAIN || errno == libc::EWOULDBLOCK => {
+                        return Err(PipeCopyError {
+                            err: io::Error::other(
+                                "process context copy pipe had no bytes to drain after write",
+                            ),
+                            // The pipe state violated our expected write/drain sequence.
+                            pipe_dirty: true,
+                        });
+                    }
                     _ => {
                         return Err(PipeCopyError {
                             err: io::Error::new(
