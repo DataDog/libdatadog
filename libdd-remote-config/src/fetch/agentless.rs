@@ -1419,8 +1419,30 @@ pub fn debug_latest_configs_response(
 
 #[cfg(test)]
 mod tests {
+    use libdd_common::Endpoint;
+
+    use crate::fetch::AgentlessConfig;
+    use crate::fetch::NativeAgentlessFetcher;
+
     use super::trim_hash_target_path;
     use super::Site;
+
+    #[tokio::test]
+    async fn test_create_fetcher_for_site() {
+        for site in ["datad0g.com", "datadoghq.com", "ddog-gov.com"] {
+            NativeAgentlessFetcher::new(
+                AgentlessConfig {
+                    hostname: "hostname".to_string(),
+                    config_root_override_path: None,
+                    director_root_override_path: None,
+                    agent_uuid: None,
+                },
+                Endpoint::agentless(site, "abc".to_string()).unwrap(),
+            )
+            .await
+            .expect(&format!("failed to instantiate fetcher for site {site}"));
+        }
+    }
 
     #[test]
     fn strips_hash_prefix() {
