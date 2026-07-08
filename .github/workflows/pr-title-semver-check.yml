@@ -112,7 +112,7 @@ jobs:
       - name: Install cargo-public-api
         uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
-          tool: cargo-public-api@0.50.2, cargo-semver-checks@0.45.0
+          tool: cargo-public-api@0.52.0, cargo-semver-checks@0.48.0
         env:
           RUSTUP_TOOLCHAIN: ${{ env.RUST_VERSION }}
 

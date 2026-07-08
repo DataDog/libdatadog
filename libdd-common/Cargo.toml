@@ -16,7 +16,7 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-anyhow = "1.0"
+anyhow = "1.0.103"
 futures = "0.3"
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
@@ -51,6 +51,8 @@ hyper-rustls = { version = "0.27.7", default-features = false, features = [
     "http1",
     "tls12",
 ], optional = true }
+# Unused; pins a floor on this transitive-only dep since rustls itself only requires ^0.103.5.
+rustls-webpki = { version = ">=0.103.13", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 hyper = { workspace = true }
@@ -121,3 +123,7 @@ bench-utils = ["dep:criterion"]
 # normal environments, so we need to let the rust linter know that it is in
 # fact a real thing, though one that shows up only in some situations.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage)'] }
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"

@@ -191,6 +191,7 @@ mod mini_agent_tests {
                     http_method: "GET".to_string(),
                     service_source: "".to_string(),
                     span_derived_primary_tags: vec![],
+                    additional_metric_tags: vec![],
                 }],
                 agent_time_shift: 0,
             }],

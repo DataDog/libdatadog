@@ -264,6 +264,7 @@ mod tests {
             env: "".to_string(),
             hostname: "".to_string(),
             app_version: "".to_string(),
+            container_debug: None,
         }])
     }
 
