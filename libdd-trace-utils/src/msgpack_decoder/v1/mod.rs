@@ -14,6 +14,7 @@ use std::borrow::Borrow;
 // (`msgpack_encoder::v1::{trace_key, chunk_key, SpanKey, SpanLinkKey, SpanEventKey, AnyValueKey}`).
 
 pub(super) mod trace_key {
+    pub const CONTAINER_ID: u8 = 2;
     pub const LANGUAGE_NAME: u8 = 3;
     pub const LANGUAGE_VERSION: u8 = 4;
     pub const TRACER_VERSION: u8 = 5;
@@ -239,6 +240,7 @@ where
                 payload.chunks = decode_chunks(buf, table)?;
                 saw_chunks = true;
             }
+            trace_key::CONTAINER_ID => payload.container_id = read_interned_string(buf, table)?,
             trace_key::LANGUAGE_NAME => payload.language_name = read_interned_string(buf, table)?,
             trace_key::LANGUAGE_VERSION => {
                 payload.language_version = read_interned_string(buf, table)?
