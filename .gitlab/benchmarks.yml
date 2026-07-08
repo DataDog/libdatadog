@@ -112,7 +112,7 @@ benchmarks:
     UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog" # The HTTP URL to the project's repository.
 
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
-    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
+    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "false"
 
 # Merges the parallel benchmark shards and posts a single PR comment. Each shard already uploaded its
 # own results to S3 / the Benchmarking API with correct per-run metadata; this job only assembles the
@@ -154,4 +154,4 @@ benchmarks_combine:
     UPSTREAM_REPO_URL: "https://github.com/DataDog/libdatadog"
 
     KUBERNETES_SERVICE_ACCOUNT_OVERWRITE: libdatadog
-    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "true"
+    FF_USE_LEGACY_KUBERNETES_EXECUTION_STRATEGY: "false"
