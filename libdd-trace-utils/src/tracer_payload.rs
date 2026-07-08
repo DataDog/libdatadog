@@ -32,7 +32,7 @@ pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan with de-duplicated strings.
     V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
     /// Collection of v0.4 spans to be serialized as a V1 msgpack payload.
-    V1(v1::TracerPayload<BytesData>),
+    V1(Box<v1::TracerPayload<BytesData>>),
 }
 
 impl TraceChunks<BytesData> {
@@ -66,7 +66,7 @@ pub enum TracerPayloadCollection {
     /// Collection of TraceChunkSpan with de-duplicated strings.
     V05((SharedDictBytes, Vec<Vec<v05::Span>>)),
     // /// V0.4-shaped spans that must be serialized as a V1 msgpack payload on send.
-    V1(v1::TracerPayload<BytesData>),
+    V1(Box<v1::TracerPayload<BytesData>>),
 }
 
 impl TracerPayloadCollection {
@@ -275,7 +275,7 @@ pub fn decode_to_trace_chunks(
             let (data, size) = msgpack_decoder::v1::from_bytes(data).map_err(|e| {
                 anyhow::format_err!("Error deserializing trace from request body: {e}")
             })?;
-            Ok((TraceChunks::V1(data), size))
+            Ok((TraceChunks::V1(Box::new(data)), size))
         }
     }
 }
@@ -293,6 +293,7 @@ fn metadata_matches_v1(
     src: &v1::TracerPayload<BytesData>,
 ) -> bool {
     let differing: Vec<&'static str> = [
+        ("container_id", dest.container_id == src.container_id),
         ("language_name", dest.language_name == src.language_name),
         (
             "language_version",

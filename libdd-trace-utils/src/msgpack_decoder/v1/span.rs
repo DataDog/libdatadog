@@ -5,10 +5,10 @@
 // a V1 msgpack span into a [`crate::span::v1::Span`].
 
 use super::{
-    read_interned_string, skip_unknown_value, span_event_key, span_key, span_link_key,
-    StringTable, ANY_VALUE_KEY_ARRAY, ANY_VALUE_KEY_BOOL, ANY_VALUE_KEY_BYTES,
-    ANY_VALUE_KEY_DOUBLE, ANY_VALUE_KEY_INT64, ANY_VALUE_KEY_KEY_VALUE_LIST, ANY_VALUE_KEY_STRING,
-    FLAT_ATTR_STRIDE, TYPED_VALUE_STRIDE,
+    read_interned_string, skip_unknown_value, span_event_key, span_key, span_link_key, StringTable,
+    ANY_VALUE_KEY_ARRAY, ANY_VALUE_KEY_BOOL, ANY_VALUE_KEY_BYTES, ANY_VALUE_KEY_DOUBLE,
+    ANY_VALUE_KEY_INT64, ANY_VALUE_KEY_KEY_VALUE_LIST, ANY_VALUE_KEY_STRING, FLAT_ATTR_STRIDE,
+    TYPED_VALUE_STRIDE,
 };
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
@@ -60,9 +60,7 @@ where
                     DecodeError::InvalidFormat("V1 span start u64 read failure".to_owned())
                 })?;
                 span.start = i64::try_from(start).map_err(|_| {
-                    DecodeError::InvalidFormat(format!(
-                        "V1 span start {start} exceeds i64::MAX"
-                    ))
+                    DecodeError::InvalidFormat(format!("V1 span start {start} exceeds i64::MAX"))
                 })?;
                 has_start = true;
             }
