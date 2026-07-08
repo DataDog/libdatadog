@@ -13,7 +13,7 @@ criterion::criterion_main!(linux_bench::benches);
 
 #[cfg(target_os = "linux")]
 mod linux_bench {
-    use criterion::{criterion_group, BenchmarkId, Criterion, Throughput};
+    use criterion::{criterion_group, BenchmarkId, Criterion};
     use libdd_heap_allocator::SampledAllocator;
     use libdd_heap_sampler::{
         dd_allocation_created, dd_allocation_freed, dd_allocation_requested,
@@ -80,7 +80,6 @@ mod linux_bench {
         let mut group = c.benchmark_group("alloc_free/system");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
-            group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 b.iter(|| unsafe {
                     let ptr = System.alloc(layout);
@@ -97,7 +96,6 @@ mod linux_bench {
         let mut group = c.benchmark_group("alloc_free/sampled_system_fast_path");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
-            group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 unsafe { pin_sampler_to_fast_path() };
                 b.iter(|| unsafe {
@@ -115,7 +113,6 @@ mod linux_bench {
         let mut group = c.benchmark_group("alloc_free/noop");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
-            group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 b.iter(|| unsafe {
                     let ptr = alloc.alloc(layout);
@@ -132,7 +129,6 @@ mod linux_bench {
         let mut group = c.benchmark_group("alloc_free/sampled_noop_fast_path");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
-            group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 unsafe { pin_sampler_to_fast_path() };
                 b.iter(|| unsafe {
@@ -148,7 +144,6 @@ mod linux_bench {
     fn bench_sampler_only(c: &mut Criterion) {
         let mut group = c.benchmark_group("sampler_only/fast_path");
         for &size in SIZES {
-            group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
                 unsafe { pin_sampler_to_fast_path() };
                 b.iter(|| unsafe {
@@ -167,7 +162,6 @@ mod linux_bench {
         let mut group = c.benchmark_group("alloc_free/sampled_system_slow_path");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
-            group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 b.iter(|| unsafe {
                     force_next_allocation_to_sample();
@@ -185,7 +179,6 @@ mod linux_bench {
         let mut group = c.benchmark_group("alloc_free/sampled_noop_slow_path");
         for &size in SIZES {
             let layout = Layout::from_size_align(size, ALIGN).unwrap();
-            group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
                 b.iter(|| unsafe {
                     force_next_allocation_to_sample();
@@ -201,7 +194,6 @@ mod linux_bench {
     fn bench_sampler_only_slow_path(c: &mut Criterion) {
         let mut group = c.benchmark_group("sampler_only/slow_path");
         for &size in SIZES {
-            group.throughput(Throughput::Bytes(size as u64));
             group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
                 b.iter(|| unsafe {
                     force_next_allocation_to_sample();
