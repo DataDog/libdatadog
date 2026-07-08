@@ -31,7 +31,9 @@ use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
 };
 use prost::Message;
 
-use super::{MappingHeader, PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
+use crate::otel_process_ctx::linux::MappingHeaderSnapshot;
+
+use super::{PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
 
 /// Reader for the current process's OTel process context mapping.
 ///
@@ -86,18 +88,9 @@ impl ProcessContextSelfReader {
             ));
         }
 
-        // This is the first read-side seqlock fence. Header and payload copies happen after it;
-        // the second fence below precedes the final timestamp copy.
         fence(Ordering::SeqCst);
 
         let header = self.read_header()?;
-        if header.monotonic_published_at_ns != published_at {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "process context changed while being read",
-            ));
-        }
-
         if header.signature != *SIGNATURE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -144,9 +137,8 @@ impl ProcessContextSelfReader {
 
     /// Returns the thread-local attribute key map from a decoded process context.
     pub fn threadlocal_attribute_key_map(context: &ProcessContext) -> Option<Vec<String>> {
-        let key = "threadlocal.attribute_key_map";
-
-        Self::find_attr(&context.extra_attributes, key).and_then(Self::string_array)
+        Self::find_attr(&context.extra_attributes, "threadlocal.attribute_key_map")
+            .and_then(Self::string_array)
     }
 
     fn string_array(value: &AnyValue) -> Option<Vec<String>> {
@@ -230,7 +222,7 @@ impl ProcessContextSelfReader {
         let timestamp_ptr = self
             .header_ptr
             .as_ptr()
-            .wrapping_add(offset_of!(MappingHeader, monotonic_published_at_ns))
+            .wrapping_add(offset_of!(MappingHeaderSnapshot, monotonic_published_at_ns))
             .cast_const();
         let bytes = self.read_process_memory(timestamp_ptr, size_of::<u64>())?;
         Ok(u64::from_ne_bytes(
@@ -238,51 +230,55 @@ impl ProcessContextSelfReader {
         ))
     }
 
-    fn read_header(&self) -> io::Result<MappingHeader> {
+    fn read_header(&self) -> io::Result<MappingHeaderSnapshot> {
         let bytes = self.read_process_memory(
             self.header_ptr.as_ptr().cast_const(),
-            size_of::<MappingHeader>(),
+            size_of::<MappingHeaderSnapshot>(),
         )?;
         Self::mapping_header_from_bytes(&bytes)
     }
 
-    fn mapping_header_from_bytes(bytes: &[u8]) -> io::Result<MappingHeader> {
-        if bytes.len() != size_of::<MappingHeader>() {
+    /// Unmarshalls the header from the bytes
+    fn mapping_header_from_bytes(bytes: &[u8]) -> io::Result<MappingHeaderSnapshot> {
+        if bytes.len() != size_of::<MappingHeaderSnapshot>() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "process context header copy had size {}, expected {}",
                     bytes.len(),
-                    size_of::<MappingHeader>()
+                    size_of::<MappingHeaderSnapshot>()
                 ),
             ));
         }
 
-        let signature =
-            Self::field_bytes::<8>(bytes, offset_of!(MappingHeader, signature), "signature")?;
+        let signature = Self::field_bytes::<8>(
+            bytes,
+            offset_of!(MappingHeaderSnapshot, signature),
+            "signature",
+        )?;
         let version = u32::from_ne_bytes(Self::field_bytes::<{ size_of::<u32>() }>(
             bytes,
-            offset_of!(MappingHeader, version),
+            offset_of!(MappingHeaderSnapshot, version),
             "version",
         )?);
         let payload_size = u32::from_ne_bytes(Self::field_bytes::<{ size_of::<u32>() }>(
             bytes,
-            offset_of!(MappingHeader, payload_size),
+            offset_of!(MappingHeaderSnapshot, payload_size),
             "payload_size",
         )?);
         let monotonic_published_at_ns =
             u64::from_ne_bytes(Self::field_bytes::<{ size_of::<u64>() }>(
                 bytes,
-                offset_of!(MappingHeader, monotonic_published_at_ns),
+                offset_of!(MappingHeaderSnapshot, monotonic_published_at_ns),
                 "monotonic_published_at_ns",
             )?);
         let payload_addr = usize::from_ne_bytes(Self::field_bytes::<{ size_of::<usize>() }>(
             bytes,
-            offset_of!(MappingHeader, payload_ptr),
+            offset_of!(MappingHeaderSnapshot, payload_ptr),
             "payload_ptr",
         )?);
 
-        Ok(MappingHeader {
+        Ok(MappingHeaderSnapshot {
             signature,
             version,
             payload_size,
@@ -629,7 +625,10 @@ mod tests {
             // SAFETY: the mapping was published by this test before being read, and the test is
             // serial so no writer is concurrently mutating the plain header field.
             let published_at_ns = unsafe {
-                let header = reader.header_ptr.as_ptr().cast::<super::MappingHeader>();
+                let header = reader
+                    .header_ptr
+                    .as_ptr()
+                    .cast::<super::MappingHeaderSnapshot>();
                 let published_at_ns = (*header).monotonic_published_at_ns;
                 (*header).monotonic_published_at_ns = super::UNPUBLISHED_OR_UPDATING;
                 published_at_ns
@@ -647,8 +646,11 @@ mod tests {
 
             // SAFETY: same as above.
             unsafe {
-                (*reader.header_ptr.as_ptr().cast::<super::MappingHeader>())
-                    .monotonic_published_at_ns = published_at_ns;
+                (*reader
+                    .header_ptr
+                    .as_ptr()
+                    .cast::<super::MappingHeaderSnapshot>())
+                .monotonic_published_at_ns = published_at_ns;
             }
             drop(reader);
         });

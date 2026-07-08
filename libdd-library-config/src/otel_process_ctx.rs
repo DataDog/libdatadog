@@ -22,10 +22,11 @@
 #[cfg(target_has_atomic = "64")]
 pub mod linux {
     use core::{
+        convert::TryInto,
         ffi::{c_void, CStr},
         mem::{size_of, swap, ManuallyDrop},
         ptr::{self, NonNull},
-        sync::atomic::{fence, Ordering},
+        sync::atomic::{fence, AtomicPtr, AtomicU32, AtomicU64, Ordering},
         time::Duration,
     };
     use std::{
@@ -56,8 +57,16 @@ pub mod linux {
     /// atomics here: publication relies on naturally atomic aligned word-sized accesses on the
     /// supported Linux architectures, plus explicit fences to constrain store/load ordering.
     #[repr(C)]
-    #[derive(Clone, Copy)]
     struct MappingHeader {
+        signature: [u8; 8],
+        version: u32,
+        payload_size: AtomicU32,
+        monotonic_published_at_ns: AtomicU64,
+        payload_ptr: AtomicPtr<u8>,
+    }
+
+    #[repr(C)]
+    struct MappingHeaderSnapshot {
         signature: [u8; 8],
         version: u32,
         payload_size: u32,
@@ -175,12 +184,16 @@ pub mod linux {
             // invariants. name is a valid NUL-terminated string that outlives the prctl call.
             check_syscall_retval(
                 unsafe {
+                    // int prctl(PR_SET_VMA, long attr, unsigned long addr, unsigned long size,
+                    // const char *_Nullable val);
                     libc::prctl(
                         libc::PR_SET_VMA,
                         libc::PR_SET_VMA_ANON_NAME as libc::c_ulong,
-                        self.start_addr.as_ptr() as libc::c_ulong,
-                        mapping_size() as libc::c_ulong,
-                        MAPPING_NAME.as_ptr() as libc::c_ulong,
+                        TryInto::<libc::c_ulong>::try_into(self.start_addr.as_ptr() as usize)
+                            .expect("start addr overflowed"),
+                        TryInto::<libc::c_ulong>::try_into(mapping_size())
+                            .expect("mapping size overflowed"),
+                        MAPPING_NAME.as_ptr(),
                     )
                 },
                 "prctl PR_SET_VMA_ANON_NAME failed",
@@ -269,14 +282,23 @@ pub mod linux {
 
             // SAFETY: header points to a zero-filled, page-aligned mapping of at least
             // mapping_size() bytes; field projections are in-bounds and aligned.
+            // The pointer writes do not happen while there are live &MappingHeader references
+            // and, to the extent the atomic stores do, this is fine because the mutated bytes
+            // are inside UnsafeCells.
             unsafe {
                 ptr::addr_of_mut!((*header).signature).write(*SIGNATURE);
                 ptr::addr_of_mut!((*header).version).write(PROCESS_CTX_VERSION);
-                ptr::addr_of_mut!((*header).payload_size).write(payload_size);
-                ptr::addr_of_mut!((*header).payload_ptr).write(payload.as_ptr());
+                (*header)
+                    .payload_size
+                    .store(payload_size, Ordering::Relaxed);
+                (*header)
+                    .payload_ptr
+                    .store(payload.as_ptr().cast_mut(), Ordering::Relaxed);
 
                 fence(Ordering::SeqCst);
-                ptr::addr_of_mut!((*header).monotonic_published_at_ns).write(published_at_ns);
+                (*header)
+                    .monotonic_published_at_ns
+                    .store(published_at_ns, Ordering::Relaxed);
             }
 
             // Note that naming must be unconditionally attempted, even on kernels where we might
@@ -316,16 +338,14 @@ pub mod linux {
             // Note: this does not use CAS because we assume the write lock is being held by the
             // caller.
             let previous_published_at_ns = unsafe {
-                let previous = (*header).monotonic_published_at_ns;
-                (*header).monotonic_published_at_ns = UNPUBLISHED_OR_UPDATING;
-                previous
+                (*header)
+                    .monotonic_published_at_ns
+                    .swap(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed)
             };
             // should never happen (publish() and the several update() calls are serialized by the
             // lock)
             if previous_published_at_ns == UNPUBLISHED_OR_UPDATING {
-                return Err(io::Error::other(
-                    "concurrent update of the process context is not supported",
-                ));
+                panic!("concurrent update of the process context is not supported");
             }
 
             // The timestamp also acts as the seqlock version, so it must advance even if the
@@ -344,14 +364,20 @@ pub mod linux {
             // SAFETY: the mapping is live and valid, and the global mutex prevents concurrent
             // in-process writers from mutating the plain header fields.
             unsafe {
-                (*header).payload_ptr = self.payload.as_ptr();
-                (*header).payload_size = payload_size;
+                (*header)
+                    .payload_ptr
+                    .store(self.payload.as_ptr().cast_mut(), Ordering::Relaxed);
+                (*header)
+                    .payload_size
+                    .store(payload_size, Ordering::Relaxed);
             }
 
             fence(Ordering::SeqCst);
             // SAFETY: same as above.
             unsafe {
-                (*header).monotonic_published_at_ns = monotonic_published_at_ns;
+                (*header)
+                    .monotonic_published_at_ns
+                    .store(monotonic_published_at_ns, Ordering::Relaxed);
             }
 
             Ok(())
@@ -500,7 +526,9 @@ pub mod linux {
             // concurrent in-process writers from mutating the plain header fields.
             let header = mapping.start_addr.as_ptr() as *mut MappingHeader;
             unsafe {
-                (*header).monotonic_published_at_ns = UNPUBLISHED_OR_UPDATING;
+                (*header)
+                    .monotonic_published_at_ns
+                    .store(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
             }
             fence(Ordering::SeqCst);
 
@@ -532,9 +560,9 @@ pub mod linux {
         /// functions it relies on, are specialized for tests (for example, it doesn't check for
         /// concurrent writers after reading the header, because we know they can't be). Do not
         /// extract or use as it is as a generic Rust OTel process context reader.
-        fn read_process_context() -> io::Result<super::MappingHeader> {
+        fn read_process_context() -> io::Result<super::MappingHeaderSnapshot> {
             let mapping_addr = super::ProcessContextSelfReader::find_otel_mapping()?;
-            let header_ptr: *const super::MappingHeader =
+            let header_ptr: *const super::MappingHeaderSnapshot =
                 ptr::with_exposed_provenance(mapping_addr);
             // SAFETY: the mapping was published by this test before being read; the tests are
             // serial and don't update the mapping while this header is copied.
