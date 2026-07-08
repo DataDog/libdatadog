@@ -6,7 +6,7 @@ use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_
 use super::*;
 use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
-use rand::{Rng, thread_rng};
+use rand::{thread_rng, Rng};
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
