@@ -469,7 +469,7 @@ impl<
                     metadata: &self.metadata,
                     endpoint_url: &self.endpoint.url,
                     shared_runtime: &*self.shared_runtime,
-                    stats_cardinality_limit: self.client_side_stats.stats_cardinality_limit,
+                    stats_cardinality_limits: self.client_side_stats.stats_cardinality_limits,
                     dogstatsd: if self.health_metrics_enabled {
                         self.dogstatsd.clone()
                     } else {
@@ -875,8 +875,8 @@ impl<
                     && self.v1_active.swap(false, Ordering::Relaxed)
                 {
                     warn!(
-                            "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
-                        );
+                        "V1 trace send returned 404; agent no longer advertises {V1_TRACES_ENDPOINT} — falling back to V0.4"
+                    );
                     self.info_response_observer.manual_trigger();
                 }
             }

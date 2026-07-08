@@ -7,6 +7,8 @@
 //! including starting/stopping stats workers, managing the span concentrator,
 //! and processing traces for stats collection.
 
+pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
+
 #[cfg(not(target_arch = "wasm32"))]
 use super::add_path;
 use super::TracerMetadata;
@@ -18,7 +20,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
-use libdd_trace_stats::span_concentrator::{CardinalityLimitConfig, SpanConcentrator};
+use libdd_trace_stats::span_concentrator::SpanConcentrator;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
@@ -77,7 +79,7 @@ pub(crate) enum StatsComputationStatus {
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) struct StatsComputationConfig {
     pub(crate) status: ArcSwap<StatsComputationStatus>,
-    pub(crate) stats_cardinality_limit: Option<usize>,
+    pub(crate) stats_cardinality_limits: Option<CardinalityLimitConfig>,
     #[cfg(feature = "stats-obfuscation")]
     pub(crate) obfuscation_config: SharedStatsComputationObfuscationConfig,
     /// Builder-level opt-in. When false, stats obfuscation stays off

@@ -26,6 +26,7 @@ use libdd_dogstatsd_client::new;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
+use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,7 +76,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     peer_tags_aggregation: bool,
     compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
-    stats_cardinality_limit: Option<usize>,
+    stats_cardinality_limits: Option<CardinalityLimitConfig>,
     #[cfg(feature = "stats-obfuscation")]
     client_side_stats_obfuscation_enabled: bool,
     #[cfg(feature = "telemetry")]
@@ -143,7 +144,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             peer_tags_aggregation: false,
             compute_stats_by_span_kind: false,
             peer_tags: Vec::new(),
-            stats_cardinality_limit: None,
+            stats_cardinality_limits: None,
             #[cfg(feature = "stats-obfuscation")]
             client_side_stats_obfuscation_enabled: false,
             #[cfg(feature = "telemetry")]
@@ -333,8 +334,11 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// This bounds memory usage when the trace population has very high cardinality.
     ///
     /// Has no effect unless stats computation is enabled.
-    pub fn set_stats_cardinality_limit(&mut self, cardinality_limit: usize) -> &mut Self {
-        self.stats_cardinality_limit = Some(cardinality_limit);
+    pub fn set_stats_cardinality_limit(
+        &mut self,
+        cardinality_limits: CardinalityLimitConfig,
+    ) -> &mut Self {
+        self.stats_cardinality_limits = Some(cardinality_limits);
         self
     }
 
@@ -820,7 +824,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             common_stats_tags: vec![libdatadog_version],
             client_side_stats: StatsComputationConfig {
                 status: ArcSwap::new(stats.into()),
-                stats_cardinality_limit: self.stats_cardinality_limit,
+                stats_cardinality_limits: self.stats_cardinality_limits,
                 #[cfg(feature = "stats-obfuscation")]
                 obfuscation_config: Arc::new(ArcSwap::from_pointee(
                     StatsComputationObfuscationConfig::default(),
