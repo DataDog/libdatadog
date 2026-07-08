@@ -128,12 +128,12 @@ impl TraceSerializer {
             .max(MIN_BUFFER_CAPACITY);
         let buff = match (payload, output_format) {
             (tracer_payload::TraceChunks::V04(p), TraceExporterOutputFormat::V04) => {
-                msgpack_encoder::v04::to_vec_with_capacity(p, capacity as u32)
+                msgpack_encoder::v04::to_vec_with_capacity_from_v04(p, capacity as u32)
             }
             // v0.4 spans cross-encoded as V1 on the wire (used when the agent advertises
             // /v1.0/traces).
             (tracer_payload::TraceChunks::V04(p), TraceExporterOutputFormat::V1) => {
-                msgpack_encoder::v1::to_vec_with_capacity(p, capacity as u32, metadata)
+                msgpack_encoder::v1::to_vec_with_capacity_from_v04(p, capacity as u32, metadata)
             }
             (tracer_payload::TraceChunks::V05(p), TraceExporterOutputFormat::V05) => {
                 let mut buff = Vec::with_capacity(capacity);
@@ -141,13 +141,10 @@ impl TraceSerializer {
                     .map_err(TraceExporterError::Serialization)?;
                 buff
             }
-            // APMSP-2812 - TODO: native V1 input — call
-            // `msgpack_encoder::v1::to_vec_from_payload_v1` on the carried
-            // `v1::TracerPayload`. Not yet reachable: `collect_and_process_traces`
-            // never produces `TraceChunks::V1` in the current data-pipeline path.
-            #[allow(clippy::unimplemented)]
-            (tracer_payload::TraceChunks::V1(_), TraceExporterOutputFormat::V1) => {
-                unimplemented!("Native V1 input serialization not yet implemented (APMSP-2812)")
+            // Native V1 input model, serialized directly — the payload carries its own
+            // tracer-level metadata, so no `TracerMetadata` is needed here.
+            (tracer_payload::TraceChunks::V1(p), TraceExporterOutputFormat::V1) => {
+                msgpack_encoder::v1::to_vec_with_capacity_from_v1(p, capacity as u32)
             }
             // `collect_and_process_traces` only produces (V04, V04|V1), (V05, V05),
             // or (V1, V1) — any other combination here is a programming error.

@@ -370,7 +370,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::msgpack_encoder::v1::to_vec_from_payload_v1;
+    use crate::msgpack_encoder::v1::to_vec_from_v1;
     use crate::span::v1::{
         AttributeValue, Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes,
         TracerPayloadBytes,
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn roundtrip_full_payload() {
         let original = sample_payload();
-        let bytes = to_vec_from_payload_v1(&original);
+        let bytes = to_vec_from_v1(&original);
         let payload_len = bytes.len();
         let (decoded, consumed) =
             from_bytes(Bytes::from(bytes)).expect("decoder should succeed on encoder output");
@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn empty_payload_roundtrip() {
         let original = TracerPayloadBytes::default();
-        let bytes = to_vec_from_payload_v1(&original);
+        let bytes = to_vec_from_v1(&original);
         let (decoded, _) =
             from_bytes(Bytes::from(bytes)).expect("decoder should succeed on empty payload");
         assert!(decoded.chunks.is_empty());
@@ -559,7 +559,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let bytes = to_vec_from_payload_v1(&payload);
+        let bytes = to_vec_from_v1(&payload);
         let (decoded, _) =
             from_bytes(Bytes::from(bytes)).expect("decoder should resolve interned strings");
         assert_eq!(decoded.chunks[0].spans[0].service.as_str(), "shared");
@@ -589,7 +589,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let bytes = to_vec_from_payload_v1(&payload);
+        let bytes = to_vec_from_v1(&payload);
         let (decoded, _) = from_bytes(Bytes::from(bytes)).expect("nested KeyValue roundtrip");
 
         let decoded_attrs = &decoded.chunks[0].spans[0].attributes;
@@ -671,7 +671,7 @@ mod tests {
                         ..Default::default()
                     };
 
-                    let encoded = to_vec_from_payload_v1(&payload);
+                    let encoded = to_vec_from_v1(&payload);
                     let result = from_bytes(Bytes::from(encoded));
                     assert!(
                         result.is_ok(),

@@ -808,6 +808,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 app_version: self.app_version,
                 runtime_id,
                 service: self.service,
+                container_id: String::new(),
             },
             input_format: self.input_format,
             output_format: self.output_format,
