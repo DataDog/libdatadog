@@ -535,7 +535,7 @@ impl StatsBucket {
         if self.distinct_peer_tags.len() >= self.cardinality_limits.peer_tags_limit
             && !self.distinct_peer_tags.contains(&peer_tags_hash)
         {
-            key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(TRACER_BLOCKED_VALUE))];
+            key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
         } else {
             self.distinct_peer_tags.insert(peer_tags_hash);
         }
