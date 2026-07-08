@@ -101,7 +101,8 @@ pub type SharedStatsComputationObfuscationConfig =
 pub const DEFAULT_MAX_ENTRIES_PER_BUCKET: usize = 7_000;
 
 /// Config to override the default stats cardinality limit values
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct CardinalityLimitConfig {
     /// The whole-key cardinality limit (defaults to 7000)
     pub whole_key_limit: usize,
