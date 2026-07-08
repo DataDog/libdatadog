@@ -1,0 +1,35 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-heap-sampler"
+version = "0.1.0"
+description = "Sampling primitives for USDT-based heap profiling."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-sampler"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-sampler"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib"]
+bench = false
+
+[features]
+default = []
+# Live-heap tracking: flag each sampled allocation so frees can be balanced
+# against allocs for retained/live-heap profiling, and sample
+# frees to emit ddheap:free.
+live-heap = []
+
+[build-dependencies]
+cc = "1.1.31"
+# `bindgen` is only *invoked* when the env var LIBDD_HEAP_SAMPLER_REGEN
+# is set (see build.rs); it is otherwise pulled in as a build-dep so
+# that regen works without a cargo feature. Cargo features would be
+# problematic here because CI jobs frequently use `--all-features`,
+# which would silently trigger a bindgen regen on hosts that lack
+# libclang. An env var side-steps
+# that (see README's "Regenerating bindings" section).
+bindgen = "0.71"
