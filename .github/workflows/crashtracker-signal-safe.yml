@@ -1,0 +1,64 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+name: Crashtracker signal-safe
+
+on:
+  pull_request:
+    paths:
+      - "libdd-crashtracker/**"
+      - "libdd-crashtracker-ffi/**"
+      - "libdd-profiling-ffi/**"
+      - "builder/**"
+      - "tools/check_signal_safe_symbols.sh"
+      - ".github/workflows/crashtracker-signal-safe.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  push:
+    branches:
+      - main
+
+jobs:
+  signal-safe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Install Rust toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable
+          rustup component add clippy --toolchain stable
+          rustup target add aarch64-unknown-linux-gnu
+      - name: Install cargo nextest
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
+        with:
+          tool: nextest@0.9.96
+      - name: Check signal-safe collector
+        run: cargo check -p libdd-crashtracker --no-default-features --features collector_signal-safe
+      - name: Check aarch64 signal-safe collector
+        run: cargo check -p libdd-crashtracker --target aarch64-unknown-linux-gnu --no-default-features --features collector_signal-safe
+      - name: Clippy signal-safe collector
+        run: cargo +stable clippy -p libdd-crashtracker --no-default-features --features collector_signal-safe --all-targets -- -D warnings
+      - name: Test signal-safe collector
+        run: cargo nextest run -p libdd-crashtracker --no-default-features --features collector_signal-safe --no-fail-fast
+      - name: Test signal-safe receiver compatibility
+        run: cargo nextest run -p libdd-crashtracker --features "collector_signal-safe,receiver" --no-fail-fast
+      - name: Symbol guard
+        run: bash tools/check_signal_safe_symbols.sh
+
+  signal-safe-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Install Rust toolchain
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable
+      - name: Install cargo nextest
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
+        with:
+          tool: nextest@0.9.96
+      - name: Test signal-safe collector fallback paths
+        run: cargo nextest run -p libdd-crashtracker --no-default-features --features collector_signal-safe --no-fail-fast

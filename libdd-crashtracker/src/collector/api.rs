@@ -4,14 +4,17 @@
 
 use super::{crash_handler::enable, receiver_manager::Receiver};
 use crate::{
-    clear_spans, clear_traces, collector::crash_handler::register_panic_hook,
-    collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
-    reset_counters, shared::configuration::CrashtrackerReceiverConfig, update_config,
-    update_metadata, CrashtrackerConfiguration,
+    clear_spans, clear_traces,
+    collector::crash_handler::register_panic_hook,
+    collector::signal_handler_manager::register_crash_handlers,
+    crash_info::Metadata,
+    reset_counters,
+    shared::{configuration::CrashtrackerReceiverConfig, signals::LEGACY_DEFAULT_SIGNALS},
+    signal_owner::{self, SignalOwner},
+    update_config, update_metadata, CrashtrackerConfiguration,
 };
 
-pub static DEFAULT_SYMBOLS: [libc::c_int; 4] =
-    [libc::SIGBUS, libc::SIGABRT, libc::SIGSEGV, libc::SIGILL];
+pub static DEFAULT_SYMBOLS: [libc::c_int; 4] = LEGACY_DEFAULT_SIGNALS;
 
 pub fn default_signals() -> Vec<libc::c_int> {
     Vec::from(DEFAULT_SYMBOLS)
@@ -81,13 +84,23 @@ pub fn init(
     receiver_config: CrashtrackerReceiverConfig,
     metadata: Metadata,
 ) -> anyhow::Result<()> {
-    update_metadata(metadata)?;
-    update_config(config.clone())?;
-    Receiver::update_stored_config(receiver_config)?;
-    register_crash_handlers(&config)?;
-    register_panic_hook()?;
-    enable();
-    Ok(())
+    if !signal_owner::acquire(SignalOwner::StdCollector) {
+        anyhow::bail!("another crashtracker collector already owns the crash signal handlers");
+    }
+
+    let result = (|| {
+        update_metadata(metadata)?;
+        update_config(config.clone())?;
+        Receiver::update_stored_config(receiver_config)?;
+        register_crash_handlers(&config)?;
+        register_panic_hook()?;
+        enable();
+        Ok(())
+    })();
+    if result.is_err() {
+        signal_owner::release(SignalOwner::StdCollector);
+    }
+    result
 }
 
 /// Reconfigure the crash-tracking infrastructure.

@@ -1,0 +1,455 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+use core::sync::atomic::Ordering::Relaxed;
+
+use heapless::String as HeaplessString;
+use serde::Serialize;
+use thiserror::Error;
+
+use super::{capabilities, state};
+use crate::shared::{
+    defaults::DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS, signals::SIGNAL_SAFE_CRASH_SIGNALS,
+    stacktrace_collection::StacktraceCollection,
+};
+
+// Default metadata used only when the caller leaves an `InitConfig` field empty. The
+// library reads no environment (neither at build time nor at runtime): a consumer populates the
+// config struct with its own identity. These neutral placeholders keep any single consumer's
+// name out of the shared crate.
+pub const DEFAULT_LIBRARY_NAME: &str = "unknown-library";
+pub const DEFAULT_LIBRARY_VERSION: &str = "unknown";
+pub const DEFAULT_LIBRARY_FAMILY: &str = "native";
+pub const DEFAULT_SERVICE: &str = "unknown-service";
+pub const DEFAULT_RUNTIME_ID: &str = "00000000-0000-0000-0000-000000000000";
+
+/// Capacity for signal-safe filesystem path buffers (PATH_MAX + trailing NUL).
+pub const PATH_CAPACITY: usize = 513;
+
+pub const RECEIVER_TIMEOUT_SECS_DEFAULT: u32 = DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS;
+pub const RECEIVER_TIMEOUT_SECS_MAX: u32 = 60;
+pub const COLLECTOR_REAP_MS_DEFAULT: i32 = 500;
+pub const RECEIVER_REAP_GRACE_MS: i32 = 1000;
+pub const RECEIVER_REAP_MS_DEFAULT: i32 =
+    RECEIVER_TIMEOUT_SECS_DEFAULT as i32 * 1000 + RECEIVER_REAP_GRACE_MS;
+pub const BACKTRACE_LEVELS_DEFAULT: usize = 32;
+pub const BACKTRACE_LEVELS_MAX: usize = 64;
+
+pub const CRASH_SIGNALS: [i32; 5] = SIGNAL_SAFE_CRASH_SIGNALS;
+
+pub const CONFIG_JSON_BUF_SIZE: usize = 2048;
+
+#[derive(Clone, Copy, Debug)]
+pub struct InitConfig<'a> {
+    /// Receiver executable path. When empty, no receiver is spawned and collection degrades to
+    /// the `report_fd` fallback.
+    pub receiver_path: &'a [u8],
+    /// Service name emitted in crash report metadata and tags.
+    pub service: &'a [u8],
+    /// Deployment environment emitted in crash report metadata and tags.
+    pub env: &'a [u8],
+    /// Application version emitted in crash report metadata and tags.
+    pub app_version: &'a [u8],
+    /// Runtime identifier emitted in crash report metadata.
+    pub runtime_id: &'a [u8],
+    /// Platform name emitted in crash report metadata.
+    pub platform: &'a [u8],
+    /// Library name emitted in crash report metadata.
+    pub library_name: &'a [u8],
+    /// Library version emitted in crash report metadata.
+    pub library_version: &'a [u8],
+    /// Library family emitted in crash report metadata.
+    pub family: &'a [u8],
+    /// Service fallback emitted when `service` is empty.
+    pub default_service: &'a [u8],
+    /// Install, probe, and immediately shut down once `bootstrap_complete` is called.
+    pub only_bootstrap: bool,
+    /// Emit minimal async-signal-safe handler diagnostics to stderr.
+    pub debug_logging: bool,
+    /// Install the built-in alternate signal stack on the init thread.
+    ///
+    /// This stack is per-thread kernel state. Other threads must install their own alternate
+    /// stack before `use_alt_stack` can protect stack-overflow crashes on those threads.
+    pub create_alt_stack: bool,
+    /// Register crash handlers with `SA_ONSTACK`.
+    ///
+    /// This may be used with `create_alt_stack` or with a caller-provided alternate stack already
+    /// installed on the current thread.
+    pub use_alt_stack: bool,
+    /// Add all managed crash signals to the signal mask while the handler runs.
+    pub block_signals: bool,
+    /// Reset the crashing signal's disposition to `SIG_DFL` immediately on handler entry.
+    pub disarm_on_entry: bool,
+    /// File descriptor used for degraded-mode report emission.
+    pub report_fd: i32,
+    /// Milliseconds to wait for the collector child before killing it.
+    pub collector_reap_ms: i32,
+    /// Receiver timeout, in seconds, passed through the receiver config and used for parent reap.
+    pub receiver_timeout_secs: u32,
+    /// Maximum number of stack frames to emit.
+    pub max_frames: usize,
+    /// Close non-stdio descriptors before the receiver `execv`.
+    pub close_fds_on_receiver: bool,
+    /// Probe `process_vm_readv` in a forked child to detect seccomp denial.
+    pub probe_seccomp: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum PrepareError {
+    #[error("invalid signal-safe crashtracker configuration")]
+    InvalidConfig,
+    #[error("failed to prepare signal-safe crashtracker configuration")]
+    Failed,
+}
+
+impl<'a> Default for InitConfig<'a> {
+    fn default() -> Self {
+        Self {
+            receiver_path: &[],
+            service: &[],
+            env: &[],
+            app_version: &[],
+            runtime_id: &[],
+            platform: &[],
+            library_name: DEFAULT_LIBRARY_NAME.as_bytes(),
+            library_version: DEFAULT_LIBRARY_VERSION.as_bytes(),
+            family: DEFAULT_LIBRARY_FAMILY.as_bytes(),
+            default_service: DEFAULT_SERVICE.as_bytes(),
+            only_bootstrap: false,
+            debug_logging: false,
+            create_alt_stack: false,
+            use_alt_stack: false,
+            block_signals: true,
+            disarm_on_entry: false,
+            report_fd: -1,
+            collector_reap_ms: COLLECTOR_REAP_MS_DEFAULT,
+            receiver_timeout_secs: RECEIVER_TIMEOUT_SECS_DEFAULT,
+            max_frames: BACKTRACE_LEVELS_DEFAULT,
+            close_fds_on_receiver: true,
+            probe_seccomp: false,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct WireConfig<'a> {
+    additional_files: [&'a str; 0],
+    create_alt_stack: bool,
+    use_alt_stack: bool,
+    demangle_names: bool,
+    endpoint: Option<()>,
+    resolve_frames: StacktraceCollection,
+    signals: &'a [i32],
+    timeout: WireTimeout,
+    unix_socket_path: Option<()>,
+}
+
+#[derive(Serialize)]
+struct WireTimeout {
+    secs: u32,
+    nanos: u32,
+}
+
+pub fn build_config_json(
+    out: &mut HeaplessString<CONFIG_JSON_BUF_SIZE>,
+    config: &InitConfig<'_>,
+) -> bool {
+    out.clear();
+    let wire = WireConfig {
+        additional_files: [],
+        create_alt_stack: config.create_alt_stack,
+        use_alt_stack: config.use_alt_stack,
+        demangle_names: true,
+        endpoint: None,
+        resolve_frames: StacktraceCollection::EnabledWithSymbolsInReceiver,
+        signals: &CRASH_SIGNALS,
+        timeout: WireTimeout {
+            secs: normalized_receiver_timeout_secs(config.receiver_timeout_secs),
+            nanos: 0,
+        },
+        unix_socket_path: None,
+    };
+
+    let mut buf = [0u8; CONFIG_JSON_BUF_SIZE];
+    let Ok(len) = serde_json_core::to_slice(&wire, &mut buf) else {
+        return false;
+    };
+    let Ok(json) = core::str::from_utf8(&buf[..len]) else {
+        return false;
+    };
+    out.push_str(json).is_ok() && out.push('\n').is_ok()
+}
+
+pub fn apply(config: &InitConfig<'_>, m: &mut state::Meta) -> Result<(), PrepareError> {
+    validate(config)?;
+
+    if !build_config_json(&mut m.config_json, config) {
+        return Err(PrepareError::Failed);
+    }
+
+    let mut metadata_truncated = false;
+    metadata_truncated |= !set_str(&mut m.service, config.service);
+    metadata_truncated |= !set_str(&mut m.env, config.env);
+    metadata_truncated |= !set_str(&mut m.app_version, config.app_version);
+    metadata_truncated |= !set_str_or(
+        &mut m.runtime_id,
+        config.runtime_id,
+        DEFAULT_RUNTIME_ID.as_bytes(),
+    );
+    metadata_truncated |= !set_str(&mut m.platform, config.platform);
+    if m.platform.is_empty() {
+        metadata_truncated |= !set_str(&mut m.platform, b"host");
+    }
+    metadata_truncated |= !set_str_or(
+        &mut m.library_name,
+        config.library_name,
+        DEFAULT_LIBRARY_NAME.as_bytes(),
+    );
+    metadata_truncated |= !set_str_or(
+        &mut m.library_version,
+        config.library_version,
+        DEFAULT_LIBRARY_VERSION.as_bytes(),
+    );
+    metadata_truncated |= !set_str_or(
+        &mut m.family,
+        config.family,
+        DEFAULT_LIBRARY_FAMILY.as_bytes(),
+    );
+    metadata_truncated |= !set_str_or(
+        &mut m.default_service,
+        config.default_service,
+        DEFAULT_SERVICE.as_bytes(),
+    );
+
+    if !set_receiver_path(&mut m.process_path, config.receiver_path) {
+        return Err(PrepareError::InvalidConfig);
+    }
+
+    state::SETTINGS
+        .only_bootstrap
+        .store(config.only_bootstrap, Relaxed);
+    state::SETTINGS
+        .debug_log
+        .store(config.debug_logging, Relaxed);
+    state::SETTINGS
+        .create_alt_stack
+        .store(config.create_alt_stack, Relaxed);
+    state::SETTINGS
+        .use_alt_stack
+        .store(config.use_alt_stack, Relaxed);
+    state::SETTINGS
+        .block_signals
+        .store(config.block_signals, Relaxed);
+    state::SETTINGS
+        .disarm_on_entry
+        .store(config.disarm_on_entry, Relaxed);
+    state::SETTINGS
+        .close_fds_on_receiver
+        .store(config.close_fds_on_receiver, Relaxed);
+    state::SETTINGS.report_fd.store(config.report_fd, Relaxed);
+    state::SETTINGS.collector_reap_ms.store(
+        normalized_collector_reap_ms(config.collector_reap_ms),
+        Relaxed,
+    );
+    state::SETTINGS.receiver_reap_ms.store(
+        normalized_receiver_timeout_secs(config.receiver_timeout_secs) as i32 * 1000
+            + RECEIVER_REAP_GRACE_MS,
+        Relaxed,
+    );
+    state::SETTINGS
+        .max_frames
+        .store(normalized_max_frames(config.max_frames), Relaxed);
+    capabilities::publish(
+        m.process_path.as_slice(),
+        config.report_fd,
+        config.probe_seccomp,
+    );
+    if metadata_truncated {
+        capabilities::note_degraded(capabilities::DEGRADED_METADATA_TRUNCATED);
+    }
+    Ok(())
+}
+
+fn normalized_receiver_timeout_secs(value: u32) -> u32 {
+    if value == 0 {
+        RECEIVER_TIMEOUT_SECS_DEFAULT
+    } else if value > RECEIVER_TIMEOUT_SECS_MAX {
+        RECEIVER_TIMEOUT_SECS_MAX
+    } else {
+        value
+    }
+}
+
+fn normalized_collector_reap_ms(value: i32) -> i32 {
+    if value <= 0 {
+        COLLECTOR_REAP_MS_DEFAULT
+    } else {
+        value
+    }
+}
+
+fn normalized_max_frames(value: usize) -> usize {
+    if value == 0 {
+        BACKTRACE_LEVELS_DEFAULT
+    } else if value > BACKTRACE_LEVELS_MAX {
+        BACKTRACE_LEVELS_MAX
+    } else {
+        value
+    }
+}
+
+fn set_str<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8]) -> bool {
+    dst.clear();
+    if let Ok(s) = core::str::from_utf8(src) {
+        for ch in s.chars() {
+            if dst.push(ch).is_err() {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn set_str_or<const N: usize>(dst: &mut HeaplessString<N>, src: &[u8], default: &[u8]) -> bool {
+    if src.is_empty() {
+        set_str(dst, default)
+    } else {
+        set_str(dst, src)
+    }
+}
+
+fn set_receiver_path(dst: &mut heapless::Vec<u8, PATH_CAPACITY>, path: &[u8]) -> bool {
+    dst.clear();
+    if path.len() >= dst.capacity() {
+        return false;
+    }
+    dst.extend_from_slice(path).is_ok() && dst.push(0).is_ok()
+}
+
+fn validate(config: &InitConfig<'_>) -> Result<(), PrepareError> {
+    if config.create_alt_stack && !config.use_alt_stack {
+        return Err(PrepareError::InvalidConfig);
+    }
+
+    if config.receiver_path.len() >= PATH_CAPACITY {
+        return Err(PrepareError::InvalidConfig);
+    }
+
+    // `report_fd` validity is probed by `capabilities::publish`, which records its absence as a
+    // degradation rather than failing init: the fd is only the degraded-mode fallback, so a bad
+    // one must not take down the primary fork/receiver path.
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+    use alloc::vec::Vec;
+    use std::format;
+
+    #[test]
+    fn config_json_contains_receiver_contract() {
+        let mut out = HeaplessString::<CONFIG_JSON_BUF_SIZE>::new();
+        assert!(build_config_json(&mut out, &InitConfig::default()));
+        let signals = CRASH_SIGNALS
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(
+            out.as_str(),
+            format!(
+                "{{\"additional_files\":[],\"create_alt_stack\":false,\"use_alt_stack\":false,\
+                 \"demangle_names\":true,\"endpoint\":null,\
+                 \"resolve_frames\":\"EnabledWithSymbolsInReceiver\",\
+                 \"signals\":[{signals}],\"timeout\":{{\"secs\":5,\"nanos\":0}},\
+                 \"unix_socket_path\":null}}\n"
+            )
+        );
+        assert!(CRASH_SIGNALS.contains(&libc::SIGSEGV));
+        assert!(CRASH_SIGNALS.contains(&libc::SIGABRT));
+        assert!(CRASH_SIGNALS.contains(&libc::SIGBUS));
+        assert!(CRASH_SIGNALS.contains(&libc::SIGILL));
+        assert!(CRASH_SIGNALS.contains(&libc::SIGFPE));
+    }
+
+    #[test]
+    fn timeout_seconds_are_clamped() {
+        assert_eq!(
+            normalized_receiver_timeout_secs(0),
+            RECEIVER_TIMEOUT_SECS_DEFAULT
+        );
+        assert_eq!(normalized_receiver_timeout_secs(1), 1);
+        assert_eq!(
+            normalized_receiver_timeout_secs(RECEIVER_TIMEOUT_SECS_MAX + 1),
+            RECEIVER_TIMEOUT_SECS_MAX
+        );
+    }
+
+    #[test]
+    fn validate_rejects_pointless_alt_stack_configuration() {
+        assert_eq!(
+            validate(&InitConfig {
+                create_alt_stack: true,
+                use_alt_stack: false,
+                ..InitConfig::default()
+            }),
+            Err(PrepareError::InvalidConfig)
+        );
+    }
+
+    #[test]
+    fn prepare_caches_fixed_metadata() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+
+        let mut meta = state::Meta::new();
+        assert!(apply(
+            &InitConfig {
+                receiver_path: b"/tmp/receiver",
+                service: b"svc",
+                env: b"prod",
+                app_version: b"1.2.3",
+                runtime_id: b"rid",
+                platform: b"host",
+                only_bootstrap: true,
+                debug_logging: true,
+                ..InitConfig::default()
+            },
+            &mut meta
+        )
+        .is_ok());
+
+        assert_eq!(meta.service.as_str(), "svc");
+        assert_eq!(meta.env.as_str(), "prod");
+        assert_eq!(meta.app_version.as_str(), "1.2.3");
+        assert_eq!(meta.runtime_id.as_str(), "rid");
+        assert_eq!(meta.platform.as_str(), "host");
+        assert_eq!(meta.process_path.as_slice(), b"/tmp/receiver\0");
+        assert!(state::SETTINGS.only_bootstrap.load(Relaxed));
+        assert!(state::SETTINGS.debug_log.load(Relaxed));
+    }
+
+    #[test]
+    fn prepare_marks_metadata_truncation_degraded() {
+        let _guard = crate::collector_signal_safe::TEST_GLOBAL_LOCK
+            .lock()
+            .expect("test lock poisoned");
+        let oversized_service = "s".repeat(300);
+
+        let mut meta = state::Meta::new();
+        assert!(apply(
+            &InitConfig {
+                receiver_path: b"/definitely/missing-signal-safe-receiver",
+                service: oversized_service.as_bytes(),
+                ..InitConfig::default()
+            },
+            &mut meta
+        )
+        .is_ok());
+
+        assert!(capabilities::degradations().contains(capabilities::DEGRADED_METADATA_TRUNCATED));
+    }
+}

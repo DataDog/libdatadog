@@ -12,9 +12,15 @@ pub fn clear_additional_tags() -> Result<(), AtomicSetError> {
 
 pub fn consume_and_emit_additional_tags(w: &mut impl Write) -> Result<(), AtomicSetError> {
     use crate::shared::constants::*;
-    writeln!(w, "{DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS}")?;
-    ADDITIONAL_TAGS.consume_and_emit(w, true)?;
-    writeln!(w, "{DD_CRASHTRACK_END_ADDITIONAL_TAGS}")?;
+    crate::protocol::section::<_, AtomicSetError>(
+        w,
+        DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS,
+        DD_CRASHTRACK_END_ADDITIONAL_TAGS,
+        |w| {
+            ADDITIONAL_TAGS.consume_and_emit(w, true)?;
+            Ok(())
+        },
+    )?;
     w.flush()?;
     Ok(())
 }

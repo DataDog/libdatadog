@@ -7,24 +7,7 @@ use core::time::Duration;
 use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
 
-/// Stacktrace collection occurs in the context of a crashing process.
-/// If the stack is sufficiently corruputed, it is possible (but unlikely),
-/// for stack trace collection itself to crash.
-/// We recommend fully enabling stacktrace collection, but having an environment
-/// variable to allow downgrading the collector.
-#[repr(C)]
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum StacktraceCollection {
-    #[default]
-    Disabled,
-    WithoutSymbols,
-    /// This option uses `backtrace::resolve_frame_unsynchronized()` to gather symbol information
-    /// and also unwind inlined functions. Enabling this feature will not only provide symbolic
-    /// details, but may also yield additional or less stack frames compared to other
-    /// configurations.
-    EnabledWithInprocessSymbols,
-    EnabledWithSymbolsInReceiver,
-}
+pub use super::stacktrace_collection::StacktraceCollection;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {

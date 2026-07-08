@@ -119,10 +119,6 @@ fn main() {
         std::env::var("TARGET").unwrap()
     );
 
-    cc::Build::new()
-        .file("src/crash_info/emit_sicodes.c")
-        .compile("emit_sicodes");
-
     // Build CXX bridge if feature is enabled
     #[cfg(feature = "cxx")]
     build_cxx_bridge();

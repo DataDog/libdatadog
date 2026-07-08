@@ -115,10 +115,16 @@ int main(int argc, char **argv) {
   // Test raising SEGV explicitly, to ensure chaining works
   // properly in this case
   raise(SIGSEGV);
+#elif defined(__APPLE__) && defined(__aarch64__)
+  // Optimized arm64 macOS builds may lower the undefined null write below to
+  // a trap instruction, which terminates with SIGTRAP instead of SIGSEGV.
+  raise(SIGSEGV);
 #endif
 
+#if !defined(EXPLICIT_RAISE_SEGV) && !(defined(__APPLE__) && defined(__aarch64__))
   char *bug = NULL;
   *bug = 42;
+#endif
 
   // The crash handler should intercept the SIGSEGV, invoke the receiver,
   // and write the crash report to output_dir before the process terminates.

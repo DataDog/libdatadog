@@ -107,4 +107,142 @@ mod tests {
         join_handle2.await??;
         Ok(())
     }
+
+    #[cfg(feature = "collector_signal-safe")]
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn signal_safe_emitted_report_round_trips_through_receiver_parser() -> anyhow::Result<()>
+    {
+        use crate::collector_signal_safe as signal_safe;
+        use signal_safe::capabilities::{Capabilities, Degradations};
+
+        let config = CrashtrackerConfiguration::builder()
+            .signals(default_signals())
+            .timeout(Duration::from_secs(3))
+            .build()?;
+        let config_json = serde_json::to_string(&config)?;
+        let signal =
+            signal_safe::SignalInfo::new(libc::SIGSEGV, signal_safe::SEGV_MAPERR, 0x1234, true);
+        let frames = [0x10usize, 0x20usize];
+        let context = signal_safe::CrashContext {
+            signal,
+            pid: std::process::id() as i32,
+            tid: std::process::id() as i32,
+            frames: &frames,
+        };
+        let report = signal_safe::Report {
+            config_json: &config_json,
+            library_name: "dd-test",
+            library_version: "1.2.3",
+            family: "native",
+            default_service: "default-service",
+            service: "svc",
+            env: "prod",
+            app_version: "v1",
+            runtime_id: "rid",
+            platform: "linux",
+            stackwalk_method: "fp_pvr",
+            capabilities: Capabilities::from_bits(0x21),
+            degradations: Degradations::from_bits(1 << 8), // DEGRADED_REPORT_TO_FD
+        };
+
+        let mut buf = [0u8; 8192];
+        let mut sink = signal_safe::SliceSink::new(&mut buf);
+        assert!(signal_safe::emit_report(&mut sink, &report, &context));
+        let emitted = sink.as_slice().to_vec();
+
+        let (mut sender, receiver) = tokio::net::UnixStream::pair()?;
+        let writer = tokio::spawn(async move {
+            sender.write_all(&emitted).await?;
+            sender.shutdown().await
+        });
+
+        let parsed = receive_report_from_stream(Duration::from_secs(2), BufReader::new(receiver))
+            .await?
+            .expect("signal-safe report should parse");
+        writer.await??;
+
+        let (_config, crashinfo) = parsed;
+        assert_eq!(crashinfo.error.kind, ErrorKind::UnixSignal);
+        assert_eq!(crashinfo.metadata.library_name, "dd-test");
+        assert_eq!(crashinfo.metadata.tags[4], "service:svc");
+
+        let sig_info = crashinfo.sig_info.expect("siginfo parsed");
+        assert_eq!(sig_info.si_signo_human_readable, SignalNames::SIGSEGV);
+        assert_eq!(sig_info.si_code_human_readable, SiCodes::SEGV_MAPERR);
+
+        let tags = crashinfo
+            .experimental
+            .expect("additional tags parsed")
+            .additional_tags;
+        assert!(tags.iter().any(|tag| tag == "stackwalk_method:fp_pvr"));
+        assert!(tags.iter().any(|tag| tag == "report_degraded:report_to_fd"));
+
+        Ok(())
+    }
+
+    #[cfg(feature = "collector_signal-safe")]
+    #[test]
+    fn signal_safe_signal_names_stay_receiver_compatible() -> anyhow::Result<()> {
+        use crate::collector_signal_safe as signal_safe;
+
+        let signals = [
+            (libc::SIGSEGV, SignalNames::SIGSEGV),
+            (libc::SIGABRT, SignalNames::SIGABRT),
+            (libc::SIGBUS, SignalNames::SIGBUS),
+            (libc::SIGILL, SignalNames::SIGILL),
+            (libc::SIGFPE, SignalNames::SIGFPE),
+        ];
+        for (signum, expected) in signals {
+            let siginfo = siginfo_from_signal_safe_names(signum, signal_safe::SI_USER)?;
+            assert_eq!(siginfo.si_signo_human_readable, expected);
+            assert_eq!(siginfo.si_code_human_readable, SiCodes::SI_USER);
+        }
+
+        let sicodes = [
+            (
+                libc::SIGSEGV,
+                signal_safe::SEGV_MAPERR,
+                SiCodes::SEGV_MAPERR,
+            ),
+            (
+                libc::SIGSEGV,
+                signal_safe::SEGV_ACCERR,
+                SiCodes::SEGV_ACCERR,
+            ),
+            (libc::SIGBUS, signal_safe::BUS_ADRALN, SiCodes::BUS_ADRALN),
+            (libc::SIGBUS, signal_safe::BUS_ADRERR, SiCodes::BUS_ADRERR),
+            (libc::SIGBUS, signal_safe::BUS_OBJERR, SiCodes::BUS_OBJERR),
+            (libc::SIGILL, signal_safe::ILL_ILLOPC, SiCodes::ILL_ILLOPC),
+            (libc::SIGILL, signal_safe::ILL_ILLOPN, SiCodes::ILL_ILLOPN),
+            (libc::SIGILL, signal_safe::ILL_ILLADR, SiCodes::ILL_ILLADR),
+            (libc::SIGILL, signal_safe::ILL_ILLTRP, SiCodes::ILL_ILLTRP),
+            (libc::SIGILL, signal_safe::ILL_PRVOPC, SiCodes::ILL_PRVOPC),
+            (libc::SIGILL, signal_safe::ILL_PRVREG, SiCodes::ILL_PRVREG),
+            (libc::SIGILL, signal_safe::ILL_COPROC, SiCodes::ILL_COPROC),
+            (libc::SIGILL, signal_safe::ILL_BADSTK, SiCodes::ILL_BADSTK),
+            (libc::SIGFPE, signal_safe::FPE_INTDIV, SiCodes::FPE_INTDIV),
+        ];
+        for (signum, si_code, expected) in sicodes {
+            let siginfo = siginfo_from_signal_safe_names(signum, si_code)?;
+            assert_eq!(siginfo.si_code_human_readable, expected);
+        }
+
+        let siginfo = siginfo_from_signal_safe_names(libc::SIGSEGV, 999)?;
+        assert_eq!(siginfo.si_code_human_readable, SiCodes::UNKNOWN);
+        Ok(())
+    }
+
+    #[cfg(feature = "collector_signal-safe")]
+    fn siginfo_from_signal_safe_names(signum: i32, si_code: i32) -> anyhow::Result<SigInfo> {
+        use crate::collector_signal_safe as signal_safe;
+
+        Ok(serde_json::from_value(serde_json::json!({
+            "si_addr": null,
+            "si_code": si_code,
+            "si_code_human_readable": signal_safe::rust_si_code_name(signum, si_code),
+            "si_signo": signum,
+            "si_signo_human_readable": signal_safe::rust_signal_name(signum),
+        }))?)
+    }
 }

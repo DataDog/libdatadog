@@ -11,19 +11,23 @@
 mod collector;
 #[cfg(all(windows, feature = "collector_windows"))]
 mod collector_windows;
+#[cfg(feature = "std")]
 mod crash_info;
 #[cfg(feature = "demangler")]
 mod demangler;
 #[cfg(all(unix, feature = "receiver"))]
 mod receiver;
+#[cfg(feature = "std")]
 mod runtime_callback;
 #[cfg(all(unix, feature = "collector"))]
 pub use collector::*;
 #[cfg(all(windows, feature = "collector_windows"))]
 pub use collector_windows::api::ddog_crasht_init_windows;
+#[cfg(feature = "std")]
 pub use crash_info::*;
 #[cfg(feature = "demangler")]
 pub use demangler::*;
 #[cfg(all(unix, feature = "receiver"))]
 pub use receiver::*;
+#[cfg(feature = "std")]
 pub use runtime_callback::*;

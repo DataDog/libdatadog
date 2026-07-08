@@ -1,0 +1,26 @@
+DD_CRASHTRACK_BEGIN_CONFIG
+{"resolve_frames":"Disabled"}
+DD_CRASHTRACK_END_CONFIG
+DD_CRASHTRACK_BEGIN_METADATA
+{"library_name":"dd-test","library_version":"1.2.3","family":"native","tags":["language:native","runtime:native","is_crash:true","severity:crash","service:svc","env:prod","version:v1","runtime_id:rid","runtime_version:1.2.3","library_version:1.2.3","platform:linux","injector_version:1.2.3"]}
+DD_CRASHTRACK_END_METADATA
+DD_CRASHTRACK_BEGIN_ADDITIONAL_TAGS
+["stackwalk_method:fp_pvr","capabilities:0x00000021","degradations:0x00000100","report_degraded:report_to_fd"]
+DD_CRASHTRACK_END_ADDITIONAL_TAGS
+DD_CRASHTRACK_BEGIN_KIND
+"UnixSignal"
+DD_CRASHTRACK_END_KIND
+DD_CRASHTRACK_BEGIN_SIGINFO
+{"si_signo":11,"si_code":1,"si_signo_human_readable":"SIGSEGV","si_code_human_readable":"SEGV_MAPERR","si_addr":"0x0000000000001234"}
+DD_CRASHTRACK_END_SIGINFO
+DD_CRASHTRACK_BEGIN_PROCESSINFO
+{"pid":123,"tid":456}
+DD_CRASHTRACK_END_PROCESSINFO
+DD_CRASHTRACK_BEGIN_STACKTRACE
+{"ip":"0x0000000000000010"}
+{"ip":"0x0000000000000020"}
+DD_CRASHTRACK_END_STACKTRACE
+DD_CRASHTRACK_BEGIN_MESSAGE
+Crash (SIGSEGV)
+DD_CRASHTRACK_END_MESSAGE
+DD_CRASHTRACK_DONE

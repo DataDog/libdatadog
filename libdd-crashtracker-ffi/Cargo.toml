@@ -20,15 +20,16 @@ bench = false
 required-features = ["collector_windows"]
 
 [features]
-default = ["cbindgen", "collector", "demangler", "receiver"]
+default = ["std", "cbindgen", "collector", "demangler", "receiver"]
+std = ["libdd-crashtracker/std"]
 cbindgen = ["build_common/cbindgen"]
 regex-lite = ["libdd-common-ffi/regex-lite"]
 # Enables the in-process collection of crash-info
-collector = []
-collector_windows = []
-demangler = ["dep:symbolic-demangle", "dep:symbolic-common"]
+collector = ["std", "libdd-crashtracker/collector"]
+collector_windows = ["std", "libdd-crashtracker/collector_windows"]
+demangler = ["std", "dep:symbolic-demangle", "dep:symbolic-common"]
 # Enables the use of this library to receiver crash-info from a suitable collector
-receiver = []
+receiver = ["std", "libdd-crashtracker/receiver"]
 
 [target.'cfg(windows)'.features]
 default = ["collector_windows"]
@@ -38,7 +39,7 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow = "1.0"
-libdd-crashtracker = { path = "../libdd-crashtracker" }
+libdd-crashtracker = { path = "../libdd-crashtracker", default-features = false }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"], optional = true }

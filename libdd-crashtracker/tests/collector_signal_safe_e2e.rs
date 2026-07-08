@@ -1,0 +1,340 @@
+// Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+// SPDX-License-Identifier: Apache-2.0
+
+#![cfg(all(unix, feature = "collector_signal-safe"))]
+
+use std::fs;
+use std::os::fd::AsRawFd;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::os::unix::fs::PermissionsExt;
+use std::process::Command;
+
+use libdd_crashtracker::collector_signal_safe::{
+    bootstrap_complete, init, owned_signal_count, owns_signal, InitConfig, InitResult,
+};
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn signal_safe_receiver_child_process() {
+    if std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER_CHILD").is_none() {
+        return;
+    }
+    let receiver = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER").expect("receiver");
+
+    assert_eq!(
+        init(&InitConfig {
+            receiver_path: receiver.as_encoded_bytes(),
+            service: b"signal-safe-e2e",
+            env: b"test",
+            app_version: b"1",
+            runtime_id: b"00000000-0000-0000-0000-000000000001",
+            ..InitConfig::default()
+        }),
+        InitResult::Enabled
+    );
+    bootstrap_complete();
+
+    std::process::abort();
+}
+
+#[test]
+fn signal_safe_report_fd_child_process() {
+    let Some(report) = std::env::var_os("DD_SIGNAL_SAFE_E2E_REPORT_FD_CHILD") else {
+        return;
+    };
+
+    let report = fs::File::create(report).expect("create report");
+    assert_eq!(
+        init(&InitConfig {
+            receiver_path: b"/definitely/missing-signal-safe-receiver",
+            service: b"signal-safe-e2e",
+            env: b"test",
+            app_version: b"1",
+            runtime_id: b"00000000-0000-0000-0000-000000000001",
+            report_fd: report.as_raw_fd(),
+            ..InitConfig::default()
+        }),
+        InitResult::Enabled
+    );
+    bootstrap_complete();
+
+    std::process::abort();
+}
+
+#[test]
+fn signal_safe_bootstrap_only_child_process() {
+    let Some(report) = std::env::var_os("DD_SIGNAL_SAFE_E2E_BOOTSTRAP_ONLY_CHILD") else {
+        return;
+    };
+
+    let _report = init_report_fd(report, b"/definitely/missing-signal-safe-receiver", true);
+    bootstrap_complete();
+    std::process::abort();
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn signal_safe_receiver_deleted_child_process() {
+    let Some(report) = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER_DELETED_CHILD") else {
+        return;
+    };
+    let receiver = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER").expect("receiver");
+
+    let _report = init_report_fd(report, receiver.as_encoded_bytes(), false);
+    bootstrap_complete();
+    fs::remove_file(receiver).expect("remove receiver");
+    std::process::abort();
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn signal_safe_receiver_signaled_child_process() {
+    let Some(report) = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER_SIGNALED_CHILD") else {
+        return;
+    };
+    let receiver = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER").expect("receiver");
+
+    let _report = init_report_fd(report, receiver.as_encoded_bytes(), false);
+    bootstrap_complete();
+    std::process::abort();
+}
+
+#[test]
+fn signal_safe_preexisting_app_handler_child_process() {
+    let Some(report) = std::env::var_os("DD_SIGNAL_SAFE_E2E_APP_HANDLER_CHILD") else {
+        return;
+    };
+
+    install_noop_handler(libc::SIGSEGV);
+    let _report = init_report_fd(report, b"/definitely/missing-signal-safe-receiver", false);
+    assert!(!owns_signal(libc::SIGSEGV));
+    assert!(owns_signal(libc::SIGABRT));
+    assert!(owned_signal_count() < 5);
+    bootstrap_complete();
+    std::process::abort();
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn signal_safe_crash_writes_report_through_receiver() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let receiver = temp.path().join("receiver.sh");
+    let report = temp.path().join("report.txt");
+
+    fs::write(
+        &receiver,
+        b"#!/bin/sh\ncat > \"$DD_SIGNAL_SAFE_E2E_REPORT\"\n",
+    )
+    .expect("write receiver");
+    let mut perms = fs::metadata(&receiver).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&receiver, perms).expect("chmod receiver");
+
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let status = Command::new(current_exe)
+        .arg("--exact")
+        .arg("signal_safe_receiver_child_process")
+        .arg("--nocapture")
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER_CHILD", "1")
+        .env("DD_SIGNAL_SAFE_E2E_REPORT", &report)
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER", &receiver)
+        .status()
+        .expect("spawn child");
+
+    assert!(!status.success(), "child should terminate via signal");
+
+    let report = fs::read_to_string(&report).expect("read crash report");
+    assert_common_report_shape(&report);
+    assert!(report.contains("\"si_signo_human_readable\":\"SIGABRT\""));
+    let stacktrace_frames = stacktrace_frame_count(&report);
+    #[cfg(target_arch = "aarch64")]
+    assert!(
+        stacktrace_frames >= 3,
+        "expected a multi-frame receiver stacktrace, got {stacktrace_frames}\n{report}"
+    );
+    #[cfg(not(target_arch = "aarch64"))]
+    assert!(
+        stacktrace_frames >= 1,
+        "expected at least the seed frame, got {stacktrace_frames}\n{report}"
+    );
+}
+
+#[test]
+fn signal_safe_crash_writes_report_to_fd_when_degraded() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = temp.path().join("report.txt");
+
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let status = Command::new(current_exe)
+        .arg("--exact")
+        .arg("signal_safe_report_fd_child_process")
+        .arg("--nocapture")
+        .env("DD_SIGNAL_SAFE_E2E_REPORT_FD_CHILD", &report)
+        .status()
+        .expect("spawn child");
+
+    assert!(!status.success(), "child should terminate via signal");
+
+    let report = fs::read_to_string(&report).expect("read crash report");
+    assert_common_report_shape(&report);
+    assert!(report.contains("\"si_signo_human_readable\":\"SIGABRT\""));
+    assert!(report.contains("\"report_degraded:missing_receiver\""));
+    assert!(report.contains("\"report_degraded:report_to_fd\""));
+}
+
+#[test]
+fn signal_safe_bootstrap_only_shutdown_suppresses_later_report() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = temp.path().join("report.txt");
+
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let status = Command::new(current_exe)
+        .arg("--exact")
+        .arg("signal_safe_bootstrap_only_child_process")
+        .arg("--nocapture")
+        .env("DD_SIGNAL_SAFE_E2E_BOOTSTRAP_ONLY_CHILD", &report)
+        .status()
+        .expect("spawn child");
+
+    assert!(!status.success(), "child should terminate via signal");
+    let contents = fs::read_to_string(&report).unwrap_or_default();
+    assert!(contents.is_empty(), "bootstrap-only mode should not emit");
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn signal_safe_receiver_deleted_after_init_falls_back_to_report_fd() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let receiver = temp.path().join("receiver.sh");
+    let report = temp.path().join("report.txt");
+
+    fs::write(&receiver, b"#!/bin/sh\ncat >/dev/null\n").expect("write receiver");
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let mut perms = fs::metadata(&receiver).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&receiver, perms).expect("chmod receiver");
+    }
+
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let status = Command::new(current_exe)
+        .arg("--exact")
+        .arg("signal_safe_receiver_deleted_child_process")
+        .arg("--nocapture")
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER_DELETED_CHILD", &report)
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER", &receiver)
+        .status()
+        .expect("spawn child");
+
+    assert!(!status.success(), "child should terminate via signal");
+    let report = fs::read_to_string(&report).expect("read crash report");
+    assert_common_report_shape(&report);
+    assert!(report.contains("\"report_degraded:receiver_unavailable\""));
+    assert!(report.contains("\"report_degraded:report_to_fd\""));
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn signal_safe_receiver_death_by_signal_falls_back_to_report_fd() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let receiver = temp.path().join("receiver.sh");
+    let report = temp.path().join("report.txt");
+
+    fs::write(&receiver, b"#!/bin/sh\nkill -9 $$\n").expect("write receiver");
+    let mut perms = fs::metadata(&receiver).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&receiver, perms).expect("chmod receiver");
+
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let status = Command::new(current_exe)
+        .arg("--exact")
+        .arg("signal_safe_receiver_signaled_child_process")
+        .arg("--nocapture")
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER_SIGNALED_CHILD", &report)
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER", &receiver)
+        .status()
+        .expect("spawn child");
+
+    assert!(!status.success(), "child should terminate via signal");
+    let report = fs::read_to_string(&report).expect("read crash report");
+    assert_common_report_shape(&report);
+    assert!(report.contains("\"report_degraded:receiver_unavailable\""));
+    assert!(report.contains("\"report_degraded:report_to_fd\""));
+}
+
+#[test]
+fn signal_safe_preexisting_app_handler_is_reported_without_internal_state_setup() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let report = temp.path().join("report.txt");
+
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let status = Command::new(current_exe)
+        .arg("--exact")
+        .arg("signal_safe_preexisting_app_handler_child_process")
+        .arg("--nocapture")
+        .env("DD_SIGNAL_SAFE_E2E_APP_HANDLER_CHILD", &report)
+        .status()
+        .expect("spawn child");
+
+    assert!(!status.success(), "child should terminate via signal");
+    let report = fs::read_to_string(&report).expect("read crash report");
+    assert_common_report_shape(&report);
+    assert!(report.contains("\"report_degraded:app_handler_present\""));
+    assert!(report.contains(&format!(
+        "\"report_degraded:app_handler_present:{}\"",
+        libc::SIGSEGV
+    )));
+}
+
+fn init_report_fd(
+    report_path: impl AsRef<std::path::Path>,
+    receiver_path: &[u8],
+    only_bootstrap: bool,
+) -> fs::File {
+    let report = fs::File::create(report_path).expect("create report");
+    assert_eq!(
+        init(&InitConfig {
+            receiver_path,
+            service: b"signal-safe-e2e",
+            env: b"test",
+            app_version: b"1",
+            runtime_id: b"00000000-0000-0000-0000-000000000001",
+            report_fd: report.as_raw_fd(),
+            only_bootstrap,
+            ..InitConfig::default()
+        }),
+        InitResult::Enabled
+    );
+    report
+}
+
+extern "C" fn noop_handler(_: libc::c_int) {}
+
+fn install_noop_handler(signal: libc::c_int) {
+    let mut action: libc::sigaction = unsafe { core::mem::zeroed() };
+    action.sa_sigaction = noop_handler as *const () as usize;
+    action.sa_flags = 0;
+    unsafe {
+        libc::sigemptyset(&mut action.sa_mask);
+        assert_eq!(libc::sigaction(signal, &action, core::ptr::null_mut()), 0);
+    }
+}
+
+fn assert_common_report_shape(report: &str) {
+    assert!(report.contains("DD_CRASHTRACK_BEGIN_CONFIG\n"));
+    assert!(report.contains("DD_CRASHTRACK_BEGIN_METADATA\n"));
+    assert!(report.contains("\"service:signal-safe-e2e\""));
+    assert!(report.contains("DD_CRASHTRACK_BEGIN_SIGINFO\n"));
+    assert!(report.contains("DD_CRASHTRACK_BEGIN_PROCESSINFO\n"));
+    assert!(report.contains("DD_CRASHTRACK_BEGIN_STACKTRACE\n"));
+    assert!(report.ends_with("DD_CRASHTRACK_DONE\n"));
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn stacktrace_frame_count(report: &str) -> usize {
+    report
+        .split_once("DD_CRASHTRACK_BEGIN_STACKTRACE\n")
+        .and_then(|(_, rest)| rest.split_once("DD_CRASHTRACK_END_STACKTRACE\n"))
+        .map(|(stacktrace, _)| stacktrace.lines().filter(|line| !line.is_empty()).count())
+        .unwrap_or(0)
+}

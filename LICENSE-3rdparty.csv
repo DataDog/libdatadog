@@ -167,10 +167,12 @@ gloo-timers,https://github.com/rustwasm/gloo/tree/master/crates/timers,MIT OR Ap
 h2,https://github.com/hyperium/h2,MIT,"Carl Lerche <me@carllerche.com>, Sean McArthur <sean@seanmonstar.com>"
 half,https://github.com/starkat99/half-rs,MIT OR Apache-2.0,Kathryn Long <squeeself@gmail.com>
 halfbrown,https://github.com/Licenser/halfbrown,Apache-2.0 OR MIT,Heinz N. Gies <heinz@licenser.net>
+hash32,https://github.com/japaric/hash32,MIT OR Apache-2.0,Jorge Aparicio <jorge@japaric.io>
 hashbrown,https://github.com/rust-lang/hashbrown,MIT OR Apache-2.0,Amanieu d'Antras <amanieu@gmail.com>
 hdrhistogram,https://github.com/HdrHistogram/HdrHistogram_rust,MIT OR Apache-2.0,"Jon Gjengset <jon@thesquareplanet.com>, Marshall Pierce <marshall@mpierce.org>"
 headers,https://github.com/hyperium/headers,MIT,Sean McArthur <sean@seanmonstar.com>
 headers-core,https://github.com/hyperium/headers,MIT,Sean McArthur <sean@seanmonstar.com>
+heapless,https://github.com/rust-embedded/heapless,MIT OR Apache-2.0,"Jorge Aparicio <jorge@japaric.io>, Per Lindgren <per.lindgren@ltu.se>, Emil Fresk <emil.fresk@gmail.com>"
 heck,https://github.com/withoutboats/heck,MIT OR Apache-2.0,The heck Authors
 heck,https://github.com/withoutboats/heck,MIT OR Apache-2.0,Without Boats <woboats@gmail.com>
 hermit-abi,https://github.com/hermit-os/hermit-rs,MIT OR Apache-2.0,Stefan Lankes
@@ -255,7 +257,6 @@ nom,https://github.com/Geal/nom,MIT,contact@geoffroycouprie.com
 ntapi,https://github.com/MSxDOS/ntapi,Apache-2.0 OR MIT,MSxDOS <melcodos@gmail.com>
 nu-ansi-term,https://github.com/nushell/nu-ansi-term,MIT,"ogham@bsago.me, Ryan Scheel (Havvy) <ryan.havvy@gmail.com>, Josh Triplett <josh@joshtriplett.org>, The Nushell Project Developers"
 num-conv,https://github.com/jhpratt/num-conv,MIT OR Apache-2.0,Jacob Pratt <jacob@jhpratt.dev>
-num-derive,https://github.com/rust-num/num-derive,MIT OR Apache-2.0,The Rust Project Developers
 num-traits,https://github.com/rust-num/num-traits,MIT OR Apache-2.0,The Rust Project Developers
 objc2,https://github.com/madsmtm/objc2,MIT,Mads Marquart <mads@marquart.dk>
 objc2-cloud-kit,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,The objc2-cloud-kit Authors
@@ -375,6 +376,7 @@ semver,https://github.com/dtolnay/semver,MIT OR Apache-2.0,David Tolnay <dtolnay
 sendfd,https://github.com/standard-ai/sendfd,Apache-2.0 OR BSD-3-Clause,"Simonas Kazlauskas <simonas@standard.ai>, Bernardo Meurer <bernardo@standard.ai>, Léo Gaspard <leo@standard.ai>"
 serde,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
 serde-bool,https://github.com/x52dev/serde-utils,MIT OR Apache-2.0,Rob Ede <robjtede@icloud.com>
+serde-json-core,https://github.com/rust-embedded-community/serde-json-core,MIT OR Apache-2.0,"Jorge Aparicio <jorge@japaric.io>, Ryan Summers <ryan.summers@vertigo-designs.com>, Robert Jördens <rj@quartiq.de>, Mathias Koch <mk@factbird.com>"
 serde-transcode,https://github.com/sfackler/serde-transcode,MIT OR Apache-2.0,Steven Fackler <sfackler@palantir.com>
 serde_bytes,https://github.com/serde-rs/bytes,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 serde_core,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"

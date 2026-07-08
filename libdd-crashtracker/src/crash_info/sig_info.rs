@@ -1,6 +1,5 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use num_derive::{FromPrimitive, ToPrimitive};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +52,45 @@ pub enum SignalNames {
     UNKNOWN,
 }
 
+impl SignalNames {
+    pub(crate) fn from_name(name: &str) -> Self {
+        match name {
+            "SIGHUP" => Self::SIGHUP,
+            "SIGINT" => Self::SIGINT,
+            "SIGQUIT" => Self::SIGQUIT,
+            "SIGILL" => Self::SIGILL,
+            "SIGTRAP" => Self::SIGTRAP,
+            "SIGABRT" => Self::SIGABRT,
+            "SIGBUS" => Self::SIGBUS,
+            "SIGFPE" => Self::SIGFPE,
+            "SIGKILL" => Self::SIGKILL,
+            "SIGUSR1" => Self::SIGUSR1,
+            "SIGSEGV" => Self::SIGSEGV,
+            "SIGUSR2" => Self::SIGUSR2,
+            "SIGPIPE" => Self::SIGPIPE,
+            "SIGALRM" => Self::SIGALRM,
+            "SIGTERM" => Self::SIGTERM,
+            "SIGCHLD" => Self::SIGCHLD,
+            "SIGCONT" => Self::SIGCONT,
+            "SIGSTOP" => Self::SIGSTOP,
+            "SIGTSTP" => Self::SIGTSTP,
+            "SIGTTIN" => Self::SIGTTIN,
+            "SIGTTOU" => Self::SIGTTOU,
+            "SIGURG" => Self::SIGURG,
+            "SIGXCPU" => Self::SIGXCPU,
+            "SIGXFSZ" => Self::SIGXFSZ,
+            "SIGVTALRM" => Self::SIGVTALRM,
+            "SIGPROF" => Self::SIGPROF,
+            "SIGWINCH" => Self::SIGWINCH,
+            "SIGIO" => Self::SIGIO,
+            "SIGSYS" => Self::SIGSYS,
+            "SIGEMT" => Self::SIGEMT,
+            "SIGINFO" => Self::SIGINFO,
+            _ => Self::UNKNOWN,
+        }
+    }
+}
+
 #[cfg(unix)]
 pub use unix::*;
 
@@ -62,81 +100,24 @@ mod unix {
 
     impl From<libc::c_int> for SignalNames {
         fn from(value: libc::c_int) -> Self {
-            match value {
-                libc::SIGHUP => SignalNames::SIGHUP,
-                libc::SIGINT => SignalNames::SIGINT,
-                libc::SIGQUIT => SignalNames::SIGQUIT,
-                libc::SIGILL => SignalNames::SIGILL,
-                libc::SIGTRAP => SignalNames::SIGTRAP,
-                libc::SIGABRT => SignalNames::SIGABRT,
-                libc::SIGBUS => SignalNames::SIGBUS,
-                libc::SIGFPE => SignalNames::SIGFPE,
-                libc::SIGKILL => SignalNames::SIGKILL,
-                libc::SIGUSR1 => SignalNames::SIGUSR1,
-                libc::SIGSEGV => SignalNames::SIGSEGV,
-                libc::SIGUSR2 => SignalNames::SIGUSR2,
-                libc::SIGPIPE => SignalNames::SIGPIPE,
-                libc::SIGALRM => SignalNames::SIGALRM,
-                libc::SIGTERM => SignalNames::SIGTERM,
-                libc::SIGCHLD => SignalNames::SIGCHLD,
-                libc::SIGCONT => SignalNames::SIGCONT,
-                libc::SIGSTOP => SignalNames::SIGSTOP,
-                libc::SIGTSTP => SignalNames::SIGTSTP,
-                libc::SIGTTIN => SignalNames::SIGTTIN,
-                libc::SIGTTOU => SignalNames::SIGTTOU,
-                libc::SIGURG => SignalNames::SIGURG,
-                libc::SIGXCPU => SignalNames::SIGXCPU,
-                libc::SIGXFSZ => SignalNames::SIGXFSZ,
-                libc::SIGVTALRM => SignalNames::SIGVTALRM,
-                libc::SIGPROF => SignalNames::SIGPROF,
-                libc::SIGWINCH => SignalNames::SIGWINCH,
-                libc::SIGIO => SignalNames::SIGIO,
-                libc::SIGSYS => SignalNames::SIGSYS,
-                #[cfg(not(any(
-                    target_os = "android",
-                    target_os = "emscripten",
-                    target_os = "fuchsia",
-                    target_os = "linux",
-                    target_os = "redox",
-                    target_os = "haiku"
-                )))]
-                libc::SIGEMT => SignalNames::SIGEMT,
-                #[cfg(not(any(
-                    target_os = "android",
-                    target_os = "emscripten",
-                    target_os = "fuchsia",
-                    target_os = "linux",
-                    target_os = "redox",
-                    target_os = "haiku",
-                    target_os = "aix"
-                )))]
-                libc::SIGINFO => SignalNames::SIGINFO,
-                _ => SignalNames::UNKNOWN,
-            }
+            SignalNames::from_name(crate::shared::signal_names::rust_signal_name(value))
         }
     }
 
-    extern "C" {
-        /// A bit of C code which can access the constants in <signal.h>.
-        /// See the file comment on emit_sicodes.c for full details.
-        fn translate_si_code_impl(signum: libc::c_int, si_code: libc::c_int) -> libc::c_int;
-    }
-
     pub fn translate_si_code(signum: libc::c_int, si_code: libc::c_int) -> SiCodes {
-        use num_traits::FromPrimitive;
-        // SAFETY: this function has no safety requirements
-        let translated = unsafe { translate_si_code_impl(signum, si_code) };
-        SiCodes::from_i32(translated).unwrap_or(SiCodes::UNKNOWN)
+        SiCodes::from_name(crate::shared::signal_names::rust_si_code_name(
+            signum, si_code,
+        ))
     }
 
     #[cfg(test)]
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_si_code() {
-        // standard values differ between oses, but it seems like segv match
-        // https://github.com/torvalds/linux/blob/master/include/uapi/asm-generic/siginfo.h
-        // https://github.com/apple/darwin-xnu/blob/main/bsd/sys/signal.h
-        assert_eq!(translate_si_code(libc::SIGSEGV, 2), SiCodes::SEGV_ACCERR);
+        assert_eq!(
+            translate_si_code(libc::SIGSEGV, crate::shared::signal_names::SEGV_ACCERR),
+            SiCodes::SEGV_ACCERR
+        );
 
         // An invalid code should translate to UNKNOWN
         assert_eq!(translate_si_code(libc::SIGSEGV, 42), SiCodes::UNKNOWN);
@@ -255,19 +236,24 @@ mod unix {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, FromPrimitive, ToPrimitive,
-)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::upper_case_acronyms, non_camel_case_types)]
 #[repr(C)]
 /// See https://man7.org/linux/man-pages/man2/sigaction.2.html
-/// MUST REMAIN IN SYNC WITH THE ENUM IN emit_sigcodes.c
 pub enum SiCodes {
     BUS_ADRALN,
     BUS_ADRERR,
     BUS_MCEERR_AO,
     BUS_MCEERR_AR,
     BUS_OBJERR,
+    FPE_FLTDIV,
+    FPE_FLTINV,
+    FPE_FLTOVF,
+    FPE_FLTRES,
+    FPE_FLTSUB,
+    FPE_FLTUND,
+    FPE_INTDIV,
+    FPE_INTOVF,
     ILL_BADSTK,
     ILL_COPROC,
     ILL_ILLADR,
@@ -290,6 +276,48 @@ pub enum SiCodes {
     SI_USER,
     SYS_SECCOMP,
     UNKNOWN,
+}
+
+impl SiCodes {
+    pub(crate) fn from_name(name: &str) -> Self {
+        match name {
+            "BUS_ADRALN" => Self::BUS_ADRALN,
+            "BUS_ADRERR" => Self::BUS_ADRERR,
+            "BUS_MCEERR_AO" => Self::BUS_MCEERR_AO,
+            "BUS_MCEERR_AR" => Self::BUS_MCEERR_AR,
+            "BUS_OBJERR" => Self::BUS_OBJERR,
+            "FPE_FLTDIV" => Self::FPE_FLTDIV,
+            "FPE_FLTINV" => Self::FPE_FLTINV,
+            "FPE_FLTOVF" => Self::FPE_FLTOVF,
+            "FPE_FLTRES" => Self::FPE_FLTRES,
+            "FPE_FLTSUB" => Self::FPE_FLTSUB,
+            "FPE_FLTUND" => Self::FPE_FLTUND,
+            "FPE_INTDIV" => Self::FPE_INTDIV,
+            "FPE_INTOVF" => Self::FPE_INTOVF,
+            "ILL_BADSTK" => Self::ILL_BADSTK,
+            "ILL_COPROC" => Self::ILL_COPROC,
+            "ILL_ILLADR" => Self::ILL_ILLADR,
+            "ILL_ILLOPC" => Self::ILL_ILLOPC,
+            "ILL_ILLOPN" => Self::ILL_ILLOPN,
+            "ILL_ILLTRP" => Self::ILL_ILLTRP,
+            "ILL_PRVOPC" => Self::ILL_PRVOPC,
+            "ILL_PRVREG" => Self::ILL_PRVREG,
+            "SEGV_ACCERR" => Self::SEGV_ACCERR,
+            "SEGV_BNDERR" => Self::SEGV_BNDERR,
+            "SEGV_MAPERR" => Self::SEGV_MAPERR,
+            "SEGV_PKUERR" => Self::SEGV_PKUERR,
+            "SI_ASYNCIO" => Self::SI_ASYNCIO,
+            "SI_KERNEL" => Self::SI_KERNEL,
+            "SI_MESGQ" => Self::SI_MESGQ,
+            "SI_QUEUE" => Self::SI_QUEUE,
+            "SI_SIGIO" => Self::SI_SIGIO,
+            "SI_TIMER" => Self::SI_TIMER,
+            "SI_TKILL" => Self::SI_TKILL,
+            "SI_USER" => Self::SI_USER,
+            "SYS_SECCOMP" => Self::SYS_SECCOMP,
+            _ => Self::UNKNOWN,
+        }
+    }
 }
 
 #[cfg(test)]

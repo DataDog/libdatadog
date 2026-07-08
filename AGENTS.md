@@ -46,7 +46,7 @@ Iterate fastest with `cargo check -p <crate>` while editing; the full validation
 
 ### Per-crate test notes
 
-- **crashtracker**: needs `--features libdd-crashtracker/generate-unit-test-files` for unit tests.
+- **crashtracker**: needs `--features libdd-crashtracker/generate-unit-test-files` for its unit tests. For the signal-safe collector, validate with `cargo check -p libdd-crashtracker --no-default-features --features collector_signal-safe`, `cargo +stable clippy -p libdd-crashtracker --no-default-features --features collector_signal-safe --all-targets -- -D warnings`, `cargo nextest run -p libdd-crashtracker --no-default-features --features collector_signal-safe --no-fail-fast`, `cargo nextest run -p libdd-crashtracker --features "collector_signal-safe,receiver" --no-fail-fast`, and `bash tools/check_signal_safe_symbols.sh`.
 - **http-client**: ships two alternative backend features (`reqwest-backend` is the default, `hyper-backend` is the alternative). Cargo does not enforce exclusivity, but each backend must be exercised independently when this crate is touched:
   ```bash
   # Default (reqwest) backend — covered by the workspace test run
