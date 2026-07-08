@@ -61,10 +61,9 @@ impl<K, V> Default for VecMap<K, V> {
     }
 }
 
-// This implementation allocates, which isn't expected for equality testing (not allocating would be
-// rather tedious though). It's fine for tests (where `PartialEq` is currently needed), so we
-// cfg-gate it to avoid unintended usage in prod.
-#[cfg(any(test, feature = "test-utils"))]
+// This implementation allocates, which isn't ideal for equality testing (not allocating would be
+// rather tedious though), but is needed both by production code (e.g. comparing V1 tracer metadata
+// before coalescing) and by tests.
 impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
         let lhs: HashMap<&K, &V> = self.data.iter().map(|(k, v)| (k, v)).collect();
@@ -73,7 +72,6 @@ impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
 impl<K: Eq + Hash, V: Eq> Eq for VecMap<K, V> {}
 
 impl<K, V> VecMap<K, V> {
