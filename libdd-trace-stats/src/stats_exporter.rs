@@ -78,6 +78,23 @@ impl From<TracerMetadata> for StatsMetadata {
     }
 }
 
+#[cfg(feature = "telemetry")]
+#[derive(Debug)]
+struct StatsExporterTelemetryKeys {
+    collapsed_whole_key: libdd_telemetry::metrics::ContextKey,
+    collapsed_resources: libdd_telemetry::metrics::ContextKey,
+    collapsed_http_endpoints: libdd_telemetry::metrics::ContextKey,
+    collapsed_peer_tags: libdd_telemetry::metrics::ContextKey,
+    collapsed_additional_tags: libdd_telemetry::metrics::ContextKey,
+}
+
+#[cfg(feature = "telemetry")]
+#[derive(Debug)]
+struct StatsExporterTelemetry {
+    handle: libdd_telemetry::worker::TelemetryWorkerHandle,
+    keys: StatsExporterTelemetryKeys,
+}
+
 /// An exporter that concentrates and sends stats to the agent.
 ///
 /// `Cap` is the capabilities bundle (HTTP + sleep). Leaf crates pin it to a
@@ -97,10 +114,7 @@ pub struct StatsExporter<
     supported_obfuscation_version: &'static str,
     /// Optional telemetry handle and context key.
     #[cfg(feature = "telemetry")]
-    telemetry: Option<(
-        libdd_telemetry::worker::TelemetryWorkerHandle,
-        libdd_telemetry::metrics::ContextKey,
-    )>,
+    telemetry: Option<StatsExporterTelemetry>,
     /// Optional DogStatsD client.
     #[cfg(feature = "dogstatsd")]
     dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
@@ -131,14 +145,54 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     ) -> Self {
         #[cfg(feature = "telemetry")]
         let telemetry = telemetry.map(|handle| {
-            let key = handle.register_metric_context(
+            let collapsed_whole_key = handle.register_metric_context(
                 COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
                 vec![libdd_common::tag!("collapsed_spans", "whole_key")],
                 libdd_telemetry::data::metrics::MetricType::Count,
                 true,
                 libdd_telemetry::data::metrics::MetricNamespace::Tracers,
             );
-            (handle, key)
+            let collapsed_resources = handle.register_metric_context(
+                COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
+                vec![libdd_common::tag!("collapsed_spans", "resource")],
+                libdd_telemetry::data::metrics::MetricType::Count,
+                true,
+                libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+            );
+            let collapsed_http_endpoints = handle.register_metric_context(
+                COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
+                vec![libdd_common::tag!("collapsed_spans", "http_endpoint")],
+                libdd_telemetry::data::metrics::MetricType::Count,
+                true,
+                libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+            );
+            let collapsed_peer_tags = handle.register_metric_context(
+                COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
+                vec![libdd_common::tag!("collapsed_spans", "peer_tags")],
+                libdd_telemetry::data::metrics::MetricType::Count,
+                true,
+                libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+            );
+            let collapsed_additional_tags = handle.register_metric_context(
+                COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
+                vec![libdd_common::tag!(
+                    "collapsed_spans",
+                    "additional_metric_tags"
+                )],
+                libdd_telemetry::data::metrics::MetricType::Count,
+                true,
+                libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+            );
+            StatsExporterTelemetry {
+                handle,
+                keys: StatsExporterTelemetryKeys {
+                    collapsed_whole_key,
+                    collapsed_resources,
+                    collapsed_http_endpoints,
+                    collapsed_peer_tags,
+                    collapsed_additional_tags,
+                },
+            }
         });
         Self {
             flush_interval,
@@ -179,17 +233,101 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             concentrator.flush_buckets(force_flush)
         };
 
-        if flush.collapsed_spans > 0 {
+        if flush.collapsed_spans.whole_key > 0 {
             #[cfg(feature = "telemetry")]
-            if let Some((handle, key)) = &self.telemetry {
-                let _ = handle.add_point(flush.collapsed_spans as f64, key, vec![]);
+            if let Some(telemetry) = &self.telemetry {
+                let _ = telemetry.handle.add_point(
+                    flush.collapsed_spans.whole_key as f64,
+                    &telemetry.keys.collapsed_whole_key,
+                    vec![],
+                );
             }
             #[cfg(feature = "dogstatsd")]
             if let Some(client) = &self.dogstatsd {
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
-                    flush.collapsed_spans as i64,
+                    flush.collapsed_spans.whole_key as i64,
                     [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
+                )]);
+            }
+        }
+
+        if flush.collapsed_spans.resources > 0 {
+            #[cfg(feature = "telemetry")]
+            if let Some(telemetry) = &self.telemetry {
+                let _ = telemetry.handle.add_point(
+                    flush.collapsed_spans.resources as f64,
+                    &telemetry.keys.collapsed_resources,
+                    vec![],
+                );
+            }
+            #[cfg(feature = "dogstatsd")]
+            if let Some(client) = &self.dogstatsd {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    flush.collapsed_spans.resources as i64,
+                    [libdd_common::tag!("collapsed_spans", "resource")].iter(),
+                )]);
+            }
+        }
+
+        if flush.collapsed_spans.http_endpoint > 0 {
+            #[cfg(feature = "telemetry")]
+            if let Some(telemetry) = &self.telemetry {
+                let _ = telemetry.handle.add_point(
+                    flush.collapsed_spans.http_endpoint as f64,
+                    &telemetry.keys.collapsed_http_endpoints,
+                    vec![],
+                );
+            }
+            #[cfg(feature = "dogstatsd")]
+            if let Some(client) = &self.dogstatsd {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    flush.collapsed_spans.http_endpoint as i64,
+                    [libdd_common::tag!("collapsed_spans", "http_endpoint")].iter(),
+                )]);
+            }
+        }
+
+        if flush.collapsed_spans.peer_tags > 0 {
+            #[cfg(feature = "telemetry")]
+            if let Some(telemetry) = &self.telemetry {
+                let _ = telemetry.handle.add_point(
+                    flush.collapsed_spans.peer_tags as f64,
+                    &telemetry.keys.collapsed_peer_tags,
+                    vec![],
+                );
+            }
+            #[cfg(feature = "dogstatsd")]
+            if let Some(client) = &self.dogstatsd {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    flush.collapsed_spans.peer_tags as i64,
+                    [libdd_common::tag!("collapsed_spans", "peer_tags")].iter(),
+                )]);
+            }
+        }
+
+        if flush.collapsed_spans.additional_tags > 0 {
+            #[cfg(feature = "telemetry")]
+            if let Some(telemetry) = &self.telemetry {
+                let _ = telemetry.handle.add_point(
+                    flush.collapsed_spans.additional_tags as f64,
+                    &telemetry.keys.collapsed_additional_tags,
+                    vec![],
+                );
+            }
+            #[cfg(feature = "dogstatsd")]
+            if let Some(client) = &self.dogstatsd {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    flush.collapsed_spans.additional_tags as i64,
+                    [libdd_common::tag!(
+                        "collapsed_spans",
+                        "additional_metric_tags"
+                    )]
+                    .iter(),
                 )]);
             }
         }
@@ -636,7 +774,8 @@ mod tests {
             vec![],
             vec![],
             Some(CardinalityLimitConfig {
-                whole_key_limit: 1, // max 1 distinct key → second span collapses
+                whole_key_limit: 2, // max 2 distinct key → third distinct span collapses
+                resource_limit: 1,  // max 1 distinct resource values
                 ..Default::default()
             }),
             #[cfg(feature = "stats-obfuscation")]
@@ -645,26 +784,26 @@ mod tests {
 
         let mut trace = vec![
             SpanSlice {
-                service: "svc",
+                service: "svc-a",
                 resource: "resource-a",
                 duration: 10,
                 ..Default::default()
             },
             SpanSlice {
-                service: "svc",
+                service: "svc-a",
                 resource: "resource-b",
                 duration: 20,
                 ..Default::default()
             },
             SpanSlice {
-                service: "svc",
-                resource: "resource-c",
+                service: "svc-b",
+                resource: "resource-a",
                 duration: 20,
                 ..Default::default()
             },
             SpanSlice {
-                service: "svc",
-                resource: "resource-d",
+                service: "svc-b",
+                resource: "resource-b",
                 duration: 20,
                 ..Default::default()
             },
@@ -768,12 +907,23 @@ mod tests {
         stats_exporter.send(true).await.unwrap();
 
         let mut buf = [0u8; 256];
+        // Whole-key metric emitted first
         let n = socket
             .recv(&mut buf)
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:3|c|#collapsed_spans:whole_key",
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:whole_key",
+            "DogStatsD datagram must match the expected format"
+        );
+
+        // Then comes the per-field collapse metrics
+        let n = socket
+            .recv(&mut buf)
+            .expect("expected a DogStatsD datagram");
+        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
+        assert_eq!(
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:resource",
             "DogStatsD datagram must match the expected format"
         );
     }
@@ -819,23 +969,23 @@ mod tests {
         stats_exporter.send(true).await.unwrap();
 
         let stats_exporter_ref = &stats_exporter;
-        let (handle_ref, _key) = stats_exporter_ref
+        let telemetry = stats_exporter_ref
             .telemetry
             .as_ref()
             .expect("telemetry must be set");
-        let receiver = handle_ref.stats().expect("failed to request stats");
+        let receiver = telemetry.handle.stats().expect("failed to request stats");
         let stats = receiver.await.expect("failed to receive stats");
         // metric_contexts == 1 verifies that exactly one metric name was registered
         // (i.e. COLLAPSED_SPANS_METRIC and nothing else).
         // metric_buckets.buckets == 1 verifies that a data point was recorded for it.
         // However it does not check the value of the data point.
         assert_eq!(
-            stats.metric_contexts, 1,
-            "exactly one metric context (COLLAPSED_SPANS_METRIC) should be registered"
+            stats.metric_contexts, 5,
+            "exactly five metric context (COLLAPSED_SPANS_METRIC, and one for each of the 4 supported field collapsed) should be registered"
         );
         assert_eq!(
-            stats.metric_buckets.buckets, 1,
-            "exactly one metric bucket expected after one collapsed-spans emission"
+            stats.metric_buckets.buckets, 2,
+            "exactly one metric bucket expected after collapsing both on whole-key and on the resource field"
         );
     }
 }

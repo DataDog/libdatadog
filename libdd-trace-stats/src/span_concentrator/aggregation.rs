@@ -425,6 +425,31 @@ pub struct OtlpStatsBucket {
     pub exact: Vec<OtlpExactGroup>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+/// Number of spans collapsed into the overflow bucket for each reason they got collapsed
+pub struct StatsBucketCollapseTelemetry {
+    /// Collapsed due to whole-key cardinality limiting.
+    pub whole_key: u64,
+    /// Collapsed due to resource key cardinality limiting.
+    pub resources: u64,
+    /// Collapsed due to http_endpoint key cardinality limiting.
+    pub http_endpoint: u64,
+    /// Collapsed due to peer_tags key cardinality limiting.
+    pub peer_tags: u64,
+    /// Collapsed due to additional_tags key cardinality limiting.
+    pub additional_tags: u64,
+}
+
+impl std::ops::AddAssign<StatsBucketCollapseTelemetry> for StatsBucketCollapseTelemetry {
+    fn add_assign(&mut self, rhs: StatsBucketCollapseTelemetry) {
+        self.whole_key += rhs.whole_key;
+        self.resources += rhs.resources;
+        self.http_endpoint += rhs.http_endpoint;
+        self.peer_tags += rhs.peer_tags;
+        self.additional_tags += rhs.additional_tags;
+    }
+}
+
 /// A time bucket used for stats aggregation. It stores a map of GroupedStats storing the stats of
 /// spans aggregated on their AggregationKey.
 #[derive(Debug, Clone)]
@@ -434,13 +459,13 @@ pub(super) struct StatsBucket {
     /// Maximum number of distinct aggregation keys this bucket will hold before collapsing new
     /// ones into the overflow sentinel key.
     cardinality_limits: CardinalityLimitConfig,
+    // HashSet of hashes of values so save memory, no need for total accuracy here
     distinct_resources: HashSet<u64>,
     distinct_http_endpoint: HashSet<u64>,
     distinct_peer_tags: HashSet<u64>,
     #[allow(unused, reason = "FIXME: implement stats additional tags")]
     distinct_additional_tags: HashSet<u64>,
-    /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
-    collapsed_count: u64,
+    collapsed_counts: StatsBucketCollapseTelemetry,
     /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
     /// constant per bucket
     #[cfg(feature = "stats-obfuscation")]
@@ -460,19 +485,20 @@ impl StatsBucket {
             data: HashMap::new(),
             start: start_timestamp,
             cardinality_limits,
-            collapsed_count: 0,
             #[cfg(feature = "stats-obfuscation")]
             obfuscated: obfuscation_enabled,
             distinct_resources: HashSet::new(),
             distinct_http_endpoint: HashSet::new(),
             distinct_peer_tags: HashSet::new(),
             distinct_additional_tags: HashSet::new(),
+            collapsed_counts: StatsBucketCollapseTelemetry::default(),
         }
     }
 
-    /// Return the number of spans collapsed into the overflow bucket.
-    pub(super) fn collapsed_count(&self) -> u64 {
-        self.collapsed_count
+    /// Return the number of spans collapsed into the overflow buckets, for whole-key and for each
+    /// field
+    pub(super) fn collapsed_counts(&self) -> StatsBucketCollapseTelemetry {
+        self.collapsed_counts
     }
 
     /// Insert a value as stats in the group corresponding to the aggregation key. If the key is new
@@ -492,7 +518,7 @@ impl StatsBucket {
         if self.data.len() >= self.cardinality_limits.whole_key_limit
             && !self.data.contains_key(&key)
         {
-            self.collapsed_count += 1;
+            self.collapsed_counts.whole_key += 1;
             self.data
                 .entry(OwnedAggregationKey::overflow_key())
                 .or_default()
@@ -519,6 +545,7 @@ impl StatsBucket {
             && !self.distinct_resources.contains(&resource_name_hash)
         {
             key.fixed.resource_name = TRACER_BLOCKED_VALUE;
+            self.collapsed_counts.resources += 1;
         } else {
             self.distinct_resources.insert(resource_name_hash);
         }
@@ -528,6 +555,7 @@ impl StatsBucket {
             && !self.distinct_http_endpoint.contains(&http_endpoint_hash)
         {
             key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
+            self.collapsed_counts.http_endpoint += 1;
         } else {
             self.distinct_http_endpoint.insert(http_endpoint_hash);
         }
@@ -537,6 +565,7 @@ impl StatsBucket {
             && !self.distinct_peer_tags.contains(&peer_tags_hash)
         {
             key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
+            self.collapsed_counts.peer_tags += 1;
         } else {
             self.distinct_peer_tags.insert(peer_tags_hash);
         }

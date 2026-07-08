@@ -11,7 +11,10 @@ use aggregation::StatsBucket;
 
 mod aggregation;
 use aggregation::BorrowedAggregationKey;
-pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
+pub use aggregation::{
+    FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket,
+    StatsBucketCollapseTelemetry,
+};
 
 pub mod stat_span;
 pub use stat_span::StatSpan;
@@ -26,8 +29,8 @@ pub struct FlushResult {
     /// Buckets whose resource names were left as-is.
     pub unobfuscated_buckets: Vec<pb::ClientStatsBucket>,
     /// Total number of spans that were collapsed into the overflow sentinel bucket due to
-    /// cardinality limiting across all flushed time buckets.
-    pub collapsed_spans: u64,
+    /// whole-key cardinality limiting across all flushed time buckets.
+    pub collapsed_spans: StatsBucketCollapseTelemetry,
 }
 
 impl FlushResult {
@@ -164,6 +167,8 @@ pub struct SpanConcentrator {
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
     peer_tag_keys: Vec<String>,
+    /// Cardinality collapsed log was already emitted
+    cardinality_log_emitted: bool,
     #[cfg(feature = "stats-obfuscation")]
     obfuscation_config: SharedStatsComputationObfuscationConfig,
 }
@@ -214,6 +219,7 @@ impl SpanConcentrator {
             peer_tag_keys,
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config: obfuscation_config.unwrap_or_default(),
+            cardinality_log_emitted: false,
         }
     }
 
@@ -343,7 +349,7 @@ impl SpanConcentrator {
         now: SystemTime,
         force: bool,
         encode: impl Fn(StatsBucket, u64) -> T,
-    ) -> (Vec<(bool, T)>, u64) {
+    ) -> (Vec<(bool, T)>, StatsBucketCollapseTelemetry) {
         // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
         let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
@@ -353,7 +359,7 @@ impl SpanConcentrator {
             align_timestamp(now_timestamp, self.bucket_size)
                 - (self.buffer_len as u64 - 1) * self.bucket_size
         };
-        let mut total_collapsed = 0;
+        let mut total_collapsed = StatsBucketCollapseTelemetry::default();
         let buckets_pb = buckets
             .into_iter()
             .filter_map(|(timestamp, bucket)| {
@@ -370,7 +376,7 @@ impl SpanConcentrator {
                     self.buckets.insert(timestamp, bucket);
                     return None;
                 }
-                total_collapsed += bucket.collapsed_count();
+                total_collapsed += bucket.collapsed_counts();
                 #[cfg(feature = "stats-obfuscation")]
                 let obfuscated = bucket.obfuscated;
                 #[cfg(not(feature = "stats-obfuscation"))]
@@ -378,13 +384,35 @@ impl SpanConcentrator {
                 Some((obfuscated, encode(bucket, self.bucket_size)))
             })
             .collect();
-        if total_collapsed > 0 {
+
+        if !self.cardinality_log_emitted && total_collapsed.whole_key > 0 {
+            self.cardinality_log_emitted = true;
             debug!(
                 max_entries_per_bucket = self.cardinality_limits.whole_key_limit,
-                total_collapsed,
+                total_whole_key_collapsed = total_collapsed.whole_key,
                 "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT"
             );
         }
+        if !self.cardinality_log_emitted
+            && (total_collapsed.resources > 0
+                || total_collapsed.http_endpoint > 0
+                || total_collapsed.peer_tags > 0
+                || total_collapsed.additional_tags > 0)
+        {
+            self.cardinality_log_emitted = true;
+            debug!(
+                max_distinct_resource_per_bucket = self.cardinality_limits.resource_limit,
+                total_resource_collapsed = total_collapsed.resources,
+                max_distinct_http_endpoint_per_bucket = self.cardinality_limits.http_endpoint_limit,
+                total_http_endpoint_collapsed = total_collapsed.http_endpoint,
+                max_distinct_peer_tags_per_bucket = self.cardinality_limits.peer_tags_limit,
+                total_peer_tags_collapsed = total_collapsed.peer_tags,
+                max_distinct_additional_tags_per_bucket = self.cardinality_limits.additional_tags_limit,
+                total_additional_tags_collapsed = total_collapsed.additional_tags,
+                "Client-side stats field have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding one of the DD_TRACE_STATS_*_CARDINALITY_LIMIT"
+            );
+        }
+
         (buckets_pb, total_collapsed)
     }
 }

@@ -57,7 +57,7 @@ use zwohash::ZwoHasher;
 use libdd_ddsketch::DDSketch;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{
-    FixedAggregationKey, FlushResult, FlushableConcentrator,
+    FixedAggregationKey, FlushResult, FlushableConcentrator, StatsBucketCollapseTelemetry,
 };
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
@@ -827,7 +827,7 @@ impl FlushableConcentrator for ShmSpanConcentrator {
         FlushResult {
             obfuscated_buckets: vec![],
             unobfuscated_buckets: self.drain_buckets(force),
-            collapsed_spans: 0,
+            collapsed_spans: StatsBucketCollapseTelemetry::default(),
         }
     }
 }
