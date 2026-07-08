@@ -187,7 +187,7 @@ async fn run_one_iteration(
 
 #[cfg(feature = "agentless")]
 async fn agentless_main() -> anyhow::Result<()> {
-     let hostname = get_hostname();
+    let hostname = get_hostname();
     println!("Hostname: {hostname}");
 
     let dd_api_key = std::env::var("DD_API_KEY").ok();
@@ -270,12 +270,10 @@ async fn agentless_main() -> anyhow::Result<()> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-   #[cfg(feature = "agentless")]
-   agentless_main().await?;
-   Ok(())
+    #[cfg(feature = "agentless")]
+    agentless_main().await?;
+    Ok(())
 }
-
-
 
 fn print_summary(label: &str, samples: &[Sample]) {
     let n = samples.len() as u32;

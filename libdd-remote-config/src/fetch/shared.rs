@@ -359,10 +359,13 @@ impl SharedFetcher {
 
             if let Some(interval) = opaque_state.server_recommended_refresh_interval() {
                 // Keep the run-loop interval in sync with the server-provided value
-                // If the interval is nanoseconds is greater than u64 max, pick the max representable value
-                // This is tolerable as u64 max nanoseconds still represents 35584 years
-                self.interval
-                    .store(interval.as_nanos().min(u64::MAX as u128) as u64, Ordering::Relaxed);
+                // If the interval is nanoseconds is greater than u64 max, pick the max
+                // representable value This is tolerable as u64 max nanoseconds
+                // still represents 35584 years
+                self.interval.store(
+                    interval.as_nanos().min(u64::MAX as u128) as u64,
+                    Ordering::Relaxed,
+                );
             }
 
             select! {
