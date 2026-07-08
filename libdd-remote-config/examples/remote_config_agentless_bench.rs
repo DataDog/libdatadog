@@ -1,6 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(unreachable_code)]
+#![allow(unused)]
+
 //! Benchmark for agentless Remote Config fetching.
 //!
 //! Measures, for three distinct phases, three quantities each:
@@ -182,9 +185,9 @@ async fn run_one_iteration(
     Ok((init, first, refetch))
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
-    let hostname = get_hostname();
+#[cfg(feature = "agentless")]
+async fn agentless_main() -> anyhow::Result<()> {
+     let hostname = get_hostname();
     println!("Hostname: {hostname}");
 
     let dd_api_key = std::env::var("DD_API_KEY").ok();
@@ -264,6 +267,15 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> anyhow::Result<()> {
+   #[cfg(feature = "agentless")]
+   agentless_main().await?;
+   Ok(())
+}
+
+
 
 fn print_summary(label: &str, samples: &[Sample]) {
     let n = samples.len() as u32;
