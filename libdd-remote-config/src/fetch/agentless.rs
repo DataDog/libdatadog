@@ -89,26 +89,18 @@ impl Site {
     }
 }
 
-/// Extract the `version` integer from a signed TUF root JSON document. Used
-/// only when loading an override root from disk; the embedded roots have
-/// their versions hardcoded above.
-fn parse_root_version(raw: &[u8]) -> anyhow::Result<u64> {
-    let v: Value = serde_json::from_slice(raw)?;
-    v.get("signed")
-        .and_then(|s| s.get("version"))
-        .and_then(Value::as_u64)
-        .ok_or_else(|| format_err!("missing or invalid signed.version in TUF root"))
-}
-
 /// Read a TUF root override from disk, returning the bytes and their parsed
 /// version
-fn load_root(override_path: &std::path::Path) -> anyhow::Result<(Vec<u8>, u64)> {
+fn load_root(override_path: &std::path::Path) -> anyhow::Result<Vec<u8>> {
     let bytes = std::fs::read(override_path)
         .map_err(|e| format_err!("failed to read TUF root override at {override_path:?}: {e}"))?;
-    let version = parse_root_version(&bytes)?;
-    Ok((bytes, version))
+    Ok(bytes)
 }
 
+/// Fake version sent to RC. We have to do this as the RC backend will not answer if the
+/// agent_version field is empty or lower than a certain version.
+///
+/// This is currently set to the last agent version released
 const FAKE_AGENT_VERSION: &str = "7.78.4";
 
 type TUFRepo = tuf::repository::EphemeralRepository<tuf::interchange::Json>;
@@ -265,12 +257,12 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
             .unwrap_or(Site::Prod);
 
         let config_root_bytes: Cow<'static, [u8]> = match cfg.config_root_override_path.as_deref() {
-            Some(p) => Cow::Owned(load_root(p)?.0),
+            Some(p) => Cow::Owned(load_root(p)?),
             None => Cow::Borrowed(site.embedded_config_root()),
         };
         let director_root_bytes: Cow<'static, [u8]> =
             match cfg.director_root_override_path.as_deref() {
-                Some(p) => Cow::Owned(load_root(p)?.0),
+                Some(p) => Cow::Owned(load_root(p)?),
                 None => Cow::Borrowed(site.embedded_director_root()),
             };
 
