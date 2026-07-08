@@ -10,6 +10,7 @@ use std::{
 };
 
 use super::platform::{FileBackedHandle, PlatformHandle, ShmHandle};
+use crate::ipc_server::OwnedServerConn;
 
 extern crate self as datadog_ipc;
 
@@ -30,6 +31,7 @@ pub trait ExampleInterface {
     async fn echo_len(payload: Vec<u8>) -> u32;
 }
 
+/// Shared server state. Cloned into a per-connection [`ExampleConnectionHandler`] on accept.
 #[derive(Default, Clone)]
 pub struct ExampleServer {
     req_cnt: Arc<AtomicU64>,
@@ -38,70 +40,69 @@ pub struct ExampleServer {
 
 impl ExampleServer {
     pub async fn accept_connection(self, conn: crate::SeqpacketConn) {
-        serve_example_interface_connection(conn, Arc::new(self)).await
+        let connection = match OwnedServerConn::new(conn) {
+            Ok(c) => c,
+            Err(e) => {
+                ::tracing::error!("ExampleServer: failed to set up connection: {e}");
+                return;
+            }
+        };
+        serve_example_interface_connection(Arc::new(ExampleConnectionHandler {
+            server: self,
+            connection,
+        }))
+        .await
     }
 }
 
-impl ExampleInterface for ExampleServer {
+/// Per-connection handler: owns the connection and serves requests received on it.
+struct ExampleConnectionHandler {
+    server: ExampleServer,
+    connection: OwnedServerConn,
+}
+
+impl ExampleInterface for ExampleConnectionHandler {
     fn recv_counter(&self) -> &AtomicU64 {
-        &self.req_cnt
+        &self.server.req_cnt
     }
 
-    fn notify(
-        &self,
-        _peer: datadog_ipc::PeerCredentials,
-    ) -> impl std::future::Future<Output = ()> + Send + '_ {
+    fn connection(&self) -> &OwnedServerConn {
+        &self.connection
+    }
+
+    fn notify(&self) -> impl std::future::Future<Output = ()> + Send + '_ {
         std::future::ready(())
     }
 
-    fn ping(
-        &self,
-        _peer: datadog_ipc::PeerCredentials,
-    ) -> impl std::future::Future<Output = ()> + Send + '_ {
+    fn ping(&self) -> impl std::future::Future<Output = ()> + Send + '_ {
         std::future::ready(())
     }
 
-    fn time_now(
-        &self,
-        _peer: datadog_ipc::PeerCredentials,
-    ) -> impl std::future::Future<Output = Duration> + Send + '_ {
+    fn time_now(&self) -> impl std::future::Future<Output = Duration> + Send + '_ {
         std::future::ready(Instant::now().elapsed())
     }
 
-    fn req_cnt(
-        &self,
-        _peer: datadog_ipc::PeerCredentials,
-    ) -> impl std::future::Future<Output = u32> + Send + '_ {
-        std::future::ready(self.req_cnt.load(Ordering::Relaxed) as u32)
+    fn req_cnt(&self) -> impl std::future::Future<Output = u32> + Send + '_ {
+        std::future::ready(self.server.req_cnt.load(Ordering::Relaxed) as u32)
     }
 
     fn store_file(
         &self,
-        _peer: datadog_ipc::PeerCredentials,
         file: PlatformHandle<File>,
     ) -> impl std::future::Future<Output = ()> + Send + '_ {
         #[allow(clippy::unwrap_used)]
-        self.stored_files.lock().unwrap().push(file);
+        self.server.stored_files.lock().unwrap().push(file);
         std::future::ready(())
     }
 
-    async fn shm_sum(
-        &self,
-        _peer: datadog_ipc::PeerCredentials,
-        handle: ShmHandle,
-        len: usize,
-    ) -> u64 {
+    async fn shm_sum(&self, handle: ShmHandle, len: usize) -> u64 {
         match handle.map() {
             Ok(mapped) => mapped.as_slice()[..len].iter().map(|&b| b as u64).sum(),
             Err(_) => u64::MAX,
         }
     }
 
-    fn echo_len(
-        &self,
-        _peer: datadog_ipc::PeerCredentials,
-        payload: Vec<u8>,
-    ) -> impl std::future::Future<Output = u32> + Send + '_ {
+    fn echo_len(&self, payload: Vec<u8>) -> impl std::future::Future<Output = u32> + Send + '_ {
         std::future::ready(payload.len() as u32)
     }
 }
