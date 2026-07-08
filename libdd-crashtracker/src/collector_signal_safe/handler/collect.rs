@@ -16,6 +16,8 @@ use crate::collector_signal_safe::{
 };
 
 const REAP_KILL_TIMEOUT_MS: i64 = 500;
+// This currently equals `config::COLLECTOR_REAP_MS_DEFAULT` by coincidence: it is the
+// post-timeout SIGKILL wait, not the collector's configured reap budget.
 const REAP_WAIT_INTERVAL_MS: i32 = 100;
 
 #[derive(Clone, Copy)]
@@ -73,18 +75,14 @@ impl CrashEvent {
             frames,
         }
     }
-
-    pub(super) fn instruction_pointer(self) -> usize {
-        backtrace::instruction_pointer(self.ucontext)
-    }
 }
 
 pub(super) fn collect_crash(event: CrashEvent) {
     // The receiver is forked first and execs the configured receiver binary with the read side of
     // the pipe on stdin. Report generation runs in a second forked child so stack walking and
     // formatting happen outside the crashing process' possibly-corrupt heap. The original process
-    // only forks, closes fds, and reaps. A receiver exit status of `EXIT_CODE_FAILURE` means exec
-    // failed, so the handler can still fall back to `report_fd`.
+    // only forks, closes fds, and reaps. Receiver exec failure or abnormal death leaves the
+    // handler with a last-chance `report_fd` fallback.
     let report_fd = state::SETTINGS.report_fd.load(Ordering::Relaxed);
     let caps = capabilities::get();
 
@@ -151,8 +149,10 @@ pub(super) fn collect_crash(event: CrashEvent) {
         receiver as i32,
         state::SETTINGS.receiver_reap_ms.load(Ordering::Relaxed) as i64,
     );
-    if receiver_status.is_some_and(|status| exited_with(status, EXIT_CODE_FAILURE)) {
-        crash_debug(b"receiver exec failed", event.sig);
+    if receiver_status.is_some_and(receiver_unavailable) {
+        crash_debug(b"receiver unavailable", event.sig);
+        // A receiver killed by our reap escalation may have already consumed the pipe and written
+        // the report. Prefer a possible duplicate via `report_fd` over losing the crash report.
         fallback_to_report_fd(
             event,
             caps,
@@ -236,4 +236,8 @@ fn reap_or_kill(pid: i32, timeout_ms: i64) -> Option<i32> {
 
 fn exited_with(status: i32, code: i32) -> bool {
     libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == code
+}
+
+fn receiver_unavailable(status: i32) -> bool {
+    exited_with(status, EXIT_CODE_FAILURE) || libc::WIFSIGNALED(status)
 }

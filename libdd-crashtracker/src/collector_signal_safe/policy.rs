@@ -14,10 +14,8 @@ pub enum Disposition {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChainAction {
-    InvokeApp,
     RestoreDefaultAndRefault,
     RestoreDefaultAndReraise,
-    Resume,
 }
 
 pub(super) fn disposition_of(handler: *mut c_void) -> Disposition {
@@ -30,14 +28,6 @@ pub(super) fn disposition_of(handler: *mut c_void) -> Disposition {
 
 pub(super) fn app_handler_is_real(handler: *mut c_void) -> bool {
     matches!(disposition_of(handler), Disposition::Handler)
-}
-
-pub(super) fn should_run_app_first(force_on_top: bool, app_is_real: bool) -> bool {
-    !force_on_top && app_is_real
-}
-
-pub(super) fn app_recovered(handler_after: *mut c_void) -> bool {
-    disposition_of(handler_after) != Disposition::Default
 }
 
 pub(super) fn is_genuine_fault(
@@ -60,13 +50,14 @@ pub(super) fn chain_action(
     has_siginfo: bool,
     si_code: i32,
 ) -> ChainAction {
-    match disposition {
-        Disposition::Ignore => ChainAction::Resume,
-        Disposition::Handler => ChainAction::InvokeApp,
-        Disposition::Default if should_refault(has_siginfo, si_code) => {
-            ChainAction::RestoreDefaultAndRefault
+    // Owned signal slots are installed only over SIG_DFL today. If a non-default disposition ever
+    // appears here before app-handler chaining is implemented, keep terminal crash semantics
+    // instead of invoking unreachable app code.
+    match (disposition, should_refault(has_siginfo, si_code)) {
+        (_, true) => ChainAction::RestoreDefaultAndRefault,
+        (Disposition::Default | Disposition::Ignore | Disposition::Handler, false) => {
+            ChainAction::RestoreDefaultAndReraise
         }
-        Disposition::Default => ChainAction::RestoreDefaultAndReraise,
     }
 }
 
@@ -102,29 +93,6 @@ mod tests {
     }
 
     #[test]
-    fn handler_policy_tracks_application_recovery() {
-        let dfl = libc::SIG_DFL as *mut c_void;
-        let ign = libc::SIG_IGN as *mut c_void;
-        let handler = 0x1234usize as *mut c_void;
-
-        assert!(should_run_app_first(false, true));
-        assert!(!should_run_app_first(true, true));
-        assert!(!should_run_app_first(false, false));
-
-        assert!(app_recovered(handler));
-        assert!(app_recovered(ign));
-        assert!(!app_recovered(dfl));
-    }
-
-    #[test]
-    fn disposition_based_chain_action_resumes_ignored_signals() {
-        assert_eq!(
-            chain_action(Disposition::Ignore, true, SEGV_MAPERR),
-            ChainAction::Resume
-        );
-    }
-
-    #[test]
     fn genuine_fault_filter_ignores_external_async_signal() {
         assert!(!is_genuine_fault(true, SI_USER, 7, 9));
     }
@@ -146,7 +114,11 @@ mod tests {
         );
         assert_eq!(
             chain_action(Disposition::Handler, true, SEGV_MAPERR),
-            ChainAction::InvokeApp
+            ChainAction::RestoreDefaultAndRefault
+        );
+        assert_eq!(
+            chain_action(Disposition::Ignore, true, SI_USER),
+            ChainAction::RestoreDefaultAndReraise
         );
     }
 }

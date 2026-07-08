@@ -86,6 +86,19 @@ fn signal_safe_receiver_deleted_child_process() {
     std::process::abort();
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn signal_safe_receiver_signaled_child_process() {
+    let Some(report) = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER_SIGNALED_CHILD") else {
+        return;
+    };
+    let receiver = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER").expect("receiver");
+
+    let _report = init_report_fd(report, receiver.as_encoded_bytes(), false);
+    bootstrap_complete();
+    std::process::abort();
+}
+
 #[test]
 fn signal_safe_preexisting_app_handler_child_process() {
     let Some(report) = std::env::var_os("DD_SIGNAL_SAFE_E2E_APP_HANDLER_CHILD") else {
@@ -198,6 +211,35 @@ fn signal_safe_receiver_deleted_after_init_falls_back_to_report_fd() {
         .arg("signal_safe_receiver_deleted_child_process")
         .arg("--nocapture")
         .env("DD_SIGNAL_SAFE_E2E_RECEIVER_DELETED_CHILD", &report)
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER", &receiver)
+        .status()
+        .expect("spawn child");
+
+    assert!(!status.success(), "child should terminate via signal");
+    let report = fs::read_to_string(&report).expect("read crash report");
+    assert_common_report_shape(&report);
+    assert!(report.contains("\"report_degraded:receiver_unavailable\""));
+    assert!(report.contains("\"report_degraded:report_to_fd\""));
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[test]
+fn signal_safe_receiver_death_by_signal_falls_back_to_report_fd() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let receiver = temp.path().join("receiver.sh");
+    let report = temp.path().join("report.txt");
+
+    fs::write(&receiver, b"#!/bin/sh\nkill -9 $$\n").expect("write receiver");
+    let mut perms = fs::metadata(&receiver).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&receiver, perms).expect("chmod receiver");
+
+    let current_exe = std::env::current_exe().expect("current_exe");
+    let status = Command::new(current_exe)
+        .arg("--exact")
+        .arg("signal_safe_receiver_signaled_child_process")
+        .arg("--nocapture")
+        .env("DD_SIGNAL_SAFE_E2E_RECEIVER_SIGNALED_CHILD", &report)
         .env("DD_SIGNAL_SAFE_E2E_RECEIVER", &receiver)
         .status()
         .expect("spawn child");

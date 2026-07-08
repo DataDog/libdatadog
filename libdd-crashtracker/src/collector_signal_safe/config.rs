@@ -26,10 +26,12 @@ pub const DEFAULT_RUNTIME_ID: &str = "00000000-0000-0000-0000-000000000000";
 /// Capacity for signal-safe filesystem path buffers (PATH_MAX + trailing NUL).
 pub const PATH_CAPACITY: usize = 513;
 
-pub const RECEIVER_TIMEOUT_SECS: u32 = DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS;
+pub const RECEIVER_TIMEOUT_SECS_DEFAULT: u32 = DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS;
 pub const RECEIVER_TIMEOUT_SECS_MAX: u32 = 60;
-pub const COLLECTOR_REAP_MS: i32 = 500;
-pub const RECEIVER_TIMEOUT_GRACE_MS: i32 = 1000;
+pub const COLLECTOR_REAP_MS_DEFAULT: i32 = 500;
+pub const RECEIVER_REAP_GRACE_MS: i32 = 1000;
+pub const RECEIVER_REAP_MS_DEFAULT: i32 =
+    RECEIVER_TIMEOUT_SECS_DEFAULT as i32 * 1000 + RECEIVER_REAP_GRACE_MS;
 pub const BACKTRACE_LEVELS_DEFAULT: usize = 32;
 pub const BACKTRACE_LEVELS_MAX: usize = 64;
 
@@ -42,17 +44,27 @@ pub struct InitConfig<'a> {
     /// Receiver executable path. When empty, no receiver is spawned and collection degrades to
     /// the `report_fd` fallback.
     pub receiver_path: &'a [u8],
+    /// Service name emitted in crash report metadata and tags.
     pub service: &'a [u8],
+    /// Deployment environment emitted in crash report metadata and tags.
     pub env: &'a [u8],
+    /// Application version emitted in crash report metadata and tags.
     pub app_version: &'a [u8],
+    /// Runtime identifier emitted in crash report metadata.
     pub runtime_id: &'a [u8],
+    /// Platform name emitted in crash report metadata.
     pub platform: &'a [u8],
+    /// Library name emitted in crash report metadata.
     pub library_name: &'a [u8],
+    /// Library version emitted in crash report metadata.
     pub library_version: &'a [u8],
+    /// Library family emitted in crash report metadata.
     pub family: &'a [u8],
+    /// Service fallback emitted when `service` is empty.
     pub default_service: &'a [u8],
-    pub force_on_top: bool,
+    /// Install, probe, and immediately shut down once `bootstrap_complete` is called.
     pub only_bootstrap: bool,
+    /// Emit minimal async-signal-safe handler diagnostics to stderr.
     pub debug_logging: bool,
     /// Install the built-in alternate signal stack on the init thread.
     ///
@@ -64,16 +76,21 @@ pub struct InitConfig<'a> {
     /// This may be used with `create_alt_stack` or with a caller-provided alternate stack already
     /// installed on the current thread.
     pub use_alt_stack: bool,
-    /// Add all managed crash signals to the handler mask.
-    ///
-    /// Application handlers invoked by the signal-safe handler run with this mask in effect.
+    /// Add all managed crash signals to the signal mask while the handler runs.
     pub block_signals: bool,
+    /// Reset the crashing signal's disposition to `SIG_DFL` immediately on handler entry.
     pub disarm_on_entry: bool,
+    /// File descriptor used for degraded-mode report emission.
     pub report_fd: i32,
+    /// Milliseconds to wait for the collector child before killing it.
     pub collector_reap_ms: i32,
+    /// Receiver timeout, in seconds, passed through the receiver config and used for parent reap.
     pub receiver_timeout_secs: u32,
+    /// Maximum number of stack frames to emit.
     pub max_frames: usize,
+    /// Close non-stdio descriptors before the receiver `execv`.
     pub close_fds_on_receiver: bool,
+    /// Probe `process_vm_readv` in a forked child to detect seccomp denial.
     pub probe_seccomp: bool,
 }
 
@@ -98,7 +115,6 @@ impl<'a> Default for InitConfig<'a> {
             library_version: DEFAULT_LIBRARY_VERSION.as_bytes(),
             family: DEFAULT_LIBRARY_FAMILY.as_bytes(),
             default_service: DEFAULT_SERVICE.as_bytes(),
-            force_on_top: false,
             only_bootstrap: false,
             debug_logging: false,
             create_alt_stack: false,
@@ -106,8 +122,8 @@ impl<'a> Default for InitConfig<'a> {
             block_signals: true,
             disarm_on_entry: false,
             report_fd: -1,
-            collector_reap_ms: COLLECTOR_REAP_MS,
-            receiver_timeout_secs: RECEIVER_TIMEOUT_SECS,
+            collector_reap_ms: COLLECTOR_REAP_MS_DEFAULT,
+            receiver_timeout_secs: RECEIVER_TIMEOUT_SECS_DEFAULT,
             max_frames: BACKTRACE_LEVELS_DEFAULT,
             close_fds_on_receiver: true,
             probe_seccomp: false,
@@ -210,9 +226,6 @@ pub fn apply(config: &InitConfig<'_>, m: &mut state::Meta) -> Result<(), Prepare
     }
 
     state::SETTINGS
-        .force_on_top
-        .store(config.force_on_top, Relaxed);
-    state::SETTINGS
         .only_bootstrap
         .store(config.only_bootstrap, Relaxed);
     state::SETTINGS
@@ -240,7 +253,7 @@ pub fn apply(config: &InitConfig<'_>, m: &mut state::Meta) -> Result<(), Prepare
     );
     state::SETTINGS.receiver_reap_ms.store(
         normalized_receiver_timeout_secs(config.receiver_timeout_secs) as i32 * 1000
-            + RECEIVER_TIMEOUT_GRACE_MS,
+            + RECEIVER_REAP_GRACE_MS,
         Relaxed,
     );
     state::SETTINGS
@@ -259,7 +272,7 @@ pub fn apply(config: &InitConfig<'_>, m: &mut state::Meta) -> Result<(), Prepare
 
 fn normalized_receiver_timeout_secs(value: u32) -> u32 {
     if value == 0 {
-        RECEIVER_TIMEOUT_SECS
+        RECEIVER_TIMEOUT_SECS_DEFAULT
     } else if value > RECEIVER_TIMEOUT_SECS_MAX {
         RECEIVER_TIMEOUT_SECS_MAX
     } else {
@@ -269,7 +282,7 @@ fn normalized_receiver_timeout_secs(value: u32) -> u32 {
 
 fn normalized_collector_reap_ms(value: i32) -> i32 {
     if value <= 0 {
-        COLLECTOR_REAP_MS
+        COLLECTOR_REAP_MS_DEFAULT
     } else {
         value
     }
@@ -363,7 +376,10 @@ mod tests {
 
     #[test]
     fn timeout_seconds_are_clamped() {
-        assert_eq!(normalized_receiver_timeout_secs(0), RECEIVER_TIMEOUT_SECS);
+        assert_eq!(
+            normalized_receiver_timeout_secs(0),
+            RECEIVER_TIMEOUT_SECS_DEFAULT
+        );
         assert_eq!(normalized_receiver_timeout_secs(1), 1);
         assert_eq!(
             normalized_receiver_timeout_secs(RECEIVER_TIMEOUT_SECS_MAX + 1),
@@ -398,7 +414,6 @@ mod tests {
                 app_version: b"1.2.3",
                 runtime_id: b"rid",
                 platform: b"host",
-                force_on_top: true,
                 only_bootstrap: true,
                 debug_logging: true,
                 ..InitConfig::default()
@@ -413,7 +428,6 @@ mod tests {
         assert_eq!(meta.runtime_id.as_str(), "rid");
         assert_eq!(meta.platform.as_str(), "host");
         assert_eq!(meta.process_path.as_slice(), b"/tmp/receiver\0");
-        assert!(state::SETTINGS.force_on_top.load(Relaxed));
         assert!(state::SETTINGS.only_bootstrap.load(Relaxed));
         assert!(state::SETTINGS.debug_log.load(Relaxed));
     }

@@ -25,22 +25,6 @@ pub(super) fn effective_target(idx: usize) -> Target {
     Target { fn_ptr, flags }
 }
 
-pub(super) unsafe fn invoke_handler(
-    t: &Target,
-    sig: c_int,
-    info: *mut libc::siginfo_t,
-    ucontext: *mut c_void,
-) {
-    if t.flags & libc::SA_SIGINFO != 0 {
-        let f: extern "C" fn(c_int, *mut libc::siginfo_t, *mut c_void) =
-            core::mem::transmute(t.fn_ptr);
-        f(sig, info, ucontext);
-    } else {
-        let f: extern "C" fn(c_int) = core::mem::transmute(t.fn_ptr);
-        f(sig);
-    }
-}
-
 pub(super) fn query_sigaction(sig: c_int) -> Option<libc::sigaction> {
     let mut out: libc::sigaction = unsafe { core::mem::zeroed() };
     if unsafe { libc::sigaction(sig, null_mut(), &mut out) } == 0 {
@@ -73,13 +57,6 @@ fn build_crash_sigaction() -> libc::sigaction {
         }
     }
     sa
-}
-
-pub(super) fn restore_our_handler(sig: c_int) {
-    let sa = build_crash_sigaction();
-    unsafe {
-        let _ = libc::sigaction(sig, &sa, null_mut());
-    }
 }
 
 pub(super) fn reset_signals_to_default(signals: &[c_int]) -> bool {

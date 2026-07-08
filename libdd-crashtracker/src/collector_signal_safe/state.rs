@@ -207,7 +207,6 @@ pub static HANDLERS_ENABLED: AtomicBool = AtomicBool::new(false);
 /// These are written before [`HANDLERS_ENABLED`] is published and are read from the crash path
 /// after that publication has been observed.
 pub struct Settings {
-    pub force_on_top: AtomicBool,
     pub only_bootstrap: AtomicBool,
     pub debug_log: AtomicBool,
     pub create_alt_stack: AtomicBool,
@@ -224,7 +223,6 @@ pub struct Settings {
 impl Settings {
     const fn new() -> Self {
         Self {
-            force_on_top: AtomicBool::new(false),
             only_bootstrap: AtomicBool::new(false),
             debug_log: AtomicBool::new(false),
             create_alt_stack: AtomicBool::new(false),
@@ -233,10 +231,8 @@ impl Settings {
             disarm_on_entry: AtomicBool::new(false),
             close_fds_on_receiver: AtomicBool::new(true),
             report_fd: AtomicI32::new(-1),
-            collector_reap_ms: AtomicI32::new(config::COLLECTOR_REAP_MS),
-            receiver_reap_ms: AtomicI32::new(
-                config::RECEIVER_TIMEOUT_SECS as i32 * 1000 + config::RECEIVER_TIMEOUT_GRACE_MS,
-            ),
+            collector_reap_ms: AtomicI32::new(config::COLLECTOR_REAP_MS_DEFAULT),
+            receiver_reap_ms: AtomicI32::new(config::RECEIVER_REAP_MS_DEFAULT),
             max_frames: AtomicUsize::new(config::BACKTRACE_LEVELS_DEFAULT),
         }
     }

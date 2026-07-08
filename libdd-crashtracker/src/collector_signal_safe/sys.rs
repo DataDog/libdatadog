@@ -78,7 +78,7 @@ impl crate::protocol::ByteSink for FdSink {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy)]
 pub struct Pipe {
     pub read: i32,
     pub write: i32,
@@ -121,6 +121,10 @@ mod raw_common {
         }
     }
 
+    #[cfg(not(all(
+        any(target_os = "linux", target_os = "android"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
     pub fn close(fd: i32) {
         unsafe {
             rustix::io::close(fd);
@@ -240,8 +244,8 @@ mod raw {
     use core::ffi::c_void;
 
     pub use super::raw_common::{
-        access_executable, close, fcntl_dupfd, fd_valid, getpid, kill, monotonic_nanos,
-        mprotect_none, open_readwrite, pipe, poll_sleep_ms, waitpid_nohang_status, write,
+        access_executable, fcntl_dupfd, fd_valid, getpid, kill, monotonic_nanos, mprotect_none,
+        open_readwrite, pipe, poll_sleep_ms, waitpid_nohang_status, write,
     };
 
     /// Upper bound on the descriptor scan in [`close_range_from`], so a very large (or unlimited)
@@ -339,6 +343,10 @@ mod raw {
             return newfd;
         }
         unsafe { syscall3(libc::SYS_dup3, oldfd as usize, newfd as usize, 0) as i32 }
+    }
+
+    pub fn close(fd: i32) {
+        let _ = unsafe { syscall3(libc::SYS_close, fd as usize, 0, 0) };
     }
 
     pub fn close_range_from(first_fd: i32) -> bool {
@@ -555,6 +563,11 @@ unsafe fn errno_location() -> *mut i32 {
 mod tests {
     use super::*;
     use crate::collector_signal_safe::Sink;
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    use std::os::fd::IntoRawFd;
 
     #[test]
     fn fd_sink_writes_to_pipe() {
@@ -607,5 +620,38 @@ mod tests {
         assert_eq!(got, expected);
         assert!(out[..written].iter().all(|&b| b == b'a'));
         assert!(out[written..expected].iter().all(|&b| b == b'b'));
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn close_tolerates_already_closed_fd() {
+        let fd = tempfile::tempfile().expect("tempfile").into_raw_fd();
+        close(fd);
+        close(fd);
+    }
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn close_range_from_tolerates_closed_fds() {
+        let child = unsafe { fork_raw() };
+        if child == 0 {
+            close(10);
+            exit_process(if close_range_from(3) { 0 } else { 1 });
+        }
+        assert!(child > 0, "fork failed: {child}");
+
+        match reap_child(child as i32, 1_000, 10, 100) {
+            ChildReap::Reaped(status) => {
+                assert!(libc::WIFEXITED(status));
+                assert_eq!(libc::WEXITSTATUS(status), 0);
+            }
+            _ => panic!("unexpected child reap result"),
+        }
     }
 }

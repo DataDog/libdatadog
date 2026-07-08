@@ -89,6 +89,10 @@ pub const DEGRADATION_REASONS: &[(Degradations, &str)] = &[
 static CAPABILITIES: AtomicU32 = AtomicU32::new(0);
 static DEGRADATIONS: AtomicU32 = AtomicU32::new(0);
 
+const SECCOMP_PROBE_REAP_TIMEOUT_MS: i64 = 100;
+const SECCOMP_PROBE_REAP_POLL_MS: i32 = 10;
+const SECCOMP_PROBE_KILL_TIMEOUT_MS: i64 = 10;
+
 pub fn publish(receiver_path: &[u8], report_fd: i32, probe_seccomp: bool) {
     let mut caps = Capabilities::empty();
     let mut degraded = Degradations::empty();
@@ -170,7 +174,12 @@ fn probe_process_vm_readv_in_child() -> bool {
         return true;
     }
 
-    match sys::reap_child(child as i32, 100, 10, 10) {
+    match sys::reap_child(
+        child as i32,
+        SECCOMP_PROBE_REAP_TIMEOUT_MS,
+        SECCOMP_PROBE_REAP_POLL_MS,
+        SECCOMP_PROBE_KILL_TIMEOUT_MS,
+    ) {
         sys::ChildReap::Reaped(status) => libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
         sys::ChildReap::NoChild | sys::ChildReap::WaitFailed(_) | sys::ChildReap::TimedOut => true,
     }

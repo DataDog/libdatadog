@@ -26,9 +26,7 @@
 //! `create_alt_stack` installs the built-in alternate signal stack only for the init thread.
 //! `use_alt_stack` may be used with a caller-installed per-thread alternate stack. Stack-overflow
 //! crashes on threads without an alternate stack are collected on the faulting thread's stack.
-//! When `block_signals` is enabled, app handlers invoked from this handler run with the
-//! crash-signal mask in effect; a nested crash on another managed signal is deferred until the
-//! app handler returns.
+//! When `block_signals` is enabled, managed crash signals are masked while this handler runs.
 
 mod backtrace;
 pub(crate) mod capabilities;

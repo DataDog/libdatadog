@@ -68,21 +68,6 @@ fn arch_seed(uc: &libc::ucontext_t, out: &mut [usize]) -> (usize, usize) {
     (n, registers.fp)
 }
 
-pub fn instruction_pointer(ucontext: *const c_void) -> usize {
-    if ucontext.is_null() {
-        return 0;
-    }
-
-    let uc = unsafe { &*(ucontext as *const libc::ucontext_t) };
-    let mut out = [0usize; 1];
-    let (n, _) = arch_seed(uc, &mut out);
-    if n == 0 {
-        0
-    } else {
-        out[0]
-    }
-}
-
 pub fn backtrace_from_ucontext(
     out: &mut [usize],
     ucontext: *const c_void,
@@ -118,6 +103,8 @@ mod tests {
         frames[0] = [base + stride, 0x401000];
         frames[1] = [base + 2 * stride, 0x402000];
         frames[2] = [0, 0x403000];
+        // The frame array is read through `process_vm_readv`, which is opaque to lints.
+        core::hint::black_box(&frames);
 
         let mut out = [0usize; 8];
         let n = walk_fp(&mut out, 0, pid(), base);
@@ -139,6 +126,8 @@ mod tests {
         frames[0] = [base + stride, 0x401000];
         frames[1] = [base + 2 * stride, 0x402000];
         frames[2] = [0, 0x403000];
+        // The frame array is read through `process_vm_readv`, which is opaque to lints.
+        core::hint::black_box(&frames);
 
         let mut out = [0usize; 2];
         let n = walk_fp(&mut out, 0, pid(), base);

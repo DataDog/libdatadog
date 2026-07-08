@@ -31,7 +31,7 @@ jobs:
           rustup component add clippy --toolchain stable
           rustup target add aarch64-unknown-linux-gnu
       - name: Install cargo nextest
-        uses: taiki-e/install-action@d12e869b89167df346dd0ff65da342d1fb1202fb # v2.57.4
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.96
       - name: Check signal-safe collector
@@ -57,7 +57,7 @@ jobs:
           rustup set profile minimal
           rustup toolchain install stable
       - name: Install cargo nextest
-        uses: taiki-e/install-action@d12e869b89167df346dd0ff65da342d1fb1202fb # v2.57.4
+        uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.96
       - name: Test signal-safe collector fallback paths
