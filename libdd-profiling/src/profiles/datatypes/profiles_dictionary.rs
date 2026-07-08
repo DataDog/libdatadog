@@ -123,6 +123,34 @@ mod tests {
         }
     }
 
+    fn string_arena_reserved_bytes(dict: &ProfilesDictionary) -> usize {
+        dict.strings
+            .inner
+            .arc
+            .shards
+            .iter()
+            .map(|shard| shard.read().arena.reserved_bytes())
+            .sum()
+    }
+
+    fn function_arena_reserved_bytes(dict: &ProfilesDictionary) -> usize {
+        dict.functions
+            .storage
+            .shards
+            .iter()
+            .map(|shard| shard.read().arena.reserved_bytes())
+            .sum()
+    }
+
+    fn mapping_arena_reserved_bytes(dict: &ProfilesDictionary) -> usize {
+        dict.mappings
+            .storage
+            .shards
+            .iter()
+            .map(|shard| shard.read().arena.reserved_bytes())
+            .sum()
+    }
+
     #[test]
     fn get_str_round_trip() {
         let dict = ProfilesDictionary::try_new().unwrap();
@@ -161,6 +189,94 @@ mod tests {
         assert!(got.name.is_empty());
         assert!(got.system_name.is_empty());
         assert!(got.file_name.is_empty());
+    }
+
+    #[test]
+    fn initial_dictionary_arena_floor_is_small() {
+        const SMALL_ARENA_HINT: usize = 64 * 1024;
+        const STRING_SHARDS: usize = crate::profiles::collections::N_SHARDS;
+
+        let dict = ProfilesDictionary::try_new().unwrap();
+
+        assert!(string_arena_reserved_bytes(&dict) <= STRING_SHARDS * SMALL_ARENA_HINT);
+        assert!(function_arena_reserved_bytes(&dict) <= 4 * SMALL_ARENA_HINT);
+        assert!(mapping_arena_reserved_bytes(&dict) <= 2 * SMALL_ARENA_HINT);
+    }
+
+    #[test]
+    fn dictionary_grows_past_initial_arenas_and_preserves_handles() {
+        let dict = ProfilesDictionary::try_new().unwrap();
+        let initial_string_reserved = string_arena_reserved_bytes(&dict);
+        let initial_function_reserved = function_arena_reserved_bytes(&dict);
+        let initial_mapping_reserved = mapping_arena_reserved_bytes(&dict);
+
+        let mut string_ids = Vec::new();
+        for i in 0..4096 {
+            let string = format!("profile-dictionary-growth-{i:04}-{}", "x".repeat(512));
+            string_ids.push(dict.try_insert_str2(&string).unwrap());
+        }
+        let first_string_id = string_ids[0];
+        assert_string_value(
+            &dict,
+            first_string_id,
+            &format!("profile-dictionary-growth-0000-{}", "x".repeat(512)),
+        );
+        assert_eq!(
+            StringRef::from(first_string_id),
+            StringRef::from(
+                dict.try_insert_str2(&format!(
+                    "profile-dictionary-growth-0000-{}",
+                    "x".repeat(512)
+                ))
+                .unwrap()
+            )
+        );
+
+        let make_function = |i: usize| Function2 {
+            name: string_ids[i % string_ids.len()],
+            system_name: string_ids[(i / string_ids.len()) % string_ids.len()],
+            file_name: string_ids[(i.wrapping_mul(31) + i / string_ids.len()) % string_ids.len()],
+        };
+        let first_function = make_function(0);
+        let first_function_id = dict.try_insert_function2(first_function).unwrap();
+        for i in 1..12_000 {
+            dict.try_insert_function2(make_function(i)).unwrap();
+        }
+        assert_eq!(
+            first_function_id.0,
+            dict.try_insert_function2(first_function).unwrap().0
+        );
+        let first_function_read = unsafe { dict.get_func(first_function_id) };
+        assert_string_id_eq(first_function_read.name, first_function.name);
+        assert_string_id_eq(first_function_read.system_name, first_function.system_name);
+        assert_string_id_eq(first_function_read.file_name, first_function.file_name);
+
+        let make_mapping = |i: usize| Mapping2 {
+            memory_start: i as u64,
+            memory_limit: i as u64 + 4096,
+            file_offset: i as u64 * 16,
+            filename: string_ids[i % string_ids.len()],
+            build_id: string_ids[(i * 17) % string_ids.len()],
+        };
+        let first_mapping = make_mapping(0);
+        let first_mapping_id = dict.try_insert_mapping2(first_mapping).unwrap();
+        for i in 1..4096 {
+            dict.try_insert_mapping2(make_mapping(i)).unwrap();
+        }
+        assert_eq!(
+            first_mapping_id.0,
+            dict.try_insert_mapping2(first_mapping).unwrap().0
+        );
+        let first_mapping_read = unsafe { first_mapping_id.read().unwrap() };
+        assert_eq!(first_mapping_read.memory_start, first_mapping.memory_start);
+        assert_eq!(first_mapping_read.memory_limit, first_mapping.memory_limit);
+        assert_eq!(first_mapping_read.file_offset, first_mapping.file_offset);
+        assert_string_id_eq(first_mapping_read.filename, first_mapping.filename);
+        assert_string_id_eq(first_mapping_read.build_id, first_mapping.build_id);
+
+        assert!(string_arena_reserved_bytes(&dict) > initial_string_reserved);
+        assert!(function_arena_reserved_bytes(&dict) > initial_function_reserved);
+        assert!(mapping_arena_reserved_bytes(&dict) > initial_mapping_reserved);
     }
 
     proptest! {

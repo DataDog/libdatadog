@@ -10,7 +10,7 @@ use std::ops::Deref;
 /// Number of shards used by the parallel slice set and (by extension)
 /// the string-specific parallel set. Kept as a constant so tests and
 /// related code can refer to the same value.
-pub const N_SHARDS: usize = 16;
+pub const N_SHARDS: usize = 4;
 
 /// The initial capacities for Rust's hash map (and set) currently go
 /// like this: 3, 7, 14, 28. We want to avoid some of the smaller sizes so
@@ -64,9 +64,7 @@ impl<T: Copy + hash::Hash + Eq + 'static> ParallelSliceSet<T> {
     pub const fn select_shard(hash: u64) -> usize {
         // Use lower bits for shard selection to avoid interfering with
         // Swiss tables' internal SIMD comparisons that use upper 7 bits.
-        // Using 4 bits provides resilience against hash function deficiencies
-        // and optimal scaling for low thread counts.
-        (hash & 0b1111) as usize
+        (hash as usize) & (N_SHARDS - 1)
     }
 
     /// Tries to create a new parallel slice set.
