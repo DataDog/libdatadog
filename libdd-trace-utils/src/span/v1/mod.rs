@@ -34,7 +34,7 @@ impl SpanKind {
 
 /// Typed V1 attribute value.
 /// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum AttributeValue<T: TraceData> {
     String(T::Text),
     Float(f64),

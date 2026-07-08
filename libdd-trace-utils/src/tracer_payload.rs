@@ -88,17 +88,27 @@ impl TracerPayloadCollection {
     /// let mut col2 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// col1.append(&mut col2);
     /// ```
-    pub fn append(&mut self, other: &mut Self) {
+    ///
+    /// # Returns
+    ///
+    /// `true` if `other`'s data was merged into `self`, `false` if the append was skipped (e.g.
+    /// diverging V1 tracer metadata). Callers that rely on `other` being fully drained must check
+    /// this return value rather than assuming success.
+    pub fn append(&mut self, other: &mut Self) -> bool {
         match self {
             TracerPayloadCollection::V07(dest) => {
                 if let TracerPayloadCollection::V07(src) = other {
-                    dest.append(src)
+                    dest.append(src);
+                    return true;
                 }
+                false
             }
             TracerPayloadCollection::V04(dest) => {
                 if let TracerPayloadCollection::V04(src) = other {
-                    dest.append(src)
+                    dest.append(src);
+                    return true;
                 }
+                false
             }
             TracerPayloadCollection::V1(dest) => {
                 if let TracerPayloadCollection::V1(src) = other {
@@ -109,8 +119,10 @@ impl TracerPayloadCollection {
                     // (logging a warning) rather than silently dropping `src`'s metadata.
                     if metadata_matches_v1(dest, src) {
                         dest.chunks.append(&mut src.chunks);
+                        return true;
                     }
                 }
+                false
             }
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
             #[allow(clippy::unimplemented)]
@@ -271,7 +283,8 @@ pub fn decode_to_trace_chunks(
     }
 }
 
-/// Returns `true` iff every tracer-level metadata string field of `src` matches `dest`.
+/// Returns `true` iff every tracer-level metadata field (string fields and attributes) of `src`
+/// matches `dest`.
 ///
 /// V1 payloads carry tracer metadata (env, hostname, language, …) inside the payload itself, so
 /// merging two payloads whose metadata diverges would silently drop one set of values. Callers
@@ -293,6 +306,7 @@ fn metadata_matches_v1(
         ("env", dest.env == src.env),
         ("hostname", dest.hostname == src.hostname),
         ("app_version", dest.app_version == src.app_version),
+        ("attributes", dest.attributes == src.attributes),
     ]
     .into_iter()
     .filter_map(|(label, eq)| (!eq).then_some(label))

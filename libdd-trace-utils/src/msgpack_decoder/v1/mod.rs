@@ -205,6 +205,17 @@ where
     Ok((payload, consumed))
 }
 
+/// Consumes and discards the msgpack value at the current buffer position, regardless of its
+/// type. Used to skip unknown keys for forward compatibility: if the V1 format gains new fields,
+/// older decoders shouldn't reject the whole payload just because they don't recognize a key.
+pub(super) fn skip_unknown_value<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<(), DecodeError> {
+    rmpv::decode::read_value(buf.as_mut_slice())
+        .map_err(|_| DecodeError::InvalidFormat("Failed to skip unknown V1 value".to_owned()))?;
+    Ok(())
+}
+
 /// Decodes the top-level V1 payload map: tracer metadata fields + chunks array.
 fn decode_payload<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
@@ -240,11 +251,7 @@ where
             trace_key::ATTRIBUTES => {
                 payload.attributes = span::read_attributes_map(buf, table)?;
             }
-            unknown => {
-                return Err(DecodeError::InvalidFormat(format!(
-                    "Unknown V1 payload key: {unknown}"
-                )));
-            }
+            _unknown => skip_unknown_value(buf)?,
         }
     }
 
@@ -342,11 +349,7 @@ where
                     )
                 })?;
             }
-            unknown => {
-                return Err(DecodeError::InvalidFormat(format!(
-                    "Unknown V1 chunk key: {unknown}"
-                )));
-            }
+            _unknown => skip_unknown_value(buf)?,
         }
     }
 
@@ -498,6 +501,28 @@ mod tests {
         // `0x81` = fixmap len 1, key 0x07 (ENV_REF), value = inline str "x" (`0xa1 0x78`).
         let bytes = vec![0x81, 0x07, 0xa1, 0x78];
         let err = from_bytes(Bytes::from(bytes)).expect_err("missing chunks must error");
+        assert!(matches!(err, DecodeError::InvalidFormat(_)));
+    }
+
+    #[test]
+    fn truncated_trace_id_is_rejected_not_panicking() {
+        // Payload map with 1 entry: chunks -> [ chunk map with 1 entry: trace_id -> bin(16) ].
+        // The bin declares 16 bytes but only 4 are actually present, so the owned decoder's
+        // `try_slice_and_advance` must reject this instead of indexing out of bounds.
+        let bytes = vec![
+            0x81,
+            trace_key::CHUNKS,
+            0x91, // array len 1
+            0x81, // chunk fixmap len 1
+            chunk_key::TRACE_ID,
+            0xc4, // bin8 marker
+            0x10, // declared length: 16 bytes
+            0x01,
+            0x02,
+            0x03,
+            0x04, // only 4 bytes actually present
+        ];
+        let err = from_bytes(Bytes::from(bytes)).expect_err("truncated trace_id must error");
         assert!(matches!(err, DecodeError::InvalidFormat(_)));
     }
 
