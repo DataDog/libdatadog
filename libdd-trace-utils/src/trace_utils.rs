@@ -354,10 +354,13 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
             // has similar results. The primary goal here is avoiding many small requests.
             // TODO: maybe make the MAX_PAYLOAD_SIZE configurable?
             if a.size + b.size < MAX_PAYLOAD_SIZE / 2 {
-                // Note: dedup_by drops a, and retains b.
-                b.tracer_payloads.append(&mut a.tracer_payloads);
-                b.size += a.size;
-                return true;
+                // Note: dedup_by drops a, and retains b. Only drop a if the append actually
+                // merged its data into b; otherwise keep both entries (e.g. diverging V1
+                // tracer metadata) so a's traces aren't silently lost.
+                if b.tracer_payloads.append(&mut a.tracer_payloads) {
+                    b.size += a.size;
+                    return true;
+                }
             }
         }
         false

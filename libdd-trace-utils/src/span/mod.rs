@@ -88,6 +88,9 @@ impl DeserializableTraceData for BytesData {
 
     #[inline]
     fn try_slice_and_advance(buf: &mut Bytes, bytes: usize) -> Option<Bytes> {
+        if bytes > buf.len() {
+            return None;
+        }
         let data = buf.slice_ref(&buf[0..bytes])?;
         unsafe {
             // SAFETY: forwarding the buffer requires that buf is borrowed from static.
