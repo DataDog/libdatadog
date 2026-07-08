@@ -10,7 +10,7 @@ use std::ops::Deref;
 /// Number of shards used by the parallel slice set and (by extension)
 /// the string-specific parallel set. Kept as a constant so tests and
 /// related code can refer to the same value.
-pub const N_SHARDS: usize = 4;
+pub const N_SHARDS: usize = 16;
 
 /// The initial capacities for Rust's hash map (and set) currently go
 /// like this: 3, 7, 14, 28. We want to avoid some of the smaller sizes so

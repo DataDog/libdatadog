@@ -194,7 +194,8 @@ mod tests {
     #[test]
     fn initial_dictionary_arena_floor_is_small() {
         const SMALL_ARENA_HINT: usize = 64 * 1024;
-        const STRING_SHARDS: usize = crate::profiles::collections::N_SHARDS;
+        const STRING_SHARDS: usize = 16;
+        assert_eq!(crate::profiles::collections::N_SHARDS, STRING_SHARDS);
 
         let dict = ProfilesDictionary::try_new().unwrap();
 
