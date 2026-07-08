@@ -9,7 +9,10 @@ use hashbrown::{HashMap, HashSet};
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
-use std::borrow::{Borrow, Cow};
+use std::{
+    borrow::{Borrow, Cow},
+    hash::{DefaultHasher, Hash, Hasher as _},
+};
 
 use crate::span_concentrator::StatSpan;
 
@@ -432,11 +435,11 @@ pub(super) struct StatsBucket {
     /// ones into the overflow sentinel key.
     cardinality_limits: CardinalityLimitConfig,
     // FIXME: optimize memory by storing hashes only
-    distinct_resources: HashSet<String>,
-    distinct_http_endpoint: HashSet<String>,
-    distinct_peer_tags: HashSet<Vec<(String, String)>>,
+    distinct_resources: HashSet<u64>,
+    distinct_http_endpoint: HashSet<u64>,
+    distinct_peer_tags: HashSet<u64>,
     #[allow(unused, reason = "FIXME: implement stats additional tags")]
-    distinct_additional_tags: HashSet<String>,
+    distinct_additional_tags: HashSet<u64>,
     /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
     collapsed_count: u64,
     /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
@@ -504,37 +507,37 @@ impl StatsBucket {
 
     /// Collapse an aggregation key fields following the bucket's `CardinalityLimitConfig`
     fn collapse_key_cardinality(&mut self, key: &mut BorrowedAggregationKey<'_>) {
+        fn hash(input: &impl Hash) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            input.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        let resource_name_hash = hash(&key.fixed.resource_name);
         if self.distinct_resources.len() >= self.cardinality_limits.resource_limit
-            && !self.distinct_resources.contains(key.fixed.resource_name)
+            && !self.distinct_resources.contains(&resource_name_hash)
         {
             key.fixed.resource_name = TRACER_BLOCKED_VALUE;
         } else {
-            self.distinct_resources
-                .insert(key.fixed.resource_name.to_owned());
+            self.distinct_resources.insert(resource_name_hash);
         }
 
+        let http_endpoint_hash = hash(&key.fixed.http_endpoint);
         if self.distinct_http_endpoint.len() >= self.cardinality_limits.http_endpoint_limit
-            && !self
-                .distinct_http_endpoint
-                .contains(key.fixed.http_endpoint)
+            && !self.distinct_http_endpoint.contains(&http_endpoint_hash)
         {
             key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
         } else {
-            self.distinct_http_endpoint
-                .insert(key.fixed.http_endpoint.to_owned());
+            self.distinct_http_endpoint.insert(http_endpoint_hash);
         }
 
-        let owned_peer_tags = key
-            .peer_tags
-            .iter()
-            .map(|(k, v)| ((*k).to_owned(), v.to_string()))
-            .collect();
+        let peer_tags_hash = hash(&key.peer_tags);
         if self.distinct_peer_tags.len() >= self.cardinality_limits.peer_tags_limit
-            && !self.distinct_peer_tags.contains(&owned_peer_tags)
+            && !self.distinct_peer_tags.contains(&peer_tags_hash)
         {
             key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(TRACER_BLOCKED_VALUE))];
         } else {
-            self.distinct_peer_tags.insert(owned_peer_tags);
+            self.distinct_peer_tags.insert(peer_tags_hash);
         }
     }
 
