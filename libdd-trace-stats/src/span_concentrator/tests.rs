@@ -1647,14 +1647,14 @@ fn test_flush_with_otlp_exact_per_cell_scalars() {
 }
 
 /// Build a minimal concentrator with a tiny `max_entries_per_bucket` for cardinality tests.
-fn make_cardinality_concentrator(max_entries: usize) -> SpanConcentrator {
+fn make_cardinality_concentrator(cardinality_limits: CardinalityLimitConfig) -> SpanConcentrator {
     let now = SystemTime::now();
     SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
         vec![],
-        Some(max_entries),
+        Some(cardinality_limits),
         #[cfg(feature = "stats-obfuscation")]
         None,
     )
@@ -1663,10 +1663,13 @@ fn make_cardinality_concentrator(max_entries: usize) -> SpanConcentrator {
 /// When the limit is 3 and we insert 5 distinct-resource spans, only 3 normal keys plus one
 /// overflow key must appear in the flushed stats. Total hits must equal 5.
 #[test]
-fn test_cardinality_limit_collapse() {
+fn test_whole_key_cardinality_limit_collapse() {
     let now = SystemTime::now();
     let limit: usize = 3;
-    let mut concentrator = make_cardinality_concentrator(limit);
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
 
     // Insert limit + 2 distinct-resource root spans all in the same time bucket.
     let resources: Vec<String> = (0..limit + 2).map(|i| format!("resource-{i}")).collect();
@@ -1719,12 +1722,108 @@ fn test_cardinality_limit_collapse() {
     );
 }
 
+/// When the `http_endpoint` cardinality limit is 3 and we insert 5 distinct spans differing only on
+/// their `http_endpoint`, only 3 normal keys plus one overflow key must appear in the flushed
+/// stats.
+///
+/// But then inserting spans differing on another field, it should not be collapsed.
+/// So total hits must equal 6.
+#[test]
+fn test_per_key_cardinality_limit_collapse_http_endpoint() {
+    let now = SystemTime::now();
+    let limit: usize = 3;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        http_endpoint_limit: limit,
+        ..Default::default()
+    });
+
+    // Insert limit + 2 distinct `http_endpoint` root spans all in the same time bucket.
+    let http_endpoints: Vec<String> = (0..limit + 2).map(|i| format!("endpoint-{i}")).collect();
+    for (i, http_endpoint) in http_endpoints.iter().enumerate() {
+        let meta = [("http.endpoint", http_endpoint.as_str())];
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            100,
+            2,
+            "svc",
+            "resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+    // Insert a distinct `resource` root span, this one won't get collapsed
+    {
+        let meta = [("http.endpoint", "endpoint-0")];
+        let span = get_test_span_with_meta(
+            now,
+            limit as u64 + 3,
+            0,
+            100,
+            2,
+            "svc",
+            "different-resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let (buckets, _) = concentrator.flush(SystemTime::now(), true);
+    assert!(!buckets.is_empty(), "should get at least one time bucket");
+
+    let stats = &buckets[0].stats;
+
+    // Exactly limit normal keys + 1 overflow key + the distinct `resource` span
+    assert_eq!(
+        stats.len(),
+        limit + 2,
+        "expected {limit} normal groups + 1 overflow group + 1 for the distinct `resource` span, got {}",
+        stats.len()
+    );
+
+    // Total hits must be preserved.
+    let total_hits: u64 = stats.iter().map(|g| g.hits).sum();
+    assert_eq!(
+        total_hits,
+        (limit + 3) as u64,
+        "total hits must equal the number of inserted spans"
+    );
+
+    // No overflow group, identified by the sentinel resource.
+    let overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        overflow_groups.len(),
+        0,
+        "expected no overflow group, given whole key cardinality limit was not reached"
+    );
+    let http_overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.http_endpoint == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        http_overflow_groups.len(),
+        1,
+        "expected exactly one overflow key for the http_endpoint field"
+    );
+}
+
 /// The overflow bucket must correctly aggregate the hits from overflow spans.
 #[test]
 fn test_overflow_bucket_counts() {
     let now = SystemTime::now();
     let limit: usize = 1;
-    let mut concentrator = make_cardinality_concentrator(limit);
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
 
     // First span fills the sole slot; the next 4 spans all have distinct keys → all overflow.
     for i in 0..5usize {
@@ -1773,7 +1872,10 @@ fn test_overflow_bucket_counts() {
 fn test_no_collapse_within_limit() {
     let now = SystemTime::now();
     let limit: usize = 10;
-    let mut concentrator = make_cardinality_concentrator(limit);
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
 
     // Insert exactly `limit` distinct-resource spans — no overflow expected.
     for i in 0..limit {
@@ -1814,7 +1916,10 @@ fn test_no_collapse_within_limit() {
 fn test_overflow_bucket_key_sentinel_values() {
     let now = SystemTime::now();
     let limit: usize = 1;
-    let mut concentrator = make_cardinality_concentrator(limit);
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
 
     // First span occupies the only slot; second one overflows.
     let first = get_test_span_with_meta(
@@ -1896,7 +2001,7 @@ fn test_overflow_bucket_key_sentinel_values() {
         overflow.is_trace_root, 0,
         "is_trace_root must be NOT_SET (0)"
     );
-    assert!(overflow.peer_tags.is_empty(), "peer_tags must be empty");
+    assert_eq!(overflow.peer_tags, [TRACER_BLOCKED_VALUE]);
 
     // The normal group must be unaffected.
     let normal = stats
