@@ -1432,7 +1432,7 @@ mod tests {
                 Endpoint::agentless(site, "abc".to_string()).unwrap(),
             )
             .await
-            .expect(&format!("failed to instantiate fetcher for site {site}"));
+            .unwrap_or_else(|e| panic!("failed to instantiate fetcher for site {site}: {e}"));
         }
     }
 
