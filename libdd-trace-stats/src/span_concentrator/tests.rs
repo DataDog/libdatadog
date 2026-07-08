@@ -6,7 +6,7 @@ use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_
 use super::*;
 use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
-use rand::{thread_rng, Rng};
+use rand::{Rng, thread_rng};
 
 const BUCKET_SIZE: u64 = Duration::from_secs(2).as_nanos() as u64;
 
@@ -1653,7 +1653,7 @@ fn make_cardinality_concentrator(cardinality_limits: CardinalityLimitConfig) -> 
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
-        vec![],
+        vec!["peer.hostname".to_owned()],
         Some(cardinality_limits),
         #[cfg(feature = "stats-obfuscation")]
         None,
@@ -1773,7 +1773,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
         concentrator.add_span(&span);
     }
 
-    let (buckets, _) = concentrator.flush(SystemTime::now(), true);
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
     assert!(!buckets.is_empty(), "should get at least one time bucket");
 
     let stats = &buckets[0].stats;
@@ -1782,7 +1782,7 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
     assert_eq!(
         stats.len(),
         limit + 2,
-        "expected {limit} normal groups + 1 overflow group + 1 for the distinct `resource` span, got {}",
+        "expected {limit} normal groups + 1 overflow key + 1 for the distinct `resource` span, got {}",
         stats.len()
     );
 
@@ -1812,6 +1812,83 @@ fn test_per_key_cardinality_limit_collapse_http_endpoint() {
         http_overflow_groups.len(),
         1,
         "expected exactly one overflow key for the http_endpoint field"
+    );
+}
+
+/// When whole-key cardinality limit is reached, check that per-key fields are collapsed before
+/// falling back to whole-key
+#[test]
+fn test_per_key_cardinality_limit_collapse_before_whole_key() {
+    let now = SystemTime::now();
+    let peer_tags_limit = 3;
+    let whole_key_limit = peer_tags_limit + 1;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit,
+        peer_tags_limit,
+        ..Default::default()
+    });
+
+    // Insert limit + 2 distinct `peer.hostname` root spans all in the same time bucket.
+    let inserted_spans = peer_tags_limit + 2;
+    let peer_tag_values: Vec<String> = (0..inserted_spans).map(|i| format!("peer-{i}")).collect();
+    for (i, peer_tag_value) in peer_tag_values.iter().enumerate() {
+        let meta = [
+            ("peer.hostname", peer_tag_value.as_str()),
+            ("span.kind", "client"),
+        ];
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            100,
+            2,
+            "svc",
+            "resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty(), "should get at least one time bucket");
+
+    let stats = &buckets[0].stats;
+
+    // Exactly peer_tags_limit normal keys + 1 overflow key
+    assert_eq!(
+        stats.len(),
+        peer_tags_limit + 1,
+        "expected {peer_tags_limit} normal groups + 1 overflow key, got {}",
+        stats.len()
+    );
+
+    // Total hits must be preserved.
+    let total_hits: u64 = stats.iter().map(|g| g.hits).sum();
+    assert_eq!(
+        total_hits, inserted_spans as u64,
+        "total hits must equal the number of inserted spans"
+    );
+
+    // No overflow group, identified by the sentinel resource.
+    let overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        overflow_groups.len(),
+        0,
+        "expected no overflow group: whole key cardinality limit was not reached because per-field cardinality limit collapsed keys before overflowing whole key"
+    );
+    let peer_tag_overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.peer_tags == [TRACER_BLOCKED_VALUE])
+        .collect();
+    assert_eq!(
+        peer_tag_overflow_groups.len(),
+        1,
+        "expected exactly one overflow key for the peer_tags field"
     );
 }
 
