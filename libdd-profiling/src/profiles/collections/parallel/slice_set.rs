@@ -64,7 +64,9 @@ impl<T: Copy + hash::Hash + Eq + 'static> ParallelSliceSet<T> {
     pub const fn select_shard(hash: u64) -> usize {
         // Use lower bits for shard selection to avoid interfering with
         // Swiss tables' internal SIMD comparisons that use upper 7 bits.
-        (hash as usize) & (N_SHARDS - 1)
+        // Using 4 bits provides resilience against hash function deficiencies
+        // and optimal scaling for low thread counts.
+        (hash & 0b1111) as usize
     }
 
     /// Tries to create a new parallel slice set.

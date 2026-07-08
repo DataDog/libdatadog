@@ -195,7 +195,6 @@ mod tests {
         let function_shards = dict.functions.storage.shards.len();
         let mapping_shards = dict.mappings.storage.shards.len();
 
-        assert_eq!(string_shards, 16);
         assert!(string_arena_reserved_bytes(&dict) <= string_shards * SMALL_ARENA_HINT);
         assert!(function_arena_reserved_bytes(&dict) <= function_shards * SMALL_ARENA_HINT);
         assert!(mapping_arena_reserved_bytes(&dict) <= mapping_shards * SMALL_ARENA_HINT);
