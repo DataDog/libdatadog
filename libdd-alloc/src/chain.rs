@@ -17,9 +17,8 @@ use core::ptr::NonNull;
 /// [ChainAllocator] creates a new [LinearAllocator] when the current one
 /// doesn't have enough space for the requested allocation, and then links the
 /// new [LinearAllocator] to the previous one, creating a chain. This is where
-/// its name comes from. Each successful growth doubles the target chunk size
-/// up to a cap, so small arenas retain a low initial footprint while larger
-/// workloads quickly converge to larger chunks.
+/// its name comes from. When configured with a larger maximum chunk size,
+/// each successful growth doubles the target chunk size up to that cap.
 pub struct ChainAllocator<A: Allocator + Clone> {
     top: UnsafeCell<ChainNodePtr<A>>,
     /// The size hint for the next linear allocator chunk.
@@ -92,11 +91,6 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
     /// is worth it. This is somewhat arbitrarily chosen at the moment.
     const MIN_NODE_SIZE: usize = 4 * Self::CHAIN_NODE_OVERHEAD;
 
-    /// Default cap for routine geometric growth. This preserves the historical
-    /// chunk size used by profiling dictionaries while allowing smaller initial
-    /// chunks to ramp up quickly.
-    const DEFAULT_MAX_NODE_SIZE: usize = 1024 * 1024;
-
     const fn normalize_node_size(size: usize) -> usize {
         if size < Self::MIN_NODE_SIZE {
             Self::MIN_NODE_SIZE
@@ -106,26 +100,22 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
     }
 
     /// Creates a new [ChainAllocator]. The `chunk_size_hint` is used as the
-    /// initial size hint for chunks of the chain. Routine growth doubles the
-    /// chunk size up to at least `Self::DEFAULT_MAX_NODE_SIZE`. Note that the
-    /// [ChainAllocator] will use some bytes at the beginning of each chunk of
-    /// the chain. The number of bytes is [Self::CHAIN_NODE_OVERHEAD]. Keep
-    /// this in mind when sizing your hint if you are trying to be precise,
-    /// such as making sure a specific object fits.
+    /// size hint for chunks of the chain. Note that the [ChainAllocator] will
+    /// use some bytes at the beginning of each chunk of the chain. The number
+    /// of bytes is [Self::CHAIN_NODE_OVERHEAD]. Keep this in mind when sizing
+    /// your hint if you are trying to be precise, such as making sure a
+    /// specific object fits.
+    ///
+    /// To use geometric growth, use [Self::new_capped_in].
     pub const fn new_in(chunk_size_hint: usize, allocator: A) -> Self {
-        let initial_node_size = Self::normalize_node_size(chunk_size_hint);
-        let max_node_size = if initial_node_size < Self::DEFAULT_MAX_NODE_SIZE {
-            Self::DEFAULT_MAX_NODE_SIZE
-        } else {
-            initial_node_size
-        };
-        Self::new_capped_in(initial_node_size, max_node_size, allocator)
+        Self::new_capped_in(chunk_size_hint, chunk_size_hint, allocator)
     }
 
     /// Creates a new [ChainAllocator] whose routine growth starts at
     /// `chunk_size_hint` and doubles until reaching `max_chunk_size_hint`.
-    /// Requests larger than the cap are still honored by allocating an
-    /// oversized chunk for that request.
+    /// If the maximum is the same as the initial size, routine chunks keep a
+    /// fixed size. Requests larger than the cap are still honored by allocating
+    /// an oversized chunk for that request.
     pub const fn new_capped_in(
         chunk_size_hint: usize,
         max_chunk_size_hint: usize,
@@ -451,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_geometric_growth() {
-        let allocator = ChainAllocator::new_in(4096, Global);
+        let allocator = ChainAllocator::new_capped_in(4096, 1024 * 1024, Global);
         let layout = Layout::new::<u8>();
 
         let _ = allocator.allocate(layout).unwrap();
@@ -473,6 +463,25 @@ mod tests {
         assert!(
             third_chunk >= second_chunk * 2,
             "third chunk should grow geometrically: second={second_chunk}, third={third_chunk}"
+        );
+    }
+
+    #[test]
+    fn test_new_in_uses_fixed_size_chunks() {
+        let allocator = ChainAllocator::new_in(4096, Global);
+        let layout = Layout::new::<u8>();
+
+        let _ = allocator.allocate(layout).unwrap();
+        let first_reserved = allocator.reserved_bytes();
+        fill_to_capacity(&allocator);
+
+        let _ = allocator.allocate(layout).unwrap();
+        let second_reserved = allocator.reserved_bytes();
+        let second_chunk = second_reserved - first_reserved;
+
+        assert!(
+            second_chunk < first_reserved * 2,
+            "new_in should not enable geometric growth: first={first_reserved}, second={second_chunk}"
         );
     }
 
@@ -553,7 +562,7 @@ mod tests {
 
         let bool_layout = Layout::new::<bool>();
 
-        const GROWTH_ITERATIONS: usize = 16;
+        const GROWTH_ITERATIONS: usize = 100;
 
         // test that it fills to capacity a few times.
         for _ in 0..GROWTH_ITERATIONS {
