@@ -25,7 +25,7 @@ pub unsafe extern "C" fn ddog_telemetry_handle_add_dependency(
 ) -> MaybeError {
     let name = crate::try_c!(dependency_name.try_to_string());
     let version = crate::try_c!(dependency_version.try_to_string_option());
-    crate::try_c!(handle.add_dependency(name, version));
+    crate::try_c!(handle.add_dependency(name, version, None));
     MaybeError::None
 }
 

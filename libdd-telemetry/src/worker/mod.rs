@@ -7,7 +7,10 @@ pub mod store;
 
 use crate::{
     config::Config,
-    data::{self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, Telemetry},
+    data::{
+        self, Application, Dependency, Endpoint, Host, Integration, Log, Payload, ProductState,
+        Telemetry,
+    },
     metrics::{ContextKey, MetricBuckets, MetricContexts},
 };
 
@@ -85,7 +88,7 @@ macro_rules! telemetry_worker_log {
                 $($arg)*
             );
             if $worker.config.telemetry_debug_logging_enabled {
-                println!(concat!("{}: Telemetry worker DEBUG: ", $fmt_str), time_now(), $($arg)*);
+                eprintln!(concat!("{}: Telemetry worker DEBUG: ", $fmt_str), time_now(), $($arg)*);
             }
         }
     };
@@ -97,6 +100,7 @@ pub enum TelemetryActions {
     AddConfig(data::Configuration),
     AddDependency(Dependency),
     AddIntegration(Integration),
+    AddProductChange((String, ProductState)),
     AddLog((LogIdentifier, Log)),
     AddEndpoint(Endpoint),
     Lifecycle(LifecycleAction),
@@ -131,11 +135,14 @@ struct TelemetryWorkerData {
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
     endpoints: HashSet<data::Endpoint>,
+    products: std::collections::HashMap<String, ProductState>,
+    products_pending: HashSet<String>,
     logs: store::QueueHashMap<LogIdentifier, Log>,
     metric_contexts: MetricContexts,
     metric_buckets: MetricBuckets,
     host: Host,
     app: Application,
+    install_signature: Option<data::InstallSignature>,
 }
 
 /// `C` is the capability bundle. Leaf crates pin it to a concrete type
@@ -238,6 +245,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         self.data.integrations.clear();
         self.data.configurations.clear();
         self.data.endpoints.clear();
+        self.data.products.clear();
+        self.data.products_pending.clear();
     }
 
     async fn shutdown(&mut self) {
@@ -408,6 +417,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             AddConfig(_)
             | AddDependency(_)
             | AddIntegration(_)
+            | AddProductChange(_)
             | AddEndpoint(_)
             | Lifecycle(ExtendedHeartbeat) => {}
             Lifecycle(Stop) => {
@@ -450,10 +460,12 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
         match action {
             Lifecycle(Start) => {
                 if !self.data.started {
-                    let app_started = data::Payload::AppStarted(self.build_app_started());
-                    match self.send_payload(&app_started).await {
-                        Ok(()) => self.payload_sent_success(&app_started),
-                        Err(err) => self.log_err(&err),
+                    if self.config.emit_app_lifecycle {
+                        let app_started = data::Payload::AppStarted(self.build_app_started());
+                        match self.send_payload(&app_started).await {
+                            Ok(()) => self.payload_sent_success(&app_started),
+                            Err(err) => self.log_err(&err),
+                        }
                     }
 
                     #[allow(clippy::unwrap_used)]
@@ -476,6 +488,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             }
             AddDependency(dep) => self.data.dependencies.insert(dep),
             AddIntegration(integration) => self.data.integrations.insert(integration),
+            AddProductChange((name, state)) => {
+                self.data.products.insert(name.clone(), state);
+                self.data.products_pending.insert(name);
+            }
             AddConfig(cfg) => self.data.configurations.insert(cfg),
             AddEndpoint(endpoint) => {
                 self.data.endpoints.insert(endpoint);
@@ -538,6 +554,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                     Ok(()) => self.payload_sent_success(&extended_hb),
                     Err(err) => self.log_err(&err),
                 }
+
+                if !self.data.products.is_empty() {
+                    let products = self
+                        .data
+                        .products
+                        .iter()
+                        .map(|(name, state)| (name.clone(), state.clone()))
+                        .collect();
+                    let product_change =
+                        data::Payload::AppProductChange(data::AppProductChange { products });
+                    match self.send_payload(&product_change).await {
+                        Ok(()) => self.payload_sent_success(&product_change),
+                        Err(err) => self.log_err(&err),
+                    }
+                }
                 // Only re-schedule self. Resetting `FlushData` here would replace its
                 // existing deadline with `now + heartbeat_interval`, starving FlushData
                 // when `extended_heartbeat_interval < heartbeat_interval` because each
@@ -554,7 +585,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 self.data.metric_buckets.flush_aggregates();
 
                 let mut app_events = self.build_app_events_batch();
-                app_events.push(data::Payload::AppClosing(()));
+                if self.config.emit_app_lifecycle {
+                    app_events.push(data::Payload::AppClosing(()));
+                }
 
                 let observability_events = self.build_observability_batch();
 
@@ -614,6 +647,22 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                     integrations: self.data.integrations.unflushed().cloned().collect(),
                 },
             ))
+        }
+        if !self.data.products_pending.is_empty() {
+            let products = self
+                .data
+                .products_pending
+                .iter()
+                .filter_map(|name| {
+                    self.data
+                        .products
+                        .get(name)
+                        .map(|state| (name.clone(), state.clone()))
+                })
+                .collect();
+            payloads.push(data::Payload::AppProductChange(data::AppProductChange {
+                products,
+            }))
         }
         if self.data.configurations.flush_not_empty() {
             payloads.push(data::Payload::AppClientConfigurationChange(
@@ -714,6 +763,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             configuration: self.data.configurations.unflushed().cloned().collect(),
             dependencies: self.data.dependencies.unflushed().cloned().collect(),
             integrations: self.data.integrations.unflushed().cloned().collect(),
+            install_signature: self.data.install_signature.clone(),
+            products: self.data.products.clone(),
+            error: None,
         }
     }
 
@@ -723,6 +775,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             .removed_flushed(p.configuration.len());
         self.data.dependencies.removed_flushed(p.dependencies.len());
         self.data.integrations.removed_flushed(p.integrations.len());
+        self.data.products_pending.clear();
     }
 
     fn payload_sent_success(&mut self, payload: &data::Payload) {
@@ -735,6 +788,11 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
             }
             AppIntegrationsChange(p) => {
                 self.data.integrations.removed_flushed(p.integrations.len())
+            }
+            AppProductChange(p) => {
+                for name in p.products.keys() {
+                    self.data.products_pending.remove(name);
+                }
             }
             AppClientConfigurationChange(p) => self
                 .data
@@ -1108,12 +1166,36 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>
         self.wait_for_shutdown()
     }
 
-    pub fn add_dependency(&self, name: String, version: Option<String>) -> anyhow::Result<()> {
+    pub fn add_dependency(
+        &self,
+        name: String,
+        version: Option<String>,
+        metadata: Option<Vec<data::DependencyMetadata>>,
+    ) -> anyhow::Result<()> {
         self.sender
             .try_send(TelemetryActions::AddDependency(Dependency {
                 name,
                 version,
+                hash: None,
+                metadata,
             }))?;
+        Ok(())
+    }
+
+    pub fn add_product_change(
+        &self,
+        product: String,
+        enabled: bool,
+        version: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.sender.try_send(TelemetryActions::AddProductChange((
+            product,
+            ProductState {
+                enabled,
+                version,
+                error: None,
+            },
+        )))?;
         Ok(())
     }
 
@@ -1211,6 +1293,7 @@ pub struct TelemetryWorkerBuilder {
     pub rust_shared_lib_deps: bool,
     pub config: Config,
     pub flavor: TelemetryWorkerFlavor,
+    pub install_signature: Option<data::InstallSignature>,
 }
 
 impl TelemetryWorkerBuilder {
@@ -1262,6 +1345,7 @@ impl TelemetryWorkerBuilder {
             rust_shared_lib_deps: false,
             config: Config::default(),
             flavor: TelemetryWorkerFlavor::default(),
+            install_signature: None,
         }
     }
 
@@ -1294,11 +1378,14 @@ impl TelemetryWorkerBuilder {
                 integrations: self.integrations,
                 configurations: self.configurations,
                 endpoints: self.endpoints,
+                products: std::collections::HashMap::new(),
+                products_pending: HashSet::new(),
                 logs: store::QueueHashMap::default(),
                 metric_contexts: contexts.clone(),
                 metric_buckets: MetricBuckets::default(),
                 host: self.host,
                 app: self.application,
+                install_signature: self.install_signature,
             },
             config,
             mailbox,
@@ -1701,7 +1788,7 @@ mod tests {
             // Populate every data field that reset() should clear.
             worker.data.dependencies.insert(Dependency {
                 name: "dep".to_string(),
-                version: None,
+                ..Default::default()
             });
             worker.data.integrations.insert(Integration {
                 name: "integration".to_string(),
@@ -1788,7 +1875,7 @@ mod tests {
             handle
                 .try_send_msg(TelemetryActions::AddDependency(Dependency {
                     name: "dep".to_string(),
-                    version: None,
+                    ..Default::default()
                 }))
                 .unwrap();
             let (id, log) = make_log(1, "pre-fork log");

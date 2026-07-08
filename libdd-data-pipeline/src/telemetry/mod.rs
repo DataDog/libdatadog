@@ -190,6 +190,16 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> std
     }
 }
 
+impl TelemetryClient {
+    /// Allow sharing a telemetry worker with data-pipeline
+    pub fn with_handle(handle: TelemetryWorkerHandle) -> Self {
+        TelemetryClient {
+            metrics: Metrics::new(&handle),
+            worker: handle,
+        }
+    }
+}
+
 /// Telemetry describing the sending of a trace payload
 /// It can be produced from a [`SendWithRetryResult`] or from a [`SendDataResult`].
 #[derive(PartialEq, Debug, Default)]
