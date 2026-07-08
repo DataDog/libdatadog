@@ -12,7 +12,7 @@ use std::{
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::{tag, Endpoint};
+use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
@@ -133,7 +133,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
         let telemetry = telemetry.map(|handle| {
             let key = handle.register_metric_context(
                 COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
-                vec![tag!("collapsed_spans", "whole_key")],
+                vec![libdd_common::tag!("collapsed_spans", "whole_key")],
                 libdd_telemetry::data::metrics::MetricType::Count,
                 true,
                 libdd_telemetry::data::metrics::MetricNamespace::Tracers,
@@ -173,88 +173,83 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     /// case stats cannot be flushed since the concentrator might be corrupted.
     /// Returns `Ok(true)` if stats were sent, `Ok(false)` if the concentrator had nothing to send.
     pub async fn send(&self, force_flush: bool) -> anyhow::Result<bool> {
-        // We flush twice with `force_flush` so that if we have a mix of obfuscated and unobfuscated
-        // buckets, both get flushed in separate payloads
-        let flush_count = if force_flush { 2 } else { 1 };
+        let flush = {
+            #[allow(clippy::unwrap_used)]
+            let mut concentrator = self.concentrator.lock().unwrap();
+            concentrator.flush_buckets(force_flush)
+        };
+
+        if flush.collapsed_spans > 0 {
+            #[cfg(feature = "telemetry")]
+            if let Some((handle, key)) = &self.telemetry {
+                let _ = handle.add_point(flush.collapsed_spans as f64, key, vec![]);
+            }
+            #[cfg(feature = "dogstatsd")]
+            if let Some(client) = &self.dogstatsd {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    flush.collapsed_spans as i64,
+                    [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
+                )]);
+            }
+        }
+
+        // Obfuscated and un-obfuscated buckets must be sent in separate payloads because only
+        // the obfuscated one carries the `datadog-obfuscation-version` header.
         let mut sent_stats = false;
-        for _ in 0..flush_count {
-            let (payload, collapsed_spans, buckets_obfuscated) = self.flush(force_flush);
-
-            if collapsed_spans > 0 {
-                #[cfg(feature = "telemetry")]
-                if let Some((handle, key)) = &self.telemetry {
-                    let _ = handle.add_point(collapsed_spans as f64, key, vec![]);
-                }
-                #[cfg(feature = "dogstatsd")]
-                if let Some(client) = &self.dogstatsd {
-                    client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                        COLLAPSED_SPANS_HEALTH_METRIC,
-                        collapsed_spans as i64,
-                        [tag!("collapsed_spans", "whole_key")].iter(),
-                    )]);
-                }
-            }
-
-            if payload.stats.is_empty() {
-                continue;
-            }
-            let body = rmp_serde::encode::to_vec_named(&payload)?;
-
-            let mut headers: http::HeaderMap = TracerHeaderTags::from(&self.meta).into();
-
-            headers.insert(
-                http::header::CONTENT_TYPE,
-                libdd_common::header::APPLICATION_MSGPACK,
-            );
-
-            #[cfg(feature = "stats-obfuscation")]
-            if buckets_obfuscated {
-                headers.insert(
-                    http::HeaderName::from_static("datadog-obfuscation-version"),
-                    http::HeaderValue::from_static(self.supported_obfuscation_version),
-                );
-            }
-            #[cfg(not(feature = "stats-obfuscation"))]
-            let _ = buckets_obfuscated;
-
-            let result = send_with_retry(
-                &self.capabilities,
-                &self.endpoint,
-                body,
-                &headers,
-                &RetryStrategy::default(),
-            )
-            .await;
-
-            match result {
-                Ok(_) => {
-                    sent_stats = true;
-                }
-                Err(err) => {
-                    error!(?err, "Error with the StatsExporter when sending stats");
-                    anyhow::bail!("Failed to send stats: {err}");
-                }
-            }
+        if !flush.obfuscated_buckets.is_empty() {
+            self.send_payload(flush.obfuscated_buckets, true).await?;
+            sent_stats = true;
+        }
+        if !flush.unobfuscated_buckets.is_empty() {
+            self.send_payload(flush.unobfuscated_buckets, false).await?;
+            sent_stats = true;
         }
         Ok(sent_stats)
     }
 
-    /// Flush stats from the concentrator into a payload
+    /// Encode the given buckets into a stats payload and send it to the agent.
     ///
-    /// # Arguments
-    /// - `force_flush` if true, triggers a force flush on the concentrator causing all buckets to
-    ///   be flushed regardless of their age.
-    ///
-    /// # Panic
-    /// Will panic if another thread panicked while holding the concentrator lock in which
-    /// case stats cannot be flushed since the concentrator might be corrupted.
-    fn flush(&self, force_flush: bool) -> (pb::ClientStatsPayload, u64, bool) {
+    /// `obfuscated` indicates whether the buckets were obfuscated client-side, in which case the
+    /// `datadog-obfuscation-version` header is added.
+    async fn send_payload(
+        &self,
+        buckets: Vec<pb::ClientStatsBucket>,
+        #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))] obfuscated: bool,
+    ) -> anyhow::Result<()> {
         let sequence = self.sequence_id.fetch_add(1, Ordering::Relaxed);
-        #[allow(clippy::unwrap_used)]
-        let (buckets, collapsed_spans, buckets_obfuscated) =
-            self.concentrator.lock().unwrap().flush_buckets(force_flush);
         let payload = encode_stats_payload(&self.meta, sequence, buckets);
-        (payload, collapsed_spans, buckets_obfuscated)
+        let body = rmp_serde::encode::to_vec_named(&payload)?;
+
+        let mut headers: http::HeaderMap = TracerHeaderTags::from(&self.meta).into();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            libdd_common::header::APPLICATION_MSGPACK,
+        );
+        #[cfg(feature = "stats-obfuscation")]
+        if obfuscated {
+            headers.insert(
+                http::HeaderName::from_static("datadog-obfuscation-version"),
+                http::HeaderValue::from_static(self.supported_obfuscation_version),
+            );
+        }
+
+        let result = send_with_retry(
+            &self.capabilities,
+            &self.endpoint,
+            body,
+            &headers,
+            &RetryStrategy::default(),
+        )
+        .await;
+
+        match result {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                error!(?err, "Error with the StatsExporter when sending stats");
+                anyhow::bail!("Failed to send stats: {err}");
+            }
+        }
     }
 }
 

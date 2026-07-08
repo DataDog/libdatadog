@@ -16,26 +16,42 @@ pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpSt
 pub mod stat_span;
 pub use stat_span::StatSpan;
 
+/// Result of flushing a concentrator.
+///
+/// Obfuscated and un-obfuscated buckets are kept separate because they must be sent in distinct
+/// stats payloads: only the obfuscated payload carries the `datadog-obfuscation-version` header.
+pub struct FlushResult {
+    /// Buckets whose resource names were obfuscated client-side.
+    pub obfuscated_buckets: Vec<pb::ClientStatsBucket>,
+    /// Buckets whose resource names were left as-is.
+    pub unobfuscated_buckets: Vec<pb::ClientStatsBucket>,
+    /// Total number of spans that were collapsed into the overflow sentinel bucket due to
+    /// cardinality limiting across all flushed time buckets.
+    pub collapsed_spans: u64,
+}
+
+impl FlushResult {
+    /// All flushed buckets regardless of obfuscation.
+    #[cfg(test)]
+    pub fn all_buckets(self) -> Vec<pb::ClientStatsBucket> {
+        let mut buckets = self.obfuscated_buckets;
+        buckets.extend(self.unobfuscated_buckets);
+        buckets
+    }
+}
+
 /// Concentrators that can provide raw time buckets for export implement this trait.
 ///
 /// `StatsExporter` is generic over `C: FlushableConcentrator` so it can work with
 /// both the in-process [`SpanConcentrator`] and the SHM-backed `ShmSpanConcentrator`.
 pub trait FlushableConcentrator {
-    /// Flush time buckets and return them together some metadata. If `force` is true, flush
-    /// all buckets.
-    ///
-    /// Returns a triplet `(buckets, collapsed_spans, buckets_obfuscated)`
-    /// Where
-    ///   - `buckets` are the encoded stats bucket
-    ///   - `collapsed_spans` is the number of spans that were collapsed into the overflow sentinel
-    ///     bucket due to cardinality limiting
-    ///   - `buckets_obfuscated` indicates whether the returned buckets have been obfuscated
-    ///     client-side
-    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64, bool);
+    /// Flush time buckets and return them together with flush metadata. If `force` is true, flush
+    /// all buckets. See [`FlushResult`] for the returned data.
+    fn flush_buckets(&mut self, force: bool) -> FlushResult;
 }
 
 impl FlushableConcentrator for SpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64, bool) {
+    fn flush_buckets(&mut self, force: bool) -> FlushResult {
         self.flush(SystemTime::now(), force)
     }
 }
@@ -208,11 +224,11 @@ impl SpanConcentrator {
             )
         });
         #[cfg(feature = "stats-obfuscation")]
-        let obfuscated_resource = Self::compute_obfuscated_span(
-            target_bucket.obfuscated,
-            self.obfuscation_config.load().sql_obfuscation_mode,
-            span,
-        );
+        let obfuscated_resource = if target_bucket.obfuscated {
+            Self::compute_obfuscated_span(self.obfuscation_config.load().sql_obfuscation_mode, span)
+        } else {
+            None
+        };
         #[cfg(not(feature = "stats-obfuscation"))]
         let obfuscated_resource: Option<String> = None;
         let agg_key = match obfuscated_resource.as_deref() {
@@ -233,66 +249,63 @@ impl SpanConcentrator {
 
     #[cfg(feature = "stats-obfuscation")]
     fn compute_obfuscated_span<'a>(
-        obfuscate: bool,
         sql_obfuscation_mode: libdd_trace_obfuscation::sql::SqlObfuscationMode,
-        #[allow(unused)] span: &'a impl StatSpan<'a>,
+        span: &'a impl StatSpan<'a>,
     ) -> Option<String> {
-        if obfuscate {
-            let dbms_hint: Option<&str> = span.get_meta("db.type");
-            return libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
-                span.r#type(),
-                span.resource(),
-                dbms_hint,
-                sql_obfuscation_mode,
-            );
-        }
-        None
+        let dbms_hint: Option<&str> = span.get_meta("db.type");
+        libdd_trace_obfuscation::obfuscate::obfuscate_resource_for_stats(
+            span.r#type(),
+            span.resource(),
+            dbms_hint,
+            sql_obfuscation_mode,
+        )
     }
 
     /// Flush all stats bucket except for the `buffer_len` most recent. If `force` is true, flush
     /// all buckets.
     ///
-    /// Returns a triplet `(buckets, collapsed_spans, buckets_obfuscated)`
-    /// Where
-    ///   - `buckets` are the encoded stats bucket
-    ///   - `collapsed_spans` is the number of spans that were collapsed into the overflow sentinel
-    ///     bucket due to cardinality limiting
-    ///   - `buckets_obfuscated` indicates whether the returned buckets have been obfuscated
-    ///     client-side
-    pub fn flush(
-        &mut self,
-        now: SystemTime,
-        force: bool,
-    ) -> (Vec<pb::ClientStatsBucket>, u64, bool) {
-        self.drain_due_buckets(now, force, StatsBucket::flush)
+    /// Obfuscated and un-obfuscated buckets are returned separately, see [`FlushResult`].
+    pub fn flush(&mut self, now: SystemTime, force: bool) -> FlushResult {
+        let (buckets, collapsed_spans) = self.drain_due_buckets(now, force, StatsBucket::flush);
+        let mut obfuscated_buckets = Vec::new();
+        let mut unobfuscated_buckets = Vec::new();
+        for (obfuscated, bucket) in buckets {
+            if obfuscated {
+                obfuscated_buckets.push(bucket);
+            } else {
+                unobfuscated_buckets.push(bucket);
+            }
+        }
+        FlushResult {
+            obfuscated_buckets,
+            unobfuscated_buckets,
+            collapsed_spans,
+        }
     }
 
     /// Like [`Self::flush`], but also emits exact per-cell scalars alongside each bucket for the
     /// OTLP trace-metrics path. The protobuf bucket inside each [`OtlpStatsBucket`] is identical
     /// to what [`Self::flush`] would produce, so the /v0.6/stats agent path is unaffected.
     pub fn flush_with_otlp_exact(&mut self, now: SystemTime, force: bool) -> Vec<OtlpStatsBucket> {
-        let (buckets, _, _) =
-            self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact);
-        buckets
+        let (buckets, _) = self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact);
+        buckets.into_iter().map(|(_, bucket)| bucket).collect()
     }
 
+    /// Drain the buckets that are due for flushing, encoding each with `encode`.
+    ///
+    /// Returns a tuple `(buckets, collapsed_spans)` where each encoded bucket is paired with a
+    /// boolean indicating whether it was obfuscated client-side (always `false` when the
+    /// `stats-obfuscation` feature is disabled), and `collapsed_spans` is the total number of
+    /// spans collapsed into the overflow sentinel bucket due to cardinality limiting.
     fn drain_due_buckets<T>(
         &mut self,
         now: SystemTime,
         force: bool,
         encode: impl Fn(StatsBucket, u64) -> T,
-    ) -> (Vec<T>, u64, bool) {
+    ) -> (Vec<(bool, T)>, u64) {
         // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
-        let mut buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
-        buckets.sort_unstable_by_key(|(timestamp, _)| *timestamp);
-        #[cfg(not(feature = "stats-obfuscation"))]
-        let first_bucket_is_obfuscated = false;
-        #[cfg(feature = "stats-obfuscation")]
-        let first_bucket_is_obfuscated = buckets
-            .first()
-            .map(|(_, bucket)| bucket.obfuscated)
-            .unwrap_or(false);
+        let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
         self.oldest_timestamp = if force {
             align_timestamp(now_timestamp, self.bucket_size)
         } else {
@@ -312,22 +325,22 @@ impl SpanConcentrator {
                 // shutdown.
                 let keep = !force
                     && timestamp > (now_timestamp - self.buffer_len as u64 * self.bucket_size);
-                // Even when forcing to flush, we refuse to mix obfuscated buckets from
-                // un-obfuscated buckets. This means you need to flush twice to flush it all
-                #[cfg(feature = "stats-obfuscation")]
-                let keep = keep || bucket.obfuscated != first_bucket_is_obfuscated;
                 if keep {
                     self.buckets.insert(timestamp, bucket);
                     return None;
                 }
                 total_collapsed += bucket.collapsed_count();
-                Some(encode(bucket, self.bucket_size))
+                #[cfg(feature = "stats-obfuscation")]
+                let obfuscated = bucket.obfuscated;
+                #[cfg(not(feature = "stats-obfuscation"))]
+                let obfuscated = false;
+                Some((obfuscated, encode(bucket, self.bucket_size)))
             })
             .collect();
         if total_collapsed > 0 {
             debug!(max_entries_per_bucket = self.max_entries_per_bucket, total_collapsed, "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT");
         }
-        (buckets_pb, total_collapsed, first_bucket_is_obfuscated)
+        (buckets_pb, total_collapsed)
     }
 }
 

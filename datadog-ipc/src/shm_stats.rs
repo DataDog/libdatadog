@@ -56,7 +56,9 @@ use zwohash::ZwoHasher;
 
 use libdd_ddsketch::DDSketch;
 use libdd_trace_protobuf::pb;
-use libdd_trace_stats::span_concentrator::{FixedAggregationKey, FlushableConcentrator};
+use libdd_trace_stats::span_concentrator::{
+    FixedAggregationKey, FlushResult, FlushableConcentrator,
+};
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};
 
@@ -820,8 +822,13 @@ impl ShmSpanConcentrator {
 }
 
 impl FlushableConcentrator for ShmSpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> (Vec<pb::ClientStatsBucket>, u64, bool) {
-        (self.drain_buckets(force), 0, false)
+    fn flush_buckets(&mut self, force: bool) -> FlushResult {
+        // The SHM concentrator does not perform client-side obfuscation.
+        FlushResult {
+            obfuscated_buckets: vec![],
+            unobfuscated_buckets: self.drain_buckets(force),
+            collapsed_spans: 0,
+        }
     }
 }
 
