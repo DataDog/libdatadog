@@ -3,7 +3,7 @@
 //! This module implements the SpanConcentrator used to aggregate spans into stats
 use std::collections::HashMap;
 use std::time::{self, Duration, SystemTime};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use libdd_trace_protobuf::pb;
 
@@ -187,6 +187,20 @@ impl SpanConcentrator {
             SharedStatsComputationObfuscationConfig,
         >,
     ) -> SpanConcentrator {
+        if let Some(cardinality_limit_config) = override_cardinality_limits.as_ref() {
+            if cardinality_limit_config.whole_key_limit <= cardinality_limit_config.resource_limit
+                || cardinality_limit_config.whole_key_limit
+                    <= cardinality_limit_config.http_endpoint_limit
+                || cardinality_limit_config.whole_key_limit
+                    <= cardinality_limit_config.peer_tags_limit
+                || cardinality_limit_config.whole_key_limit
+                    <= cardinality_limit_config.additional_tags_limit
+            {
+                warn!(
+                    "Stats cardinality limit is misconfigured: per-field limits must be lower than whole-key limit otherwise they have no effect and you will get over-collapsed stats!"
+                );
+            }
+        }
         SpanConcentrator {
             bucket_size: bucket_size.as_nanos() as u64,
             buckets: HashMap::new(),
