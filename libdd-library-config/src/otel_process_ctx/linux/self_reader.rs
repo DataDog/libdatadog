@@ -3,25 +3,28 @@
 
 //! Same-process reader for the OTEL process context mapping.
 //!
-//! The reader copies header and payload bytes with `write(2)` into a pipe before decoding. That
-//! syscall turns accesses to reclaimed memory that has been unmapped into a syscall error or short
-//! write instead of a segfault, but its ordering relative to the publisher has to be reasoned about
-//! at the OS/architecture level rather than only in Rust.
+//! By design, this reader emulates an out-of-process reader: it does not take the publisher's
+//! mutex or hold any guard that prevents the mapping from being unpublished, the header from being
+//! rewritten, or the payload allocation from being replaced while it copies memory. The
+//! seqlock-style timestamp checks and fences only let it detect concurrent publication or update;
+//! unpublish can make the memory disappear entirely.
+//!
+//! To handle this safely, instead of dereferencing process memory directly, we ask the kernel to
+//! copy those bytes into a pipe and then read the pipe back. This gives us the same failure mode an
+//! out-of-process reader has: if memory is unmapped or invalid, the copy fails instead of
+//! segfaulting the process.
 
 use core::{
     cell::Cell,
+    mem::offset_of,
     ptr::{self, NonNull},
     sync::atomic::{fence, Ordering},
 };
 use std::{
     fs::File,
     io::{self, BufRead, BufReader},
-    mem::offset_of,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
 };
-
-#[cfg(debug_assertions)]
-use core::sync::atomic::AtomicUsize;
 
 use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
     any_value, AnyValue, KeyValue, ProcessContext,
@@ -30,9 +33,6 @@ use prost::Message;
 
 use super::{MappingHeader, PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
 
-#[cfg(debug_assertions)]
-static LIVE_SELF_READERS: AtomicUsize = AtomicUsize::new(0);
-
 /// Reader for the current process's OTel process context mapping.
 ///
 /// Locates the OTEL_CTX mapping at construction. Call [`read`](Self::read) repeatedly to fetch
@@ -40,12 +40,13 @@ static LIVE_SELF_READERS: AtomicUsize = AtomicUsize::new(0);
 /// forked. After a `fork()`, reads fail and a new reader must be constructed.
 pub struct ProcessContextSelfReader {
     pid: libc::pid_t,
-    header_ptr: NonNull<MappingHeader>,
+    header_ptr: NonNull<u8>,
     pipe: Cell<Option<CopyPipe>>,
 }
 
-// SAFETY: ProcessContextSelfReader doesn't rely on thread local state;
-// mapping header is a pointer, but it's assumed to be a static mapping
+// SAFETY: ProcessContextSelfReader can be moved between threads because it owns its pipe file
+// descriptors and only stores a process-global mapping address. `Cell` keeps it !Sync, so the
+// cached pipe cannot be used concurrently through shared references.
 unsafe impl Send for ProcessContextSelfReader {}
 // we do not implement Sync because of the Cell
 
@@ -60,8 +61,6 @@ impl ProcessContextSelfReader {
             header_ptr: Self::header_ptr_from_addr(mapping_addr)?,
             pipe: Cell::new(None),
         };
-        #[cfg(debug_assertions)]
-        LIVE_SELF_READERS.fetch_add(1, Ordering::Relaxed);
         Ok(reader)
     }
 
@@ -147,12 +146,7 @@ impl ProcessContextSelfReader {
     pub fn threadlocal_attribute_key_map(context: &ProcessContext) -> Option<Vec<String>> {
         let key = "threadlocal.attribute_key_map";
 
-        context
-            .resource
-            .as_ref()
-            .and_then(|resource| Self::find_attr(&resource.attributes, key))
-            .or_else(|| Self::find_attr(&context.extra_attributes, key))
-            .and_then(Self::string_array)
+        Self::find_attr(&context.extra_attributes, key).and_then(Self::string_array)
     }
 
     fn string_array(value: &AnyValue) -> Option<Vec<String>> {
@@ -179,11 +173,10 @@ impl ProcessContextSelfReader {
             .and_then(|attr| attr.value.as_ref())
     }
 
-    fn header_ptr_from_addr(mapping_addr: usize) -> io::Result<NonNull<MappingHeader>> {
-        NonNull::new(ptr::with_exposed_provenance::<MappingHeader>(mapping_addr).cast_mut())
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "null process context header")
-            })
+    fn header_ptr_from_addr(mapping_addr: usize) -> io::Result<NonNull<u8>> {
+        NonNull::new(ptr::with_exposed_provenance::<u8>(mapping_addr).cast_mut()).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "null process context header")
+        })
     }
 
     /// Find the OTEL_CTX mapping in /proc/self/maps.
@@ -237,7 +230,6 @@ impl ProcessContextSelfReader {
         let timestamp_ptr = self
             .header_ptr
             .as_ptr()
-            .cast::<u8>()
             .wrapping_add(offset_of!(MappingHeader, monotonic_published_at_ns))
             .cast_const();
         let bytes = self.read_process_memory(timestamp_ptr, size_of::<u64>())?;
@@ -248,7 +240,7 @@ impl ProcessContextSelfReader {
 
     fn read_header(&self) -> io::Result<MappingHeader> {
         let bytes = self.read_process_memory(
-            self.header_ptr.as_ptr().cast::<u8>().cast_const(),
+            self.header_ptr.as_ptr().cast_const(),
             size_of::<MappingHeader>(),
         )?;
         Self::mapping_header_from_bytes(&bytes)
@@ -351,18 +343,6 @@ impl ProcessContextSelfReader {
             }
         }
     }
-}
-
-#[cfg(debug_assertions)]
-impl Drop for ProcessContextSelfReader {
-    fn drop(&mut self) {
-        LIVE_SELF_READERS.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-#[cfg(debug_assertions)]
-pub(super) fn live_reader_count() -> usize {
-    LIVE_SELF_READERS.load(Ordering::Relaxed)
 }
 
 /// A cached pipe used to probe-copy process memory via `write(2)`.
@@ -534,6 +514,7 @@ impl CopyPipe {
 }
 
 /// Error from [`copy_via_pipe`], carrying whether the pipe may still hold undrained bytes.
+#[derive(Debug)]
 struct PipeCopyError {
     err: io::Error,
     /// If true, the pipe may contain leftover bytes and must not be reused.
@@ -545,14 +526,12 @@ mod tests {
     use core::ptr;
     use std::io;
 
-    use super::ProcessContextSelfReader;
+    use super::{CopyPipe, ProcessContextSelfReader};
 
     fn with_published_mapping(f: impl FnOnce()) {
         super::super::publish_raw_payload(b"setup".to_vec()).expect("publish should succeed");
         f();
-        unsafe {
-            super::super::unpublish().expect("unpublish should succeed");
-        }
+        super::super::unpublish().expect("unpublish should succeed");
     }
 
     fn page_size() -> usize {
@@ -624,6 +603,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[serial_test::serial]
     fn read_returns_would_block_while_context_is_being_updated() {
         with_published_mapping(|| {
@@ -631,7 +611,7 @@ mod tests {
             // SAFETY: the mapping was published by this test before being read, and the test is
             // serial so no writer is concurrently mutating the plain header field.
             let published_at_ns = unsafe {
-                let header = reader.header_ptr.as_ptr();
+                let header = reader.header_ptr.as_ptr().cast::<super::MappingHeader>();
                 let published_at_ns = (*header).monotonic_published_at_ns;
                 (*header).monotonic_published_at_ns = super::UNPUBLISHED_OR_UPDATING;
                 published_at_ns
@@ -649,7 +629,8 @@ mod tests {
 
             // SAFETY: same as above.
             unsafe {
-                (*reader.header_ptr.as_ptr()).monotonic_published_at_ns = published_at_ns;
+                (*reader.header_ptr.as_ptr().cast::<super::MappingHeader>())
+                    .monotonic_published_at_ns = published_at_ns;
             }
             drop(reader);
         });
@@ -669,6 +650,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[serial_test::serial]
     fn read_process_memory_copies_valid_memory() {
         with_published_mapping(|| {
@@ -684,15 +666,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[serial_test::serial]
     fn read_process_memory_copies_more_than_pipe_capacity() {
         with_published_mapping(|| {
-            const LEN: usize = 256 * 1024;
-            let payload: Vec<_> = (0..LEN).map(|i| i as u8).collect();
+            let pipe = CopyPipe::new().expect("pipe creation should succeed");
+            let len = pipe
+                .capacity
+                .checked_add(1)
+                .expect("pipe capacity should fit payload length");
+            let payload: Vec<_> = (0..len).map(|i| i as u8).collect();
 
-            let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
-            let copy = reader
-                .read_process_memory(payload.as_ptr(), payload.len())
+            let copy = pipe
+                .copy_via_pipe(payload.as_ptr(), payload.len())
                 .expect("large payload copy through pipe should succeed");
 
             assert_eq!(copy, payload);
@@ -700,6 +686,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[serial_test::serial]
     fn read_process_memory_fails_on_unmapped_address() {
         with_published_mapping(|| {
@@ -716,6 +703,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     #[serial_test::serial]
     fn read_process_memory_fails_when_range_extends_past_mapped_page() {
         with_published_mapping(|| {

@@ -52,9 +52,9 @@ pub mod linux {
     /// The header structure written at the start of the mapping. This must match the C
     /// layout of the specification.
     ///
-    /// Header fields intentionally use the plain C layout types specified by OTel. Same-process
-    /// readers copy the header through [`ProcessContextSelfReader`]'s pipe-based reader instead of
-    /// dereferencing this mapping directly.
+    /// Header fields intentionally use the plain C layout types specified by OTel. There are no
+    /// atomics here: publication relies on naturally atomic aligned word-sized accesses on the
+    /// supported Linux architectures, plus explicit fences to constrain store/load ordering.
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct MappingHeader {
@@ -484,20 +484,8 @@ pub mod linux {
     /// this is no-op.
     ///
     /// A call to [publish] following an [unpublish] will create a new mapping.
-    ///
-    /// # Safety
-    ///
-    /// This function may only be called if it can be guaranteed that there are no in-process
-    /// readers, or at least that they will not be used after the call.
-    pub unsafe fn unpublish() -> io::Result<()> {
+    pub fn unpublish() -> io::Result<()> {
         let mut guard = lock_context_handle()?;
-
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(
-            self_reader::live_reader_count(),
-            0,
-            "unpublish called while ProcessContextSelfReader instances are live"
-        );
 
         if let Some(ProcessContextHandle {
             mapping, payload, ..
@@ -505,10 +493,8 @@ pub mod linux {
         {
             // Mark the context as unavailable before freeing the mapping/payload. The fence forces
             // the writing CPU not to reorder the unavailable timestamp store and the deallocation
-            // stores. Formal correctness, which this does not aim for, only applies to in-process
-            // readers, and those are forbidden to read after `unpublish()` because they could also
-            // hit an unmapped header, which is why this function is unsafe. The ordering should
-            // help out-of-process readers.
+            // stores. This gives readers more of a chance (but no guarantee) to observe an
+            // unavailable context before the mapping is removed.
             //
             // SAFETY: the mapping is still live and valid, and the global mutex prevents
             // concurrent in-process writers from mutating the plain header fields.
@@ -516,7 +502,7 @@ pub mod linux {
             unsafe {
                 (*header).monotonic_published_at_ns = UNPUBLISHED_OR_UPDATING;
             }
-            fence(Ordering::Release);
+            fence(Ordering::SeqCst);
 
             mapping.free()?; // payload will still drop if it fails
                              // but we'll be stuck with a zero timestamp
@@ -529,7 +515,7 @@ pub mod linux {
     #[cfg(test)]
     #[serial_test::serial]
     mod tests {
-        use core::{mem::size_of, ptr, time::Duration};
+        use core::{ptr, time::Duration};
         use std::io;
 
         use super::ProcessContext;
@@ -537,28 +523,6 @@ pub mod linux {
             any_value, AnyValue, KeyValue,
         };
         use prost::Message;
-
-        #[repr(C)]
-        #[derive(Clone, Copy)]
-        struct MappingHeaderSnapshot {
-            signature: [u8; 8],
-            version: u32,
-            payload_size: u32,
-            monotonic_published_at_ns: u64,
-            payload_ptr: *const u8,
-        }
-
-        const _: () = {
-            use core::mem::{align_of, offset_of};
-
-            assert!(offset_of!(MappingHeaderSnapshot, signature) == 0);
-            assert!(offset_of!(MappingHeaderSnapshot, version) == 8);
-            assert!(offset_of!(MappingHeaderSnapshot, payload_size) == 12);
-            assert!(offset_of!(MappingHeaderSnapshot, monotonic_published_at_ns) == 16);
-            assert!(offset_of!(MappingHeaderSnapshot, payload_ptr) == 24);
-            assert!(size_of::<MappingHeaderSnapshot>() == size_of::<super::MappingHeader>());
-            assert!(align_of::<MappingHeaderSnapshot>() == align_of::<super::MappingHeader>());
-        };
 
         /// Read the process context from the current process.
         ///
@@ -568,13 +532,12 @@ pub mod linux {
         /// functions it relies on, are specialized for tests (for example, it doesn't check for
         /// concurrent writers after reading the header, because we know they can't be). Do not
         /// extract or use as it is as a generic Rust OTel process context reader.
-        fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
+        fn read_process_context() -> io::Result<super::MappingHeader> {
             let mapping_addr = super::ProcessContextSelfReader::find_otel_mapping()?;
-            let header_ptr: *const MappingHeaderSnapshot =
+            let header_ptr: *const super::MappingHeader =
                 ptr::with_exposed_provenance(mapping_addr);
             // SAFETY: the mapping was published by this test before being read; the tests are
-            // serial and don't update the mapping while this snapshot is copied; the layout
-            // assertions above keep this snapshot compatible with the real header.
+            // serial and don't update the mapping while this header is copied.
             Ok(unsafe { ptr::read(header_ptr) })
         }
 
@@ -601,9 +564,7 @@ pub mod linux {
             };
             let read_context =
                 ProcessContext::decode(read_payload).expect("couldn't decode the process context");
-            unsafe {
-                super::unpublish().expect("couldn't unpublish the context");
-            }
+            super::unpublish().expect("couldn't unpublish the context");
 
             assert!(header.signature == *super::SIGNATURE, "wrong signature");
             assert!(
@@ -677,9 +638,7 @@ pub mod linux {
             );
             assert!(read_payload == payload_v2.as_bytes(), "payload mismatch");
 
-            unsafe {
-                super::unpublish().expect("couldn't unpublish the context");
-            }
+            super::unpublish().expect("couldn't unpublish the context");
         }
 
         #[test]
@@ -694,9 +653,7 @@ pub mod linux {
             super::ProcessContextSelfReader::find_otel_mapping()
                 .expect("couldn't find the otel mapping after publishing");
 
-            unsafe {
-                super::unpublish().expect("couldn't unpublish the context");
-            }
+            super::unpublish().expect("couldn't unpublish the context");
 
             // After unpublishing the name must no longer appear in /proc/self/maps
             assert!(
