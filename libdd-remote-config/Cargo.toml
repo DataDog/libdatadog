@@ -1,7 +1,7 @@
 [package]
 edition = "2021"
 name = "libdd-remote-config"
-version = "1.0.0"
+version = "2.0.0"
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -36,10 +36,10 @@ test = ["hyper/server", "hyper-util"]
 
 [dependencies]
 anyhow = { version = "1.0" }
-libdd-common = { path = "../libdd-common", version = "5.0.0", default-features = false }
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.0.0" }
-libdd-capabilities-impl = { version = "2.0.0", path = "../libdd-capabilities-impl", default-features = false }
-libdd-trace-protobuf = { path = "../libdd-trace-protobuf", version = "3.0.2", optional = true }
+libdd-common = { path = "../libdd-common", version = "5.1.0", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
+libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-trace-protobuf = { path = "../libdd-trace-protobuf", version = "4.0.0", optional = true }
 hyper = { workspace = true, optional = true, default-features = false }
 http-body-util = { version = "0.1", optional = true }
 http = { version = "1.1", optional = true }
