@@ -184,10 +184,12 @@ pub(super) fn emit_report_to_fd(write_fd: i32, event: CrashEvent) -> bool {
         .min(config::BACKTRACE_LEVELS_MAX);
     let caps = capabilities::get();
     let can_walk = caps.contains(capabilities::PROC_VM_READV);
+    // Walk through a self-read in the calling process. In the forked collector child this reads
+    // the CoW crash snapshot and is Yama-exempt; in the in-process fallback it matches event.pid.
     let n = backtrace::backtrace_from_ucontext(
         &mut frames[..max_frames],
         event.ucontext,
-        event.pid,
+        sys::getpid(),
         can_walk,
     );
     let stackwalk_method = if n == 0 {

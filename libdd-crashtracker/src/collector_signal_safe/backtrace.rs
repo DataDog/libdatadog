@@ -113,6 +113,37 @@ mod tests {
     }
 
     #[test]
+    fn forked_child_walks_inherited_snapshot_with_self_pid() {
+        let mut frames = [[0usize; 2]; 3];
+        let base = frames.as_ptr() as usize;
+        let stride = core::mem::size_of::<[usize; 2]>();
+        frames[0] = [base + stride, 0x401000];
+        frames[1] = [base + 2 * stride, 0x402000];
+        frames[2] = [0, 0x403000];
+        // The child reads this array through `process_vm_readv`, which is opaque to lints.
+        core::hint::black_box(&frames);
+
+        let child = unsafe { sys::fork_raw() };
+        if child == 0 {
+            let mut out = [0usize; 8];
+            let n = walk_fp(&mut out, 0, sys::getpid(), base);
+            let ok = n == 3 && out[..3] == [0x401000, 0x402000, 0x403000];
+            sys::exit_process(if ok { 0 } else { 1 });
+        }
+
+        assert!(child > 0, "fork failed: {child}");
+        match sys::reap_child(child as i32, 1_000, 10, 100) {
+            sys::ChildReap::Reaped(status) => {
+                assert!(libc::WIFEXITED(status));
+                assert_eq!(libc::WEXITSTATUS(status), 0);
+            }
+            sys::ChildReap::NoChild => panic!("child was already reaped"),
+            sys::ChildReap::WaitFailed(errno) => panic!("waitpid failed: {errno}"),
+            sys::ChildReap::TimedOut => panic!("child timed out"),
+        }
+    }
+
+    #[test]
     fn stops_on_unmapped_fp() {
         let mut out = [0usize; 8];
         assert_eq!(walk_fp(&mut out, 0, pid(), 0x10000), 0);

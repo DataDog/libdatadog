@@ -146,6 +146,17 @@ fn signal_safe_crash_writes_report_through_receiver() {
     let report = fs::read_to_string(&report).expect("read crash report");
     assert_common_report_shape(&report);
     assert!(report.contains("\"si_signo_human_readable\":\"SIGABRT\""));
+    let stacktrace_frames = stacktrace_frame_count(&report);
+    #[cfg(target_arch = "aarch64")]
+    assert!(
+        stacktrace_frames >= 3,
+        "expected a multi-frame receiver stacktrace, got {stacktrace_frames}\n{report}"
+    );
+    #[cfg(not(target_arch = "aarch64"))]
+    assert!(
+        stacktrace_frames >= 1,
+        "expected at least the seed frame, got {stacktrace_frames}\n{report}"
+    );
 }
 
 #[test]
@@ -317,4 +328,13 @@ fn assert_common_report_shape(report: &str) {
     assert!(report.contains("DD_CRASHTRACK_BEGIN_PROCESSINFO\n"));
     assert!(report.contains("DD_CRASHTRACK_BEGIN_STACKTRACE\n"));
     assert!(report.ends_with("DD_CRASHTRACK_DONE\n"));
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn stacktrace_frame_count(report: &str) -> usize {
+    report
+        .split_once("DD_CRASHTRACK_BEGIN_STACKTRACE\n")
+        .and_then(|(_, rest)| rest.split_once("DD_CRASHTRACK_END_STACKTRACE\n"))
+        .map(|(stacktrace, _)| stacktrace.lines().filter(|line| !line.is_empty()).count())
+        .unwrap_or(0)
 }
