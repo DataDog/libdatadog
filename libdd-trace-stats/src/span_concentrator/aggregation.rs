@@ -434,7 +434,6 @@ pub(super) struct StatsBucket {
     /// Maximum number of distinct aggregation keys this bucket will hold before collapsing new
     /// ones into the overflow sentinel key.
     cardinality_limits: CardinalityLimitConfig,
-    // FIXME: optimize memory by storing hashes only
     distinct_resources: HashSet<u64>,
     distinct_http_endpoint: HashSet<u64>,
     distinct_peer_tags: HashSet<u64>,
@@ -486,6 +485,10 @@ impl StatsBucket {
         is_error: bool,
         is_top_level: bool,
     ) {
+        // Per field cardinality limiting
+        self.collapse_key_fields_cardinality(&mut key);
+
+        // Whole-key cardinality limiting
         if self.data.len() >= self.cardinality_limits.whole_key_limit
             && !self.data.contains_key(&key)
         {
@@ -497,8 +500,6 @@ impl StatsBucket {
             return;
         }
 
-        self.collapse_key_cardinality(&mut key);
-
         self.data
             .entry_ref(&key)
             .or_default()
@@ -506,7 +507,7 @@ impl StatsBucket {
     }
 
     /// Collapse an aggregation key fields following the bucket's `CardinalityLimitConfig`
-    fn collapse_key_cardinality(&mut self, key: &mut BorrowedAggregationKey<'_>) {
+    fn collapse_key_fields_cardinality(&mut self, key: &mut BorrowedAggregationKey<'_>) {
         fn hash(input: &impl Hash) -> u64 {
             let mut hasher = DefaultHasher::new();
             input.hash(&mut hasher);
