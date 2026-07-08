@@ -584,13 +584,34 @@ fn collect_and_add_thread_contexts(
             };
 
             collected_threads.push(ThreadData {
-                crashed: tid == crashing_tid,
+                crashed: false,
                 name,
                 stack,
                 state,
             });
         },
     )?;
+
+    // Add the crashing thread separately: it is excluded from ptrace collection
+    // because PTRACE_INTERRUPT inside its signal handler causes an EINTR loop.
+    // Its stack comes from the crash-site data already captured by the signal handler.
+    if crashing_tid != 0 {
+        let (name, state) = read_thread_stat(parent_pid, crashing_tid);
+        let name = name
+            .or_else(|| builder.error.thread_name.clone())
+            .unwrap_or_else(|| crashing_tid.to_string());
+        let stack = builder
+            .error
+            .stack
+            .clone()
+            .unwrap_or_else(StackTrace::new_incomplete);
+        collected_threads.push(ThreadData {
+            crashed: true,
+            name,
+            stack,
+            state,
+        });
+    }
 
     if incomplete {
         let _ = builder.with_counter("threads_incomplete".to_string(), 1);
