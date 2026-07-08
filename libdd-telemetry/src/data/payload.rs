@@ -11,6 +11,7 @@ pub enum Payload {
     AppStarted(AppStarted),
     AppDependenciesLoaded(AppDependenciesLoaded),
     AppIntegrationsChange(AppIntegrationsChange),
+    AppProductChange(AppProductChange),
     AppClientConfigurationChange(AppClientConfigurationChange),
     AppEndpoints(AppEndpoints),
     AppHeartbeat(#[serde(skip_serializing)] ()),
@@ -29,6 +30,7 @@ impl Payload {
             AppStarted(_) => "app-started",
             AppDependenciesLoaded(_) => "app-dependencies-loaded",
             AppIntegrationsChange(_) => "app-integrations-change",
+            AppProductChange(_) => "app-product-change",
             AppClientConfigurationChange(_) => "app-client-configuration-change",
             AppEndpoints(_) => "app-endpoints",
             AppHeartbeat(_) => "app-heartbeat",
@@ -68,6 +70,9 @@ mod tests {
             ],
             dependencies: Vec::new(),
             integrations: Vec::new(),
+            install_signature: None,
+            products: Default::default(),
+            error: None,
         });
 
         let serialized = serde_json::to_value(&payload).unwrap();
@@ -106,10 +111,11 @@ mod tests {
                 Dependency {
                     name: "tokio".to_string(),
                     version: Some("1.32.0".to_string()),
+                    ..Default::default()
                 },
                 Dependency {
                     name: "serde".to_string(),
-                    version: None,
+                    ..Default::default()
                 },
             ],
         });
@@ -485,6 +491,100 @@ mod tests {
     }
 
     #[test]
+    fn test_app_product_change_serialization() {
+        let mut products = std::collections::HashMap::new();
+        products.insert(
+            "appsec".to_string(),
+            ProductState {
+                enabled: true,
+                version: Some("1.2.3".to_string()),
+                error: None,
+            },
+        );
+        let payload = Payload::AppProductChange(AppProductChange { products });
+
+        let serialized = serde_json::to_value(&payload).unwrap();
+
+        let expected = json!({
+            "request_type": "app-product-change",
+            "payload": {
+                "products": {
+                    "appsec": {
+                        "enabled": true,
+                        "version": "1.2.3"
+                    }
+                }
+            }
+        });
+
+        assert_eq!(serialized, expected);
+    }
+
+    #[test]
+    fn test_dependency_metadata_serialization() {
+        // A plain dependency (no metadata) omits both `hash` and `metadata`.
+        let plain = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
+            dependencies: vec![Dependency {
+                name: "requests".to_string(),
+                version: Some("2.0".to_string()),
+                ..Default::default()
+            }],
+        });
+        assert_eq!(
+            serde_json::to_value(&plain).unwrap(),
+            json!({
+                "request_type": "app-dependencies-loaded",
+                "payload": { "dependencies": [{ "name": "requests", "version": "2.0" }] }
+            })
+        );
+
+        // With SCA metadata: per the telemetry schema, `type` names the metadata kind and
+        // `value` is an opaque stringified-JSON payload that consumers must parse.
+        let with_sca = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
+            dependencies: vec![Dependency {
+                name: "requests".to_string(),
+                version: Some("2.0".to_string()),
+                metadata: Some(vec![DependencyMetadata {
+                    r#type: "reachability".to_string(),
+                    value: "{\"id\":\"CVE-2024-1\",\"reached\":true}".to_string(),
+                }]),
+                ..Default::default()
+            }],
+        });
+        assert_eq!(
+            serde_json::to_value(&with_sca).unwrap(),
+            json!({
+                "request_type": "app-dependencies-loaded",
+                "payload": { "dependencies": [{
+                    "name": "requests",
+                    "version": "2.0",
+                    "metadata": [{
+                        "type": "reachability",
+                        "value": "{\"id\":\"CVE-2024-1\",\"reached\":true}"
+                    }]
+                }] }
+            })
+        );
+
+        // SCA enabled with no findings: `metadata` is present-but-empty (distinct from omitted).
+        let empty_meta = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
+            dependencies: vec![Dependency {
+                name: "requests".to_string(),
+                version: Some("2.0".to_string()),
+                metadata: Some(vec![]),
+                ..Default::default()
+            }],
+        });
+        assert_eq!(
+            serde_json::to_value(&empty_meta).unwrap(),
+            json!({
+                "request_type": "app-dependencies-loaded",
+                "payload": { "dependencies": [{ "name": "requests", "version": "2.0", "metadata": [] }] }
+            })
+        );
+    }
+
+    #[test]
     fn test_app_extended_heartbeat_serialization() {
         let payload = Payload::AppExtendedHeartbeat(AppStarted {
             configuration: vec![Configuration {
@@ -496,6 +596,9 @@ mod tests {
             }],
             dependencies: Vec::new(),
             integrations: Vec::new(),
+            install_signature: None,
+            products: Default::default(),
+            error: None,
         });
 
         let serialized = serde_json::to_value(&payload).unwrap();

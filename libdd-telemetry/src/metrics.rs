@@ -121,7 +121,7 @@ impl MetricBuckets {
             extra_tags,
         };
         match context_key.1 {
-            metrics::MetricType::Count => self
+            metrics::MetricType::Count | metrics::MetricType::Rate => self
                 .buckets
                 .entry(bucket_key)
                 .or_insert_with(|| MetricBucket {
