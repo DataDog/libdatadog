@@ -189,14 +189,16 @@ mod tests {
     #[test]
     fn initial_dictionary_arena_floor_is_small() {
         const SMALL_ARENA_HINT: usize = 64 * 1024;
-        const STRING_SHARDS: usize = 16;
-        assert_eq!(crate::profiles::collections::N_SHARDS, STRING_SHARDS);
 
         let dict = ProfilesDictionary::try_new().unwrap();
+        let string_shards = dict.strings.inner.arc.shards.len();
+        let function_shards = dict.functions.storage.shards.len();
+        let mapping_shards = dict.mappings.storage.shards.len();
 
-        assert!(string_arena_reserved_bytes(&dict) <= STRING_SHARDS * SMALL_ARENA_HINT);
-        assert!(function_arena_reserved_bytes(&dict) <= 4 * SMALL_ARENA_HINT);
-        assert!(mapping_arena_reserved_bytes(&dict) <= 2 * SMALL_ARENA_HINT);
+        assert_eq!(string_shards, 16);
+        assert!(string_arena_reserved_bytes(&dict) <= string_shards * SMALL_ARENA_HINT);
+        assert!(function_arena_reserved_bytes(&dict) <= function_shards * SMALL_ARENA_HINT);
+        assert!(mapping_arena_reserved_bytes(&dict) <= mapping_shards * SMALL_ARENA_HINT);
     }
 
     #[test]

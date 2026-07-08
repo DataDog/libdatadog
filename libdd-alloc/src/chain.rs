@@ -21,7 +21,9 @@ use core::ptr::NonNull;
 /// each successful growth doubles the target chunk size up to that cap.
 pub struct ChainAllocator<A: Allocator + Clone> {
     top: UnsafeCell<ChainNodePtr<A>>,
-    /// The size hint for the next linear allocator chunk.
+    /// The size hint for the next linear allocator chunk. This is a [Cell]
+    /// because [Allocator::allocate] takes `&self`, but growth updates the
+    /// next routine chunk size. [ChainAllocator] is not [Sync].
     node_size: Cell<usize>,
     /// The maximum size hint used for routine geometric growth. Individual
     /// oversized allocations can still request larger chunks.
@@ -148,6 +150,9 @@ impl<A: Allocator + Clone> ChainAllocator<A> {
         if Layout::from_size_align(next, align).is_ok() {
             next
         } else {
+            // `current` came from a valid layout. If the next geometric target
+            // is invalid, keep the last valid routine size instead of storing
+            // an invalid future hint.
             current
         }
     }
