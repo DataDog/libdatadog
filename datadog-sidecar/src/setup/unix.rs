@@ -121,6 +121,11 @@ impl SharedDirLiaison {
             lock_path,
         }
     }
+
+    /// The filesystem socket path this liaison binds/connects to.
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
 }
 
 impl Default for SharedDirLiaison {
@@ -186,6 +191,14 @@ mod linux {
                 pid
             ));
             Self { path }
+        }
+
+        /// The abstract socket name this liaison binds/connects to.
+        ///
+        /// Exposed so the crashtracker collector (in another process) can target the exact same
+        /// IPC socket the sidecar listens on.
+        pub fn path(&self) -> &std::path::Path {
+            &self.path
         }
     }
 
