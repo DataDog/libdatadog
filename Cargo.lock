@@ -3309,6 +3309,7 @@ dependencies = [
  "libdd-trace-protobuf",
  "manual_future",
  "prost",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "serde_with",

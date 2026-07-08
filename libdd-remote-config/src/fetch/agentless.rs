@@ -843,30 +843,18 @@ fn parse_rc_response<T: prost::Message + Default>(
 /// given the number of consecutive failures observed so far.
 fn compute_backoff(consecutive_failures: u32) -> Option<Duration> {
     match consecutive_failures {
-        0 | 1 => None,
-        2 => Some(jitter_secs(30, 60)),
-        3 => Some(jitter_secs(60, 120)),
-        _ => Some(Duration::from_secs(120)),
+        0 => None,
+        1 => Some(jitter_secs(30, 60)),
+        2 => Some(jitter_secs(60, 120)),
+        3 => Some(jitter_secs(120, 240)),
+        _ => Some(Duration::from_secs(240)),
     }
 }
 
-/// Pseudo-random duration in `[min_secs, max_secs]`, derived from the current
-/// wall-clock subsecond nanos. This is sufficient for jitter purposes (we do
-/// not need cryptographic randomness here, and pulling in a `rand` dependency
-/// for one usage is overkill).
+/// Random duration in `[min_secs, max_secs]`
 fn jitter_secs(min_secs: u64, max_secs: u64) -> Duration {
-    let (lo, hi) = if min_secs <= max_secs {
-        (min_secs, max_secs)
-    } else {
-        (max_secs, min_secs)
-    };
-    let span = hi.saturating_sub(lo);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| u64::from(d.subsec_nanos()))
-        .unwrap_or(0);
-    let offset = if span == 0 { 0 } else { nanos % (span + 1) };
-    Duration::from_secs(lo + offset)
+    use rand::Rng;
+    Duration::from_secs(rand::thread_rng().gen_range(min_secs..=max_secs))
 }
 
 fn now_unix_milli_ts() -> u64 {

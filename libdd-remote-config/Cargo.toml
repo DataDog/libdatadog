@@ -11,7 +11,7 @@ description = "Datadog Remote Configuration client and config parsers"
 
 [features]
 default = ["client", "https"]
-agentless = ["dep:tuf", "dep:chrono", "dep:prost", "client", "https"]
+agentless = ["dep:tuf", "dep:chrono", "dep:prost", "dep:rand", "client", "https"]
 client = [
     "libdd-trace-protobuf",
     "http-body-util",
@@ -60,6 +60,7 @@ tracing = { version = "0.1", default-features = false, optional = true }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = "3"
+rand = { version = "0.8.5", optional = true }
 thiserror = "2"
 hashbrown = "0.15"
 # branch = "opw-develop"
