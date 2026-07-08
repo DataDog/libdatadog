@@ -123,32 +123,27 @@ mod tests {
         }
     }
 
+    /// Sums `reserved_bytes()` across every shard's arena. Works for any of
+    /// the dictionary's sharded sets regardless of shard element type or count.
+    macro_rules! sum_shard_arena_reserved_bytes {
+        ($shards:expr) => {
+            $shards
+                .iter()
+                .map(|shard| shard.read().arena.reserved_bytes())
+                .sum::<usize>()
+        };
+    }
+
     fn string_arena_reserved_bytes(dict: &ProfilesDictionary) -> usize {
-        dict.strings
-            .inner
-            .arc
-            .shards
-            .iter()
-            .map(|shard| shard.read().arena.reserved_bytes())
-            .sum()
+        sum_shard_arena_reserved_bytes!(dict.strings.inner.arc.shards)
     }
 
     fn function_arena_reserved_bytes(dict: &ProfilesDictionary) -> usize {
-        dict.functions
-            .storage
-            .shards
-            .iter()
-            .map(|shard| shard.read().arena.reserved_bytes())
-            .sum()
+        sum_shard_arena_reserved_bytes!(dict.functions.storage.shards)
     }
 
     fn mapping_arena_reserved_bytes(dict: &ProfilesDictionary) -> usize {
-        dict.mappings
-            .storage
-            .shards
-            .iter()
-            .map(|shard| shard.read().arena.reserved_bytes())
-            .sum()
+        sum_shard_arena_reserved_bytes!(dict.mappings.storage.shards)
     }
 
     #[test]
