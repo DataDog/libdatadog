@@ -568,7 +568,11 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let handle = std::thread::spawn(move || {
             tx.send(current_tid()).unwrap();
-            let mut pfd = libc::pollfd { fd: read_fd, events: libc::POLLHUP, revents: 0 };
+            let mut pfd = libc::pollfd {
+                fd: read_fd,
+                events: libc::POLLHUP,
+                revents: 0,
+            };
             unsafe { libc::poll(&mut pfd, 1, 10_000) };
             unsafe { libc::close(read_fd) };
         });
