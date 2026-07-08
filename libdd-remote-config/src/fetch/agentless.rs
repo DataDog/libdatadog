@@ -317,9 +317,9 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
     /// TODO(rust-tuf): rebuilding from the embedded root discards any newer root
     /// versions we had already verified, so recovery re-reports the embedded root
     /// version and the backend re-sends the rotated roots to be re-verified.
-    /// rust-tuf has a private `Database::purge_metadata()` (TUF §5.1.9) that
+    /// rust-tuf has a private `Database::purge_metadata()` that
     /// clears snapshot/targets/timestamp/delegations while keeping the trusted
-    /// root; if that were exposed we could reset non-root state in place and
+    /// root. If that were exposed we could reset non-root state in place and
     /// preserve the advanced root instead of restarting from the embedded one.
     async fn reset(&mut self) -> anyhow::Result<()> {
         self.director_client = TUFClient::with_trusted_root(
@@ -430,18 +430,24 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         Ok(buf)
     }
 
-    /// Fetch remote config. Newly-downloaded target content is written directly into
-    /// `cache` rather than buffered inside the agentless fetcher.
+    /// Fetch remote config. Newly-downloaded target content is written into
+    /// `cache` after having been validated.
+    /// The [`ClientResponse`] contains the path, and metadata info of targets
+    /// that have been sent to the client.
+    ///
+    /// This separation between content and metadata is done for 2 reasons:
+    /// 1. Remote Config does not re-send target files that we have received in a previous fetch. So
+    ///    it should already be in cache.
+    /// 2. Currently we only have a single [`remoteconfig::Client`], but targets for mutliple
+    ///    clients can be fetched at once, and we need to do a M:N mapping of target files to
+    ///    clients, with the same target that can be used by mutliple client
     pub(crate) async fn fetch_config<Storage: FileStorage>(
         &mut self,
         c: remoteconfig::Client,
         cache: &TargetCache<'_, Storage>,
     ) -> anyhow::Result<ClientResponse> {
         // Derive the versions we report to the backend directly from the live
-        // trusted databases so they always match what `apply()` has actually
-        // committed. (Previously these came from a `self.initialized` flag that
-        // could diverge from the in-place-mutated trusted DB after a partial
-        // `apply()` failure — D-F1.) A freshly built or just-reset client has no
+        // trusted databases. A freshly built or just-reset client has no
         // trusted snapshot yet, so it reports snapshot version 0 and the embedded
         // root versions.
         let current_config_snapshot_version = self
@@ -611,6 +617,11 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         Ok(response)
     }
 
+    /// Update the TUF-clients state to add the new data fetched from the intake,
+    /// verify it with tuf-rust and verify target files against the TUF signed information.
+    ///
+    /// After this function returns Ok, the TUF client trusted database should be in-sync
+    /// with data fetched from the backend
     async fn apply<S: FileStorage>(
         &mut self,
         response: &remoteconfig::LatestConfigsResponse,
@@ -675,6 +686,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
         store(director_remote_repo, &snapshot_path, &metas.snapshot).await?;
         store(director_remote_repo, &targets_path, &metas.targets).await?;
 
+        // Verification of top level metadata for each individual repo happens here
         self.config_client.update().await?;
         self.director_client.update().await?;
 
