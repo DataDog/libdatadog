@@ -100,6 +100,33 @@ pub type SharedStatsComputationObfuscationConfig =
 /// over this limit (e.g. adding extra overflow buckets) we set a slightly lower limit.
 pub const DEFAULT_MAX_ENTRIES_PER_BUCKET: usize = 7_000;
 
+/// Config to override the default stats cardinality limit values
+#[derive(Debug, Clone, Copy)]
+pub struct CardinalityLimitConfig {
+    /// The whole-key cardinality limit (defaults to 7000)
+    pub whole_key_limit: usize,
+    /// The per-field cardinality limit for the Resource field (defaults to 1024)
+    pub resource_limit: usize,
+    /// The per-field cardinality limit for the HttpEndpoint field (defaults to 512)
+    pub http_endpoint_limit: usize,
+    /// The per-field cardinality limit for the PeerTags field (defaults to 512)
+    pub peer_tags_limit: usize,
+    /// The per-field cardinality limit for the AdditionalTags field (defaults to 100)
+    pub additional_tags_limit: usize,
+}
+
+impl Default for CardinalityLimitConfig {
+    fn default() -> Self {
+        Self {
+            whole_key_limit: DEFAULT_MAX_ENTRIES_PER_BUCKET,
+            resource_limit: 1024,
+            http_endpoint_limit: 512,
+            peer_tags_limit: 512,
+            additional_tags_limit: 100,
+        }
+    }
+}
+
 /// SpanConcentrator compute stats on span aggregated by time and span attributes
 ///
 /// # Aggregation
@@ -130,8 +157,8 @@ pub struct SpanConcentrator {
     oldest_timestamp: u64,
     /// bufferLen is the number stats bucket we keep when flushing.
     buffer_len: usize,
-    /// Maximum number of distinct aggregation keys per bucket.
-    max_entries_per_bucket: usize,
+    /// Config values for whole-key and per-field cardinality limits
+    cardinality_limits: CardinalityLimitConfig,
     /// span.kind fields eligible for stats computation
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
@@ -154,7 +181,7 @@ impl SpanConcentrator {
         now: SystemTime,
         span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
-        override_max_entries_per_bucket: Option<usize>,
+        override_cardinality_limits: Option<CardinalityLimitConfig>,
         #[cfg(feature = "stats-obfuscation")] obfuscation_config: Option<
             SharedStatsComputationObfuscationConfig,
         >,
@@ -167,8 +194,7 @@ impl SpanConcentrator {
                 bucket_size.as_nanos() as u64,
             ),
             buffer_len: 2,
-            max_entries_per_bucket: override_max_entries_per_bucket
-                .unwrap_or(DEFAULT_MAX_ENTRIES_PER_BUCKET),
+            cardinality_limits: override_cardinality_limits.unwrap_or_default(),
             span_kinds_stats_computed,
             peer_tag_keys,
             #[cfg(feature = "stats-obfuscation")]
@@ -218,7 +244,7 @@ impl SpanConcentrator {
         let target_bucket = self.buckets.entry(bucket_timestamp).or_insert_with(|| {
             StatsBucket::new(
                 bucket_timestamp,
-                self.max_entries_per_bucket,
+                self.cardinality_limits,
                 #[cfg(feature = "stats-obfuscation")]
                 self.obfuscation_config.load().enabled,
             )
@@ -338,7 +364,11 @@ impl SpanConcentrator {
             })
             .collect();
         if total_collapsed > 0 {
-            debug!(max_entries_per_bucket = self.max_entries_per_bucket, total_collapsed, "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT");
+            debug!(
+                max_entries_per_bucket = self.cardinality_limits.whole_key_limit,
+                total_collapsed,
+                "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT"
+            );
         }
         (buckets_pb, total_collapsed)
     }

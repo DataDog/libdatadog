@@ -5,13 +5,15 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
 use std::borrow::{Borrow, Cow};
 
 use crate::span_concentrator::StatSpan;
+
+use super::CardinalityLimitConfig;
 
 /// Sentinel value used for cardinality limiting.
 pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
@@ -299,7 +301,7 @@ impl OwnedAggregationKey {
                 is_synthetics_request: false,
                 is_trace_root: pb::Trilean::NotSet,
             },
-            peer_tags: vec![],
+            peer_tags: vec![(TRACER_BLOCKED_VALUE.to_owned(), "".to_owned())],
         }
     }
 }
@@ -428,7 +430,13 @@ pub(super) struct StatsBucket {
     start: u64,
     /// Maximum number of distinct aggregation keys this bucket will hold before collapsing new
     /// ones into the overflow sentinel key.
-    max_entries: usize,
+    cardinality_limits: CardinalityLimitConfig,
+    // FIXME: optimize memory by storing hashes only
+    distinct_resources: HashSet<String>,
+    distinct_http_endpoint: HashSet<String>,
+    distinct_peer_tags: HashSet<Vec<(String, String)>>,
+    #[allow(unused, reason = "FIXME: implement stats additional tags")]
+    distinct_additional_tags: HashSet<String>,
     /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
     collapsed_count: u64,
     /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
@@ -440,20 +448,23 @@ pub(super) struct StatsBucket {
 impl StatsBucket {
     /// Return a new StatsBucket starting at `start_timestamp`.
     ///
-    /// `max_entries` is the maximum number of distinct aggregation keys the bucket will hold.
-    /// Once the limit is reached, new distinct keys are collapsed into the overflow sentinel key.
+    /// `cardinality_limits` are the values for whole-key and per-field cardinality limits
     pub(super) fn new(
         start_timestamp: u64,
-        max_entries: usize,
+        cardinality_limits: CardinalityLimitConfig,
         #[cfg(feature = "stats-obfuscation")] obfuscation_enabled: bool,
     ) -> Self {
         Self {
             data: HashMap::new(),
             start: start_timestamp,
-            max_entries,
+            cardinality_limits,
             collapsed_count: 0,
             #[cfg(feature = "stats-obfuscation")]
             obfuscated: obfuscation_enabled,
+            distinct_resources: HashSet::new(),
+            distinct_http_endpoint: HashSet::new(),
+            distinct_peer_tags: HashSet::new(),
+            distinct_additional_tags: HashSet::new(),
         }
     }
 
@@ -467,12 +478,14 @@ impl StatsBucket {
     /// instead merged into the overflow sentinel key.
     pub(super) fn insert(
         &mut self,
-        key: BorrowedAggregationKey<'_>,
+        mut key: BorrowedAggregationKey<'_>,
         duration: i64,
         is_error: bool,
         is_top_level: bool,
     ) {
-        if self.data.len() >= self.max_entries && !self.data.contains_key(&key) {
+        if self.data.len() >= self.cardinality_limits.whole_key_limit
+            && !self.data.contains_key(&key)
+        {
             self.collapsed_count += 1;
             self.data
                 .entry(OwnedAggregationKey::overflow_key())
@@ -480,10 +493,49 @@ impl StatsBucket {
                 .insert(duration, is_error, is_top_level);
             return;
         }
+
+        self.collapse_key_cardinality(&mut key);
+
         self.data
             .entry_ref(&key)
             .or_default()
             .insert(duration, is_error, is_top_level);
+    }
+
+    /// Collapse an aggregation key fields following the bucket's `CardinalityLimitConfig`
+    fn collapse_key_cardinality(&mut self, key: &mut BorrowedAggregationKey<'_>) {
+        if self.distinct_resources.len() >= self.cardinality_limits.resource_limit
+            && !self.distinct_resources.contains(key.fixed.resource_name)
+        {
+            key.fixed.resource_name = TRACER_BLOCKED_VALUE;
+        } else {
+            self.distinct_resources
+                .insert(key.fixed.resource_name.to_owned());
+        }
+
+        if self.distinct_http_endpoint.len() >= self.cardinality_limits.http_endpoint_limit
+            && !self
+                .distinct_http_endpoint
+                .contains(key.fixed.http_endpoint)
+        {
+            key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
+        } else {
+            self.distinct_http_endpoint
+                .insert(key.fixed.http_endpoint.to_owned());
+        }
+
+        let owned_peer_tags = key
+            .peer_tags
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), v.to_string()))
+            .collect();
+        if self.distinct_peer_tags.len() >= self.cardinality_limits.peer_tags_limit
+            && !self.distinct_peer_tags.contains(&owned_peer_tags)
+        {
+            key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(TRACER_BLOCKED_VALUE))];
+        } else {
+            self.distinct_peer_tags.insert(owned_peer_tags);
+        }
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
@@ -550,7 +602,13 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
         peer_tags: key
             .peer_tags
             .into_iter()
-            .map(|(k, v)| format!("{k}:{v}"))
+            .map(|(k, v)| {
+                if v.is_empty() {
+                    k.to_string()
+                } else {
+                    format!("{k}:{v}")
+                }
+            })
             .collect(),
         is_trace_root: f.is_trace_root.into(),
         http_method: f.http_method,

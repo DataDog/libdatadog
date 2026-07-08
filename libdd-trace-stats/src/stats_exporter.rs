@@ -323,6 +323,9 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "stats-obfuscation")]
+    use crate::span_concentrator::StatsComputationObfuscationConfig;
+    use crate::span_concentrator::CardinalityLimitConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
@@ -589,7 +592,6 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn test_send_stats_with_obfuscation_header() {
-        use crate::span_concentrator::StatsComputationObfuscationConfig;
         use arc_swap::ArcSwap;
 
         let server = MockServer::start_async().await;
@@ -642,7 +644,10 @@ mod tests {
             SystemTime::now(),
             vec![],
             vec![],
-            Some(1), // max 1 distinct key → second span collapses
+            Some(CardinalityLimitConfig {
+                whole_key_limit: 1, // max 1 distinct key → second span collapses
+                ..Default::default()
+            }),
             #[cfg(feature = "stats-obfuscation")]
             None,
         );

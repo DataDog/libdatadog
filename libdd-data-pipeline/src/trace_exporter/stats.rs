@@ -18,7 +18,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
-use libdd_trace_stats::span_concentrator::SpanConcentrator;
+use libdd_trace_stats::span_concentrator::{CardinalityLimitConfig, SpanConcentrator};
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
@@ -49,7 +49,7 @@ pub(crate) struct StatsContext<'a, R: SharedRuntime> {
     pub metadata: &'a TracerMetadata,
     pub endpoint_url: &'a http::Uri,
     pub shared_runtime: &'a R,
-    pub stats_cardinality_limit: Option<usize>,
+    pub stats_cardinality_limits: Option<CardinalityLimitConfig>,
     /// Optional DogStatsD client forwarded to the [`StatsExporter`].
     pub dogstatsd: Option<std::sync::Arc<libdd_dogstatsd_client::Client>>,
     /// Optional telemetry handle forwarded to the [`StatsExporter`].
@@ -142,7 +142,7 @@ pub(crate) fn start_stats_computation<
             std::time::SystemTime::now(),
             span_kinds,
             peer_tags,
-            ctx.stats_cardinality_limit,
+            ctx.stats_cardinality_limits,
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),
         )));
