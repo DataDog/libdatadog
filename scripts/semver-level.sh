@@ -171,7 +171,7 @@ compute_semver_results() {
     elif [[ "$semver_level" == "major" ]]; then
         log_verbose "Skipping cargo-public-api: cargo-semver-checks already at major"
     else
-        PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --color=never diff "$baseline..$current" 2>&1)
+        PUBLIC_API_OUTPUT=$(cargo public-api --package "$crate" --color=never --all-features diff "$baseline..$current" 2>&1)
         EXIT_CODE=$?
 
         if [[ $EXIT_CODE -ne 0 ]]; then

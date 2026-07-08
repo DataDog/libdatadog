@@ -4,7 +4,15 @@
 //! Signal-safe Unix crash collection.
 //!
 //! `init` takes explicit caller-provided configuration. The collector reads no environment
-//! variables of its own; the consumer populates [`SignalSafeInitConfig`] with the values it wants.
+//! variables of its own; the consumer populates [`InitConfig`] with the values it wants.
+//!
+//! Crash path: the handler captures signal metadata, opens a pipe, forks a receiver child that
+//! `execv`s the configured receiver, then forks a collector child that stack-walks and writes the
+//! wire report. The parent closes the pipe, reaps both children, and falls back to `report_fd` on
+//! any unavailable capability or fork/exec/pipe failure. Degradations are recorded as
+//! `report_degraded:*` tags and as bitsets. Lifecycle is `init` -> optional
+//! [`bootstrap_complete`] -> [`shutdown`]. The wire format is pinned by
+//! `tests/fixtures/signal_safe_report.golden`.
 //!
 //! Support matrix:
 //!
@@ -13,7 +21,7 @@
 //! | Linux x86_64/aarch64 | raw `clone(SIGCHLD)` | frame-pointer walk + `process_vm_readv` | `report_fd` |
 //! | other Linux arches | no | no | `report_fd` |
 //! | macOS/iOS | no | no | `report_fd` with siginfo-only minimal reports |
-//! | non-Unix | unsupported | unsupported | compile error |
+//! | non-Unix | inert | inert | inert |
 //!
 //! `create_alt_stack` installs the built-in alternate signal stack only for the init thread.
 //! `use_alt_stack` may be used with a caller-installed per-thread alternate stack. Stack-overflow
@@ -38,29 +46,39 @@ use crate::shared::signal_names;
 #[cfg(test)]
 pub(crate) static TEST_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub use config::SignalSafeInitConfig;
+pub use config::InitConfig;
 #[cfg(test)]
 pub(crate) use emitter::SliceSink;
 pub(crate) use emitter::{emit_report, Sink};
 #[cfg(test)]
 pub(crate) use fmt::hex_addr;
-pub use handler::{bootstrap_complete, init_result, shutdown, InitResult};
+pub use handler::{bootstrap_complete, init, shutdown, InitResult};
 pub(crate) use report::{CrashContext, Report, SignalInfo, SECTION_BUF_CAPACITY};
 #[cfg(test)]
 pub(crate) use signal_names::*;
 
+/// Return signal-safe collection capability bits.
+///
+/// Bit meanings are the `capabilities::*` constants and the value is emitted as a
+/// `capabilities:0x...` report tag.
 pub fn capability_bits() -> u32 {
     capabilities::get().bits()
 }
 
+/// Return signal-safe collection degradation bits.
+///
+/// Bit meanings are the `capabilities::*` degradation constants and the value is emitted as a
+/// `degradations:0x...` report tag.
 pub fn degradation_bits() -> u32 {
     capabilities::degradations().bits()
 }
 
+/// Count crash signals currently owned by this collector.
 pub fn owned_signal_count() -> u32 {
     state::owned_signal_count()
 }
 
+/// Return whether this collector currently owns `sig`.
 pub fn owns_signal(sig: i32) -> bool {
     state::owns_signal(sig)
 }

@@ -28,6 +28,12 @@
 //!    and then exits. The signal handler must wait for the receiver in order to reap its exit
 //!    status.
 //!
+//! The default Unix collector remains `collector`. The opt-in `collector_signal_safe` collector
+//! is a separate Unix-only implementation for consumers that need crash-path work to stay within a
+//! signal-safe syscall subset. Both collectors use the shared `signal_owner` latch: the first
+//! collector initialized owns process crash signals, and later attempts fail with an owner-conflict
+//! error instead of partially installing handlers.
+//!
 //! Data collected:
 //! 1. The data collected by the crash-handler includes:
 //!    1. The signal type leading to the crash
@@ -40,9 +46,6 @@
 //!    1. Metadata provided by the caller (e.g. library & profiler versions).
 //!    2. System info: OS version, /proc/cpuinfo /proc/meminfo, etc.
 //!    3. A timestamp and GUID for tracking the crash report.
-//!
-//! Handling of forks
-//! Safety issues
 
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
@@ -50,9 +53,6 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 #![cfg_attr(not(feature = "std"), no_std)]
-
-#[cfg(all(not(unix), feature = "collector_signal-safe"))]
-compile_error!("The collector_signal-safe feature is only supported on Unix targets.");
 
 extern crate alloc;
 

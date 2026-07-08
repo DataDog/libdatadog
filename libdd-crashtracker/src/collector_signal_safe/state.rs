@@ -1,6 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Global state publication for the signal-safe collector.
+//!
+//! Initialization is single-threaded behind [`InitSession`]. The initializing thread writes
+//! metadata and settings first, then publishes handler readiness with the `Release` store to
+//! [`HANDLERS_ENABLED`]. The signal handler `Acquire`-loads that flag before reading the rest of
+//! the state, so per-setting and per-slot accesses can stay `Relaxed`.
+
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
@@ -10,7 +17,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicUsize, Ordering
 use heapless::{String as HeaplessString, Vec as HeaplessVec};
 use thiserror::Error;
 
-use super::config::{CONFIG_JSON_BUF_SIZE, PATH_CAPACITY};
+use super::config::{self, CONFIG_JSON_BUF_SIZE, PATH_CAPACITY};
 
 // Raw signal numbers index these arrays. 128 covers Linux and BSD/macOS signal ranges used here.
 pub const NSIG: usize = 128;
@@ -35,7 +42,7 @@ pub struct Meta {
 }
 
 impl Meta {
-    const fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             config_json: HeaplessString::new(),
             service: HeaplessString::new(),
@@ -72,33 +79,48 @@ pub enum BeginInitError {
     Busy,
 }
 
-pub fn begin_init() -> Result<(), BeginInitError> {
+pub struct InitSession {
+    finished: bool,
+}
+
+impl InitSession {
+    pub fn meta_mut(&mut self) -> &mut Meta {
+        unsafe { &mut *META.0.get() }
+    }
+
+    pub fn finish(mut self) {
+        self.finished = true;
+        INIT_STATE.store(INIT_READY, Ordering::Release);
+    }
+}
+
+impl Drop for InitSession {
+    fn drop(&mut self) {
+        if !self.finished {
+            INIT_STATE.store(INIT_UNINIT, Ordering::Release);
+        }
+    }
+}
+
+pub fn begin_init() -> Result<InitSession, BeginInitError> {
     match INIT_STATE.compare_exchange(
         INIT_UNINIT,
         INIT_INITIALIZING,
         Ordering::AcqRel,
         Ordering::Acquire,
     ) {
-        Ok(_) => Ok(()),
+        Ok(_) => Ok(InitSession { finished: false }),
         Err(INIT_READY) => Err(BeginInitError::AlreadyInitialized),
         Err(_) => Err(BeginInitError::Busy),
     }
 }
 
-pub fn finish_init() {
-    INIT_STATE.store(INIT_READY, Ordering::Release);
-}
-
-pub fn reset_init() {
+pub fn reset_after_shutdown() {
     INIT_STATE.store(INIT_UNINIT, Ordering::Release);
 }
 
 pub fn meta() -> &'static Meta {
     unsafe { &*META.0.get() }
-}
-
-pub fn meta_mut() -> &'static mut Meta {
-    unsafe { &mut *META.0.get() }
 }
 
 pub(super) struct SignalSlot {
@@ -153,7 +175,7 @@ impl SignalSlot {
     }
 
     pub(super) fn owns_signal(&self) -> bool {
-        self.own_signal.load(Ordering::Acquire)
+        self.own_signal.load(Ordering::Relaxed)
     }
 
     pub(super) fn set_app_handler_present(&self) {
@@ -161,7 +183,7 @@ impl SignalSlot {
     }
 
     pub(super) fn app_handler_present(&self) -> bool {
-        self.app_handler_present.load(Ordering::Acquire)
+        self.app_handler_present.load(Ordering::Relaxed)
     }
 
     fn clear(&self) {
@@ -179,18 +201,48 @@ pub(super) fn signal_slot(idx: usize) -> &'static SignalSlot {
 }
 
 pub static HANDLERS_ENABLED: AtomicBool = AtomicBool::new(false);
-pub static FORCE_ON_TOP: AtomicBool = AtomicBool::new(false);
-pub static ONLY_BOOTSTRAP: AtomicBool = AtomicBool::new(false);
-pub static DEBUG_LOG: AtomicBool = AtomicBool::new(false);
-pub static CREATE_ALT_STACK: AtomicBool = AtomicBool::new(false);
-pub static USE_ALT_STACK: AtomicBool = AtomicBool::new(false);
-pub static BLOCK_SIGNALS: AtomicBool = AtomicBool::new(true);
-pub static DISARM_ON_ENTRY: AtomicBool = AtomicBool::new(false);
-pub static CLOSE_FDS_ON_RECEIVER: AtomicBool = AtomicBool::new(true);
-pub static REPORT_FD: AtomicI32 = AtomicI32::new(-1);
-pub static COLLECTOR_REAP_MS: AtomicI32 = AtomicI32::new(500);
-pub static RECEIVER_TIMEOUT_MS: AtomicI32 = AtomicI32::new(6_000);
-pub static MAX_FRAMES: AtomicUsize = AtomicUsize::new(32);
+
+/// Runtime settings copied from the caller's init config.
+///
+/// These are written before [`HANDLERS_ENABLED`] is published and are read from the crash path
+/// after that publication has been observed.
+pub struct Settings {
+    pub force_on_top: AtomicBool,
+    pub only_bootstrap: AtomicBool,
+    pub debug_log: AtomicBool,
+    pub create_alt_stack: AtomicBool,
+    pub use_alt_stack: AtomicBool,
+    pub block_signals: AtomicBool,
+    pub disarm_on_entry: AtomicBool,
+    pub close_fds_on_receiver: AtomicBool,
+    pub report_fd: AtomicI32,
+    pub collector_reap_ms: AtomicI32,
+    pub receiver_reap_ms: AtomicI32,
+    pub max_frames: AtomicUsize,
+}
+
+impl Settings {
+    const fn new() -> Self {
+        Self {
+            force_on_top: AtomicBool::new(false),
+            only_bootstrap: AtomicBool::new(false),
+            debug_log: AtomicBool::new(false),
+            create_alt_stack: AtomicBool::new(false),
+            use_alt_stack: AtomicBool::new(false),
+            block_signals: AtomicBool::new(true),
+            disarm_on_entry: AtomicBool::new(false),
+            close_fds_on_receiver: AtomicBool::new(true),
+            report_fd: AtomicI32::new(-1),
+            collector_reap_ms: AtomicI32::new(config::COLLECTOR_REAP_MS),
+            receiver_reap_ms: AtomicI32::new(
+                config::RECEIVER_TIMEOUT_SECS as i32 * 1000 + config::RECEIVER_TIMEOUT_GRACE_MS,
+            ),
+            max_frames: AtomicUsize::new(config::BACKTRACE_LEVELS_DEFAULT),
+        }
+    }
+}
+
+pub static SETTINGS: Settings = Settings::new();
 
 pub fn clear_signal_state() {
     for slot in &SIGNAL_SLOTS {

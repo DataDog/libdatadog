@@ -7,14 +7,13 @@ use heapless::String as HeaplessString;
 use serde::Serialize;
 use thiserror::Error;
 
-use super::state::meta_mut;
 use super::{capabilities, state};
 use crate::shared::{
     defaults::DD_CRASHTRACK_DEFAULT_TIMEOUT_SECS, signals::SIGNAL_SAFE_CRASH_SIGNALS,
     stacktrace_collection::StacktraceCollection,
 };
 
-// Default metadata used only when the caller leaves a `SignalSafeInitConfig` field empty. The
+// Default metadata used only when the caller leaves an `InitConfig` field empty. The
 // library reads no environment (neither at build time nor at runtime): a consumer populates the
 // config struct with its own identity. These neutral placeholders keep any single consumer's
 // name out of the shared crate.
@@ -39,7 +38,7 @@ pub const CRASH_SIGNALS: [i32; 5] = SIGNAL_SAFE_CRASH_SIGNALS;
 pub const CONFIG_JSON_BUF_SIZE: usize = 2048;
 
 #[derive(Clone, Copy, Debug)]
-pub struct SignalSafeInitConfig<'a> {
+pub struct InitConfig<'a> {
     /// Receiver executable path. When empty, no receiver is spawned and collection degrades to
     /// the `report_fd` fallback.
     pub receiver_path: &'a [u8],
@@ -86,7 +85,7 @@ pub enum PrepareError {
     Failed,
 }
 
-impl<'a> Default for SignalSafeInitConfig<'a> {
+impl<'a> Default for InitConfig<'a> {
     fn default() -> Self {
         Self {
             receiver_path: &[],
@@ -137,7 +136,7 @@ struct WireTimeout {
 
 pub fn build_config_json(
     out: &mut HeaplessString<CONFIG_JSON_BUF_SIZE>,
-    config: &SignalSafeInitConfig<'_>,
+    config: &InitConfig<'_>,
 ) -> bool {
     out.clear();
     let wire = WireConfig {
@@ -165,10 +164,9 @@ pub fn build_config_json(
     out.push_str(json).is_ok() && out.push('\n').is_ok()
 }
 
-pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
+pub fn apply(config: &InitConfig<'_>, m: &mut state::Meta) -> Result<(), PrepareError> {
     validate(config)?;
 
-    let m = meta_mut();
     if !build_config_json(&mut m.config_json, config) {
         return Err(PrepareError::Failed);
     }
@@ -211,25 +209,43 @@ pub fn prepare_result(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareEr
         return Err(PrepareError::InvalidConfig);
     }
 
-    state::FORCE_ON_TOP.store(config.force_on_top, Relaxed);
-    state::ONLY_BOOTSTRAP.store(config.only_bootstrap, Relaxed);
-    state::DEBUG_LOG.store(config.debug_logging, Relaxed);
-    state::CREATE_ALT_STACK.store(config.create_alt_stack, Relaxed);
-    state::USE_ALT_STACK.store(config.use_alt_stack, Relaxed);
-    state::BLOCK_SIGNALS.store(config.block_signals, Relaxed);
-    state::DISARM_ON_ENTRY.store(config.disarm_on_entry, Relaxed);
-    state::CLOSE_FDS_ON_RECEIVER.store(config.close_fds_on_receiver, Relaxed);
-    state::REPORT_FD.store(config.report_fd, Relaxed);
-    state::COLLECTOR_REAP_MS.store(
+    state::SETTINGS
+        .force_on_top
+        .store(config.force_on_top, Relaxed);
+    state::SETTINGS
+        .only_bootstrap
+        .store(config.only_bootstrap, Relaxed);
+    state::SETTINGS
+        .debug_log
+        .store(config.debug_logging, Relaxed);
+    state::SETTINGS
+        .create_alt_stack
+        .store(config.create_alt_stack, Relaxed);
+    state::SETTINGS
+        .use_alt_stack
+        .store(config.use_alt_stack, Relaxed);
+    state::SETTINGS
+        .block_signals
+        .store(config.block_signals, Relaxed);
+    state::SETTINGS
+        .disarm_on_entry
+        .store(config.disarm_on_entry, Relaxed);
+    state::SETTINGS
+        .close_fds_on_receiver
+        .store(config.close_fds_on_receiver, Relaxed);
+    state::SETTINGS.report_fd.store(config.report_fd, Relaxed);
+    state::SETTINGS.collector_reap_ms.store(
         normalized_collector_reap_ms(config.collector_reap_ms),
         Relaxed,
     );
-    state::RECEIVER_TIMEOUT_MS.store(
+    state::SETTINGS.receiver_reap_ms.store(
         normalized_receiver_timeout_secs(config.receiver_timeout_secs) as i32 * 1000
             + RECEIVER_TIMEOUT_GRACE_MS,
         Relaxed,
     );
-    state::MAX_FRAMES.store(normalized_max_frames(config.max_frames), Relaxed);
+    state::SETTINGS
+        .max_frames
+        .store(normalized_max_frames(config.max_frames), Relaxed);
     capabilities::publish(
         m.process_path.as_slice(),
         config.report_fd,
@@ -297,7 +313,7 @@ fn set_receiver_path(dst: &mut heapless::Vec<u8, PATH_CAPACITY>, path: &[u8]) ->
     dst.extend_from_slice(path).is_ok() && dst.push(0).is_ok()
 }
 
-fn validate(config: &SignalSafeInitConfig<'_>) -> Result<(), PrepareError> {
+fn validate(config: &InitConfig<'_>) -> Result<(), PrepareError> {
     if config.create_alt_stack && !config.use_alt_stack {
         return Err(PrepareError::InvalidConfig);
     }
@@ -322,10 +338,7 @@ mod tests {
     #[test]
     fn config_json_contains_receiver_contract() {
         let mut out = HeaplessString::<CONFIG_JSON_BUF_SIZE>::new();
-        assert!(build_config_json(
-            &mut out,
-            &SignalSafeInitConfig::default()
-        ));
+        assert!(build_config_json(&mut out, &InitConfig::default()));
         let signals = CRASH_SIGNALS
             .iter()
             .map(i32::to_string)
@@ -361,10 +374,10 @@ mod tests {
     #[test]
     fn validate_rejects_pointless_alt_stack_configuration() {
         assert_eq!(
-            validate(&SignalSafeInitConfig {
+            validate(&InitConfig {
                 create_alt_stack: true,
                 use_alt_stack: false,
-                ..SignalSafeInitConfig::default()
+                ..InitConfig::default()
             }),
             Err(PrepareError::InvalidConfig)
         );
@@ -376,30 +389,33 @@ mod tests {
             .lock()
             .expect("test lock poisoned");
 
-        assert!(prepare_result(&SignalSafeInitConfig {
-            receiver_path: b"/tmp/receiver",
-            service: b"svc",
-            env: b"prod",
-            app_version: b"1.2.3",
-            runtime_id: b"rid",
-            platform: b"host",
-            force_on_top: true,
-            only_bootstrap: true,
-            debug_logging: true,
-            ..SignalSafeInitConfig::default()
-        })
+        let mut meta = state::Meta::new();
+        assert!(apply(
+            &InitConfig {
+                receiver_path: b"/tmp/receiver",
+                service: b"svc",
+                env: b"prod",
+                app_version: b"1.2.3",
+                runtime_id: b"rid",
+                platform: b"host",
+                force_on_top: true,
+                only_bootstrap: true,
+                debug_logging: true,
+                ..InitConfig::default()
+            },
+            &mut meta
+        )
         .is_ok());
 
-        let meta = state::meta();
         assert_eq!(meta.service.as_str(), "svc");
         assert_eq!(meta.env.as_str(), "prod");
         assert_eq!(meta.app_version.as_str(), "1.2.3");
         assert_eq!(meta.runtime_id.as_str(), "rid");
         assert_eq!(meta.platform.as_str(), "host");
         assert_eq!(meta.process_path.as_slice(), b"/tmp/receiver\0");
-        assert!(state::FORCE_ON_TOP.load(Relaxed));
-        assert!(state::ONLY_BOOTSTRAP.load(Relaxed));
-        assert!(state::DEBUG_LOG.load(Relaxed));
+        assert!(state::SETTINGS.force_on_top.load(Relaxed));
+        assert!(state::SETTINGS.only_bootstrap.load(Relaxed));
+        assert!(state::SETTINGS.debug_log.load(Relaxed));
     }
 
     #[test]
@@ -409,11 +425,15 @@ mod tests {
             .expect("test lock poisoned");
         let oversized_service = "s".repeat(300);
 
-        assert!(prepare_result(&SignalSafeInitConfig {
-            receiver_path: b"/definitely/missing-signal-safe-receiver",
-            service: oversized_service.as_bytes(),
-            ..SignalSafeInitConfig::default()
-        })
+        let mut meta = state::Meta::new();
+        assert!(apply(
+            &InitConfig {
+                receiver_path: b"/definitely/missing-signal-safe-receiver",
+                service: oversized_service.as_bytes(),
+                ..InitConfig::default()
+            },
+            &mut meta
+        )
         .is_ok());
 
         assert!(capabilities::degradations().contains(capabilities::DEGRADED_METADATA_TRUNCATED));

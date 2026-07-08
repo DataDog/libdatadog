@@ -119,11 +119,10 @@ pub fn publish(receiver_path: &[u8], report_fd: i32, probe_seccomp: bool) {
         degraded.insert(DEGRADED_NO_DEV_NULL);
     }
 
-    let mut fds = [0i32; 2];
-    if sys::pipe(&mut fds) {
+    if let Some(pipe) = sys::pipe() {
         caps.insert(PIPE_OK);
-        sys::close(fds[0]);
-        sys::close(fds[1]);
+        sys::close(pipe.read);
+        sys::close(pipe.write);
     } else {
         degraded.insert(DEGRADED_NO_PIPE);
     }
@@ -171,7 +170,7 @@ fn probe_process_vm_readv_in_child() -> bool {
         return true;
     }
 
-    match sys::reap_child(child as i32, 100, 10, true, 10) {
+    match sys::reap_child(child as i32, 100, 10, 10) {
         sys::ChildReap::Reaped(status) => libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
         sys::ChildReap::NoChild | sys::ChildReap::WaitFailed(_) | sys::ChildReap::TimedOut => true,
     }

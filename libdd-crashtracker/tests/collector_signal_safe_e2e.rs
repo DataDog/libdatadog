@@ -10,8 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 use libdd_crashtracker::collector_signal_safe::{
-    bootstrap_complete, init_result, owned_signal_count, owns_signal, InitResult,
-    SignalSafeInitConfig,
+    bootstrap_complete, init, owned_signal_count, owns_signal, InitConfig, InitResult,
 };
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -23,13 +22,13 @@ fn signal_safe_receiver_child_process() {
     let receiver = std::env::var_os("DD_SIGNAL_SAFE_E2E_RECEIVER").expect("receiver");
 
     assert_eq!(
-        init_result(&SignalSafeInitConfig {
+        init(&InitConfig {
             receiver_path: receiver.as_encoded_bytes(),
             service: b"signal-safe-e2e",
             env: b"test",
             app_version: b"1",
             runtime_id: b"00000000-0000-0000-0000-000000000001",
-            ..SignalSafeInitConfig::default()
+            ..InitConfig::default()
         }),
         InitResult::Enabled
     );
@@ -46,14 +45,14 @@ fn signal_safe_report_fd_child_process() {
 
     let report = fs::File::create(report).expect("create report");
     assert_eq!(
-        init_result(&SignalSafeInitConfig {
+        init(&InitConfig {
             receiver_path: b"/definitely/missing-signal-safe-receiver",
             service: b"signal-safe-e2e",
             env: b"test",
             app_version: b"1",
             runtime_id: b"00000000-0000-0000-0000-000000000001",
             report_fd: report.as_raw_fd(),
-            ..SignalSafeInitConfig::default()
+            ..InitConfig::default()
         }),
         InitResult::Enabled
     );
@@ -241,7 +240,7 @@ fn init_report_fd(
 ) -> fs::File {
     let report = fs::File::create(report_path).expect("create report");
     assert_eq!(
-        init_result(&SignalSafeInitConfig {
+        init(&InitConfig {
             receiver_path,
             service: b"signal-safe-e2e",
             env: b"test",
@@ -249,7 +248,7 @@ fn init_report_fd(
             runtime_id: b"00000000-0000-0000-0000-000000000001",
             report_fd: report.as_raw_fd(),
             only_bootstrap,
-            ..SignalSafeInitConfig::default()
+            ..InitConfig::default()
         }),
         InitResult::Enabled
     );

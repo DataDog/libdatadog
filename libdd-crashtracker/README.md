@@ -31,6 +31,7 @@ This ensures crash reports are sent even if the main process is corrupted.
 - `collector` (default): Enable in-process crash collection
 - `receiver` (default): Enable crash receiver functionality  
 - `collector_windows` (default): Windows crash collection
+- `collector_signal-safe`: Enable the opt-in Unix signal-safe crash collector
 - `benchmarking`: Enable benchmark functionality
 
 ## Example Usage
@@ -55,4 +56,3 @@ use libdd_crashtracker;
 ## Receiver Binary
 
 The crate includes a `crashtracker-receiver` binary that runs as a separate process to ensure crash reports are sent even when the main process crashes.
-

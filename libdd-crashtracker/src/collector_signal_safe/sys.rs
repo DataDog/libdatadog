@@ -78,6 +78,12 @@ impl crate::protocol::ByteSink for FdSink {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Pipe {
+    pub read: i32,
+    pub write: i32,
+}
+
 fn write_all(fd: i32, bytes: &[u8]) -> bool {
     let mut off = 0usize;
     while off < bytes.len() {
@@ -95,6 +101,8 @@ mod raw_common {
     use core::ffi::CStr;
     use core::num::NonZeroI32;
     use rustix::fd::{BorrowedFd, IntoRawFd};
+
+    use super::Pipe;
 
     #[inline]
     fn neg_errno(err: rustix::io::Errno) -> i32 {
@@ -133,14 +141,13 @@ mod raw_common {
         fd >= 0 && rustix::io::fcntl_getfd(unsafe { borrowed_fd(fd) }).is_ok()
     }
 
-    pub fn pipe(fds: &mut [i32; 2]) -> bool {
+    pub fn pipe() -> Option<Pipe> {
         match rustix::pipe::pipe() {
-            Ok((read_fd, write_fd)) => {
-                fds[0] = read_fd.into_raw_fd();
-                fds[1] = write_fd.into_raw_fd();
-                true
-            }
-            Err(_) => false,
+            Ok((read_fd, write_fd)) => Some(Pipe {
+                read: read_fd.into_raw_fd(),
+                write: write_fd.into_raw_fd(),
+            }),
+            Err(_) => None,
         }
     }
 
@@ -454,9 +461,9 @@ mod raw {
 
 pub use raw::{
     access_executable, close, close_range_from, dup2, exit_process, fcntl_dupfd, fd_valid,
-    fork_raw, fork_supported, getpid, gettid, kill, monotonic_nanos, mprotect_none, open_readwrite,
-    pipe, poll_sleep_ms, read_own_mem, waitpid_nohang_status, write,
+    fork_raw, fork_supported, getpid, gettid, mprotect_none, open_readwrite, pipe, read_own_mem,
 };
+use raw::{kill, monotonic_nanos, poll_sleep_ms, waitpid_nohang_status, write};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub enum ChildReap {
@@ -466,15 +473,9 @@ pub enum ChildReap {
     TimedOut,
 }
 
-pub fn reap_child(
-    pid: i32,
-    timeout_ms: i64,
-    poll_ms: i32,
-    kill_on_timeout: bool,
-    kill_timeout_ms: i64,
-) -> ChildReap {
+pub fn reap_child(pid: i32, timeout_ms: i64, poll_ms: i32, kill_timeout_ms: i64) -> ChildReap {
     let mut remaining_timeout_ms = timeout_ms;
-    let mut should_kill = kill_on_timeout;
+    let mut should_kill = true;
     loop {
         match wait_child_until(pid, remaining_timeout_ms, poll_ms) {
             ChildReap::TimedOut if should_kill => {
@@ -557,25 +558,23 @@ mod tests {
 
     #[test]
     fn fd_sink_writes_to_pipe() {
-        let mut fds = [0i32; 2];
-        assert!(pipe(&mut fds));
-        let mut sink = FdSink::new(fds[1]);
+        let pipe = pipe().expect("pipe");
+        let mut sink = FdSink::new(pipe.write);
         assert!(sink.put(b"abc"));
         assert!(sink.flush());
-        close(fds[1]);
+        close(pipe.write);
 
         let mut out = [0u8; 3];
-        let n = unsafe { libc::read(fds[0], out.as_mut_ptr().cast(), out.len()) };
-        close(fds[0]);
+        let n = unsafe { libc::read(pipe.read, out.as_mut_ptr().cast(), out.len()) };
+        close(pipe.read);
         assert_eq!(n, 3);
         assert_eq!(&out, b"abc");
     }
 
     #[test]
     fn fd_sink_coalesces_and_handles_overflow() {
-        let mut fds = [0i32; 2];
-        assert!(pipe(&mut fds));
-        let mut sink = FdSink::new(fds[1]);
+        let pipe = pipe().expect("pipe");
+        let mut sink = FdSink::new(pipe.write);
 
         // Small writes that together exceed the staging buffer must auto-flush
         // mid-stream; a single write larger than the buffer takes the direct
@@ -590,19 +589,20 @@ mod tests {
         let big = [b'b'; FD_SINK_BUF_CAPACITY + 1];
         assert!(sink.put(&big));
         assert!(sink.flush());
-        close(fds[1]);
+        close(pipe.write);
 
         let expected = written + big.len();
         let mut out = [0u8; 4 * FD_SINK_BUF_CAPACITY];
         let mut got = 0usize;
         loop {
-            let n = unsafe { libc::read(fds[0], out[got..].as_mut_ptr().cast(), out.len() - got) };
+            let n =
+                unsafe { libc::read(pipe.read, out[got..].as_mut_ptr().cast(), out.len() - got) };
             if n <= 0 {
                 break;
             }
             got += n as usize;
         }
-        close(fds[0]);
+        close(pipe.read);
 
         assert_eq!(got, expected);
         assert!(out[..written].iter().all(|&b| b == b'a'));
