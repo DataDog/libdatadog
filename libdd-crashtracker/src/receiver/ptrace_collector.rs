@@ -173,7 +173,10 @@ fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceE
     // On older kernels, the register state may not be
     // immediately readable after waitpid reports the stop. Spin briefly
     // until PEEKUSER returns a non-zero IP, proving registers are committed.
-    wait_for_registers(tid, stop_deadline);
+    if !wait_for_registers(tid, stop_deadline) {
+        let _ = detach_thread(tid);
+        return Err(PtraceError::Attach(tid, libc::ETIMEDOUT));
+    }
 
     Ok(())
 }
@@ -181,7 +184,11 @@ fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceE
 /// Poll the thread's instruction pointer using PTRACE_PEEKUSER until it is
 /// non-zero or the deadline expires. On modern kernels this should return on the
 /// first iteration; on older ones, it may take a few microseconds.
-fn wait_for_registers(tid: libc::pid_t, deadline: Instant) {
+///
+/// Returns `true` if a non-zero IP was observed or the check is not applicable
+/// (PTRACE_PEEKUSER unsupported on the architecture), `false` if the
+/// deadline expired without reading a valid IP on a platform that supports it.
+fn wait_for_registers(tid: libc::pid_t, deadline: Instant) -> bool {
     #[cfg(target_arch = "x86_64")]
     const IP_OFFSET: libc::c_long = 16 * std::mem::size_of::<libc::c_long>() as libc::c_long; // RIP
 
@@ -190,17 +197,33 @@ fn wait_for_registers(tid: libc::pid_t, deadline: Instant) {
 
     const SPIN_SLEEP: Duration = Duration::from_micros(100);
 
+    // First probe: if PTRACE_PEEKUSER returns EIO, the kernel doesn't support it
+    // In that case, skip the check. libunwind uses PTRACE_GETREGSET which works
+    // regardless, and modern kernels commit register state synchronously on ptrace-stop.
+    unsafe { *libc::__errno_location() = 0 };
+    let ip = unsafe { libc::ptrace(libc::PTRACE_PEEKUSER, tid as libc::c_long, IP_OFFSET, 0) };
+    let errno = unsafe { *libc::__errno_location() };
+    if errno == libc::EIO {
+        return true;
+    }
+    if ip != 0 && errno == 0 {
+        return true;
+    }
+
     loop {
-        unsafe { *libc::__errno_location() = 0 };
-        let ip = unsafe { libc::ptrace(libc::PTRACE_PEEKUSER, tid as libc::c_long, IP_OFFSET, 0) };
-        // PEEKUSER returns the register value; errno==0 means success.
-        if ip != 0 && unsafe { *libc::__errno_location() } == 0 {
-            return;
-        }
         if Instant::now() >= deadline {
-            return;
+            return false;
         }
         std::thread::sleep(SPIN_SLEEP);
+        unsafe { *libc::__errno_location() = 0 };
+        let ip = unsafe { libc::ptrace(libc::PTRACE_PEEKUSER, tid as libc::c_long, IP_OFFSET, 0) };
+        let errno = unsafe { *libc::__errno_location() };
+        if errno == libc::EIO {
+            return true;
+        }
+        if ip != 0 && errno == 0 {
+            return true;
+        }
     }
 }
 
@@ -369,6 +392,40 @@ pub fn capture_thread_context(
 /// Maximum time to wait for a single thread to enter ptrace-stop.
 const STOP_TIMEOUT_PER_THREAD: Duration = Duration::from_millis(50);
 
+/// Number of retry attempts for a failed capture_thread_context call.
+const CAPTURE_RETRIES: u32 = 1;
+
+/// Delay between retry attempts.
+const RETRY_DELAY: Duration = Duration::from_millis(5);
+
+/// Attempt to capture a thread context with retries on transient failures.
+///
+/// On some kernels, ptrace operations can fail intermittently due to scheduling
+/// races or brief permission windows. Retrying once after a short delay resolves
+/// most transient issues without significantly impacting overall collection time.
+fn capture_with_retry(
+    tid: libc::pid_t,
+    resolve_frames: crate::StacktraceCollection,
+    addr_space: UnwAddrSpaceT,
+    overall_deadline: Instant,
+) -> Option<CapturedThreadContext> {
+    for attempt in 0..=CAPTURE_RETRIES {
+        let now = Instant::now();
+        if now >= overall_deadline {
+            break;
+        }
+        let stop_deadline = (now + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
+        match capture_thread_context(tid, resolve_frames, addr_space, stop_deadline) {
+            Ok(ctx) => return Some(ctx),
+            Err(_) if attempt < CAPTURE_RETRIES => {
+                std::thread::sleep(RETRY_DELAY);
+            }
+            Err(_) => break,
+        }
+    }
+    None
+}
+
 /// Stream thread contexts to a callback one at a time.
 ///
 /// For each thread in the process the callback receives the TID and an optional
@@ -412,9 +469,8 @@ where
 
     // Process the crashing thread first so it is never dropped by the cap.
     if crashing_tid != 0 && tids.contains(&crashing_tid) {
-        let stop_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
         let context =
-            capture_thread_context(crashing_tid, resolve_frames, addr_space, stop_deadline).ok();
+            capture_with_retry(crashing_tid, resolve_frames, addr_space, overall_deadline);
         callback(crashing_tid, context.as_ref());
         processed += 1;
     }
@@ -423,16 +479,11 @@ where
         if tid == crashing_tid {
             continue;
         }
-        let now = Instant::now();
-        if now >= overall_deadline || processed >= max_threads {
+        if Instant::now() >= overall_deadline || processed >= max_threads {
             break;
         }
 
-        // Cap the per-thread stop wait at STOP_TIMEOUT_PER_THREAD but never
-        // past the overall deadline, so one thread can't consume the budget.
-        let stop_deadline = (now + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
-
-        let context = capture_thread_context(tid, resolve_frames, addr_space, stop_deadline).ok();
+        let context = capture_with_retry(tid, resolve_frames, addr_space, overall_deadline);
         callback(tid, context.as_ref());
         processed += 1;
     }
