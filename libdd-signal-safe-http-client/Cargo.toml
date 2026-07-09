@@ -23,5 +23,9 @@ std = ["alloc"]
 libc-dns = ["alloc", "dep:libc"]
 
 [dependencies]
+embedded-io = "0.6"
+embedded-io-async = "0.6"
+heapless = "0.8"
 libc = { version = "0.2.153", default-features = false, optional = true }
+reqwless = { version = "0.13", default-features = false }
 thiserror = { version = "2", default-features = false }

@@ -43,7 +43,8 @@ pub mod dns;
 
 pub use error::{BuildError, SendError};
 pub use header::Header;
-pub use request::{HttpClient, Method, Request};
+pub use request::{HttpClient, Request};
+pub use reqwless::request::Method;
 #[cfg(feature = "std")]
 pub use sink::StdWriteSink;
 pub use sink::{BufferTooSmall, FixedBuffer, HttpSink};

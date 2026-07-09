@@ -124,7 +124,7 @@ impl<'a> TelemetryMetricsRequest<'a> {
     where
         'a: 'request,
     {
-        Request::new(Method::Post, self.host, self.path)
+        Request::new(Method::POST, self.host, self.path)
             .with_body(self.payload)
             .with_content_type(APPLICATION_JSON)
             .with_headers(telemetry_headers)
@@ -167,9 +167,9 @@ mod tests {
         let expected = concat!(
             "POST /telemetry/proxy/api/v2/apmtelemetry HTTP/1.1\r\n",
             "Host: localhost:8126\r\n",
+            "Content-Type: application/json\r\n",
             "Content-Length: 13\r\n",
             "Connection: close\r\n",
-            "Content-Type: application/json\r\n",
             "DD-Telemetry-Request-Type: generate-metrics\r\n",
             "DD-Telemetry-API-Version: v2\r\n",
             "DD-Telemetry-Debug-Enabled: true\r\n",

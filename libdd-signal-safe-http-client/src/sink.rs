@@ -11,6 +11,11 @@ pub trait HttpSink {
 
     /// Writes the entire chunk or returns an error.
     fn write_all(&mut self, chunk: &[u8]) -> Result<(), Self::Error>;
+
+    /// Converts a sink-specific write error into an embedded I/O error kind.
+    fn error_kind(_error: &Self::Error) -> embedded_io::ErrorKind {
+        embedded_io::ErrorKind::Other
+    }
 }
 
 /// Error returned by [`FixedBuffer`] when there is not enough remaining capacity.
@@ -76,6 +81,10 @@ impl HttpSink for FixedBuffer<'_> {
         self.len = end;
         Ok(())
     }
+
+    fn error_kind(_error: &Self::Error) -> embedded_io::ErrorKind {
+        embedded_io::ErrorKind::WriteZero
+    }
 }
 
 /// A [`std::io::Write`]-backed sink for non-signal-handler use.
@@ -113,6 +122,10 @@ impl<W: std::io::Write> HttpSink for StdWriteSink<W> {
 
     fn write_all(&mut self, chunk: &[u8]) -> Result<(), Self::Error> {
         std::io::Write::write_all(&mut self.writer, chunk)
+    }
+
+    fn error_kind(_error: &Self::Error) -> embedded_io::ErrorKind {
+        embedded_io::ErrorKind::Other
     }
 }
 

@@ -4,43 +4,37 @@
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use crate::{
-    header::validate_header_value, BuildError, Header, HttpSink, SendError, TelemetryMetricsRequest,
+use core::{
+    fmt,
+    future::Future,
+    ptr,
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-const CRLF: &[u8] = b"\r\n";
-const HTTP_VERSION: &str = "HTTP/1.1";
+use embedded_io_async::Write;
+use heapless::Vec as HeaplessVec;
+use reqwless::{
+    headers::ContentType,
+    request::{RequestBody, RequestBuilder},
+};
+
+use crate::{
+    header::validate_header_value, BuildError, Header, HttpSink, Method, SendError,
+    TelemetryMetricsRequest,
+};
+
+/// Maximum number of extra headers this wrapper can pass to reqwless without allocation.
+pub const MAX_HEADER_COUNT: usize = 16;
+
 const CONNECTION_CLOSE: Header<'static> = Header::new_unchecked("Connection", "close");
 
-/// HTTP methods supported by the allocation-free request writer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Method {
-    /// `GET`
-    Get,
-    /// `POST`
-    Post,
-    /// `PUT`
-    Put,
-    /// `DELETE`
-    Delete,
-}
-
-impl Method {
-    /// Returns the wire representation of the method.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Get => "GET",
-            Self::Post => "POST",
-            Self::Put => "PUT",
-            Self::Delete => "DELETE",
-        }
-    }
-}
+type HeaderPairs<'a> = HeaplessVec<(&'a str, &'a str), MAX_HEADER_COUNT>;
 
 /// A borrowed HTTP/1.1 request.
 ///
-/// The writer emits `Host`, `Content-Length`, and `Connection: close` automatically. Optional
-/// content type and caller-provided headers are emitted before the body.
+/// Header and body emission is delegated to `reqwless`' low-level request API. This wrapper only
+/// validates borrowed inputs, keeps a caller-friendly synchronous sink API for signal-handler
+/// paths, and supplies fixed-size `heapless` header storage.
 #[derive(Debug, Clone, Copy)]
 pub struct Request<'a> {
     method: Method,
@@ -68,7 +62,7 @@ impl<'a> Request<'a> {
 
     /// Creates a `POST` request with no body and no optional headers.
     pub const fn post(host: &'a str, path: &'a str) -> Self {
-        Self::new(Method::Post, host, path)
+        Self::new(Method::POST, host, path)
     }
 
     /// Sets the request body.
@@ -77,7 +71,7 @@ impl<'a> Request<'a> {
         self
     }
 
-    /// Sets the `Content-Type` header value emitted by the writer.
+    /// Sets the `Content-Type` header value emitted by reqwless.
     pub const fn with_content_type(mut self, content_type: &'a str) -> Self {
         self.content_type = Some(content_type);
         self
@@ -121,29 +115,22 @@ impl<'a> Request<'a> {
     /// Returns the number of bytes needed to encode the full request.
     pub fn encoded_len(&self) -> Result<usize, BuildError> {
         self.validate()?;
+        let headers = self.reqwless_headers()?;
+        let reqwless_request = self.reqwless_request(headers.as_slice());
+        let mut counter = CountingWriter::default();
 
-        let mut len = 0;
-        len = checked_add(len, self.method.as_str().len())?;
-        len = checked_add(len, 1)?;
-        len = checked_add(len, self.path.len())?;
-        len = checked_add(len, 1)?;
-        len = checked_add(len, HTTP_VERSION.len())?;
-        len = checked_add(len, CRLF.len())?;
+        block_on_ready(reqwless_request.write_header(&mut counter))
+            .map_err(|_| BuildError::LengthOverflow)?
+            .map_err(|error| map_reqwless_build_error(error, &counter))?;
+        block_on_ready(self.body.write(&mut counter))
+            .map_err(|_| BuildError::LengthOverflow)?
+            .map_err(|_| BuildError::LengthOverflow)?;
 
-        len = checked_add_header_len(len, "Host", self.host)?;
-        len = checked_add_header_len(len, "Content-Length", decimal_len(self.body.len()))?;
-        len = checked_add_header_len(len, CONNECTION_CLOSE.name(), CONNECTION_CLOSE.value())?;
-
-        if let Some(content_type) = self.content_type {
-            len = checked_add_header_len(len, "Content-Type", content_type)?;
+        if counter.overflowed {
+            Err(BuildError::LengthOverflow)
+        } else {
+            Ok(counter.len)
         }
-
-        for header in self.headers.iter().chain(self.extra_headers.iter()) {
-            len = checked_add_header_len(len, header.name(), header.value())?;
-        }
-
-        len = checked_add(len, CRLF.len())?;
-        checked_add(len, self.body.len())
     }
 
     /// Validates all request fields without emitting bytes.
@@ -162,30 +149,29 @@ impl<'a> Request<'a> {
     /// Writes the full HTTP request into the supplied sink.
     pub fn write_to<S: HttpSink>(&self, sink: &mut S) -> Result<(), SendError<S::Error>> {
         self.validate()?;
+        let headers = self.reqwless_headers()?;
+        let reqwless_request = self.reqwless_request(headers.as_slice());
+        let mut writer = SinkWriter::new(sink);
 
-        write_str(sink, self.method.as_str())?;
-        write_all(sink, b" ")?;
-        write_str(sink, self.path)?;
-        write_all(sink, b" ")?;
-        write_str(sink, HTTP_VERSION)?;
-        write_all(sink, CRLF)?;
-
-        write_header(sink, "Host", self.host)?;
-        write_str(sink, "Content-Length: ")?;
-        write_decimal(sink, self.body.len())?;
-        write_all(sink, CRLF)?;
-        write_header(sink, CONNECTION_CLOSE.name(), CONNECTION_CLOSE.value())?;
-
-        if let Some(content_type) = self.content_type {
-            write_header(sink, "Content-Type", content_type)?;
+        match block_on_ready(reqwless_request.write_header(&mut writer)) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                return match writer.take_error() {
+                    Some(error) => Err(SendError::Sink(error)),
+                    None => Err(SendError::Reqwless(error)),
+                };
+            }
+            Err(()) => return Err(SendError::Pending),
         }
 
-        for header in self.headers.iter().chain(self.extra_headers.iter()) {
-            write_header(sink, header.name(), header.value())?;
+        match block_on_ready(self.body.write(&mut writer)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_error)) => match writer.take_error() {
+                Some(error) => Err(SendError::Sink(error)),
+                None => Err(SendError::Pending),
+            },
+            Err(()) => Err(SendError::Pending),
         }
-
-        write_all(sink, CRLF)?;
-        write_all(sink, self.body)
     }
 
     /// Encodes the full HTTP request into an owned buffer.
@@ -200,8 +186,52 @@ impl<'a> Request<'a> {
         match self.write_to(&mut out) {
             Ok(()) => Ok(out),
             Err(SendError::Build(error)) => Err(error),
+            Err(SendError::Reqwless(error)) => {
+                Err(map_reqwless_build_error(error, &CountingWriter::default()))
+            }
+            Err(SendError::Pending) => Err(BuildError::LengthOverflow),
             Err(SendError::Sink(error)) => match error {},
         }
+    }
+
+    fn reqwless_request<'request>(
+        &'request self,
+        headers: &'request [(&'request str, &'request str)],
+    ) -> reqwless::request::Request<'request, &'request [u8]>
+    where
+        'a: 'request,
+    {
+        let builder = reqwless::request::Request::new(self.method, self.path)
+            .host(self.host)
+            .headers(headers);
+
+        let builder = match self.content_type.and_then(content_type) {
+            Some(content_type) => builder.content_type(content_type),
+            None => builder,
+        };
+
+        builder.body(self.body).build()
+    }
+
+    fn reqwless_headers(&self) -> Result<HeaderPairs<'a>, BuildError> {
+        let mut headers = HeaderPairs::new();
+
+        push_header(&mut headers, CONNECTION_CLOSE)?;
+        if let Some(value) = self.content_type {
+            if content_type(value).is_none() {
+                push_header(&mut headers, Header::new_unchecked("Content-Type", value))?;
+            }
+        }
+        for header in self
+            .headers
+            .iter()
+            .chain(self.extra_headers.iter())
+            .copied()
+        {
+            push_header(&mut headers, header)?;
+        }
+
+        Ok(headers)
     }
 }
 
@@ -274,81 +304,147 @@ fn is_path_byte(byte: u8) -> bool {
     matches!(byte, b'!'..=b'~')
 }
 
-fn checked_add(lhs: usize, rhs: usize) -> Result<usize, BuildError> {
-    lhs.checked_add(rhs).ok_or(BuildError::LengthOverflow)
+fn content_type(value: &str) -> Option<ContentType> {
+    match value {
+        "application/json" => Some(ContentType::ApplicationJson),
+        "application/cbor" => Some(ContentType::ApplicationCbor),
+        "application/octet-stream" => Some(ContentType::ApplicationOctetStream),
+        "text/plain" => Some(ContentType::TextPlain),
+        _ => None,
+    }
 }
 
-fn checked_add_header_len(
+fn push_header<'a>(headers: &mut HeaderPairs<'a>, header: Header<'a>) -> Result<(), BuildError> {
+    headers
+        .push((header.name(), header.value()))
+        .map_err(|_| BuildError::TooManyHeaders {
+            max: MAX_HEADER_COUNT,
+        })
+}
+
+fn map_reqwless_build_error(error: reqwless::Error, counter: &CountingWriter) -> BuildError {
+    let _ = error;
+    let _ = counter;
+    BuildError::LengthOverflow
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SinkWriteError {
+    kind: embedded_io::ErrorKind,
+}
+
+impl embedded_io::Error for SinkWriteError {
+    fn kind(&self) -> embedded_io::ErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Display for SinkWriteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "embedded I/O write failed: {:?}", self.kind)
+    }
+}
+
+struct SinkWriter<'a, S: HttpSink> {
+    sink: &'a mut S,
+    error: Option<S::Error>,
+}
+
+impl<'a, S: HttpSink> SinkWriter<'a, S> {
+    fn new(sink: &'a mut S) -> Self {
+        Self { sink, error: None }
+    }
+
+    fn take_error(&mut self) -> Option<S::Error> {
+        self.error.take()
+    }
+}
+
+impl<S: HttpSink> embedded_io::ErrorType for SinkWriter<'_, S> {
+    type Error = SinkWriteError;
+}
+
+impl<S: HttpSink> Write for SinkWriter<'_, S> {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        self.sink.write_all(buf).map_or_else(
+            |error| {
+                let kind = S::error_kind(&error);
+                self.error = Some(error);
+                Err(SinkWriteError { kind })
+            },
+            |()| Ok(buf.len()),
+        )
+    }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct CountingWriter {
     len: usize,
-    name: &str,
-    value_or_value_len: impl HeaderLen,
-) -> Result<usize, BuildError> {
-    let len = checked_add(len, name.len())?;
-    let len = checked_add(len, 2)?;
-    let len = checked_add(len, value_or_value_len.header_len())?;
-    checked_add(len, CRLF.len())
+    overflowed: bool,
 }
 
-trait HeaderLen {
-    fn header_len(self) -> usize;
+impl embedded_io::ErrorType for CountingWriter {
+    type Error = SinkWriteError;
 }
 
-impl HeaderLen for &str {
-    fn header_len(self) -> usize {
-        self.len()
-    }
-}
-
-impl HeaderLen for usize {
-    fn header_len(self) -> usize {
-        self
-    }
-}
-
-fn decimal_len(mut value: usize) -> usize {
-    let mut len = 1;
-    while value >= 10 {
-        value /= 10;
-        len += 1;
-    }
-    len
-}
-
-fn write_header<S: HttpSink>(
-    sink: &mut S,
-    name: &str,
-    value: &str,
-) -> Result<(), SendError<S::Error>> {
-    write_str(sink, name)?;
-    write_all(sink, b": ")?;
-    write_str(sink, value)?;
-    write_all(sink, CRLF)
-}
-
-fn write_decimal<S: HttpSink>(sink: &mut S, value: usize) -> Result<(), SendError<S::Error>> {
-    let mut buffer = [0_u8; 39];
-    let mut index = buffer.len();
-    let mut remaining = value;
-
-    loop {
-        index -= 1;
-        buffer[index] = b'0' + (remaining % 10) as u8;
-        remaining /= 10;
-        if remaining == 0 {
-            break;
+impl Write for CountingWriter {
+    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+        if let Some(len) = self.len.checked_add(buf.len()) {
+            self.len = len;
+        } else {
+            self.overflowed = true;
         }
+        Ok(buf.len())
     }
 
-    write_all(sink, &buffer[index..])
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
-fn write_str<S: HttpSink>(sink: &mut S, value: &str) -> Result<(), SendError<S::Error>> {
-    write_all(sink, value.as_bytes())
+fn block_on_ready<F: Future>(future: F) -> Result<F::Output, ()> {
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let mut future = core::pin::pin!(future);
+
+    match future.as_mut().poll(&mut cx) {
+        Poll::Ready(output) => Ok(output),
+        Poll::Pending => Err(()),
+    }
 }
 
-fn write_all<S: HttpSink>(sink: &mut S, chunk: &[u8]) -> Result<(), SendError<S::Error>> {
-    sink.write_all(chunk).map_err(SendError::Sink)
+fn noop_waker() -> Waker {
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(
+        noop_waker_clone,
+        noop_waker_wake,
+        noop_waker_wake_by_ref,
+        noop_waker_drop,
+    );
+
+    // SAFETY: The raw waker uses a null data pointer that is never dereferenced. All vtable
+    // operations are no-ops and cloning returns another equivalent raw waker.
+    unsafe { Waker::from_raw(RawWaker::new(ptr::null(), &VTABLE)) }
 }
+
+unsafe fn noop_waker_clone(_data: *const ()) -> RawWaker {
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(
+        noop_waker_clone,
+        noop_waker_wake,
+        noop_waker_wake_by_ref,
+        noop_waker_drop,
+    );
+    RawWaker::new(ptr::null(), &VTABLE)
+}
+
+unsafe fn noop_waker_wake(_data: *const ()) {}
+
+unsafe fn noop_waker_wake_by_ref(_data: *const ()) {}
+
+unsafe fn noop_waker_drop(_data: *const ()) {}
 
 #[cfg(test)]
 mod tests {
@@ -370,9 +466,9 @@ mod tests {
         let expected = concat!(
             "POST /v1/input HTTP/1.1\r\n",
             "Host: localhost:8126\r\n",
+            "Content-Type: text/plain\r\n",
             "Content-Length: 4\r\n",
             "Connection: close\r\n",
-            "Content-Type: text/plain\r\n",
             "X-Test: yes\r\n",
             "\r\n",
             "body"
@@ -391,7 +487,7 @@ mod tests {
 
         let result = request.write_to(&mut buffer);
 
-        assert_eq!(result, Err(SendError::Sink(BufferTooSmall)));
+        assert!(matches!(result, Err(SendError::Sink(BufferTooSmall))));
     }
 
     #[test]
@@ -416,6 +512,22 @@ mod tests {
             Request::post("localhost", "relative").validate(),
             Err(BuildError::InvalidPath)
         );
+    }
+
+    #[test]
+    fn too_many_headers_are_rejected_before_writing() {
+        let headers = [Header::new_unchecked("X-Test", "yes"); MAX_HEADER_COUNT];
+        let request = Request::post("localhost:8126", "/v1/input").with_headers(&headers);
+        let mut storage = [0_u8; 1024];
+        let mut buffer = FixedBuffer::new(&mut storage);
+
+        assert!(matches!(
+            request.write_to(&mut buffer),
+            Err(SendError::Build(BuildError::TooManyHeaders {
+                max: MAX_HEADER_COUNT
+            }))
+        ));
+        assert!(buffer.is_empty());
     }
 
     #[cfg(feature = "alloc")]

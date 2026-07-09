@@ -57,6 +57,7 @@ bolero-honggfuzz,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bythew
 bolero-kani,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
 bolero-libfuzzer,https://github.com/camshaft/bolero,MIT,Cameron Bytheway <bytheway.cameron@gmail.com>
 borrow-or-share,https://github.com/yescallop/borrow-or-share,MIT-0,Scallop Ye <yescallop@gmail.com>
+buffered-io,https://github.com/rmja/buffered-io,MIT  OR  Apache-2.0,Rasmus Melchior Jacobsen <rmja@laesoe.org>
 bumpalo,https://github.com/fitzgen/bumpalo,MIT OR Apache-2.0,Nick Fitzgerald <fitzgen@gmail.com>
 byteorder,https://github.com/BurntSushi/byteorder,Unlicense OR MIT,Andrew Gallant <jamslam@gmail.com>
 bytes,https://github.com/tokio-rs/bytes,MIT,"Carl Lerche <me@carllerche.com>, Sean McArthur <sean@seanmonstar.com>"
@@ -126,6 +127,10 @@ displaydoc,https://github.com/yaahc/displaydoc,MIT OR Apache-2.0,Jane Lusby <jlu
 dyn-clone,https://github.com/dtolnay/dyn-clone,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 either,https://github.com/rayon-rs/either,MIT OR Apache-2.0,bluss
 elf,https://github.com/cole14/rust-elf,MIT OR Apache-2.0,Christopher Cole <chris.cole.09@gmail.com>
+embedded-io,https://github.com/rust-embedded/embedded-hal,MIT OR Apache-2.0,The embedded-io Authors
+embedded-io-async,https://github.com/rust-embedded/embedded-hal,MIT OR Apache-2.0,The embedded-io-async Authors
+embedded-nal,https://github.com/rust-embedded-community/embedded-nal,MIT OR Apache-2.0,"Jonathan 'theJPster' Pallant <github@thejpster.org.uk>, Mathias Koch <mk@blackbird.online>, Diego Barrios Romero <eldruin@gmail.com>, Ryan Summers <ryan.summers@vertigo-designs.com>"
+embedded-nal-async,https://github.com/rust-embedded-community/embedded-nal,MIT OR Apache-2.0,The embedded-nal-async Authors
 encoding_rs,https://github.com/hsivonen/encoding_rs,(Apache-2.0 OR MIT) AND BSD-3-Clause,Henri Sivonen <hsivonen@hsivonen.fi>
 enum-as-inner,https://github.com/bluejekyll/enum-as-inner,MIT OR Apache-2.0,Benjamin Fry <benjaminfry@me.com>
 equivalent,https://github.com/cuviper/equivalent,Apache-2.0 OR MIT,The equivalent Authors
@@ -167,10 +172,12 @@ gloo-timers,https://github.com/rustwasm/gloo/tree/master/crates/timers,MIT OR Ap
 h2,https://github.com/hyperium/h2,MIT,"Carl Lerche <me@carllerche.com>, Sean McArthur <sean@seanmonstar.com>"
 half,https://github.com/starkat99/half-rs,MIT OR Apache-2.0,Kathryn Long <squeeself@gmail.com>
 halfbrown,https://github.com/Licenser/halfbrown,Apache-2.0 OR MIT,Heinz N. Gies <heinz@licenser.net>
+hash32,https://github.com/japaric/hash32,MIT OR Apache-2.0,Jorge Aparicio <jorge@japaric.io>
 hashbrown,https://github.com/rust-lang/hashbrown,MIT OR Apache-2.0,Amanieu d'Antras <amanieu@gmail.com>
 hdrhistogram,https://github.com/HdrHistogram/HdrHistogram_rust,MIT OR Apache-2.0,"Jon Gjengset <jon@thesquareplanet.com>, Marshall Pierce <marshall@mpierce.org>"
 headers,https://github.com/hyperium/headers,MIT,Sean McArthur <sean@seanmonstar.com>
 headers-core,https://github.com/hyperium/headers,MIT,Sean McArthur <sean@seanmonstar.com>
+heapless,https://github.com/rust-embedded/heapless,MIT OR Apache-2.0,"Jorge Aparicio <jorge@japaric.io>, Per Lindgren <per.lindgren@ltu.se>, Emil Fresk <emil.fresk@gmail.com>"
 heck,https://github.com/withoutboats/heck,MIT OR Apache-2.0,The heck Authors
 heck,https://github.com/withoutboats/heck,MIT OR Apache-2.0,Without Boats <woboats@gmail.com>
 hermit-abi,https://github.com/hermit-os/hermit-rs,MIT OR Apache-2.0,Stefan Lankes
@@ -250,8 +257,10 @@ moka,https://github.com/moka-rs/moka,(MIT OR Apache-2.0) AND Apache-2.0,The moka
 msvc-demangler,https://github.com/mstange/msvc-demangler-rust,MIT OR NCSA,"Markus Stange <mstange@themasta.com>, Jeff Muizelaar <jrmuizel@gmail.com>"
 multer,https://github.com/rwf2/multer,MIT,Rousan Ali <hello@rousan.io>
 multimap,https://github.com/havarnov/multimap,MIT OR Apache-2.0,Håvar Nøvik <havar.novik@gmail.com>
+nb,https://github.com/rust-embedded/nb,MIT OR Apache-2.0,Jorge Aparicio <jorge@japaric.io>
 nix,https://github.com/nix-rust/nix,MIT,The nix-rust Project Developers
 nom,https://github.com/Geal/nom,MIT,contact@geoffroycouprie.com
+nourl,https://github.com/rmja/nourl,MIT  OR  Apache-2.0,Rasmus Melchior Jacobsen <rmja@laesoe.org>
 ntapi,https://github.com/MSxDOS/ntapi,Apache-2.0 OR MIT,MSxDOS <melcodos@gmail.com>
 nu-ansi-term,https://github.com/nushell/nu-ansi-term,MIT,"ogham@bsago.me, Ryan Scheel (Havvy) <ryan.havvy@gmail.com>, Josh Triplett <josh@joshtriplett.org>, The Nushell Project Developers"
 num-conv,https://github.com/jhpratt/num-conv,MIT OR Apache-2.0,Jacob Pratt <jacob@jhpratt.dev>
@@ -341,6 +350,7 @@ regex-automata,https://github.com/rust-lang/regex/tree/master/regex-automata,MIT
 regex-lite,https://github.com/rust-lang/regex,MIT OR Apache-2.0,"The Rust Project Developers, Andrew Gallant <jamslam@gmail.com>"
 regex-syntax,https://github.com/rust-lang/regex/tree/master/regex-syntax,MIT OR Apache-2.0,"The Rust Project Developers, Andrew Gallant <jamslam@gmail.com>"
 reqwest,https://github.com/seanmonstar/reqwest,MIT OR Apache-2.0,Sean McArthur <sean@seanmonstar.com>
+reqwless,https://github.com/drogue-iot/reqwless,Apache-2.0,The reqwless Authors
 resolv-conf,https://github.com/hickory-dns/resolv-conf,MIT OR Apache-2.0,The resolv-conf Authors
 ring,https://github.com/briansmith/ring,Apache-2.0 AND ISC,The ring Authors
 rmp,https://github.com/3Hren/msgpack-rust,MIT,Evgeny Safronov <division494@gmail.com>

@@ -21,13 +21,19 @@ pub enum BuildError {
     /// The encoded request length overflowed `usize`.
     #[error("encoded HTTP request length overflowed")]
     LengthOverflow,
+    /// The caller provided more headers than the fixed reqwless header buffer can hold.
+    #[error("too many HTTP headers; maximum supported header count is {max}")]
+    TooManyHeaders {
+        /// Maximum number of headers accepted by this crate's reqwless wrapper.
+        max: usize,
+    },
     /// An owned allocation failed while using an `alloc`-backed convenience API.
     #[error("failed to allocate HTTP request buffer")]
     AllocationFailed,
 }
 
 /// Errors returned while writing a request into a sink.
-#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, thiserror::Error)]
 pub enum SendError<E> {
     /// Request validation or sizing failed before the request was fully emitted.
     #[error(transparent)]
@@ -35,6 +41,12 @@ pub enum SendError<E> {
     /// The caller-provided sink rejected a write.
     #[error("HTTP sink write failed: {0}")]
     Sink(E),
+    /// reqwless rejected or failed to emit the request.
+    #[error("reqwless HTTP request emission failed: {0:?}")]
+    Reqwless(reqwless::Error),
+    /// reqwless yielded while writing to a sink that is expected to complete immediately.
+    #[error("reqwless HTTP request emission unexpectedly yielded pending")]
+    Pending,
 }
 
 impl<E> From<BuildError> for SendError<E> {
