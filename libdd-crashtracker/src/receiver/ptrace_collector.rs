@@ -173,10 +173,15 @@ fn attach_thread(tid: libc::pid_t, stop_deadline: Instant) -> Result<(), PtraceE
     // On older kernels, the register state may not be
     // immediately readable after waitpid reports the stop. Spin briefly
     // until PEEKUSER returns a non-zero IP, proving registers are committed.
-    if !wait_for_registers(tid, stop_deadline) {
-        let _ = detach_thread(tid);
-        return Err(PtraceError::Attach(tid, libc::ETIMEDOUT));
-    }
+    //
+    // If the deadline expires before we see a non-zero IP, proceed anyway:
+    // libunwind uses PTRACE_GETREGSET which may succeed even when PEEKUSER
+    // returns zero. If registers are truly uncommitted, unwind_remote_thread
+    // will return 0 frames and capture_with_retry will retry without needing
+    // a costly detach/re-attach cycle (which can fail with EPERM under CPU
+    // pressure because the kernel hasn't fully released the prior ptrace
+    // state).
+    let _ = wait_for_registers(tid, stop_deadline);
 
     Ok(())
 }
@@ -245,6 +250,14 @@ fn detach_thread(tid: libc::pid_t) -> Result<(), PtraceError> {
             return Err(PtraceError::Detach(tid, errno));
         }
     }
+
+    // Drain any pending waitpid event so the kernel fully releases the thread.
+    // Without this, a rapid re-attach (PTRACE_SEIZE) can fail with EPERM under
+    // CPU pressure because the kernel hasn't finished processing the detach.
+    unsafe {
+        libc::waitpid(tid, ptr::null_mut(), libc::__WALL | libc::WNOHANG);
+    }
+
     Ok(())
 }
 
@@ -390,15 +403,20 @@ pub fn capture_thread_context(
 }
 
 /// Maximum time to wait for a single thread to enter ptrace-stop.
-const STOP_TIMEOUT_PER_THREAD: Duration = Duration::from_millis(50);
+///
+/// 200ms accommodates CI environments with heavy CPU contention where the thread
+/// may take tens of milliseconds to be scheduled and enter ptrace-stop after
+/// PTRACE_INTERRUPT. On unloaded machines the stop typically arrives in <1ms.
+const STOP_TIMEOUT_PER_THREAD: Duration = Duration::from_millis(200);
 
-/// Delay between retry attempts.
-const RETRY_DELAY: Duration = Duration::from_millis(5);
+/// Delay between retry attempts. Uses an exponential back-off starting from
+/// this value (10ms, 20ms, 40ms).
+const RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
+
+/// Maximum number of retry attempts per thread.
+const MAX_RETRIES: u32 = 3;
 
 /// Returns true if err is worth retrying.
-///
-/// Only ETIMEDOUT (register-wait deadline expired before IP became readable)
-/// should be retired.
 ///
 /// EPERM (Yama denial / missing PR_SET_PTRACER) and ESRCH (thread exited)
 /// are permanent for the receiver's lifetime and are not retried.
@@ -406,42 +424,50 @@ fn is_transient_ptrace_error(err: &PtraceError) -> bool {
     matches!(err, PtraceError::Attach(_, libc::ETIMEDOUT))
 }
 
-/// Attempt to capture a thread context, retrying once on transient failures.
+/// Attempt to capture a thread context, retrying on transient failures.
 ///
-/// Uses a single per-thread deadline across attempts so that a slow thread
-/// cannot consume more than STOP_TIMEOUT_PER_THREAD total.
+/// Each attempt gets its own `STOP_TIMEOUT_PER_THREAD` budget (capped at the
+/// overall deadline) so that a retry after a timeout-induced failure actually
+/// has enough time to succeed. On older kernels (e.g. CentOS 7 / kernel 3.10)
+/// the first attempt can consume its entire budget waiting for registers to
+/// become readable; reusing that exhausted deadline would make the retry a
+/// no-op.
 ///
 /// A capture that succeeds but produces zero frames is also retried: on a
 /// running thread with a confirmed non-zero IP, empty frames indicates a
 /// transient libunwind issue (e.g. stale address-space cache state) rather
-/// than a permanent problem.
+/// than a permanent problem. Retries use exponential back-off to give the
+/// kernel time to fully commit thread state between attempts.
 fn capture_with_retry(
     tid: libc::pid_t,
     resolve_frames: crate::StacktraceCollection,
     addr_space: UnwAddrSpaceT,
     overall_deadline: Instant,
 ) -> Option<CapturedThreadContext> {
-    let thread_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
+    for attempt in 0..=MAX_RETRIES {
+        let thread_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
 
-    let should_retry =
         match capture_thread_context(tid, resolve_frames, addr_space, thread_deadline) {
             Ok(ctx) if !ctx.stack_trace.frames.is_empty() => return Some(ctx),
-            Ok(_) => true,
-            Err(ref e) if is_transient_ptrace_error(e) => true,
-            Err(_) => false,
-        };
+            Ok(_) => {}                                      // 0 frames -- retry
+            Err(ref e) if is_transient_ptrace_error(e) => {} // ETIMEDOUT -- retry
+            Err(_) => return None,                           // permanent error
+        }
 
-    if !should_retry {
-        return None;
+        if attempt == MAX_RETRIES {
+            break;
+        }
+
+        let delay = RETRY_BASE_DELAY * 2u32.saturating_pow(attempt);
+        if Instant::now() + delay >= overall_deadline {
+            break;
+        }
+        std::thread::sleep(delay);
     }
 
-    let remaining = thread_deadline.saturating_duration_since(Instant::now());
-    if remaining <= RETRY_DELAY {
-        return None;
-    }
-    std::thread::sleep(RETRY_DELAY);
-
-    capture_thread_context(tid, resolve_frames, addr_space, thread_deadline).ok()
+    // All attempts produced 0 frames or timed out; return None so the caller
+    // records the thread with an incomplete stack rather than frames: [].
+    None
 }
 
 /// Stream thread contexts to a callback one at a time.
