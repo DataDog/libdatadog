@@ -357,7 +357,7 @@ version = "0.13.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8bce4948d2520386c6d92a6ea2d472300257702242e5a1d01d6add52bd2e7c1"
 dependencies = [
- "bindgen",
+ "bindgen 0.72.1",
  "cc",
  "cmake",
  "dunce",
@@ -486,6 +486,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "bindgen"
+version = "0.71.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
+dependencies = [
+ "bitflags",
+ "cexpr",
+ "clang-sys",
+ "itertools",
+ "log",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash",
+ "shlex",
+ "syn 2.0.87",
 ]
 
 [[package]]
@@ -2847,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities"
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2857,7 +2877,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-capabilities-impl"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "bytes",
  "http",
@@ -2869,7 +2889,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common"
-version = "5.0.0"
+version = "5.1.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2986,7 +3006,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-data-pipeline"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3048,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "criterion",
  "prost",
@@ -3069,7 +3089,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-dogstatsd-client"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "anyhow",
  "cadence",
@@ -3100,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-library-config"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "libc",
@@ -3255,6 +3275,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-profiling-heap-allocator"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "libdd-profiling-heap-sampler",
+]
+
+[[package]]
+name = "libdd-profiling-heap-gotter"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "libdd-profiling-heap-sampler",
+ "serial_test",
+]
+
+[[package]]
+name = "libdd-profiling-heap-gotter-ffi"
+version = "37.0.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "function_name",
+ "libc",
+ "libdd-common-ffi",
+ "libdd-profiling-heap-gotter",
+]
+
+[[package]]
+name = "libdd-profiling-heap-sampler"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.71.1",
+ "cc",
+]
+
+[[package]]
 name = "libdd-profiling-protobuf"
 version = "2.0.0"
 dependencies = [
@@ -3265,7 +3322,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-remote-config"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3296,7 +3353,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-sampling"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "criterion",
  "libdd-common",
@@ -3308,7 +3365,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime"
-version = "1.0.0"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3333,7 +3390,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry"
-version = "5.0.1"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3390,7 +3447,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-normalization"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -3402,7 +3459,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-obfuscation"
-version = "4.0.0"
+version = "5.0.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -3419,7 +3476,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-protobuf"
-version = "3.0.2"
+version = "4.0.0"
 dependencies = [
  "bolero",
  "prost",
@@ -3433,7 +3490,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-stats"
-version = "5.0.0"
+version = "6.0.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3462,7 +3519,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-trace-utils"
-version = "8.0.0"
+version = "9.0.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
