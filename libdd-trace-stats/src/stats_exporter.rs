@@ -9,7 +9,7 @@ use std::{
     time,
 };
 
-use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
+use crate::span_concentrator::{FlushResult, FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
@@ -227,107 +227,90 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
     /// case stats cannot be flushed since the concentrator might be corrupted.
     /// Returns `Ok(true)` if stats were sent, `Ok(false)` if the concentrator had nothing to send.
     pub async fn send(&self, force_flush: bool) -> anyhow::Result<bool> {
-        let flush = {
+        let FlushResult {
+            obfuscated_buckets,
+            unobfuscated_buckets,
+            collapsed_spans,
+        } = {
             #[allow(clippy::unwrap_used)]
             let mut concentrator = self.concentrator.lock().unwrap();
             concentrator.flush_buckets(force_flush)
         };
 
-        if flush.collapsed_spans.whole_key > 0 {
-            #[cfg(feature = "telemetry")]
-            if let Some(telemetry) = &self.telemetry {
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = &self.telemetry {
+            if collapsed_spans.whole_key > 0 {
                 let _ = telemetry.handle.add_point(
-                    flush.collapsed_spans.whole_key as f64,
+                    collapsed_spans.whole_key as f64,
                     &telemetry.keys.collapsed_whole_key,
                     vec![],
                 );
             }
-            #[cfg(feature = "dogstatsd")]
-            if let Some(client) = &self.dogstatsd {
-                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                    COLLAPSED_SPANS_HEALTH_METRIC,
-                    flush.collapsed_spans.whole_key as i64,
-                    [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
-                )]);
-            }
-        }
-
-        if flush.collapsed_spans.resources > 0 {
-            #[cfg(feature = "telemetry")]
-            if let Some(telemetry) = &self.telemetry {
+            if collapsed_spans.resources > 0 {
                 let _ = telemetry.handle.add_point(
-                    flush.collapsed_spans.resources as f64,
+                    collapsed_spans.resources as f64,
                     &telemetry.keys.collapsed_resources,
                     vec![],
                 );
             }
-            #[cfg(feature = "dogstatsd")]
-            if let Some(client) = &self.dogstatsd {
-                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                    COLLAPSED_SPANS_HEALTH_METRIC,
-                    flush.collapsed_spans.resources as i64,
-                    [libdd_common::tag!("collapsed_spans", "resource")].iter(),
-                )]);
-            }
-        }
-
-        if flush.collapsed_spans.http_endpoint > 0 {
-            #[cfg(feature = "telemetry")]
-            if let Some(telemetry) = &self.telemetry {
+            if collapsed_spans.http_endpoint > 0 {
                 let _ = telemetry.handle.add_point(
-                    flush.collapsed_spans.http_endpoint as f64,
+                    collapsed_spans.http_endpoint as f64,
                     &telemetry.keys.collapsed_http_endpoints,
                     vec![],
                 );
             }
-            #[cfg(feature = "dogstatsd")]
-            if let Some(client) = &self.dogstatsd {
-                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                    COLLAPSED_SPANS_HEALTH_METRIC,
-                    flush.collapsed_spans.http_endpoint as i64,
-                    [libdd_common::tag!("collapsed_spans", "http_endpoint")].iter(),
-                )]);
-            }
-        }
-
-        if flush.collapsed_spans.peer_tags > 0 {
-            #[cfg(feature = "telemetry")]
-            if let Some(telemetry) = &self.telemetry {
+            if collapsed_spans.peer_tags > 0 {
                 let _ = telemetry.handle.add_point(
-                    flush.collapsed_spans.peer_tags as f64,
+                    collapsed_spans.peer_tags as f64,
                     &telemetry.keys.collapsed_peer_tags,
                     vec![],
                 );
             }
-            #[cfg(feature = "dogstatsd")]
-            if let Some(client) = &self.dogstatsd {
-                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                    COLLAPSED_SPANS_HEALTH_METRIC,
-                    flush.collapsed_spans.peer_tags as i64,
-                    [libdd_common::tag!("collapsed_spans", "peer_tags")].iter(),
-                )]);
-            }
-        }
-
-        if flush.collapsed_spans.additional_tags > 0 {
-            #[cfg(feature = "telemetry")]
-            if let Some(telemetry) = &self.telemetry {
+            if collapsed_spans.additional_tags > 0 {
                 let _ = telemetry.handle.add_point(
-                    flush.collapsed_spans.additional_tags as f64,
+                    collapsed_spans.additional_tags as f64,
                     &telemetry.keys.collapsed_additional_tags,
                     vec![],
                 );
             }
-            #[cfg(feature = "dogstatsd")]
-            if let Some(client) = &self.dogstatsd {
+        }
+
+        #[cfg(feature = "dogstatsd")]
+        if let Some(client) = &self.dogstatsd {
+            if collapsed_spans.whole_key > 0 {
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
-                    flush.collapsed_spans.additional_tags as i64,
-                    [libdd_common::tag!(
-                        "collapsed_spans",
-                        "additional_metric_tags"
-                    )]
-                    .iter(),
+                    collapsed_spans.whole_key as i64,
+                    [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
+                )]);
+            }
+            if collapsed_spans.resources > 0 {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    collapsed_spans.resources as i64,
+                    [libdd_common::tag!("collapsed_spans", "resources")].iter(),
+                )]);
+            }
+            if collapsed_spans.http_endpoint > 0 {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    collapsed_spans.http_endpoint as i64,
+                    [libdd_common::tag!("collapsed_spans", "http_endpoint")].iter(),
+                )]);
+            }
+            if collapsed_spans.peer_tags > 0 {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    collapsed_spans.peer_tags as i64,
+                    [libdd_common::tag!("collapsed_spans", "peer_tags")].iter(),
+                )]);
+            }
+            if collapsed_spans.additional_tags > 0 {
+                client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    COLLAPSED_SPANS_HEALTH_METRIC,
+                    collapsed_spans.additional_tags as i64,
+                    [libdd_common::tag!("collapsed_spans", "additional_tags")].iter(),
                 )]);
             }
         }
@@ -335,12 +318,12 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
         // Obfuscated and un-obfuscated buckets must be sent in separate payloads because only
         // the obfuscated one carries the `datadog-obfuscation-version` header.
         let mut sent_stats = false;
-        if !flush.obfuscated_buckets.is_empty() {
-            self.send_payload(flush.obfuscated_buckets, true).await?;
+        if !obfuscated_buckets.is_empty() {
+            self.send_payload(obfuscated_buckets, true).await?;
             sent_stats = true;
         }
-        if !flush.unobfuscated_buckets.is_empty() {
-            self.send_payload(flush.unobfuscated_buckets, false).await?;
+        if !unobfuscated_buckets.is_empty() {
+            self.send_payload(unobfuscated_buckets, false).await?;
             sent_stats = true;
         }
         Ok(sent_stats)
