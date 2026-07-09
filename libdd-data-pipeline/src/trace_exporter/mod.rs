@@ -2440,8 +2440,15 @@ mod tests {
     fn test_agentless_export_body_shape() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/input")
+            let when = when.method(POST).path("/v1/input");
+            // When the `compression` feature is enabled the agentless sender zstd-compresses
+            // the body, so the JSON substrings are no longer present in the raw request. In that
+            // case assert on the `content-encoding` header instead; the body shape itself is
+            // covered by the default (uncompressed) build.
+            #[cfg(feature = "compression")]
+            let when = when.header("content-encoding", "zstd");
+            #[cfg(not(feature = "compression"))]
+            let when = when
                 .body_includes("\"traces\":")
                 .body_includes("\"spans\":")
                 .body_includes("\"hostname\":\"h-1\"")
@@ -2450,6 +2457,7 @@ mod tests {
                 .body_includes("\"_top_level\":1")
                 .body_includes("\"_trace_root\":1")
                 .body_includes("\"parent_id\":\"0000000000000000\"");
+            let _ = when;
             then.status(200).body("");
         });
 

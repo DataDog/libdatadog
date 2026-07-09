@@ -7,7 +7,7 @@
 mod retry_strategy;
 pub use retry_strategy::{RetryBackoffType, RetryStrategy};
 
-mod compression;
+pub(crate) mod compression;
 pub use compression::CompressionStrategy;
 
 use bytes::Bytes;
@@ -86,7 +86,15 @@ impl std::error::Error for SendWithRetryError {}
 /// );
 /// let retry_strategy = RetryStrategy::new(3, 10, RetryBackoffType::Exponential, Some(5));
 /// let capabilities = libdd_capabilities_impl::NativeCapabilities::new_client();
-/// send_with_retry(&capabilities, &target, payload, &headers, &retry_strategy, CompressionStrategy::None).await
+/// send_with_retry(
+///     &capabilities,
+///     &target,
+///     payload,
+///     &headers,
+///     &retry_strategy,
+///     CompressionStrategy::None,
+/// )
+/// .await
 /// # }
 /// ```
 pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(

@@ -4,6 +4,7 @@
 pub mod send_data_result;
 
 use crate::msgpack_encoder;
+use crate::send_with_retry::compression::{add_headers, compress};
 use crate::send_with_retry::{
     send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryResult,
 };
@@ -233,10 +234,14 @@ impl SendData {
         capabilities: &C,
         chunks: u64,
         payload: Vec<u8>,
-        headers: HeaderMap,
+        mut headers: HeaderMap,
         endpoint: Option<&Endpoint>,
         compression_strategy: CompressionStrategy,
     ) -> (SendWithRetryResult, u64, u64) {
+        // Compress here (rather than inside `send_with_retry`) so that the reported
+        // `bytes_sent` metric reflects the number of bytes actually put on the wire.
+        let (payload, compression_strategy) = compress(payload, compression_strategy);
+        add_headers(&mut headers, compression_strategy);
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
@@ -246,7 +251,7 @@ impl SendData {
                 payload,
                 &headers,
                 &self.retry_strategy,
-                compression_strategy,
+                CompressionStrategy::None,
             )
             .await,
             payload_len,
