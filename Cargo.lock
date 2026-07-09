@@ -3456,7 +3456,6 @@ version = "37.0.0"
 dependencies = [
  "embedded-io",
  "embedded-io-async",
- "heapless",
  "libc",
  "reqwless",
  "thiserror 2.0.17",

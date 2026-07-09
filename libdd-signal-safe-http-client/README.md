@@ -1,15 +1,15 @@
 # libdd-signal-safe-http-client
 
-`libdd-signal-safe-http-client` is a `no_std`-first HTTP/1.1 request emitter for Datadog payloads that may need to leave an async signal handler.
+`libdd-signal-safe-http-client` is a `no_std`-first set of Datadog telemetry helpers for [`reqwless`](https://docs.rs/reqwless).
 
-The default build has no allocation, DNS, socket, thread, lock, TLS, or runtime dependency. It formats complete HTTP requests into caller-owned sinks. Signal safety for the actual submission depends on the sink implementation; the default crate only guarantees that request construction and emission do not allocate or call the OS.
+The default build depends on `reqwless` with `default-features = false`; it does not enable allocation, DNS, sockets, threads, locks, TLS, or a runtime. HTTP request construction and emission remain reqwless APIs. This crate only supplies Datadog telemetry paths, header tuples, and request-builder helpers.
 
 Feature flags:
 
 | Feature | Default | Purpose |
 | --- | --- | --- |
-| `alloc` | no | Enables owned request buffers such as `Request::to_vec`. |
-| `std` | no | Enables standard library support and implies `alloc`. |
+| `alloc` | no | Enables allocation-backed setup helpers. |
+| `std` | no | Reserved for standard library support and implies `alloc`. |
 | `libc-dns` | no | Enables libc `getaddrinfo` resolver convenience for non-signal-handler use. |
 
-The telemetry helper emits `POST /telemetry/proxy/api/v2/apmtelemetry` with the Datadog telemetry metrics headers for `generate-metrics` payloads.
+Use `telemetry_metrics_headers` to build the default `generate-metrics` header tuples, then pass those headers to `agent_telemetry_metrics_request` or `telemetry_metrics_request` to get a `reqwless::request::Request`.

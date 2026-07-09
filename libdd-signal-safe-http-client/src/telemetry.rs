@@ -1,10 +1,13 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "alloc")]
-use alloc::vec::Vec;
+use reqwless::{
+    headers::ContentType,
+    request::{Request, RequestBuilder},
+};
 
-use crate::{BuildError, Header, HttpSink, Method, Request, SendError};
+/// A reqwless extra-header tuple.
+pub type Header<'a> = (&'a str, &'a str);
 
 /// Agent telemetry proxy path for APM telemetry payloads.
 pub const AGENT_TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
@@ -12,6 +15,8 @@ pub const AGENT_TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
 pub const DIRECT_TELEMETRY_PATH: &str = "/api/v2/apmtelemetry";
 /// JSON content type emitted for telemetry payloads.
 pub const APPLICATION_JSON: &str = "application/json";
+/// `Connection: close` header value for one-shot signal-handler submissions.
+pub const CONNECTION_CLOSE: Header<'static> = ("Connection", "close");
 /// Telemetry request-type header name.
 pub const HEADER_REQUEST_TYPE: &str = "DD-Telemetry-Request-Type";
 /// Telemetry API version header name.
@@ -23,121 +28,48 @@ pub const REQUEST_TYPE_GENERATE_METRICS: &str = "generate-metrics";
 /// Telemetry API version used by libdatadog telemetry payloads.
 pub const TELEMETRY_API_VERSION_V2: &str = "v2";
 
-/// A borrowed Datadog telemetry metrics request.
-#[derive(Debug, Clone, Copy)]
-pub struct TelemetryMetricsRequest<'a> {
+/// Builds the default telemetry headers for a `generate-metrics` payload.
+///
+/// The returned slice can be passed directly to `reqwless` through
+/// [`telemetry_metrics_request`]. Callers that need endpoint headers such as `dd-api-key` should
+/// append those to their own reqwless header storage and pass that combined slice instead.
+pub const fn telemetry_metrics_headers<'a>(
+    api_version: &'a str,
+    debug_enabled: bool,
+) -> [Header<'a>; 4] {
+    [
+        CONNECTION_CLOSE,
+        (HEADER_REQUEST_TYPE, REQUEST_TYPE_GENERATE_METRICS),
+        (HEADER_API_VERSION, api_version),
+        (HEADER_DEBUG_ENABLED, debug_header_value(debug_enabled)),
+    ]
+}
+
+/// Builds a reqwless `POST` request for a Datadog telemetry metrics payload.
+///
+/// This function does not validate, encode, or write HTTP bytes itself. It only applies Datadog
+/// telemetry defaults to reqwless's low-level request builder.
+pub fn telemetry_metrics_request<'a>(
     host: &'a str,
     path: &'a str,
     payload: &'a [u8],
-    api_version: &'a str,
-    debug_enabled: bool,
     headers: &'a [Header<'a>],
+) -> Request<'a, &'a [u8]> {
+    reqwless::request::Request::post(path)
+        .host(host)
+        .content_type(ContentType::ApplicationJson)
+        .headers(headers)
+        .body(payload)
+        .build()
 }
 
-impl<'a> TelemetryMetricsRequest<'a> {
-    /// Creates a telemetry metrics request targeting the Datadog agent telemetry proxy.
-    pub const fn new_agent(host: &'a str, payload: &'a [u8]) -> Self {
-        Self {
-            host,
-            path: AGENT_TELEMETRY_PATH,
-            payload,
-            api_version: TELEMETRY_API_VERSION_V2,
-            debug_enabled: false,
-            headers: &[],
-        }
-    }
-
-    /// Overrides the request path.
-    ///
-    /// Use [`DIRECT_TELEMETRY_PATH`] for direct intake submissions outside the agent path.
-    pub const fn with_path(mut self, path: &'a str) -> Self {
-        self.path = path;
-        self
-    }
-
-    /// Overrides the telemetry API version header value.
-    pub const fn with_api_version(mut self, api_version: &'a str) -> Self {
-        self.api_version = api_version;
-        self
-    }
-
-    /// Sets the telemetry debug-enabled header value.
-    pub const fn with_debug_enabled(mut self, enabled: bool) -> Self {
-        self.debug_enabled = enabled;
-        self
-    }
-
-    /// Appends endpoint headers such as `dd-api-key` or `x-datadog-test-session-token`.
-    pub const fn with_headers(mut self, headers: &'a [Header<'a>]) -> Self {
-        self.headers = headers;
-        self
-    }
-
-    /// Returns the HTTP `Host` header value.
-    pub const fn host(&self) -> &'a str {
-        self.host
-    }
-
-    /// Returns the request path.
-    pub const fn path(&self) -> &'a str {
-        self.path
-    }
-
-    /// Returns the telemetry payload bytes.
-    pub const fn payload(&self) -> &'a [u8] {
-        self.payload
-    }
-
-    /// Returns the number of bytes needed to encode the full request.
-    pub fn encoded_len(&self) -> Result<usize, BuildError> {
-        let debug_enabled = debug_header_value(self.debug_enabled);
-        let telemetry_headers = telemetry_headers(self.api_version, debug_enabled);
-        self.request(&telemetry_headers).encoded_len()
-    }
-
-    /// Validates all request fields without emitting bytes.
-    pub fn validate(&self) -> Result<(), BuildError> {
-        let debug_enabled = debug_header_value(self.debug_enabled);
-        let telemetry_headers = telemetry_headers(self.api_version, debug_enabled);
-        self.request(&telemetry_headers).validate()
-    }
-
-    /// Writes the full HTTP request into the supplied sink.
-    pub fn submit<S: HttpSink>(&self, sink: &mut S) -> Result<(), SendError<S::Error>> {
-        let debug_enabled = debug_header_value(self.debug_enabled);
-        let telemetry_headers = telemetry_headers(self.api_version, debug_enabled);
-        self.request(&telemetry_headers).write_to(sink)
-    }
-
-    /// Encodes the full HTTP request into an owned buffer.
-    #[cfg(feature = "alloc")]
-    pub fn to_vec(&self) -> Result<Vec<u8>, BuildError> {
-        let debug_enabled = debug_header_value(self.debug_enabled);
-        let telemetry_headers = telemetry_headers(self.api_version, debug_enabled);
-        self.request(&telemetry_headers).to_vec()
-    }
-
-    fn request<'request>(
-        &'request self,
-        telemetry_headers: &'request [Header<'request>],
-    ) -> Request<'request>
-    where
-        'a: 'request,
-    {
-        Request::new(Method::POST, self.host, self.path)
-            .with_body(self.payload)
-            .with_content_type(APPLICATION_JSON)
-            .with_headers(telemetry_headers)
-            .with_extra_headers(self.headers)
-    }
-}
-
-fn telemetry_headers<'a>(api_version: &'a str, debug_enabled: &'a str) -> [Header<'a>; 3] {
-    [
-        Header::new_unchecked(HEADER_REQUEST_TYPE, REQUEST_TYPE_GENERATE_METRICS),
-        Header::new_unchecked(HEADER_API_VERSION, api_version),
-        Header::new_unchecked(HEADER_DEBUG_ENABLED, debug_enabled),
-    ]
+/// Builds a reqwless `POST` request for the Datadog agent telemetry proxy.
+pub fn agent_telemetry_metrics_request<'a>(
+    host: &'a str,
+    payload: &'a [u8],
+    headers: &'a [Header<'a>],
+) -> Request<'a, &'a [u8]> {
+    telemetry_metrics_request(host, AGENT_TELEMETRY_PATH, payload, headers)
 }
 
 const fn debug_header_value(enabled: bool) -> &'static str {
@@ -150,19 +82,42 @@ const fn debug_header_value(enabled: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use core::{
+        future::Future,
+        ptr,
+        task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
+    };
+
+    use reqwless::request::RequestBody as _;
+
     use super::*;
-    use crate::{BufferTooSmall, FixedBuffer, HttpClient};
 
     #[test]
-    fn telemetry_metrics_request_emits_agent_headers() -> Result<(), SendError<BufferTooSmall>> {
-        let headers = [Header::new_unchecked("dd-api-key", "abc123")];
-        let request = TelemetryMetricsRequest::new_agent("localhost:8126", br#"{"series":[]}"#)
-            .with_debug_enabled(true)
-            .with_headers(&headers);
-        let mut storage = [0_u8; 512];
-        let mut buffer = FixedBuffer::new(&mut storage);
+    fn telemetry_headers_are_reqwless_header_tuples() {
+        assert_eq!(
+            telemetry_metrics_headers(TELEMETRY_API_VERSION_V2, true),
+            [
+                ("Connection", "close"),
+                ("DD-Telemetry-Request-Type", "generate-metrics"),
+                ("DD-Telemetry-API-Version", "v2"),
+                ("DD-Telemetry-Debug-Enabled", "true"),
+            ]
+        );
+    }
 
-        request.submit(&mut buffer)?;
+    #[test]
+    fn telemetry_request_is_reqwless_request() {
+        let payload = br#"{"series":[]}"#;
+        let headers = telemetry_metrics_headers(TELEMETRY_API_VERSION_V2, true);
+        let request = agent_telemetry_metrics_request("localhost:8126", payload, &headers);
+        let mut writer = VecWriter::default();
+
+        block_on_ready(request.write_header(&mut writer))
+            .expect("reqwless write_header should be ready")
+            .expect("reqwless write_header should succeed");
+        block_on_ready(payload.as_slice().write(&mut writer))
+            .expect("reqwless body write should be ready")
+            .expect("reqwless body write should succeed");
 
         let expected = concat!(
             "POST /telemetry/proxy/api/v2/apmtelemetry HTTP/1.1\r\n",
@@ -173,48 +128,79 @@ mod tests {
             "DD-Telemetry-Request-Type: generate-metrics\r\n",
             "DD-Telemetry-API-Version: v2\r\n",
             "DD-Telemetry-Debug-Enabled: true\r\n",
-            "dd-api-key: abc123\r\n",
             "\r\n",
             r#"{"series":[]}"#
         )
         .as_bytes();
-        assert_eq!(buffer.as_slice(), expected);
-        assert_eq!(request.encoded_len(), Ok(expected.len()));
-        Ok(())
+        assert_eq!(writer.bytes, expected);
     }
 
-    #[test]
-    fn http_client_submits_telemetry_metrics() -> Result<(), SendError<BufferTooSmall>> {
-        let headers = [Header::new_unchecked(
-            "x-datadog-test-session-token",
-            "token",
-        )];
-        let client = HttpClient::new("localhost:8126").with_default_headers(&headers);
-        let mut storage = [0_u8; 512];
-        let mut buffer = FixedBuffer::new(&mut storage);
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct TestError;
 
-        client.submit_telemetry_metrics(br#"{"series":[]}"#, &mut buffer)?;
-
-        assert!(buffer
-            .as_slice()
-            .windows(HEADER_REQUEST_TYPE.len())
-            .any(|window| window == HEADER_REQUEST_TYPE.as_bytes()));
-        assert!(buffer
-            .as_slice()
-            .windows(headers[0].name().len())
-            .any(|window| window == headers[0].name().as_bytes()));
-        Ok(())
+    impl embedded_io::Error for TestError {
+        fn kind(&self) -> embedded_io::ErrorKind {
+            embedded_io::ErrorKind::Other
+        }
     }
 
-    #[cfg(feature = "alloc")]
-    #[test]
-    fn telemetry_alloc_to_vec_contains_payload() -> Result<(), BuildError> {
-        let request = TelemetryMetricsRequest::new_agent("localhost:8126", br#"{"series":[]}"#);
-
-        let bytes = request.to_vec()?;
-
-        assert!(bytes.starts_with(b"POST /telemetry/proxy/api/v2/apmtelemetry HTTP/1.1\r\n"));
-        assert!(bytes.ends_with(b"\r\n\r\n{\"series\":[]}"));
-        Ok(())
+    #[derive(Default)]
+    struct VecWriter {
+        bytes: std::vec::Vec<u8>,
     }
+
+    impl embedded_io::ErrorType for VecWriter {
+        type Error = TestError;
+    }
+
+    impl embedded_io_async::Write for VecWriter {
+        async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
+            self.bytes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        async fn flush(&mut self) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    fn block_on_ready<F: Future>(future: F) -> Result<F::Output, ()> {
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        let mut future = core::pin::pin!(future);
+
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(output) => Ok(output),
+            Poll::Pending => Err(()),
+        }
+    }
+
+    fn noop_waker() -> Waker {
+        const VTABLE: RawWakerVTable = RawWakerVTable::new(
+            noop_waker_clone,
+            noop_waker_wake,
+            noop_waker_wake_by_ref,
+            noop_waker_drop,
+        );
+
+        // SAFETY: The raw waker uses a null data pointer that is never dereferenced. All vtable
+        // operations are no-ops and cloning returns another equivalent raw waker.
+        unsafe { Waker::from_raw(RawWaker::new(ptr::null(), &VTABLE)) }
+    }
+
+    unsafe fn noop_waker_clone(_data: *const ()) -> RawWaker {
+        const VTABLE: RawWakerVTable = RawWakerVTable::new(
+            noop_waker_clone,
+            noop_waker_wake,
+            noop_waker_wake_by_ref,
+            noop_waker_drop,
+        );
+        RawWaker::new(ptr::null(), &VTABLE)
+    }
+
+    unsafe fn noop_waker_wake(_data: *const ()) {}
+
+    unsafe fn noop_waker_wake_by_ref(_data: *const ()) {}
+
+    unsafe fn noop_waker_drop(_data: *const ()) {}
 }

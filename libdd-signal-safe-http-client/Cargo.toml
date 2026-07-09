@@ -8,7 +8,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "no_std-first HTTP request emitter for signal-safe Datadog telemetry submissions"
+description = "no_std-first reqwless helpers for signal-safe Datadog telemetry submissions"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-signal-safe-http-client"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-signal-safe-http-client"
 publish = false
@@ -23,9 +23,10 @@ std = ["alloc"]
 libc-dns = ["alloc", "dep:libc"]
 
 [dependencies]
-embedded-io = "0.6"
-embedded-io-async = "0.6"
-heapless = "0.8"
 libc = { version = "0.2.153", default-features = false, optional = true }
 reqwless = { version = "0.13", default-features = false }
 thiserror = { version = "2", default-features = false }
+
+[dev-dependencies]
+embedded-io = { version = "0.6", default-features = false }
+embedded-io-async = { version = "0.6", default-features = false }
