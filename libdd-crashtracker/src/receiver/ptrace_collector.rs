@@ -410,6 +410,11 @@ fn is_transient_ptrace_error(err: &PtraceError) -> bool {
 ///
 /// Uses a single per-thread deadline across attempts so that a slow thread
 /// cannot consume more than STOP_TIMEOUT_PER_THREAD total.
+///
+/// A capture that succeeds but produces zero frames is also retried: on a
+/// running thread with a confirmed non-zero IP, empty frames indicates a
+/// transient libunwind issue (e.g. stale address-space cache state) rather
+/// than a permanent problem.
 fn capture_with_retry(
     tid: libc::pid_t,
     resolve_frames: crate::StacktraceCollection,
@@ -418,10 +423,16 @@ fn capture_with_retry(
 ) -> Option<CapturedThreadContext> {
     let thread_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
 
-    match capture_thread_context(tid, resolve_frames, addr_space, thread_deadline) {
-        Ok(ctx) => return Some(ctx),
-        Err(ref e) if is_transient_ptrace_error(e) => {}
-        Err(_) => return None,
+    let should_retry =
+        match capture_thread_context(tid, resolve_frames, addr_space, thread_deadline) {
+            Ok(ctx) if !ctx.stack_trace.frames.is_empty() => return Some(ctx),
+            Ok(_) => true,
+            Err(ref e) if is_transient_ptrace_error(e) => true,
+            Err(_) => false,
+        };
+
+    if !should_retry {
+        return None;
     }
 
     let remaining = thread_deadline.saturating_duration_since(Instant::now());
