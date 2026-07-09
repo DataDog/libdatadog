@@ -332,6 +332,8 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     } = &**status
     {
         let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
+        let _ = dropped_by_trace_filter;
 
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
