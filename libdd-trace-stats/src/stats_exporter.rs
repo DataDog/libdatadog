@@ -3,8 +3,8 @@
 
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
     },
     time,
 };
@@ -15,7 +15,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use libdd_trace_utils::send_with_retry::{RetryStrategy, send_with_retry};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use std::fmt::Debug;
@@ -310,7 +310,11 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
                     collapsed_spans.additional_tags as i64,
-                    [libdd_common::tag!("collapsed_spans", "additional_tags")].iter(),
+                    [libdd_common::tag!(
+                        "collapsed_spans",
+                        "additional_metric_tagss"
+                    )]
+                    .iter(),
                 )]);
             }
         }
@@ -377,9 +381,9 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<
-        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
-        Con: FlushableConcentrator + Send + Debug,
-    > Worker for StatsExporter<Cap, Con>
+    Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    Con: FlushableConcentrator + Send + Debug,
+> Worker for StatsExporter<Cap, Con>
 {
     async fn trigger(&mut self) {
         self.capabilities.sleep(self.flush_interval).await;
@@ -438,8 +442,8 @@ mod tests {
     use crate::span_concentrator::CardinalityLimitConfig;
     #[cfg(feature = "stats-obfuscation")]
     use crate::span_concentrator::StatsComputationObfuscationConfig;
-    use httpmock::prelude::*;
     use httpmock::MockServer;
+    use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
     use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime};
     use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
