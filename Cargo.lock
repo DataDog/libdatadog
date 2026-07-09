@@ -3100,43 +3100,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libdd-heap-allocator"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "libdd-heap-sampler",
-]
-
-[[package]]
-name = "libdd-heap-gotter"
-version = "0.1.0"
-dependencies = [
- "libc",
- "libdd-heap-sampler",
- "serial_test",
-]
-
-[[package]]
-name = "libdd-heap-gotter-ffi"
-version = "37.0.0"
-dependencies = [
- "anyhow",
- "build_common",
- "function_name",
- "libc",
- "libdd-common-ffi",
- "libdd-heap-gotter",
-]
-
-[[package]]
-name = "libdd-heap-sampler"
-version = "0.1.0"
-dependencies = [
- "bindgen 0.71.1",
- "cc",
-]
-
-[[package]]
 name = "libdd-http-client"
 version = "37.0.0"
 dependencies = [
@@ -3308,6 +3271,43 @@ dependencies = [
  "symbolizer-ffi",
  "thiserror 2.0.17",
  "tokio-util",
+]
+
+[[package]]
+name = "libdd-profiling-heap-allocator"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "libdd-profiling-heap-sampler",
+]
+
+[[package]]
+name = "libdd-profiling-heap-gotter"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "libdd-profiling-heap-sampler",
+ "serial_test",
+]
+
+[[package]]
+name = "libdd-profiling-heap-gotter-ffi"
+version = "37.0.0"
+dependencies = [
+ "anyhow",
+ "build_common",
+ "function_name",
+ "libc",
+ "libdd-common-ffi",
+ "libdd-profiling-heap-gotter",
+]
+
+[[package]]
+name = "libdd-profiling-heap-sampler"
+version = "0.1.0"
+dependencies = [
+ "bindgen 0.71.1",
+ "cc",
 ]
 
 [[package]]
