@@ -45,16 +45,104 @@ pub const fn telemetry_metrics_headers<'a>(
     ]
 }
 
+/// Builder for a reqwless Datadog telemetry metrics request.
+#[derive(Debug, Clone, Copy)]
+pub struct TelemetryMetricsRequestBuilder<'a> {
+    host: &'a str,
+    path: &'a str,
+    payload: &'a [u8],
+    api_version: &'a str,
+    debug_enabled: bool,
+}
+
+impl<'a> TelemetryMetricsRequestBuilder<'a> {
+    /// Creates a builder for the Datadog agent telemetry proxy.
+    pub const fn agent(host: &'a str, payload: &'a [u8]) -> Self {
+        Self::new(host, AGENT_TELEMETRY_PATH, payload)
+    }
+
+    /// Creates a builder for Datadog direct intake telemetry.
+    pub const fn direct(host: &'a str, payload: &'a [u8]) -> Self {
+        Self::new(host, DIRECT_TELEMETRY_PATH, payload)
+    }
+
+    /// Creates a builder for a custom telemetry endpoint path.
+    pub const fn new(host: &'a str, path: &'a str, payload: &'a [u8]) -> Self {
+        Self {
+            host,
+            path,
+            payload,
+            api_version: TELEMETRY_API_VERSION_V2,
+            debug_enabled: false,
+        }
+    }
+
+    /// Overrides the request path.
+    pub const fn with_path(mut self, path: &'a str) -> Self {
+        self.path = path;
+        self
+    }
+
+    /// Overrides the telemetry API version header value.
+    pub const fn with_api_version(mut self, api_version: &'a str) -> Self {
+        self.api_version = api_version;
+        self
+    }
+
+    /// Sets the telemetry debug-enabled header value.
+    pub const fn with_debug_enabled(mut self, enabled: bool) -> Self {
+        self.debug_enabled = enabled;
+        self
+    }
+
+    /// Returns the HTTP `Host` header value for the reqwless request.
+    pub const fn host(&self) -> &'a str {
+        self.host
+    }
+
+    /// Returns the request path.
+    pub const fn path(&self) -> &'a str {
+        self.path
+    }
+
+    /// Returns the telemetry payload bytes.
+    pub const fn payload(&self) -> &'a [u8] {
+        self.payload
+    }
+
+    /// Builds the default telemetry header tuple array.
+    ///
+    /// Keep this array alive for at least as long as the reqwless request returned by
+    /// [`Self::build`].
+    pub const fn headers(&self) -> [Header<'a>; 4] {
+        telemetry_metrics_headers(self.api_version, self.debug_enabled)
+    }
+
+    /// Builds a reqwless `POST` request with the supplied header slice.
+    ///
+    /// Pass [`Self::headers`] for the default telemetry headers, or a caller-owned combined slice
+    /// if endpoint-specific headers such as `dd-api-key` are required.
+    pub fn build<'request>(
+        &'request self,
+        headers: &'request [Header<'request>],
+    ) -> Request<'request, &'a [u8]>
+    where
+        'a: 'request,
+    {
+        telemetry_metrics_request(self.host, self.path, self.payload, headers)
+    }
+}
+
 /// Builds a reqwless `POST` request for a Datadog telemetry metrics payload.
 ///
 /// This function does not validate, encode, or write HTTP bytes itself. It only applies Datadog
 /// telemetry defaults to reqwless's low-level request builder.
-pub fn telemetry_metrics_request<'a>(
-    host: &'a str,
-    path: &'a str,
-    payload: &'a [u8],
-    headers: &'a [Header<'a>],
-) -> Request<'a, &'a [u8]> {
+pub fn telemetry_metrics_request<'request, 'body>(
+    host: &'request str,
+    path: &'request str,
+    payload: &'body [u8],
+    headers: &'request [Header<'request>],
+) -> Request<'request, &'body [u8]> {
     reqwless::request::Request::post(path)
         .host(host)
         .content_type(ContentType::ApplicationJson)
@@ -64,11 +152,11 @@ pub fn telemetry_metrics_request<'a>(
 }
 
 /// Builds a reqwless `POST` request for the Datadog agent telemetry proxy.
-pub fn agent_telemetry_metrics_request<'a>(
-    host: &'a str,
-    payload: &'a [u8],
-    headers: &'a [Header<'a>],
-) -> Request<'a, &'a [u8]> {
+pub fn agent_telemetry_metrics_request<'request, 'body>(
+    host: &'request str,
+    payload: &'body [u8],
+    headers: &'request [Header<'request>],
+) -> Request<'request, &'body [u8]> {
     telemetry_metrics_request(host, AGENT_TELEMETRY_PATH, payload, headers)
 }
 
@@ -108,8 +196,10 @@ mod tests {
     #[test]
     fn telemetry_request_is_reqwless_request() {
         let payload = br#"{"series":[]}"#;
-        let headers = telemetry_metrics_headers(TELEMETRY_API_VERSION_V2, true);
-        let request = agent_telemetry_metrics_request("localhost:8126", payload, &headers);
+        let builder = TelemetryMetricsRequestBuilder::agent("localhost:8126", payload)
+            .with_debug_enabled(true);
+        let headers = builder.headers();
+        let request = builder.build(&headers);
         let mut writer = VecWriter::default();
 
         block_on_ready(request.write_header(&mut writer))
