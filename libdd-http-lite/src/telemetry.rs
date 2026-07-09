@@ -6,7 +6,7 @@ use reqwless::{
     request::{Request, RequestBuilder},
 };
 
-/// An HTTP header pair accepted by `reqwless`.
+/// A header pair accepted by `reqwless`.
 pub type Header<'a> = (&'a str, &'a str);
 
 /// Agent telemetry proxy path for APM telemetry payloads.

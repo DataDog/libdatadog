@@ -1,6 +1,6 @@
-# libdd-http-primitives
+# libdd-http-lite
 
-`libdd-http-primitives` provides transport-agnostic, `no_std`-first HTTP request and response building blocks based on [`reqwless`](https://docs.rs/reqwless).
+`libdd-http-lite` provides lightweight, transport-agnostic, `no_std`-first HTTP helpers based on [`reqwless`](https://docs.rs/reqwless).
 
 It allows callers to construct HTTP requests and write them to an embedded-io transport. The default build depends on `reqwless` with `default-features = false`; it does not enable allocation, DNS, sockets, threads, locks, TLS, or a runtime.
 

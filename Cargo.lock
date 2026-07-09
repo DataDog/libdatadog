@@ -3181,7 +3181,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "libdd-http-primitives"
+name = "libdd-http-lite"
 version = "37.0.0"
 dependencies = [
  "embedded-io",

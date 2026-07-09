@@ -281,7 +281,7 @@ mod imp {
         fn missing_resolver_symbol_returns_specific_error() {
             assert!(matches!(
                 lookup_symbol(
-                    b"libdd_http_primitives_missing_symbol_for_test\0",
+                    b"libdd_http_lite_missing_symbol_for_test\0",
                     "missing-symbol"
                 ),
                 Err(DnsError::MissingResolverSymbol {

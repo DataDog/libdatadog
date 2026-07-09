@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "libdd-http-primitives"
+name = "libdd-http-lite"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "transport-agnostic no_std HTTP request and response primitives based on reqwless"
-homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-primitives"
-repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-primitives"
+description = "lightweight transport-agnostic no_std HTTP helpers based on reqwless"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-lite"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-lite"
 publish = false
 
 [lib]

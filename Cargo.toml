@@ -57,7 +57,7 @@ members = [
   "libdd-tinybytes",
   "libdd-dogstatsd-client",
   "libdd-http-client",
-  "libdd-http-primitives",
+  "libdd-http-lite",
   "libdd-agent-client",
   "libdd-log",
   "libdd-log-ffi",

@@ -9,7 +9,7 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-//! Transport-agnostic, `no_std`-first HTTP request and response primitives based on `reqwless`.
+//! Lightweight, transport-agnostic, `no_std`-first HTTP helpers based on `reqwless`.
 //!
 //! The default build uses `reqwless` with `default-features = false`; it does not enable an
 //! allocator, DNS, sockets, threads, locks, TLS, or a runtime. Callers use the re-exported
