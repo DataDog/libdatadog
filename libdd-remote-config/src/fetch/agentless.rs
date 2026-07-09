@@ -1455,16 +1455,18 @@ mod tests {
         use std::time::Duration;
 
         assert_eq!(compute_backoff(0), None);
-        assert_eq!(compute_backoff(1), None);
+
+        let b1 = compute_backoff(1).unwrap();
+        assert!((Duration::from_secs(30)..=Duration::from_secs(60)).contains(&b1));
 
         let b2 = compute_backoff(2).unwrap();
-        assert!((Duration::from_secs(30)..=Duration::from_secs(60)).contains(&b2));
+        assert!((Duration::from_secs(60)..=Duration::from_secs(120)).contains(&b2));
 
         let b3 = compute_backoff(3).unwrap();
-        assert!((Duration::from_secs(60)..=Duration::from_secs(120)).contains(&b3));
+        assert!((Duration::from_secs(120)..=Duration::from_secs(240)).contains(&b3));
 
-        assert_eq!(compute_backoff(4), Some(Duration::from_secs(120)));
-        assert_eq!(compute_backoff(42), Some(Duration::from_secs(120)));
+        assert_eq!(compute_backoff(4), Some(Duration::from_secs(240)));
+        assert_eq!(compute_backoff(42), Some(Duration::from_secs(240)));
     }
 
     #[test]
