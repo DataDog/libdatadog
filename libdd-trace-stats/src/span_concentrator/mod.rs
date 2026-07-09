@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! This module implements the SpanConcentrator used to aggregate spans into stats
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use std::time::{self, Duration, SystemTime};
 use tracing::{debug, warn};
 
@@ -21,11 +20,10 @@ pub mod stat_span;
 pub use stat_span::StatSpan;
 
 /// Executes a statement one time. Useful when emitting a warning once
-#[macro_export]
 macro_rules! once {
     ($expression:expr) => {{
-        static LOGGED: OnceLock<()> = OnceLock::new();
-        LOGGED.get_or_init(|| {
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| {
             $expression;
         });
     }};
@@ -428,7 +426,8 @@ impl SpanConcentrator {
 
         if total_collapsed.additional_tags > 0 {
             once!(debug!(
-                max_distinct_additional_tags_per_bucket = self.cardinality_limits.additional_tags_limit,
+                max_distinct_additional_tags_per_bucket =
+                    self.cardinality_limits.additional_tags_limit,
                 total_additional_tags_collapsed = total_collapsed.additional_tags,
                 "Client-side stats field 'additional_tags' has been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_ADDITIONAL_TAGS_CARDINALITY_LIMIT"
             ));
