@@ -1,0 +1,27 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-signal-safe-http-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "no_std-first HTTP request emitter for signal-safe Datadog telemetry submissions"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-signal-safe-http-client"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-signal-safe-http-client"
+publish = false
+
+[lib]
+bench = false
+
+[features]
+default = []
+alloc = []
+std = ["alloc"]
+libc-dns = ["alloc", "dep:libc"]
+
+[dependencies]
+libc = { version = "0.2.153", default-features = false, optional = true }
+thiserror = { version = "2", default-features = false }

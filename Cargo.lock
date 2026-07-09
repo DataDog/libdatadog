@@ -3388,6 +3388,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-signal-safe-http-client"
+version = "37.0.0"
+dependencies = [
+ "libc",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "libdd-telemetry"
 version = "6.0.0"
 dependencies = [
