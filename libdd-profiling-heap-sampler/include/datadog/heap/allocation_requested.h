@@ -28,6 +28,7 @@
 #ifndef DD_SAMPLERS_ALLOCATION_REQUESTED_H
 #define DD_SAMPLERS_ALLOCATION_REQUESTED_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -63,6 +64,18 @@ typedef struct {
     size_t   alignment;
     uint64_t weight;
 } dd_alloc_req_t;
+
+/*
+ * True if this request was sampled (weight > 0). Both the C fast path
+ * (allocation_created.h) and callers that branch on sampled-ness (e.g.
+ * gotter's calloc hook) should use this instead of comparing `weight == 0`
+ * directly, so there is one named predicate rather than the same
+ * comparison repeated in C and Rust.
+ */
+static inline __attribute__((always_inline))
+bool dd_alloc_req_is_sampled(dd_alloc_req_t req) {
+    return req.weight != 0;
+}
 
 /* Slow path for an allocation request. This is only taken when we think we
  * need to sample, and is declared as a separate function to avoid bloating

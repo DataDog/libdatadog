@@ -15,6 +15,7 @@
 
 dd_tl_state_t * dd_tl_state_get__extern(void) { return dd_tl_state_get(); }
 dd_tl_state_t * dd_tl_state_get_or_init__extern(void) { return dd_tl_state_get_or_init(); }
+bool dd_alloc_req_is_sampled__extern(dd_alloc_req_t req) { return dd_alloc_req_is_sampled(req); }
 dd_alloc_req_t dd_allocation_requested__extern(size_t size, size_t alignment) { return dd_allocation_requested(size, alignment); }
 void * dd_allocation_created__extern(void *raw, dd_alloc_req_t req) { return dd_allocation_created(raw, req); }
 bool dd_sample_flag_check__extern(void *user, void **raw_out) { return dd_sample_flag_check(user, raw_out); }

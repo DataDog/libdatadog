@@ -16,6 +16,8 @@ bench = false
 [features]
 default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+# See libdd-profiling-heap-gotter's test-support feature. Not for production use.
+test-support = ["libdd-profiling-heap-gotter/test-support"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

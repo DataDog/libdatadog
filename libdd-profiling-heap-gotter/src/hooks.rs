@@ -17,8 +17,9 @@ use core::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use libdd_profiling_heap_sampler::{
-    dd_alloc_req_t, dd_allocation_created, dd_allocation_freed, dd_allocation_realloc_commit,
-    dd_allocation_realloc_prepare, dd_allocation_requested, dd_tl_state_init,
+    dd_alloc_req_is_sampled, dd_alloc_req_t, dd_allocation_created, dd_allocation_freed,
+    dd_allocation_realloc_commit, dd_allocation_realloc_prepare, dd_allocation_requested,
+    dd_tl_state_init,
 };
 
 /// Resolved address of the real `malloc`; filled by `install_heap_overrides`.
@@ -39,9 +40,27 @@ pub(crate) static ORIG_DLOPEN: AtomicUsize = AtomicUsize::new(0);
 /// Resolved address of the real `pthread_create`.
 pub(crate) static ORIG_PTHREAD_CREATE: AtomicUsize = AtomicUsize::new(0);
 
+/// Counts hook invocations so integration tests outside this crate can
+/// prove the patched GOT was actually exercised, not just that nothing
+/// crashed. Only `malloc`/`free` increment it: that's enough to prove the
+/// hooks ran without adding bookkeeping to every symbol.
+#[cfg(feature = "test-support")]
+pub(crate) static HOOK_HITS: AtomicUsize = AtomicUsize::new(0);
+
 /// Load a resolved function pointer from one of the `ORIG_*` slots.
+///
+/// # Safety
+///
+/// `T` must be exactly the `extern "C" fn(...)` pointer type that
+/// `apply_overrides` writes into `slot` (see the `ORIG_*` docs above); if
+/// `slot` is still `0`, this returns `None` rather than transmuting.
 #[inline]
 unsafe fn load_fn<T>(slot: &AtomicUsize) -> Option<T> {
+    // `Acquire` pairs with the `store(Release)` in elf.rs's
+    // `apply_overrides`, which runs before the GOT is ever patched to
+    // route calls into these hooks. That gives a real happens-before
+    // edge: once this observes a non-zero slot, it's guaranteed to see
+    // the fully-published address, not just "no torn read".
     let v = slot.load(Ordering::Acquire);
     if v == 0 {
         None
@@ -95,17 +114,21 @@ type PthreadCreateFn = unsafe extern "C" fn(
 
 #[no_mangle]
 pub unsafe extern "C" fn gotter_malloc(size: usize) -> *mut c_void {
+    #[cfg(feature = "test-support")]
+    HOOK_HITS.fetch_add(1, Ordering::Relaxed);
     let Some(real): Option<MallocFn> = load_fn(&ORIG_MALLOC) else {
         return std::ptr::null_mut();
     };
     // Default alignment for malloc on glibc is 2*sizeof(void*) == 16.
-    let req = dd_allocation_requested(size, core::mem::align_of::<u64>() * 2);
+    let req = dd_allocation_requested(size, core::mem::align_of::<*mut c_void>() * 2);
     let raw = real(req.size);
     dd_allocation_created(raw, req)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn gotter_free(ptr: *mut c_void) {
+    #[cfg(feature = "test-support")]
+    HOOK_HITS.fetch_add(1, Ordering::Relaxed);
     let Some(real): Option<FreeFn> = load_fn(&ORIG_FREE) else {
         return;
     };
@@ -125,14 +148,14 @@ pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void
     let Some(total) = nmemb.checked_mul(size) else {
         return real(nmemb, size);
     };
-    let req = dd_allocation_requested(total, core::mem::align_of::<u64>() * 2);
+    let req = dd_allocation_requested(total, core::mem::align_of::<*mut c_void>() * 2);
     // calloc takes (nmemb, size); when the sampler bumps `req.size` we
     // funnel the extra bytes into the size argument (nmemb stays 1's
     // worth conceptually). The simplest robust path is to switch to a
     // single (1, req.size) allocation when sampling kicks in, so the
     // underlying allocator zeroes everything we hand back. Unsampled
     // path keeps the user's (nmemb, size) verbatim.
-    let raw = if req.weight == 0 {
+    let raw = if !dd_alloc_req_is_sampled(req) {
         real(nmemb, size)
     } else {
         real(1, req.size)

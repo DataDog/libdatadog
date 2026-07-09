@@ -19,6 +19,10 @@ bench = false
 [features]
 # Forward live-heap (retained-heap) tracking down to the sampler
 live-heap = ["libdd-profiling-heap-sampler/live-heap"]
+# Exposes a hook-hit counter so integration tests in other crates (e.g.
+# libdd-profiling-heap-gotter-ffi) can prove the patched GOT was actually
+# used, not just that nothing crashed. Not for production use.
+test-support = []
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

@@ -157,6 +157,24 @@ pub fn heap_overrides_are_installed() -> bool {
     false
 }
 
+/// Number of times a `gotter_*` hook has run in this process. Test-only:
+/// lets integration tests in other crates (see
+/// `libdd-profiling-heap-gotter-ffi/tests/install.rs`) prove the patched
+/// GOT was actually exercised, not just that nothing crashed. Always `0`
+/// on non-64-bit-Linux targets, where hooks never run.
+#[cfg(feature = "test-support")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub fn test_hook_hits() -> u64 {
+    hooks::HOOK_HITS.load(std::sync::atomic::Ordering::Relaxed) as u64
+}
+
+/// See the Linux variant above.
+#[cfg(feature = "test-support")]
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+pub fn test_hook_hits() -> u64 {
+    0
+}
+
 /// Register GOT overrides for every symbol this crate currently hooks.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 fn register_all(so: &mut SymbolOverrides) {

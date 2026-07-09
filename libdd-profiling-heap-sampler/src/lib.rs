@@ -49,6 +49,7 @@ pub const DD_HEAP_SAMPLING_ENABLED: &str = "DD_HEAP_SAMPLING_ENABLED";
 /// The lookup uses `getenv` rather than [`std::env::var`] specifically so it
 /// performs no heap allocation so that our consumers don't have to worry about
 /// re-entrancy.
+#[inline]
 pub fn heap_sampling_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
