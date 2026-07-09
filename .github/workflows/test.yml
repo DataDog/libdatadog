@@ -297,6 +297,17 @@ jobs:
           cache-bin: true # cache the ~/.cargo/bin directory
       - name: Build CentOS 7 Docker image
         run: docker build -t libdatadog-centos7 -f tools/docker/Dockerfile.centos .
+      - name: "Log runner memory limits (pre-test)"
+        shell: bash
+        run: |
+          echo "::group::cgroup memory limit"
+          cat /sys/fs/cgroup/memory.max 2>/dev/null \
+            || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null \
+            || echo "cgroup memory limit not found"
+          echo "::endgroup::"
+      - name: "Prepare crash diagnostics temp dir"
+        shell: bash
+        run: mkdir -p "${{ github.workspace }}/.crash-diag-tmp"
       - name: "cargo nextest run (centos7)"
         # Run docker as a user, not the default root
         # Mount and use the runner's toolchain as it's the same arch
@@ -317,10 +328,55 @@ jobs:
             -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup" \
             -e CARGO_HOME=/usr/local/cargo \
             -e RUSTUP_HOME=/usr/local/rustup \
+            -e TMPDIR=/workspace/.crash-diag-tmp \
+            -e DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS=120000 \
+            -e DD_TELEMETRY_DEBUG=1 \
             -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             -w /workspace \
             libdatadog-centos7 \
             sh -c "$NEXTEST_CMD"
+      - name: "Collect failure diagnostics"
+        if: failure() || cancelled()
+        shell: bash
+        run: |
+          echo "::group::1) cgroup memory – limit, current, peak"
+          echo -n "memory.max: "; cat /sys/fs/cgroup/memory.max 2>/dev/null \
+            || cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null \
+            || echo "(not found)"
+          echo -n "memory.current: "; cat /sys/fs/cgroup/memory.current 2>/dev/null \
+            || echo "(not found)"
+          echo -n "memory.peak: "; cat /sys/fs/cgroup/memory.peak 2>/dev/null \
+            || echo "(not found)"
+          echo "--- dmesg OOM ---"
+          sudo dmesg 2>/dev/null | grep -i -A3 'oom\|killed process' || echo "(no OOM messages)"
+          echo "::endgroup::"
+
+          echo "::group::2) Binary sizes (crashtracker)"
+          find "${{ github.workspace }}/target" \
+            \( -name 'crashtracker_bin_test' -o -name 'test_crashtracker_receiver' \) \
+            -type f -exec ls -lh {} + 2>/dev/null || echo "(crashtracker binaries not found)"
+          echo "::endgroup::"
+
+          echo "::group::3) Crashtracker receiver logs (out.stderr / out.stdout)"
+          find "${{ github.workspace }}/.crash-diag-tmp" "${{ github.workspace }}/target" /tmp \
+            \( -name 'out.stderr' -o -name 'out.stdout' \) -size +0c 2>/dev/null \
+            | while read -r f; do
+              echo "=== $f ==="
+              tail -c 64K "$f" 2>/dev/null || true
+            done
+          echo "::endgroup::"
+
+          echo "::group::4) Thread dump of hung processes"
+          for pid in $(pgrep -f 'crashtracker|nextest|cargo' 2>/dev/null || true); do
+            echo "=== PID $pid ($(cat /proc/$pid/comm 2>/dev/null || echo '?')) ==="
+            grep -H . /proc/$pid/status 2>/dev/null | head -20 || true
+            echo "--- kernel stacks ---"
+            for tid in /proc/$pid/task/*/stack; do
+              echo "  $tid:"
+              sudo cat "$tid" 2>/dev/null || true
+            done
+          done
+          echo "::endgroup::"
       - name: Add file attributes to JUnit XML
         if: success() || failure()
         run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml
