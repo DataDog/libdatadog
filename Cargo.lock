@@ -3181,6 +3181,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-http-primitives"
+version = "37.0.0"
+dependencies = [
+ "embedded-io",
+ "embedded-io-async",
+ "libc",
+ "reqwless",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "libdd-library-config"
 version = "3.0.0"
 dependencies = [
@@ -3448,17 +3459,6 @@ dependencies = [
  "build_common",
  "libdd-shared-runtime",
  "tracing",
-]
-
-[[package]]
-name = "libdd-signal-safe-http-client"
-version = "37.0.0"
-dependencies = [
- "embedded-io",
- "embedded-io-async",
- "libc",
- "reqwless",
- "thiserror 2.0.17",
 ]
 
 [[package]]

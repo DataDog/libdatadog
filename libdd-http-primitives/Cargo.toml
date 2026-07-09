@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "libdd-signal-safe-http-client"
+name = "libdd-http-primitives"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "no_std-first reqwless helpers for signal-safe Datadog telemetry submissions"
-homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-signal-safe-http-client"
-repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-signal-safe-http-client"
+description = "transport-agnostic no_std HTTP request and response primitives based on reqwless"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-primitives"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-primitives"
 publish = false
 
 [lib]

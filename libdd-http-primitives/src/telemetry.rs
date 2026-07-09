@@ -6,7 +6,7 @@ use reqwless::{
     request::{Request, RequestBuilder},
 };
 
-/// A reqwless extra-header tuple.
+/// An HTTP header pair accepted by `reqwless`.
 pub type Header<'a> = (&'a str, &'a str);
 
 /// Agent telemetry proxy path for APM telemetry payloads.
@@ -15,7 +15,7 @@ pub const AGENT_TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
 pub const DIRECT_TELEMETRY_PATH: &str = "/api/v2/apmtelemetry";
 /// JSON content type emitted for telemetry payloads.
 pub const APPLICATION_JSON: &str = "application/json";
-/// `Connection: close` header value for one-shot signal-handler submissions.
+/// `Connection: close` header value for one-shot submissions.
 pub const CONNECTION_CLOSE: Header<'static> = ("Connection", "close");
 /// Telemetry request-type header name.
 pub const HEADER_REQUEST_TYPE: &str = "DD-Telemetry-Request-Type";

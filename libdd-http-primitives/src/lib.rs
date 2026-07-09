@@ -9,20 +9,21 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
-//! `no_std`-first Datadog HTTP helpers for `reqwless`.
+//! Transport-agnostic, `no_std`-first HTTP request and response primitives based on `reqwless`.
 //!
 //! The default build uses `reqwless` with `default-features = false`; it does not enable an
 //! allocator, DNS, sockets, threads, locks, TLS, or a runtime. Callers use the re-exported
 //! reqwless request APIs with their own embedded I/O transport.
 //!
-//! Feature flags intentionally separate handler-safe and convenience APIs:
+//! Feature flags separate the minimal core from convenience APIs:
 //!
 //! - `alloc`: enables allocation-backed setup helpers.
 //! - `std`: reserves standard-library support and implies `alloc`.
 //! - `libc-dns`: enables weakly loaded libc `getaddrinfo` helpers for setup paths.
 //!
-//! This crate is a low-level request API for constructing HTTP requests and writing them through
-//! reqwless. It includes Datadog telemetry builders as an example payload family.
+//! This crate constructs HTTP requests and writes them through reqwless. It does not guarantee
+//! that a caller-provided transport or platform operation is signal-safe. Datadog telemetry is
+//! included as the first protocol-specific request family.
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
