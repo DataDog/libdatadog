@@ -2088,3 +2088,25 @@ fn test_overflow_bucket_key_sentinel_values() {
     assert_eq!(normal.service, "my-service");
     assert_eq!(normal.resource, "my-resource");
 }
+
+#[test]
+fn test_once_macro() {
+    let mut count = 0;
+    for _ in 0..10 {
+        once!(count += 1);
+    }
+    assert_eq!(count, 1, "once! macro executes its body one time only");
+}
+
+/// Verifies it works inside a called function too (it has to use a static variable)
+#[test]
+fn test_once_macro_funcall() {
+    fn incr(target: &mut usize) {
+        once!(*target += 1)
+    }
+    let mut count = 0;
+    for _ in 0..10 {
+        incr(&mut count);
+    }
+    assert_eq!(count, 1, "once! macro executes its body one time only");
+}

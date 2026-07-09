@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! This module implements the SpanConcentrator used to aggregate spans into stats
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::{self, Duration, SystemTime};
 use tracing::{debug, warn};
 
@@ -18,6 +19,17 @@ pub use aggregation::{
 
 pub mod stat_span;
 pub use stat_span::StatSpan;
+
+/// Executes a statement one time. Useful when emitting a warning once
+#[macro_export]
+macro_rules! once {
+    ($expression:expr) => {{
+        static LOGGED: OnceLock<()> = OnceLock::new();
+        LOGGED.get_or_init(|| {
+            $expression;
+        });
+    }};
+}
 
 /// Result of flushing a concentrator.
 ///
@@ -167,8 +179,6 @@ pub struct SpanConcentrator {
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
     peer_tag_keys: Vec<String>,
-    /// Cardinality collapsed log was already emitted
-    cardinality_log_emitted: bool,
     #[cfg(feature = "stats-obfuscation")]
     obfuscation_config: SharedStatsComputationObfuscationConfig,
 }
@@ -219,7 +229,6 @@ impl SpanConcentrator {
             peer_tag_keys,
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config: obfuscation_config.unwrap_or_default(),
-            cardinality_log_emitted: false,
         }
     }
 
@@ -385,32 +394,44 @@ impl SpanConcentrator {
             })
             .collect();
 
-        if !self.cardinality_log_emitted && total_collapsed.whole_key > 0 {
-            self.cardinality_log_emitted = true;
-            debug!(
+        if total_collapsed.whole_key > 0 {
+            once!(debug!(
                 max_entries_per_bucket = self.cardinality_limits.whole_key_limit,
                 total_whole_key_collapsed = total_collapsed.whole_key,
                 "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT"
-            );
+            ));
         }
-        if !self.cardinality_log_emitted
-            && (total_collapsed.resources > 0
-                || total_collapsed.http_endpoint > 0
-                || total_collapsed.peer_tags > 0
-                || total_collapsed.additional_tags > 0)
-        {
-            self.cardinality_log_emitted = true;
-            debug!(
+
+        if total_collapsed.resources > 0 {
+            once!(debug!(
                 max_distinct_resource_per_bucket = self.cardinality_limits.resource_limit,
                 total_resource_collapsed = total_collapsed.resources,
+                "Client-side stats field 'resource' has been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_RESOURCE_CARDINALITY_LIMIT"
+            ));
+        }
+
+        if total_collapsed.http_endpoint > 0 {
+            once!(debug!(
                 max_distinct_http_endpoint_per_bucket = self.cardinality_limits.http_endpoint_limit,
                 total_http_endpoint_collapsed = total_collapsed.http_endpoint,
+                "Client-side stats field 'http_endpoint' has been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_HTTP_ENDPOINT_CARDINALITY_LIMIT"
+            ));
+        }
+
+        if total_collapsed.peer_tags > 0 {
+            once!(debug!(
                 max_distinct_peer_tags_per_bucket = self.cardinality_limits.peer_tags_limit,
                 total_peer_tags_collapsed = total_collapsed.peer_tags,
+                "Client-side stats field 'peer_tags' has been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_PEER_TAGS_CARDINALITY_LIMIT"
+            ));
+        }
+
+        if total_collapsed.additional_tags > 0 {
+            once!(debug!(
                 max_distinct_additional_tags_per_bucket = self.cardinality_limits.additional_tags_limit,
                 total_additional_tags_collapsed = total_collapsed.additional_tags,
-                "Client-side stats field have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding one of the DD_TRACE_STATS_*_CARDINALITY_LIMIT"
-            );
+                "Client-side stats field 'additional_tags' has been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_ADDITIONAL_TAGS_CARDINALITY_LIMIT"
+            ));
         }
 
         (buckets_pb, total_collapsed)
