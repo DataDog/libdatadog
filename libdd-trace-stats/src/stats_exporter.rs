@@ -194,18 +194,22 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             }
         }
 
-        // Obfuscated and un-obfuscated buckets must be sent in separate payloads because only
-        // the obfuscated one carries the `datadog-obfuscation-version` header.
-        let mut sent_stats = false;
-        if !flush.obfuscated_buckets.is_empty() {
+        if !flush.obfuscated_buckets.is_empty() && !flush.unobfuscated_buckets.is_empty() {
+            let (res_obfuscated, res_unobfuscated) = tokio::join!(
+                self.send_payload(flush.obfuscated_buckets, true),
+                self.send_payload(flush.unobfuscated_buckets, false)
+            );
+            res_obfuscated?;
+            res_unobfuscated?;
+            return Ok(true);
+        } else if !flush.obfuscated_buckets.is_empty() {
             self.send_payload(flush.obfuscated_buckets, true).await?;
-            sent_stats = true;
+            return Ok(true);
+        } else if !flush.unobfuscated_buckets.is_empty() {
+            self.send_payload(flush.unobfuscated_buckets, true).await?;
+            return Ok(true);
         }
-        if !flush.unobfuscated_buckets.is_empty() {
-            self.send_payload(flush.unobfuscated_buckets, false).await?;
-            sent_stats = true;
-        }
-        Ok(sent_stats)
+        Ok(false)
     }
 
     /// Encode the given buckets into a stats payload and send it to the agent.
