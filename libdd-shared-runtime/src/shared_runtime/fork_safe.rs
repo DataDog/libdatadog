@@ -51,11 +51,11 @@ impl ForkSafeRuntime {
     /// Pauses all workers before `fork()`. Worker pause errors are logged, not propagated.
     pub fn before_fork(&self) {
         debug!("before_fork: pausing all workers");
-        let mut runtime_lock = self.runtime.lock_or_panic();
+        let mut runtime_lock = self.runtime.lock_or_recover();
         let Some(runtime) = runtime_lock.take() else {
             return;
         };
-        let mut workers_lock = self.workers.lock_or_panic();
+        let mut workers_lock = self.workers.lock_or_recover();
         runtime.block_on(async {
             let futures: FuturesUnordered<_> = workers_lock
                 .iter_mut()
@@ -71,7 +71,7 @@ impl ForkSafeRuntime {
     }
 
     fn restart_runtime(&self) -> Result<(), SharedRuntimeError> {
-        let mut runtime_lock = self.runtime.lock_or_panic();
+        let mut runtime_lock = self.runtime.lock_or_recover();
         if runtime_lock.is_none() {
             *runtime_lock = Some(Arc::new(build_runtime(self.worker_threads)?));
         }
@@ -83,7 +83,7 @@ impl ForkSafeRuntime {
         debug!("after_fork_parent: restarting runtime and workers");
         self.restart_runtime()?;
 
-        let runtime_lock = self.runtime.lock_or_panic();
+        let runtime_lock = self.runtime.lock_or_recover();
         let handle = runtime_lock
             .as_ref()
             .ok_or(SharedRuntimeError::RuntimeUnavailable)?
@@ -91,7 +91,7 @@ impl ForkSafeRuntime {
             .clone();
         drop(runtime_lock);
 
-        let mut workers_lock = self.workers.lock_or_panic();
+        let mut workers_lock = self.workers.lock_or_recover();
 
         for worker_entry in workers_lock.iter_mut() {
             worker_entry.worker.start(tokio_spawn_fn(&handle))?;
@@ -107,7 +107,7 @@ impl ForkSafeRuntime {
         debug!("after_fork_child: reinitializing runtime and workers");
         self.restart_runtime()?;
 
-        let runtime_lock = self.runtime.lock_or_panic();
+        let runtime_lock = self.runtime.lock_or_recover();
         let handle = runtime_lock
             .as_ref()
             .ok_or(SharedRuntimeError::RuntimeUnavailable)?
@@ -115,7 +115,7 @@ impl ForkSafeRuntime {
             .clone();
         drop(runtime_lock);
 
-        let mut workers_lock = self.workers.lock_or_panic();
+        let mut workers_lock = self.workers.lock_or_recover();
 
         workers_lock.retain(|entry| entry.restart_on_fork);
 
@@ -129,20 +129,23 @@ impl ForkSafeRuntime {
 
     /// Shuts down all workers synchronously. Returns `ShutdownTimedOut` if `timeout` is
     /// exceeded.
+    ///
+    /// This is the *graceful* path: it drives each worker's shutdown to completion so
+    /// in-flight work (e.g. a final trace flush) is not lost. It requires a live Tokio
+    /// context, so it is only attempted when one is available — see [`Self::can_block_on`].
+    /// When it is not (interpreter finalization), teardown is left to [`Drop`], which
+    /// detaches the runtime without blocking. This split means neither path depends on
+    /// the destruction order of any other global/TLS state.
     pub fn shutdown(&self, timeout: Option<std::time::Duration>) -> Result<(), SharedRuntimeError> {
         debug!(?timeout, "Shutting down ForkSafeRuntime");
-        // block_on calls context::enter() which accesses Tokio's CONTEXT thread-local.
-        // During CPython interpreter finalization, TLS is destroyed before atexit handlers
-        // fire, causing a panic. Detect this via try_current() and bail out early —
-        // the OS will clean up remaining threads on process exit.
-        if matches!(
-            tokio::runtime::Handle::try_current(),
-            Err(ref e) if e.is_thread_local_destroyed()
-        ) {
-            debug!("Tokio TLS destroyed during interpreter finalization, skipping shutdown");
+        if !Self::can_block_on() {
+            // block_on -> context::enter() would access Tokio's CONTEXT thread-local,
+            // which is already destroyed during (embedded) interpreter finalization.
+            // Skip the graceful path; Drop detaches the runtime safely.
+            debug!("No live Tokio context (finalization); deferring teardown to Drop");
             return Ok(());
         }
-        match self.runtime.lock_or_panic().take() {
+        match self.runtime.lock_or_recover().take() {
             Some(runtime) => {
                 if let Some(timeout) = timeout {
                     match runtime.block_on(async {
@@ -159,6 +162,19 @@ impl ForkSafeRuntime {
             }
             None => Ok(()),
         }
+    }
+
+    /// Whether the current thread can safely enter a Tokio context (i.e. call `block_on`).
+    ///
+    /// Returns `false` only when the Tokio CONTEXT thread-local has been *destroyed*,
+    /// which happens during interpreter/thread finalization. A merely-missing context
+    /// (the normal case for a thread that never entered a runtime) still returns `true`,
+    /// because `block_on` establishes its own context in that case.
+    fn can_block_on() -> bool {
+        !matches!(
+            tokio::runtime::Handle::try_current(),
+            Err(ref e) if e.is_thread_local_destroyed()
+        )
     }
 
     fn push_worker(
@@ -180,6 +196,34 @@ impl ForkSafeRuntime {
     }
 }
 
+impl Drop for ForkSafeRuntime {
+    /// Terminal teardown for the owned Tokio runtime.
+    ///
+    /// A normal `Runtime` drop blocks the current thread to join its worker threads,
+    /// and that join path touches the Tokio CONTEXT thread-local. During (embedded)
+    /// interpreter finalization — e.g. a uWSGI worker exiting — that thread-local may
+    /// already be destroyed, so a normal drop panics with "The Tokio context
+    /// thread-local variable has been destroyed" (and, via a poisoned mutex, cascades).
+    ///
+    /// `shutdown_background` instead signals shutdown and returns immediately, detaching
+    /// the worker threads; the OS reclaims them on process exit. This is done
+    /// *unconditionally* — we do not try to detect whether we are in finalization —
+    /// so there is no ordering-dependent branch that a future teardown scenario can
+    /// slip past. If `shutdown` already took the runtime (the graceful path ran), this
+    /// is a no-op.
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.lock_or_recover().take() {
+            match Arc::try_unwrap(runtime) {
+                Ok(runtime) => runtime.shutdown_background(),
+                // Another Arc clone is still alive (e.g. an in-flight block_on holds
+                // one). We cannot take ownership to detach; drop our reference and let
+                // the last owner's drop run. This is not the finalization path.
+                Err(_runtime) => {}
+            }
+        }
+    }
+}
+
 impl SharedRuntime for ForkSafeRuntime {
     fn new() -> Result<Self, SharedRuntimeError> {
         Self::with_worker_threads(1)
@@ -197,8 +241,8 @@ impl SharedRuntime for ForkSafeRuntime {
         // Hold both locks together (runtime → workers, per struct lock order) so
         // before_fork cannot interleave between start and push. If runtime is already
         // None (fork window), skip start; after_fork_* will pick it up.
-        let runtime_guard = self.runtime.lock_or_panic();
-        let mut workers_guard = self.workers.lock_or_panic();
+        let runtime_guard = self.runtime.lock_or_recover();
+        let mut workers_guard = self.workers.lock_or_recover();
 
         if let Some(rt) = runtime_guard.as_ref() {
             pausable_worker.start(tokio_spawn_fn(rt.handle()))?;
@@ -210,7 +254,7 @@ impl SharedRuntime for ForkSafeRuntime {
     async fn shutdown_async(&self) {
         debug!("Shutting down all workers asynchronously");
         let workers = {
-            let mut workers_lock = self.workers.lock_or_panic();
+            let mut workers_lock = self.workers.lock_or_recover();
             std::mem::take(&mut *workers_lock)
         };
 
@@ -232,7 +276,7 @@ impl SharedRuntime for ForkSafeRuntime {
 impl BlockingRuntime for ForkSafeRuntime {
     /// Falls back to a temporary current-thread runtime in the fork window.
     fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
-        let runtime = match self.runtime.lock_or_panic().as_ref() {
+        let runtime = match self.runtime.lock_or_recover().as_ref() {
             None => Arc::new(Builder::new_current_thread().enable_all().build()?),
             Some(runtime) => runtime.clone(),
         };
@@ -450,6 +494,48 @@ mod tests {
         assert!(
             shared_runtime.shutdown(None).is_ok(),
             "second shutdown must not panic"
+        );
+    }
+
+    #[test]
+    fn test_drop_without_shutdown_detaches_cleanly() {
+        // Dropping a ForkSafeRuntime that still owns a live runtime + worker (i.e.
+        // shutdown() was never called) must not panic or hang. Drop routes through
+        // shutdown_background(), which detaches worker threads without blocking or
+        // entering the Tokio context — the structural terminal-teardown path that
+        // makes finalization (destroyed-TLS) drops safe.
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not run");
+
+        // No explicit shutdown() — just drop. Must return promptly without panicking.
+        drop(shared_runtime);
+    }
+
+    #[test]
+    fn test_lock_recovers_from_poison() {
+        // A panic while holding one of the runtime's locks must not cascade into
+        // subsequent lifecycle calls (the original PoisonError second-panic). After a
+        // poisoning panic, shutdown()/Drop must still succeed.
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, _receiver) = make_test_worker();
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
+
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = shared_runtime.workers.lock_or_recover();
+            panic!("poison the workers mutex while holding it");
+        }));
+
+        // The mutex is now poisoned; lock_or_recover must still work rather than panic.
+        assert!(
+            shared_runtime.shutdown(None).is_ok(),
+            "shutdown must recover from a poisoned lock"
         );
     }
 }

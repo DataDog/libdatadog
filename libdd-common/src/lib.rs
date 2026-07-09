@@ -79,6 +79,17 @@ pub mod unix_utils;
 /// ```
 pub trait MutexExt<T> {
     fn lock_or_panic(&self) -> MutexGuard<'_, T>;
+
+    /// Acquires the lock, recovering the guard if the mutex is poisoned instead of
+    /// panicking.
+    ///
+    /// Poisoning only means a previous holder panicked while holding the lock; the
+    /// data itself is still structurally valid to access. Use this on teardown, fork,
+    /// and shutdown paths where one thread panicking (e.g. during interpreter
+    /// finalization) must not cascade into every other thread that later takes the
+    /// same lock. Prefer [`MutexExt::lock_or_panic`] on hot paths where a poisoned
+    /// lock genuinely indicates a bug that should surface.
+    fn lock_or_recover(&self) -> MutexGuard<'_, T>;
 }
 
 impl<T> MutexExt<T> for Mutex<T> {
@@ -87,6 +98,11 @@ impl<T> MutexExt<T> for Mutex<T> {
     fn lock_or_panic(&self) -> MutexGuard<'_, T> {
         #[allow(clippy::unwrap_used)]
         self.lock().unwrap()
+    }
+
+    #[inline(always)]
+    fn lock_or_recover(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
