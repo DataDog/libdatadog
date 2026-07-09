@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use libc::{
-    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
-    _SC_PAGESIZE, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD,
+    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym, PROT_EXEC,
+    PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
 };
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -141,13 +141,9 @@ impl DynamicInfo {
         }
 
         let gnu_hash_addr = gnu_hash as usize;
-        let gnu_hash_words = match containing_load_segment_end(gnu_hash_addr) {
-            Some(end) => match end.checked_sub(gnu_hash_addr) {
-                Some(bytes) => bytes / core::mem::size_of::<u32>(),
-                None => return None,
-            },
-            None => return None,
-        };
+        let end = containing_load_segment_end(gnu_hash_addr)?;
+        let bytes = end.checked_sub(gnu_hash_addr)?;
+        let gnu_hash_words = bytes / core::mem::size_of::<u32>();
         let sym_count = gnu_hash_symbol_count(gnu_hash, gnu_hash_words).unwrap_or_else(|| {
             // Fallback for degenerate .gnu.hash (e.g. executables with only
             // undefined imports): estimate dynsym entry count from the common
