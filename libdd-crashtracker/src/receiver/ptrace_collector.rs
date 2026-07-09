@@ -392,38 +392,45 @@ pub fn capture_thread_context(
 /// Maximum time to wait for a single thread to enter ptrace-stop.
 const STOP_TIMEOUT_PER_THREAD: Duration = Duration::from_millis(50);
 
-/// Number of retry attempts for a failed capture_thread_context call.
-const CAPTURE_RETRIES: u32 = 1;
-
 /// Delay between retry attempts.
 const RETRY_DELAY: Duration = Duration::from_millis(5);
 
-/// Attempt to capture a thread context with retries on transient failures.
+/// Returns true if err is worth retrying.
 ///
-/// On some kernels, ptrace operations can fail intermittently due to scheduling
-/// races or brief permission windows. Retrying once after a short delay resolves
-/// most transient issues without significantly impacting overall collection time.
+/// Only ETIMEDOUT (register-wait deadline expired before IP became readable)
+/// should be retired.
+///
+/// EPERM (Yama denial / missing PR_SET_PTRACER) and ESRCH (thread exited)
+/// are permanent for the receiver's lifetime and are not retried.
+fn is_transient_ptrace_error(err: &PtraceError) -> bool {
+    matches!(err, PtraceError::Attach(_, libc::ETIMEDOUT))
+}
+
+/// Attempt to capture a thread context, retrying once on transient failures.
+///
+/// Uses a single per-thread deadline across attempts so that a slow thread
+/// cannot consume more than STOP_TIMEOUT_PER_THREAD total.
 fn capture_with_retry(
     tid: libc::pid_t,
     resolve_frames: crate::StacktraceCollection,
     addr_space: UnwAddrSpaceT,
     overall_deadline: Instant,
 ) -> Option<CapturedThreadContext> {
-    for attempt in 0..=CAPTURE_RETRIES {
-        let now = Instant::now();
-        if now >= overall_deadline {
-            break;
-        }
-        let stop_deadline = (now + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
-        match capture_thread_context(tid, resolve_frames, addr_space, stop_deadline) {
-            Ok(ctx) => return Some(ctx),
-            Err(_) if attempt < CAPTURE_RETRIES => {
-                std::thread::sleep(RETRY_DELAY);
-            }
-            Err(_) => break,
-        }
+    let thread_deadline = (Instant::now() + STOP_TIMEOUT_PER_THREAD).min(overall_deadline);
+
+    match capture_thread_context(tid, resolve_frames, addr_space, thread_deadline) {
+        Ok(ctx) => return Some(ctx),
+        Err(ref e) if is_transient_ptrace_error(e) => {}
+        Err(_) => return None,
     }
-    None
+
+    let remaining = thread_deadline.saturating_duration_since(Instant::now());
+    if remaining <= RETRY_DELAY {
+        return None;
+    }
+    std::thread::sleep(RETRY_DELAY);
+
+    capture_thread_context(tid, resolve_frames, addr_space, thread_deadline).ok()
 }
 
 /// Stream thread contexts to a callback one at a time.
