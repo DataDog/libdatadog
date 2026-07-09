@@ -193,7 +193,7 @@ fn replace_all(
         scratch_space.push_str(&haystack[last_match..]);
     }
     core::mem::swap(scratch_space, haystack);
-    scratch_space.truncate(0);
+    scratch_space.clear();
 }
 
 #[cfg(test)]
