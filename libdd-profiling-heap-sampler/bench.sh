@@ -11,11 +11,11 @@ if [ -d /workspaces/libdatadog ]; then
   cd /workspaces/libdatadog
 fi
 
-OUT_DIR="libdd-heap-sampler"
+OUT_DIR="libdd-profiling-heap-sampler"
 mkdir -p "$OUT_DIR"
 
 # Rebuild the benchmark so build.rs changes such as -fcf-protection=none are used.
-cargo bench -p libdd-heap-allocator --bench sampler_overhead --no-run
+cargo bench -p libdd-profiling-heap-allocator --bench sampler_overhead --no-run
 
 # Pick the x86-64 bench binary; the shared target dir may contain stale arm64 bins.
 BENCH_BIN=$(
@@ -41,7 +41,7 @@ objdump -d --demangle "$BENCH_BIN" \
 cat "$OUT_DIR/objdump-cet-none-snippet.txt"
 
 # Focused timing comparison.
-cargo bench -p libdd-heap-allocator --bench sampler_overhead -- \
+cargo bench -p libdd-profiling-heap-allocator --bench sampler_overhead -- \
   --warm-up-time 0.3 \
   --measurement-time 0.3 \
   --sample-size 10 \

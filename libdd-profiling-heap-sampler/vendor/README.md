@@ -25,7 +25,7 @@ To refresh, fetch the latest copy and overwrite the file in place:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/libbpf/usdt/main/usdt.h \
-  > libdd-heap-sampler/vendor/usdt.h
+  > libdd-profiling-heap-sampler/vendor/usdt.h
 ```
 
 Verify the BSD-2-Clause SPDX identifier is still on line 1 after

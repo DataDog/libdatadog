@@ -16,7 +16,7 @@ includes = ["common.h"]
 
 [parse]
 parse_deps = true
-include = ["libdd-common-ffi", "libdd-heap-gotter"]
+include = ["libdd-common-ffi", "libdd-profiling-heap-gotter"]
 
 [export]
 prefix = "ddog_"

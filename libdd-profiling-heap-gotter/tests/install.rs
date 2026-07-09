@@ -21,7 +21,7 @@
 
 use std::ffi::c_void;
 
-use libdd_heap_sampler::{dd_sample_flag_peek, dd_tl_state_get_or_init};
+use libdd_profiling_heap_sampler::{dd_sample_flag_peek, dd_tl_state_get_or_init};
 use serial_test::serial;
 
 /// After install the heap should still be functional and no recursive
@@ -33,7 +33,7 @@ fn install_keeps_heap_functional() {
         fn malloc(size: usize) -> *mut c_void;
     }
 
-    let installed = libdd_heap_gotter::install_heap_overrides();
+    let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(
         installed,
         "expected install_heap_overrides to find at least one symbol"
@@ -54,7 +54,7 @@ fn install_keeps_heap_functional() {
 #[test]
 #[serial]
 fn install_produces_sampled_allocations() {
-    let installed = libdd_heap_gotter::install_heap_overrides();
+    let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
     unsafe {
@@ -97,7 +97,7 @@ fn install_produces_sampled_allocations() {
 #[test]
 #[serial]
 fn realloc_null_produces_sampled_allocation() {
-    let installed = libdd_heap_gotter::install_heap_overrides();
+    let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
     unsafe {
@@ -130,7 +130,7 @@ fn realloc_null_produces_sampled_allocation() {
 #[test]
 #[serial]
 fn page_aligned_allocations_are_unsampled() {
-    let installed = libdd_heap_gotter::install_heap_overrides();
+    let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
     unsafe {
@@ -162,7 +162,7 @@ fn page_aligned_allocations_are_unsampled() {
 #[test]
 #[serial]
 fn realloc_of_sampled_allocation_preserves_data() {
-    let installed = libdd_heap_gotter::install_heap_overrides();
+    let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
     unsafe {
@@ -261,7 +261,7 @@ fn realloc_stress_across_alignments_preserves_data() {
             ^ 0x5A
     }
 
-    let installed = libdd_heap_gotter::install_heap_overrides();
+    let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
     let mut saw_sampled = false;

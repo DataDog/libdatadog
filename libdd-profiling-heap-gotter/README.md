@@ -1,4 +1,4 @@
-# libdd-heap-gotter
+# libdd-profiling-heap-gotter
 
 GOTter implements our GOT-patching mechanism to wrap (dynamically!) linked allocators in a running process.
 This follows the same approach as `ddprof`, and may prove useful to inject via our tracing libraries into running processes such as python.

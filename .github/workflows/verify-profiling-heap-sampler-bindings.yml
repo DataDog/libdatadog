@@ -1,23 +1,23 @@
-name: 'Verify libdd-heap-sampler bindings'
+name: 'Verify libdd-profiling-heap-sampler bindings'
 on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
-      - 'libdd-heap-sampler/**'
-      - '.github/workflows/verify-heap-sampler-bindings.yml'
+      - 'libdd-profiling-heap-sampler/**'
+      - '.github/workflows/verify-profiling-heap-sampler-bindings.yml'
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 jobs:
   verify-bindings:
-    name: "Verify libdd-heap-sampler generated bindings are in sync"
+    name: "Verify libdd-profiling-heap-sampler generated bindings are in sync"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
       - name: Install libclang-dev
         # Only this verification job needs libclang; the normal build
-        # path for libdd-heap-sampler consumes the checked-in bindings
+        # path for libdd-profiling-heap-sampler consumes the checked-in bindings
         # under `src/generated/` and does not depend on bindgen at all.
         run: |
           sudo apt-get update
@@ -33,17 +33,17 @@ jobs:
           cache-targets: true
           cache-bin: true
       - name: Regenerate bindings
-        # `LIBDD_HEAP_SAMPLER_REGEN=1` rewrites `src/generated/*`
+        # `LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1` rewrites `src/generated/*`
         # in-place via bindgen. If the committed files were stale the
         # git diff below fails and instructs the author how to refresh
         # them. We use an env var (rather than a cargo feature) so that
         # unrelated `--all-features` CI jobs cannot accidentally invoke
-        # bindgen — see libdd-heap-sampler/Cargo.toml for the rationale.
-        run: LIBDD_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-heap-sampler
+        # bindgen — see libdd-profiling-heap-sampler/Cargo.toml for the rationale.
+        run: LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-profiling-heap-sampler
       - name: Verify committed bindings match regenerated output
         run: |
-          if ! git diff --exit-code libdd-heap-sampler/src/generated/; then
-            echo "::error::libdd-heap-sampler/src/generated/ is out of date."
-            echo "Run \`LIBDD_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-heap-sampler\` locally and commit the result."
+          if ! git diff --exit-code libdd-profiling-heap-sampler/src/generated/; then
+            echo "::error::libdd-profiling-heap-sampler/src/generated/ is out of date."
+            echo "Run \`LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-profiling-heap-sampler\` locally and commit the result."
             exit 1
           fi

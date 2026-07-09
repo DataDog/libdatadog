@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! C FFI bindings for [`libdd_heap_gotter`]. Exposes install / update /
+//! C FFI bindings for [`libdd_profiling_heap_gotter`]. Exposes install / update /
 //! is-installed entry points as `extern "C"` functions so language
 //! runtimes (Python, Ruby, …) can drive GOT-based heap profiling from
 //! their own native extension code.
@@ -17,7 +17,7 @@
 use function_name::named;
 use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 
-// `libdd_heap_gotter` exposes the same public surface on every target.
+// `libdd_profiling_heap_gotter` exposes the same public surface on every target.
 // On non-Linux the underlying functions are no-ops, so callers that
 // invoke these FFI entry points outside Linux observe a clean error
 // from `ddog_heap_gotter_install` (nothing was overridden) without
@@ -25,7 +25,7 @@ use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 
 /// Install GOT overrides for supported heap-allocation symbols in the current process.
 ///
-/// Installation is permanent: there is no un-install (see [`libdd_heap_gotter`]
+/// Installation is permanent: there is no un-install (see [`libdd_profiling_heap_gotter`]
 /// for why). GOT entries are patched to point at functions in this library, so
 /// the library containing these hooks must remain loaded for the life of the
 /// process; unloading it would leave dangling function pointers.
@@ -37,7 +37,7 @@ use libdd_common_ffi::{wrap_with_void_ffi_result, VoidResult};
 #[named]
 pub extern "C" fn ddog_heap_gotter_install() -> VoidResult {
     wrap_with_void_ffi_result!({
-        let installed = libdd_heap_gotter::install_heap_overrides();
+        let installed = libdd_profiling_heap_gotter::install_heap_overrides();
         anyhow::ensure!(installed, "no heap GOT overrides could be installed");
     })
 }
@@ -51,7 +51,7 @@ pub extern "C" fn ddog_heap_gotter_install() -> VoidResult {
 #[named]
 pub extern "C" fn ddog_heap_gotter_update() -> VoidResult {
     wrap_with_void_ffi_result!({
-        libdd_heap_gotter::update_heap_overrides();
+        libdd_profiling_heap_gotter::update_heap_overrides();
     })
 }
 
@@ -60,5 +60,5 @@ pub extern "C" fn ddog_heap_gotter_update() -> VoidResult {
 #[no_mangle]
 #[must_use]
 pub extern "C" fn ddog_heap_gotter_is_installed() -> bool {
-    libdd_heap_gotter::heap_overrides_are_installed()
+    libdd_profiling_heap_gotter::heap_overrides_are_installed()
 }

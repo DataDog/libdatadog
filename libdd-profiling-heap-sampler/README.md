@@ -28,24 +28,24 @@ runtime patching mechanism such that, as native libraries are loaded, we interce
 libraries function largely as API glue around native libraries this will help close the allocation observability gap. 
 
 **Example Apps**
-* [libdd-heap-allocator/examples/usdt_demo.rs](../libdd-heap-allocator/examples/usdt_demo.rs) - spins allocating/freeing memory hooked by a `GlobalAllocator`
-* [libdd-heap-gotter-ffi/examples/cdylib_demo.rs](../libdd-heap-gotter-ffi/examples/cdylib_demo.rs) - _dynamically loads_ the gotter library, then spins allocating memory hooked by GOT table rewriting
+* [libdd-profiling-heap-allocator/examples/usdt_demo.rs](../libdd-profiling-heap-allocator/examples/usdt_demo.rs) - spins allocating/freeing memory hooked by a `GlobalAllocator`
+* [libdd-profiling-heap-gotter-ffi/examples/cdylib_demo.rs](../libdd-profiling-heap-gotter-ffi/examples/cdylib_demo.rs) - _dynamically loads_ the gotter library, then spins allocating memory hooked by GOT table rewriting
 
 ## Components
 
 ```mermaid
 flowchart TB
-    sampler["<b>libdd-heap-sampler</b><br/>Sampling decisions and USDT emission"]
-    allocator["<b>libdd-heap-allocator</b><br/>Rust GlobalAlloc wrapper"]
-    hooks["<b>libdd-heap-hooks</b><br/>Native allocator hooks (jemalloc, etc.)"]
-    gotter["<b>libdd-heap-gotter</b><br/>Dynamically inject samplers at runtime"]
+    sampler["<b>libdd-profiling-heap-sampler</b><br/>Sampling decisions and USDT emission"]
+    allocator["<b>libdd-profiling-heap-allocator</b><br/>Rust GlobalAlloc wrapper"]
+    hooks["<b>libdd-profiling-heap-hooks</b><br/>Native allocator hooks (jemalloc, etc.)"]
+    gotter["<b>libdd-profiling-heap-gotter</b><br/>Dynamically inject samplers at runtime"]
 
     sampler --- allocator
     sampler --- hooks
     sampler --- gotter
 ```
 
-### Samplers - `libdd-heap-sampler` (you are here)
+### Samplers - `libdd-profiling-heap-sampler` (you are here)
 These are the foundational functions themselves containing the sampling logic and USDTs, and are intended to be used
 within higher order constructs that bind them back to concrete allocator callsites. 
 They are responsible for deciding whether or not to sample, and storing the information required to decide later on, at `free` time, if the given allocation _was_ sampled. We will cover:
@@ -63,7 +63,7 @@ The actual USDTs emitted are:
 
 By splitting into `requested` and `created`, these are designed to be generic across different allocation functions 
 (e.g. `malloc`, `operator new`, `aligned_alloc`, etc.). The job of binding these back to concrete callsites in a 
-process is left to the other components - e.g. `libdd-heap-gotter`, `libdd-heap-allocator`, etc.     
+process is left to the other components - e.g. `libdd-profiling-heap-gotter`, `libdd-profiling-heap-allocator`, etc.     
 
 The allocation-side pair is declared `static inline __attribute__((always_inline))` so the non-sampled fast path inlines
 into the wrapper with no function-call overhead.
@@ -81,13 +81,13 @@ value through verbatim to the allocator it is wrapping.
 * _mapping created_ - used by `mmap`
 * _mapping freed_ - used by `munmap`
 
-### [Rust Allocator `libdd-heap-allocator`](../libdd-heap-allocator)
-An implementation of a rust allocator using `libdd-heap-sampler` and wrapping an arbitrary allocator.
+### [Rust Allocator `libdd-profiling-heap-allocator`](../libdd-profiling-heap-allocator)
+An implementation of a rust allocator using `libdd-profiling-heap-sampler` and wrapping an arbitrary allocator.
 
-### [Native Allocator Hooks `libdd-heap-hooks`](../libdd-heap-hooks)
-These implement the native profiling hooks for the various allocators we support, emitting the same USDTs in the sampling path as `libdd-heap-sampler` does. We will implement this for `jemalloc` first.
+### [Native Allocator Hooks `libdd-profiling-heap-hooks`](../libdd-profiling-heap-hooks)
+These implement the native profiling hooks for the various allocators we support, emitting the same USDTs in the sampling path as `libdd-profiling-heap-sampler` does. We will implement this for `jemalloc` first.
 
-### [GOTter `libdd-heap-gotter`](../libdd-heap-gotter)
+### [GOTter `libdd-profiling-heap-gotter`](../libdd-profiling-heap-gotter)
 GOTter implements our GOT-patching mechanism to wrap (dynamically!) linked allocators in a running process.
 
 ## Cargo features
@@ -121,12 +121,12 @@ binding set works for both supported Linux architectures.
 # We use an env var and not a feature, as several parts of the libdatadog
 # build turn on all features, and we don't want everything to need the extra
 # build tooling. 
-LIBDD_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-heap-sampler
+LIBDD_PROFILING_HEAP_SAMPLER_REGEN=1 cargo build -p libdd-profiling-heap-sampler
 ```
 
 This refreshes `src/generated/bindings.rs` and
 `src/generated/dd_heap_sampler_static_wrappers.c`. Commit the delta. CI's
-`verify-heap-sampler-bindings` workflow runs the same command on every PR
+`verify-profiling-heap-sampler-bindings` workflow runs the same command on every PR
 and fails if the checked-in files are stale.
 
 ### Requirements

@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "libdd-heap-allocator"
+name = "libdd-profiling-heap-allocator"
 version = "0.1.0"
-description = "Rust GlobalAlloc wrapper that drives libdd-heap-sampler."
-homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-allocator"
-repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-allocator"
+description = "Rust GlobalAlloc wrapper that drives libdd-profiling-heap-sampler."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-allocator"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-allocator"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -18,11 +18,11 @@ bench = false
 [features]
 # Forward live-heap (retained-heap) tracking down to the sampler. Off by
 # default: a bare SampledAllocator does allocation profiling only. Enable
-# to flag allocations and sample frees. See libdd-heap-sampler.
-live-heap = ["libdd-heap-sampler/live-heap"]
+# to flag allocations and sample frees. See libdd-profiling-heap-sampler.
+live-heap = ["libdd-profiling-heap-sampler/live-heap"]
 
 [dependencies]
-libdd-heap-sampler = { path = "../libdd-heap-sampler" }
+libdd-profiling-heap-sampler = { path = "../libdd-profiling-heap-sampler" }
 
 [dev-dependencies]
 criterion = "0.5.1"

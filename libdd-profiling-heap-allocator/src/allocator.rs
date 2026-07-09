@@ -5,10 +5,12 @@ use core::alloc::{GlobalAlloc, Layout};
 use std::alloc::System;
 
 #[cfg(target_os = "linux")]
-use libdd_heap_sampler::{dd_allocation_created, dd_allocation_freed, dd_allocation_requested};
+use libdd_profiling_heap_sampler::{
+    dd_allocation_created, dd_allocation_freed, dd_allocation_requested,
+};
 
 /// `GlobalAlloc` wrapper that routes each alloc/dealloc through
-/// `libdd-heap-sampler` before forwarding to the inner allocator `A`.
+/// `libdd-profiling-heap-sampler` before forwarding to the inner allocator `A`.
 ///
 /// The default `realloc` / `alloc_zeroed` impls from [`GlobalAlloc`] are
 /// inherited; they dispatch back to `alloc` / `dealloc`, so sampling
@@ -44,7 +46,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
         // so we're indistinguishable from an unwrapped allocator. realloc /
         // alloc_zeroed are inherited from GlobalAlloc and dispatch back
         // through alloc/dealloc, so they pass through too.
-        if !libdd_heap_sampler::heap_sampling_enabled() {
+        if !libdd_profiling_heap_sampler::heap_sampling_enabled() {
             return self.inner.alloc(layout);
         }
         let req = dd_allocation_requested(layout.size(), layout.align());
@@ -65,7 +67,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         // Honour bypass
-        if !libdd_heap_sampler::heap_sampling_enabled() {
+        if !libdd_profiling_heap_sampler::heap_sampling_enabled() {
             return self.inner.dealloc(ptr, layout);
         }
         let freed = dd_allocation_freed(ptr.cast(), layout.size(), layout.align());
@@ -87,7 +89,7 @@ mod tests {
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
     #[cfg(target_os = "linux")]
-    use libdd_heap_sampler::dd_tl_state_get;
+    use libdd_profiling_heap_sampler::dd_tl_state_get;
 
     /// Minimal `GlobalAlloc` that forwards to `System` while recording
     /// counters so tests can assert the sampled wrapper passed the right

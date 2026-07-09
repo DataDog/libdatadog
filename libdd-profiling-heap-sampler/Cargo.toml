@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "libdd-heap-sampler"
+name = "libdd-profiling-heap-sampler"
 version = "0.1.0"
 description = "Sampling primitives for USDT-based heap profiling."
-homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-sampler"
-repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-heap-sampler"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-sampler"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-sampler"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -25,7 +25,7 @@ live-heap = []
 
 [build-dependencies]
 cc = "1.1.31"
-# `bindgen` is only *invoked* when the env var LIBDD_HEAP_SAMPLER_REGEN
+# `bindgen` is only *invoked* when the env var LIBDD_PROFILING_HEAP_SAMPLER_REGEN
 # is set (see build.rs); it is otherwise pulled in as a build-dep so
 # that regen works without a cargo feature. Cargo features would be
 # problematic here because CI jobs frequently use `--all-features`,

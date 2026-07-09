@@ -16,7 +16,7 @@
 use core::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use libdd_heap_sampler::{
+use libdd_profiling_heap_sampler::{
     dd_alloc_req_t, dd_allocation_created, dd_allocation_freed, dd_allocation_realloc_commit,
     dd_allocation_realloc_prepare, dd_allocation_requested, dd_tl_state_init,
 };

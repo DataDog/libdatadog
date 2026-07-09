@@ -6,7 +6,7 @@
 //! This crate installs hook functions over a running process's dynamic
 //! symbol relocations (the GOT / PLT-resolved entries) so that calls
 //! such as `malloc` and `free` are routed through
-//! [`libdd-heap-sampler`] without recompiling or relinking the target
+//! [`libdd-profiling-heap-sampler`] without recompiling or relinking the target
 //! application. The approach mirrors ddprof's `src/lib/symbol_overrides.cc`
 //! + `src/lib/elfutils.cc`.
 //!
@@ -20,9 +20,9 @@
 //! # Quickstart
 //!
 //! ```no_run
-//! libdd_heap_gotter::install_heap_overrides();
+//! libdd_profiling_heap_gotter::install_heap_overrides();
 //! // ... application runs for the rest of its life; malloc/free/calloc/
-//! //     realloc/etc. flow through libdd-heap-sampler and emit
+//! //     realloc/etc. flow through libdd-profiling-heap-sampler and emit
 //! //     ddheap:alloc / ddheap:free USDTs ...
 //! ```
 //!
@@ -99,7 +99,7 @@ pub fn install_heap_overrides() -> bool {
     // keeps calling the real allocator symbols directly, exactly as if
     // this crate had never been installed. Returns false (nothing
     // overridden), consistent with the "couldn't install" return.
-    if !libdd_heap_sampler::heap_sampling_enabled() {
+    if !libdd_profiling_heap_sampler::heap_sampling_enabled() {
         return false;
     }
 

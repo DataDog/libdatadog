@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Build script for `libdd-heap-gotter-ffi`. Generates the C header for
+//! Build script for `libdd-profiling-heap-gotter-ffi`. Generates the C header for
 //! the FFI surface via cbindgen.
 
 extern crate build_common;

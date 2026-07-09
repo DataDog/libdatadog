@@ -14,8 +14,8 @@ criterion::criterion_main!(linux_bench::benches);
 #[cfg(target_os = "linux")]
 mod linux_bench {
     use criterion::{criterion_group, BenchmarkId, Criterion};
-    use libdd_heap_allocator::SampledAllocator;
-    use libdd_heap_sampler::{
+    use libdd_profiling_heap_allocator::SampledAllocator;
+    use libdd_profiling_heap_sampler::{
         dd_allocation_created, dd_allocation_freed, dd_allocation_requested,
         dd_tl_state_get_or_init,
     };
@@ -48,7 +48,7 @@ mod linux_bench {
         unsafe { ptr::addr_of_mut!(NOOP_BUFFER.0).cast::<u8>().add(4096) }
     }
 
-    unsafe fn sampler_tl_state() -> *mut libdd_heap_sampler::dd_tl_state_t {
+    unsafe fn sampler_tl_state() -> *mut libdd_profiling_heap_sampler::dd_tl_state_t {
         unsafe { dd_tl_state_get_or_init() }
     }
 

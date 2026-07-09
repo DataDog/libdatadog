@@ -14,7 +14,7 @@
 #![cfg(all(target_os = "linux", target_pointer_width = "64", not(miri)))]
 
 use libdd_common_ffi::VoidResult;
-use libdd_heap_gotter_ffi::{ddog_heap_gotter_install, ddog_heap_gotter_is_installed};
+use libdd_profiling_heap_gotter_ffi::{ddog_heap_gotter_install, ddog_heap_gotter_is_installed};
 
 #[track_caller]
 fn assert_ok(result: VoidResult, what: &str) {

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "libdd-heap-gotter-ffi"
+name = "libdd-profiling-heap-gotter-ffi"
 edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
@@ -24,10 +24,10 @@ build_common = { path = "../build-common" }
 anyhow = "1.0"
 function_name = "0.3.0"
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
-# libdd-heap-gotter exposes the same public surface on every target
+# libdd-profiling-heap-gotter exposes the same public surface on every target
 # (no-ops on non-Linux), so this dependency is unconditional and the
 # FFI layer is portable too.
-libdd-heap-gotter = { path = "../libdd-heap-gotter" }
+libdd-profiling-heap-gotter = { path = "../libdd-profiling-heap-gotter" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"

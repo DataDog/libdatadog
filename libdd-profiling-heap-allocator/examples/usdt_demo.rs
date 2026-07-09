@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Sample app exercising `libdd-heap-allocator` as the global allocator.
+//! Sample app exercising `libdd-profiling-heap-allocator` as the global allocator.
 //!
 //! Install `SampledAllocator<System>` globally, then loop producing
 //! allocations (strings joined into a single buffer) so a tracer attached
@@ -9,7 +9,7 @@
 //!
 //! Run (Linux, inside the crate's Lima VM):
 //! ```
-//! cargo run --example usdt_demo -p libdd-heap-allocator
+//! cargo run --example usdt_demo -p libdd-profiling-heap-allocator
 //! ```
 //! and in another shell, attach a tracer, e.g.
 //! ```
@@ -30,7 +30,7 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use libdd_heap_allocator::SampledAllocator;
+    use libdd_profiling_heap_allocator::SampledAllocator;
     use std::alloc::System;
     use std::thread::sleep;
     use std::time::Duration;

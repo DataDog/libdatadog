@@ -1,16 +1,17 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Demonstrates using `libdd-heap-gotter-ffi` as an actual dynamically-loaded C ABI library.
+//! Demonstrates using `libdd-profiling-heap-gotter-ffi` as an actual dynamically-loaded C ABI
+//! library.
 //!
 //! Build the cdylib first:
 //! ```sh
-//! cargo build -p libdd-heap-gotter-ffi
+//! cargo build -p libdd-profiling-heap-gotter-ffi
 //! ```
 //!
 //! Then run this demo:
 //! ```sh
-//! cargo run -p libdd-heap-gotter-ffi --example cdylib_demo
+//! cargo run -p libdd-profiling-heap-gotter-ffi --example cdylib_demo
 //! ```
 //!
 //! The gotter-ffi crate is Linux-only; on other targets the example
@@ -35,7 +36,7 @@ mod linux {
     use std::thread::sleep;
     use std::time::Duration;
 
-    const LIB_NAME: &str = "liblibdd_heap_gotter_ffi.so";
+    const LIB_NAME: &str = "liblibdd_profiling_heap_gotter_ffi.so";
 
     type InstallFn = unsafe extern "C" fn() -> VoidResult;
     type IsInstalledFn = unsafe extern "C" fn() -> bool;
@@ -108,7 +109,7 @@ mod linux {
         let lib_path = cdylib_path()?;
         if !lib_path.exists() {
             return Err(format!(
-                "{} does not exist; run `cargo build -p libdd-heap-gotter-ffi` first",
+                "{} does not exist; run `cargo build -p libdd-profiling-heap-gotter-ffi` first",
                 lib_path.display()
             ));
         }

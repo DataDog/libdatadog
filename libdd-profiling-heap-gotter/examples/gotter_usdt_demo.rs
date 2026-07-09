@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Sample app exercising `libdd-heap-gotter`: install the GOT overrides,
+//! Sample app exercising `libdd-profiling-heap-gotter`: install the GOT overrides,
 //! then drive libc's allocator functions directly (`malloc`, `calloc`,
 //! `realloc`, `free`, `posix_memalign`, `aligned_alloc`) from multiple
 //! threads with a mix of sizes and alignments — including alignments
@@ -14,7 +14,7 @@
 //!
 //! Run (Linux):
 //! ```
-//! cargo run --example gotter_usdt_demo -p libdd-heap-gotter
+//! cargo run --example gotter_usdt_demo -p libdd-profiling-heap-gotter
 //! ```
 //! Options:
 //! * `--stress` — keep one CPU core hot between iterations (for CPU profiles).
@@ -370,7 +370,7 @@ mod linux {
 
         std::thread::sleep(Duration::from_secs(2));
 
-        let ok = libdd_heap_gotter::install_heap_overrides();
+        let ok = libdd_profiling_heap_gotter::install_heap_overrides();
         println!("install_heap_overrides() -> {ok}");
 
         let stop = Arc::new(AtomicBool::new(false));

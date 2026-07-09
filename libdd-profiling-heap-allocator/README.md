@@ -1,13 +1,13 @@
-# libdd-heap-allocator
+# libdd-profiling-heap-allocator
 
-Rust `GlobalAlloc` wrapper with USDT-based heap profiling, effectively implementing [libdd-heap-sampler](../libdd-heap-sampler) for Rust apps at compile time. This lets Rust users quickly setup sampled heap profiling within their application regardless of the particular allocator they are using.
+Rust `GlobalAlloc` wrapper with USDT-based heap profiling, effectively implementing [libdd-profiling-heap-sampler](../libdd-profiling-heap-sampler) for Rust apps at compile time. This lets Rust users quickly setup sampled heap profiling within their application regardless of the particular allocator they are using.
 
 For this to work _well_, you should make sure everything passes through the global allocator!
 
 Usage:
 
 ```rust
-use libdd_heap_allocator::SampledAllocator;
+use libdd_profiling_heap_allocator::SampledAllocator;
 use std::alloc::System;
 
 // Wrap the default system allocator 
@@ -33,7 +33,7 @@ See [`examples/usdt_demo.rs`](examples/usdt_demo.rs) for a runnable demo that fi
 The `sampler_overhead` Criterion benchmark measures the allocator/sampler hot path without installing `SampledAllocator` as the process global allocator. It compares direct `System` allocation, `SampledAllocator<System>`, a no-op allocator, `SampledAllocator<NoopAllocator>`, and direct sampler calls.
 
 ```sh
-cargo bench -p libdd-heap-allocator --bench sampler_overhead
+cargo bench -p libdd-profiling-heap-allocator --bench sampler_overhead
 ```
 
 One quick validation run produced these fast-path results:

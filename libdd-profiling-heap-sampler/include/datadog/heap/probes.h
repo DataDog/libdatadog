@@ -15,7 +15,7 @@
 #include <stdint.h>
 
 #ifdef __linux__
-   /* libbpf/usdt vendored at libdd-heap-sampler/vendor/usdt.h. Provides
+   /* libbpf/usdt vendored at libdd-profiling-heap-sampler/vendor/usdt.h. Provides
     * the variadic USDT() macro that emits the same v3 ELF-note format
     * that bpftrace, systemtap, and BPF tracers all consume. */
 #  include <usdt.h>
