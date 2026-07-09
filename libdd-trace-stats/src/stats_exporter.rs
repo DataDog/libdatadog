@@ -230,6 +230,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
         let FlushResult {
             obfuscated_buckets,
             unobfuscated_buckets,
+            #[cfg_attr(not(any(feature = "telemetry", feature = "dogstatsd")), allow(unused))]
             collapsed_spans,
         } = {
             #[allow(clippy::unwrap_used)]
@@ -439,7 +440,6 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span_concentrator::CardinalityLimitConfig;
     #[cfg(feature = "stats-obfuscation")]
     use crate::span_concentrator::StatsComputationObfuscationConfig;
     use httpmock::MockServer;
@@ -752,7 +752,9 @@ mod tests {
 
     /// Build a concentrator with `max_entries_per_bucket = 1` pre-seeded with four distinct spans
     /// so that three spans are collapsed into the overflow bucket.
+    #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
     fn get_collapsed_concentrator() -> SpanConcentrator {
+        use crate::span_concentrator::CardinalityLimitConfig;
         use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
 
         let mut concentrator = SpanConcentrator::new(
