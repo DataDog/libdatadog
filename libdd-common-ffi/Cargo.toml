@@ -32,3 +32,7 @@ serde = "1.0"
 bolero = "0.13"
 assert_no_alloc = "1.1.2"
 function_name = "0.3.0"
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"

@@ -36,3 +36,13 @@ pub trait Liaison: Sized {
     fn ipc_shared() -> Self;
     fn ipc_per_process() -> Self;
 }
+
+/// The liaison a subprocess sidecar listens on / connects to for the given `ipc_mode`. Shared by
+/// `start_or_connect_to_sidecar` and the crashtracker collector (`crashtracker_ipc_socket_path`) so
+/// both always target the same socket. (Thread mode keys the socket by the master PID instead.)
+pub fn liaison_for_ipc_mode(ipc_mode: crate::config::IpcMode) -> DefaultLiason {
+    match ipc_mode {
+        crate::config::IpcMode::Shared => DefaultLiason::ipc_shared(),
+        crate::config::IpcMode::InstancePerProcess => DefaultLiason::ipc_per_process(),
+    }
+}
