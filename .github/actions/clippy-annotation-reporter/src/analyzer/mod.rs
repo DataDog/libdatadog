@@ -12,7 +12,7 @@ use crate::analyzer::annotation::{
 };
 use crate::analyzer::git::{get_changed_files, GitOperations};
 use anyhow::Result;
-use log::{debug, info, warn};
+use log::{debug, info};
 use octocrab::Octocrab;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -104,23 +104,14 @@ fn analyze_annotations(
     for file in files {
         changed_files.insert(file.clone());
 
-        // most likely reason for errors is the files don't exist in the respective branch.
-
-        let base_content = match git_ops.get_file_content(file, base_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                warn!("Failed to get {} content from {}: {}", file, base_branch, e);
-                String::new()
-            }
-        };
-
-        let head_content = match git_ops.get_file_content(file, head_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                warn!("Failed to get {} content from {}: {}", file, head_branch, e);
-                String::new()
-            }
-        };
+        // A file added or removed in the PR won't exist in one of the branches;
+        // `get_file_content` returns `None` for that, which we treat as empty.
+        let base_content = git_ops
+            .get_file_content(file, base_branch)?
+            .unwrap_or_default();
+        let head_content = git_ops
+            .get_file_content(file, head_branch)?
+            .unwrap_or_default();
 
         // Find annotations in base branch
         find_annotations(
@@ -186,8 +177,12 @@ fn analyze_all_files_for_crates(
 
     let git_ops = GitOperations::default();
     for file in files {
-        let base_content = git_ops.get_branch_content(file, base_branch);
-        let head_content = git_ops.get_branch_content(file, head_branch);
+        let base_content = git_ops
+            .get_file_content(file, base_branch)?
+            .unwrap_or_default();
+        let head_content = git_ops
+            .get_file_content(file, head_branch)?
+            .unwrap_or_default();
 
         // Find annotations in base branch
         find_annotations(
