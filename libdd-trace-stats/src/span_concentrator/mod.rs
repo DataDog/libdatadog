@@ -92,14 +92,6 @@ pub struct StatsComputationObfuscationConfig {
 pub type SharedStatsComputationObfuscationConfig =
     std::sync::Arc<arc_swap::ArcSwap<StatsComputationObfuscationConfig>>;
 
-/// Default maximum number of distinct aggregation keys per time bucket.
-///
-/// 7 168 is the limit to exactly saturate hashbrown's internal table at its maximum load factor of
-/// 7/8. Any higher limit would immediately force a doubling of the table capacity, wasting
-/// half the allocated slots for a modest increase in cardinality. To avoid future changes going
-/// over this limit (e.g. adding extra overflow buckets) we set a slightly lower limit.
-pub const DEFAULT_MAX_ENTRIES_PER_BUCKET: usize = 7_000;
-
 /// Config to override the default stats cardinality limit values
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -119,8 +111,16 @@ pub struct CardinalityLimitConfig {
 impl Default for CardinalityLimitConfig {
     fn default() -> Self {
         Self {
-            whole_key_limit: DEFAULT_MAX_ENTRIES_PER_BUCKET,
-            resource_limit: 1024,
+            // Default maximum number of distinct aggregation keys per time bucket.
+            //
+            // 7 168 is the limit to exactly saturate hashbrown's internal table at its maximum
+            // load factor of 7/8. Any higher limit would immediately force a doubling
+            // of the table capacity, wasting half the allocated slots for a modest
+            // increase in cardinality. To avoid future changes going over this limit
+            // (e.g. adding extra overflow buckets) we set a slightly lower limit.
+            whole_key_limit: 7_000,
+            // Other defaults from the spec
+            resource_limit: 1_024,
             http_endpoint_limit: 512,
             peer_tags_limit: 512,
             additional_tags_limit: 100,
@@ -174,8 +174,8 @@ impl SpanConcentrator {
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
     /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
-    /// - `override_max_entries_per_bucket` maximum distinct aggregation keys per time bucket before
-    ///   cardinality limiting applies. Pass `None` to use [`DEFAULT_MAX_ENTRIES_PER_BUCKET`].
+    /// - `override_cardinality_limits` config values for whole-key and per-field cardinality limi.
+    ///   Pass `None` to use defaults (see [`CardinalityLimitConfig`]).
     /// - `obfuscation_config` optional and updatable config for resource key obfuscation
     pub fn new(
         bucket_size: Duration,
