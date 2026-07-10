@@ -245,6 +245,7 @@ mod linux {
             memfd::FileSeal::SealShrink,
             memfd::FileSeal::SealGrow,
             memfd::FileSeal::SealSeal,
+            memfd::FileSeal::SealWrite,
         ])
         .context("unable to seal memfd")?;
 
