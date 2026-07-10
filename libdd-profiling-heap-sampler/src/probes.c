@@ -28,8 +28,10 @@ void dd_probe_alloc(void *user, uint64_t size, uint64_t weight) {
     errno = saved_errno;
 }
 
+#if DD_HEAP_LIVE_TRACKING
 void dd_probe_free(void *ptr) {
     int saved_errno = errno;
     USDT(ddheap, free, ptr);
     errno = saved_errno;
 }
+#endif

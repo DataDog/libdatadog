@@ -22,7 +22,9 @@ dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
                                           size_t alignment) {
     /* Fire with the user-visible pointer, matching what was reported at alloc
      * time, so the profiler can correlate the two events by address. */
+#if DD_HEAP_LIVE_TRACKING
     dd_probe_free(ptr);
+#endif
 
     dd_alloc_freed_t out = {
         /* Return the raw pointer so the caller passes the real allocation base
