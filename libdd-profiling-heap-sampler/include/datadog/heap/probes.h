@@ -31,16 +31,15 @@
  */
 void dd_probe_alloc(void *user, uint64_t size, uint64_t weight);
 
-#if DD_HEAP_LIVE_TRACKING
 /*
  * Emits the `ddheap:free` USDT.
  *   ptr - user-visible pointer being freed
  *
- * Only available when compiled with live-heap tracking. The absence of
- * the `ddheap:free` note in .note.stapsdt signals to external profilers
- * that this binary does not support live-heap correlation.
+ * The symbol always exists, but the USDT is only emitted when compiled
+ * with live-heap tracking. The absence of the `ddheap:free` note in
+ * .note.stapsdt signals to external profilers that this binary does not
+ * support live-heap correlation.
  */
 void dd_probe_free(void *ptr);
-#endif
 
 #endif

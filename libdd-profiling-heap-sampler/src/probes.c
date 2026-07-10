@@ -18,6 +18,7 @@
  */
 
 #include <datadog/heap/probes.h>
+#include <datadog/heap/sample_flag.h>
 
 #include <errno.h>
 
@@ -28,10 +29,12 @@ void dd_probe_alloc(void *user, uint64_t size, uint64_t weight) {
     errno = saved_errno;
 }
 
-#if DD_HEAP_LIVE_TRACKING
 void dd_probe_free(void *ptr) {
+#if DD_HEAP_LIVE_TRACKING
     int saved_errno = errno;
     USDT(ddheap, free, ptr);
     errno = saved_errno;
-}
+#else
+    (void)ptr;
 #endif
+}

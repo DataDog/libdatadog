@@ -12,7 +12,8 @@
  * dd_sample_flag_check_and_clear confirmed that ptr carries the sample flag,
  * meaning this allocation was previously sampled.
  *
- * Fires the ddheap:free USDT with the user-visible pointer, then returns
+ * Fires the ddheap:free USDT (when live-heap tracking is enabled) with the
+ * user-visible pointer, then returns
  * the raw pointer and adjusted size that the caller must forward to the
  * real deallocator. On x86-64 the size grows by DD_HEADER_BYTES to cover
  * the header that was reserved at allocation time; on arm64 the size is
@@ -21,10 +22,10 @@
 dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
                                           size_t alignment) {
     /* Fire with the user-visible pointer, matching what was reported at alloc
-     * time, so the profiler can correlate the two events by address. */
-#if DD_HEAP_LIVE_TRACKING
+     * time, so the profiler can correlate the two events by address. Safe to
+     * call unconditionally: dd_probe_free is a no-op USDT-wise when live-heap
+     * tracking is off. */
     dd_probe_free(ptr);
-#endif
 
     dd_alloc_freed_t out = {
         /* Return the raw pointer so the caller passes the real allocation base
