@@ -5,7 +5,7 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 
-use hashbrown::{HashMap, HashSet};
+use hashbrown::{HashMap, HashSet, hash_set::Entry};
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
@@ -435,7 +435,7 @@ pub(super) struct StatsBucket {
     /// ones into the overflow sentinel key.
     cardinality_limits: CardinalityLimitConfig,
     distinct_resources: HashSet<u64>,
-    distinct_http_endpoint: HashSet<u64>,
+    distinct_http_endpoints: HashSet<u64>,
     distinct_peer_tags: HashSet<u64>,
     #[allow(
         unused,
@@ -467,7 +467,7 @@ impl StatsBucket {
             #[cfg(feature = "stats-obfuscation")]
             obfuscated: obfuscation_enabled,
             distinct_resources: HashSet::new(),
-            distinct_http_endpoint: HashSet::new(),
+            distinct_http_endpoints: HashSet::new(),
             distinct_peer_tags: HashSet::new(),
             distinct_additional_tags: HashSet::new(),
         }
@@ -517,31 +517,34 @@ impl StatsBucket {
             hasher.finish()
         }
 
-        let resource_name_hash = hash(&key.fixed.resource_name);
-        if self.distinct_resources.len() >= self.cardinality_limits.resource_limit
-            && !self.distinct_resources.contains(&resource_name_hash)
-        {
-            key.fixed.resource_name = TRACER_BLOCKED_VALUE;
-        } else {
-            self.distinct_resources.insert(resource_name_hash);
+        let resource_hash = hash(&key.fixed.resource_name);
+        let resources_count = self.distinct_resources.len();
+        if let Entry::Vacant(slot) = self.distinct_resources.entry(resource_hash) {
+            if resources_count >= self.cardinality_limits.resource_limit {
+                key.fixed.resource_name = TRACER_BLOCKED_VALUE;
+            } else {
+                slot.insert();
+            }
         }
 
         let http_endpoint_hash = hash(&key.fixed.http_endpoint);
-        if self.distinct_http_endpoint.len() >= self.cardinality_limits.http_endpoint_limit
-            && !self.distinct_http_endpoint.contains(&http_endpoint_hash)
-        {
-            key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
-        } else {
-            self.distinct_http_endpoint.insert(http_endpoint_hash);
+        let http_endpoints_count = self.distinct_http_endpoints.len();
+        if let Entry::Vacant(slot) = self.distinct_http_endpoints.entry(http_endpoint_hash) {
+            if http_endpoints_count >= self.cardinality_limits.http_endpoint_limit {
+                key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
+            } else {
+                slot.insert();
+            }
         }
 
         let peer_tags_hash = hash(&key.peer_tags);
-        if self.distinct_peer_tags.len() >= self.cardinality_limits.peer_tags_limit
-            && !self.distinct_peer_tags.contains(&peer_tags_hash)
-        {
-            key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
-        } else {
-            self.distinct_peer_tags.insert(peer_tags_hash);
+        let peer_tags_count = self.distinct_peer_tags.len();
+        if let Entry::Vacant(slot) = self.distinct_peer_tags.entry(peer_tags_hash) {
+            if peer_tags_count >= self.cardinality_limits.peer_tags_limit {
+                key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
+            } else {
+                slot.insert();
+            }
         }
     }
 
