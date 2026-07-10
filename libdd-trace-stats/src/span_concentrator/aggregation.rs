@@ -552,7 +552,7 @@ impl CollapsedFieldsMetrics {
                         CollapsedField::ADDITIONAL_TAGS
                     ]
                     .contains(&field_value));
-                    let has_field = dbg!(mask & field_value) != 0;
+                    let has_field = (mask & field_value) != 0;
                     if !has_field {
                         continue;
                     }
@@ -569,7 +569,10 @@ impl CollapsedFieldsMetrics {
                         CollapsedField::ADDITIONAL_TAGS => {
                             libdd_common::tag!("collapsed_spans", "additional_metric_tags")
                         }
-                        #[allow(clippy::unreachable, reason = "I swear it is unreachable")]
+                        #[allow(
+                            clippy::unreachable,
+                            reason = "field pow is between 1..CollapsedField::COUNT, so field_value is a valid CollapsedField value. (Asserted just above)"
+                        )]
                         _ => unreachable!(),
                     };
                     tags.push(field_tag);
@@ -613,7 +616,7 @@ impl StatsBucket {
             distinct_http_endpoints: HashSet::new(),
             distinct_peer_tags: HashSet::new(),
             distinct_additional_tags: HashSet::new(),
-            collapsed_fields_metrics: CollapsedFieldsMetrics([0; COLLAPSED_FIELD_METRIC_SIZE]),
+            collapsed_fields_metrics: CollapsedFieldsMetrics::zero(),
         }
     }
 
