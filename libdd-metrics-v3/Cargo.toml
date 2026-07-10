@@ -1,0 +1,42 @@
+# Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-metrics-v3"
+version = "0.1.0"
+description = "V3 columnar protobuf codec for Datadog metrics"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-metrics-v3"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-metrics-v3"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+autobenches = false
+
+[lints]
+workspace = true
+
+[lib]
+bench = false
+
+[dependencies]
+# default-features = false: enabling foldhash's default "std" feature would pull `std` back into
+# this otherwise `no_std` crate.
+foldhash = { version = "0.2", default-features = false }
+hashbrown = { version = "0.16", default-features = false }
+
+[dev-dependencies]
+# Reference implementation used by the wire-format parity tests in `tests/`: encodes the same
+# columnar data via prost's generated bindings for `proto/intake_v3.proto` and checks that it's
+# byte-for-byte identical to this crate's hand-rolled encoder output.
+bolero = "0.13"
+prost = "0.14"
+
+[build-dependencies]
+prost-build = { version = "0.14", optional = true }
+protoc-bin-vendored = { version = "3.0", optional = true }
+
+[features]
+# Regenerates `tests/pb/mod.rs` from `proto/intake_v3.proto`. Not needed for normal builds or test
+# runs: the generated bindings are checked into version control, and CI verifies they're in sync
+# with the vendored .proto file (see `.github/workflows/verify-metrics-v3-proto.yml`).
+generate-protobuf = ["dep:prost-build", "dep:protoc-bin-vendored"]

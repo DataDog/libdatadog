@@ -3180,6 +3180,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-metrics-v3"
+version = "0.1.0"
+dependencies = [
+ "bolero",
+ "foldhash 0.2.0",
+ "hashbrown 0.16.1",
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+]
+
+[[package]]
 name = "libdd-otel-thread-ctx"
 version = "1.0.0"
 dependencies = [

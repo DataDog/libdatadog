@@ -1,0 +1,40 @@
+name: 'No-std check (libdd-metrics-v3)'
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - mq-working-branch-*
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+jobs:
+  no-std-check:
+    # `#![no_std]` alone only stops this crate's own code from referencing `std`; a dependency
+    # that quietly requires std would still link fine on a normal host target. Building for a
+    # target with no OS (so no std is even available to link against) is what actually proves the
+    # whole dependency graph is no_std-compatible.
+    name: "libdd-metrics-v3 builds for a target with no OS and no std"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Read Rust version from rust-toolchain.toml
+        id: rust-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' rust-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Install ${{ steps.rust-version.outputs.version }} toolchain
+        run: |
+          rustup set profile minimal
+          rustup install ${{ steps.rust-version.outputs.version }}
+          rustup default ${{ steps.rust-version.outputs.version }}
+          rustup target add x86_64-unknown-none
+          rustup component add clippy
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
+      - name: Build for x86_64-unknown-none
+        run: cargo build -p libdd-metrics-v3 --target x86_64-unknown-none
+      - name: Clippy for x86_64-unknown-none
+        run: cargo clippy -p libdd-metrics-v3 --target x86_64-unknown-none -- -D warnings

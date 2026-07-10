@@ -61,6 +61,7 @@ members = [
   "libdd-log",
   "libdd-log-ffi",
   "libdd-sampling",
+  "libdd-metrics-v3",
 ]
 
 # https://doc.rust-lang.org/cargo/reference/resolver.html

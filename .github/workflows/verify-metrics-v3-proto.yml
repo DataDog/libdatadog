@@ -1,0 +1,37 @@
+name: 'Verify metrics-v3 proto'
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+env:
+  # Pinned commit of https://github.com/DataDog/agent-payload/blob/master/proto/metrics/intake_v3.proto
+  AGENT_PAYLOAD_COMMIT: "512d523e386f75077efe9e8d878284104d491f46"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+jobs:
+  verify-proto-files:
+    name: "Verify libdd-metrics-v3's vendored intake_v3.proto and generated bindings are in sync"
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: diff intake_v3.proto against agent-payload
+        working-directory: libdd-metrics-v3/proto
+        run: |
+          ../../.github/workflows/diff-agent-payload-proto.sh --file intake_v3.proto --commit "$AGENT_PAYLOAD_COMMIT"
+      - name: Read Rust version from rust-toolchain.toml
+        id: rust-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' rust-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Install ${{ steps.rust-version.outputs.version }} toolchain
+        run: rustup set profile minimal && rustup install ${{ steps.rust-version.outputs.version }} && rustup default ${{ steps.rust-version.outputs.version }}
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
+      - name: diff tests/pb/mod.rs
+        working-directory: libdd-metrics-v3
+        run: |
+          cargo build --features generate-protobuf
+          git diff --exit-code -- tests/pb/mod.rs
