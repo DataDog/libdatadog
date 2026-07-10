@@ -55,12 +55,27 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Nothing changed: don't post a comment, and remove any stale one left over
+    // from an earlier revision of this PR.
+    if !analysis_result.has_changes() {
+        info!("No changes to tracked clippy annotations; removing any stale comment.");
+        commenter::delete_comment_if_exists(
+            &octocrab,
+            &config.owner,
+            &config.repo,
+            config.pr_number,
+            None,
+        )
+        .await?;
+        info!("Process completed successfully!");
+        return Ok(());
+    }
+
     let report = generate_report(
         &analysis_result,
         &config.rules,
         &config.repository,
         &config.base_branch,
-        &config.head_branch,
     );
 
     commenter::post_comment(

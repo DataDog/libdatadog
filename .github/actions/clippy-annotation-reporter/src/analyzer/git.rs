@@ -100,7 +100,7 @@ impl<T: CommandExecutor> GitOperations<T> {
 // Default implementation for GitOperations with RealCommandExecutor
 impl Default for GitOperations<RealCommandExecutor> {
     fn default() -> Self {
-        Self::new(RealCommandExecutor::default())
+        Self::new(RealCommandExecutor)
     }
 }
 

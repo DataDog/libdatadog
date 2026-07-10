@@ -20,6 +20,9 @@ use std::rc::Rc;
 mod annotation;
 mod git;
 
+/// Map of a rule or crate name to the number of annotations counted for it.
+type AnnotationCounts = HashMap<Rc<String>, usize>;
+
 /// Represents a clippy annotation in code
 #[derive(Debug, Clone)]
 pub struct ClippyAnnotation {
@@ -36,6 +39,14 @@ pub struct AnalysisResult {
     pub changed_files: HashSet<String>,
     pub base_crate_counts: HashMap<Rc<String>, usize>,
     pub head_crate_counts: HashMap<Rc<String>, usize>,
+}
+
+impl AnalysisResult {
+    /// Whether the number of tracked annotations differs between the base and
+    /// PR branches. When this is false there is nothing to report.
+    pub fn has_changes(&self) -> bool {
+        self.base_counts != self.head_counts
+    }
 }
 
 pub async fn run_analysis(
@@ -159,7 +170,7 @@ fn analyze_all_files_for_crates(
     base_branch: &str,
     head_branch: &str,
     rules: &[String],
-) -> Result<(HashMap<Rc<String>, usize>, HashMap<Rc<String>, usize>)> {
+) -> Result<(AnnotationCounts, AnnotationCounts)> {
     info!(
         "Analyzing all {} Rust files for crate-level statistics...",
         files.len()
