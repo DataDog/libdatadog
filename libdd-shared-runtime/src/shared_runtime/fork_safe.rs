@@ -7,6 +7,7 @@ use libdd_common::MutexExt;
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
 use tracing::{debug, error};
 
@@ -130,37 +131,75 @@ impl ForkSafeRuntime {
     /// Shuts down all workers synchronously. Returns `ShutdownTimedOut` if `timeout` is
     /// exceeded.
     ///
-    /// This is the *graceful* path: it drives each worker's shutdown to completion so
-    /// in-flight work (e.g. a final trace flush) is not lost. It requires a live Tokio
-    /// context, so it is only attempted when one is available — see [`Self::can_block_on`].
-    /// When it is not (interpreter finalization), teardown is left to [`Drop`], which
-    /// detaches the runtime without blocking. This split means neither path depends on
-    /// the destruction order of any other global/TLS state.
-    pub fn shutdown(&self, timeout: Option<std::time::Duration>) -> Result<(), SharedRuntimeError> {
+    /// This always drives each worker's shutdown to completion so in-flight work (e.g. a
+    /// final trace flush) is not lost. Normally that happens by calling `block_on` on the
+    /// current thread. But `block_on` needs a live Tokio context, which requires the
+    /// calling thread's CONTEXT thread-local — and during (embedded) interpreter
+    /// finalization that thread-local may already be destroyed (see
+    /// [`Self::can_block_on`]). The runtime's own worker threads are unaffected by that;
+    /// only the *calling* thread's TLS is gone. So in that case we hand the same graceful
+    /// shutdown off to a freshly spawned thread, whose TLS was never touched, and just wait
+    /// for it to finish (bounded by `timeout`, if given) using plain OS-level
+    /// synchronization that doesn't touch Tokio's TLS.
+    pub fn shutdown(&self, timeout: Option<Duration>) -> Result<(), SharedRuntimeError> {
         debug!(?timeout, "Shutting down ForkSafeRuntime");
-        if !Self::can_block_on() {
-            // block_on -> context::enter() would access Tokio's CONTEXT thread-local,
-            // which is already destroyed during (embedded) interpreter finalization.
-            // Skip the graceful path; Drop detaches the runtime safely.
-            debug!("No live Tokio context (finalization); deferring teardown to Drop");
+        let Some(runtime) = self.runtime.lock_or_recover().take() else {
             return Ok(());
+        };
+
+        if Self::can_block_on() {
+            return Self::block_on_shutdown(&runtime, &self.workers, timeout);
         }
-        match self.runtime.lock_or_recover().take() {
-            Some(runtime) => {
-                if let Some(timeout) = timeout {
-                    match runtime.block_on(async {
-                        tokio::time::timeout(timeout, <Self as SharedRuntime>::shutdown_async(self))
-                            .await
-                    }) {
-                        Ok(()) => Ok(()),
-                        Err(_) => Err(SharedRuntimeError::ShutdownTimedOut(timeout)),
-                    }
-                } else {
-                    runtime.block_on(<Self as SharedRuntime>::shutdown_async(self));
-                    Ok(())
+
+        debug!("No live Tokio context (finalization); flushing from a helper thread");
+        Self::shutdown_from_helper_thread(runtime, self.workers.clone(), timeout)
+    }
+
+    /// Drives `shutdown_workers` to completion via `runtime.block_on` on the calling
+    /// thread. Only safe to call when [`Self::can_block_on`] is true.
+    fn block_on_shutdown(
+        runtime: &Runtime,
+        workers: &Arc<Mutex<Vec<WorkerEntry>>>,
+        timeout: Option<Duration>,
+    ) -> Result<(), SharedRuntimeError> {
+        match timeout {
+            Some(timeout) => {
+                match runtime.block_on(async {
+                    tokio::time::timeout(timeout, shutdown_workers(workers)).await
+                }) {
+                    Ok(()) => Ok(()),
+                    Err(_) => Err(SharedRuntimeError::ShutdownTimedOut(timeout)),
                 }
             }
-            None => Ok(()),
+            None => {
+                runtime.block_on(shutdown_workers(workers));
+                Ok(())
+            }
+        }
+    }
+
+    /// Runs [`Self::block_on_shutdown`] on a fresh, detached thread (whose Tokio TLS was
+    /// never touched) and blocks the calling thread on its completion via a channel —
+    /// plain OS-level synchronization, safe even with the calling thread's Tokio TLS gone.
+    ///
+    /// A missing `timeout` waits indefinitely for completion, matching the behavior of
+    /// [`Self::block_on_shutdown`] itself when called with `None`.
+    fn shutdown_from_helper_thread(
+        runtime: Arc<Runtime>,
+        workers: Arc<Mutex<Vec<WorkerEntry>>>,
+        timeout: Option<Duration>,
+    ) -> Result<(), SharedRuntimeError> {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = Self::block_on_shutdown(&runtime, &workers, timeout);
+            let _ = done_tx.send(result);
+        });
+
+        match timeout {
+            Some(timeout) => done_rx
+                .recv_timeout(timeout)
+                .unwrap_or(Err(SharedRuntimeError::ShutdownTimedOut(timeout))),
+            None => done_rx.recv().unwrap_or(Ok(())),
         }
     }
 
@@ -209,8 +248,13 @@ impl Drop for ForkSafeRuntime {
     /// the worker threads; the OS reclaims them on process exit. This is done
     /// *unconditionally* — we do not try to detect whether we are in finalization —
     /// so there is no ordering-dependent branch that a future teardown scenario can
-    /// slip past. If `shutdown` already took the runtime (the graceful path ran), this
-    /// is a no-op.
+    /// slip past.
+    ///
+    /// [`Self::shutdown`] always takes the runtime out (even during finalization, via a
+    /// helper thread — see its docs), so this only fires when `shutdown` was never called
+    /// at all before drop; that caller-error case is the one scenario this crate can't
+    /// flush on behalf of the caller, so it just detaches cleanly instead of risking a
+    /// panic.
     fn drop(&mut self) {
         if let Some(runtime) = self.runtime.lock_or_recover().take() {
             match Arc::try_unwrap(runtime) {
@@ -252,25 +296,33 @@ impl SharedRuntime for ForkSafeRuntime {
     }
 
     async fn shutdown_async(&self) {
-        debug!("Shutting down all workers asynchronously");
-        let workers = {
-            let mut workers_lock = self.workers.lock_or_recover();
-            std::mem::take(&mut *workers_lock)
-        };
-
-        let futures: FuturesUnordered<_> = workers
-            .into_iter()
-            .map(|mut worker_entry| async move {
-                if let Err(e) = worker_entry.worker.pause().await {
-                    error!("Worker failed to shutdown: {:?}", e);
-                    return;
-                }
-                worker_entry.worker.shutdown().await;
-            })
-            .collect();
-
-        futures.collect::<()>().await;
+        shutdown_workers(&self.workers).await;
     }
+}
+
+/// Drains and gracefully shuts down every registered worker. Standalone (rather than a
+/// `&self` method) so it can run identically whether driven from the calling thread
+/// ([`ForkSafeRuntime::block_on_shutdown`]) or from the helper thread spawned by
+/// [`ForkSafeRuntime::shutdown_from_helper_thread`].
+async fn shutdown_workers(workers: &Mutex<Vec<WorkerEntry>>) {
+    debug!("Shutting down all workers asynchronously");
+    let workers = {
+        let mut workers_lock = workers.lock_or_recover();
+        std::mem::take(&mut *workers_lock)
+    };
+
+    let futures: FuturesUnordered<_> = workers
+        .into_iter()
+        .map(|mut worker_entry| async move {
+            if let Err(e) = worker_entry.worker.pause().await {
+                error!("Worker failed to shutdown: {:?}", e);
+                return;
+            }
+            worker_entry.worker.shutdown().await;
+        })
+        .collect();
+
+    futures.collect::<()>().await;
 }
 
 impl BlockingRuntime for ForkSafeRuntime {
@@ -494,6 +546,41 @@ mod tests {
         assert!(
             shared_runtime.shutdown(None).is_ok(),
             "second shutdown must not panic"
+        );
+    }
+
+    #[test]
+    fn test_shutdown_from_helper_thread_flushes_workers() {
+        // Exercises the destroyed-TLS fallback mechanism directly (this test's thread has
+        // a perfectly fine Tokio context, but shutdown_from_helper_thread is the exact
+        // code path shutdown() delegates to when the calling thread's context is gone).
+        // Confirms the worker's shutdown() -- the "final flush" -- actually runs to
+        // completion on the helper thread, not just that teardown avoids a panic.
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let (worker, receiver) = make_test_worker();
+
+        let _ = shared_runtime.spawn_worker(worker, true).unwrap();
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker did not run");
+
+        let runtime = shared_runtime.runtime.lock_or_recover().take().unwrap();
+        let result = ForkSafeRuntime::shutdown_from_helper_thread(
+            runtime,
+            shared_runtime.workers.clone(),
+            Some(Duration::from_secs(1)),
+        );
+        assert!(result.is_ok());
+
+        let mut last = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("helper thread did not flush worker shutdown");
+        while let Ok(v) = receiver.try_recv() {
+            last = v;
+        }
+        assert_eq!(
+            last, -1,
+            "worker shutdown (the flush) must actually run on the helper thread"
         );
     }
 
