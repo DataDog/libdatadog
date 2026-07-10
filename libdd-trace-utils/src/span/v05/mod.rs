@@ -42,8 +42,7 @@ pub struct Span {
 ///   low 64 bits).
 /// - `span_id` is the 64-bit id hex-encoded as 16 lowercase chars.
 /// - `tracestate` and `attributes` are only emitted when non-empty.
-/// - The v0.4 `flags` field is intentionally not emitted: it is not part of the `_dd.span_links`
-///   contract (the agent's OTLP path drops it too).
+/// - `flags` is only emitted when not zero.
 struct SpanLinksSerializerV05<'a, T: TraceData>(&'a [SpanLink<T>]);
 struct SpanLinkSerializerV05<'a, T: TraceData>(&'a SpanLink<T>);
 
@@ -63,7 +62,8 @@ impl<'a, T: TraceData> Serialize for SpanLinkSerializerV05<'a, T> {
         let tracestate: &str = link.tracestate.borrow();
         let has_tracestate = !tracestate.is_empty();
         let has_attributes = !link.attributes.is_empty();
-        let len = 2 + has_tracestate as usize + has_attributes as usize;
+        let has_flags = link.flags != 0;
+        let len = 2 + has_tracestate as usize + has_attributes as usize + has_flags as usize;
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry(
             "trace_id",
@@ -78,6 +78,9 @@ impl<'a, T: TraceData> Serialize for SpanLinkSerializerV05<'a, T> {
                 "attributes",
                 &SortedStrMapSerializerV05::<T>(&link.attributes),
             )?;
+        }
+        if has_flags {
+            map.serialize_entry("flags", &link.flags)?;
         }
         map.end()
     }
@@ -409,7 +412,7 @@ mod tests {
         let links_json = meta_json(&dict, &v05_span, "_dd.span_links").unwrap();
         assert_eq!(
             links_json,
-            "[{\"trace_id\":\"00000000000109320000000000003039\",\"span_id\":\"000000000000d431\",\"tracestate\":\"tracestate_value\",\"attributes\":{\"key\":\"val\"}}]"
+            "[{\"trace_id\":\"00000000000109320000000000003039\",\"span_id\":\"000000000000d431\",\"tracestate\":\"tracestate_value\",\"attributes\":{\"key\":\"val\"},\"flags\":1}]"
         );
         let events_json = meta_json(&dict, &v05_span, "events").unwrap();
         assert_eq!(
@@ -464,7 +467,7 @@ mod tests {
         let json = serde_json::to_string(&SpanLinksSerializerV05::<BytesData>(&links)).unwrap();
         assert_eq!(
             json,
-            "[{\"trace_id\":\"000000000000000000000000deadbeef\",\"span_id\":\"000000000000feed\"}]"
+            "[{\"trace_id\":\"000000000000000000000000deadbeef\",\"span_id\":\"000000000000feed\",\"flags\":7}]"
         );
     }
 
