@@ -260,6 +260,30 @@ impl SidecarServer {
         target: &Endpoint,
         retry_interval: u64,
     ) {
+        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V04)
+    }
+
+    /// Entry point for the V1 trace path. Input bytes are a V1 msgpack `TracerPayload` from the
+    /// SDK; the [`TraceEncoding::V1`] tag drives [`decode_to_trace_chunks`] to the V1 decoder,
+    /// and [`SendData`] then re-encodes the same shape as V1 on the wire to the agent.
+    fn send_trace_v1(
+        &self,
+        headers: &SerializedTracerHeaderTags,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+        retry_interval: u64,
+    ) {
+        self.send_trace(headers, data, target, retry_interval, TraceEncoding::V1)
+    }
+
+    fn send_trace(
+        &self,
+        headers: &SerializedTracerHeaderTags,
+        data: tinybytes::Bytes,
+        target: &Endpoint,
+        retry_interval: u64,
+        encoding: TraceEncoding,
+    ) {
         let headers: TracerHeaderTags = match headers.try_into() {
             Ok(headers) => headers,
             Err(e) => {
@@ -275,7 +299,7 @@ impl SidecarServer {
             headers
         );
 
-        match decode_to_trace_chunks(data, TraceEncoding::V04) {
+        match decode_to_trace_chunks(data, encoding) {
             Ok((payload, size)) => {
                 trace!("Parsed the trace payload and enqueuing it for sending: {payload:?}");
                 let mut data = SendData::new(
@@ -931,6 +955,63 @@ impl SidecarInterface for ConnectionSidecarHandler {
             tokio::spawn(async move {
                 let bytes = tinybytes::Bytes::from(data);
                 server.send_trace_v04(&headers, bytes, &endpoint, retry_interval);
+            });
+        } else {
+            warn!(
+                "Received trace data for missing session {}",
+                instance_id.session_id
+            );
+        }
+    }
+
+    async fn send_trace_v1_shm(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        _len: usize,
+        headers: SerializedTracerHeaderTags,
+    ) {
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+        if let Some(endpoint) = trace_config.endpoint.clone() {
+            let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
+            tokio::spawn(async move {
+                match handle.map() {
+                    Ok(mapped) => {
+                        let bytes = tinybytes::Bytes::from(mapped);
+                        server.send_trace_v1(&headers, bytes, &endpoint, retry_interval);
+                    }
+                    Err(e) => error!("Failed mapping shared trace data memory: {}", e),
+                }
+            });
+        } else {
+            warn!(
+                "Received trace data ({handle:?}) for missing session {}",
+                instance_id.session_id
+            );
+        }
+    }
+
+    async fn send_trace_v1_bytes(
+        &self,
+        _peer: PeerCredentials,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: SerializedTracerHeaderTags,
+    ) {
+        self.track_instance(&instance_id);
+        let session = self.server.get_session(&instance_id.session_id);
+        let trace_config = session.get_trace_config();
+
+        if let Some(endpoint) = trace_config.endpoint.clone() {
+            let server = self.server.clone();
+            let retry_interval = trace_config.retry_interval;
+            tokio::spawn(async move {
+                let bytes = tinybytes::Bytes::from(data);
+                server.send_trace_v1(&headers, bytes, &endpoint, retry_interval);
             });
         } else {
             warn!(

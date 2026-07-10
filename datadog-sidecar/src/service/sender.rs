@@ -406,6 +406,33 @@ impl SidecarSender {
             .try_send_send_trace_v04_bytes(instance_id, data, headers);
     }
 
+    pub fn send_trace_v1_shm(
+        &mut self,
+        instance_id: InstanceId,
+        handle: ShmHandle,
+        len: usize,
+        headers: SerializedTracerHeaderTags,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_trace_v1_shm(instance_id, handle, len, headers);
+    }
+
+    pub fn send_trace_v1_bytes(
+        &mut self,
+        instance_id: InstanceId,
+        data: Vec<u8>,
+        headers: SerializedTracerHeaderTags,
+    ) {
+        if !self.try_drain_outbox() {
+            return;
+        }
+        self.channel
+            .try_send_send_trace_v1_bytes(instance_id, data, headers);
+    }
+
     pub fn send_debugger_data_shm(
         &mut self,
         instance_id: InstanceId,

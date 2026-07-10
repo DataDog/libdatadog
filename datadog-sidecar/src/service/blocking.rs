@@ -319,6 +319,31 @@ pub fn send_trace_v04_shm(
     Ok(())
 }
 
+/// Sends a V1-encoded trace as bytes. The sidecar decodes the V1 payload, can inspect it, and
+/// re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_bytes(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    data: Vec<u8>,
+    headers: SerializedTracerHeaderTags,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_bytes(instance_id.clone(), data, headers);
+    Ok(())
+}
+
+/// Sends a V1-encoded trace via shared memory. The sidecar decodes the V1 payload, can inspect
+/// it, and re-encodes it as V1 msgpack on the way to the agent's `/v1.0/traces` endpoint.
+pub fn send_trace_v1_shm(
+    transport: &mut SidecarTransport,
+    instance_id: &InstanceId,
+    handle: ShmHandle,
+    len: usize,
+    headers: SerializedTracerHeaderTags,
+) -> io::Result<()> {
+    lock_sender(transport)?.send_trace_v1_shm(instance_id.clone(), handle, len, headers);
+    Ok(())
+}
+
 /// Sends raw data from shared memory to the debugger endpoint.
 pub fn send_debugger_data_shm(
     transport: &mut SidecarTransport,
