@@ -57,11 +57,13 @@ pub async fn run_analysis(
     base_branch: &str,
     head_branch: &str,
     rules: &[String],
-) -> Result<AnalysisResult> {
+) -> Result<Option<AnalysisResult>> {
     let changed_files = get_changed_files(octocrab, owner, repo, pr_number).await?;
 
+    // No Rust files changed is a valid outcome, not an error: there is simply
+    // nothing to analyze.
     if changed_files.is_empty() {
-        return Err(anyhow::anyhow!("No Rust files changed in this PR"));
+        return Ok(None);
     }
     let git_ops = GitOperations::default();
 
@@ -70,7 +72,7 @@ pub async fn run_analysis(
     let (repo_base_crate_counts, repo_head_crate_counts) =
         analyze_all_files_for_crates(&all_files, base_branch, head_branch, rules)?;
 
-    Ok(AnalysisResult {
+    Ok(Some(AnalysisResult {
         base_annotations: pr_analysis.base_annotations,
         head_annotations: pr_analysis.head_annotations,
         base_counts: pr_analysis.base_counts,
@@ -78,7 +80,7 @@ pub async fn run_analysis(
         changed_files: pr_analysis.changed_files,
         base_crate_counts: repo_base_crate_counts,
         head_crate_counts: repo_head_crate_counts,
-    })
+    }))
 }
 /// Analyze clippy annotations in base and head branches
 fn analyze_annotations(

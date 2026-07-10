@@ -43,15 +43,22 @@ async fn main() -> Result<()> {
         &config.head_branch,
         &config.rules,
     )
-    .await
+    .await?
     {
-        Ok(result) => result,
-        Err(e) => {
-            if e.to_string().contains("No Rust files changed") {
-                info!("No Rust files changed in this PR, nothing to analyze.");
-                return Ok(());
-            }
-            return Err(e);
+        Some(result) => result,
+        None => {
+            // No Rust files changed. A prior revision of this PR may have touched
+            // Rust and posted a comment, so remove any stale one.
+            info!("No Rust files changed in this PR; removing any stale comment.");
+            commenter::delete_comment_if_exists(
+                &octocrab,
+                &config.owner,
+                &config.repo,
+                config.pr_number,
+                None,
+            )
+            .await?;
+            return Ok(());
         }
     };
 
