@@ -188,6 +188,7 @@ pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 /// Handles for the background workers owned by a [`TraceExporter`].
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
+    dogstatsd: Option<WorkerHandle>,
     /// `None` when no background `/info` fetcher is started (agentless trace
     /// export mode, log-export mode).
     info_fetcher: Option<WorkerHandle>,
@@ -342,6 +343,10 @@ impl<
 
         if let Some(info_fetcher) = self.workers.info_fetcher {
             handles.push(info_fetcher);
+        }
+
+        if let Some(dogstatsd) = self.workers.dogstatsd {
+            handles.push(dogstatsd)
         }
 
         #[cfg(feature = "telemetry")]
