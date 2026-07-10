@@ -5,7 +5,7 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 
-use hashbrown::{HashMap, HashSet, hash_set::Entry};
+use hashbrown::{hash_set::Entry, HashMap, HashSet};
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
