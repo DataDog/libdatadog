@@ -437,7 +437,10 @@ pub(super) struct StatsBucket {
     distinct_resources: HashSet<u64>,
     distinct_http_endpoint: HashSet<u64>,
     distinct_peer_tags: HashSet<u64>,
-    #[allow(unused, reason = "FIXME: implement stats additional tags")]
+    #[allow(
+        unused,
+        reason = "FIXME(SVLS-8787|github.com/DataDog/libdatadog/pull/2170): implement stats additional tags"
+    )]
     distinct_additional_tags: HashSet<u64>,
     /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
     collapsed_count: u64,
