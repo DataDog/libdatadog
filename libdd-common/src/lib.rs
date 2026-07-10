@@ -6,12 +6,16 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+extern crate alloc;
+
+use alloc::borrow::Cow;
 use anyhow::Context;
+use core::{ops::Deref, str::FromStr};
 use http::uri;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
 
 pub mod azure_app_services;
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,6 +25,7 @@ pub mod connector;
 #[cfg(feature = "reqwest")]
 pub mod dump_server;
 pub mod entity_id;
+pub mod machine_id;
 pub mod regex_engine;
 #[macro_use]
 pub mod cstr;
@@ -460,7 +465,7 @@ impl Endpoint {
         // configuration will mutate the system environment (it doesn't pass
         // it as part of the SAPI env, it changes the actual system env).
         let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .timeout(core::time::Duration::from_millis(self.timeout_ms))
             .hickory_dns(!self.use_system_resolver)
             .no_proxy();
 

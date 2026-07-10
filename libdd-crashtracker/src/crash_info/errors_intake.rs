@@ -1,6 +1,8 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::borrow::Cow;
+use core::time::Duration;
 use std::time::SystemTime;
 
 use crate::{OsInfo, SigInfo, Ucontext};
@@ -14,7 +16,7 @@ use chrono::{DateTime, Utc};
 use http::{uri::PathAndQuery, Uri};
 use libdd_common::{config::parse_env, parse_uri, Endpoint};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
 pub const DEFAULT_DD_SITE: &str = "datadoghq.com";
 pub const PROD_ERRORS_INTAKE_SUBDOMAIN: &str = "error-tracking-intake";

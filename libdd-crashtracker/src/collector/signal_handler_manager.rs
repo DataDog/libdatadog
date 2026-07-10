@@ -3,15 +3,15 @@
 use super::crash_handler::handle_posix_sigaction;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::signal_from_signum;
+use core::ptr;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::Ordering::SeqCst;
 use libc::{
     c_void, mmap, sigaltstack, siginfo_t, MAP_ANON, MAP_FAILED, MAP_PRIVATE, PROT_NONE, PROT_READ,
     PROT_WRITE, SIGSTKSZ,
 };
 use libdd_common::unix_utils::terminate;
 use nix::sys::signal::{self, SaFlags, SigAction, SigHandler};
-use std::ptr;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::SeqCst;
 
 // Linux seems to have the most, supporting up to 64 inclusive
 // https://man7.org/linux/man-pages/man7/signal.7.html
@@ -142,7 +142,7 @@ unsafe fn create_alt_stack() -> anyhow::Result<()> {
     // arbitrary, but at least it's large enough for our purposes, and yet a small enough part of
     // the process RSS that it shouldn't be a problem.
     let page_size = page_size::get();
-    let sigalstack_base_size = std::cmp::max(SIGSTKSZ, 16 * page_size);
+    let sigalstack_base_size = core::cmp::max(SIGSTKSZ, 16 * page_size);
     let stackp = mmap(
         ptr::null_mut(),
         sigalstack_base_size + page_size,

@@ -74,7 +74,10 @@ impl TelemetryClientBuilder {
     pub fn set_url(mut self, url: &str) -> Self {
         let _ = self
             .config
-            .set_endpoint(libdd_common::Endpoint::from_slice(url));
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(url.to_owned()),
+                ..Default::default()
+            });
         self
     }
 
@@ -324,6 +327,11 @@ impl TelemetryClient {
             .worker
             .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
             .await;
+    }
+
+    /// Clone the telemetry handle
+    pub fn clone_handle(&self) -> TelemetryWorkerHandle {
+        self.worker.clone()
     }
 }
 

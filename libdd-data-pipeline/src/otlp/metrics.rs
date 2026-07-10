@@ -21,6 +21,32 @@ use tracing::error;
 
 const METRIC_NAME: &str = "traces.span.sdk.metrics.duration";
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+
+// Canonical gRPC status names indexed by numeric code.
+// See <https://github.com/grpc/grpc/blob/master/doc/statuscodes.md>.
+const GRPC_STATUS_NAMES: [&str; 17] = [
+    "OK",
+    "CANCELLED",
+    "UNKNOWN",
+    "INVALID_ARGUMENT",
+    "DEADLINE_EXCEEDED",
+    "NOT_FOUND",
+    "ALREADY_EXISTS",
+    "PERMISSION_DENIED",
+    "RESOURCE_EXHAUSTED",
+    "FAILED_PRECONDITION",
+    "ABORTED",
+    "OUT_OF_RANGE",
+    "UNIMPLEMENTED",
+    "INTERNAL",
+    "UNAVAILABLE",
+    "DATA_LOSS",
+    "UNAUTHENTICATED",
+];
+
+fn grpc_status_code_to_name(code: &str) -> Option<&'static str> {
+    GRPC_STATUS_NAMES.get(code.parse::<usize>().ok()?).copied()
+}
 /// Fixed bucket boundaries (seconds) mirroring the OTel spanmetrics-connector defaults.
 const EXPLICIT_BOUNDS_SECONDS: [f64; 16] = [
     0.002, 0.004, 0.006, 0.008, 0.01, 0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.4, 2.0, 5.0, 10.0, 15.0,
@@ -145,7 +171,10 @@ fn build_attributes(
     push("span.kind", &group.span_kind);
     push("http.request.method", &group.http_method);
     push("http.route", &group.http_endpoint);
-    push("rpc.response.status_code", &group.grpc_status_code);
+    // group.grpc_status_code is the numeric code as a string; emit the canonical OTel status name.
+    if let Some(name) = grpc_status_code_to_name(&group.grpc_status_code) {
+        push("rpc.response.status_code", name);
+    }
     for tag in &group.peer_tags {
         if let Some((k, v)) = tag.split_once(':') {
             push(k, v);
@@ -226,7 +255,7 @@ pub struct OtlpStatsExporter<C: HttpClientCapability + SleepCapability> {
 impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
     /// Flush the concentrator and export stats; returns `Ok(true)` if anything was sent.
     async fn send(&self, force_flush: bool, max_retries: u32) -> anyhow::Result<bool> {
-        let buckets = {
+        let (buckets, _collapsed_count) = {
             #[allow(clippy::unwrap_used)]
             let mut c = self.concentrator.lock().unwrap();
             c.flush_with_otlp_exact(SystemTime::now(), force_flush)
@@ -472,6 +501,26 @@ mod tests {
     }
 
     #[test]
+    fn emits_canonical_grpc_status_name_for_rpc_response_status_code() {
+        let g = group_with_exact(&[1_000_000_000], &[], |g| {
+            g.grpc_status_code = "5".into();
+        });
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let a = points(&req)[0]["attributes"].as_array().unwrap();
+        assert_eq!(str_at(a, "rpc.response.status_code"), Some("NOT_FOUND"));
+
+        // Empty/unmapped codes omit the attribute.
+        for code in ["", "99"] {
+            let g = group_with_exact(&[1_000_000_000], &[], |g| {
+                g.grpc_status_code = code.into();
+            });
+            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            let a = points(&req)[0]["attributes"].as_array().unwrap();
+            assert!(!a.iter().any(|kv| kv["key"] == "rpc.response.status_code"));
+        }
+    }
+
+    #[test]
     fn histogram_values_are_exact_and_distribution_uses_sketch() {
         // Single 1s ok span: count/sum/min/max all exact, distribution shaped by the sketch.
         let req =
@@ -528,5 +577,16 @@ mod tests {
         let ok_s = ok_pt["sum"].as_f64().unwrap();
         let err_s = err_pt["sum"].as_f64().unwrap();
         assert_eq!(ok_s + err_s, ns_to_s(combined_ns));
+    }
+
+    #[test]
+    fn test_grpc_status_code_to_name() {
+        assert_eq!(grpc_status_code_to_name("0"), Some("OK"));
+        assert_eq!(grpc_status_code_to_name("5"), Some("NOT_FOUND"));
+        assert_eq!(grpc_status_code_to_name("14"), Some("UNAVAILABLE"));
+        assert_eq!(grpc_status_code_to_name("16"), Some("UNAUTHENTICATED"));
+        assert_eq!(grpc_status_code_to_name("17"), None);
+        assert_eq!(grpc_status_code_to_name(""), None);
+        assert_eq!(grpc_status_code_to_name("OK"), None);
     }
 }
