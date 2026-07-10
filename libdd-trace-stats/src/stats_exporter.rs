@@ -643,7 +643,9 @@ mod tests {
 
     /// Build a concentrator with `max_entries_per_bucket = 1` pre-seeded with four distinct spans
     /// so that three spans are collapsed into the overflow bucket.
+    #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
     fn get_collapsed_concentrator() -> SpanConcentrator {
+        use crate::span_concentrator::CardinalityLimitConfig;
         use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
 
         let mut concentrator = SpanConcentrator::new(
@@ -652,7 +654,8 @@ mod tests {
             vec![],
             vec![],
             Some(CardinalityLimitConfig {
-                whole_key_limit: 1, // max 1 distinct key → second span collapses
+                whole_key_limit: 2, // max 2 distinct key → third distinct span collapses
+                resource_limit: 1,  // max 1 distinct resource values
                 ..Default::default()
             }),
             vec![],
@@ -662,26 +665,26 @@ mod tests {
 
         let mut trace = vec![
             SpanSlice {
-                service: "svc",
+                service: "svc-a",
                 resource: "resource-a",
                 duration: 10,
                 ..Default::default()
             },
             SpanSlice {
-                service: "svc",
+                service: "svc-a",
                 resource: "resource-b",
                 duration: 20,
                 ..Default::default()
             },
             SpanSlice {
-                service: "svc",
-                resource: "resource-c",
+                service: "svc-b",
+                resource: "resource-a",
                 duration: 20,
                 ..Default::default()
             },
             SpanSlice {
-                service: "svc",
-                resource: "resource-d",
+                service: "svc-b",
+                resource: "resource-b",
                 duration: 20,
                 ..Default::default()
             },
@@ -739,7 +742,8 @@ mod tests {
         let result = socket.recv(&mut buf);
         assert!(
             result.is_err(),
-            "No DogStatsD datagram expected when collapsed_spans == 0"
+            "No DogStatsD datagram expected when collapsed_spans == 0. Got {}",
+            std::str::from_utf8(&buf[..result.unwrap()]).unwrap()
         );
     }
 
@@ -783,12 +787,23 @@ mod tests {
         stats_exporter.send(true).await.unwrap();
 
         let mut buf = [0u8; 256];
+        // Whole-key metric emitted first
         let n = socket
             .recv(&mut buf)
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:3|c|#collapsed_spans:whole_key",
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:whole_key",
+            "DogStatsD datagram must match the expected format"
+        );
+
+        // Then comes the per-field collapse metrics
+        let n = socket
+            .recv(&mut buf)
+            .expect("expected a DogStatsD datagram");
+        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
+        assert_eq!(
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:resource",
             "DogStatsD datagram must match the expected format"
         );
     }
@@ -849,8 +864,8 @@ mod tests {
             "exactly one metric context (COLLAPSED_SPANS_METRIC) should be registered"
         );
         assert_eq!(
-            stats.metric_buckets.buckets, 1,
-            "exactly one metric bucket expected after one collapsed-spans emission"
+            stats.metric_buckets.buckets, 2,
+            "exactly one metric bucket expected after collapsing both on whole-key and on the resource field"
         );
     }
 }
