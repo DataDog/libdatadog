@@ -6,6 +6,7 @@ pub mod dict;
 use crate::span::v04::{AttributeAnyValue, AttributeArrayValue, SpanEvent, SpanLink};
 use crate::span::{SharedDictBytes, SpanText, TraceData};
 use anyhow::Result;
+use indexmap::map::RawEntryApiV1;
 use libdd_tinybytes::BytesString;
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
@@ -182,6 +183,21 @@ impl<'a, T: TraceData> Serialize for AttributeArrayValueV05<'a, T> {
     }
 }
 
+/// Gets the index of the interned string. If the string is not part of the dictionary it is
+/// added and its corresponding index returned.
+///
+/// Checks if the span text is already interned before creating a
+/// new ByteString instance from it.
+fn get_or_insert(
+    dict: &mut SharedDictBytes,
+    str: &impl SpanText,
+) -> Result<u32, std::num::TryFromIntError> {
+    let entry = dict.map.raw_entry_mut_v1().from_key(str.borrow());
+    let idx = entry.index();
+    entry.or_insert_with(|| (str.to_bytes_string(), ()));
+    idx.try_into()
+}
+
 /// Converts a v0.4 [`Span`](crate::span::v04::Span) into its v0.5 dictionary-encoded form.
 ///
 /// The v0.5 format is a fixed 12-element positional array (service, name, resource, trace_id,
@@ -229,16 +245,13 @@ pub fn from_v04_span<T: TraceData>(
 
     // Intern fields in the same order as the base conversion to keep dictionary indices
     // stable; the span links / events keys are appended to `meta` afterwards.
-    let service = dict.get_or_insert(span.service.to_bytes_string())?;
-    let name = dict.get_or_insert(span.name.to_bytes_string())?;
-    let resource = dict.get_or_insert(span.resource.to_bytes_string())?;
+    let service = get_or_insert(dict, &span.service)?;
+    let name = get_or_insert(dict, &span.name)?;
+    let resource = get_or_insert(dict, &span.resource)?;
     let mut meta = span.meta.into_iter().try_fold(
         HashMap::with_capacity(meta_len + extra_meta),
         |mut meta, (k, v)| -> anyhow::Result<HashMap<u32, u32>> {
-            meta.insert(
-                dict.get_or_insert(k.to_bytes_string())?,
-                dict.get_or_insert(v.to_bytes_string())?,
-            );
+            meta.insert(get_or_insert(dict, &k)?, get_or_insert(dict, &v)?);
             Ok(meta)
         },
     )?;
@@ -257,11 +270,11 @@ pub fn from_v04_span<T: TraceData>(
     let metrics = span.metrics.into_iter().try_fold(
         HashMap::with_capacity(metrics_len),
         |mut metrics, (k, v)| -> anyhow::Result<HashMap<u32, f64>> {
-            metrics.insert(dict.get_or_insert(k.to_bytes_string())?, v);
+            metrics.insert(get_or_insert(dict, &k)?, v);
             Ok(metrics)
         },
     )?;
-    let r#type = dict.get_or_insert(span.r#type.to_bytes_string())?;
+    let r#type = get_or_insert(dict, &span.r#type)?;
 
     Ok(Span {
         service,
