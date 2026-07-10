@@ -198,6 +198,11 @@ impl<
             }
         }
 
+        #[cfg(feature = "dogstatsd")]
+        if let Some(client) = &self.dogstatsd {
+            flush.collapsed_fields_metrics.emit_dogstatsd(client);
+        }
+
         let futures = FuturesUnordered::new();
 
         if !flush.obfuscated_buckets.is_empty() {

@@ -6,6 +6,7 @@
 //! span.
 
 use hashbrown::{HashMap, HashSet};
+use libdd_common::tag::const_assert;
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
@@ -501,12 +502,88 @@ pub(super) struct StatsBucket {
     distinct_http_endpoints: HashSet<u64>,
     distinct_peer_tags: HashSet<u64>,
     distinct_additional_tags: HashSet<u64>,
-    /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
+    /// Number of spans collapsed into the overflow bucket due to whole-key cardinality limiting.
     collapsed_count: u64,
+    collapsed_fields_metrics: CollapsedFieldsMetrics,
     /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
     /// constant per bucket
     #[cfg(feature = "stats-obfuscation")]
     pub(super) obfuscated: bool,
+}
+
+#[repr(transparent)]
+pub struct CollapsedField;
+impl CollapsedField {
+    pub const RESOURCE_NAME: usize = 1 << 1;
+    pub const HTTP_ENDPOINT: usize = 1 << 2;
+    pub const PEER_TAGS: usize = 1 << 3;
+    #[allow(
+        unused,
+        reason = "FIXME(SVLS-8787|github.com/DataDog/libdatadog/pull/2170): implement stats additional tags"
+    )]
+    pub const ADDITIONAL_TAGS: usize = 1 << 4;
+    pub const COUNT: u8 = 5;
+}
+
+const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << CollapsedField::COUNT;
+#[derive(Debug, Clone, Default, Copy)]
+pub struct CollapsedFieldsMetrics([usize; COLLAPSED_FIELD_METRIC_SIZE]);
+
+const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 32); // Metrics table is of reasonable size
+
+impl CollapsedFieldsMetrics {
+    pub(crate) fn zero() -> Self {
+        Self::default()
+    }
+
+    #[cfg(feature = "dogstatsd")]
+    pub fn emit_dogstatsd(
+        &self,
+        dogstatsd: &std::sync::Arc<libdd_dogstatsd_client::DogStatsDClient>,
+    ) {
+        for (mask, &count) in self.0.iter().enumerate() {
+            if count > 0 {
+                let mut tags = Vec::new();
+                for field in 0..CollapsedField::COUNT {
+                    let field_value = 1 << field;
+                    let has_field = (mask | field_value) != 0;
+                    if !has_field {
+                        continue;
+                    }
+                    let field_tag = match field_value {
+                        CollapsedField::RESOURCE_NAME => {
+                            libdd_common::tag!("collapsed_spans", "resource")
+                        }
+                        CollapsedField::HTTP_ENDPOINT => {
+                            libdd_common::tag!("collapsed_spans", "http_endpoint")
+                        }
+                        CollapsedField::PEER_TAGS => {
+                            libdd_common::tag!("collapsed_spans", "peer_tags")
+                        }
+                        CollapsedField::ADDITIONAL_TAGS => {
+                            libdd_common::tag!("collapsed_spans", "additional_metric_tags")
+                        }
+                        #[allow(clippy::unreachable, reason = "I swear it is unreachable")]
+                        _ => unreachable!(),
+                    };
+                    tags.push(field_tag);
+                }
+                dogstatsd.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
+                    "datadog.tracer.stats.collapsed_spans",
+                    count as i64,
+                    tags.iter(),
+                )]);
+            }
+        }
+    }
+}
+
+impl std::ops::AddAssign for CollapsedFieldsMetrics {
+    fn add_assign(&mut self, rhs: Self) {
+        for i in 0..self.0.len() {
+            self.0[i] += rhs.0[i];
+        }
+    }
 }
 
 impl StatsBucket {
@@ -529,7 +606,13 @@ impl StatsBucket {
             distinct_http_endpoints: HashSet::new(),
             distinct_peer_tags: HashSet::new(),
             distinct_additional_tags: HashSet::new(),
+            collapsed_fields_metrics: CollapsedFieldsMetrics([0; COLLAPSED_FIELD_METRIC_SIZE]),
         }
+    }
+
+    /// Returns metrics on spans field collapse with reasons.
+    pub fn collapsed_fields_metrics(&self) -> CollapsedFieldsMetrics {
+        self.collapsed_fields_metrics
     }
 
     /// Return the number of spans collapsed into the overflow bucket.
@@ -588,11 +671,14 @@ impl StatsBucket {
             hasher.finish()
         }
 
+        let mut collapsed_fields = 0;
+
         let resource_hash = hash(&key.fixed.resource_name);
         let resources_count = self.distinct_resources.len();
         if let Entry::Vacant(slot) = self.distinct_resources.entry(resource_hash) {
             if resources_count >= self.cardinality_limits.resource_limit {
                 key.fixed.resource_name = TRACER_BLOCKED_VALUE;
+                collapsed_fields |= CollapsedField::RESOURCE_NAME;
             } else {
                 slot.insert();
             }
@@ -603,6 +689,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_http_endpoints.entry(http_endpoint_hash) {
             if http_endpoints_count >= self.cardinality_limits.http_endpoint_limit {
                 key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
+                collapsed_fields |= CollapsedField::HTTP_ENDPOINT;
             } else {
                 slot.insert();
             }
@@ -613,6 +700,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_peer_tags.entry(peer_tags_hash) {
             if peer_tags_count >= self.cardinality_limits.peer_tags_limit {
                 key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
+                collapsed_fields |= CollapsedField::PEER_TAGS;
             } else {
                 slot.insert();
             }
@@ -627,6 +715,7 @@ impl StatsBucket {
                 slot.insert();
             }
         }
+        self.collapsed_fields_metrics.0[collapsed_fields] += 1;
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
