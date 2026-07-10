@@ -11,6 +11,8 @@ use std::{
 
 use crate::span_concentrator::{FlushableConcentrator, SpanConcentrator};
 use async_trait::async_trait;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt as _;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
@@ -194,22 +196,25 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             }
         }
 
-        if !flush.obfuscated_buckets.is_empty() && !flush.unobfuscated_buckets.is_empty() {
-            let (res_obfuscated, res_unobfuscated) = tokio::join!(
-                self.send_payload(flush.obfuscated_buckets, true),
-                self.send_payload(flush.unobfuscated_buckets, false)
-            );
-            res_obfuscated?;
-            res_unobfuscated?;
-            return Ok(true);
-        } else if !flush.obfuscated_buckets.is_empty() {
-            self.send_payload(flush.obfuscated_buckets, true).await?;
-            return Ok(true);
-        } else if !flush.unobfuscated_buckets.is_empty() {
-            self.send_payload(flush.unobfuscated_buckets, true).await?;
-            return Ok(true);
+        let futures = FuturesUnordered::new();
+
+        if !flush.obfuscated_buckets.is_empty() {
+            futures.push(self.send_payload(flush.obfuscated_buckets, true));
         }
-        Ok(false)
+
+        if !flush.unobfuscated_buckets.is_empty() {
+            futures.push(self.send_payload(flush.unobfuscated_buckets, false));
+        }
+
+        let sent_stats = !futures.is_empty();
+
+        futures
+            .collect::<Vec<anyhow::Result<()>>>()
+            .await
+            .into_iter()
+            .collect::<anyhow::Result<()>>()?;
+
+        Ok(sent_stats)
     }
 
     /// Encode the given buckets into a stats payload and send it to the agent.
