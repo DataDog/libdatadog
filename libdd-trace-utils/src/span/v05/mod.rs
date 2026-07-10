@@ -83,8 +83,8 @@ impl<'a, T: TraceData> Serialize for SpanLinkSerializerV05<'a, T> {
     }
 }
 
-/// Serializes a `HashMap<T::Text, T::Text>` as a JSON object with keys in sorted order, matching
-/// Go's `encoding/json` (which the agent uses) and keeping the output deterministic.
+/// Serializes a `HashMap<T::Text, T::Text>` as a JSON object with keys in sorted order,
+/// keeping the output deterministic for snapshot testing
 struct SortedStrMapSerializerV05<'a, T: TraceData>(&'a HashMap<T::Text, T::Text>);
 
 impl<'a, T: TraceData> Serialize for SortedStrMapSerializerV05<'a, T> {
