@@ -527,6 +527,7 @@ impl CollapsedField {
 
 const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << CollapsedField::COUNT;
 #[derive(Debug, Clone, Default, Copy)]
+// note slot 0 is a counter for non_collapsed spans. useless
 pub struct CollapsedFieldsMetrics([usize; COLLAPSED_FIELD_METRIC_SIZE]);
 
 const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 32); // Metrics table is of reasonable size
@@ -537,16 +538,21 @@ impl CollapsedFieldsMetrics {
     }
 
     #[cfg(feature = "dogstatsd")]
-    pub fn emit_dogstatsd(
-        &self,
-        dogstatsd: &std::sync::Arc<libdd_dogstatsd_client::DogStatsDClient>,
-    ) {
-        for (mask, &count) in self.0.iter().enumerate() {
+    pub fn emit_dogstatsd(&self, dogstatsd: &libdd_dogstatsd_client::DogStatsDClient) {
+        // skip the first slot that is used to count span which have no collapsed fields.
+        for (mask, &count) in self.0.iter().enumerate().skip(1) {
             if count > 0 {
                 let mut tags = Vec::new();
-                for field in 0..CollapsedField::COUNT {
-                    let field_value = 1 << field;
-                    let has_field = (mask | field_value) != 0;
+                for field_pow in 1..CollapsedField::COUNT {
+                    let field_value = 1 << field_pow;
+                    assert!([
+                        CollapsedField::RESOURCE_NAME,
+                        CollapsedField::HTTP_ENDPOINT,
+                        CollapsedField::PEER_TAGS,
+                        CollapsedField::ADDITIONAL_TAGS
+                    ]
+                    .contains(&field_value));
+                    let has_field = dbg!(mask & field_value) != 0;
                     if !has_field {
                         continue;
                     }
@@ -568,6 +574,7 @@ impl CollapsedFieldsMetrics {
                     };
                     tags.push(field_tag);
                 }
+                assert!(!tags.is_empty());
                 dogstatsd.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     "datadog.tracer.stats.collapsed_spans",
                     count as i64,
