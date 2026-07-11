@@ -3302,6 +3302,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-profiling-heap-jemalloc"
+version = "0.1.0"
+dependencies = [
+ "libdd-profiling-heap-sampler",
+ "tikv-jemalloc-ctl",
+ "tikv-jemallocator",
+]
+
+[[package]]
 name = "libdd-profiling-heap-sampler"
 version = "0.1.0"
 dependencies = [
@@ -5914,6 +5923,34 @@ checksum = "8b9ef9bad013ada3808854ceac7b46812a6465ba368859a37e2100283d2d719c"
 dependencies = [
  "cfg-if",
  "once_cell",
+]
+
+[[package]]
+name = "tikv-jemalloc-ctl"
+version = "0.7.0"
+source = "git+https://github.com/scottgerring/jemallocator?branch=scottgerring%2Fprofiling-hooks#96bfb1b9f483c8e9c7b2e378c266cf8645a0c804"
+dependencies = [
+ "libc",
+ "paste",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
+name = "tikv-jemalloc-sys"
+version = "0.7.0+5.3.1-0-g81034ce1f1373e37dc865038e1bc8eeecf559ce8"
+source = "git+https://github.com/scottgerring/jemallocator?branch=scottgerring%2Fprofiling-hooks#96bfb1b9f483c8e9c7b2e378c266cf8645a0c804"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
+name = "tikv-jemallocator"
+version = "0.7.0"
+source = "git+https://github.com/scottgerring/jemallocator?branch=scottgerring%2Fprofiling-hooks#96bfb1b9f483c8e9c7b2e378c266cf8645a0c804"
+dependencies = [
+ "libc",
+ "tikv-jemalloc-sys",
 ]
 
 [[package]]

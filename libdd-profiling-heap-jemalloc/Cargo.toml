@@ -1,0 +1,26 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-profiling-heap-jemalloc"
+version = "0.1.0"
+description = "Drives libdd-profiling-heap-sampler's USDTs from jemalloc's own experimental sampling hooks."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-jemalloc"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-jemalloc"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+bench = false
+
+[dependencies]
+libdd-profiling-heap-sampler = { path = "../libdd-profiling-heap-sampler" }
+tikv-jemalloc-ctl = { git = "https://github.com/scottgerring/jemallocator", branch = "scottgerring/profiling-hooks", features = [
+  "profiling_hooks",
+  "use_std",
+] }
+
+[dev-dependencies]
+tikv-jemallocator = { git = "https://github.com/scottgerring/jemallocator", branch = "scottgerring/profiling-hooks" }
