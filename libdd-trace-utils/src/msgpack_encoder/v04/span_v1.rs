@@ -31,7 +31,7 @@
 //! dropped: the dedicated field always wins, so each key is written at most once.
 
 use crate::span::v1::{AttributeValue, Span, SpanEvent, SpanKind, SpanLink};
-use crate::span::vec_map::VecMap;
+use crate::span::vec_map::{DedupedVecMap, VecMap};
 use crate::span::TraceData;
 use rmp::encode::{
     write_array_len, write_bin, write_bool, write_f64, write_i64, write_map_len, write_sint,
@@ -39,6 +39,7 @@ use rmp::encode::{
 };
 use std::borrow::Borrow;
 use std::collections::HashSet;
+use std::fmt::Write as _;
 
 /// Writes a `bool` as the v0.4 string representation (`"true"` / `"false"`). Used wherever a
 /// typed V1 `Bool` attribute is downgraded into v0.4 `meta` (which is `String → String` only).
@@ -69,15 +70,43 @@ const PROMOTED_ATTR_KEYS: &[&str] = &[
 /// carries payload-level fields (`payload_env`, `payload_app_version`, `payload_attributes`),
 /// which apply as a fallback when the span itself doesn't set the equivalent field — v0.4 has
 /// neither a chunk nor a payload concept, so both levels collapse onto every span.
+///
+/// `chunk_attrs_dd` / `payload_attrs_dd` are deduped once here rather than per span: unlike the
+/// span's own attributes, they're identical for every span in the chunk.
 pub(super) struct ChunkContext<'a, T: TraceData> {
     pub trace_id: &'a [u8; 16],
     pub priority: Option<i32>,
     pub origin: &'a T::Text,
     pub sampling_mechanism: Option<u32>,
-    pub attributes: &'a VecMap<T::Text, AttributeValue<T>>,
     pub payload_env: &'a T::Text,
     pub payload_app_version: &'a T::Text,
-    pub payload_attributes: &'a VecMap<T::Text, AttributeValue<T>>,
+    pub chunk_attrs_dd: DedupedVecMap<'a, T::Text, AttributeValue<T>>,
+    pub payload_attrs_dd: DedupedVecMap<'a, T::Text, AttributeValue<T>>,
+}
+
+impl<'a, T: TraceData> ChunkContext<'a, T> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        trace_id: &'a [u8; 16],
+        priority: Option<i32>,
+        origin: &'a T::Text,
+        sampling_mechanism: Option<u32>,
+        attributes: &'a VecMap<T::Text, AttributeValue<T>>,
+        payload_env: &'a T::Text,
+        payload_app_version: &'a T::Text,
+        payload_attributes: &'a VecMap<T::Text, AttributeValue<T>>,
+    ) -> Self {
+        Self {
+            trace_id,
+            priority,
+            origin,
+            sampling_mechanism,
+            payload_env,
+            payload_app_version,
+            chunk_attrs_dd: attributes.defensive_dedup(),
+            payload_attrs_dd: payload_attributes.defensive_dedup(),
+        }
+    }
 }
 
 /// Maps a `SpanKind` to its v0.4 `span.kind` meta string. Returns `None` for `Internal` so
@@ -114,6 +143,26 @@ struct BucketCounts {
     meta_struct: u32,
 }
 
+/// Drops entries whose key was already seen, keeping the first occurrence. Two distinct
+/// attributes can flatten to the same dotted key (e.g. a literal `"a.0"` attribute alongside a
+/// `List` attribute named `"a"`, whose first element also flattens to `"a.0"`); msgpack doesn't
+/// forbid duplicate map keys, but doesn't define decoder precedence for them either, so we
+/// enforce "each key written at most once" ourselves rather than leaving it to chance.
+fn dedup_first_wins<V>(mut leaves: Vec<(String, V)>) -> Vec<(String, V)> {
+    // Same two-pass technique as `VecMap::dedup`: collect a keep/drop bitmap using borrowed
+    // `&str`s (no per-key clone), then `retain` in place (no full re-collect into a new `Vec`).
+    let keep: Vec<bool> = {
+        let mut seen: HashSet<&str> = HashSet::with_capacity(leaves.len());
+        leaves
+            .iter()
+            .map(|(k, _)| seen.insert(k.as_str()))
+            .collect()
+    };
+    let mut keep = keep.into_iter();
+    leaves.retain(|_| keep.next().unwrap_or(false));
+    leaves
+}
+
 /// Recursively flattens a `List`/`KeyValue` attribute into dotted-key leaf entries for the v0.4
 /// `meta` (string-valued) and `metrics` (numeric) maps — matching how intake/the UI expect nested
 /// V1 attributes to be exploded: list elements become `key.0`, `key.1`, ... and `KeyValue`
@@ -121,29 +170,40 @@ struct BucketCounts {
 /// (`String`/`Bool`/`Int`/`Float`) are leaves in their own right and produce a single entry under
 /// `key`. `Bytes` has no flattened form; callers must route it to `meta_struct` separately.
 fn flatten_attr_into<T: TraceData>(
-    key: String,
+    key: &mut String,
     v: &AttributeValue<T>,
     meta_out: &mut Vec<(String, String)>,
     metrics_out: &mut Vec<(String, f64)>,
 ) {
     match v {
-        AttributeValue::String(s) => meta_out.push((key, s.borrow().to_owned())),
+        AttributeValue::String(s) => meta_out.push((key.clone(), s.borrow().to_owned())),
         AttributeValue::Bool(b) => {
-            meta_out.push((key, if *b { "true" } else { "false" }.to_owned()))
+            meta_out.push((key.clone(), if *b { "true" } else { "false" }.to_owned()))
         }
-        AttributeValue::Int(i) => metrics_out.push((key, *i as f64)),
-        AttributeValue::Float(f) => metrics_out.push((key, *f)),
+        AttributeValue::Int(i) => metrics_out.push((key.clone(), *i as f64)),
+        AttributeValue::Float(f) => metrics_out.push((key.clone(), *f)),
         AttributeValue::Bytes(_) => {
             // Callers filter `Bytes` out before recursing; unreachable in practice.
         }
         AttributeValue::List(items) => {
+            // Reuse `key`'s buffer across siblings instead of allocating a new `String` per
+            // recursion level: append the suffix, recurse, then truncate back before the next
+            // sibling. Only leaves actually need an owned `String` (via `.clone()` above).
+            let base_len = key.len();
             for (i, item) in items.iter().enumerate() {
-                flatten_attr_into(format!("{key}.{i}"), item, meta_out, metrics_out);
+                key.push('.');
+                let _ = write!(key, "{i}");
+                flatten_attr_into(key, item, meta_out, metrics_out);
+                key.truncate(base_len);
             }
         }
         AttributeValue::KeyValue(map) => {
+            let base_len = key.len();
             for (k, v) in map.defensive_dedup().iter() {
-                flatten_attr_into(format!("{key}.{}", k.borrow()), v, meta_out, metrics_out);
+                key.push('.');
+                key.push_str(k.borrow());
+                flatten_attr_into(key, v, meta_out, metrics_out);
+                key.truncate(base_len);
             }
         }
     }
@@ -175,8 +235,6 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     chunk: &ChunkContext<'_, T>,
 ) -> Result<(), ValueWriteError<W::Error>> {
     let span_attrs_dd = span.attributes.defensive_dedup();
-    let chunk_attrs_dd = chunk.attributes.defensive_dedup();
-    let payload_attrs_dd = chunk.payload_attributes.defensive_dedup();
 
     // Merge span + chunk + payload attributes upfront with explicit "span overrides chunk
     // overrides payload" precedence. We don't rely on msgpack map last-write-wins decoding
@@ -185,23 +243,24 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     //
     // Attributes sharing a name with a "promoted" dedicated field (`env`, `_dd.origin`, ...)
     // are dropped here: the dedicated field always wins so we never emit that key twice.
-    let span_keys: HashSet<&T::Text> = span_attrs_dd.iter().map(|(k, _)| k).collect();
-    let mut seen_keys: HashSet<&T::Text> = span_keys.clone();
-    let chunk_only: Vec<(&T::Text, &AttributeValue<T>)> = chunk_attrs_dd
+    //
+    // This is a hot path (once per span), so precedence is resolved by chaining filtered
+    // iterators over the already-deduped maps rather than materializing intermediate
+    // `Vec`/`HashSet`s of keys — `chunk_attrs_dd`/`payload_attrs_dd` are small enough in
+    // practice that the linear "is this key already present" scans below are cheaper than an
+    // allocation.
+    let merged_attrs = span_attrs_dd
         .iter()
-        .filter(|(k, _)| !seen_keys.contains(k))
-        .collect();
-    seen_keys.extend(chunk_attrs_dd.iter().map(|(k, _)| k));
-    let payload_only: Vec<(&T::Text, &AttributeValue<T>)> = payload_attrs_dd
-        .iter()
-        .filter(|(k, _)| !seen_keys.contains(k))
-        .collect();
-    let merged_attrs: Vec<(&T::Text, &AttributeValue<T>)> = span_attrs_dd
-        .iter()
-        .chain(chunk_only)
-        .chain(payload_only)
         .filter(|(k, _)| !PROMOTED_ATTR_KEYS.contains(&(*k).borrow()))
-        .collect();
+        .chain(chunk.chunk_attrs_dd.iter().filter(|(k, _)| {
+            !PROMOTED_ATTR_KEYS.contains(&(*k).borrow())
+                && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+        }))
+        .chain(chunk.payload_attrs_dd.iter().filter(|(k, _)| {
+            !PROMOTED_ATTR_KEYS.contains(&(*k).borrow())
+                && !span_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+                && !chunk.chunk_attrs_dd.iter().any(|(k2, _)| k2 == *k)
+        }));
 
     let (trace_id_low, trace_id_high) = split_trace_id(chunk.trace_id);
     let kind_meta = span_kind_to_meta(span.span_kind);
@@ -228,17 +287,21 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
     let mut meta_leaves: Vec<(String, String)> = Vec::new();
     let mut metrics_leaves: Vec<(String, f64)> = Vec::new();
     let mut bytes_attrs: Vec<(&T::Text, &T::Bytes)> = Vec::new();
-    for &(k, v) in &merged_attrs {
+    let mut key_buf = String::new();
+    for (k, v) in merged_attrs {
         match v {
             AttributeValue::Bytes(b) => bytes_attrs.push((k, b)),
-            _ => flatten_attr_into(
-                k.borrow().to_owned(),
-                v,
-                &mut meta_leaves,
-                &mut metrics_leaves,
-            ),
+            _ => {
+                key_buf.clear();
+                key_buf.push_str(k.borrow());
+                flatten_attr_into(&mut key_buf, v, &mut meta_leaves, &mut metrics_leaves);
+            }
         }
     }
+    // Two distinct attributes can flatten to the same dotted key (see `dedup_first_wins`);
+    // `meta` and `metrics` are separate wire maps, so dedup independently within each bucket.
+    let meta_leaves = dedup_first_wins(meta_leaves);
+    let metrics_leaves = dedup_first_wins(metrics_leaves);
 
     // First pass: count bucket sizes so each msgpack map header carries the exact length.
     let mut counts = BucketCounts::default();
@@ -739,6 +802,38 @@ mod tests {
         // producing a duplicate `"env"` key on the wire.
         assert_eq!(map_get(meta, "env").unwrap().as_str(), Some("prod"));
         assert_eq!(map_get(meta, "http.method").unwrap().as_str(), Some("GET"));
+    }
+
+    #[test]
+    fn flattened_attribute_colliding_with_another_attribute_keeps_first_wins() {
+        // "a" is a List whose first element flattens to "a.0"; "a.0" is also a literal
+        // attribute key. Both flatten to the same dotted key "a.0" — only one must survive
+        // on the wire, keeping whichever attribute came first in insertion order.
+        let mut attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        attrs.insert(
+            bs("a"),
+            AttributeValue::List(vec![AttributeValue::String(bs("from-list"))]),
+        );
+        attrs.insert(bs("a.0"), AttributeValue::String(bs("from-literal")));
+        // Mark deduped (as attributes are expected to be by the time they reach the encoder)
+        // so iteration order is deterministic rather than depending on `defensive_dedup`'s
+        // fallback `HashMap` order.
+        attrs.dedup();
+        let span = SpanBytes {
+            attributes: attrs,
+            ..minimal_span()
+        };
+        let payload = minimal_payload([0u8; 16], span);
+        let traces = encode_and_decode(&payload);
+        let meta = map_get(&traces[0][0], "meta").expect("meta present");
+        let meta_entries = meta.as_map().expect("meta must be a map");
+
+        // Only one "a.0" entry must survive on the wire, regardless of which attribute wins.
+        let a0_count = meta_entries
+            .iter()
+            .filter(|(k, _)| k.as_str() == Some("a.0"))
+            .count();
+        assert_eq!(a0_count, 1, "duplicate \"a.0\" key written to the wire");
     }
 
     #[test]

@@ -298,7 +298,7 @@ where
                                 == session_id
                             {
                                 'changed_rt_id: {
-                                    for (_, runtime) in runtimes.iter() {
+                                    for runtime in runtimes.values() {
                                         if runtime.targets.len() == 1
                                             && runtime.targets.contains_key(target)
                                         {
@@ -746,7 +746,7 @@ where
             let mut active = 0;
             let mut inactive = 0;
             let mut removing = 0;
-            for (_, known_target) in services.iter() {
+            for known_target in services.values() {
                 match *known_target.status.lock_or_panic() {
                     KnownTargetStatus::Pending => starting += 1,
                     KnownTargetStatus::Alive => active += 1,

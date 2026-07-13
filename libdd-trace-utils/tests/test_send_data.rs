@@ -759,7 +759,7 @@ mod tracing_integration_tests {
     /// Round-trip: the v1::Span → v0.4 downgrade encoder
     /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1`]) must produce a v0.4
     /// payload that decodes to the same canonical form as the native v0.4 encoder
-    /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec`]) when fed equivalent input.
+    /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04`]) when fed equivalent input.
     ///
     /// Both encodings are POSTed to `/v0.4/traces` in the same session with distinct
     /// `trace_id`s, and the checked-in snapshot records the two traces side by side. Any

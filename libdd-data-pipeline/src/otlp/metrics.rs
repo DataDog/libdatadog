@@ -255,7 +255,7 @@ pub struct OtlpStatsExporter<C: HttpClientCapability + SleepCapability> {
 impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
     /// Flush the concentrator and export stats; returns `Ok(true)` if anything was sent.
     async fn send(&self, force_flush: bool, max_retries: u32) -> anyhow::Result<bool> {
-        let (buckets, _collapsed_count) = {
+        let buckets = {
             #[allow(clippy::unwrap_used)]
             let mut c = self.concentrator.lock().unwrap();
             c.flush_with_otlp_exact(SystemTime::now(), force_flush)

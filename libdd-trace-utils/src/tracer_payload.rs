@@ -30,7 +30,11 @@ pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan.
     V04(Vec<Vec<v04::Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
+    ///
+    /// The dictionary always owns its strings ([`SharedDictBytes`]) because the v0.5
+    /// conversion interns dynamically-built JSON (span links / events) alongside the
+    /// (possibly borrowed) span text.
+    V05((SharedDictBytes, Vec<Vec<v05::Span>>)),
     /// Collection of v0.4 spans to be serialized as a V1 msgpack payload.
     V1(Box<v1::TracerPayload<BytesData>>),
 }

@@ -107,7 +107,7 @@ fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
     agent_info
         .info
         .obfuscation_version
-        .is_some_and(|v| v >= 1 && v <= SUPPORTED_OBFUSCATION_VERSION)
+        .is_some_and(|v| v >= 1 && v == SUPPORTED_OBFUSCATION_VERSION)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -169,8 +169,6 @@ fn create_and_start_stats_worker<
         StatsMetadata::from(ctx.metadata.clone()),
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         capabilities.clone(),
-        #[cfg(feature = "stats-obfuscation")]
-        client_side_stats.obfuscation_config.clone(),
         #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
         #[cfg(feature = "telemetry")]
@@ -258,6 +256,7 @@ fn update_obfuscation_config(
     ) {
         let obfuscation_active =
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
+        // FIXME(APMSP-3720): there is more than this to obfuscation config
         let sql_obfuscation_mode = (|| {
             agent_info
                 .info
@@ -332,6 +331,8 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     } = &**status
     {
         let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
+        let _ = dropped_by_trace_filter;
 
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
