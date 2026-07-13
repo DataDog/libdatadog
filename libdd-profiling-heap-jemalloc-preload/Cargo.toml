@@ -1,0 +1,26 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-profiling-heap-jemalloc-preload"
+version = "0.1.0"
+description = "LD_PRELOAD-able cdylib bundling jemalloc + libdd-profiling-heap-jemalloc's sampling hooks."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-jemalloc-preload"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-jemalloc-preload"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+bench = false
+
+# Linux-only: `LD_PRELOAD` interposition relies on plain (weak) libc symbols,
+# which Apple's allocator does not support the same way. On every other target
+# this compiles to an inert empty cdylib.
+[target.'cfg(target_os = "linux")'.dependencies]
+libdd-profiling-heap-jemalloc = { path = "../libdd-profiling-heap-jemalloc" }
+tikv-jemalloc-sys = { git = "https://github.com/scottgerring/jemallocator", branch = "scottgerring/profiling-hooks", features = [
+  "profiling_hooks",
+] }

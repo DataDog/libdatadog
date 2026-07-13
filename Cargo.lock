@@ -3311,6 +3311,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdd-profiling-heap-jemalloc-preload"
+version = "0.1.0"
+dependencies = [
+ "libdd-profiling-heap-jemalloc",
+ "tikv-jemalloc-sys",
+]
+
+[[package]]
 name = "libdd-profiling-heap-sampler"
 version = "0.1.0"
 dependencies = [
