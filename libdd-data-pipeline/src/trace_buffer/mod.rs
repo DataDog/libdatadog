@@ -632,9 +632,9 @@ pub trait Export<T>: Send + Debug {
         >,
     >;
 
-    /// Called once before the first trigger to allow the export operation to perform any
-    /// async setup (e.g. waiting for agent info).
-    #[cfg(feature = "test-utils")]
+    /// Called once before the first trigger, for one-time async setup (e.g. waiting for the
+    /// agent's `/info`). Defaults to a no-op; implementations opt in by overriding. A returned
+    /// `Err` is logged and the worker proceeds — setup must never block the export loop.
     fn wait_ready(
         &mut self,
     ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
@@ -642,6 +642,8 @@ pub trait Export<T>: Send + Debug {
     }
 }
 
+/// The built-in [`Export`] over a [`TraceExporter`]. Per the opt-in design it does not wait for
+/// agent `/info` before the first flush; consumers needing that override [`Export::wait_ready`].
 #[derive(Debug)]
 pub struct DefaultExport<C, R>
 where
@@ -677,17 +679,6 @@ where
         Box::pin(async {
             self.trace_exporter
                 .send_trace_chunks_async(trace_chunks)
-                .await
-        })
-    }
-
-    #[cfg(feature = "test-utils")]
-    fn wait_ready(
-        &mut self,
-    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>> {
-        Box::pin(async {
-            self.trace_exporter
-                .wait_agent_info_ready(Duration::from_secs(5))
                 .await
         })
     }
@@ -756,10 +747,9 @@ impl<T: Send + Debug + 'static> Worker for TraceExporterWorker<T> {
     }
 
     async fn initial_trigger(&mut self) {
-        #[cfg(feature = "test-utils")]
-        {
-            #[allow(clippy::unwrap_used)]
-            self.export_operation.wait_ready().await.unwrap();
+        // A failed/timed-out opt-in setup must not block the export loop.
+        if let Err(e) = self.export_operation.wait_ready().await {
+            tracing::warn!(error = %e, "Export::wait_ready failed; proceeding with first flush");
         }
         self.trigger().await
     }

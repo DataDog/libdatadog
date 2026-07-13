@@ -535,32 +535,23 @@ impl<
         }
     }
 
-    /// !!! This function is only for testing purposes !!!
-    ///
-    /// Waits the agent info to be ready by checking the agent_info state.
-    /// It will only return Ok after the agent info has been fetched at least once or Err if timeout
-    /// has been reached
-    ///
-    /// In production:
-    /// 1) We should not synchronously wait for this to be ready before sending traces
-    /// 2) It's not guaranteed to not block forever, since the /info endpoint might not be
-    ///    available.
-    ///
-    /// The `send` function will check agent_info when running, which will only be available if the
-    /// fetcher had time to reach to the agent.
-    /// Since agent_info can enable CSS computation, waiting for this during testing can make
-    /// snapshots non-deterministic.
-    #[cfg(feature = "test-utils")]
+    /// Waits until the agent's `/info` response is in the process-global cache, or returns `Err`
+    /// on `timeout`. Opt-in: by default the exporter does not wait for `/info` before sending —
+    /// callers that need agent-driven policy (e.g. p0 dropping) active before the first flush
+    /// await this (typically from an [`Export::wait_ready`] impl).
     pub async fn wait_agent_info_ready(&self, timeout: Duration) -> anyhow::Result<()> {
+        // Runtime-agnostic sleep via the capability, not `tokio::time::sleep`, so this stays
+        // usable off a tokio reactor (e.g. wasm), matching the agent-info fetcher.
+        let sleeper = <C as SleepCapability>::new();
         let start = std::time::Instant::now();
         loop {
             if std::time::Instant::now().duration_since(start) > timeout {
-                anyhow::bail!("Timeout waiting for agent info to be ready",);
+                anyhow::bail!("Timeout waiting for agent info to be ready");
             }
             if agent_info::get_agent_info().is_some() {
                 return Ok(());
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            sleeper.sleep(Duration::from_millis(10)).await;
         }
     }
 
@@ -2507,6 +2498,157 @@ mod single_threaded_tests {
     use libdd_shared_runtime::ForkSafeRuntime;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
+
+    /// Reproduces the client-side-stats `/info` startup race behind the flaky system-tests
+    /// `test_entire_trace_dropped_when_dropping_policy_is_active018[parametric-rust]`: a p0 trace
+    /// flushed before the async `/info` fetch lands is forwarded undropped instead of dropped.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_p0_dropping_startup_race() {
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+
+        // `/info` advertises p0-dropping support but responds slowly, so the first send races
+        // ahead of the fetch and observes the not-yet-`Enabled` state.
+        let info_body =
+            r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#;
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path(INFO_ENDPOINT);
+            then.delay(Duration::from_millis(500))
+                .status(200)
+                .body(info_body);
+        });
+        // Absorb stats flushes once the concentrator starts.
+        let _mock_stats = server.mock(|when, then| {
+            when.method(POST).path(STATS_ENDPOINT);
+            then.status(200).body("");
+        });
+        // trace-count 1 → the p0 chunk was NOT dropped (forwarded to the agent).
+        let forwarded = server.mock(|when, then| {
+            when.method(POST)
+                .path(V04_TRACES_ENDPOINT)
+                .header("x-datadog-trace-count", "1");
+            then.status(200).body(r#"{"rate_by_service":{}}"#);
+        });
+        // trace-count 0 → the p0 chunk WAS dropped client-side.
+        let dropped = server.mock(|when, then| {
+            when.method(POST)
+                .path(V04_TRACES_ENDPOINT)
+                .header("x-datadog-trace-count", "0");
+            then.status(200).body(r#"{"rate_by_service":{}}"#);
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .enable_stats(Duration::from_secs(10));
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        // A single unsampled (p0) trace: root span with sampling priority -1, no error, no
+        // single-span sampling — exactly what the agent expects the client to drop.
+        let p0_chunk = vec![SpanBytes {
+            duration: 10,
+            metrics: vec![("_sampling_priority_v1".into(), -1.0)].into(),
+            ..Default::default()
+        }];
+        let data = msgpack_encoder::v04::to_vec(&[p0_chunk]);
+
+        // (1) BUG: send before the delayed `/info` resolves. Stats are still `DisabledByAgent`,
+        //     so the p0 trace is forwarded undropped.
+        exporter.send(data.as_ref()).unwrap();
+        forwarded.assert_calls(1);
+        dropped.assert_calls(0);
+
+        // (2) Once `/info` has been fetched and cached, the same p0 trace is dropped client-side
+        //     — proving this is a startup race, not a permanent misconfiguration.
+        let start = std::time::Instant::now();
+        while agent_info::get_agent_info().is_none() {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "agent info was never fetched"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        exporter.send(data.as_ref()).unwrap();
+        dropped.assert_calls(1);
+        forwarded.assert_calls(1); // unchanged: the second trace was not forwarded
+    }
+
+    /// Verifies the fix for the startup race: opting into `wait_agent_info_ready` before the first
+    /// send (as an `Export::wait_ready` implementation does) makes the exporter drop the p0 trace
+    /// client-side even when it is flushed immediately at startup.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_p0_dropping_startup_race_fixed_by_waiting_for_agent_info() {
+        agent_info::clear_cache_for_test();
+
+        let server = MockServer::start();
+        let info_body =
+            r#"{"version":"1","client_drop_p0s":true,"endpoints":["/v0.4/traces","/v0.6/stats"]}"#;
+        let _mock_info = server.mock(|when, then| {
+            when.method(GET).path(INFO_ENDPOINT);
+            then.delay(Duration::from_millis(500))
+                .status(200)
+                .body(info_body);
+        });
+        let _mock_stats = server.mock(|when, then| {
+            when.method(POST).path(STATS_ENDPOINT);
+            then.status(200).body("");
+        });
+        let forwarded = server.mock(|when, then| {
+            when.method(POST)
+                .path(V04_TRACES_ENDPOINT)
+                .header("x-datadog-trace-count", "1");
+            then.status(200).body(r#"{"rate_by_service":{}}"#);
+        });
+        let dropped = server.mock(|when, then| {
+            when.method(POST)
+                .path(V04_TRACES_ENDPOINT)
+                .header("x-datadog-trace-count", "0");
+            then.status(200).body(r#"{"rate_by_service":{}}"#);
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("test")
+            .set_env("staging")
+            .set_tracer_version("v0.1")
+            .set_language("rust")
+            .set_language_version("1.0")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04)
+            .enable_stats(Duration::from_secs(10));
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let p0_chunk = vec![SpanBytes {
+            duration: 10,
+            metrics: vec![("_sampling_priority_v1".into(), -1.0)].into(),
+            ..Default::default()
+        }];
+        let data = msgpack_encoder::v04::to_vec(&[p0_chunk]);
+
+        // Opt into the fix: wait for agent info before the first flush. This is exactly what the
+        // trace-buffer worker does once via `Export::wait_ready` for an exporter that opts in.
+        exporter
+            .shared_runtime
+            .block_on(exporter.wait_agent_info_ready(Duration::from_secs(5)))
+            .expect("runtime")
+            .expect("agent info ready");
+
+        // Even sent immediately, the p0 trace is now dropped client-side — the race is closed.
+        exporter.send(data.as_ref()).unwrap();
+        dropped.assert_calls(1);
+        forwarded.assert_calls(0);
+    }
 
     #[cfg_attr(miri, ignore)]
     #[test]
