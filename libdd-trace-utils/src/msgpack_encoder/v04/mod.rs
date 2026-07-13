@@ -46,7 +46,15 @@ const fn msgpack_const_string_encoding<const ENCODING_LEN: usize>(s: &str) -> [u
         storage[0] = 0xdb;
         4
     };
-    copy_to_slice(storage.split_at_mut(1).1, &len.to_be_bytes(), len_bytes);
+    let len_be_bytes = len.to_be_bytes();
+    // `len_be_bytes` holds `len` as 8 big-endian bytes; the marker only needs the low-order
+    // `len_bytes` of those (e.g. for a str8 length of 200, that's byte `[200]`, not `[0]`), so
+    // skip the leading zero bytes rather than copying from the front.
+    copy_to_slice(
+        storage.split_at_mut(1).1,
+        len_be_bytes.split_at(8 - len_bytes).1,
+        len_bytes,
+    );
     copy_to_slice(storage.split_at_mut(1 + len_bytes).1, s.as_bytes(), s.len());
     storage
 }
@@ -231,9 +239,9 @@ pub fn to_encoded_byte_len_from_v04<T: TraceData, S: AsRef<[Span<T>]>>(traces: &
 /// Encodes a [`TracerPayload`] in the v0.4 wire format (downgrade path used when the agent
 /// does not advertise `/v1.0/traces`). The output is a msgpack array of traces, where each
 /// trace is itself a msgpack array of v0.4-shaped spans — matching the existing v0.4 wire
-/// format produced by [`to_vec`]. Payload-level `env`/`app_version`/`attributes` are propagated
-/// into every span (see [`span_v1`]'s mapping table); `payload.hostname` has no v0.4 body
-/// equivalent (the agent gets hostname from the `Datadog-Meta-Hostname` header instead) and is
+/// format produced by [`to_vec_from_v04`]. Payload-level `env`/`app_version`/`attributes` are
+/// propagated into every span (see [`span_v1`]'s mapping table); `payload.hostname` has no v0.4
+/// body equivalent (the agent gets hostname from the `Datadog-Meta-Hostname` header instead) and is
 /// intentionally dropped here.
 fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
     writer: &mut W,
@@ -252,16 +260,16 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
         } else {
             chunk.priority
         };
-        let ctx = ChunkContext {
-            trace_id: &chunk.trace_id,
+        let ctx = ChunkContext::new(
+            &chunk.trace_id,
             priority,
-            origin: &chunk.origin,
-            sampling_mechanism: chunk.sampling_mechanism,
-            attributes: &chunk.attributes,
-            payload_env: &payload.env,
-            payload_app_version: &payload.app_version,
-            payload_attributes: &payload.attributes,
-        };
+            &chunk.origin,
+            chunk.sampling_mechanism,
+            &chunk.attributes,
+            &payload.env,
+            &payload.app_version,
+            &payload.attributes,
+        );
         write_array_len(writer, chunk.spans.len() as u32)?;
         for span in &chunk.spans {
             encode_span(writer, span, &ctx)?;
@@ -273,9 +281,9 @@ fn encode_payload_from_v1<W: RmpWrite, T: TraceData>(
 /// Serializes a [`TracerPayload`] (V1 data model) as a v0.4 msgpack payload.
 ///
 /// Used by the trace exporter when the agent has not advertised `/v1.0/traces` via `/info`.
-/// The output is byte-compatible with [`to_vec`] for equivalent data — chunk-level fields are
-/// propagated to every span and typed attributes are bucketed into the v0.4 `meta` /
-/// `metrics` / `meta_struct` maps per [`span_v1_to_v04`]'s mapping table.
+/// The output is byte-compatible with [`to_vec_from_v04`] for equivalent data — chunk-level fields
+/// are propagated to every span and typed attributes are bucketed into the v0.4 `meta` /
+/// `metrics` / `meta_struct` maps per [`span_v1`]'s mapping table.
 pub fn to_vec_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> Vec<u8> {
     to_vec_with_capacity_from_v1(payload, 0)
 }
@@ -313,4 +321,41 @@ pub fn to_encoded_byte_len_from_v1<T: TraceData>(payload: &TracerPayload<T>) -> 
     let mut counter = super::CountLength(0);
     let _ = encode_payload_from_v1(&mut counter, payload);
     counter.0
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression tests for [`msgpack_const_string_encoding`] across every msgpack string
+    //! length-marker boundary (fixstr / str8 / str16), since the length only fits in the
+    //! low-order bytes of `len.to_be_bytes()` and it's easy to accidentally copy from the
+    //! high-order (zero) end instead.
+    use super::msgpack_const_string_encoding;
+
+    fn encode<const N: usize>(s: &str) -> [u8; N] {
+        msgpack_const_string_encoding::<N>(s)
+    }
+
+    #[test]
+    fn fixstr_boundary_31_bytes() {
+        let s = "a".repeat(31);
+        let bytes: [u8; 32] = encode(&s);
+        let value = rmpv::decode::read_value(&mut &bytes[..]).expect("decode failed");
+        assert_eq!(value.as_str(), Some(s.as_str()));
+    }
+
+    #[test]
+    fn str8_boundary_200_bytes() {
+        let s = "b".repeat(200);
+        let bytes: [u8; 202] = encode(&s);
+        let value = rmpv::decode::read_value(&mut &bytes[..]).expect("decode failed");
+        assert_eq!(value.as_str(), Some(s.as_str()));
+    }
+
+    #[test]
+    fn str16_boundary_300_bytes() {
+        let s = "c".repeat(300);
+        let bytes: [u8; 303] = encode(&s);
+        let value = rmpv::decode::read_value(&mut &bytes[..]).expect("decode failed");
+        assert_eq!(value.as_str(), Some(s.as_str()));
+    }
 }
