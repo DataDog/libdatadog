@@ -83,7 +83,13 @@ pub trait MutexExt<T> {
     /// Acquires the lock, recovering the guard instead of panicking if poisoned.
     /// Reserve for terminal teardown (`shutdown`/`Drop`); elsewhere prefer
     /// [`MutexExt::lock_or_panic`] since poisoning there indicates a real bug.
-    fn lock_or_recover(&self) -> MutexGuard<'_, T>;
+    ///
+    /// Default implementation just delegates to `lock_or_panic` (a safe, behavior-
+    /// preserving default for existing implementors); `Mutex<T>`'s impl below is the
+    /// one that actually recovers.
+    fn lock_or_recover(&self) -> MutexGuard<'_, T> {
+        self.lock_or_panic()
+    }
 }
 
 impl<T> MutexExt<T> for Mutex<T> {
