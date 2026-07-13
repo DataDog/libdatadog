@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v05::dict::SharedDict;
 use crate::span::{v04, v05, v1, BytesData, SharedDictBytes, TraceData};
 use crate::trace_utils::convert_trace_chunks_v04_to_v05;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
