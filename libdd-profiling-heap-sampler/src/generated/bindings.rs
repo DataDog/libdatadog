@@ -109,8 +109,8 @@ unsafe extern "C" {
     ) -> bool;
 }
 unsafe extern "C" {
-    #[link_name = "dd_sample_flag_check__extern"]
-    pub fn dd_sample_flag_check(
+    #[link_name = "dd_sample_flag_check_and_clear__extern"]
+    pub fn dd_sample_flag_check_and_clear(
         user: *mut ::std::os::raw::c_void,
         raw_out: *mut *mut ::std::os::raw::c_void,
     ) -> bool;

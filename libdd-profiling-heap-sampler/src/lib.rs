@@ -32,6 +32,11 @@ mod sys {
 #[cfg(target_os = "linux")]
 pub use sys::*;
 
+/// Runtime ELF self-inspection asserting one USDT note per probe. Opt-in via
+/// the `sanity-check` feature (pulls in the `elf`/`anyhow` deps).
+#[cfg(all(target_os = "linux", feature = "sanity-check"))]
+pub mod usdt_check;
+
 /// Name of the environment variable that toggles heap sampling.
 pub const DD_HEAP_SAMPLING_ENABLED: &str = "DD_HEAP_SAMPLING_ENABLED";
 
@@ -264,7 +269,7 @@ mod tests {
         buf[header_idx + 8..header_idx + 16].copy_from_slice(&8u64.to_ne_bytes());
 
         let mut raw = core::ptr::null_mut();
-        let sampled = unsafe { dd_sample_flag_check(user_addr as *mut c_void, &mut raw) };
+        let sampled = unsafe { dd_sample_flag_check_and_clear(user_addr as *mut c_void, &mut raw) };
 
         assert!(!sampled);
         assert!(raw.is_null());

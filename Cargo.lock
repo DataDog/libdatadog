@@ -3299,14 +3299,17 @@ dependencies = [
  "libc",
  "libdd-common-ffi",
  "libdd-profiling-heap-gotter",
+ "libdd-profiling-heap-sampler",
 ]
 
 [[package]]
 name = "libdd-profiling-heap-sampler"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bindgen 0.71.1",
  "cc",
+ "elf",
 ]
 
 [[package]]

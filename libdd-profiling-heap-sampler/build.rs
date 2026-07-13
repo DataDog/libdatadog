@@ -95,6 +95,14 @@ mod linux {
         // Translate the `live-heap` cargo feature into a C define.
         let live_heap = env::var_os("CARGO_FEATURE_LIVE_HEAP").is_some();
 
+        // Define NDEBUG for optimized builds so C `assert()`s are stripped in
+        // release and live in dev/test (incl. `cargo test`). cc doesn't set
+        // this itself; `.debug()` only controls `-g`. Key off OPT_LEVEL, not
+        // DEBUG: this workspace's release profile keeps line-table debuginfo,
+        // so cargo reports DEBUG=true there too; OPT_LEVEL is "0" only for the
+        // unoptimized dev/test profile.
+        let optimized = env::var("OPT_LEVEL").as_deref() != Ok("0");
+
         let mut build = cc::Build::new();
         build
             .files(SOURCES)
@@ -112,6 +120,9 @@ mod linux {
             // loads it works on both glibc and musl without allocation
             // concerns (see tl_state.h for the full analysis).
             .flag_if_supported("-mtls-dialect=gnu2");
+        if optimized {
+            build.define("NDEBUG", None);
+        }
         build.compile("dd_heap_sampler");
 
         // `allocation_requested.c` calls `log()`; glibc keeps it in libm,

@@ -13,7 +13,7 @@
  * The returned dd_alloc_req_t carries the values the caller must forward:
  *   - size:      the number of bytes to request from the real allocator
  *                (may be larger than the original on architectures that
- *                store the sample flag in a header word before the user
+ *                store the sample flag in a 16-byte header before the user
  *                pointer).
  *   - user_size: the original application-requested size, reported to
  *                the profiler via the ddheap:alloc USDT.
@@ -107,9 +107,10 @@ static inline __attribute__((always_inline, warn_unused_result))
 dd_alloc_req_t dd_allocation_requested(size_t size, size_t alignment) {
     dd_alloc_req_t out = { size, size, alignment, 0 };
 
-    // If we don't have TLS yet, or the reentry guard is set (meaning a sampled
-    // allocation is already in flight on this thread and something in its slow
-    // path triggered another allocation), pass through without sampling.
+    // If we don't have TLS yet (this is defensive and should never happen), or
+    // the reentry guard is set (meaning a sampled allocation is already in
+    // flight on this thread and something in its slow path triggered another
+    // allocation), pass through without sampling.
     // Either condition is rare on a hot path, so mark the branch unlikely.
     dd_tl_state_t *tl = dd_tl_state_get_or_init();
     if (__builtin_expect(!tl || tl->reentry_guard, 0)) return out;
