@@ -987,12 +987,13 @@ mod tests {
             .set_git_commit_sha("797e9ea")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
-            .set_client_computed_stats()
-            .enable_telemetry(TelemetryConfig {
-                heartbeat: 1000,
-                runtime_id: None,
-                debug_enabled: false,
-            });
+            .set_client_computed_stats();
+        #[cfg(feature = "telemetry")]
+        builder.enable_telemetry(TelemetryConfig {
+            heartbeat: 1000,
+            runtime_id: None,
+            debug_enabled: false,
+        });
         let exporter = builder.build::<NativeCapabilities>().unwrap();
 
         assert_eq!(
@@ -1010,6 +1011,7 @@ mod tests {
         assert_eq!(exporter.metadata.language_interpreter_vendor, "node");
         assert_eq!(exporter.metadata.git_commit_sha, "797e9ea");
         assert!(exporter.metadata.client_computed_stats);
+        #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.is_some());
     }
 
@@ -1032,6 +1034,7 @@ mod tests {
         assert_eq!(exporter.metadata.language_version, "");
         assert_eq!(exporter.metadata.language_interpreter, "");
         assert!(!exporter.metadata.client_computed_stats);
+        #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.is_none());
     }
 
@@ -1156,6 +1159,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "telemetry")]
     #[cfg_attr(miri, ignore)]
     #[test]
     fn test_agentless_skips_info_fetcher_and_telemetry() {
