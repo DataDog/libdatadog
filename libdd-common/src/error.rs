@@ -20,7 +20,7 @@
 pub unsafe trait FfiSafeErrorMessage {
     /// Returns the error message as a static CStr. It must also be a valid
     /// Rust string, including being UTF-8.
-    fn as_ffi_str(&self) -> &'static std::ffi::CStr;
+    fn as_ffi_str(&self) -> &'static core::ffi::CStr;
 
     /// Returns the error message as a static Rust str, excluding the null
     /// terminator. If you need it, use [`FfiSafeErrorMessage::as_ffi_str`].
@@ -29,6 +29,6 @@ pub unsafe trait FfiSafeErrorMessage {
     fn as_rust_str(&self) -> &'static str {
         // Bytes will not contain the null terminator.
         let bytes = self.as_ffi_str().to_bytes();
-        unsafe { std::str::from_utf8_unchecked(bytes) }
+        unsafe { core::str::from_utf8_unchecked(bytes) }
     }
 }

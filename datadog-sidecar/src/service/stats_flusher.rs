@@ -116,12 +116,6 @@ fn make_exporter(
         s.meta.clone(),
         endpoint,
         NativeCapabilities::new_client(),
-        // Sidecar does not perform client-side stats obfuscation. Pass a disabled
-        // default so the `datadog-obfuscation-version` header is never sent.
-        #[cfg(feature = "stats-obfuscation")]
-        Arc::new(arc_swap::ArcSwap::from_pointee(
-            libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig::default(),
-        )),
         #[cfg(feature = "stats-obfuscation")]
         "0",
         s.telemetry.clone(),

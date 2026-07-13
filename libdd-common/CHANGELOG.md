@@ -2,6 +2,19 @@
 
 
 
+## [5.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.0.0..libdd-common-v5.1.0) - 2026-07-07
+
+### Added
+
+- Add helpers in ddcommon to fetch the machine UUID l… ([#2163](https://github.com/datadog/libdatadog/issues/2163)) - ([e646931](https://github.com/datadog/libdatadog/commit/e6469314304c3eaae9a0b76ad48ff859e8bb8657))
+
+### Fixed
+
+- Update rustls-webpki to 0.103.13 ([#2187](https://github.com/datadog/libdatadog/issues/2187)) - ([3ba5431](https://github.com/datadog/libdatadog/commit/3ba543127039a0b785ede64d8eec2d367e49cb1a))
+- Update anyhow for unsoundness ([#2186](https://github.com/datadog/libdatadog/issues/2186)) - ([f8b9cc1](https://github.com/datadog/libdatadog/commit/f8b9cc1d8db5cf69a070588fa6b728a75842653a))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.2.0..libdd-common-v5.0.0) - 2026-06-19
 
 ### Added
