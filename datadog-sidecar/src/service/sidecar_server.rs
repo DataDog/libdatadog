@@ -30,6 +30,8 @@ use tracing::{debug, error, info, trace, warn};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
+use crate::appsec::AppSecBackendCallbacks;
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
 use crate::service::debugger_diagnostics_bookkeeper::{
@@ -117,6 +119,9 @@ pub struct SidecarServer {
     pub(crate) ffe_http_client: NativeCapabilities,
     /// Sidecar-owned exposure cache, shared across sessions/connections.
     pub(crate) ffe_exposure_deduplicator: ffe_exposures_flusher::ExposureDeduplicator,
+    /// AppSec message backend supplied by the embedding application.
+    #[cfg(unix)]
+    appsec_backend: Option<AppSecBackendCallbacks>,
 }
 
 /// Per-connection handler wrapper that tracks sessions/instances for cleanup on disconnect.
@@ -168,14 +173,9 @@ impl ConnectionSidecarHandler {
         {
             let client_id_opt = *self.appsec_client_id.lock_or_panic();
             if let (Some(session_id), Some(client_id)) = (self.session_id.get(), client_id_opt) {
-                let session_id = session_id.clone();
-                tokio::task::spawn_blocking(move || {
-                    crate::appsec::dispatch_disconnect(&session_id, client_id);
-                })
-                .await
-                .unwrap_or_else(|e| {
-                    error!("appsec disconnect callback panicked/was cancelled: {e:#}");
-                });
+                if let Some(appsec) = self.server.appsec_backend.as_ref() {
+                    appsec.disconnect(session_id, client_id);
+                }
             }
         }
 
@@ -213,6 +213,12 @@ impl ConnectionSidecarHandler {
 }
 
 impl SidecarServer {
+    #[cfg(unix)]
+    pub(crate) fn with_appsec_backend(mut self, backend: AppSecBackendCallbacks) -> Self {
+        self.appsec_backend = Some(backend);
+        self
+    }
+
     /// Accepts a new connection and starts processing requests.
     ///
     /// This function creates a per-connection `ConnectionSidecarHandler` and serves the connection,
@@ -272,7 +278,9 @@ impl SidecarServer {
         // is a no-op. client_id == 0 signals a session-wide sweep.
         #[cfg(unix)]
         {
-            crate::appsec::dispatch_disconnect(session_id, 0);
+            if let Some(appsec) = self.appsec_backend.as_ref() {
+                appsec.disconnect(session_id, 0);
+            }
         }
     }
 
@@ -1211,6 +1219,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
     ) -> (Vec<u8>, bool) {
         #[cfg(unix)]
         {
+            let Some(appsec) = self.server.appsec_backend.as_ref() else {
+                warn!("appsec: no backend is available");
+                return (vec![], true /* disconnect */);
+            };
+
             // Update the tracked active client and determine whether an old
             // client_id must be eagerly evicted before dispatching the message.
             //
@@ -1251,14 +1264,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             };
 
             if let Some(prev) = evict {
-                let session_id_evict = session_id.clone();
-                tokio::task::spawn_blocking(move || {
-                    crate::appsec::dispatch_disconnect(&session_id_evict, prev);
-                })
-                .await
-                .unwrap_or_else(|e| {
-                    error!("appsec: evict disconnect callback panicked/was cancelled: {e:#}");
-                });
+                appsec.disconnect(&session_id, prev);
             }
 
             if reject {
@@ -1266,28 +1272,11 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 return (vec![], true /* disconnect */);
             }
 
-            let (res, new_client_id) = tokio::task::spawn_blocking(move || {
-                let mut new_client_id = client_id;
-                let res =
-                    match crate::appsec::dispatch_message(&session_id, &mut new_client_id, &data) {
-                        None => (vec![], false),
-                        Some(response) => {
-                            let bytes = response.as_bytes().to_vec();
-                            let disconnect = response.disconnect;
-                            (bytes, disconnect)
-                        }
-                    };
-                (res, new_client_id)
-            })
-            .await
-            .unwrap_or_else(|e| {
-                error!("appsec: dispatch callback panicked/was cancelled: {e:#}");
-                ((vec![], false), client_id)
-            });
-            if new_client_id != client_id {
-                *self.appsec_client_id.lock_or_panic() = Some(new_client_id);
+            let response = appsec.send_message(&session_id, client_id, data).await;
+            if response.client_id != client_id {
+                *self.appsec_client_id.lock_or_panic() = Some(response.client_id);
             }
-            res
+            (response.data, response.disconnect)
         }
         #[cfg(not(unix))]
         {

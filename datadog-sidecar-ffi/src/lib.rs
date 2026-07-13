@@ -1795,9 +1795,15 @@ pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTr
     let _ = transport.send_garbage();
 }
 
-/// Re-export so that cbindgen can see the type and include it in the generated header.
+/// Raw AppSec response returned to the PHP extension.
 #[cfg(unix)]
-pub use datadog_sidecar::appsec::{AppsecCResponse, FreeResponseFn, OnDisconnectFn, OnMessageFn};
+#[repr(C)]
+pub struct AppsecCResponse {
+    pub ptr: *mut u8,
+    pub len: usize,
+    pub capacity: usize,
+    pub disconnect: bool,
+}
 
 /// Sends an AppSec message from the PHP extension through the sidecar to the registered helper.
 ///
@@ -1846,30 +1852,6 @@ pub extern "C" fn ddog_sidecar_appsec_response_drop(response: AppsecCResponse) {
             let _ = Vec::from_raw_parts(response.ptr, response.len, response.capacity);
         }
     }
-}
-
-/// Re-export the registration function so that it appears in the generated C header.
-///
-/// Called by any shared library loaded into the sidecar process (e.g. the AppSec
-/// helper) to register callbacks for AppSec message handling:
-///
-/// - `on_message` – invoked for each message from a PHP extension session; the
-///   returned `AppsecCResponse` is forwarded back to the extension.
-/// - `on_disconnect` – invoked when a PHP extension session closes.
-/// - `free_response` – invoked by the sidecar to free a non-null buffer returned
-///   by `on_message`; must use the same allocator that allocated the buffer.
-///
-/// # Safety
-/// All function pointers must remain valid for the lifetime of the process.
-#[cfg(unix)]
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_appsec_register_message_handler(
-    on_message: OnMessageFn,
-    on_disconnect: OnDisconnectFn,
-    free_response: FreeResponseFn,
-) {
-    datadog_sidecar::appsec::register_message_handler(on_message, on_disconnect, free_response)
 }
 
 #[cfg(test)]

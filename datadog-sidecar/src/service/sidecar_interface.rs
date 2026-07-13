@@ -249,7 +249,11 @@ pub trait SidecarInterface {
     ///
     /// Returns the response bytes from the helper and a flag indicating whether
     /// the extension session should be disconnected.
-    async fn send_appsec_message(session_id: String, client_id: u64, data: Vec<u8>) -> (Vec<u8>, bool);
+    async fn send_appsec_message(
+        session_id: String,
+        client_id: u64,
+        data: Vec<u8>,
+    ) -> (Vec<u8>, bool);
 
     /// Sends a ping to the service.
     #[blocking]

@@ -397,6 +397,66 @@ impl<'writer> MakeWriter<'writer> for &MultiWriter {
     }
 }
 
+#[derive(Clone)]
+struct AppSecLogWriter {
+    writer: Arc<LogWriter>,
+}
+
+impl AppSecLogWriter {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            writer: Arc::new(create_logfile(&path).map_or(LogWriter::Disabled, LogWriter::File)),
+        }
+    }
+}
+
+struct AppSecEventWriter {
+    writer: Arc<LogWriter>,
+    buffer: Vec<u8>,
+    enabled: bool,
+}
+
+impl io::Write for AppSecEventWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.buffer.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // The formatter creates one writer per event; Drop commits the completed event.
+        Ok(())
+    }
+}
+
+impl Drop for AppSecEventWriter {
+    fn drop(&mut self) {
+        if self.enabled {
+            self.writer.write_line(&self.buffer);
+        }
+    }
+}
+
+impl<'writer> MakeWriter<'writer> for AppSecLogWriter {
+    type Writer = AppSecEventWriter;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        AppSecEventWriter {
+            writer: self.writer.clone(),
+            buffer: Vec::new(),
+            enabled: false,
+        }
+    }
+
+    fn make_writer_for(&'writer self, metadata: &Metadata<'_>) -> Self::Writer {
+        let target = metadata.target();
+        AppSecEventWriter {
+            writer: self.writer.clone(),
+            buffer: Vec::new(),
+            enabled: target == "ddappsec_helper" || target.starts_with("ddappsec_helper::"),
+        }
+    }
+}
+
 pub(crate) static MULTI_LOG_FILTER: LazyLock<MultiEnvFilter> =
     LazyLock::new(MultiEnvFilter::default);
 pub(crate) static MULTI_LOG_WRITER: LazyLock<MultiWriter> = LazyLock::new(MultiWriter::default);
@@ -405,6 +465,14 @@ static PERMANENT_MIN_LOG_LEVEL: OnceLock<TemporarilyRetainedMapGuard<String, Env
     OnceLock::new();
 
 pub(crate) fn enable_logging() -> anyhow::Result<()> {
+    let config = config::Config::get();
+    let appsec_layer = config.appsec_config.as_ref().map(|appsec| {
+        tracing_subscriber::fmt::Layer::new()
+            .event_format(LogFormatter::default())
+            .with_writer(AppSecLogWriter::new(appsec.log_file_path.clone().into()))
+            .with_filter(EnvFilter::builder().parse_lossy(&appsec.log_level))
+    });
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::Layer::new()
@@ -412,6 +480,7 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
                 .with_writer(&*MULTI_LOG_WRITER)
                 .with_filter(&*MULTI_LOG_FILTER),
         )
+        .with(appsec_layer)
         .init();
 
     // Set initial log level if provided
@@ -420,7 +489,6 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
                                    // few
                                    // seconds during startup
     }
-    let config = config::Config::get();
     if !config.log_level.is_empty() {
         let filter = MULTI_LOG_FILTER.add(config.log_level.clone());
         _ = PERMANENT_MIN_LOG_LEVEL.set(filter);
@@ -435,7 +503,8 @@ pub(crate) fn enable_logging() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        enable_logging, TemporarilyRetainedKeyParser, TemporarilyRetainedMap, MULTI_LOG_FILTER,
+        enable_logging, AppSecLogWriter, TemporarilyRetainedKeyParser, TemporarilyRetainedMap,
+        MULTI_LOG_FILTER,
     };
     use crate::log::MultiEnvFilter;
     use std::sync::atomic::{AtomicI32, Ordering};
@@ -460,6 +529,27 @@ mod tests {
         fn disable() {
             DISABLED.fetch_add(1, Ordering::SeqCst);
         }
+    }
+
+    #[test]
+    fn test_appsec_log_writer_uses_event_target() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("appsec.log");
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_writer(AppSecLogWriter::new(log_path.clone()))
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(target: "ddappsec_helper::test", "helper message");
+            tracing::info!(target: "datadog_sidecar::test", "sidecar message");
+            tracing::info!(target: "ddappsec_helperish::test", "similar target message");
+        });
+
+        let contents = std::fs::read_to_string(log_path).unwrap();
+        assert!(contents.contains("helper message"));
+        assert!(!contents.contains("sidecar message"));
+        assert!(!contents.contains("similar target message"));
     }
 
     #[test]

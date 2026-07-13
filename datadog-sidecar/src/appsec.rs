@@ -1,198 +1,110 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::{c_char, CString};
-use std::sync::atomic::{AtomicPtr, Ordering};
+use crate::config::AppSecConfig;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::OnceLock;
 use tracing::{error, info};
 
-pub type OnMessageFn =
-    extern "C" fn(*const c_char, usize, *mut u64, *const u8, usize) -> AppsecCResponse;
-pub type OnDisconnectFn = extern "C" fn(*const c_char, usize, u64);
-pub type FreeResponseFn = extern "C" fn(*mut u8, usize, usize);
+pub type AppSecBackendFactory = fn(&AppSecConfig) -> anyhow::Result<AppSecBackend>;
 
-/// Starts the AppSec helper if the sidecar configuration requests it.
+static APPSEC_BACKEND_FACTORY: OnceLock<AppSecBackendFactory> = OnceLock::new();
+
+/// Registers the AppSec backend linked by the sidecar's embedding application.
 ///
-/// Returns `true` if the helper started successfully and `shutdown` should be
-/// called later; `false` otherwise (disabled or failed to start).
-pub fn maybe_start(_appsec_config: &crate::config::AppSecConfig) -> bool {
-    info!("Starting appsec helper");
-    #[allow(clippy::unwrap_used)]
-    let sym = CString::new("appsec_helper_main").unwrap();
-    let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, sym.as_ptr()) };
-    if func_ptr.is_null() {
-        error!("Failed to load appsec helper: can't find the symbol 'appsec_helper_main'");
-        return false;
-    }
-
-    let entry_fn: extern "C" fn() -> i32 = unsafe { std::mem::transmute(func_ptr) };
-    if entry_fn() != 0 {
-        error!("Appsec helper failed to start");
-        return false;
-    }
-
-    info!("Appsec helper started");
-    true
+/// Only the first registration in a process is retained. This allows inverting
+/// the dependency between sidecar and appsec helper-rust.
+pub fn register_backend_factory(factory: AppSecBackendFactory) {
+    _ = APPSEC_BACKEND_FACTORY.set(factory);
+}
+pub struct AppSec {
+    backend: AppSecBackend,
 }
 
-/// Shuts down the AppSec helper via its exported symbol.
-pub fn shutdown() {
-    info!("Shutting down appsec helper");
-    #[allow(clippy::unwrap_used)]
-    let sym = CString::new("appsec_helper_shutdown").unwrap();
-    let func_ptr = unsafe { libc::dlsym(libc::RTLD_DEFAULT, sym.as_ptr()) };
-    if func_ptr.is_null() {
-        error!("Failed to shut down appsec helper: can't find the symbol 'appsec_helper_shutdown'");
-        return;
+impl AppSec {
+    pub fn start(config: &AppSecConfig) -> Option<Self> {
+        info!("Starting appsec backend");
+
+        let Some(factory) = APPSEC_BACKEND_FACTORY.get() else {
+            error!("No appsec backend is registered");
+            return None;
+        };
+
+        let backend = match factory(config) {
+            Ok(backend) => backend,
+            Err(err) => {
+                error!("Appsec backend failed to start: {err:#}");
+                return None;
+            }
+        };
+
+        info!("Appsec backend started");
+        Some(Self { backend })
     }
 
-    let shutdown_fn: extern "C" fn() -> i32 = unsafe { std::mem::transmute(func_ptr) };
-    if shutdown_fn() != 0 {
-        error!("Appsec helper failed to shutdown cleanly");
-        return;
+    pub(crate) fn backend(&self) -> AppSecBackendCallbacks {
+        self.backend.callbacks
     }
 
-    info!("Appsec helper shutdown");
+    pub async fn shutdown(self) {
+        info!("Shutting down appsec backend");
+        self.backend.shutdown.await;
+        info!("Appsec backend shutdown");
+    }
 }
 
-/// Raw response returned by the AppSec `on_message` C callback.
-///
-/// When `ptr` is non-null the buffer must be freed by calling the `free_response`
-/// function registered via `ddog_appsec_register_message_handler`, which uses
-/// the allocator that created the buffer (helper-rust's allocator).
-#[repr(C)]
-pub struct AppsecCResponse {
-    pub ptr: *mut u8,
-    pub len: usize,
-    pub capacity: usize,
-    /// If true, the extension session should be disconnected after this response.
+type AppSecSendMessage =
+    for<'a> fn(&'a str, u64, Vec<u8>) -> AppSecFuture<'a, AppSecMessageResponse>;
+
+pub type AppSecFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+pub struct AppSecMessageResponse {
+    pub client_id: u64,
+    pub data: Vec<u8>,
     pub disconnect: bool,
 }
 
-/// Owned response from `dispatch_message`.
-///
-/// Frees the buffer through the registered `free_response` callback on drop, so
-/// the correct (helper-rust) allocator is used regardless of which allocator
-/// the sidecar itself uses.
-pub struct AppsecResponse {
-    ptr: *mut u8,
-    len: usize,
-    capacity: usize,
-    pub disconnect: bool,
+type AppSecDisconnect = fn(&str, u64);
+
+#[derive(Clone, Copy)]
+pub(crate) struct AppSecBackendCallbacks {
+    send_message: AppSecSendMessage,
+    disconnect: AppSecDisconnect,
 }
 
-impl AppsecResponse {
-    pub fn as_bytes(&self) -> &[u8] {
-        if self.ptr.is_null() {
-            &[]
-        } else {
-            // SAFETY: ptr/len are valid for the lifetime of self.
-            unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+impl AppSecBackendCallbacks {
+    pub(crate) fn send_message<'a>(
+        &self,
+        session_id: &'a str,
+        client_id: u64,
+        data: Vec<u8>,
+    ) -> AppSecFuture<'a, AppSecMessageResponse> {
+        (self.send_message)(session_id, client_id, data)
+    }
+
+    pub(crate) fn disconnect(&self, session_id: &str, client_id: u64) {
+        (self.disconnect)(session_id, client_id);
+    }
+}
+
+pub struct AppSecBackend {
+    callbacks: AppSecBackendCallbacks,
+    shutdown: AppSecFuture<'static, ()>,
+}
+
+impl AppSecBackend {
+    pub fn new(
+        send_message: AppSecSendMessage,
+        disconnect: AppSecDisconnect,
+        shutdown: AppSecFuture<'static, ()>,
+    ) -> Self {
+        Self {
+            callbacks: AppSecBackendCallbacks {
+                send_message,
+                disconnect,
+            },
+            shutdown,
         }
     }
-}
-
-impl Drop for AppsecResponse {
-    fn drop(&mut self) {
-        if self.ptr.is_null() {
-            return;
-        }
-        let free_ptr = FREE_RESPONSE.load(Ordering::Acquire);
-        if free_ptr.is_null() {
-            // Should not happen: free_response is always set alongside on_message.
-            error!("AppSec response buffer leaked: free_response not registered");
-            return;
-        }
-        // SAFETY: fn_ptr was stored by ddog_appsec_register_message_handler and is
-        // a valid FreeResponseFn for the lifetime of the process.
-        let free_fn: FreeResponseFn = unsafe { std::mem::transmute(free_ptr) };
-        free_fn(self.ptr, self.len, self.capacity);
-    }
-}
-
-// SAFETY: ownership of the buffer is held by AppsecResponse; only one thread
-// accesses it at a time.
-unsafe impl Send for AppsecResponse {}
-
-static ON_MESSAGE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static ON_DISCONNECT: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-static FREE_RESPONSE: AtomicPtr<()> = AtomicPtr::new(std::ptr::null_mut());
-
-/// Called by the AppSec helper at startup to register its message-handling callbacks.
-///
-/// The C-exported entry point is `ddog_appsec_register_message_handler`, declared in
-/// `datadog-sidecar-ffi` so that it appears in the generated header.
-///
-/// # Safety
-/// - All function pointers must remain valid for the lifetime of the process.
-/// - `on_message` and `on_disconnect` may be called from a `spawn_blocking` thread
-///   and are allowed to block.
-/// - `free_response(ptr, len, capacity)` will be called to free any non-null buffer
-///   returned by `on_message`; it must use the same allocator that produced the buffer.
-pub fn register_message_handler(
-    on_message: OnMessageFn,
-    on_disconnect: OnDisconnectFn,
-    free_response: FreeResponseFn,
-) {
-    ON_MESSAGE.store(on_message as *mut _, Ordering::Release);
-    ON_DISCONNECT.store(on_disconnect as *mut _, Ordering::Release);
-    FREE_RESPONSE.store(free_response as *mut _, Ordering::Release);
-}
-
-/// Dispatches an AppSec helper message to the registered callback.
-///
-/// Returns `Some(response)` when a handler is registered, or `None` if no handler
-/// has been registered yet. The response buffer is freed via `free_response` when
-/// the returned `AppsecResponse` is dropped.
-pub fn dispatch_message(
-    session_id: &str,
-    client_id: &mut u64,
-    data: &[u8],
-) -> Option<AppsecResponse> {
-    let on_message_ptr = ON_MESSAGE.load(Ordering::Acquire);
-    if on_message_ptr.is_null() {
-        return None;
-    }
-
-    // SAFETY: fn_ptr was stored by ddog_appsec_register_message_handler and is a valid
-    // OnMessageFn for the lifetime of the process.
-    let on_message: OnMessageFn = unsafe { std::mem::transmute(on_message_ptr) };
-
-    let resp = on_message(
-        session_id.as_ptr() as *const c_char,
-        session_id.len(),
-        client_id as *mut u64,
-        data.as_ptr(),
-        data.len(),
-    );
-
-    Some(AppsecResponse {
-        ptr: resp.ptr,
-        len: resp.len,
-        capacity: resp.capacity,
-        disconnect: resp.disconnect,
-    })
-}
-
-/// Dispatches a per-client disconnect notification to the registered callback.
-///
-/// Called when the physical connection that hosted the given `(session_id,
-/// client_id)` pair closes. helper-rust uses this to evict the exact
-/// `ClientKey` without touching sibling workers of the same session.
-///
-/// Sending `(session_id, 0)` signals a session-wide sweep, removing all clients
-/// for the session.
-pub fn dispatch_disconnect(session_id: &str, client_id: u64) {
-    let on_disconnect_ptr = ON_DISCONNECT.load(Ordering::Acquire);
-    if on_disconnect_ptr.is_null() {
-        return;
-    }
-    // SAFETY: fn_ptr was stored by ddog_appsec_register_message_handler and is a valid
-    // OnDisconnectFn for the lifetime of the process.
-    let on_disconnect: OnDisconnectFn = unsafe { std::mem::transmute(on_disconnect_ptr) };
-
-    on_disconnect(
-        session_id.as_ptr() as *const c_char,
-        session_id.len(),
-        client_id,
-    );
 }

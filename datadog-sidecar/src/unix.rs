@@ -3,7 +3,6 @@
 
 use spawn_worker::{getpid, SpawnWorker, Stdio, TrampolineData};
 
-
 use crate::config::Config;
 use crate::enter_listener_loop;
 use datadog_ipc::{SeqpacketConn, SeqpacketListener};
@@ -59,12 +58,6 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
 
     let now = Instant::now();
 
-    let appsec_started = Config::get()
-        .appsec_config
-        .as_ref()
-        .map(crate::appsec::maybe_start)
-        .unwrap_or(false);
-
     if let Some(fd) = spawn_worker::recv_passed_fd() {
         let seqpacket_listener = SeqpacketListener::from_owned_fd(fd);
         info!("Starting sidecar, pid: {}", getpid());
@@ -87,10 +80,6 @@ pub extern "C" fn ddog_daemon_entry_point(trampoline_data: &TrampolineData) {
         if let Err(err) = enter_listener_loop(acquire_listener) {
             error!("Error: {err}")
         }
-    }
-
-    if appsec_started {
-        crate::appsec::shutdown();
     }
 
     info!(
