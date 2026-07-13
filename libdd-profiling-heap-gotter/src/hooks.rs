@@ -17,9 +17,8 @@ use core::ffi::{c_char, c_int, c_void};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use libdd_profiling_heap_sampler::{
-    dd_alloc_req_is_sampled, dd_alloc_req_t, dd_allocation_created, dd_allocation_freed,
-    dd_allocation_realloc_commit, dd_allocation_realloc_prepare, dd_allocation_requested,
-    dd_tl_state_init,
+    dd_alloc_req_t, dd_allocation_created, dd_allocation_freed, dd_allocation_realloc_commit,
+    dd_allocation_realloc_prepare, dd_allocation_requested, dd_tl_state_init,
 };
 
 /// Resolved address of the real `malloc`; filled by `install_heap_overrides`.
@@ -155,7 +154,8 @@ pub unsafe extern "C" fn gotter_calloc(nmemb: usize, size: usize) -> *mut c_void
     // single (1, req.size) allocation when sampling kicks in, so the
     // underlying allocator zeroes everything we hand back. Unsampled
     // path keeps the user's (nmemb, size) verbatim.
-    let raw = if !dd_alloc_req_is_sampled(req) {
+    // `req.weight == 0` is `!dd_alloc_req_is_sampled(req)`, inlined here to avoid a cross-FFI call.
+    let raw = if req.weight == 0 {
         real(nmemb, size)
     } else {
         real(1, req.size)
