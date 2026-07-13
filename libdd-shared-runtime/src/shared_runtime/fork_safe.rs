@@ -52,11 +52,11 @@ impl ForkSafeRuntime {
     /// Pauses all workers before `fork()`. Worker pause errors are logged, not propagated.
     pub fn before_fork(&self) {
         debug!("before_fork: pausing all workers");
-        let mut runtime_lock = self.runtime.lock_or_recover();
+        let mut runtime_lock = self.runtime.lock_or_panic();
         let Some(runtime) = runtime_lock.take() else {
             return;
         };
-        let mut workers_lock = self.workers.lock_or_recover();
+        let mut workers_lock = self.workers.lock_or_panic();
         runtime.block_on(async {
             let futures: FuturesUnordered<_> = workers_lock
                 .iter_mut()
@@ -72,7 +72,7 @@ impl ForkSafeRuntime {
     }
 
     fn restart_runtime(&self) -> Result<(), SharedRuntimeError> {
-        let mut runtime_lock = self.runtime.lock_or_recover();
+        let mut runtime_lock = self.runtime.lock_or_panic();
         if runtime_lock.is_none() {
             *runtime_lock = Some(Arc::new(build_runtime(self.worker_threads)?));
         }
@@ -84,7 +84,7 @@ impl ForkSafeRuntime {
         debug!("after_fork_parent: restarting runtime and workers");
         self.restart_runtime()?;
 
-        let runtime_lock = self.runtime.lock_or_recover();
+        let runtime_lock = self.runtime.lock_or_panic();
         let handle = runtime_lock
             .as_ref()
             .ok_or(SharedRuntimeError::RuntimeUnavailable)?
@@ -92,7 +92,7 @@ impl ForkSafeRuntime {
             .clone();
         drop(runtime_lock);
 
-        let mut workers_lock = self.workers.lock_or_recover();
+        let mut workers_lock = self.workers.lock_or_panic();
 
         for worker_entry in workers_lock.iter_mut() {
             worker_entry.worker.start(tokio_spawn_fn(&handle))?;
@@ -108,7 +108,7 @@ impl ForkSafeRuntime {
         debug!("after_fork_child: reinitializing runtime and workers");
         self.restart_runtime()?;
 
-        let runtime_lock = self.runtime.lock_or_recover();
+        let runtime_lock = self.runtime.lock_or_panic();
         let handle = runtime_lock
             .as_ref()
             .ok_or(SharedRuntimeError::RuntimeUnavailable)?
@@ -116,7 +116,7 @@ impl ForkSafeRuntime {
             .clone();
         drop(runtime_lock);
 
-        let mut workers_lock = self.workers.lock_or_recover();
+        let mut workers_lock = self.workers.lock_or_panic();
 
         workers_lock.retain(|entry| entry.restart_on_fork);
 
@@ -285,8 +285,8 @@ impl SharedRuntime for ForkSafeRuntime {
         // Hold both locks together (runtime → workers, per struct lock order) so
         // before_fork cannot interleave between start and push. If runtime is already
         // None (fork window), skip start; after_fork_* will pick it up.
-        let runtime_guard = self.runtime.lock_or_recover();
-        let mut workers_guard = self.workers.lock_or_recover();
+        let runtime_guard = self.runtime.lock_or_panic();
+        let mut workers_guard = self.workers.lock_or_panic();
 
         if let Some(rt) = runtime_guard.as_ref() {
             pausable_worker.start(tokio_spawn_fn(rt.handle()))?;
@@ -328,7 +328,7 @@ async fn shutdown_workers(workers: &Mutex<Vec<WorkerEntry>>) {
 impl BlockingRuntime for ForkSafeRuntime {
     /// Falls back to a temporary current-thread runtime in the fork window.
     fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error> {
-        let runtime = match self.runtime.lock_or_recover().as_ref() {
+        let runtime = match self.runtime.lock_or_panic().as_ref() {
             None => Arc::new(Builder::new_current_thread().enable_all().build()?),
             Some(runtime) => runtime.clone(),
         };
