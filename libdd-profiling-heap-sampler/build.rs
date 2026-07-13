@@ -115,8 +115,13 @@ mod linux {
         build.compile("dd_heap_sampler");
 
         // `allocation_requested.c` calls `log()`; glibc keeps it in libm,
-        // separate from libc. Harmless on musl (empty stub libm).
-        println!("cargo:rustc-link-lib=m");
+        // separate from libc. On musl, math functions live in libc itself
+        // and its stub libm.a is empty — but on a glibc host targeting musl,
+        // an explicit -lm resolves to glibc's libm which fails to link.
+        let target = env::var("TARGET").unwrap_or_default();
+        if !target.contains("musl") {
+            println!("cargo:rustc-link-lib=m");
+        }
 
         for f in SOURCES {
             println!("cargo:rerun-if-changed={f}");
