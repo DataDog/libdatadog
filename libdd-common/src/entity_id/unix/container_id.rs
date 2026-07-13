@@ -3,118 +3,23 @@
 
 //! This module provides functions to parse the container id from the cgroup file
 use super::CgroupFileParsingError;
-use crate::regex_engine::Regex;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use crate::entity_id::parse::parse_container_id;
+use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
-
-const UUID_SOURCE: &str =
-    r"[0-9a-f]{8}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{4}[-_][0-9a-f]{12}";
-/// PCF / Garden container UUID source: 8-4-4-4-4 hex (28 chars).
-/// Distinct from `UUID_SOURCE` (8-4-4-4-12) because the last group is 4 hex.
-const PCF_UUID_SOURCE: &str = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}";
-const CONTAINER_SOURCE: &str = r"[0-9a-f]{64}";
-const TASK_SOURCE: &str = r"[0-9a-f]{32}-\d+";
-
-pub(crate) static LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    #[allow(clippy::unwrap_used)]
-    Regex::new(r"^\d+:[^:]*:(.+)$").unwrap()
-});
-
-pub(crate) static CONTAINER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    #[allow(clippy::unwrap_used)]
-    Regex::new(&format!(
-        r"({UUID_SOURCE}|{PCF_UUID_SOURCE}|{CONTAINER_SOURCE}|{TASK_SOURCE})(?:\.scope(?:/[^/ \t]+)?)? *$"
-    ))
-    .unwrap()
-});
-
-fn parse_line(line: &str) -> Option<&str> {
-    // unwrap is OK since if regex matches then the groups must exist
-    #[allow(clippy::unwrap_used)]
-    LINE_REGEX
-        .captures(line)
-        .and_then(|captures| CONTAINER_REGEX.captures(captures.get(1).unwrap().as_str()))
-        .map(|captures| captures.get(1).unwrap().as_str())
-}
 
 /// Extract container id contained in the cgroup file located at `cgroup_path`
 pub fn extract_container_id(cgroup_path: &Path) -> Result<String, CgroupFileParsingError> {
-    let file = File::open(cgroup_path).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
-    let reader = BufReader::new(file);
-
-    for line in reader.lines() {
-        if let Some(container_id) =
-            parse_line(&line.map_err(|_| CgroupFileParsingError::InvalidFormat)?)
-        {
-            return Ok(String::from(container_id));
-        }
-    }
-
-    Err(CgroupFileParsingError::ContainerIdNotFound)
+    let content =
+        fs::read_to_string(cgroup_path).map_err(|_| CgroupFileParsingError::CannotOpenFile)?;
+    parse_container_id(&content)
+        .map(String::from)
+        .ok_or(CgroupFileParsingError::ContainerIdNotFound)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use maplit::hashmap;
-
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn test_container_id_line_parsing() {
-        let test_lines = hashmap! {
-            "" => None,
-            "other_line" => None,
-            "10:hugetlb:/kubepods/burstable/podfd52ef25-a87d-11e9-9423-0800271a638e/8c046cb0b72cd4c99f51b5591cd5b095967f58ee003710a45280c28ee1a9c7fa"
-                => Some("8c046cb0b72cd4c99f51b5591cd5b095967f58ee003710a45280c28ee1a9c7fa"),
-            "11:devices:/kubepods.slice/kubepods-pod97f1ae73_7ad9_11ec_b4a7_9a35488b4fab.slice/3291bfddf3f3f8d87cb0cd1245fe9c45b2e1e5a9b6fe3de1bddf041aedaecbab"
-                => Some("3291bfddf3f3f8d87cb0cd1245fe9c45b2e1e5a9b6fe3de1bddf041aedaecbab"),
-            "11:hugetlb:/ecs/55091c13-b8cf-4801-b527-f4601742204d/432624d2150b349fe35ba397284dea788c2bf66b885d14dfc1569b01890ca7da"
-                => Some("432624d2150b349fe35ba397284dea788c2bf66b885d14dfc1569b01890ca7da"),
-            "1:name=systemd:/docker/34dc0b5e626f2c5c4c5170e34b10e7654ce36f0fcd532739f4445baabea03376"
-                => Some("34dc0b5e626f2c5c4c5170e34b10e7654ce36f0fcd532739f4445baabea03376"),
-            "1:name=systemd:/uuid/34dc0b5e-626f-2c5c-4c51-70e34b10e765"
-                => Some("34dc0b5e-626f-2c5c-4c51-70e34b10e765"),
-            "1:name=systemd:/ecs/34dc0b5e626f2c5c4c5170e34b10e765-1234567890"
-                => Some("34dc0b5e626f2c5c4c5170e34b10e765-1234567890"),
-            "1:name=systemd:/docker/34dc0b5e626f2c5c4c5170e34b10e7654ce36f0fcd532739f4445baabea03376.scope"
-                => Some("34dc0b5e626f2c5c4c5170e34b10e7654ce36f0fcd532739f4445baabea03376"),
-            // Podman cgroup v2: libpod-HEXID.scope/container (cgroupns=host)
-            "0::/machine.slice/libpod-93afc7bc3ce42ad052d2926ffacfba941803bfae080941d1e1375d9d46b6a281.scope/container"
-                => Some("93afc7bc3ce42ad052d2926ffacfba941803bfae080941d1e1375d9d46b6a281"),
-            // k8s with additional characters before ID
-            "1:name=systemd:/kubepods.slice/kubepods-burstable.slice/kubepods-burstable-pod2d3da189_6407_48e3_9ab6_78188d75e609.slice/docker-7b8952daecf4c0e44bbcefe1b5c5ebc7b4839d4eefeccefe694709d3809b6199.scope"
-                => Some("7b8952daecf4c0e44bbcefe1b5c5ebc7b4839d4eefeccefe694709d3809b6199"),
-            // extra spaces
-            "13:name=systemd:/docker/3726184226f5d3147c25fdeab5b60097e378e8a720503a5e19ecfdf29f869860    "
-                => Some("3726184226f5d3147c25fdeab5b60097e378e8a720503a5e19ecfdf29f869860"),
-            // one char too short
-            "13:name=systemd:/docker/3726184226f5d3147c25fdeab5b60097e378e8a720503a5e19ecfdf29f86986"
-                => None,
-            // invalid hex
-            "13:name=systemd:/docker/3726184226f5d3147g25fdeab5b60097e378e8a720503a5e19ecfdf29f869860"
-                => None,
-            // PCF Garden 8-4-4-4-4 UUID
-            "1:name=systemd:/system.slice/garden.service/garden/6f265890-5165-7fab-6b52-18d1"
-                => Some("6f265890-5165-7fab-6b52-18d1"),
-            "10:freezer:/garden/6f265890-5165-7fab-6b52-18d1"
-                => Some("6f265890-5165-7fab-6b52-18d1"),
-            // Regression guard: 8-4-4-4-12 standard UUID must NOT be truncated to 28 chars
-            "1:name=systemd:/uuid/5a081c13-b8cf-4801-b427-f4601742204d"
-                => Some("5a081c13-b8cf-4801-b427-f4601742204d"),
-            // First group only 7 chars -> no match
-            "1:name=systemd:/garden/6f26589-5165-7fab-6b52-18d1"
-                => None,
-        };
-        for (line, &expected_result) in test_lines.iter() {
-            assert_eq!(
-                parse_line(line),
-                expected_result,
-                "testing line parsing for container id with line: {line}"
-            );
-        }
-    }
 
     #[cfg_attr(miri, ignore)]
     #[test]

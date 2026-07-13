@@ -51,14 +51,39 @@
 //! 1:name=systemd:/ecs/8cd79a803caf4d2aa945152e934a5c00/8cd79a803caf4d2aa945152e934a5c00-1053176469
 //! ```
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::config::parse_env;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
+pub(crate) mod parse;
+
+#[cfg(not(target_arch = "wasm32"))]
 const EXTERNAL_ENV_ENVIRONMENT_VARIABLE: &str = "DD_EXTERNAL_ENV";
 
 /// Unix specific module allowing the use of unix specific functions
 #[cfg(unix)]
 mod unix;
+
+/// Cached entity ingredients. On unix, values are lazily detected on first
+/// getter call via `get_or_init`. On wasm, values remain uninitialized until
+/// [`init_entity_inputs`] is called with host-provided ingredients; getters
+/// invoked before injection init the slots to `None` (first-call-wins), so
+/// **inject before the first HTTP send**.
+struct EntityStore {
+    container_id: OnceLock<Option<&'static str>>,
+    entity_id: OnceLock<Option<&'static str>>,
+    external_env: OnceLock<Option<&'static str>>,
+}
+
+static ENTITY_STORE: EntityStore = EntityStore {
+    container_id: OnceLock::new(),
+    entity_id: OnceLock::new(),
+    external_env: OnceLock::new(),
+};
+
+fn leak(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
 
 /// Set the path to cgroup file to mock it during tests
 #[cfg(feature = "cgroup_testing")]
@@ -71,34 +96,79 @@ pub fn set_cgroup_file(_file: String) {
 
 /// Returns the `container_id` if available in the cgroup file, otherwise returns `None`
 pub fn get_container_id() -> Option<&'static str> {
-    #[cfg(unix)]
-    {
-        *unix::CONTAINER_ID
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
+    *ENTITY_STORE.container_id.get_or_init(|| {
+        #[cfg(unix)]
+        {
+            unix::detect_container_id()
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    })
 }
 
 /// Returns the `entity_id` if available, either `cid-<container_id>` or `in-<cgroup_inode>`
 pub fn get_entity_id() -> Option<&'static str> {
-    #[cfg(unix)]
-    {
-        *unix::ENTITY_ID
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
+    *ENTITY_STORE.entity_id.get_or_init(|| {
+        #[cfg(unix)]
+        {
+            unix::detect_entity_id()
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    })
 }
 
-pub static DD_EXTERNAL_ENV: LazyLock<Option<&'static str>> = LazyLock::new(|| {
-    let leaked: Option<&'static str> = parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE)
-        .map(|s| &*Box::leak(s.into_boxed_str()));
+/// Returns the sanitized `DD_EXTERNAL_ENV` value if set and safe to emit as an
+/// HTTP header. On wasm, returns whatever value was passed to
+/// [`init_entity_inputs`], since `DD_EXTERNAL_ENV` cannot be read from the
+/// wasm sandbox.
+pub fn get_external_env() -> Option<&'static str> {
+    *ENTITY_STORE.external_env.get_or_init(|| {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            parse_env::str_not_empty(EXTERNAL_ENV_ENVIRONMENT_VARIABLE)
+                .and_then(|raw| parse::sanitize_external_env(&raw).map(|s| leak(s.to_owned())))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            None
+        }
+    })
+}
 
-    leaked
-});
+/// Inject entity ingredients from a host runtime that cannot let the crate read
+/// `/proc` or environment variables directly (i.e. wasm). The Node runtime
+/// reads `/proc/self/cgroup` and `process.env.DD_EXTERNAL_ENV` itself, stats
+/// the cgroup subpath for an inode, and hands the raw values here.
+///
+/// **Call once at startup, before the first HTTP send.** Values are cached
+/// first-call-wins; a later call is a no-op. If a getter has already latched
+/// `None` (i.e. was called before `init_entity_inputs`), injection cannot
+/// override it — the getter will keep returning `None` for the process
+/// lifetime.
+#[cfg(target_arch = "wasm32")]
+pub fn init_entity_inputs(
+    cgroup_content: Option<&str>,
+    cgroup_inode: Option<u64>,
+    external_env: Option<&str>,
+) {
+    let container_id: Option<&'static str> = cgroup_content
+        .and_then(parse::parse_container_id)
+        .map(|s| leak(s.to_owned()));
+    let entity_id: Option<&'static str> =
+        parse::compose_entity_id(container_id, cgroup_inode).map(leak);
+    let external_env: Option<&'static str> = external_env
+        .and_then(parse::sanitize_external_env)
+        .map(|s| leak(s.to_owned()));
+
+    let _ = ENTITY_STORE.container_id.set(container_id);
+    let _ = ENTITY_STORE.entity_id.set(entity_id);
+    let _ = ENTITY_STORE.external_env.set(external_env);
+}
 
 /// Returns an iterator of entity-related headers (container-id, entity-id, external-env)
 /// as (header_name, header_value) string tuples for any that are available.
@@ -106,7 +176,7 @@ pub fn get_entity_headers() -> impl Iterator<Item = (&'static str, &'static str)
     [
         get_container_id().map(|v| ("datadog-container-id", v)),
         get_entity_id().map(|v| ("datadog-entity-id", v)),
-        (*DD_EXTERNAL_ENV).map(|v| ("datadog-external-env", v)),
+        get_external_env().map(|v| ("datadog-external-env", v)),
     ]
     .into_iter()
     .flatten()

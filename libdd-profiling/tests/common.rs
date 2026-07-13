@@ -35,7 +35,7 @@ pub fn assert_entity_headers_match(headers: &HashMap<String, String>) {
     // Check for entity headers and validate their values match what libdd_common provides
     let expected_container_id = libdd_common::entity_id::get_container_id();
     let expected_entity_id = libdd_common::entity_id::get_entity_id();
-    let expected_external_env = *libdd_common::entity_id::DD_EXTERNAL_ENV;
+    let expected_external_env = libdd_common::entity_id::get_external_env();
 
     // Validate container ID
     if let Some(expected) = expected_container_id {
@@ -70,12 +70,12 @@ pub fn assert_entity_headers_match(headers: &HashMap<String, String>) {
         assert_eq!(
             headers.get("datadog-external-env"),
             Some(&expected.to_string()),
-            "datadog-external-env header should match the value from entity_id::DD_EXTERNAL_ENV"
+            "datadog-external-env header should match the value from entity_id::get_external_env()"
         );
     } else {
         assert!(
             !headers.contains_key("datadog-external-env"),
-            "datadog-external-env header should not be present when entity_id::DD_EXTERNAL_ENV is None"
+            "datadog-external-env header should not be present when entity_id::get_external_env() is None"
         );
     }
 }

@@ -88,14 +88,14 @@ pub fn get_cgroup_inode(
     cgroup_v1_base_controller: &str,
     cgroup_path: &Path,
     cgroup_mount_path: &Path,
-) -> Option<String> {
+) -> Option<u64> {
     // If we're running in the host cgroup namespace, do not get the inode.
     // This would indicate that we're not in a container and the inode we'd
     // return is not related to a container.
     is_host_cgroup_namespace().ok()?;
     let cgroup_mount_path =
         get_cgroup_node_path(cgroup_v1_base_controller, cgroup_path, cgroup_mount_path).ok()?;
-    Some(get_inode(&cgroup_mount_path).ok()?.to_string())
+    get_inode(&cgroup_mount_path).ok()
 }
 
 #[cfg(test)]

@@ -4,7 +4,8 @@
 use alloc::fmt;
 use std::error;
 use std::path::Path;
-use std::sync::LazyLock;
+
+use crate::entity_id::parse;
 
 mod cgroup_inode;
 mod container_id;
@@ -47,13 +48,10 @@ fn compute_entity_id(
     cgroup_path: &Path,
     cgroup_mount_path: &Path,
 ) -> Option<String> {
-    container_id::extract_container_id(cgroup_path)
-        .ok()
-        .map(|container_id| format!("ci-{container_id}"))
-        .or(
-            cgroup_inode::get_cgroup_inode(base_controller, cgroup_path, cgroup_mount_path)
-                .map(|inode| format!("in-{inode}")),
-        )
+    let container_id = container_id::extract_container_id(cgroup_path).ok();
+    let cgroup_inode =
+        cgroup_inode::get_cgroup_inode(base_controller, cgroup_path, cgroup_mount_path);
+    parse::compose_entity_id(container_id.as_deref(), cgroup_inode)
 }
 
 /// Set cgroup mount path to mock during tests
@@ -76,40 +74,37 @@ fn get_cgroup_mount_path() -> &'static str {
     DEFAULT_CGROUP_MOUNT_PATH
 }
 
-/// The `container_id` if available in the cgroup file, otherwise returns `None`. Value is cached to
-/// avoid recomputing it at each call.
-pub static CONTAINER_ID: LazyLock<Option<&'static str>> = LazyLock::new(|| {
-    // cache container id in a static to avoid recomputing it at each call
+/// Detect the container id from the process's cgroup file. Called by the
+/// module-level store on first `get_container_id()`; the returned `&'static str`
+/// is leaked to give the store's cached value a static lifetime.
+pub(super) fn detect_container_id() -> Option<&'static str> {
     container_id::extract_container_id(Path::new(get_cgroup_path()))
         .ok()
-        .map(|s| {
-            let leaked_str: &'static str = Box::leak(s.into_boxed_str());
-            leaked_str
-        })
-});
+        .map(|s| Box::leak(s.into_boxed_str()) as &'static str)
+}
 
-/// The `entity_id` if available, either `cid-<container_id>` or `in-<cgroup_inode>`
-pub static ENTITY_ID: LazyLock<Option<&'static str>> = LazyLock::new(|| {
+/// Detect the entity id (`ci-<container_id>` or `in-<cgroup_inode>`) by
+/// combining container-id detection with cgroup inode lookup. Called by the
+/// module-level store on first `get_entity_id()`.
+pub(super) fn detect_entity_id() -> Option<&'static str> {
     compute_entity_id(
         CGROUP_V1_BASE_CONTROLLER,
         Path::new(get_cgroup_path()),
         Path::new(get_cgroup_mount_path()),
     )
-    .map(|s| {
-        let leaked_str: &'static str = Box::leak(s.into_boxed_str());
-        leaked_str
-    })
-});
+    .map(|s| Box::leak(s.into_boxed_str()) as &'static str)
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entity_id::parse::CONTAINER_REGEX;
     use crate::regex_engine::Regex;
+    use std::sync::LazyLock;
 
     static IN_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"in-\d+").unwrap());
-    static CI_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(&format!(r"ci-{}", container_id::CONTAINER_REGEX.as_str())).unwrap()
-    });
+    static CI_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(&format!(r"ci-{}", CONTAINER_REGEX.as_str())).unwrap());
 
     /// The following test can only be run in isolation because of caching behaviour
     fn test_entity_id(filename: &str, expected_result: Option<&Regex>) {
