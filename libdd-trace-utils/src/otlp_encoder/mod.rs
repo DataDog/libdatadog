@@ -22,4 +22,6 @@ pub struct OtlpResourceInfo {
     pub language: String,
     pub tracer_version: String,
     pub runtime_id: String,
+    pub instrumentation_scope_name: String,
+    pub instrumentation_scope_version: String,
 }

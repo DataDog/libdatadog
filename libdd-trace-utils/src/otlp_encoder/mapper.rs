@@ -18,7 +18,7 @@ const MAX_ATTRIBUTES_PER_SPAN: usize = 128;
 /// Maps Datadog trace chunks and resource info to an OTLP ExportTraceServiceRequest.
 ///
 /// Resource: SDK-level attributes (service.name, deployment.environment.name, telemetry.sdk.*,
-/// runtime-id). InstrumentationScope: present but empty (DD SDKs don't have a scope concept).
+/// runtime-id). InstrumentationScope: optional tracer scope name/version.
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
 /// meta["error.msg"].
@@ -34,7 +34,10 @@ pub fn map_traces_to_otlp<T: TraceData>(
         }
     }
     let scope_spans = ScopeSpans {
-        scope: Some(InstrumentationScope::default()),
+        scope: Some(InstrumentationScope {
+            name: non_empty_string(&resource_info.instrumentation_scope_name),
+            version: non_empty_string(&resource_info.instrumentation_scope_version),
+        }),
         spans: all_spans,
         schema_url: None,
     };
@@ -45,6 +48,10 @@ pub fn map_traces_to_otlp<T: TraceData>(
     ExportTraceServiceRequest {
         resource_spans: vec![resource_spans],
     }
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn build_resource(resource_info: &OtlpResourceInfo) -> Resource {
@@ -385,6 +392,28 @@ mod tests {
         assert_eq!(otlp_span.start_time_unix_nano, "1544712660000000000");
         assert_eq!(otlp_span.end_time_unix_nano, "1544712661000000000");
         assert_eq!(rs.scope_spans[0].scope.as_ref().unwrap().name, None);
+    }
+
+    #[test]
+    fn test_instrumentation_scope_from_resource_info() {
+        let resource_info = OtlpResourceInfo {
+            instrumentation_scope_name: "dd-trace-js".to_string(),
+            instrumentation_scope_version: "7.0.0-pre".to_string(),
+            ..Default::default()
+        };
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info);
+        let scope = req.resource_spans[0].scope_spans[0].scope.as_ref().unwrap();
+        assert_eq!(scope.name.as_deref(), Some("dd-trace-js"));
+        assert_eq!(scope.version.as_deref(), Some("7.0.0-pre"));
     }
 
     #[test]

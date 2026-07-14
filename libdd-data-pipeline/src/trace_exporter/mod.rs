@@ -236,6 +236,8 @@ pub struct TraceExporter<C: HttpClientCapability + SleepCapability + MaybeSend +
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
+    otlp_instrumentation_scope_name: String,
+    otlp_instrumentation_scope_version: String,
 }
 
 impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TraceExporter<C> {
@@ -518,6 +520,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tra
             r.language = self.metadata.language.clone();
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
+            r.instrumentation_scope_name = self.otlp_instrumentation_scope_name.clone();
+            r.instrumentation_scope_version = self.otlp_instrumentation_scope_version.clone();
             r
         };
         let request = map_traces_to_otlp(traces, &resource_info);

@@ -40,6 +40,8 @@ pub struct TraceExporterBuilder {
     language_version: String,
     language_interpreter: String,
     language_interpreter_vendor: String,
+    instrumentation_scope_name: String,
+    instrumentation_scope_version: String,
     git_commit_sha: String,
     process_tags: String,
     input_format: TraceExporterInputFormat,
@@ -158,6 +160,13 @@ impl TraceExporterBuilder {
     /// Set the `Datadog-Meta-Lang-Interpreter-Vendor` header
     pub fn set_language_interpreter_vendor(&mut self, lang_interpreter_vendor: &str) -> &mut Self {
         lang_interpreter_vendor.clone_into(&mut self.language_interpreter_vendor);
+        self
+    }
+
+    /// Set OTLP trace instrumentation scope metadata.
+    pub fn set_otlp_instrumentation_scope(&mut self, name: &str, version: &str) -> &mut Self {
+        name.clone_into(&mut self.instrumentation_scope_name);
+        version.clone_into(&mut self.instrumentation_scope_version);
         self
     }
 
@@ -485,6 +494,8 @@ impl TraceExporterBuilder {
             #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
             telemetry: telemetry_client,
             health_metrics_enabled: self.health_metrics_enabled,
+            otlp_instrumentation_scope_name: self.instrumentation_scope_name,
+            otlp_instrumentation_scope_version: self.instrumentation_scope_version,
             capabilities,
             #[cfg(not(target_arch = "wasm32"))]
             workers: TraceExporterWorkers {
