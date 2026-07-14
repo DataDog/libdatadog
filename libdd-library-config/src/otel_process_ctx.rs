@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Implementation of the Linux parts of the [OTEL process
-//! context specification](https://github.com/open-telemetry/opentelemetry-specification/pull/4719).
+//! context specification](https://github.com/open-telemetry/opentelemetry-specification/blob/main/oteps/profiles/4719-process-ctx.md).
 //!
 //! The update/read protocol is seqlock-style: the publisher marks the mapping as unavailable,
 //! writes the payload metadata, publishes a non-zero version, and readers accept a copy only if

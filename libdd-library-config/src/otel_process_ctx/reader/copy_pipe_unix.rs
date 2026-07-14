@@ -77,7 +77,11 @@ impl ProcessMemoryCopy for CopyPipe {
                                 io::ErrorKind::WouldBlock,
                                 "process context memory was unmapped during read",
                             ),
-                            pipe_dirty: false,
+                            // actually false on Linux: if EFAULT is returned, nothing was written;
+                            // should anything have been written already we would get a short write
+                            // However, this is not the case for macOS, despite what its manual
+                            // says: See https://github.com/apple-oss-distributions/xnu/blob/5c306bec31e314fa4d8bbdafb2f6f5a6b7e7b291/bsd/man/man2/write.2#L168-L186
+                            pipe_dirty: true,
                         });
                     }
                     _ => {
@@ -233,7 +237,7 @@ mod tests {
             .expect_err("a copy crossing into inaccessible memory should fail");
 
         assert_eq!(err.err.kind(), io::ErrorKind::WouldBlock);
-        assert!(!err.pipe_dirty);
+        assert!(err.pipe_dirty);
         // SAFETY: address and len came from mmap above.
         assert_eq!(unsafe { libc::munmap(address, len) }, 0);
     }
