@@ -45,8 +45,9 @@ pub struct Profile {
     locations: FxIndexSet<Location>,
     mappings: FxIndexSet<Mapping>,
     observations: Observations,
-    period: Option<(api::ValueType<'static>, i64)>,
-    sample_types: Box<[api::ValueType<'static>]>,
+    period: Option<api::Period>,
+    sample_types: Box<[api::SampleType]>,
+    sample_type_overrides: HashMap<api::SampleType, OwnedValueType>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -54,6 +55,21 @@ pub struct Profile {
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedValueType {
+    r#type: Box<str>,
+    unit: Box<str>,
+}
+
+impl From<api::ValueType<'_>> for OwnedValueType {
+    fn from(value_type: api::ValueType<'_>) -> Self {
+        Self {
+            r#type: value_type.r#type.into(),
+            unit: value_type.unit.into(),
+        }
+    }
 }
 
 pub struct EncodedProfile {
@@ -398,13 +414,9 @@ impl Profile {
         period: Option<api::Period>,
     ) -> io::Result<Self> {
         Self::try_new_internal(
-            period.map(|p| (api::ValueType::from(p.sample_type), p.value)),
-            sample_types
-                .iter()
-                .copied()
-                .map(api::ValueType::from)
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
+            period,
+            sample_types.to_vec().into_boxed_slice(),
+            HashMap::new(),
             None,
             None,
         )
@@ -419,13 +431,9 @@ impl Profile {
         profiles_dictionary: crate::profiles::collections::Arc<ProfilesDictionary>,
     ) -> io::Result<Self> {
         Self::try_new_internal(
-            period.map(|p| (api::ValueType::from(p.sample_type), p.value)),
-            sample_types
-                .iter()
-                .copied()
-                .map(api::ValueType::from)
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
+            period,
+            sample_types.to_vec().into_boxed_slice(),
+            HashMap::new(),
             None,
             Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
         )
@@ -438,13 +446,9 @@ impl Profile {
         string_storage: Arc<Mutex<ManagedStringStorage>>,
     ) -> io::Result<Self> {
         Self::try_new_internal(
-            period.map(|p| (api::ValueType::from(p.sample_type), p.value)),
-            sample_types
-                .iter()
-                .copied()
-                .map(api::ValueType::from)
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
+            period,
+            sample_types.to_vec().into_boxed_slice(),
+            HashMap::new(),
             Some(string_storage),
             None,
         )
@@ -460,25 +464,16 @@ impl Profile {
     pub fn set_custom_sample_type(
         &mut self,
         slot: api::SampleType,
-        value_type: api::ValueType<'static>,
+        value_type: api::ValueType<'_>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             slot.is_custom(),
             "{slot:?} is not a custom sample type slot"
         );
 
-        let placeholder = api::ValueType::from(slot);
-        let mut found = false;
-        for sample_type in self.sample_types.iter_mut() {
-            if *sample_type == placeholder {
-                *sample_type = value_type;
-                found = true;
-            }
-        }
-
-        if let Some((period_type, _)) = &mut self.period {
-            if *period_type == placeholder {
-                *period_type = value_type;
+        let mut found = self.sample_types.iter().copied().any(|st| st == slot);
+        if let Some(period) = self.period {
+            if period.sample_type == slot {
                 found = true;
             }
         }
@@ -487,6 +482,8 @@ impl Profile {
             found,
             "{slot:?} is not used by this profile's sample types or period"
         );
+
+        self.sample_type_overrides.insert(slot, value_type.into());
         Ok(())
     }
 
@@ -511,7 +508,8 @@ impl Profile {
 
         let mut profile = Profile::try_new_internal(
             self.period,
-            self.sample_types.clone(), // Box<[ValueType<'static>]> is cheap to clone (static strs)
+            self.sample_types.clone(),
+            self.sample_type_overrides.clone(),
             self.string_storage.clone(),
             profiles_dictionary_translator,
         )
@@ -659,19 +657,11 @@ impl Profile {
             Record::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
         }
 
-        for vt in self.sample_types.iter().copied() {
-            anyhow::ensure!(
-                !Self::is_unresolved_custom_value_type(vt),
-                "custom sample type slot {} was not configured before serialization",
-                vt.r#type
-            );
+        for sample_type in self.sample_types.iter().copied() {
+            self.ensure_custom_sample_type_resolved(sample_type, "sample")?;
         }
-        if let Some((vt, _)) = self.period {
-            anyhow::ensure!(
-                !Self::is_unresolved_custom_value_type(vt),
-                "custom period type slot {} was not configured before serialization",
-                vt.r#type
-            );
+        if let Some(period) = self.period {
+            self.ensure_custom_sample_type_resolved(period.sample_type, "period")?;
         }
 
         // `Sample`s must be emitted before `SampleTypes` since we consume
@@ -686,16 +676,18 @@ impl Profile {
         // so we must serialize `Sample` before `SampleType`.
         // Clone to avoid holding an immutable borrow of `self.sample_types` while interning.
         let sample_types = self.sample_types.clone();
-        for vt in sample_types.iter().copied() {
-            let vt = self.intern_value_type(vt);
-            Record::<_, 1, NO_OPT_ZERO>::from(vt).encode(writer)?;
+        for sample_type in sample_types.iter().copied() {
+            let sample_type = self.intern_sample_type(sample_type);
+            Record::<_, 1, NO_OPT_ZERO>::from(sample_type).encode(writer)?;
         }
 
         // Period type needs string interning, which must happen before we start moving fields out
         // of `self`. (Many fields below are consumed via `into_iter()`.)
-        let period_type_and_value: Option<(ValueType, i64)> = self
-            .period
-            .map(|(vt, value)| (self.intern_value_type(vt), value));
+        let period_type_and_value: Option<(ValueType, i64)> = if let Some(period) = self.period {
+            Some((self.intern_sample_type(period.sample_type), period.value))
+        } else {
+            None
+        };
 
         for (offset, item) in self.mappings.into_iter().enumerate() {
             let mapping = protobuf::Mapping {
@@ -917,23 +909,30 @@ impl Profile {
         self.stack_traces.try_dedup(StackTrace { locations })
     }
 
-    #[inline(always)]
-    fn is_unresolved_custom_value_type(vt: api::ValueType<'static>) -> bool {
-        matches!(
-            (vt.r#type, vt.unit),
-            ("custom-1", "count")
-                | ("custom-2", "count")
-                | ("custom-3", "count")
-                | ("custom-4", "count")
-                | ("custom-5", "count")
-        )
+    fn ensure_custom_sample_type_resolved(
+        &self,
+        sample_type: api::SampleType,
+        kind: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !sample_type.is_custom() || self.sample_type_overrides.contains_key(&sample_type),
+            "custom {kind} type slot {sample_type:?} was not configured before serialization"
+        );
+        Ok(())
     }
 
     #[inline(always)]
-    fn intern_value_type(&mut self, vt: api::ValueType<'static>) -> ValueType {
+    fn intern_sample_type(&mut self, sample_type: api::SampleType) -> ValueType {
+        let (type_, unit) = if let Some(value_type) = self.sample_type_overrides.get(&sample_type) {
+            (value_type.r#type.as_ref(), value_type.unit.as_ref())
+        } else {
+            let value_type = api::ValueType::from(sample_type);
+            (value_type.r#type, value_type.unit)
+        };
+
         ValueType {
-            r#type: Record::from(self.intern(vt.r#type)),
-            unit: Record::from(self.intern(vt.unit)),
+            r#type: Record::from(self.strings.intern(type_)),
+            unit: Record::from(self.strings.intern(unit)),
         }
     }
 
@@ -1011,6 +1010,7 @@ impl Profile {
 
     /// Interns the `str` as a string, returning the id in the string table.
     /// The empty string is guaranteed to have an id of [StringId::ZERO].
+    #[cfg(test)]
     #[inline]
     fn intern(&mut self, item: &str) -> StringId {
         self.strings.intern(item)
@@ -1026,8 +1026,9 @@ impl Profile {
     /// Creates a profile from the period, sample types, and start time using
     /// the owned values.
     fn try_new_internal(
-        period: Option<(api::ValueType<'static>, i64)>,
-        sample_types: Box<[api::ValueType<'static>]>,
+        period: Option<api::Period>,
+        sample_types: Box<[api::SampleType]>,
+        sample_type_overrides: HashMap<api::SampleType, OwnedValueType>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
@@ -1047,6 +1048,7 @@ impl Profile {
             observations: Default::default(),
             period,
             sample_types,
+            sample_type_overrides,
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -1473,9 +1475,8 @@ mod api_tests {
             .reset_and_return_previous()
             .expect("reset to succeed");
 
-        let expected_period = Some((api::ValueType::from(period.sample_type), period.value));
-        assert_eq!(profile.period, expected_period);
-        assert_eq!(prev.period, expected_period);
+        assert_eq!(profile.period, Some(period));
+        assert_eq!(prev.period, Some(period));
     }
 
     #[test]

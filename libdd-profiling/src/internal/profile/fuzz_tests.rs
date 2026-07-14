@@ -305,7 +305,7 @@ fn configure_custom_sample_types(profile: &mut Profile, sample_types: &[api::Sam
     for sample_type in sample_types.iter().copied() {
         if let Some(value_type) = configured_custom_value_type(sample_type) {
             // Ignore errors: duplicate custom slots are expected in fuzz input, and the first
-            // successful configuration updates every occurrence of the placeholder in the profile.
+            // successful configuration covers every occurrence of the slot in the profile.
             let _ = profile.set_custom_sample_type(sample_type, value_type);
         }
     }

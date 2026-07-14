@@ -529,19 +529,12 @@ pub unsafe extern "C" fn ddog_prof_Profile_set_custom_sample_type(
 ) -> ProfileResult {
     (|| {
         let profile = profile_ptr_to_inner(profile)?;
-        let type_str: &'static str = Box::leak(
-            type_str
-                .try_to_utf8()
-                .context("invalid UTF-8 in custom profile type")?
-                .to_string()
-                .into_boxed_str(),
-        );
-        let unit: &'static str = Box::leak(
-            unit.try_to_utf8()
-                .context("invalid UTF-8 in custom profile unit")?
-                .to_string()
-                .into_boxed_str(),
-        );
+        let type_str = type_str
+            .try_to_utf8()
+            .context("invalid UTF-8 in custom profile type")?;
+        let unit = unit
+            .try_to_utf8()
+            .context("invalid UTF-8 in custom profile unit")?;
         profile.set_custom_sample_type(slot, api::ValueType::new(type_str, unit))
     })()
     .context("ddog_prof_Profile_set_custom_sample_type failed")

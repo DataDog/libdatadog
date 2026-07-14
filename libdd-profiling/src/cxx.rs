@@ -538,12 +538,6 @@ pub struct Profile {
 }
 
 impl Profile {
-    fn owned_value_type(type_: &str, unit: &str) -> api::ValueType<'static> {
-        let type_: &'static str = Box::leak(type_.to_string().into_boxed_str());
-        let unit: &'static str = Box::leak(unit.to_string().into_boxed_str());
-        api::ValueType::new(type_, unit)
-    }
-
     pub fn create(
         sample_types: Vec<ffi::SampleType>,
         period: &ffi::Period,
@@ -590,7 +584,7 @@ impl Profile {
     ) -> anyhow::Result<()> {
         let slot: api::SampleType = slot.try_into()?;
         self.inner
-            .set_custom_sample_type(slot, Self::owned_value_type(type_, unit))
+            .set_custom_sample_type(slot, api::ValueType::new(type_, unit))
     }
 
     pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> anyhow::Result<()> {
