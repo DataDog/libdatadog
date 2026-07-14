@@ -14,7 +14,7 @@
 use crate::service::{
     sidecar_interface::{
         DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
-        SidecarInterfaceRequest,
+        SidecarInterfaceClientRequest, SidecarInterfaceRequest,
     },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
@@ -487,10 +487,10 @@ impl SidecarSender {
 
     pub fn send_appsec_message(
         &mut self,
-        request: &SidecarInterfaceRequest,
+        request: &SidecarInterfaceClientRequest<'_>,
     ) -> Result<(Vec<u8>, bool), datadog_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
-        self.channel.call_request_blocking(request)
+        self.channel.call_client_request_blocking(request)
     }
 
     pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {

@@ -250,9 +250,9 @@ pub trait SidecarInterface {
     /// Returns the response bytes from the helper and a flag indicating whether
     /// the extension session should be disconnected.
     async fn send_appsec_message(
-        session_id: String,
+        #[ClientType(&'request [u8])] session_id: String,
         client_id: u64,
-        data: Vec<u8>,
+        #[ClientType(&'request [u8])] data: Vec<u8>,
     ) -> (Vec<u8>, bool);
 
     /// Sends a ping to the service.
@@ -272,4 +272,35 @@ pub trait SidecarInterface {
     ///
     /// A string representation of the current statistics of the service.
     async fn stats() -> String;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SidecarInterfaceClientRequest, SidecarInterfaceRequest};
+
+    #[test]
+    fn appsec_client_request_decodes_as_server_request() {
+        let request = SidecarInterfaceClientRequest::SendAppsecMessage {
+            session_id: b"session",
+            client_id: 42,
+            data: b"payload",
+        };
+
+        let encoded = datadog_ipc::codec::encode(&request);
+        let decoded: SidecarInterfaceRequest =
+            datadog_ipc::codec::decode(&encoded).expect("client request should decode");
+
+        match decoded {
+            SidecarInterfaceRequest::SendAppsecMessage {
+                session_id,
+                client_id,
+                data,
+            } => {
+                assert_eq!(session_id, "session");
+                assert_eq!(client_id, 42);
+                assert_eq!(data, b"payload");
+            }
+            _ => panic!("decoded the wrong request variant"),
+        }
+    }
 }

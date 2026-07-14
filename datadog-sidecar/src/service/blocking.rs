@@ -6,7 +6,7 @@ use super::{
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceRequest};
+use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceClientRequest};
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
 use datadog_ipc::SeqpacketConn;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
@@ -476,11 +476,11 @@ pub fn stats(transport: &mut SidecarTransport) -> io::Result<String> {
 /// Returns the response bytes from the helper and a disconnect flag.
 pub fn send_appsec_message(
     transport: &mut SidecarTransport,
-    session_id: String,
+    session_id: &[u8],
     client_id: u64,
-    data: Vec<u8>,
+    data: &[u8],
 ) -> io::Result<(Vec<u8>, bool)> {
-    let request = SidecarInterfaceRequest::SendAppsecMessage {
+    let request = SidecarInterfaceClientRequest::SendAppsecMessage {
         session_id,
         client_id,
         data,
