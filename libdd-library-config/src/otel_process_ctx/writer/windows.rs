@@ -13,6 +13,16 @@ use std::{io, sync::OnceLock};
 use super::super::UNPUBLISHED_OR_UPDATING;
 use super::{HeaderMemoryHolder, MappingHeader, MonotonicTime};
 
+#[cfg(target_env = "msvc")]
+#[used]
+#[link_section = ".drectve"]
+static EXPORT_OTEL_PROCESS_CTX_V2: [u8; 28] = *b" /EXPORT:otel_process_ctx_v2";
+
+#[cfg(target_env = "gnu")]
+#[used]
+#[link_section = ".drectve"]
+static EXPORT_OTEL_PROCESS_CTX_V2: [u8; 28] = *b" -export:otel_process_ctx_v2";
+
 #[no_mangle]
 #[allow(non_upper_case_globals)]
 pub static otel_process_ctx_v2: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
@@ -106,4 +116,33 @@ fn performance_frequency() -> io::Result<u64> {
 fn last_error(context: &'static str) -> io::Error {
     let error = io::Error::last_os_error();
     io::Error::new(error.kind(), format!("{context}: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use core::{ffi::c_void, ptr};
+
+    use super::otel_process_ctx_v2;
+
+    type Handle = *mut c_void;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetModuleHandleW(module_name: *const u16) -> Handle;
+        fn GetProcAddress(module: Handle, proc_name: *const u8) -> *mut c_void;
+    }
+
+    #[test]
+    fn exports_process_context_global() {
+        // SAFETY: a null module name requests the current executable's module handle.
+        let module = unsafe { GetModuleHandleW(ptr::null()) };
+        assert!(!module.is_null());
+
+        // SAFETY: module is the current executable and the symbol name is NUL-terminated.
+        let symbol = unsafe { GetProcAddress(module, c"otel_process_ctx_v2".as_ptr().cast()) };
+        assert_eq!(
+            symbol.cast_const(),
+            ptr::from_ref(&otel_process_ctx_v2).cast::<c_void>()
+        );
+    }
 }
