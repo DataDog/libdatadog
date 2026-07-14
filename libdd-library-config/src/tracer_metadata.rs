@@ -255,10 +255,23 @@ mod linux {
 
 #[cfg(not(target_os = "linux"))]
 mod other {
+    /// Publishes tracer metadata as an OTel process context.
     pub fn store_tracer_metadata(
-        _data: &super::TracerMetadata,
+        data: &super::TracerMetadata,
     ) -> anyhow::Result<super::AnonymousFileHandle> {
-        Ok(super::AnonymousFileHandle::Other(()))
+        #[cfg(feature = "process-context-writer")]
+        {
+            crate::otel_process_ctx::publish(&data.to_otel_process_ctx())?;
+            Ok(super::AnonymousFileHandle::Other(()))
+        }
+
+        #[cfg(not(feature = "process-context-writer"))]
+        {
+            let _ = data;
+            Err(anyhow::anyhow!(
+                "storing tracer metadata requires the process-context-writer feature"
+            ))
+        }
     }
 }
 
@@ -307,6 +320,30 @@ mod tests {
 
         assert!(find_extra_attr(&ctx, "threadlocal.schema_version").is_none());
         assert!(find_extra_attr(&ctx, "threadlocal.attribute_key_map").is_none());
+    }
+
+    #[cfg(all(
+        not(target_os = "linux"),
+        feature = "process-context-reader",
+        feature = "process-context-writer"
+    ))]
+    #[test]
+    #[serial_test::serial]
+    fn store_tracer_metadata_publishes_otel_process_context() {
+        let metadata = TracerMetadata {
+            tracer_language: "python".to_owned(),
+            tracer_version: "1.2.3".to_owned(),
+            hostname: "test-host".to_owned(),
+            ..Default::default()
+        };
+        let expected = metadata.to_otel_process_ctx();
+
+        store_tracer_metadata(&metadata).expect("metadata storage should succeed");
+        let reader = crate::otel_process_ctx::ProcessContextSelfReader::new()
+            .expect("reader creation should succeed");
+        assert_eq!(reader.read().expect("read should succeed"), expected);
+
+        crate::otel_process_ctx::unpublish().expect("unpublish should succeed");
     }
 
     #[cfg(feature = "otel-thread-ctx")]

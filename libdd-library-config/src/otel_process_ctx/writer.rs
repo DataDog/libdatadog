@@ -20,6 +20,10 @@ use super::{PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
 
 #[cfg(target_os = "linux")]
 pub(super) mod linux;
+#[cfg(target_os = "macos")]
+pub(super) mod macos;
+#[cfg(target_os = "windows")]
+pub(super) mod windows;
 
 /// The header structure written at the start of the mapping. This must match the C
 /// layout of the specification.
@@ -53,9 +57,17 @@ const _: () = {
 
 #[cfg(target_os = "linux")]
 type HeaderMemory = linux::MemMapping;
+#[cfg(target_os = "macos")]
+type HeaderMemory = macos::VmRegion;
+#[cfg(target_os = "windows")]
+type HeaderMemory = windows::HeapHeader;
 
 #[cfg(target_os = "linux")]
 type PlatformMonotonicClock = linux::MonotonicClock;
+#[cfg(target_os = "macos")]
+type PlatformMonotonicClock = macos::MonotonicClock;
+#[cfg(target_os = "windows")]
+type PlatformMonotonicClock = windows::MonotonicClock;
 
 type ProcessContextHandle = ProcessContextHandleGen<HeaderMemory, PlatformMonotonicClock>;
 
@@ -208,7 +220,7 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
 }
 
 // The returned size is guaranteed to be larger or equal to the size of `MappingHeader`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) const fn mapping_size() -> usize {
     core::mem::size_of::<MappingHeader>()
 }

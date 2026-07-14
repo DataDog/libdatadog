@@ -174,6 +174,64 @@ fn create_pipe() -> io::Result<(OwnedFd, OwnedFd, usize)> {
     Ok((read_fd, write_fd, capacity as usize))
 }
 
+#[cfg(target_os = "macos")]
+fn create_pipe() -> io::Result<(OwnedFd, OwnedFd, usize)> {
+    let mut fds = [0; 2];
+    // SAFETY: fds points to space for the two descriptors returned by pipe.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
+        return Err(last_error("failed to create process context copy pipe"));
+    }
+
+    // SAFETY: pipe initialized both descriptors and ownership is transferred exactly once.
+    let (read_fd, write_fd) =
+        unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    configure_fd(&read_fd)?;
+    configure_fd(&write_fd)?;
+
+    // POSIX guarantees that an empty pipe accepts at least PIPE_BUF bytes without blocking.
+    // SAFETY: write_fd is a valid pipe descriptor.
+    let chunk_size = unsafe { libc::fpathconf(write_fd.as_raw_fd(), libc::_PC_PIPE_BUF) };
+    if chunk_size <= 0 {
+        return Err(last_error(
+            "failed to query process context copy pipe capacity",
+        ));
+    }
+
+    Ok((read_fd, write_fd, chunk_size as usize))
+}
+
+#[cfg(target_os = "macos")]
+fn configure_fd(fd: &OwnedFd) -> io::Result<()> {
+    // SAFETY: fd is a valid descriptor.
+    let status = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+    if status < 0 {
+        return Err(last_error(
+            "failed to query process context copy pipe status flags",
+        ));
+    }
+    // SAFETY: fd is valid and F_SETFL accepts the status flags returned above.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, status | libc::O_NONBLOCK) } < 0 {
+        return Err(last_error(
+            "failed to make process context copy pipe non-blocking",
+        ));
+    }
+
+    // SAFETY: fd is a valid descriptor.
+    let descriptor = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
+    if descriptor < 0 {
+        return Err(last_error(
+            "failed to query process context copy pipe descriptor flags",
+        ));
+    }
+    // SAFETY: fd is valid and F_SETFD accepts the descriptor flags returned above.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, descriptor | libc::FD_CLOEXEC) } < 0 {
+        return Err(last_error(
+            "failed to mark process context copy pipe close-on-exec",
+        ));
+    }
+    Ok(())
+}
+
 fn last_error(context: &'static str) -> io::Error {
     let err = io::Error::last_os_error();
     io::Error::new(err.kind(), format!("{context}: {err}"))
