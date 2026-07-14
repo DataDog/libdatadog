@@ -6,7 +6,7 @@ use super::{
     SessionConfig, SidecarAction, SidecarFlushOptions,
 };
 use crate::service::sender::SidecarSender;
-use crate::service::sidecar_interface::SidecarInterfaceChannel;
+use crate::service::sidecar_interface::{SidecarInterfaceChannel, SidecarInterfaceRequest};
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
 use datadog_ipc::SeqpacketConn;
 use datadog_live_debugger::debugger_defs::DebuggerPayload;
@@ -480,8 +480,13 @@ pub fn send_appsec_message(
     client_id: u64,
     data: Vec<u8>,
 ) -> io::Result<(Vec<u8>, bool)> {
+    let request = SidecarInterfaceRequest::SendAppsecMessage {
+        session_id,
+        client_id,
+        data,
+    };
     transport.with_retry(|s| {
-        s.send_appsec_message(session_id.clone(), client_id, data.clone())
+        s.send_appsec_message(&request)
             .map_err(|e| io::Error::other(e.to_string()))
     })
 }

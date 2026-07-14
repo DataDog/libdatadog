@@ -457,6 +457,27 @@ fn gen_channel(
                 }
                 self.0.send_blocking(&mut __data, &__fds)
             }
+
+            /// Generic blocking request/response call that retains ownership of the request.
+            pub fn call_request_blocking<__Response>(
+                &mut self,
+                req: &#enum_name,
+            ) -> ::std::result::Result<__Response, datadog_ipc::codec::DecodeError>
+            where
+                __Response: ::serde::de::DeserializeOwned,
+            {
+                let mut __sink = datadog_ipc::handles::FdSink::new();
+                datadog_ipc::handles::TransferHandles::copy_handles(req, &mut __sink).ok();
+                let mut __data = datadog_ipc::codec::encode(req);
+                let __fds = __sink.into_fds();
+                let __max = datadog_ipc::max_message_size();
+                if __data.len() > __max {
+                    ::tracing::warn!(?req, len = __data.len(), max = __max, "IPC message too large");
+                }
+                let (__resp, _) = self.0.call(&mut __data, &__fds)
+                    .map_err(datadog_ipc::codec::DecodeError::Io)?;
+                datadog_ipc::codec::decode::<__Response>(&__resp)
+            }
         }
     }
 }

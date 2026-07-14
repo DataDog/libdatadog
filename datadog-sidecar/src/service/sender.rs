@@ -487,13 +487,10 @@ impl SidecarSender {
 
     pub fn send_appsec_message(
         &mut self,
-        session_id: String,
-        client_id: u64,
-        data: Vec<u8>,
+        request: &SidecarInterfaceRequest,
     ) -> Result<(Vec<u8>, bool), datadog_ipc::codec::DecodeError> {
         self.drain_outbox_blocking();
-        self.channel
-            .call_send_appsec_message(session_id, client_id, data)
+        self.channel.call_request_blocking(request)
     }
 
     pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {

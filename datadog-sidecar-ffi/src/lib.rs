@@ -1795,13 +1795,17 @@ pub unsafe extern "C" fn ddog_sidecar_send_garbage(transport: &mut Box<SidecarTr
     let _ = transport.send_garbage();
 }
 
-/// Raw AppSec response returned to the PHP extension.
+/// Raw AppSec response returned by `ddog_sidecar_send_appsec_message`.
+///
+/// When `ptr` is non-null, the response must be freed by calling
+/// `ddog_sidecar_appsec_response_drop`.
 #[cfg(unix)]
 #[repr(C)]
 pub struct AppsecCResponse {
     pub ptr: *mut u8,
     pub len: usize,
     pub capacity: usize,
+    /// If true, the extension session should be disconnected after this response.
     pub disconnect: bool,
 }
 
