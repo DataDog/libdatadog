@@ -62,7 +62,7 @@ mod elf;
 mod hooks;
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-use std::sync::{Mutex, MutexGuard, TryLockError};
+use std::sync::{Mutex, MutexGuard};
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 use elf::SymbolOverrides;
@@ -77,6 +77,9 @@ static GLOBAL_OVERRIDES: Mutex<Option<SymbolOverrides>> = Mutex::new(None);
 fn lock_global_overrides() -> MutexGuard<'static, Option<SymbolOverrides>> {
     GLOBAL_OVERRIDES
         .lock()
+        // Recover from poison: if a thread panicked during apply/update, the
+        // registry may be partially applied, but the next scan re-walks all
+        // libraries idempotently, making partial state harmless.
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -109,8 +112,7 @@ pub fn install_heap_overrides() -> bool {
         register_all(&mut so);
         *guard = Some(so);
     }
-    let so = guard.as_mut().unwrap();
-    so.apply_overrides();
+    guard.as_mut().unwrap().apply_overrides();
     // Heuristic: at least one ORIG slot resolved.
     any_orig_resolved()
 }
@@ -126,14 +128,7 @@ pub fn install_heap_overrides() -> bool {
 /// doesn't need to call this directly. No-op on non-Linux targets.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn update_heap_overrides() {
-    // `try_lock` so a dlopen happening on the same thread that owns the
-    // install lock doesn't deadlock - that thread will finish its
-    // outer apply_overrides, which already walks every library.
-    let mut guard = match GLOBAL_OVERRIDES.try_lock() {
-        Ok(guard) => guard,
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        Err(TryLockError::WouldBlock) => return,
-    };
+    let mut guard = lock_global_overrides();
     if let Some(so) = guard.as_mut() {
         so.update_overrides();
     }
@@ -157,59 +152,53 @@ pub fn heap_overrides_are_installed() -> bool {
     false
 }
 
+/// Number of times a `gotter_*` hook has run in this process. Test-only:
+/// lets integration tests in other crates (see
+/// `libdd-profiling-heap-gotter-ffi/tests/install.rs`) prove the patched
+/// GOT was actually exercised, not just that nothing crashed. Always `0`
+/// on non-64-bit-Linux targets, where hooks never run.
+#[cfg(feature = "test-support")]
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub fn test_hook_hits() -> u64 {
+    hooks::HOOK_HITS.load(std::sync::atomic::Ordering::Relaxed) as u64
+}
+
+/// See the Linux variant above.
+#[cfg(feature = "test-support")]
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+pub fn test_hook_hits() -> u64 {
+    0
+}
+
 /// Register GOT overrides for every symbol this crate currently hooks.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 fn register_all(so: &mut SymbolOverrides) {
     use hooks::*;
-    use std::sync::atomic::AtomicUsize;
 
     // Register one entry per supported symbol. The install path stores
     // via `store(Release)` and hooks read via `load(Acquire)`; both go
     // through the typed atomic to avoid racing plain writes against
     // atomic loads.
-    fn reg(so: &mut SymbolOverrides, name: &str, hook_addr: usize, slot: &'static AtomicUsize) {
-        so.register(name, hook_addr, slot);
-    }
-
-    reg(
-        so,
-        "malloc",
-        gotter_malloc as *const () as usize,
-        &ORIG_MALLOC,
-    );
-    reg(so, "free", gotter_free as *const () as usize, &ORIG_FREE);
-    reg(
-        so,
-        "calloc",
-        gotter_calloc as *const () as usize,
-        &ORIG_CALLOC,
-    );
-    reg(
-        so,
+    so.register("malloc", gotter_malloc as *const () as usize, &ORIG_MALLOC);
+    so.register("free", gotter_free as *const () as usize, &ORIG_FREE);
+    so.register("calloc", gotter_calloc as *const () as usize, &ORIG_CALLOC);
+    so.register(
         "realloc",
         gotter_realloc as *const () as usize,
         &ORIG_REALLOC,
     );
-    reg(
-        so,
+    so.register(
         "posix_memalign",
         gotter_posix_memalign as *const () as usize,
         &ORIG_POSIX_MEMALIGN,
     );
-    reg(
-        so,
+    so.register(
         "aligned_alloc",
         gotter_aligned_alloc as *const () as usize,
         &ORIG_ALIGNED_ALLOC,
     );
-    reg(
-        so,
-        "dlopen",
-        gotter_dlopen as *const () as usize,
-        &ORIG_DLOPEN,
-    );
-    reg(
-        so,
+    so.register("dlopen", gotter_dlopen as *const () as usize, &ORIG_DLOPEN);
+    so.register(
         "pthread_create",
         gotter_pthread_create as *const () as usize,
         &ORIG_PTHREAD_CREATE,

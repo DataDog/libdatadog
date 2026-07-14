@@ -13,7 +13,7 @@
  * The returned dd_alloc_req_t carries the values the caller must forward:
  *   - size:      the number of bytes to request from the real allocator
  *                (may be larger than the original on architectures that
- *                store the sample flag in a header word before the user
+ *                store the sample flag in a 16-byte header before the user
  *                pointer).
  *   - user_size: the original application-requested size, reported to
  *                the profiler via the ddheap:alloc USDT.
@@ -28,6 +28,7 @@
 #ifndef DD_SAMPLERS_ALLOCATION_REQUESTED_H
 #define DD_SAMPLERS_ALLOCATION_REQUESTED_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -64,6 +65,18 @@ typedef struct {
     uint64_t weight;
 } dd_alloc_req_t;
 
+/*
+ * True if this request was sampled (weight > 0). Both the C fast path
+ * (allocation_created.h) and callers that branch on sampled-ness (e.g.
+ * gotter's calloc hook) should use this instead of comparing `weight == 0`
+ * directly, so there is one named predicate rather than the same
+ * comparison repeated in C and Rust.
+ */
+static inline __attribute__((always_inline))
+bool dd_alloc_req_is_sampled(dd_alloc_req_t req) {
+    return req.weight != 0;
+}
+
 /* Slow path for an allocation request. This is only taken when we think we
  * need to sample, and is declared as a separate function to avoid bloating
  * the instruction cache of the fast path
@@ -94,9 +107,10 @@ static inline __attribute__((always_inline, warn_unused_result))
 dd_alloc_req_t dd_allocation_requested(size_t size, size_t alignment) {
     dd_alloc_req_t out = { size, size, alignment, 0 };
 
-    // If we don't have TLS yet, or the reentry guard is set (meaning a sampled
-    // allocation is already in flight on this thread and something in its slow
-    // path triggered another allocation), pass through without sampling.
+    // If we don't have TLS yet (this is defensive and should never happen), or
+    // the reentry guard is set (meaning a sampled allocation is already in
+    // flight on this thread and something in its slow path triggered another
+    // allocation), pass through without sampling.
     // Either condition is rare on a hot path, so mark the branch unlikely.
     dd_tl_state_t *tl = dd_tl_state_get_or_init();
     if (__builtin_expect(!tl || tl->reentry_guard, 0)) return out;

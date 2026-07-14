@@ -531,6 +531,13 @@ struct PatchedLibrary {
     /// Identifies the library at this base address, so we can detect
     /// base-address reuse after a `dlclose` + `dlopen` places a
     /// different library at the same load address.
+    ///
+    /// Known limitation: detection keys on this name, not on library
+    /// contents. A different version of the same library reloaded at the
+    /// same base (identical path, changed contents, same base despite
+    /// ASLR) would slip through and we would restore stale GOT values.
+    /// This is judged unlikely enough in practice to document rather than
+    /// guard against with additional fingerprinting.
     library_name: String,
     /// Set each pass in which this library was seen; used to drop entries
     /// for libraries that have since been unloaded.

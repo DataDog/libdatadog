@@ -38,6 +38,10 @@ mod linux_bench {
             // Return a stable aligned pointer with mapped bytes before it. The sampler's free path
             // may inspect header-sized bytes immediately before the user pointer when
             // checking for sampled allocations.
+            //
+            // Always returns the same fixed pointer. This allocator isn't tracking real
+            // capacity or state; it exists purely to eliminate the real allocator's cost
+            // from the benchmark so it measures the sampler's own overhead.
             unsafe { ptr::addr_of_mut!(NOOP_BUFFER.0).cast::<u8>().add(4096) }
         }
 
@@ -48,10 +52,21 @@ mod linux_bench {
         unsafe { ptr::addr_of_mut!(NOOP_BUFFER.0).cast::<u8>().add(4096) }
     }
 
+    /// # Safety
+    ///
+    /// Must be called on a thread that isn't concurrently tearing down its
+    /// TLS (i.e. not from a destructor); otherwise identical to
+    /// `dd_tl_state_get_or_init`'s own safety contract.
     unsafe fn sampler_tl_state() -> *mut libdd_profiling_heap_sampler::dd_tl_state_t {
         unsafe { dd_tl_state_get_or_init() }
     }
 
+    /// Pins this thread's sampler state onto the fast (unsampled) path for
+    /// the rest of the benchmark. `remaining_bytes` starts at a huge
+    /// negative value and `sampling_interval` at a huge positive one, so
+    /// benchmark-sized allocations can never drive `remaining_bytes`
+    /// non-negative and trigger the slow/sampled path. Dividing by 4 keeps
+    /// headroom against overflow while summing allocation sizes.
     unsafe fn pin_sampler_to_fast_path() {
         let tl = unsafe { sampler_tl_state() };
         if !tl.is_null() {
@@ -64,6 +79,10 @@ mod linux_bench {
         }
     }
 
+    /// Forces the next allocation on this thread onto the slow/sampled
+    /// path. `512 * 1024` matches `DD_SAMPLING_INTERVAL_DEFAULT` (see
+    /// tl_state.h), so this benchmarks the sampled path against the same
+    /// interval used in production rather than an arbitrary value.
     unsafe fn force_next_allocation_to_sample() {
         let tl = unsafe { sampler_tl_state() };
         if !tl.is_null() {
