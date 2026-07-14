@@ -75,6 +75,9 @@ pub enum SampleType {
     /// Legacy: Use `WallTime` instead for consistency with naming scheme
     WallLegacy,
 
+    OffCpuSamples,
+    OffCpuTime,
+
     // Experimental sample types for testing and development.
     ExperimentalCount,
     ExperimentalNanoseconds,
@@ -160,6 +163,8 @@ impl From<SampleType> for ValueType<'static> {
             SampleType::WallSamples => ValueType::new("wall-samples", "count"),
             SampleType::WallTime => ValueType::new("wall-time", "nanoseconds"),
             SampleType::WallLegacy => ValueType::new("wall", "nanoseconds"),
+            SampleType::OffCpuSamples => ValueType::new("off-cpu-samples", "count"),
+            SampleType::OffCpuTime => ValueType::new("off-cpu-time", "nanoseconds"),
             SampleType::ExperimentalCount => ValueType::new("experimental-count", "count"),
             SampleType::ExperimentalNanoseconds => {
                 ValueType::new("experimental-nanoseconds", "nanoseconds")
@@ -226,6 +231,8 @@ impl<'a> TryFrom<ValueType<'a>> for SampleType {
             ("wall-samples", "count") => SampleType::WallSamples,
             ("wall-time", "nanoseconds") => SampleType::WallTime,
             ("wall", "nanoseconds") => SampleType::WallLegacy,
+            ("off-cpu-samples", "count") => SampleType::OffCpuSamples,
+            ("off-cpu-time", "nanoseconds") => SampleType::OffCpuTime,
             ("experimental-count", "count") => SampleType::ExperimentalCount,
             ("experimental-nanoseconds", "nanoseconds") => SampleType::ExperimentalNanoseconds,
             ("experimental-bytes", "bytes") => SampleType::ExperimentalBytes,

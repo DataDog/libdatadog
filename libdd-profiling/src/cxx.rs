@@ -89,6 +89,8 @@ pub mod ffi {
         WallSamples,
         WallTime,
         WallLegacy, // LEGACY: Use WallTime instead
+        OffCpuSamples,
+        OffCpuTime,
         ExperimentalCount,
         ExperimentalNanoseconds,
         ExperimentalBytes,
@@ -391,6 +393,8 @@ impl TryFrom<ffi::SampleType> for api::SampleType {
             ffi::SampleType::WallSamples => api::SampleType::WallSamples,
             ffi::SampleType::WallTime => api::SampleType::WallTime,
             ffi::SampleType::WallLegacy => api::SampleType::WallLegacy,
+            ffi::SampleType::OffCpuSamples => api::SampleType::OffCpuSamples,
+            ffi::SampleType::OffCpuTime => api::SampleType::OffCpuTime,
             ffi::SampleType::ExperimentalCount => api::SampleType::ExperimentalCount,
             ffi::SampleType::ExperimentalNanoseconds => api::SampleType::ExperimentalNanoseconds,
             ffi::SampleType::ExperimentalBytes => api::SampleType::ExperimentalBytes,
