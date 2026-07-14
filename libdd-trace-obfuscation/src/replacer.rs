@@ -126,7 +126,7 @@ pub fn parse_rules_from_string(
         let compiled_regex = match Regex::new(&raw_rule.pattern) {
             Ok(res) => res,
             Err(err) => {
-                anyhow::bail!("Obfuscator Error: Error while parsing rule: {}", err)
+                anyhow::bail!("Obfuscator Error: Error while parsing rule: {err}")
             }
         };
         let no_expansion = Replacer::no_expansion(&mut &raw_rule.repl).is_some();
@@ -192,8 +192,8 @@ fn replace_all(
         }
         scratch_space.push_str(&haystack[last_match..]);
     }
-    std::mem::swap(scratch_space, haystack);
-    scratch_space.truncate(0);
+    core::mem::swap(scratch_space, haystack);
+    scratch_space.clear();
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 pub mod agent_response;
 pub mod builder;
 pub mod error;
+mod log_writer;
 pub mod metrics;
 pub mod stats;
 mod trace_serializer;
@@ -12,10 +13,12 @@ pub use builder::TraceExporterBuilder;
 use libdd_trace_utils::trace_filter::TraceFilterer;
 
 use self::agent_response::AgentResponse;
+use self::log_writer::write_log_traces;
 use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
+use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -36,7 +39,7 @@ use bytes::Bytes;
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
-use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
@@ -62,6 +65,49 @@ const INFO_ENDPOINT: &str = "/info";
 const V04_TRACES_ENDPOINT: &str = "/v0.4/traces";
 const V05_TRACES_ENDPOINT: &str = "/v0.5/traces";
 const V1_TRACES_ENDPOINT: &str = "/v1.0/traces";
+
+/// Build the HTTP headers required by the agentless intake.
+///
+/// Includes the API key, content-type, trace count, `Datadog-Meta-*` tracer headers,
+/// and entity headers (container-id / entity-id / external-env) when available.
+fn build_agentless_headers(
+    metadata: &TracerMetadata,
+    api_key: &str,
+    trace_count: usize,
+) -> Result<HeaderMap, TraceExporterError> {
+    let mut headers: HeaderMap = {
+        let tags: TracerHeaderTags = metadata.into();
+        tags.into()
+    };
+
+    let api_key_val = http::HeaderValue::from_str(api_key).map_err(|_| {
+        TraceExporterError::Internal(error::InternalErrorKind::InvalidWorkerState(
+            "Invalid Datadog API key value for dd-api-key header".to_string(),
+        ))
+    })?;
+    headers.insert(http::HeaderName::from_static("dd-api-key"), api_key_val);
+
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        libdd_common::header::APPLICATION_JSON,
+    );
+
+    headers.insert(
+        http::HeaderName::from_static("x-datadog-trace-count"),
+        http::HeaderValue::from(trace_count),
+    );
+
+    for (name, value) in libdd_common::entity_id::get_entity_headers() {
+        if let (Ok(name), Ok(value)) = (
+            http::HeaderName::from_bytes(name.as_bytes()),
+            http::HeaderValue::from_str(value),
+        ) {
+            headers.insert(name, value);
+        }
+    }
+
+    Ok(headers)
+}
 
 /// Values for optional telemetry HTTP session headers (`dd-session-id`, root/parent).
 #[derive(Debug, Default, Clone)]
@@ -143,7 +189,9 @@ pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
-    info_fetcher: WorkerHandle,
+    /// `None` when no background `/info` fetcher is started (agentless trace
+    /// export mode, log-export mode).
+    info_fetcher: Option<WorkerHandle>,
     #[cfg(feature = "telemetry")]
     telemetry: Option<WorkerHandle>,
 }
@@ -188,7 +236,7 @@ impl From<TraceExporterInputFormat> for DeserInputFormat {
 /// [`libdd_shared_runtime::SharedRuntime`] for guidance on choosing an implementation.
 #[derive(Debug)]
 pub struct TraceExporter<
-    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
     R: SharedRuntime,
 > {
     endpoint: Endpoint,
@@ -205,7 +253,7 @@ pub struct TraceExporter<
     serializer: TraceSerializer,
     shared_runtime: Arc<R>,
     /// None if dogstatsd is disabled
-    dogstatsd: Option<Client>,
+    dogstatsd: Option<Arc<Client>>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     client_side_stats: StatsComputationConfig,
@@ -221,16 +269,26 @@ pub struct TraceExporter<
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
+    /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
+    /// instead of via the Datadog Agent
+    agentless_config: Option<AgentlessTraceConfig>,
     trace_filterer: ArcSwap<TraceFilterer>,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
     /// skipped.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     otlp_stats_enabled: bool,
+    /// When `Some(max_line_size)`, traces are written as newline-delimited JSON
+    /// through the [`LogWriterCapability`] (the Datadog Forwarder "log exporter"
+    /// path) instead of being sent to an agent. Used in serverless environments
+    /// where no agent is reachable.
+    log_output: Option<usize>,
 }
 
-impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: SharedRuntime>
-    TraceExporter<C, R>
+impl<
+        C: HttpClientCapability + SleepCapability + LogWriterCapability + MaybeSend + Sync + 'static,
+        R: SharedRuntime,
+    > TraceExporter<C, R>
 {
     #[allow(missing_docs)]
     pub fn builder() -> TraceExporterBuilder<R> {
@@ -287,8 +345,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
                 join_set.spawn(async move { handle.stop().await });
             }
 
-            let info_fetcher = self.workers.info_fetcher;
-            join_set.spawn(async move { info_fetcher.stop().await });
+            if let Some(info_fetcher) = self.workers.info_fetcher {
+                join_set.spawn(async move { info_fetcher.stop().await });
+            }
 
             #[cfg(feature = "telemetry")]
             if let Some(telemetry) = self.workers.telemetry {
@@ -325,7 +384,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
     /// `data` must be encoded per the `input_format` given to the builder.
     /// [`Self::send`] is the sync facade over this method.
     pub async fn send_async(&self, data: &[u8]) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info().await;
+        // In log-export mode there is no agent to negotiate with; skip the poll.
+        if self.log_output.is_none() {
+            self.check_agent_info().await;
+        }
 
         let format: DeserInputFormat = self.input_format.into();
 
@@ -407,6 +469,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
                     metadata: &self.metadata,
                     endpoint_url: &self.endpoint.url,
                     shared_runtime: &*self.shared_runtime,
+                    stats_cardinality_limit: self.client_side_stats.stats_cardinality_limit,
+                    dogstatsd: if self.health_metrics_enabled {
+                        self.dogstatsd.clone()
+                    } else {
+                        None
+                    },
+                    #[cfg(feature = "telemetry")]
+                    telemetry: self.telemetry.as_ref().map(|t| t.clone_handle()),
                 };
                 stats::handle_stats_disabled_by_agent(
                     &ctx,
@@ -497,7 +567,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
         if self.health_metrics_enabled {
-            let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
+            let emitter = MetricsEmitter::new(self.dogstatsd.as_deref(), &self.common_stats_tags);
             emitter.emit(metric, custom_tags);
         }
     }
@@ -505,7 +575,7 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
     /// Emit all health metrics from a SendResult
     fn emit_send_result(&self, result: &SendResult) {
         if self.health_metrics_enabled {
-            let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
+            let emitter = MetricsEmitter::new(self.dogstatsd.as_deref(), &self.common_stats_tags);
             emitter.emit_from_send_result(result);
         }
     }
@@ -563,8 +633,33 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         &self,
         trace_chunks: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
-        self.check_agent_info().await;
+        // In log-export mode there is no agent to negotiate with; skip the poll.
+        if self.log_output.is_none() {
+            self.check_agent_info().await;
+        }
         self.send_trace_chunks_inner(trace_chunks).await
+    }
+
+    /// Sends trace chunks to the Datadog agentless intake (`/v1/input`) as JSON.
+    async fn send_agentless_traces_inner<T: TraceData>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+        config: &AgentlessTraceConfig,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let trace_count = traces.len();
+        let json_body = libdd_trace_utils::agentless_encoder::encode_payload(
+            &traces,
+            &self.metadata,
+        )
+        .map_err(|e| {
+            error!("Agentless JSON serialization error: {e}");
+            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(e.to_string()))
+        })?;
+
+        let headers = build_agentless_headers(&self.metadata, &config.api_key, trace_count)?;
+
+        send_agentless_traces_http(&self.capabilities, config, headers, json_body).await?;
+        Ok(AgentResponse::Unchanged)
     }
 
     /// Sends trace chunks via OTLP HTTP (JSON or protobuf) when OTLP config is enabled.
@@ -655,11 +750,54 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static, R: 
         self.handle_send_result(result, chunks, payload_len).await
     }
 
+    /// Synchronous log-export path: encode every span to newline-delimited
+    /// Forwarder JSON and write it through the log-output capability (stdout on
+    /// native; host/JS on wasm). No agent, stats, OTLP, or telemetry is involved.
+    ///
+    /// Unlike the OTLP path, spans are emitted as-is and unsampled (p0) chunks are
+    /// NOT dropped here: the reference log exporters (JS/Go/Py/Java) write every
+    /// span they are handed and defer sampling to the trace intake behind the
+    /// Datadog Forwarder.
+    ///
+    /// Returns [`AgentResponse::Unchanged`] as there is no agent response to relay.
+    fn send_trace_chunks_to_log<T: TraceData>(
+        &self,
+        traces: &[Vec<Span<T>>],
+        max_line_size: usize,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let stats = write_log_traces(&self.capabilities, traces, max_line_size)
+            .map_err(TraceExporterError::Io)?;
+        debug!(
+            spans_written = stats.spans_written,
+            spans_dropped = stats.spans_dropped,
+            "Wrote traces to log exporter"
+        );
+        Ok(AgentResponse::Unchanged)
+    }
+
     async fn send_trace_chunks_inner<T: TraceData>(
         &self,
         mut traces: Vec<Vec<Span<T>>>,
     ) -> Result<AgentResponse, TraceExporterError> {
+        // TODO(APMSP-3608): log-output silently takes precedence over OTLP/agent here.
+        // The builder should reject conflicting destinations at build time instead.
+        if let Some(max_line_size) = self.log_output {
+            return self.send_trace_chunks_to_log(&traces, max_line_size);
+        }
+
         let mut header_tags: TracerHeaderTags = self.metadata.borrow().into();
+
+        if let Some(ref config) = self.agentless_config {
+            // For agentless we want to tag top level spans, but not perform
+            // stats aggregation or span drops
+            if !self.client_computed_top_level {
+                for chunk in traces.iter_mut() {
+                    libdd_trace_utils::span::trace_utils::compute_top_level_span(chunk);
+                }
+            }
+
+            return self.send_agentless_traces_inner(traces, config).await;
+        }
 
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
@@ -980,11 +1118,7 @@ mod tests {
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
-    use libdd_trace_utils::span::v05;
     use std::net;
-
-    // v05 messagepack empty payload -> [[""], []]
-    const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
@@ -1184,7 +1318,7 @@ mod tests {
         datagram.trim_matches(char::from(0)).to_string()
     }
 
-    fn build_test_exporter(
+    pub(crate) fn build_test_exporter(
         url: String,
         dogstatsd_url: Option<String>,
         input: TraceExporterInputFormat,
@@ -1213,6 +1347,7 @@ mod tests {
         };
 
         if enable_telemetry {
+            #[cfg(feature = "telemetry")]
             builder.enable_telemetry(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()
@@ -1220,6 +1355,121 @@ mod tests {
         }
 
         builder.build::<NativeCapabilities>().unwrap()
+    }
+
+    // Capturing capabilities: delegate HTTP/sleep to the native impls, but capture
+    // log output into a thread-local buffer so log-mode tests can assert the emitted
+    // bytes without writing to real stdout. `build` constructs `C` via
+    // `C::new_client`, so the buffer is shared through a thread-local rather than an
+    // instance field; `new_client` clears it so each build starts fresh.
+    thread_local! {
+        static LOG_CAPTURE: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    #[derive(Clone, Debug)]
+    struct CapturingCapabilities(NativeCapabilities);
+
+    impl HttpClientCapability for CapturingCapabilities {
+        fn new_client() -> Self {
+            LOG_CAPTURE.with(|c| c.borrow_mut().clear());
+            Self(NativeCapabilities::new_client())
+        }
+        fn request(
+            &self,
+            req: http::Request<bytes::Bytes>,
+        ) -> impl std::future::Future<
+            Output = Result<http::Response<bytes::Bytes>, libdd_capabilities::http::HttpError>,
+        > + MaybeSend {
+            self.0.request(req)
+        }
+    }
+
+    impl SleepCapability for CapturingCapabilities {
+        fn new() -> Self {
+            Self(NativeCapabilities::new())
+        }
+        fn sleep(&self, duration: Duration) -> impl std::future::Future<Output = ()> + MaybeSend {
+            self.0.sleep(duration)
+        }
+    }
+
+    impl LogWriterCapability for CapturingCapabilities {
+        fn write_log_output(&self, bytes: &[u8]) -> std::io::Result<()> {
+            LOG_CAPTURE.with(|c| c.borrow_mut().extend_from_slice(bytes));
+            Ok(())
+        }
+    }
+
+    fn captured_log() -> Vec<u8> {
+        LOG_CAPTURE.with(|c| c.borrow().clone())
+    }
+
+    // The real `send` entry point decodes msgpack, hits the log branch, and writes
+    // Forwarder-format JSON bytes through the log-output capability.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_log_mode_send_writes_forwarder_json() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("test")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_to_log(None);
+        let exporter = builder.build::<CapturingCapabilities>().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"aws.lambda").unwrap(),
+            trace_id: 1,
+            span_id: 2,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+
+        let resp = exporter.send(data.as_ref()).unwrap();
+        assert!(matches!(resp, AgentResponse::Unchanged));
+
+        let text = String::from_utf8(captured_log()).unwrap();
+        assert!(text.ends_with('\n'), "line must be newline-terminated");
+        let line = text.trim_end();
+        let v: serde_json::Value = serde_json::from_str(line).expect("valid json line");
+        // Forwarder is_trace contract + the span actually round-tripped through
+        // msgpack decode -> log encode with hex ids.
+        assert!(v["traces"][0][0]["trace_id"].is_string());
+        assert_eq!(v["traces"][0][0]["span_id"], "0000000000000002");
+        assert_eq!(v["traces"][0][0]["name"], "aws.lambda");
+    }
+
+    // Log mode must make zero agent HTTP calls — also guards the worker-gating fix
+    // (info-fetcher is not spawned in log mode).
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_log_mode_makes_no_agent_requests() {
+        let fake_agent = MockServer::start();
+        // No `when` constraints => matches any request to any path.
+        let any = fake_agent.mock(|_when, then| {
+            then.status(200).body("{}");
+        });
+
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_url(&fake_agent.url("/"))
+            .set_service("test")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_to_log(None);
+        let exporter = builder.build::<CapturingCapabilities>().unwrap();
+        // Structural guarantee: no agent-info worker is spawned in log mode.
+        assert!(exporter.workers.info_fetcher.is_none());
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"test").unwrap(),
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        // `send` is synchronous and, in log mode, returns after writing through the
+        // capability without initiating any HTTP; combined with the structural assert
+        // above this is deterministic (no background worker can race the mock).
+        exporter.send(data.as_ref()).unwrap();
+
+        assert_eq!(any.calls(), 0, "log mode must not contact the agent");
     }
 
     #[test]
@@ -1718,172 +1968,6 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_v4() {
-        let server = MockServer::start();
-        let response_body = r#"{
-                        "rate_by_service": {
-                            "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8
-                        }
-                    }"#;
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path(V04_TRACES_ENDPOINT);
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(response_body);
-        });
-
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.bytes\"")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body("");
-        });
-
-        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
-        builder
-            .set_url(&server.url("/"))
-            .set_service("foo")
-            .set_env("foo-env")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .enable_telemetry(TelemetryConfig {
-                heartbeat: 100,
-                ..Default::default()
-            });
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-
-        let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref()).unwrap();
-        let AgentResponse::Changed { body } = result else {
-            panic!("Expected Changed response");
-        };
-        assert_eq!(body, response_body);
-
-        traces_endpoint.assert_calls(1);
-        while metrics_endpoint.calls() == 0 {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_v5() {
-        let server = MockServer::start();
-        let response_body = r#"{
-                        "rate_by_service": {
-                            "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8
-                        }
-                    }"#;
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path(V05_TRACES_ENDPOINT);
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(response_body);
-        });
-
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.bytes\"")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body("");
-        });
-
-        let exporter = build_test_exporter(
-            server.url("/"),
-            None,
-            TraceExporterInputFormat::V05,
-            TraceExporterOutputFormat::V05,
-            true,
-            true,
-        );
-
-        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
-        let traces = rmp_serde::to_vec(&v5).unwrap();
-        let result = exporter.send(traces.as_ref()).unwrap();
-        let AgentResponse::Changed { body } = result else {
-            panic!("Expected Changed response");
-        };
-        assert_eq!(body, response_body);
-
-        traces_endpoint.assert_calls(1);
-        while metrics_endpoint.calls() == 0 {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_v4_to_v5() {
-        let server = MockServer::start();
-        let response_body = r#"{
-                        "rate_by_service": {
-                            "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8
-                        }
-                    }"#;
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path(V05_TRACES_ENDPOINT).is_true(|req| {
-                let bytes = libdd_tinybytes::Bytes::copy_from_slice(req.body_ref());
-                bytes.to_vec() == V5_EMPTY
-            });
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(response_body);
-        });
-
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.bytes\"")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body("");
-        });
-
-        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
-        builder
-            .set_url(&server.url("/"))
-            .set_service("foo")
-            .set_env("foo-env")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .enable_telemetry(TelemetryConfig {
-                heartbeat: 100,
-                ..Default::default()
-            })
-            .set_input_format(TraceExporterInputFormat::V04)
-            .set_output_format(TraceExporterOutputFormat::V05);
-
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-
-        let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref()).unwrap();
-        let AgentResponse::Changed { body } = result else {
-            panic!("Expected Changed response");
-        };
-        assert_eq!(body, response_body);
-
-        traces_endpoint.assert_calls(1);
-        while metrics_endpoint.calls() == 0 {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
     /// Tests that if agent_response_payload_version is not enabled
     /// the exporter always returns the response body
     fn test_agent_response_payload_version_disabled() {
@@ -2125,6 +2209,291 @@ mod tests {
             result.err()
         );
         mock_otlp.assert();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_export_via_builder() {
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/input")
+                .header("Content-Type", "application/json")
+                .header("dd-api-key", "test-api-key")
+                .header("X-Datadog-Trace-Count", "1")
+                .header("datadog-meta-lang", "nodejs")
+                .header("datadog-meta-tracer-version", "1.0");
+            then.status(200).body("");
+        });
+
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_service("svc")
+            .set_env("env")
+            .set_tracer_version("1.0")
+            .set_language("nodejs")
+            .set_language_version("v20.11.0")
+            .set_language_interpreter("v8")
+            .set_agentless_endpoint(&intake_url, "test-api-key")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            resource: BytesString::from_static("res"),
+            trace_id: 0xdeadbeef,
+            span_id: 2,
+            parent_id: 0,
+            start: 2_500_000_000,
+            duration: 1_000_000,
+            error: 0,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        let result = exporter.send(data.as_ref());
+
+        assert!(
+            result.is_ok(),
+            "Agentless send should succeed: {:?}",
+            result.err()
+        );
+        mock_intake.assert();
+
+        assert_eq!(mock_intake.calls(), 1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_agentless_export_body_shape() {
+        let server = MockServer::start();
+        let mock_intake = server.mock(|when, then| {
+            when.method(POST)
+                .path("/v1/input")
+                .body_includes("\"traces\":")
+                .body_includes("\"spans\":")
+                .body_includes("\"hostname\":\"h-1\"")
+                .body_includes("\"languageName\":\"nodejs\"")
+                .body_includes("\"_dd.compute_stats\":\"1\"")
+                .body_includes("\"_top_level\":1")
+                .body_includes("\"_trace_root\":1")
+                .body_includes("\"parent_id\":\"0000000000000000\"");
+            then.status(200).body("");
+        });
+
+        let intake_url = format!("{}/v1/input", server.url("/").trim_end_matches('/'));
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_hostname("h-1")
+            .set_service("svc")
+            .set_env("env")
+            .set_tracer_version("1.0")
+            .set_language("nodejs")
+            .set_language_version("v20.11.0")
+            .set_language_interpreter("v8")
+            .set_agentless_endpoint(&intake_url, "k")
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V04);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces: Vec<Vec<SpanBytes>> = vec![vec![SpanBytes {
+            name: BytesString::from_slice(b"op").unwrap(),
+            service: BytesString::from_static("svc"),
+            resource: BytesString::from_static("res"),
+            trace_id: 1,
+            span_id: 2,
+            parent_id: 0,
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        }]];
+        let data = msgpack_encoder::v04::to_vec(&traces);
+        exporter.send(data.as_ref()).unwrap();
+        mock_intake.assert();
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "telemetry")]
+mod telemetry_metrics_tests {
+    use super::*;
+    use crate::trace_exporter::tests::build_test_exporter;
+    use httpmock::prelude::*;
+    use httpmock::MockServer;
+    use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::ForkSafeRuntime;
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_utils::span::v05;
+
+    // v05 messagepack empty payload -> [[""], []]
+    const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_metrics_v4() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8
+                    }
+                }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path(V04_TRACES_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .enable_telemetry(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            });
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces = vec![0x90];
+        let result = exporter.send(traces.as_ref()).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        metrics_endpoint.assert_calls(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_metrics_v5() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8
+                    }
+                }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path(V05_TRACES_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let exporter = build_test_exporter(
+            server.url("/"),
+            None,
+            TraceExporterInputFormat::V05,
+            TraceExporterOutputFormat::V05,
+            true,
+            true,
+        );
+
+        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
+        let traces = rmp_serde::to_vec(&v5).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        metrics_endpoint.assert_calls(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_metrics_v4_to_v5() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8
+                    }
+                }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path(V05_TRACES_ENDPOINT).is_true(|req| {
+                let bytes = libdd_tinybytes::Bytes::copy_from_slice(req.body_ref());
+                bytes.to_vec() == V5_EMPTY
+            });
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .enable_telemetry(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            })
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V05);
+
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces = vec![0x90];
+        let result = exporter.send(traces.as_ref()).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        metrics_endpoint.assert_calls(1);
     }
 }
 

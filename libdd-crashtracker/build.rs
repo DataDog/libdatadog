@@ -47,7 +47,7 @@ fn build_c_file() {
         .to_str()
         .expect("Failed to convert dst file path to str");
 
-    println!("cargo:rerun-if-changed={}", &dst_file);
+    println!("cargo:rerun-if-changed={}", dst_file);
     libdd_common::cc_utils::ImprovedBuild::new()
         .file(&src)
         .link_dynamically("dl")
@@ -91,7 +91,7 @@ fn build_cpp_file() {
         .to_str()
         .expect("Failed to convert dst file path to str");
 
-    println!("cargo:rerun-if-changed={}", &dst_file);
+    println!("cargo:rerun-if-changed={}", dst_file);
     libdd_common::cc_utils::ImprovedBuild::new()
         .cpp(true)
         .file(&src)

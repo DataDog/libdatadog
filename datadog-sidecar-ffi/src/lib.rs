@@ -17,7 +17,6 @@ use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
-use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
@@ -263,13 +262,13 @@ pub unsafe extern "C" fn ddog_remote_config_reader_for_endpoint<'a>(
             tracer_version: tracer_version.to_utf8_lossy().into(),
             endpoint: endpoint.clone(),
         },
-        &Arc::new(Target {
-            service: service_name.to_utf8_lossy().into(),
-            env: env_name.to_utf8_lossy().into(),
-            app_version: app_version.to_utf8_lossy().into(),
-            tags: tags.as_slice().to_vec(),
-            process_tags: vec![],
-        }),
+        &Arc::new(Target::new(
+            service_name.to_utf8_lossy().to_string(),
+            env_name.to_utf8_lossy().to_string(),
+            app_version.to_utf8_lossy().to_string(),
+            tags.as_slice().iter().map(|t| t.to_string()).collect(),
+            vec![],
+        )),
     ))
 }
 
@@ -1612,21 +1611,6 @@ pub extern "C" fn ddog_sidecar_reconnect(
     factory: unsafe extern "C" fn() -> Option<Box<SidecarTransport>>,
 ) {
     transport.reconnect(|| unsafe { factory() });
-}
-
-/// Return the path of the crashtracker unix domain socket.
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_get_crashtracker_unix_socket_path() -> ffi::CharSlice<'static>
-{
-    let socket_path = crashtracker_unix_socket_path();
-    let str = socket_path.to_str().unwrap_or_default();
-
-    let size = str.len();
-    let malloced = libc::malloc(size) as *mut u8;
-    let buf = slice::from_raw_parts_mut(malloced, size);
-    buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
 }
 
 /// Gets an agent info reader.

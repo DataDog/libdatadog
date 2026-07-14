@@ -8,14 +8,14 @@ use crate::{
     ThreadData,
 };
 use anyhow::{anyhow, Context, Result};
-use core::mem::size_of;
+use core::ffi::c_void;
+use core::mem::{size_of, MaybeUninit};
+use core::ptr::{addr_of, read_unaligned};
+use core::{fmt, slice, str};
 use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
-use std::ffi::{c_void, OsString};
-use std::fmt;
-use std::mem::MaybeUninit;
+use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-use std::ptr::{addr_of, read_unaligned};
 use std::sync::Mutex;
 use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{ERROR_SUCCESS, HANDLE, HMODULE, TRUE};
@@ -220,8 +220,8 @@ pub fn exception_event_callback(
     // 1. wer_context.ptr points to valid memory
     // 2. the total size is smaller than isize::MAX
     let error_context_json =
-        unsafe { std::slice::from_raw_parts(wer_context.ptr as *const u8, wer_context.len) };
-    let error_context_str = std::str::from_utf8(error_context_json)?;
+        unsafe { slice::from_raw_parts(wer_context.ptr as *const u8, wer_context.len) };
+    let error_context_str = str::from_utf8(error_context_json)?;
     let error_context: ErrorContext = serde_json::from_str(error_context_str)?;
 
     let mut builder = CrashInfoBuilder::new();
@@ -285,7 +285,7 @@ fn read_wer_context(process_handle: HANDLE, base_address: usize) -> Result<WerCo
     let ptr = wer_context.as_mut_ptr();
 
     // SAFETY: buffer has the same size as WerContext, and they don't overlap
-    unsafe { std::ptr::copy_nonoverlapping(buffer.as_ptr(), ptr as *mut u8, buffer.len()) };
+    unsafe { core::ptr::copy_nonoverlapping(buffer.as_ptr(), ptr as *mut u8, buffer.len()) };
 
     // Validate prefix and suffix
     let raw_ptr = wer_context.as_ptr();
@@ -452,7 +452,7 @@ fn list_modules(process_handle: HANDLE) -> anyhow::Result<Vec<ModuleInfo>> {
 
     // Get the number of bytes required to store the array of module handles
     let mut cb_needed = 0;
-    unsafe { EnumProcessModules(process_handle, std::ptr::null_mut(), 0, &mut cb_needed) }
+    unsafe { EnumProcessModules(process_handle, core::ptr::null_mut(), 0, &mut cb_needed) }
         .context("Failed to get module list size")?;
 
     // Allocate enough space for the module handles
@@ -655,7 +655,7 @@ fn get_pdb_info(process_handle: HANDLE, base_address: u64) -> Result<PdbInfo> {
         // 1. data is initialized and contained within a single allocated object
         // 2. data is non-null and aligned
         // 3. total size is smaller than isize::MAX
-        std::slice::from_raw_parts(
+        slice::from_raw_parts(
             debug_dir_buffer.as_ptr() as *const IMAGE_DEBUG_DIRECTORY,
             debug_dir_buffer.len() / size_of::<IMAGE_DEBUG_DIRECTORY>(),
         )
@@ -759,9 +759,8 @@ mod tests {
         // read_wer_context makes a copy, so the address should be different
         assert_ne!(actual_context.ptr, expected_context.ptr);
 
-        let buffer = unsafe {
-            std::slice::from_raw_parts(actual_context.ptr as *const u8, actual_context.len)
-        };
+        let buffer =
+            unsafe { slice::from_raw_parts(actual_context.ptr as *const u8, actual_context.len) };
         assert_eq!(buffer, expected_data);
     }
 
@@ -825,7 +824,7 @@ mod tests {
         assert_eq!(actual_pdb_info.age, expected_pdb_age);
 
         let bytes = unsafe {
-            std::slice::from_raw_parts(
+            slice::from_raw_parts(
                 &actual_pdb_info.signature as *const Guid as *const u8,
                 size_of::<Guid>(),
             )

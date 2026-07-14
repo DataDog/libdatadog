@@ -11,7 +11,7 @@ use crate::service::{
     SidecarInterface,
 };
 use datadog_ipc::platform::{FileBackedHandle, ShmHandle};
-use datadog_ipc::{PeerCredentials, SeqpacketConn};
+use datadog_ipc::SeqpacketConn;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_telemetry::metrics::MetricContext;
 use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerStats};
@@ -27,8 +27,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
-
-use serde::{Deserialize, Serialize};
 
 #[cfg(unix)]
 use crate::appsec::AppSecBackendCallbacks;
@@ -47,14 +45,16 @@ use crate::service::stats_flusher::{
 };
 use crate::service::tracing::trace_flusher::TraceFlusherStats;
 use crate::tokio_util::run_or_spawn_shared;
+use datadog_ipc::ipc_server::OwnedServerConn;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
-use libdd_telemetry::config::Config;
+use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
 use libdd_trace_utils::tracer_header_tags::TracerHeaderTags;
+use serde::{Deserialize, Serialize};
 
 /// A Windows process handle used for remote config notification.
 ///
@@ -135,6 +135,8 @@ struct ConnectionSidecarHandler {
     /// Used to auto-register metrics in newly-created telemetry clients when a metric point
     /// for a previously registered metric arrives for a new (service, env) combination.
     metric_registrations: Mutex<HashMap<String, MetricContext>>,
+    /// The connection this handler serves.
+    connection: OwnedServerConn,
     /// The client_id of the currently active appsec logical client on this connection, if any.
     /// Updated by send_appsec_message; read by cleanup to fire on_disconnect.
     #[cfg(unix)]
@@ -142,7 +144,7 @@ struct ConnectionSidecarHandler {
 }
 
 impl ConnectionSidecarHandler {
-    fn new(server: SidecarServer) -> Self {
+    fn new(server: SidecarServer, connection: OwnedServerConn) -> Self {
         let submitted_payloads = Arc::new(AtomicU64::new(0));
         server
             .connection_counters
@@ -154,6 +156,7 @@ impl ConnectionSidecarHandler {
             session_id: Default::default(),
             instances: Default::default(),
             metric_registrations: Default::default(),
+            connection,
             #[cfg(unix)]
             appsec_client_id: Mutex::new(None),
         }
@@ -228,9 +231,16 @@ impl SidecarServer {
     ///
     /// * `conn`: The connection to the client.
     pub async fn accept_connection(self, conn: SeqpacketConn) {
-        let handler = Arc::new(ConnectionSidecarHandler::new(self));
+        let server_conn = match OwnedServerConn::new(conn) {
+            Ok(c) => c,
+            Err(e) => {
+                error!("IPC serve: failed to set up connection: {e}");
+                return;
+            }
+        };
+        let handler = Arc::new(ConnectionSidecarHandler::new(self, server_conn));
         let handler_for_cleanup = handler.clone();
-        serve_sidecar_interface_connection(conn, handler).await;
+        serve_sidecar_interface_connection(handler).await;
         handler_for_cleanup.cleanup().await;
     }
 
@@ -441,9 +451,17 @@ impl SidecarInterface for ConnectionSidecarHandler {
         &self.submitted_payloads
     }
 
+    fn connection(&self) -> &OwnedServerConn {
+        &self.connection
+    }
+
+    async fn enter_crashtracker_receiver(&self) {
+        #[cfg(unix)]
+        crate::crashtracker::run_crashtracker_receiver(self.connection.async_conn()).await;
+    }
+
     async fn enqueue_actions(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         actions: Vec<SidecarAction>,
@@ -681,12 +699,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn clear_queue_id(
-        &self,
-        _peer: PeerCredentials,
-        instance_id: InstanceId,
-        queue_id: QueueId,
-    ) {
+    async fn clear_queue_id(&self, instance_id: InstanceId, queue_id: QueueId) {
         let rt_info = self.server.get_runtime(&instance_id);
         let mut applications = rt_info.lock_applications();
         if let Entry::Occupied(entry) = applications.entry(queue_id) {
@@ -695,7 +708,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn register_telemetry_metric(&self, _peer: PeerCredentials, metric: MetricContext) {
+    async fn register_telemetry_metric(&self, metric: MetricContext) {
         self.metric_registrations
             .lock_or_panic()
             .entry(metric.name.clone())
@@ -704,7 +717,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn set_session_config(
         &self,
-        peer: PeerCredentials,
         session_id: String,
         #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
@@ -724,7 +736,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         debug!("Set session config for {session_id} to {config:?}");
 
         let session = self.server.get_session(&session_id);
-        session.pid.store(peer.pid as i32, Ordering::Relaxed);
+        session
+            .pid
+            .store(self.connection.peer().pid as i32, Ordering::Relaxed);
         #[cfg(windows)]
         #[allow(clippy::unwrap_used)]
         {
@@ -733,7 +747,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 winapi::um::processthreadsapi::OpenProcess(
                     winapi::um::winnt::PROCESS_ALL_ACCESS,
                     0,
-                    peer.pid,
+                    self.connection.peer().pid,
                 )
             };
             if !handle.is_null() {
@@ -750,7 +764,15 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 libdd_telemetry::config::PROD_INTAKE_SUBDOMAIN,
                 &config.endpoint,
             );
-            cfg.set_endpoint(endpoint).ok();
+            cfg.set_endpoint(TelemetryEndpoint {
+                api_key: endpoint.api_key.as_deref().map(str::to_owned),
+                test_token: endpoint.test_token.as_deref().map(str::to_owned),
+                timeout_ms: endpoint.timeout_ms,
+                use_system_resolver: endpoint.use_system_resolver,
+                ..Default::default()
+            })
+            .ok();
+            cfg.set_endpoint_uri(endpoint.url).ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             cfg.telemetry_extended_heartbeat_interval =
                 config.telemetry_extended_heartbeat_interval;
@@ -861,7 +883,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn set_session_process_tags(&self, _peer: PeerCredentials, process_tags: Vec<Tag>) {
+    async fn set_session_process_tags(&self, process_tags: Vec<Tag>) {
         let session_id = self
             .session_id
             .get()
@@ -872,7 +894,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session.refresh_stats_process_tags();
     }
 
-    async fn set_session_default_service_name(&self, _peer: PeerCredentials, name: Option<String>) {
+    async fn set_session_default_service_name(&self, name: Option<String>) {
         let session_id = self
             .session_id
             .get()
@@ -883,7 +905,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session.refresh_stats_process_tags();
     }
 
-    async fn set_session_user_service_defined(&self, _peer: PeerCredentials, is_defined: bool) {
+    async fn set_session_user_service_defined(&self, is_defined: bool) {
         let session_id = self
             .session_id
             .get()
@@ -894,12 +916,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session.refresh_stats_process_tags();
     }
 
-    async fn shutdown_runtime(&self, _peer: PeerCredentials, instance_id: InstanceId) {
+    async fn shutdown_runtime(&self, instance_id: InstanceId) {
         let session = self.server.get_session(&instance_id.session_id);
         tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
     }
 
-    async fn shutdown_session(&self, _peer: PeerCredentials) {
+    async fn shutdown_session(&self) {
         let server = self.server.clone();
         let session_id = self.session_id.get().cloned().unwrap_or_default();
         tokio::spawn(async move { server.stop_session(&session_id).await });
@@ -907,7 +929,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn send_trace_v04_shm(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         handle: ShmHandle,
         _len: usize,
@@ -938,7 +959,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn send_trace_v04_bytes(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
@@ -964,7 +984,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn send_debugger_data_shm(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         handle: ShmHandle,
@@ -987,7 +1006,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn send_debugger_diagnostics(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         diagnostics_payload: Vec<u8>,
@@ -1015,7 +1033,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn acquire_exception_hash_rate_limiter(
         &self,
-        _peer: PeerCredentials,
         exception_hash: u64,
         granularity: Duration,
     ) {
@@ -1027,7 +1044,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
     #[allow(clippy::too_many_arguments)]
     async fn set_universal_service_tags(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         service_name: String,
@@ -1060,7 +1076,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn set_request_config(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         queue_id: QueueId,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
@@ -1085,7 +1100,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn send_dogstatsd_actions(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         actions: Vec<DogStatsDActionOwned>,
     ) {
@@ -1102,7 +1116,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn add_span_to_concentrator(
         &self,
-        _peer: PeerCredentials,
         env: String,
         version: String,
         span: datadog_ipc::shm_stats::OwnedShmSpanInput,
@@ -1112,6 +1125,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         // Lazily create the concentrator on first IPC span for this (env, version, service).
         if let Some(state) = get_or_create_concentrator(
             &self.server.span_concentrators,
+            &self.server.telemetry_clients,
             &env,
             &version,
             session_id,
@@ -1123,7 +1137,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn flush(&self, _peer: PeerCredentials, options: SidecarFlushOptions) {
+    async fn flush(&self, options: SidecarFlushOptions) {
         if options.traces_and_stats {
             let flusher = self.server.trace_flusher.clone();
             if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
@@ -1164,7 +1178,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         }
     }
 
-    async fn set_test_session_token(&self, _peer: PeerCredentials, token: String) {
+    async fn set_test_session_token(&self, token: String) {
         let session_id = self
             .session_id
             .get()
@@ -1198,13 +1212,13 @@ impl SidecarInterface for ConnectionSidecarHandler {
         // });
     }
 
-    async fn ping(&self, _peer: PeerCredentials) {}
+    async fn ping(&self) {}
 
-    async fn dump(&self, _peer: PeerCredentials) -> String {
+    async fn dump(&self) -> String {
         crate::dump::dump().await
     }
 
-    async fn stats(&self, _peer: PeerCredentials) -> String {
+    async fn stats(&self) -> String {
         let stats = self.server.compute_stats().await;
         #[allow(clippy::expect_used)]
         simd_json::serde::to_string(&stats).expect("unable to serialize stats to string")
@@ -1212,7 +1226,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn send_appsec_message(
         &self,
-        _peer: PeerCredentials,
         session_id: String,
         client_id: u64,
         data: Vec<u8>,
@@ -1292,6 +1305,16 @@ mod tests {
     use httpmock::{Method::POST, MockServer};
     use tokio::time::{sleep, Duration as TokioDuration};
 
+    /// Build a handler backed by a throwaway socketpair connection. These tests exercise
+    /// `enqueue_actions`, which uses only the shared server state and never reads the connection,
+    /// but the handler now requires one.
+    fn test_handler(server: SidecarServer) -> ConnectionSidecarHandler {
+        let (local, peer) = SeqpacketConn::socketpair().expect("socketpair");
+        drop(peer);
+        let conn = OwnedServerConn::new(local).expect("OwnedServerConn");
+        ConnectionSidecarHandler::new(server, conn)
+    }
+
     fn ffe_context() -> FfeTelemetryContext {
         FfeTelemetryContext {
             service: "svc".to_owned(),
@@ -1333,7 +1356,7 @@ mod tests {
             })
             .await;
 
-        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let handler = test_handler(SidecarServer::default());
         let instance_id = InstanceId::new("session", "runtime");
         let queue_id = QueueId::from(42);
 
@@ -1356,7 +1379,6 @@ mod tests {
 
         handler
             .enqueue_actions(
-                PeerCredentials::default(),
                 instance_id.clone(),
                 queue_id,
                 vec![SidecarAction::FfeExposureBatch(FfeExposureBatch {
@@ -1395,7 +1417,7 @@ mod tests {
             })
             .await;
 
-        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let handler = test_handler(SidecarServer::default());
         let instance_id = InstanceId::new("session", "runtime");
         let queue_id = QueueId::from(42);
 
@@ -1418,7 +1440,6 @@ mod tests {
 
         handler
             .enqueue_actions(
-                PeerCredentials::default(),
                 instance_id.clone(),
                 queue_id,
                 vec![SidecarAction::FfeEvaluationMetrics {
@@ -1461,7 +1482,7 @@ mod tests {
             })
             .await;
 
-        let handler = ConnectionSidecarHandler::new(SidecarServer::default());
+        let handler = test_handler(SidecarServer::default());
         let instance_id = InstanceId::new("session", "runtime");
         let queue_id = QueueId::from(42);
 
@@ -1490,12 +1511,7 @@ mod tests {
             .contains_key(&queue_id));
 
         handler
-            .enqueue_actions(
-                PeerCredentials::default(),
-                instance_id,
-                queue_id,
-                Vec::new(),
-            )
+            .enqueue_actions(instance_id, queue_id, Vec::new())
             .await;
 
         sleep(TokioDuration::from_millis(50)).await;

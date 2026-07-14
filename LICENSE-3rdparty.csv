@@ -125,6 +125,7 @@ dispatch2,https://github.com/madsmtm/objc2,Zlib OR Apache-2.0 OR MIT,"Mads Marqu
 displaydoc,https://github.com/yaahc/displaydoc,MIT OR Apache-2.0,Jane Lusby <jlusby@yaah.dev>
 dyn-clone,https://github.com/dtolnay/dyn-clone,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 either,https://github.com/rayon-rs/either,MIT OR Apache-2.0,bluss
+elf,https://github.com/cole14/rust-elf,MIT OR Apache-2.0,Christopher Cole <chris.cole.09@gmail.com>
 encoding_rs,https://github.com/hsivonen/encoding_rs,(Apache-2.0 OR MIT) AND BSD-3-Clause,Henri Sivonen <hsivonen@hsivonen.fi>
 enum-as-inner,https://github.com/bluejekyll/enum-as-inner,MIT OR Apache-2.0,Benjamin Fry <benjaminfry@me.com>
 equivalent,https://github.com/cuviper/equivalent,Apache-2.0 OR MIT,The equivalent Authors
@@ -374,6 +375,7 @@ semver,https://github.com/dtolnay/semver,MIT OR Apache-2.0,David Tolnay <dtolnay
 sendfd,https://github.com/standard-ai/sendfd,Apache-2.0 OR BSD-3-Clause,"Simonas Kazlauskas <simonas@standard.ai>, Bernardo Meurer <bernardo@standard.ai>, Léo Gaspard <leo@standard.ai>"
 serde,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
 serde-bool,https://github.com/x52dev/serde-utils,MIT OR Apache-2.0,Rob Ede <robjtede@icloud.com>
+serde-transcode,https://github.com/sfackler/serde-transcode,MIT OR Apache-2.0,Steven Fackler <sfackler@palantir.com>
 serde_bytes,https://github.com/serde-rs/bytes,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
 serde_core,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
 serde_derive,https://github.com/serde-rs/serde,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"

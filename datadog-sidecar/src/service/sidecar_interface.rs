@@ -272,6 +272,11 @@ pub trait SidecarInterface {
     ///
     /// A string representation of the current statistics of the service.
     async fn stats() -> String;
+
+    /// Repurpose this connection as a crashtracker receiver.
+    ///
+    /// The connection must right after that start emitting crashtracker messages.
+    async fn enter_crashtracker_receiver();
 }
 
 #[cfg(test)]

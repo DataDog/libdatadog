@@ -1,0 +1,38 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-profiling-heap-gotter-ffi"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+bench = false
+
+[features]
+default = ["cbindgen"]
+cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
+# See libdd-profiling-heap-gotter's test-support feature. Not for production use.
+test-support = ["libdd-profiling-heap-gotter/test-support"]
+
+[build-dependencies]
+build_common = { path = "../build-common" }
+
+[dependencies]
+anyhow = "1.0"
+function_name = "0.3.0"
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+# libdd-profiling-heap-gotter exposes the same public surface on every target
+# (no-ops on non-Linux), so this dependency is unconditional and the
+# FFI layer is portable too.
+libdd-profiling-heap-gotter = { path = "../libdd-profiling-heap-gotter" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"
+# For the USDT-note ELF inspection test (tests/usdt_notes.rs); mirrors how
+# libdd-otel-thread-ctx-ffi pulls in its dep's `sanity-check` feature.
+libdd-profiling-heap-sampler = { path = "../libdd-profiling-heap-sampler", features = ["sanity-check"] }

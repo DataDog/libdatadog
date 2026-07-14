@@ -88,6 +88,9 @@ pub struct TraceExporterConfig {
     shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
     otlp_protocol: Option<OtlpProtocol>,
+    output_to_log: bool,
+    log_max_line_size: Option<usize>,
+    stats_cardinality_limit: Option<usize>,
 }
 
 #[no_mangle]
@@ -541,6 +544,61 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
     )
 }
 
+/// Sets the cardinality limit for client-side stats computation.
+///
+/// When the number of distinct stats groups exceeds `limit`, additional groups are
+/// aggregated into a sentinel key instead of being tracked individually.
+/// This bounds memory usage when the trace population has very high cardinality.
+///
+/// Has no effect unless stats computation is enabled via
+/// `ddog_trace_exporter_config_set_compute_stats`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
+    config: Option<&mut TraceExporterConfig>,
+    limit: usize,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.stats_cardinality_limit = Some(limit);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Configure the exporter to write traces as newline-delimited JSON to stdout (the Datadog
+/// Forwarder "log exporter" path) instead of sending them to a Datadog agent. Used in serverless
+/// environments (e.g. AWS Lambda) when no agent is reachable.
+///
+/// `max_line_size` overrides the per-line byte cap; pass `0` to use the default (256 KiB, the AWS
+/// CloudWatch Logs limit). When enabled, agent-specific behavior (agent-info polling, client-side
+/// stats, V1 negotiation) is bypassed.
+///
+/// In this mode each span's `meta` is serialized to process stdout (and thus captured by CloudWatch
+/// Logs in Lambda); `meta_struct` is excluded because it holds raw msgpack the log intake cannot
+/// interpret.
+///
+/// Writes are synchronous/blocking on stdout, so this mode targets single-threaded / current-thread
+/// serverless runtimes (e.g. AWS Lambda) where a blocking write won't stall a shared async reactor.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_output_to_log(
+    config: Option<&mut TraceExporterConfig>,
+    max_line_size: usize,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.output_to_log = true;
+            handle.log_max_line_size = (max_line_size != 0).then_some(max_line_size);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
 ///
 /// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces to
@@ -559,10 +617,16 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         if let Some(config) = config {
-            // let config = &*ptr;
             let mut builder = TraceExporter::builder();
+            // Only forward the agent URL when one was explicitly provided. Calling
+            // `set_url("")` would mark the agent URL as configured and conflict with
+            // agentless trace export, which rejects any caller-supplied agent URL at build
+            // time. Leaving `url` unset lets the builder fall back to its default agent URL
+            // when no transport override is configured.
+            if let Some(url) = config.url.as_ref() {
+                builder.set_url(url);
+            }
             builder
-                .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
                 .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
                 .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
                 .set_language_version(config.language_version.as_ref().unwrap_or(&"".to_string()))
@@ -580,6 +644,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_input_format(config.input_format)
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
+
+            if let Some(limit) = config.stats_cardinality_limit {
+                builder.set_stats_cardinality_limit(limit);
+            }
 
             if config.compute_stats {
                 builder.enable_stats(Duration::from_secs(10));
@@ -611,6 +679,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 if let Some(protocol) = config.otlp_protocol {
                     builder.set_otlp_protocol(protocol);
                 }
+            }
+
+            if config.output_to_log {
+                builder.set_output_to_log(config.log_max_line_size);
             }
 
             match builder.build() {
@@ -708,8 +780,35 @@ mod tests {
             assert!(cfg.process_tags.is_none());
             assert!(cfg.test_session_token.is_none());
             assert!(cfg.connection_timeout.is_none());
+            assert!(!cfg.output_to_log);
+            assert_eq!(cfg.log_max_line_size, None);
+            assert_eq!(cfg.stats_cardinality_limit, None);
 
             ddog_trace_exporter_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn config_output_to_log_test() {
+        unsafe {
+            // Null config handle -> InvalidArgument.
+            let error = ddog_trace_exporter_config_set_output_to_log(None, 0);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // 0 is a sentinel for "use the default cap" -> None.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_output_to_log(config.as_mut(), 0);
+            assert_eq!(error, None);
+            let cfg = config.unwrap();
+            assert!(cfg.output_to_log);
+            assert_eq!(cfg.log_max_line_size, None);
+
+            // Non-zero cap is stored as-is.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_output_to_log(config.as_mut(), 4096);
+            assert_eq!(error, None);
+            assert_eq!(config.unwrap().log_max_line_size, Some(4096));
         }
     }
 
@@ -1058,35 +1157,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn exporter_constructor_error_test() {
-        unsafe {
-            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
-            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
-
-            let mut cfg = config.assume_init();
-            let error = ddog_trace_exporter_config_set_service(
-                Some(cfg.as_mut()),
-                CharSlice::from("service"),
-            );
-            assert_eq!(error, None);
-
-            ddog_trace_exporter_error_free(error);
-
-            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
-
-            let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
-
-            let error = ret.as_ref().unwrap();
-            assert_eq!(error.code, ErrorCode::InvalidUrl);
-
-            ddog_trace_exporter_error_free(ret);
-
-            ddog_trace_exporter_config_free(cfg);
-        }
-    }
-
     #[test]
     fn exporter_send_test_arguments_test() {
         unsafe {
@@ -1425,6 +1495,23 @@ mod tests {
 
         assert!(ret.is_some());
         assert_eq!(ret.unwrap().code, ErrorCode::Panic);
+    }
+
+    #[test]
+    fn config_stats_cardinality_limit_test() {
+        unsafe {
+            // Null config → InvalidArgument
+            let error = ddog_trace_exporter_config_set_stats_cardinality_limit(None, 100);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Valid config → value stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error =
+                ddog_trace_exporter_config_set_stats_cardinality_limit(config.as_mut(), 500);
+            assert_eq!(error, None);
+            assert_eq!(config.unwrap().stats_cardinality_limit, Some(500));
+        }
     }
 
     #[test]
