@@ -8,15 +8,18 @@ use core::{
     ffi::c_void,
     mem::forget,
     ptr::{self, NonNull},
-    sync::atomic::{fence, AtomicPtr, Ordering},
+    sync::atomic::{fence, Ordering},
 };
 use std::io;
 
 use super::{HeaderMemoryHolder, MappingHeader, MonotonicTime};
+use crate::otel_process_ctx::macos::{AtomicPublishedHeader, PUBLISHER_PID_SHIFT};
 
+// A child inherits this global after fork even when minherit excludes the header mapping. Store
+// the publisher PID with the pointer so the child cannot discover its parent's unmapped address.
 #[no_mangle]
 #[allow(non_upper_case_globals)]
-pub static otel_process_ctx_v2: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
+pub static otel_process_ctx_v2: AtomicPublishedHeader = AtomicPublishedHeader::new(0);
 
 // From <mach/vm_inherit.h>; the libc crate does not expose this constant.
 const VM_INHERIT_NONE: libc::c_int = 2;
@@ -80,11 +83,12 @@ impl HeaderMemoryHolder for VmRegion {
     }
 
     fn make_discoverable(&mut self) {
-        otel_process_ctx_v2.store(self.start_addr.as_ptr().cast(), Ordering::Release);
+        let value = pack_published_header(std::process::id(), self.start_addr.as_ptr().cast());
+        otel_process_ctx_v2.store(value, Ordering::Release);
     }
 
     fn unpublish_and_release(mut self) -> io::Result<()> {
-        otel_process_ctx_v2.store(ptr::null_mut(), Ordering::Relaxed);
+        otel_process_ctx_v2.store(0, Ordering::Relaxed);
         // Make it slightly more likely that a reader will observe the unavailability.
         fence(Ordering::SeqCst);
         self.unmap()?;
@@ -95,6 +99,10 @@ impl HeaderMemoryHolder for VmRegion {
     fn after_fork(self) {
         drop(self);
     }
+}
+
+fn pack_published_header(publisher_pid: u32, header: *mut u8) -> u128 {
+    (u128::from(publisher_pid) << PUBLISHER_PID_SHIFT) | header.expose_provenance() as u128
 }
 
 impl MonotonicTime for MonotonicClock {

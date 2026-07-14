@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 extern crate alloc;
 
-#[cfg(any(feature = "process-context-reader", feature = "process-context-writer"))]
+#[cfg(all(
+    any(feature = "process-context-reader", feature = "process-context-writer"),
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 pub mod otel_process_ctx;
 pub mod tracer_metadata;
 

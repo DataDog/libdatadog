@@ -3124,6 +3124,7 @@ dependencies = [
  "libc",
  "libdd-trace-protobuf",
  "memfd",
+ "portable-atomic",
  "prost",
  "rand 0.8.5",
  "rmp",

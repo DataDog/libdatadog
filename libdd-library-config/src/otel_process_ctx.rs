@@ -33,6 +33,8 @@ mod writer;
 compile_error!("OTel process context requires 64-bit atomics on Linux");
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 
 #[cfg(feature = "process-context-reader")]
 pub use reader::ProcessContextSelfReader;
@@ -92,16 +94,50 @@ mod tests {
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    mod non_linux {
-        use super::super::MappingHeaderSnapshot;
+    #[cfg(target_os = "macos")]
+    mod macos {
         use core::{ptr, sync::atomic::Ordering};
         use std::io;
 
-        #[cfg(target_os = "macos")]
-        use super::super::writer::macos::otel_process_ctx_v2;
-        #[cfg(target_os = "windows")]
-        use super::super::writer::windows::otel_process_ctx_v2;
+        use super::super::{
+            macos::{HEADER_ADDRESS_MASK, PUBLISHER_PID_SHIFT},
+            writer::macos::otel_process_ctx_v2,
+            MappingHeaderSnapshot,
+        };
+
+        fn published_header() -> *mut u8 {
+            let value = otel_process_ctx_v2.load(Ordering::Acquire);
+            let publisher_pid = (value >> PUBLISHER_PID_SHIFT) as u32;
+            if publisher_pid != std::process::id() {
+                return ptr::null_mut();
+            }
+
+            let header_address = (value & HEADER_ADDRESS_MASK) as usize;
+            ptr::with_exposed_provenance_mut(header_address)
+        }
+
+        pub(super) fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
+            let header_ptr: *const MappingHeaderSnapshot = published_header().cast();
+            if header_ptr.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "no process context is published",
+                ));
+            }
+            Ok(unsafe { ptr::read(header_ptr) })
+        }
+
+        pub(super) fn is_published() -> bool {
+            !published_header().is_null()
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    mod windows {
+        use core::{ptr, sync::atomic::Ordering};
+        use std::io;
+
+        use super::super::{writer::windows::otel_process_ctx_v2, MappingHeaderSnapshot};
 
         pub(super) fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
             let header_ptr: *const MappingHeaderSnapshot =
@@ -122,8 +158,10 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     use linux::{is_published, read_process_context};
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    use non_linux::{is_published, read_process_context};
+    #[cfg(target_os = "macos")]
+    use macos::{is_published, read_process_context};
+    #[cfg(target_os = "windows")]
+    use windows::{is_published, read_process_context};
 
     #[test]
     #[cfg_attr(miri, ignore)]

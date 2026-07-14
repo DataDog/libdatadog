@@ -40,6 +40,9 @@ serial_test = "3.2"
 memfd = { version = "0.6" }
 libc = "0.2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+portable-atomic = { version = "1.9.0", default-features = false }
+
 [lints.clippy]
 std_instead_of_alloc = "warn"
 std_instead_of_core = "warn"
