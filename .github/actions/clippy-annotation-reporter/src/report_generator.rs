@@ -1,207 +1,165 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Report generator module for clippy-annotation-reporter
+//! Generates the compact PR comment from annotation analysis results.
 //!
-//! This module handles the logic for generating formatted reports
-//! based on annotation analysis results.
+//! Only rows whose count actually changed between the base and PR branches are
+//! rendered. The comment is only generated when there is at least one change;
+//! see `AnalysisResult::has_changes`.
 
 use crate::analyzer::AnalysisResult;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-/// Generate a detailed report for PR comment
+/// Generate the PR comment body for the given analysis.
 pub fn generate_report(
     analysis: &AnalysisResult,
     rules: &[String],
     repository: &str,
     base_branch: &str,
-    head_branch: &str,
 ) -> String {
     let mut report = String::new();
 
-    // Add header and branch information
-    add_header(&mut report, repository, base_branch, head_branch);
-
-    // Add rule summary section
-    add_rule_summary(&mut report, analysis, rules);
-
-    // Add file-level section
-    add_file_level_section(&mut report, analysis);
-
-    // Add crate-level section
-    add_crate_level_section(&mut report, analysis);
-
-    // Add explanation
+    add_header(&mut report, analysis, repository, base_branch);
+    add_rule_table(&mut report, analysis, rules);
+    add_details(&mut report, analysis);
     add_explanation(&mut report);
 
     report
 }
 
-/// Add report header and branch information
-fn add_header(report: &mut String, repository: &str, base_branch: &str, head_branch: &str) {
+/// Add the title and one-line headline with the net change.
+fn add_header(report: &mut String, analysis: &AnalysisResult, repository: &str, base_branch: &str) {
+    // Display the branch without the `origin/` prefix used internally.
+    let branch = base_branch.strip_prefix("origin/").unwrap_or(base_branch);
+    let (base_total, head_total) = tracked_totals(analysis);
+    let delta = format_delta(head_total as isize - base_total as isize);
+
     report.push_str("## Clippy Allow Annotation Report\n\n");
-
-    // Add branch information with link to base branch
-    let base_branch_for_url = base_branch.strip_prefix("origin/").unwrap_or(base_branch);
-
-    report.push_str("Comparing clippy allow annotations between branches:\n");
     report.push_str(&format!(
-        "- **Base Branch**: [{}](https://github.com/{}/tree/{})\n",
-        base_branch, repository, base_branch_for_url
+        "Tracked Clippy `allow` annotations changed vs [`{}`](https://github.com/{}/tree/{}): {} ({} → {})\n\n",
+        branch, repository, branch, delta, base_total, head_total
     ));
-    report.push_str(&format!("- **PR Branch**: {}\n\n", head_branch));
 }
 
-/// Add summary table by rule
-fn add_rule_summary(report: &mut String, analysis: &AnalysisResult, rules: &[String]) {
-    report.push_str("### Summary by Rule\n\n");
-    report.push_str("| Rule | Base Branch | PR Branch | Change |\n");
-    report.push_str("|------|------------|-----------|--------|\n");
+/// Add the by-rule table, listing only rules whose count changed.
+fn add_rule_table(report: &mut String, analysis: &AnalysisResult, rules: &[String]) {
+    report.push_str("| Rule | Base | PR | Δ |\n");
+    report.push_str("|------|------|----|---|\n");
 
-    let mut total_base = 0;
-    let mut total_head = 0;
-
-    // Add row for each rule
     for rule in rules {
-        let base_count = *analysis.base_counts.get(rule).unwrap_or(&0);
-        let head_count = *analysis.head_counts.get(rule).unwrap_or(&0);
-
-        total_base += base_count;
-        total_head += head_count;
-
-        add_table_row(report, rule, base_count, head_count);
+        let base = *analysis.base_counts.get(rule).unwrap_or(&0);
+        let head = *analysis.head_counts.get(rule).unwrap_or(&0);
+        if base == head {
+            continue;
+        }
+        report.push_str(&format_row(rule, base, head));
     }
 
-    // Add total row
-    add_table_row(report, "**Total**", total_base, total_head);
     report.push('\n');
 }
 
-/// Add section showing annotation counts by file
-fn add_file_level_section(report: &mut String, analysis: &AnalysisResult) {
-    if analysis.changed_files.is_empty() {
+/// Add the collapsed by-file and by-crate breakdown, listing only changed rows.
+fn add_details(report: &mut String, analysis: &AnalysisResult) {
+    let file_rows = build_file_rows(analysis);
+    let crate_rows = build_crate_rows(analysis);
+
+    if file_rows.is_empty() && crate_rows.is_empty() {
         return;
     }
 
-    report.push_str("### Annotation Counts by File\n\n");
-    report.push_str("| File | Base Branch | PR Branch | Change |\n");
-    report.push_str("|------|------------|-----------|--------|\n");
+    report.push_str("<details>\n<summary>By file and crate</summary>\n\n");
 
-    // Count annotations by file
-    let base_file_counts = count_annotations_by_file(&analysis.base_annotations);
-    let head_file_counts = count_annotations_by_file(&analysis.head_annotations);
-
-    // Get sorted list of changed files
-    let mut all_files: Vec<String> = analysis.changed_files.iter().cloned().collect();
-    all_files.sort();
-
-    // Add row for each file
-    for file in all_files {
-        let base_count = *base_file_counts.get(&file).unwrap_or(&0);
-        let head_count = *head_file_counts.get(&file).unwrap_or(&0);
-
-        // Skip files with no annotations in either branch
-        if base_count == 0 && head_count == 0 {
-            continue;
-        }
-
-        add_table_row(report, &format!("`{}`", file), base_count, head_count);
+    if !file_rows.is_empty() {
+        report.push_str("**By file**\n\n");
+        report.push_str("| File | Base | PR | Δ |\n");
+        report.push_str("|------|------|----|---|\n");
+        report.push_str(&file_rows);
+        report.push('\n');
     }
 
-    report.push('\n');
-}
-
-/// Add section showing annotation stats by crate
-fn add_crate_level_section(report: &mut String, analysis: &AnalysisResult) {
-    report.push_str("### Annotation Stats by Crate\n\n");
-    report.push_str("| Crate | Base Branch | PR Branch | Change |\n");
-    report.push_str("|-------|------------|-----------|--------|\n");
-
-    // Get all crates from both base and head
-    let all_crates = get_all_keys(&analysis.base_crate_counts, &analysis.head_crate_counts);
-
-    let mut total_base = 0;
-    let mut total_head = 0;
-
-    // Add row for each crate
-    for crate_name in all_crates {
-        let base_count = *analysis.base_crate_counts.get(&crate_name).unwrap_or(&0);
-        let head_count = *analysis.head_crate_counts.get(&crate_name).unwrap_or(&0);
-
-        // Skip crates with no annotations in either branch
-        if base_count == 0 && head_count == 0 {
-            continue;
-        }
-
-        total_base += base_count;
-        total_head += head_count;
-
-        add_table_row(report, &format!("`{}`", crate_name), base_count, head_count);
+    if !crate_rows.is_empty() {
+        report.push_str("**By crate**\n\n");
+        report.push_str("| Crate | Base | PR | Δ |\n");
+        report.push_str("|-------|------|----|---|\n");
+        report.push_str(&crate_rows);
+        report.push('\n');
     }
 
-    // Add total row
-    add_table_row(report, "**Total**", total_base, total_head);
-    report.push('\n');
+    report.push_str("</details>\n\n");
 }
 
-/// Add report explanation footer
+/// Add the report explanation.
 fn add_explanation(report: &mut String) {
     report.push_str("### About This Report\n\n");
     report.push_str("This report tracks Clippy allow annotations for specific rules, ");
     report.push_str("showing how they've changed in this PR. ");
-    report
-        .push_str("Decreasing the number of these annotations generally improves code quality.\n");
+    report.push_str("Decreasing the number of these annotations generally improves code quality. ");
+    report.push_str("Panic-inducing macros in particular should be avoided. ");
+    report.push_str("In the future, this report may become a PR-blocking quality gate.\n");
 }
 
-/// Add a table row with counts and change
-fn add_table_row(report: &mut String, label: &str, base_count: usize, head_count: usize) {
-    let change = head_count as isize - base_count as isize;
-
-    // Skip rows with no change and no counts
-    if change == 0 && base_count == 0 && head_count == 0 {
-        return;
-    }
-
-    // Calculate percentage change
-    let percent_change = calculate_percent_change(base_count, change);
-
-    // Format the change string with percentage
-    let change_str = format_change_string(change, percent_change);
-
-    report.push_str(&format!(
-        "| {} | {} | {} | {} |\n",
-        label, base_count, head_count, change_str
-    ));
+/// Total tracked annotations in the PR's changed files, for base and PR branches.
+fn tracked_totals(analysis: &AnalysisResult) -> (usize, usize) {
+    let base: usize = analysis.base_counts.values().sum();
+    let head: usize = analysis.head_counts.values().sum();
+    (base, head)
 }
 
-/// Calculate percentage change
-fn calculate_percent_change(base_count: usize, change: isize) -> f64 {
-    if base_count > 0 {
-        (change as f64 / base_count as f64) * 100.0
-    } else if change > 0 {
-        f64::INFINITY
-    } else {
-        0.0
-    }
-}
+/// Build the changed-file rows for the by-file table (empty string if none).
+fn build_file_rows(analysis: &AnalysisResult) -> String {
+    let base_counts = count_annotations_by_file(&analysis.base_annotations);
+    let head_counts = count_annotations_by_file(&analysis.head_annotations);
 
-/// Format change string with appropriate icon and percentage
-fn format_change_string(change: isize, percent_change: f64) -> String {
-    if change > 0 {
-        if percent_change.is_infinite() {
-            format!("⚠️ +{} (N/A)", change)
-        } else {
-            format!("⚠️ +{} (+{:.1}%)", change, percent_change)
+    let mut files: Vec<String> = analysis.changed_files.iter().cloned().collect();
+    files.sort();
+
+    let mut rows = String::new();
+    for file in files {
+        let base = *base_counts.get(&file).unwrap_or(&0);
+        let head = *head_counts.get(&file).unwrap_or(&0);
+        if base == head {
+            continue;
         }
-    } else if change < 0 {
-        format!("✅ {} ({:.1}%)", change, percent_change)
-    } else {
-        "No change (0%)".to_owned()
+        rows.push_str(&format_row(&format!("`{}`", file), base, head));
+    }
+    rows
+}
+
+/// Build the changed-crate rows for the by-crate table (empty string if none).
+fn build_crate_rows(analysis: &AnalysisResult) -> String {
+    let crates = get_all_keys(&analysis.base_crate_counts, &analysis.head_crate_counts);
+
+    let mut rows = String::new();
+    for crate_name in crates {
+        let base = *analysis.base_crate_counts.get(&crate_name).unwrap_or(&0);
+        let head = *analysis.head_crate_counts.get(&crate_name).unwrap_or(&0);
+        if base == head {
+            continue;
+        }
+        rows.push_str(&format_row(&format!("`{}`", crate_name), base, head));
+    }
+    rows
+}
+
+/// Format a single table row with counts and change indicator.
+fn format_row(label: &str, base: usize, head: usize) -> String {
+    let delta = format_delta(head as isize - base as isize);
+    format!("| {} | {} | {} | {} |\n", label, base, head, delta)
+}
+
+/// Format a signed change with an icon: `⚠️ +N` for increases, `✅ -N` for
+/// decreases, `↔ ±0` when the net is unchanged.
+fn format_delta(change: isize) -> String {
+    match change.cmp(&0) {
+        Ordering::Greater => format!("⚠️ +{}", change),
+        Ordering::Less => format!("✅ {}", change),
+        Ordering::Equal => "↔ ±0".to_owned(),
     }
 }
 
-/// Count annotations by file
+/// Count annotations by file.
 fn count_annotations_by_file(
     annotations: &[crate::analyzer::ClippyAnnotation],
 ) -> HashMap<Rc<String>, usize> {
@@ -214,7 +172,7 @@ fn count_annotations_by_file(
     counts
 }
 
-/// Get all unique keys from two HashMaps, sorted
+/// Get all unique keys from two HashMaps, sorted.
 fn get_all_keys<K: Clone + Ord + std::hash::Hash, V>(
     map1: &HashMap<K, V>,
     map2: &HashMap<K, V>,
@@ -329,155 +287,87 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_generate_report_basic() {
-        let analysis = create_analysis_result();
-        let rules = vec![
+    fn default_rules() -> Vec<String> {
+        vec![
             "clippy::unwrap_used".to_owned(),
             "clippy::match_bool".to_owned(),
             "clippy::unused_imports".to_owned(),
-        ];
+        ]
+    }
 
-        let report = generate_report(
-            &analysis,
-            &rules,
-            "test-owner/test-repo",
-            "main",
-            "feature-branch",
-        );
+    #[test]
+    fn test_generate_report_structure() {
+        let analysis = create_analysis_result();
+        let report = generate_report(&analysis, &default_rules(), "test-owner/test-repo", "main");
 
-        // Verify the report contains expected sections
+        // Title, rule table, collapsed details and explanation are present.
         assert!(report.contains("## Clippy Allow Annotation Report"));
-        assert!(report.contains("### Summary by Rule"));
-        assert!(report.contains("### Annotation Counts by File"));
-        assert!(report.contains("### Annotation Stats by Crate"));
+        assert!(report.contains("| Rule | Base | PR | Δ |"));
+        assert!(report.contains("<details>"));
+        assert!(report.contains("By file and crate"));
         assert!(report.contains("### About This Report"));
 
-        // Verify the report contains repository and branch information
+        // Repository and base branch information appear in the headline link.
         assert!(report.contains("test-owner/test-repo"));
-        assert!(report.contains("main"));
-        assert!(report.contains("feature-branch"));
+        assert!(report.contains("[`main`]"));
     }
 
     #[test]
-    fn test_generate_report_rule_summary() {
+    fn test_generate_report_headline_total() {
         let analysis = create_analysis_result();
-        let rules = vec![
-            "clippy::unwrap_used".to_owned(),
-            "clippy::match_bool".to_owned(),
-            "clippy::unused_imports".to_owned(),
-        ];
+        let report = generate_report(&analysis, &default_rules(), "test-owner/test-repo", "main");
 
-        let report = generate_report(
-            &analysis,
-            &rules,
-            "test-owner/test-repo",
-            "main",
-            "feature-branch",
-        );
-
-        // Verify rule summary contains all rules
-        assert!(report.contains("clippy::unwrap_used"));
-        assert!(report.contains("clippy::match_bool"));
-        assert!(report.contains("clippy::unused_imports"));
-
-        // Verify counts and changes
-        assert!(report.contains("5")); // Base count for unwrap_used
-        assert!(report.contains("3")); // Head count for unwrap_used
-        assert!(report.contains("-2")); // Change for unwrap_used
-
-        assert!(report.contains("3")); // Base count for match_bool
-        assert!(report.contains("4")); // Head count for match_bool
-        assert!(report.contains("+1")); // Change for match_bool
-
-        assert!(report.contains("10")); // Base count for unused_imports
-        assert!(report.contains("5")); // Head count for unused_imports
-        assert!(report.contains("-5")); // Change for unused_imports
+        // Base total 18 → head total 12, a net decrease of 6.
+        assert!(report.contains("✅ -6 (18 → 12)"));
     }
 
     #[test]
-    fn test_generate_report_file_section() {
+    fn test_generate_report_only_changed_rules() {
         let analysis = create_analysis_result();
-        let rules = vec![
-            "clippy::unwrap_used".to_owned(),
-            "clippy::match_bool".to_owned(),
-            "clippy::unused_imports".to_owned(),
-        ];
+        let report = generate_report(&analysis, &default_rules(), "test-owner/test-repo", "main");
 
-        let report = generate_report(
-            &analysis,
-            &rules,
-            "test-owner/test-repo",
-            "main",
-            "feature-branch",
-        );
+        // Every tracked rule changed, so all three appear with signed deltas.
+        assert!(report.contains("| clippy::unwrap_used | 5 | 3 | ✅ -2 |"));
+        assert!(report.contains("| clippy::match_bool | 3 | 4 | ⚠️ +1 |"));
+        assert!(report.contains("| clippy::unused_imports | 10 | 5 | ✅ -5 |"));
+    }
 
-        // Verify file section contains the changed files
-        assert!(report.contains("src/file1.rs"));
-        assert!(report.contains("src/file2.rs"));
+    #[test]
+    fn test_generate_report_skips_unchanged_rule() {
+        let mut analysis = create_analysis_result();
+        // Make match_bool unchanged (3 in both branches).
+        let rule2 = Rc::new("clippy::match_bool".to_owned());
+        analysis.head_counts.insert(rule2, 3);
 
-        // Verify file counts for file1.rs
-        // In the base branch, file1.rs has 3 annotations (2 unwrap_used, 1 match_bool)
-        // In the head branch, file1.rs has 3 annotations (1 unwrap_used, 2 match_bool)
-        let file1_pattern = r"`src/file1\.rs`\s*\|\s*3\s*\|\s*3\s*\|\s*No change";
+        let report = generate_report(&analysis, &default_rules(), "test-owner/test-repo", "main");
+
+        assert!(report.contains("| clippy::unwrap_used | 5 | 3 | ✅ -2 |"));
         assert!(
-            report.contains("| `src/file1.rs` | 3 | 3 |")
-                || regex::Regex::new(file1_pattern).unwrap().is_match(&report),
-            "File1 count information not found in report"
-        );
-
-        // Verify file counts for file2.rs
-        // In the base branch, file2.rs has 2 annotations (1 unwrap_used, 1 unused_imports)
-        // In the head branch, file2.rs has 1 annotation (1 unused_imports)
-        let file2_pattern = r"`src/file2\.rs`\s*\|\s*2\s*\|\s*1\s*\|\s*.*-1";
-        assert!(
-            report.contains("| `src/file2.rs` | 2 | 1 |")
-                || regex::Regex::new(file2_pattern).unwrap().is_match(&report),
-            "File2 count information not found in report"
-        );
-
-        // Make sure the change column has the correct indicators
-        assert!(
-            report.contains("No change") || report.contains("(0%)"),
-            "No change indicator missing for file1"
-        );
-        assert!(
-            report.contains("✅ -1"),
-            "Decrease indicator missing for file2"
+            !report.contains("clippy::match_bool"),
+            "unchanged rule should be omitted from the table"
         );
     }
 
     #[test]
-    fn test_generate_report_crate_section() {
+    fn test_generate_report_only_changed_files() {
         let analysis = create_analysis_result();
-        let rules = vec![
-            "clippy::unwrap_used".to_owned(),
-            "clippy::match_bool".to_owned(),
-            "clippy::unused_imports".to_owned(),
-        ];
+        let report = generate_report(&analysis, &default_rules(), "test-owner/test-repo", "main");
 
-        let report = generate_report(
-            &analysis,
-            &rules,
-            "test-owner/test-repo",
-            "main",
-            "feature-branch",
+        // file2 changed (2 → 1); file1 did not (3 → 3) and must be omitted.
+        assert!(report.contains("| `src/file2.rs` | 2 | 1 | ✅ -1 |"));
+        assert!(
+            !report.contains("`src/file1.rs`"),
+            "unchanged file should be omitted from the table"
         );
+    }
 
-        // Verify crate section contains the crates
-        assert!(report.contains("`crate1`"));
-        assert!(report.contains("`crate2`"));
+    #[test]
+    fn test_generate_report_only_changed_crates() {
+        let analysis = create_analysis_result();
+        let report = generate_report(&analysis, &default_rules(), "test-owner/test-repo", "main");
 
-        // Verify crate counts
-        // Base count for crate1: 8, Head count: 5
-        assert!(report.contains("8"));
-        assert!(report.contains("5"));
-        assert!(report.contains("-3")); // Change
-
-        // Base count for crate2: 10, Head count: 12
-        assert!(report.contains("10"));
-        assert!(report.contains("12"));
-        assert!(report.contains("+2")); // Change
+        assert!(report.contains("| `crate1` | 8 | 5 | ✅ -3 |"));
+        assert!(report.contains("| `crate2` | 10 | 12 | ⚠️ +2 |"));
     }
 
     #[test]
@@ -485,109 +375,51 @@ mod tests {
         let mut analysis = create_analysis_result();
         analysis.changed_files.clear();
 
-        let rules = vec![
-            "clippy::unwrap_used".to_owned(),
-            "clippy::match_bool".to_owned(),
-            "clippy::unused_imports".to_owned(),
-        ];
+        let report = generate_report(&analysis, &default_rules(), "test-owner/test-repo", "main");
 
-        let report = generate_report(
-            &analysis,
-            &rules,
-            "test-owner/test-repo",
-            "main",
-            "feature-branch",
-        );
-
-        // Verify that the file-level section is not included when there are no changed files
-        assert!(!report.contains("### Annotation Counts by File"));
-
-        // But other sections should still be present
-        assert!(report.contains("### Summary by Rule"));
-        assert!(report.contains("### Annotation Stats by Crate"));
-    }
-
-    #[test]
-    fn test_generate_report_formatting() {
-        let analysis = create_analysis_result();
-        let rules = vec![
-            "clippy::unwrap_used".to_owned(),
-            "clippy::match_bool".to_owned(),
-            "clippy::unused_imports".to_owned(),
-        ];
-
-        let report = generate_report(
-            &analysis,
-            &rules,
-            "test-owner/test-repo",
-            "main",
-            "feature-branch",
-        );
-
-        // Verify positive changes are formatted with ⚠️
-        assert!(report.contains("⚠️ +1"));
-
-        // Verify negative changes are formatted with ✅
-        assert!(report.contains("✅ -2"));
-
-        // Verify total row exists
-        assert!(report.contains("**Total**"));
+        // No changed files means no by-file section, but the by-crate section
+        // and rule table remain.
+        assert!(!report.contains("**By file**"));
+        assert!(report.contains("**By crate**"));
+        assert!(report.contains("| Rule | Base | PR | Δ |"));
     }
 
     #[test]
     fn test_generate_report_with_origin_prefix() {
         let analysis = create_analysis_result();
-        let rules = vec![
-            "clippy::unwrap_used".to_owned(),
-            "clippy::match_bool".to_owned(),
-            "clippy::unused_imports".to_owned(),
-        ];
-
-        // Test with origin/ prefix in base branch
         let report = generate_report(
             &analysis,
-            &rules,
+            &default_rules(),
             "test-owner/test-repo",
             "origin/main",
-            "feature-branch",
         );
 
-        // Verify the origin/ prefix is removed in the link URL
+        // The origin/ prefix is stripped for both the label and the URL.
         assert!(report.contains("https://github.com/test-owner/test-repo/tree/main"));
-        assert!(report.contains("origin/main"));
+        assert!(report.contains("[`main`]"));
+        assert!(!report.contains("origin/main"));
     }
 
     #[test]
     fn test_generate_report_new_annotations() {
-        // Create an analysis where annotations are added in the head branch
         let mut analysis = create_analysis_result();
 
-        // Add a new rule that only appears in the head counts
+        // A rule that only appears in the head branch (0 → 2).
         let new_rule = Rc::new("clippy::new_rule".to_owned());
-        analysis.head_counts.insert(new_rule.clone(), 2);
+        analysis.head_counts.insert(new_rule, 2);
 
-        let rules = vec![
-            "clippy::unwrap_used".to_owned(),
-            "clippy::match_bool".to_owned(),
-            "clippy::unused_imports".to_owned(),
-            "clippy::new_rule".to_owned(),
-        ];
+        let mut rules = default_rules();
+        rules.push("clippy::new_rule".to_owned());
 
-        let report = generate_report(
-            &analysis,
-            &rules,
-            "test-owner/test-repo",
-            "main",
-            "feature-branch",
-        );
+        let report = generate_report(&analysis, &rules, "test-owner/test-repo", "main");
 
-        // Verify that new rule appears with appropriate formatting
-        assert!(report.contains("clippy::new_rule"));
-        assert!(report.contains("0")); // Base count should be 0
-        assert!(report.contains("2")); // Head count should be 2
-        assert!(report.contains("⚠️ +2")); // Change should be +2
+        assert!(report.contains("| clippy::new_rule | 0 | 2 | ⚠️ +2 |"));
+    }
 
-        // Also verify N/A for the percentage since base count is 0
-        assert!(report.contains("N/A"));
+    #[test]
+    fn test_format_delta() {
+        assert_eq!(format_delta(3), "⚠️ +3");
+        assert_eq!(format_delta(-2), "✅ -2");
+        assert_eq!(format_delta(0), "↔ ±0");
     }
 }

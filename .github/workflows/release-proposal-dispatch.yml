@@ -645,14 +645,17 @@ jobs:
           jq . /tmp/major-bumps-input.json
 
           # Run the audit in a throwaway worktree so extra worktrees / cargo metadata do not touch
-          # the job checkout. Check it out at the ref actually being released (the ephemeral release
-          # branch tip captured before version bumps), NOT github.sha: for a hotfix or older-ref
-          # release those differ, and auditing against current main could major-bump a crate for a
-          # dependency requirement change that is not present in the branch being released.
+          # the job checkout. Check it out at the proposal branch tip (HEAD) — the released ref plus
+          # this run's version bumps from the previous step. This is deliberate on both ends:
+          #   - It includes the dependency-requirement rewrites cargo-release made in the previous
+          #     step, so a dependency bumped to a new major IN THIS proposal propagates a major bump
+          #     to its dependents (e.g. protobuf 3->4 forces its dependents major).
+          #   - It is built from the released ref, NOT github.sha, so changes present only on current
+          #     main (and absent from a hotfix/older-ref release) never trigger a spurious bump.
           MAJOR_BUMPS_WT=$(mktemp -d "${RUNNER_TEMP:-/tmp}/major-bumps-wt.XXXXXX")
-          RELEASE_SHA=$(cat /tmp/release_head_sha)
+          PROPOSAL_SHA=$(git rev-parse HEAD)
 
-          git worktree add --detach "$MAJOR_BUMPS_WT" "$RELEASE_SHA"
+          git worktree add --detach "$MAJOR_BUMPS_WT" "$PROPOSAL_SHA"
           set +e
           ( cd "$MAJOR_BUMPS_WT" && "${WORKFLOW_SCRIPTS_ROOT}/major-bumps-level.sh" /tmp/major-bumps-input.json ) \
             > /tmp/api-changes-with-major-bumps-pre-commit.json
