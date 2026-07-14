@@ -62,9 +62,7 @@ mod elf;
 mod hooks;
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-use std::sync::{Mutex, MutexGuard, TryLockError};
+use std::sync::{Mutex, MutexGuard};
 
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 use elf::SymbolOverrides;
@@ -75,29 +73,13 @@ use elf::SymbolOverrides;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 static GLOBAL_OVERRIDES: Mutex<Option<SymbolOverrides>> = Mutex::new(None);
 
-/// Set when a `dlopen` hook loses the `try_lock` race in
-/// `update_heap_overrides`: its newly-loaded library wasn't scanned, so the
-/// thread holding the lock must re-scan before releasing. Prevents a
-/// concurrent `dlopen` from being missed until the next unrelated scan.
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-static RESCAN_PENDING: AtomicBool = AtomicBool::new(false);
-
-/// Run `update_overrides` while the lock is held until no rescan is pending.
-/// Called by the lock holder after its own scan so a `dlopen` that raced the
-/// lock still gets picked up. `update_overrides` is cheap when `dlpi_adds`
-/// hasn't changed, so a spurious drain is nearly free.
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-fn drain_pending_rescans(so: &mut SymbolOverrides) {
-    while RESCAN_PENDING.swap(false, Ordering::AcqRel) {
-        so.update_overrides();
-    }
-}
-
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 fn lock_global_overrides() -> MutexGuard<'static, Option<SymbolOverrides>> {
     GLOBAL_OVERRIDES
         .lock()
-        // Recover from poison: hot path never takes this lock, registry re-applies idempotently.
+        // Recover from poison: if a thread panicked during apply/update, the
+        // registry may be partially applied, but the next scan re-walks all
+        // libraries idempotently, making partial state harmless.
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -130,9 +112,7 @@ pub fn install_heap_overrides() -> bool {
         register_all(&mut so);
         *guard = Some(so);
     }
-    let so = guard.as_mut().unwrap();
-    so.apply_overrides();
-    drain_pending_rescans(so);
+    guard.as_mut().unwrap().apply_overrides();
     // Heuristic: at least one ORIG slot resolved.
     any_orig_resolved()
 }
@@ -148,23 +128,9 @@ pub fn install_heap_overrides() -> bool {
 /// doesn't need to call this directly. No-op on non-Linux targets.
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 pub fn update_heap_overrides() {
-    // `try_lock` so a dlopen happening on the same thread that owns the
-    // install lock doesn't deadlock - that thread will finish its
-    // outer apply_overrides, which already walks every library.
-    let mut guard = match GLOBAL_OVERRIDES.try_lock() {
-        Ok(guard) => guard,
-        // Recover from poison: same rationale as lock_global_overrides.
-        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        // Lock held by another install/update: flag a rescan so that thread
-        // picks up the library we just loaded before it releases the lock.
-        Err(TryLockError::WouldBlock) => {
-            RESCAN_PENDING.store(true, Ordering::Release);
-            return;
-        }
-    };
+    let mut guard = lock_global_overrides();
     if let Some(so) = guard.as_mut() {
         so.update_overrides();
-        drain_pending_rescans(so);
     }
 }
 

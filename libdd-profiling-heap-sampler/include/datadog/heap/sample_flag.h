@@ -180,8 +180,7 @@ x86_header_t x86_header_read(const void *user) {
 /* Zero the header so a later reuse of this block isn't misdetected as sampled. */
 static inline __attribute__((always_inline))
 void x86_header_clear(void *user) {
-    const x86_header_t zero = { 0, 0 };
-    memcpy((char *)user - DD_HEADER_BYTES, &zero, sizeof(zero));
+    memset((char *)user - DD_HEADER_BYTES, 0, sizeof(x86_header_t));
 }
 
 /*
