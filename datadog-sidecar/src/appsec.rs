@@ -83,6 +83,7 @@ impl AppSecBackendCallbacks {
         (self.send_message)(session_id, client_id, data)
     }
 
+    /// If client_id is 0, this is a session-wide disconnect.
     pub(crate) fn disconnect(&self, session_id: &str, client_id: u64) {
         (self.disconnect)(session_id, client_id);
     }

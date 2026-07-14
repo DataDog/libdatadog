@@ -30,7 +30,6 @@ const ENV_SIDECAR_WATCHDOG_MAX_MEMORY: &str = "_DD_SIDECAR_WATCHDOG_MAX_MEMORY";
 
 const ENV_SIDECAR_CRASHTRACKER_ENDPOINT: &str = "_DD_SIDECAR_CRASHTRACKER_ENDPOINT";
 
-const ENV_SIDECAR_APPSEC_SHARED_LIB_PATH: &str = "_DD_SIDECAR_APPSEC_SHARED_LIB_PATH";
 const ENV_SIDECAR_APPSEC_LOG_FILE_PATH: &str = "_DD_SIDECAR_APPSEC_LOG_FILE_PATH";
 const ENV_SIDECAR_APPSEC_LOG_LEVEL: &str = "_DD_SIDECAR_APPSEC_LOG_LEVEL";
 
@@ -93,7 +92,6 @@ pub struct Config {
 
 #[derive(Debug, Clone)]
 pub struct AppSecConfig {
-    pub shared_lib_path: std::ffi::OsString,
     pub log_file_path: std::ffi::OsString,
     pub log_level: String,
 }
@@ -143,10 +141,6 @@ impl Config {
 impl AppSecConfig {
     pub fn to_env(&self) -> HashMap<&'static str, std::ffi::OsString> {
         HashMap::from([
-            (
-                ENV_SIDECAR_APPSEC_SHARED_LIB_PATH,
-                self.shared_lib_path.to_owned(),
-            ),
             (
                 ENV_SIDECAR_APPSEC_LOG_FILE_PATH,
                 self.log_file_path.to_owned(),
@@ -255,12 +249,10 @@ impl FromEnv {
     }
 
     fn appsec_config() -> Option<AppSecConfig> {
-        let shared_lib_path = std::env::var_os(ENV_SIDECAR_APPSEC_SHARED_LIB_PATH)?;
         let log_file_path = std::env::var_os(ENV_SIDECAR_APPSEC_LOG_FILE_PATH)?;
         let log_level = std::env::var(ENV_SIDECAR_APPSEC_LOG_LEVEL).ok()?;
 
         Some(AppSecConfig {
-            shared_lib_path,
             log_file_path,
             log_level,
         })
