@@ -20,7 +20,7 @@ arc-swap = { workspace = true, optional = true }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
 libdd-common = { path = "../libdd-common" }
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.0.0" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }

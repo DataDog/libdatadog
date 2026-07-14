@@ -38,8 +38,12 @@ impl<T: CommandExecutor> GitOperations<T> {
         Self { executor }
     }
 
-    /// Get file content from a specific branch
-    pub fn get_file_content(&self, file: &str, branch: &str) -> Result<String> {
+    /// Get the content of a file at a specific git ref.
+    ///
+    /// Returns `Ok(None)` when the file does not exist in that ref — a normal
+    /// outcome for files added, deleted, or renamed in the PR, which are absent
+    /// from one of the two branches. `Err` is reserved for genuine git failures.
+    pub fn get_file_content(&self, file: &str, branch: &str) -> Result<Option<String>> {
         debug!("Getting content for {} from {}", file, branch);
 
         let output = self
@@ -49,27 +53,16 @@ impl<T: CommandExecutor> GitOperations<T> {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if is_missing_path(&stderr) {
+                return Ok(None);
+            }
             anyhow::bail!("Git show command failed: {}", stderr);
         }
 
         let content =
             String::from_utf8(output.stdout).context("Failed to parse file content as UTF-8")?;
 
-        Ok(content)
-    }
-
-    /// Get file content from a branch, handling common errors
-    pub fn get_branch_content(&self, file: &str, branch: &str) -> String {
-        match self.get_file_content(file, branch) {
-            Ok(content) => content,
-            Err(e) => {
-                // Skip errors for files that might not exist in one branch
-                if !e.to_string().contains("did not match any file") {
-                    log::warn!("Failed to get {} content from {}: {}", file, branch, e);
-                }
-                String::new()
-            }
-        }
+        Ok(Some(content))
     }
 
     /// Get all Rust files in the repository
@@ -97,10 +90,18 @@ impl<T: CommandExecutor> GitOperations<T> {
     }
 }
 
+/// Whether git's stderr indicates the path simply does not exist in the ref,
+/// as opposed to a genuine failure.
+fn is_missing_path(stderr: &str) -> bool {
+    stderr.contains("does not exist in")
+        || stderr.contains("exists on disk, but not in")
+        || stderr.contains("did not match any file")
+}
+
 // Default implementation for GitOperations with RealCommandExecutor
 impl Default for GitOperations<RealCommandExecutor> {
     fn default() -> Self {
-        Self::new(RealCommandExecutor::default())
+        Self::new(RealCommandExecutor)
     }
 }
 
@@ -183,8 +184,7 @@ mod tests {
 
         let result = git_ops.get_file_content("src/test.rs", "main");
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "fn test() {}\n");
+        assert_eq!(result.unwrap(), Some("fn test() {}\n".to_owned()));
     }
 
     #[test]
@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_file_content_git_error() {
+    fn test_get_file_content_missing_file() {
         let mut mock_executor = MockCommandExecutor::new();
 
         mock_executor
@@ -238,6 +238,30 @@ mod tests {
 
         let result = git_ops.get_file_content("src/nonexistent.rs", "main");
 
+        // A file that doesn't exist in the ref is a normal outcome, not an error.
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn test_get_file_content_other_error() {
+        let mut mock_executor = MockCommandExecutor::new();
+
+        mock_executor
+            .expect_execute_command()
+            .withf(|cmd, args| {
+                cmd == "git"
+                    && args.len() == 2
+                    && args[0] == "show"
+                    && args[1] == "bad-ref:src/test.rs"
+            })
+            .times(1)
+            .returning(|_, _| create_mock_output(128, "", "fatal: invalid object name 'bad-ref'"));
+
+        let git_ops = GitOperations::new(mock_executor);
+
+        let result = git_ops.get_file_content("src/test.rs", "bad-ref");
+
+        // A genuine git failure still surfaces as an error.
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -278,80 +302,6 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Failed to parse file content as UTF-8"));
-    }
-
-    #[test]
-    fn test_get_branch_content_success() {
-        let mut mock_executor = MockCommandExecutor::new();
-
-        mock_executor
-            .expect_execute_command()
-            .withf(|cmd, args| {
-                cmd == "git"
-                    && args.len() == 2
-                    && args[0] == "show"
-                    && args[1] == "main:src/test.rs"
-            })
-            .times(1)
-            .returning(|_, _| create_mock_output(0, "fn test() {}\n", ""));
-
-        let git_ops = GitOperations::new(mock_executor);
-
-        let result = git_ops.get_branch_content("src/test.rs", "main");
-
-        assert_eq!(result, "fn test() {}\n");
-    }
-
-    #[test]
-    fn test_get_branch_content_file_not_found() {
-        let mut mock_executor = MockCommandExecutor::new();
-
-        mock_executor
-            .expect_execute_command()
-            .withf(|cmd, args| {
-                cmd == "git"
-                    && args.len() == 2
-                    && args[0] == "show"
-                    && args[1] == "main:src/nonexistent.rs"
-            })
-            .times(1)
-            .returning(|_, _| {
-                create_mock_output(
-                    1,
-                    "",
-                    "fatal: Path 'src/nonexistent.rs' does not exist in 'main'",
-                )
-            });
-
-        let git_ops = GitOperations::new(mock_executor);
-
-        let result = git_ops.get_branch_content("src/nonexistent.rs", "main");
-
-        assert_eq!(result, ""); // Should return empty string for non-existent file
-    }
-
-    #[test]
-    fn test_get_branch_content_other_error() {
-        let mut mock_executor = MockCommandExecutor::new();
-
-        mock_executor
-            .expect_execute_command()
-            .withf(|cmd, args| {
-                cmd == "git"
-                    && args.len() == 2
-                    && args[0] == "show"
-                    && args[1] == "invalid-branch:src/test.rs"
-            })
-            .times(1)
-            .returning(|_, _| {
-                create_mock_output(1, "", "fatal: invalid branch name: invalid-branch")
-            });
-
-        let git_ops = GitOperations::new(mock_executor);
-
-        let result = git_ops.get_branch_content("src/test.rs", "invalid-branch");
-
-        assert_eq!(result, ""); // Should return empty string for any error
     }
 
     #[test]
