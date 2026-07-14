@@ -683,11 +683,9 @@ impl Profile {
 
         // Period type needs string interning, which must happen before we start moving fields out
         // of `self`. (Many fields below are consumed via `into_iter()`.)
-        let period_type_and_value: Option<(ValueType, i64)> = if let Some(period) = self.period {
-            Some((self.intern_sample_type(period.sample_type), period.value))
-        } else {
-            None
-        };
+        let period_type_and_value: Option<(ValueType, i64)> = self
+            .period
+            .map(|period| (self.intern_sample_type(period.sample_type), period.value));
 
         for (offset, item) in self.mappings.into_iter().enumerate() {
             let mapping = protobuf::Mapping {
