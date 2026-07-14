@@ -525,9 +525,8 @@ impl StatsBucket {
     /// keys have their additional metric tag values masked to `TRACER_BLOCKED_VALUE` before being
     /// subject to the `max_entries` check.
     pub(super) fn new(
-        
         start_timestamp: u64,
-       
+
         max_entries: usize,
         #[cfg(feature = "stats-obfuscation")] obfuscation_enabled: bool,
         additional_metric_tags_max_entries: usize,
