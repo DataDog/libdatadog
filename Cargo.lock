@@ -2878,6 +2878,7 @@ dependencies = [
 name = "libdd-capabilities-impl"
 version = "3.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "http",
  "http-body-util",
