@@ -26,8 +26,8 @@ pub mod ffi {
     //   live objects, HTTP requests)
     // - pprof-nodejs (profile-serializer.ts value type functions)
     //
-    // Experimental variants allow profilers to use custom sample types for testing
-    // and development without modifying this enum. They map to fixed (type, unit) pairs.
+    // To use a type not yet in this enum, use Custom1 through Custom5 and configure
+    // the slot on the Profile before serialization.
     //
     // LEGACY VARIANTS (prefer alternatives for consistency):
     // - CpuLegacy (use CpuTime)
@@ -89,9 +89,11 @@ pub mod ffi {
         WallSamples,
         WallTime,
         WallLegacy, // LEGACY: Use WallTime instead
-        ExperimentalCount,
-        ExperimentalNanoseconds,
-        ExperimentalBytes,
+        Custom1,
+        Custom2,
+        Custom3,
+        Custom4,
+        Custom5,
     }
 
     struct Period {
@@ -160,8 +162,18 @@ pub mod ffi {
         #[Self = "Profile"]
         fn create(sample_types: Vec<SampleType>, period: &Period) -> Result<Box<Profile>>;
 
+        /// Create a profile without a sampling period.
+        #[Self = "Profile"]
+        fn create_no_period(sample_types: Vec<SampleType>) -> Result<Box<Profile>>;
+
         // Profile methods
         fn add_sample(self: &mut Profile, sample: &Sample) -> Result<()>;
+        fn set_custom_sample_type(
+            self: &mut Profile,
+            slot: SampleType,
+            type_: &str,
+            unit: &str,
+        ) -> Result<()>;
         fn add_endpoint(self: &mut Profile, local_root_span_id: u64, endpoint: &str) -> Result<()>;
         fn add_endpoint_count(self: &mut Profile, endpoint: &str, value: i64) -> Result<()>;
 
@@ -391,9 +403,11 @@ impl TryFrom<ffi::SampleType> for api::SampleType {
             ffi::SampleType::WallSamples => api::SampleType::WallSamples,
             ffi::SampleType::WallTime => api::SampleType::WallTime,
             ffi::SampleType::WallLegacy => api::SampleType::WallLegacy,
-            ffi::SampleType::ExperimentalCount => api::SampleType::ExperimentalCount,
-            ffi::SampleType::ExperimentalNanoseconds => api::SampleType::ExperimentalNanoseconds,
-            ffi::SampleType::ExperimentalBytes => api::SampleType::ExperimentalBytes,
+            ffi::SampleType::Custom1 => api::SampleType::Custom1,
+            ffi::SampleType::Custom2 => api::SampleType::Custom2,
+            ffi::SampleType::Custom3 => api::SampleType::Custom3,
+            ffi::SampleType::Custom4 => api::SampleType::Custom4,
+            ffi::SampleType::Custom5 => api::SampleType::Custom5,
             _ => anyhow::bail!("invalid SampleType discriminant from C++"),
         })
     }
@@ -541,6 +555,15 @@ impl Profile {
         Ok(Box::new(Profile { inner }))
     }
 
+    pub fn create_no_period(sample_types: Vec<ffi::SampleType>) -> anyhow::Result<Box<Profile>> {
+        let types: Vec<api::SampleType> = sample_types
+            .into_iter()
+            .map(TryInto::try_into)
+            .collect::<Result<Vec<_>, _>>()?;
+        let inner = internal::Profile::try_new(&types, None)?;
+        Ok(Box::new(Profile { inner }))
+    }
+
     pub fn add_sample(&mut self, sample: &ffi::Sample) -> anyhow::Result<()> {
         let api_sample = api::Sample {
             locations: sample.locations.iter().map(Into::into).collect(),
@@ -551,6 +574,17 @@ impl Profile {
         // Profile interns the strings
         self.inner.try_add_sample(api_sample, None)?;
         Ok(())
+    }
+
+    pub fn set_custom_sample_type(
+        &mut self,
+        slot: ffi::SampleType,
+        type_: &str,
+        unit: &str,
+    ) -> anyhow::Result<()> {
+        let slot: api::SampleType = slot.try_into()?;
+        self.inner
+            .set_custom_sample_type(slot, api::ValueType::new(type_, unit))
     }
 
     pub fn add_endpoint(&mut self, local_root_span_id: u64, endpoint: &str) -> anyhow::Result<()> {
