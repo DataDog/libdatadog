@@ -27,6 +27,7 @@ required-features = ["bench-internals"]
 anyhow = "1.0"
 base64 = "0.22"
 hex = "0.4"
+itoa = "1.0"
 hyper = { workspace = true, optional = true, default-features = false }
 "http" = "1"
 "http-body" = "1"
