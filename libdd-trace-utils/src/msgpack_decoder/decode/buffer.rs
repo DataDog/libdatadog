@@ -40,6 +40,11 @@ impl<T: DeserializableTraceData> Buffer<T> {
         T::get_mut_slice(&mut self.0)
     }
 
+    /// Returns an immutable reference to the underlying slice, without advancing the buffer.
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.borrow()
+    }
+
     /// Tries to extract a slice of `bytes` from the buffer and advances the buffer.
     pub fn try_slice_and_advance(&mut self, bytes: usize) -> Option<T::Bytes> {
         T::try_slice_and_advance(&mut self.0, bytes)
