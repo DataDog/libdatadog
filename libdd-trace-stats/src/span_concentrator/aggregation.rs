@@ -325,25 +325,6 @@ impl<'a> BorrowedAggregationKey<'a> {
             additional_metric_tags,
         }
     }
-
-    /// Return an owned copy of this key with all additional metric tag values replaced by
-    /// `TRACER_BLOCKED_VALUE`. Used when the per-bucket additional-metric-tags cardinality limit
-    /// is exceeded.
-    pub(super) fn into_masked_owned(self) -> OwnedAggregationKey {
-        OwnedAggregationKey {
-            fixed: self.fixed.convert(str::to_owned),
-            peer_tags: self
-                .peer_tags
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect(),
-            additional_metric_tags: self
-                .additional_metric_tags
-                .iter()
-                .map(|(k, _)| (k.to_string(), TRACER_BLOCKED_VALUE.to_string()))
-                .collect(),
-        }
-    }
 }
 
 impl OwnedAggregationKey {
@@ -509,10 +490,6 @@ pub(super) struct StatsBucket {
     /// constant per bucket
     #[cfg(feature = "stats-obfuscation")]
     pub(super) obfuscated: bool,
-    /// Number of distinct entries with additional metric tags admitted this bucket.
-    additional_metric_tags_entry_count: usize,
-    /// Maximum distinct entries with additional metric tags per bucket.
-    additional_metric_tags_max_entries: usize,
 }
 
 impl StatsBucket {
@@ -520,16 +497,10 @@ impl StatsBucket {
     ///
     /// `max_entries` is the maximum number of distinct aggregation keys the bucket will hold.
     /// Once the limit is reached, new distinct keys are collapsed into the overflow sentinel key.
-    /// `additional_metric_tags_max_entries` is the maximum number of distinct aggregation keys
-    /// with additional metric tags the bucket will hold. Once the limit is reached, new distinct
-    /// keys have their additional metric tag values masked to `TRACER_BLOCKED_VALUE` before being
-    /// subject to the `max_entries` check.
     pub(super) fn new(
         start_timestamp: u64,
-
         max_entries: usize,
         #[cfg(feature = "stats-obfuscation")] obfuscation_enabled: bool,
-        additional_metric_tags_max_entries: usize,
     ) -> Self {
         Self {
             data: HashMap::new(),
@@ -538,8 +509,6 @@ impl StatsBucket {
             collapsed_count: 0,
             #[cfg(feature = "stats-obfuscation")]
             obfuscated: obfuscation_enabled,
-            additional_metric_tags_entry_count: 0,
-            additional_metric_tags_max_entries,
         }
     }
 
@@ -551,11 +520,8 @@ impl StatsBucket {
     /// Insert a value as stats in the group corresponding to the aggregation key, if it does not
     /// exist it creates it.
     ///
-    /// Keys that already exist in this bucket always merge normally. A new key that carries
-    /// additional metric tags and would exceed the `additional_metric_tags_max_entries` has its
-    /// additional tag values masked to `TRACER_BLOCKED_VALUE` before insertion. Any new key,
-    /// masked or otherwise, is then subject to the `max_entries` limit, which collapses it into
-    /// the overflow sentinel key.
+    /// Keys that already exist in this bucket always merge normally. A new key is subject to the
+    /// `max_entries` limit, which collapses it into the overflow sentinel key.
     pub(super) fn insert(
         &mut self,
         key: BorrowedAggregationKey<'_>,
@@ -563,9 +529,8 @@ impl StatsBucket {
         is_error: bool,
         is_top_level: bool,
     ) {
-        let has_additional_tags = !key.additional_metric_tags.is_empty();
         // The map can't change size before the entry below is resolved, so this single read
-        // covers the `max_entries` check in either vacant branch without a further lookup.
+        // covers the `max_entries` check in the vacant branch without a further lookup.
         let len_before_insert = self.data.len();
 
         match self.data.entry_ref(&key) {
@@ -574,16 +539,6 @@ impl StatsBucket {
                 e.get_mut().insert(duration, is_error, is_top_level);
             }
             hashbrown::hash_map::EntryRef::Vacant(e) => {
-                // New key over the additional-metric-tags max entry limit, mask its tag values and
-                // re-resolve under the possibly different masked identity.
-                if has_additional_tags
-                    && self.additional_metric_tags_entry_count
-                        >= self.additional_metric_tags_max_entries
-                {
-                    let masked = key.into_masked_owned();
-                    self.insert_masked(masked, len_before_insert, duration, is_error, is_top_level);
-                    return;
-                }
                 // New key over the max entry limit, collapse into the overflow
                 // sentinel.
                 if len_before_insert >= self.max_entries {
@@ -594,45 +549,7 @@ impl StatsBucket {
                         .insert(duration, is_error, is_top_level);
                     return;
                 }
-                // Within the max entry and additional-metric-tag limits, admit key as a new
-                // distinct entry.
-                if has_additional_tags {
-                    self.additional_metric_tags_entry_count += 1;
-                }
-                e.insert(GroupedStats::default())
-                    .insert(duration, is_error, is_top_level);
-            }
-        }
-    }
-
-    /// Insert an already masked owned key produced when the additional-metric-tags limit was
-    /// exceeded. The key identity changed from the original, so it needs its own lookup rather than
-    /// reusing the caller's entry.
-    fn insert_masked(
-        &mut self,
-        key: OwnedAggregationKey,
-        len_before_insert: usize,
-        duration: i64,
-        is_error: bool,
-        is_top_level: bool,
-    ) {
-        match self.data.entry(key) {
-            // Existing key, merge
-            hashbrown::hash_map::Entry::Occupied(mut e) => {
-                e.get_mut().insert(duration, is_error, is_top_level);
-            }
-            hashbrown::hash_map::Entry::Vacant(e) => {
-                // New masked key over the max entry limit, collapse into the
-                // overflow sentinel.
-                if len_before_insert >= self.max_entries {
-                    self.collapsed_count += 1;
-                    self.data
-                        .entry(OwnedAggregationKey::overflow_key())
-                        .or_default()
-                        .insert(duration, is_error, is_top_level);
-                    return;
-                }
-                // Within the max entry limit, admit the masked key as a new distinct entry.
+                // Within the max entry limit, admit key as a new distinct entry.
                 e.insert(GroupedStats::default())
                     .insert(duration, is_error, is_top_level);
             }
