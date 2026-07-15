@@ -66,6 +66,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     instrumentation_scope_version: String,
     git_commit_sha: String,
     process_tags: String,
+    container_id: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     dogstatsd_url: Option<String>,
@@ -138,6 +139,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             instrumentation_scope_version: String::new(),
             git_commit_sha: String::new(),
             process_tags: String::new(),
+            container_id: String::new(),
             input_format: TraceExporterInputFormat::default(),
             output_format: TraceExporterOutputFormat::default(),
             dogstatsd_url: None,
@@ -235,6 +237,12 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
     pub fn set_process_tags(&mut self, process_tags: &str) -> &mut Self {
         process_tags.clone_into(&mut self.process_tags);
+        self
+    }
+
+    /// Set the `Datadog-Container-Id` header
+    pub fn set_container_id(&mut self, container_id: &str) -> &mut Self {
+        container_id.clone_into(&mut self.container_id);
         self
     }
 
@@ -821,6 +829,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 app_version: self.app_version,
                 runtime_id,
                 service: self.service,
+                container_id: self.container_id,
             },
             input_format: self.input_format,
             output_format: self.output_format,

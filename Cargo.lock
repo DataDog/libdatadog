@@ -3540,6 +3540,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "indexmap 2.12.1",
+ "itoa",
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
