@@ -262,9 +262,7 @@ where
                         slice.len()
                     )));
                 }
-                let mut arr = [0u8; 16];
-                arr.copy_from_slice(slice);
-                link.trace_id = arr;
+                link.trace_id.copy_from_slice(slice);
             }
             span_link_key::SPAN_ID => {
                 link.span_id = decode::read_int(buf.as_mut_slice()).map_err(|_| {
@@ -281,7 +279,9 @@ where
                 let v: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 span_link flags read failure".to_owned())
                 })?;
-                link.flags = v as u32;
+                link.flags = u32::try_from(v).map_err(|_| {
+                    DecodeError::InvalidFormat(format!("V1 span_link flags {v} exceeds u32::MAX"))
+                })?;
             }
             _unknown => skip_unknown_value(buf)?,
         }

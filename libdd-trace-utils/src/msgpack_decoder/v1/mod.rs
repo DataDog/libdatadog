@@ -83,6 +83,9 @@ pub(super) const TYPED_VALUE_STRIDE: u32 = 2;
 /// Number of msgpack items consumed per `[key, type, value]` triplet in a typed attributes map.
 pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 
+/// Length in bytes of a V1 chunk's `trace_id` field (128-bit trace ID).
+pub(super) const TRACE_ID_LEN: u32 = 16;
+
 /// Streaming string intern table built up as the payload is decoded.
 ///
 /// V1 strings are encoded inline the first time they appear (as msgpack `str`), and as a
@@ -118,10 +121,9 @@ where
             })
     }
 
-    /// Records a freshly-read inline string and returns it (cloned for reuse).
-    fn record(&mut self, s: T::Text) -> T::Text {
+    /// Records a freshly-read inline string in the table.
+    fn record(&mut self, s: &T::Text) {
         self.seen.push(s.clone());
-        s
     }
 }
 
@@ -137,7 +139,7 @@ pub(super) fn read_interned_string<T: DeserializableTraceData>(
 where
     T::Text: Clone,
 {
-    let slice: &[u8] = buf.as_mut_slice();
+    let slice: &[u8] = buf.as_slice();
     let marker_byte = *slice.first().ok_or_else(|| {
         DecodeError::InvalidFormat(
             "Unexpected end of V1 buffer when reading interned string".to_owned(),
@@ -149,21 +151,23 @@ where
     //   str8/str16/str32 : 0xd9, 0xda, 0xdb
     //   fixint (positive): 0x00..=0x7f
     //   uint8/16/32/64   : 0xcc, 0xcd, 0xce, 0xcf
-    let is_string = matches!(marker_byte, 0xa0..=0xbf | 0xd9 | 0xda | 0xdb);
-    let is_uint = matches!(marker_byte, 0x00..=0x7f | 0xcc | 0xcd | 0xce | 0xcf);
-
-    if is_string {
-        let s = buf.read_string()?;
-        Ok(table.record(s))
-    } else if is_uint {
-        let id: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
-            DecodeError::InvalidFormat("V1 interned string reference uint read failure".to_owned())
-        })?;
-        table.resolve(id)
-    } else {
-        Err(DecodeError::InvalidFormat(format!(
+    match marker_byte {
+        0xa0..=0xbf | 0xd9 | 0xda | 0xdb => {
+            let s = buf.read_string()?;
+            table.record(&s);
+            Ok(s)
+        }
+        0x00..=0x7f | 0xcc | 0xcd | 0xce | 0xcf => {
+            let id: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
+                DecodeError::InvalidFormat(
+                    "V1 interned string reference uint read failure".to_owned(),
+                )
+            })?;
+            table.resolve(id)
+        }
+        _ => Err(DecodeError::InvalidFormat(format!(
             "Unexpected msgpack marker 0x{marker_byte:02x} for V1 interned string"
-        )))
+        ))),
     }
 }
 
@@ -192,7 +196,6 @@ pub fn from_slice(data: &[u8]) -> Result<(TracerPayloadSlice<'_>, usize), Decode
 }
 
 /// Generic over the deserialization mode (owned `BytesData` or borrowed `SliceData`).
-#[allow(clippy::type_complexity)]
 pub fn from_buffer<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
 ) -> Result<(TracerPayload<T>, usize), DecodeError>
@@ -303,14 +306,16 @@ where
                 let len = decode::read_bin_len(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 chunk trace_id bin len read failure".to_owned())
                 })?;
-                if len != 16 {
+                if len != TRACE_ID_LEN {
                     return Err(DecodeError::InvalidFormat(format!(
-                        "V1 chunk trace_id must be 16 bytes, got {len}"
+                        "V1 chunk trace_id must be {TRACE_ID_LEN} bytes, got {len}"
                     )));
                 }
-                let bytes = buf.try_slice_and_advance(16).ok_or_else(|| {
-                    DecodeError::InvalidFormat("V1 chunk trace_id payload truncated".to_owned())
-                })?;
+                let bytes = buf
+                    .try_slice_and_advance(TRACE_ID_LEN as usize)
+                    .ok_or_else(|| {
+                        DecodeError::InvalidFormat("V1 chunk trace_id payload truncated".to_owned())
+                    })?;
                 let slice: &[u8] = bytes.borrow();
                 chunk.trace_id.copy_from_slice(slice);
                 saw_trace_id = true;
@@ -331,7 +336,9 @@ where
                 let v: i64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 chunk priority read failure".to_owned())
                 })?;
-                chunk.priority = Some(v as i32);
+                chunk.priority = Some(i32::try_from(v).map_err(|_| {
+                    DecodeError::InvalidFormat(format!("V1 chunk priority {v} exceeds i32 range"))
+                })?);
             }
             chunk_key::SAMPLING_MECHANISM => {
                 let v: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
@@ -339,7 +346,11 @@ where
                         "V1 chunk sampling_mechanism read failure".to_owned(),
                     )
                 })?;
-                chunk.sampling_mechanism = Some(v as u32);
+                chunk.sampling_mechanism = Some(u32::try_from(v).map_err(|_| {
+                    DecodeError::InvalidFormat(format!(
+                        "V1 chunk sampling_mechanism {v} exceeds u32::MAX"
+                    ))
+                })?);
             }
             chunk_key::ATTRIBUTES => {
                 chunk.attributes = span::read_attributes_map(buf, table)?;
