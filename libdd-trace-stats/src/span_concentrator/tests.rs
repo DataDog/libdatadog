@@ -2069,7 +2069,7 @@ fn test_additional_metric_tags_aggregation() {
         expected_without_additional_metric_tags,
         concentrator_without_additional_metric_tags
             .flush(flushtime, false)
-            .0
+            .all_buckets()
             .first()
             .expect("There should be at least one time bucket")
             .stats
@@ -2079,7 +2079,7 @@ fn test_additional_metric_tags_aggregation() {
         expected_with_additional_metric_tags,
         concentrator_with_additional_metric_tags
             .flush(flushtime, false)
-            .0
+            .all_buckets()
             .first()
             .expect("There should be at least one time bucket")
             .stats
@@ -2121,7 +2121,7 @@ fn test_additional_metric_tag_value_length_cap_substitutes_blocked_value() {
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
     let buckets = concentrator.flush(flushtime, false);
-    let tags = &buckets.0[0].stats[0].additional_metric_tags;
+    let tags = &buckets.all_buckets()[0].stats[0].additional_metric_tags;
     assert_eq!(tags, &["region:tracer_blocked_value"]);
 }
 
@@ -2159,7 +2159,7 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
     let buckets = concentrator.flush(flushtime, false);
-    let tags = &buckets.0[0].stats[0].additional_metric_tags;
+    let tags = &buckets.all_buckets()[0].stats[0].additional_metric_tags;
     assert_eq!(tags, &[format!("region:{ok_value}")]);
 }
 
@@ -2198,7 +2198,7 @@ fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
     let buckets = concentrator.flush(flushtime, false);
-    let tags = &buckets.0[0].stats[0].additional_metric_tags;
+    let tags = &buckets.all_buckets()[0].stats[0].additional_metric_tags;
     assert_eq!(tags, &[format!("region:{ok_value}")]);
 }
 
@@ -2238,7 +2238,7 @@ fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocke
     let flushtime =
         now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
     let buckets = concentrator.flush(flushtime, false);
-    let tags = &buckets.0[0].stats[0].additional_metric_tags;
+    let tags = &buckets.all_buckets()[0].stats[0].additional_metric_tags;
     assert_eq!(tags, &["region:tracer_blocked_value"]);
 }
 
