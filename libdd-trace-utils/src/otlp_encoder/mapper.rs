@@ -289,7 +289,7 @@ fn collect_event_attributes<T: TraceData>(ev: &SpanEvent<T>) -> Vec<ProtoKeyValu
 /// directly from the native span fields (no hex/decimal round trip — the prost types are the IR).
 ///
 /// Resource: SDK-level attributes (service.name, deployment.environment.name, telemetry.sdk.*,
-/// runtime-id). InstrumentationScope: present but empty (DD SDKs don't have a scope concept).
+/// runtime-id). InstrumentationScope: optional tracer scope name/version.
 /// All analogous DD span fields are mapped; meta→attributes (string), metrics→attributes
 /// (int/double), links and events mapped to OTLP links and events. Status from span.error and
 /// meta["error.msg"] or meta["error.message"].
@@ -326,8 +326,8 @@ pub fn map_traces_to_otlp<T: TraceData>(
             resource: Some(resource),
             scope_spans: vec![ProtoScopeSpans {
                 scope: Some(ProtoScope {
-                    name: String::new(),
-                    version: String::new(),
+                    name: resource_info.instrumentation_scope_name.clone(),
+                    version: resource_info.instrumentation_scope_version.clone(),
                     attributes: Vec::new(),
                     dropped_attributes_count: 0,
                 }),
@@ -955,6 +955,30 @@ mod tests {
             !resource_attrs.iter().any(|a| a.key == "_dd.stats_computed"),
             "_dd.stats_computed must not be emitted when client_computed_stats=false"
         );
+    }
+
+    #[test]
+    fn test_instrumentation_scope_uses_resource_info() {
+        let resource_info = OtlpResourceInfo {
+            instrumentation_scope_name: "dd-trace-js".to_string(),
+            instrumentation_scope_version: "7.0.0-pre".to_string(),
+            ..Default::default()
+        };
+        let span: Span<BytesData> = Span {
+            trace_id: 1,
+            span_id: 2,
+            name: libdd_tinybytes::BytesString::from_static("s"),
+            start: 0,
+            duration: 1,
+            ..Default::default()
+        };
+        let req = map_traces_to_otlp(vec![vec![span]], &resource_info, false);
+        let scope = req.resource_spans[0].scope_spans[0]
+            .scope
+            .as_ref()
+            .expect("scope must be present");
+        assert_eq!(scope.name, "dd-trace-js");
+        assert_eq!(scope.version, "7.0.0-pre");
     }
 
     #[test]

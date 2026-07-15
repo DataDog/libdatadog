@@ -225,6 +225,8 @@ pub struct TraceExporter<
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
     otlp_config: Option<OtlpTraceConfig>,
     trace_filterer: ArcSwap<TraceFilterer>,
+    otlp_instrumentation_scope_name: String,
+    otlp_instrumentation_scope_version: String,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
     /// skipped.
@@ -599,6 +601,8 @@ impl<
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
             r.client_computed_stats = self.otlp_stats_enabled;
+            r.instrumentation_scope_name = self.otlp_instrumentation_scope_name.clone();
+            r.instrumentation_scope_version = self.otlp_instrumentation_scope_version.clone();
             r
         };
         // Single prost OTLP IR; the configured protocol encodes the same request to its wire

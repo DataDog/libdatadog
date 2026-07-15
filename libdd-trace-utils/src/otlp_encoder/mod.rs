@@ -22,10 +22,11 @@ pub fn encode_otlp_json(req: &ProtoExportTraceServiceRequest) -> serde_json::Res
     json_serializer::to_otlp_json_vec(req)
 }
 
-/// Tracer-level attributes used to populate the OTLP Resource on export.
+/// Tracer-level metadata used to populate OTLP export wrappers.
 ///
-/// These are the fields from the tracer's configuration that map to OTLP Resource attributes
-/// (service.name, deployment.environment.name, service.version, telemetry.sdk.*, runtime-id).
+/// Resource fields map to OTLP Resource attributes (service.name,
+/// deployment.environment.name, service.version, telemetry.sdk.*, runtime-id).
+/// Instrumentation scope fields map to OTLP InstrumentationScope name/version.
 /// Callers should build this from their own tracer metadata struct.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -38,6 +39,8 @@ pub struct OtlpResourceInfo {
     pub runtime_id: String,
     pub hostname: String,
     pub process_tags: String,
+    pub instrumentation_scope_name: String,
+    pub instrumentation_scope_version: String,
     /// When true, emits `_dd.stats_computed: "true"` on the OTLP resource to prevent
     /// double-counted APM metrics in Datadog Agent OTLP receivers (backwards compatible).
     pub client_computed_stats: bool,

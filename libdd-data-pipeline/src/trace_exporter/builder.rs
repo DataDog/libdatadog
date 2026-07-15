@@ -91,6 +91,8 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     otlp_metrics_headers: Vec<(String, String)>,
     otel_trace_semantics_enabled: bool,
     runtime_id: Option<String>,
+    otlp_instrumentation_scope_name: String,
+    otlp_instrumentation_scope_version: String,
     /// When true, traces are written as newline-delimited JSON to stdout (the
     /// Datadog Forwarder "log exporter" path) instead of being sent to an agent.
     output_to_log: bool,
@@ -154,6 +156,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otlp_metrics_endpoint: None,
             otlp_metrics_headers: Vec::new(),
             otel_trace_semantics_enabled: false,
+            otlp_instrumentation_scope_name: String::new(),
+            otlp_instrumentation_scope_version: String::new(),
             runtime_id: None,
             output_to_log: false,
             log_max_line_size: None,
@@ -422,6 +426,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// setting the `DD_TRACE_OTEL_SEMANTICS_ENABLED` environment variable to `true`.
     pub fn enable_otel_trace_semantics(&mut self) -> &mut Self {
         self.otel_trace_semantics_enabled = true;
+        self
+    }
+
+    /// Set the OTLP InstrumentationScope metadata used for trace export.
+    pub fn set_otlp_instrumentation_scope(&mut self, name: &str, version: &str) -> &mut Self {
+        self.otlp_instrumentation_scope_name = name.to_owned();
+        self.otlp_instrumentation_scope_version = version.to_owned();
         self
     }
 
@@ -762,6 +773,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otlp_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
+            otlp_instrumentation_scope_name: self.otlp_instrumentation_scope_name,
+            otlp_instrumentation_scope_version: self.otlp_instrumentation_scope_version,
             log_output,
         })
     }
