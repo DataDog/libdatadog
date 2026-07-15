@@ -5,7 +5,7 @@
 
 use std::env::VarError;
 
-use libdd_capabilities::env::{EnvCapability, EnvError};
+use libdd_capabilities::env::{validate_name, validate_value, EnvCapability, EnvError};
 
 #[derive(Clone, Debug)]
 pub struct NativeEnvCapability;
@@ -23,13 +23,26 @@ impl EnvCapability for NativeEnvCapability {
         }
     }
 
-    fn set(&self, name: &str, value: &str) -> Result<(), EnvError> {
-        std::env::set_var(name, value);
+    unsafe fn set(&self, name: &str, value: &str) -> Result<(), EnvError> {
+        validate_name(name)?;
+        validate_value(value)?;
+        // SAFETY: Caller upholds the single-threaded-env precondition
+        // documented on `EnvCapability::set`. Inputs have been validated so
+        // `std::env::set_var` will not panic.
+        unsafe {
+            std::env::set_var(name, value);
+        }
         Ok(())
     }
 
-    fn unset(&self, name: &str) -> Result<(), EnvError> {
-        std::env::remove_var(name);
+    unsafe fn unset(&self, name: &str) -> Result<(), EnvError> {
+        validate_name(name)?;
+        // SAFETY: Caller upholds the single-threaded-env precondition
+        // documented on `EnvCapability::unset`. Name has been validated so
+        // `std::env::remove_var` will not panic.
+        unsafe {
+            std::env::remove_var(name);
+        }
         Ok(())
     }
 }
@@ -54,20 +67,45 @@ mod tests {
     fn set_then_get_roundtrips() {
         let _g = ENV_LOCK.lock().unwrap();
         let cap = NativeEnvCapability;
-        cap.set("LIBDD_CAP_TEST_SET", "value").unwrap();
+        unsafe { cap.set("LIBDD_CAP_TEST_SET", "value").unwrap() };
         assert_eq!(
             cap.get("LIBDD_CAP_TEST_SET").unwrap(),
             Some("value".to_owned())
         );
-        cap.unset("LIBDD_CAP_TEST_SET").unwrap();
+        unsafe { cap.unset("LIBDD_CAP_TEST_SET").unwrap() };
     }
 
     #[test]
     fn unset_then_get_returns_none() {
         let _g = ENV_LOCK.lock().unwrap();
         let cap = NativeEnvCapability;
-        cap.set("LIBDD_CAP_TEST_UNSET", "value").unwrap();
-        cap.unset("LIBDD_CAP_TEST_UNSET").unwrap();
+        unsafe {
+            cap.set("LIBDD_CAP_TEST_UNSET", "value").unwrap();
+            cap.unset("LIBDD_CAP_TEST_UNSET").unwrap();
+        }
         assert_eq!(cap.get("LIBDD_CAP_TEST_UNSET").unwrap(), None);
+    }
+
+    #[test]
+    fn set_rejects_invalid_name() {
+        let cap = NativeEnvCapability;
+        // SAFETY: validation fails before any env mutation happens.
+        unsafe {
+            assert!(matches!(cap.set("", "v"), Err(EnvError::Invalid(_))));
+            assert!(matches!(cap.set("A=B", "v"), Err(EnvError::Invalid(_))));
+            assert!(matches!(cap.set("A\0B", "v"), Err(EnvError::Invalid(_))));
+        }
+    }
+
+    #[test]
+    fn set_rejects_invalid_value() {
+        let cap = NativeEnvCapability;
+        // SAFETY: validation fails before any env mutation happens.
+        unsafe {
+            assert!(matches!(
+                cap.set("LIBDD_CAP_TEST_INVALID_VALUE", "a\0b"),
+                Err(EnvError::Invalid(_))
+            ));
+        }
     }
 }
