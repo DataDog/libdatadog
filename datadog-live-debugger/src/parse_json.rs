@@ -90,7 +90,25 @@ pub fn parse(json: &str) -> anyhow::Result<LiveDebuggingData> {
                         sampling_snapshots_per_second: parsed
                             .sampling
                             .map(|s| s.snapshots_per_second)
-                            .unwrap_or(5000),
+                            .unwrap_or_else(|| {
+                                // DEBUG-5730: evaluating capture expressions is
+                                // cost-equivalent to taking a full snapshot. When the
+                                // probe carries no explicit sampling, rate-limit these
+                                // probes like snapshots (1/s) instead of at the log
+                                // default (5000/s), which drives an apm-processing CPU
+                                // spike when the emitted snapshots run under the log
+                                // rate limit.
+                                let has_capture_expressions = parsed
+                                    .capture_expressions
+                                    .as_ref()
+                                    .map(|v| !v.is_empty())
+                                    .unwrap_or(false);
+                                if has_capture_expressions {
+                                    1
+                                } else {
+                                    5000
+                                }
+                            }),
                         capture_expressions: {
                             let mut exprs = vec![];
                             for raw in parsed.capture_expressions.unwrap_or_default() {
@@ -860,6 +878,51 @@ mod tests {
             assert!(matches!(kind, MetricKind::Count));
             assert_eq!(name, "showVetList.callcount");
             assert_eq!(value.to_string(), "arg");
+        } else {
+            unreachable!();
+        }
+    }
+
+    #[test]
+    fn test_capture_expressions_default_sampling_is_snapshot_rate() {
+        // DEBUG-5730: a log probe carrying capture expressions with no explicit
+        // sampling must default to the snapshot rate (1/s), not the log default
+        // (5000/s), which spikes apm-processing CPU.
+        let json = r#"
+{
+  "id": "3242910d-d2ff-4679-85cc-bfc317d74e8f",
+  "version": 1,
+  "type": "LOG_PROBE",
+  "where": {
+    "typeName": "VetController",
+    "methodName": "showVetList"
+  },
+  "template": "captured",
+  "segments": [{"str": "captured"}],
+  "captureExpressions": [
+    {
+      "name": "foo",
+      "expr": {"dsl": "arg", "json": {"ref": "arg"}}
+    }
+  ]
+}
+"#;
+
+        let parsed = parse_json(json).unwrap();
+        if let LiveDebuggingData::Probe(Probe {
+            probe:
+                ProbeType::Log(LogProbe {
+                    sampling_snapshots_per_second,
+                    capture_expressions,
+                    capture_snapshot,
+                    ..
+                }),
+            ..
+        }) = parsed
+        {
+            assert_eq!(capture_expressions.len(), 1);
+            assert!(!capture_snapshot);
+            assert_eq!(sampling_snapshots_per_second, 1);
         } else {
             unreachable!();
         }
