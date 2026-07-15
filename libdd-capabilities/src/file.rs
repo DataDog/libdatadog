@@ -35,10 +35,8 @@ pub struct FileMetadata {
 pub trait FileCapability: Clone + std::fmt::Debug {
     fn new() -> Self;
 
-    fn read(
-        &self,
-        path: &str,
-    ) -> impl Future<Output = Result<bytes::Bytes, FileError>> + MaybeSend;
+    fn read(&self, path: &str)
+        -> impl Future<Output = Result<bytes::Bytes, FileError>> + MaybeSend;
 
     fn write(
         &self,

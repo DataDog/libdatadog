@@ -162,10 +162,7 @@ mod tests {
             Self::default()
         }
 
-        fn read(
-            &self,
-            path: &str,
-        ) -> impl Future<Output = Result<Bytes, FileError>> + MaybeSend {
+        fn read(&self, path: &str) -> impl Future<Output = Result<Bytes, FileError>> + MaybeSend {
             let key = path.to_owned();
             let files = self.files.clone();
             async move {
@@ -209,10 +206,7 @@ mod tests {
             }
         }
 
-        fn exists(
-            &self,
-            path: &str,
-        ) -> impl Future<Output = Result<bool, FileError>> + MaybeSend {
+        fn exists(&self, path: &str) -> impl Future<Output = Result<bool, FileError>> + MaybeSend {
             let key = path.to_owned();
             let files = self.files.clone();
             async move { Ok(files.lock().unwrap().contains_key(&key)) }
