@@ -258,10 +258,11 @@ impl<
     #[cfg(not(target_arch = "wasm32"))]
     pub fn shutdown(self, timeout: Option<Duration>) -> Result<(), TraceExporterError>
     where
-        R: BlockingRuntime,
+        R: BlockingRuntime + Send + Sync + 'static,
+        Self: Send,
     {
         let runtime = self.shared_runtime.clone();
-        runtime.block_on(self.shutdown_async(timeout))?
+        runtime.block_on_send(self.shutdown_async(timeout))?
     }
 
     /// Async version of [`Self::shutdown`].

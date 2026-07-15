@@ -82,6 +82,20 @@ pub trait BlockingRuntime: SharedRuntime {
     ///
     /// Returns an [`io::Error`] if the executor cannot be accessed or constructed.
     fn block_on<F: std::future::Future>(&self, f: F) -> Result<F::Output, io::Error>;
+
+    /// Like [`Self::block_on`], but for callers that can guarantee `F`/its output are
+    /// `Send + 'static`, letting fork-safe impls hand `f` off to a helper thread when the
+    /// calling thread can't safely enter a Tokio context (see
+    /// [`ForkSafeRuntime::block_on_send`]). Defaults to forwarding to [`Self::block_on`].
+    fn block_on_send<F: std::future::Future + Send + 'static>(
+        &self,
+        f: F,
+    ) -> Result<F::Output, io::Error>
+    where
+        F::Output: Send + 'static,
+    {
+        self.block_on(f)
+    }
 }
 
 /// Handle to a worker registered on a [`SharedRuntime`].

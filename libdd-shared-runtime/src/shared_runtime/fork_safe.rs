@@ -334,6 +334,53 @@ impl BlockingRuntime for ForkSafeRuntime {
         };
         Ok(runtime.block_on(f))
     }
+
+    /// Entering a Tokio context, or building a new runtime, touches thread-locals that
+    /// panic if the calling thread's TLS is already destroyed (same hazard as
+    /// [`Self::shutdown`]). When that's the case, run `f` on a helper thread instead.
+    fn block_on_send<F: std::future::Future + Send + 'static>(
+        &self,
+        f: F,
+    ) -> Result<F::Output, io::Error>
+    where
+        F::Output: Send + 'static,
+    {
+        if Self::can_block_on() {
+            return self.block_on(f);
+        }
+
+        debug!("No live Tokio context (finalization); running block_on from a helper thread");
+        let runtime = self.runtime.lock_or_recover().clone();
+        Self::block_on_from_helper_thread(runtime, f)
+    }
+}
+
+impl ForkSafeRuntime {
+    /// Runs `f` on a fresh thread (whose Tokio TLS was never touched) and blocks the
+    /// calling thread on its result via a plain OS channel, safe even with the calling
+    /// thread's TLS gone. Mirrors [`Self::shutdown_from_helper_thread`].
+    fn block_on_from_helper_thread<F: std::future::Future + Send + 'static>(
+        runtime: Option<Arc<Runtime>>,
+        f: F,
+    ) -> Result<F::Output, io::Error>
+    where
+        F::Output: Send + 'static,
+    {
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new().spawn(move || {
+            let result = (|| -> Result<F::Output, io::Error> {
+                let runtime = match runtime {
+                    Some(runtime) => runtime,
+                    None => Arc::new(Builder::new_current_thread().enable_all().build()?),
+                };
+                Ok(runtime.block_on(f))
+            })();
+            let _ = done_tx.send(result);
+        })?;
+        done_rx
+            .recv()
+            .map_err(|_| io::Error::other("block_on helper thread died without a result"))?
+    }
 }
 
 #[cfg(test)]
@@ -624,5 +671,35 @@ mod tests {
             shared_runtime.shutdown(None).is_ok(),
             "shutdown must recover from a poisoned lock"
         );
+    }
+
+    #[test]
+    fn test_block_on_send_runs_future_on_calling_thread() {
+        // Sanity check for the live-TLS path: block_on_send must still just drive `f` to
+        // completion on the calling thread and return its output, matching block_on.
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let result = shared_runtime.block_on_send(async { 21 * 2 }).unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_block_on_from_helper_thread_runs_future_and_returns_value() {
+        // Exercises the fallback directly; real TLS destruction can't be triggered
+        // deterministically from a unit test. Mirrors
+        // test_shutdown_from_helper_thread_flushes_workers.
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
+        let runtime = shared_runtime.runtime.lock_or_recover().clone();
+
+        let result = ForkSafeRuntime::block_on_from_helper_thread(runtime, async { 1 + 1 });
+        assert_eq!(result.unwrap(), 2);
+    }
+
+    #[test]
+    fn test_block_on_from_helper_thread_builds_runtime_when_none() {
+        // Same as above but for the (runtime already taken) case block_on's own None
+        // branch handles unsafely — the helper thread must build its own fresh runtime
+        // instead, since building on the *calling* thread is what panics once TLS is gone.
+        let result = ForkSafeRuntime::block_on_from_helper_thread(None, async { 40 + 2 });
+        assert_eq!(result.unwrap(), 42);
     }
 }
