@@ -62,6 +62,8 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     language_version: String,
     language_interpreter: String,
     language_interpreter_vendor: String,
+    instrumentation_scope_name: String,
+    instrumentation_scope_version: String,
     git_commit_sha: String,
     process_tags: String,
     container_id: String,
@@ -133,6 +135,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             language_version: String::new(),
             language_interpreter: String::new(),
             language_interpreter_vendor: String::new(),
+            instrumentation_scope_name: String::new(),
+            instrumentation_scope_version: String::new(),
             git_commit_sha: String::new(),
             process_tags: String::new(),
             container_id: String::new(),
@@ -239,6 +243,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Set the `Datadog-Container-Id` header
     pub fn set_container_id(&mut self, container_id: &str) -> &mut Self {
         container_id.clone_into(&mut self.container_id);
+        self
+    }
+
+    /// Set OTLP trace instrumentation scope metadata.
+    pub fn set_otlp_instrumentation_scope(&mut self, name: &str, version: &str) -> &mut Self {
+        name.clone_into(&mut self.instrumentation_scope_name);
+        version.clone_into(&mut self.instrumentation_scope_version);
         self
     }
 
@@ -722,6 +733,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             headers: build_otlp_header_map(self.otlp_headers),
             timeout: otlp_timeout,
             protocol: self.otlp_protocol,
+            instrumentation_scope_name: self.instrumentation_scope_name,
+            instrumentation_scope_version: self.instrumentation_scope_version,
             otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 
@@ -993,6 +1006,8 @@ mod tests {
             .set_language_interpreter("v8")
             .set_language_interpreter_vendor("node")
             .set_git_commit_sha("797e9ea")
+            .set_otlp_endpoint("http://localhost:4318/v1/traces")
+            .set_otlp_instrumentation_scope("dd-trace-js", "7.0.0-pre")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
             .set_client_computed_stats();
@@ -1019,6 +1034,9 @@ mod tests {
         assert_eq!(exporter.metadata.language_interpreter_vendor, "node");
         assert_eq!(exporter.metadata.git_commit_sha, "797e9ea");
         assert!(exporter.metadata.client_computed_stats);
+        let otlp_config = exporter.otlp_config.as_ref().unwrap();
+        assert_eq!(otlp_config.instrumentation_scope_name, "dd-trace-js");
+        assert_eq!(otlp_config.instrumentation_scope_version, "7.0.0-pre");
         #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.is_some());
     }
