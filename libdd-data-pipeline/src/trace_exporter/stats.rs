@@ -9,15 +9,19 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::add_path;
+#[cfg(not(target_arch = "wasm32"))]
 use super::TracerMetadata;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
+#[cfg(not(target_arch = "wasm32"))]
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
-use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+#[cfg(not(target_arch = "wasm32"))]
+use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::WorkerHandle;
 use libdd_trace_stats::span_concentrator::SpanConcentrator;
 #[cfg(feature = "stats-obfuscation")]
 use libdd_trace_stats::span_concentrator::{
@@ -330,6 +334,10 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         stats_concentrator, ..
     } = &**status
     {
+        #[cfg_attr(
+            any(target_arch = "wasm32", not(feature = "telemetry")),
+            allow(unused_variables, reason = "FIXME: add telemetry on wasm")
+        )]
         let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
         #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
         let _ = dropped_by_trace_filter;

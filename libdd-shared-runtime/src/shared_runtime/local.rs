@@ -4,13 +4,14 @@
 use crate::worker::Worker;
 use futures::stream::{FuturesUnordered, StreamExt};
 use libdd_common::MutexExt;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tracing::{debug, error};
 
 use super::{
     pausable_worker::PausableWorker, BoxedWorker, SharedRuntime, SharedRuntimeError, WorkerEntry,
-    WorkerHandle,
+    WorkerHandle, WorkerRegistry,
 };
 
 /// Single-threaded local executor runtime for wasm32.
@@ -22,7 +23,7 @@ use super::{
 /// [`crate::BasicRuntime`] (caller-provided tokio runtime) instead.
 #[derive(Debug)]
 pub struct LocalRuntime {
-    workers: Arc<Mutex<Vec<WorkerEntry>>>,
+    workers: WorkerRegistry,
     next_worker_id: AtomicU64,
 }
 
@@ -31,12 +32,10 @@ impl LocalRuntime {
         &self,
         workers_guard: &mut std::sync::MutexGuard<Vec<WorkerEntry>>,
         pausable_worker: PausableWorker<BoxedWorker>,
-        restart_on_fork: bool,
     ) -> WorkerHandle {
         let worker_id = self.next_worker_id.fetch_add(1, Ordering::Relaxed);
         workers_guard.push(WorkerEntry {
             id: worker_id,
-            restart_on_fork,
             worker: pausable_worker,
         });
         WorkerHandle {
@@ -49,7 +48,7 @@ impl LocalRuntime {
 impl SharedRuntime for LocalRuntime {
     fn new() -> Result<Self, SharedRuntimeError> {
         Ok(Self {
-            workers: Arc::new(Mutex::new(Vec::new())),
+            workers: Rc::new(Mutex::new(Vec::new())),
             next_worker_id: AtomicU64::new(1),
         })
     }
@@ -57,7 +56,8 @@ impl SharedRuntime for LocalRuntime {
     fn spawn_worker<T: Worker + Sync + 'static>(
         &self,
         worker: T,
-        restart_on_fork: bool,
+        // LocalRuntime has no fork protocol.
+        _restart_on_fork: bool,
     ) -> Result<WorkerHandle, SharedRuntimeError> {
         let boxed_worker: BoxedWorker = Box::new(worker);
         debug!(?boxed_worker, "Spawning worker on LocalRuntime");
@@ -71,7 +71,7 @@ impl SharedRuntime for LocalRuntime {
             Box::pin(async { Ok(handle.await) })
         })?;
 
-        Ok(self.push_worker(&mut workers_guard, pausable_worker, restart_on_fork))
+        Ok(self.push_worker(&mut workers_guard, pausable_worker))
     }
 
     async fn shutdown_async(&self) {

@@ -31,7 +31,10 @@ pub mod config;
 pub mod exporter;
 pub mod metrics;
 
-pub use config::{OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};
+#[cfg(not(target_arch = "wasm32"))]
+pub use config::OtlpMetricsConfig;
+pub use config::{OtlpProtocol, OtlpTraceConfig};
 pub use exporter::send_otlp_traces_http;
 pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
+#[cfg(not(target_arch = "wasm32"))]
 pub use metrics::OtlpStatsExporter;

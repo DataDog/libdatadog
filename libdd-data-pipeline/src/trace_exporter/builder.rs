@@ -4,7 +4,9 @@
 use crate::agent_info::AgentInfoFetcher;
 use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
-use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
+use crate::otlp::OtlpTraceConfig;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo};
 #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -23,6 +25,8 @@ use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
 use libdd_dogstatsd_client::new;
+#[cfg(target_arch = "wasm32")]
+use libdd_shared_runtime::LocalRuntime;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
@@ -111,6 +115,13 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
 /// [`TraceExporterBuilder::new`] explicitly.
 #[cfg(not(target_arch = "wasm32"))]
 impl Default for TraceExporterBuilder<ForkSafeRuntime> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Default for TraceExporterBuilder<LocalRuntime> {
     fn default() -> Self {
         Self::new()
     }
@@ -730,6 +741,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 
+        #[cfg(not(target_arch = "wasm32"))]
         let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
             endpoint_url: url,
             headers: build_otlp_header_map(self.otlp_metrics_headers),

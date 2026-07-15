@@ -18,6 +18,8 @@ use self::metrics::MetricsEmitter;
 use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::agent_info::{self, schema::AgentInfo};
 use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
@@ -25,12 +27,11 @@ use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
 use crate::trace_exporter::agent_response::{
     AgentResponsePayloadVersion, DATADOG_RATES_PAYLOAD_VERSION,
 };
-use crate::trace_exporter::error::{
-    InternalErrorKind, RequestError, ShutdownError, TraceExporterError,
-};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::trace_exporter::error::ShutdownError;
+use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
 use crate::trace_exporter::stats::StatsComputationConfig;
 use crate::{
-    agent_info::{self, schema::AgentInfo},
     health_metrics,
     health_metrics::{HealthMetric, SendResult, TransportErrorType},
 };
@@ -45,7 +46,9 @@ use libdd_common::Endpoint;
 use libdd_dogstatsd_client::Client;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
-use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+use libdd_shared_runtime::SharedRuntime;
+#[cfg(not(target_arch = "wasm32"))]
+use libdd_shared_runtime::WorkerHandle;
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
     send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
@@ -55,9 +58,12 @@ use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
+#[cfg(any(not(target_arch = "wasm32"), feature = "test-utils"))]
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinSet;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -249,8 +255,10 @@ pub struct TraceExporter<
     /// Used to emit a one-shot warning when V1 is requested by the SDK but the agent never
     /// advertises `/v1.0/traces`. Without it we'd either spam the warning on every `/info`
     /// poll or stay silent and leave SDK authors without a signal.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     v1_unavailable_logged: Once,
     serializer: TraceSerializer,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     shared_runtime: Arc<R>,
     /// None if dogstatsd is disabled
     dogstatsd: Option<Arc<Client>>,
@@ -332,38 +340,32 @@ impl<
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     async fn shutdown_workers(self) {
-        #[cfg(not(target_arch = "wasm32"))]
+        let mut join_set = JoinSet::new();
+
+        // Extract the stats handle before moving other fields.
+        if let StatsComputationStatus::Enabled { worker_handle, .. } =
+            &**self.client_side_stats.status.load()
         {
-            let mut join_set = JoinSet::new();
-
-            // Extract the stats handle before moving other fields.
-            if let StatsComputationStatus::Enabled { worker_handle, .. } =
-                &**self.client_side_stats.status.load()
-            {
-                let handle = worker_handle.clone();
-                join_set.spawn(async move { handle.stop().await });
-            }
-
-            if let Some(info_fetcher) = self.workers.info_fetcher {
-                join_set.spawn(async move { info_fetcher.stop().await });
-            }
-
-            #[cfg(feature = "telemetry")]
-            if let Some(telemetry) = self.workers.telemetry {
-                join_set.spawn(async move { telemetry.stop().await });
-            }
-
-            while let Some(result) = join_set.join_next().await {
-                if let Ok(Err(e)) = result {
-                    error!("Worker failed to shutdown: {:?}", e);
-                }
-            }
+            let handle = worker_handle.clone();
+            join_set.spawn(async move { handle.stop().await });
         }
 
-        // On wasm32 workers are no-ops, nothing to stop.
-        #[cfg(target_arch = "wasm32")]
-        let _ = self;
+        if let Some(info_fetcher) = self.workers.info_fetcher {
+            join_set.spawn(async move { info_fetcher.stop().await });
+        }
+
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = self.workers.telemetry {
+            join_set.spawn(async move { telemetry.stop().await });
+        }
+
+        while let Some(result) = join_set.join_next().await {
+            if let Ok(Err(e)) = result {
+                error!("Worker failed to shutdown: {:?}", e);
+            }
+        }
     }
 
     /// Send msgpack serialized traces to the agent.

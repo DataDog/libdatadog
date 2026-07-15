@@ -105,6 +105,7 @@ jobs:
             # shellcheck disable=SC2086
             cargo fmt $FMT_PACKAGES -- --check
           fi
+
   clippy:
     needs: setup
     if: needs.setup.outputs.crates-count != '0'
@@ -155,6 +156,67 @@ jobs:
           else
             # shellcheck disable=SC2086
             cargo clippy $CLIPPY_PACKAGES --all-targets --all-features --keep-going -- -D warnings
+          fi
+
+  clippy-wasm:
+    needs: setup
+    if: needs.setup.outputs.crates-count != '0'
+    name: "clippy #wasm ${{ matrix.rust_version }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust_version: ["msrv", "stable", "nightly"]
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          submodules: recursive
+      - name: Install ${{ matrix.rust_version }} toolchain and clippy
+        id: install-toolchain
+        shell: bash
+        run: |
+          VERSION="${{ matrix.rust_version }}"
+          if [ "$VERSION" = "msrv" ]; then
+            VERSION="${{ needs.setup.outputs.rust-version }}"
+          elif [ "$VERSION" = "nightly" ]; then
+            VERSION="${{ needs.setup.outputs.nightly-version }}"
+          fi
+          rustup set profile minimal
+          rustup install "$VERSION"
+          rustup component add clippy --toolchain "$VERSION"
+          rustup target add wasm32-unknown-unknown --toolchain "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
+      - name: Run clippy on wasm ${{ matrix.rust_version }}
+        shell: bash
+        env:
+          CLIPPY_PACKAGES: ${{ needs.setup.outputs.clippy-packages }}
+          # Override rust-toolchain.toml so each matrix entry actually runs on
+          # its chosen toolchain instead of falling back to the workspace MSRV.
+          RUSTUP_TOOLCHAIN: ${{ steps.install-toolchain.outputs.version }}
+        run: |
+          # List of crates that are meant to be compilable for wasm.
+          WASM_ALLOWLIST="build_common cc_utils datadog-ffe datadog-ffe-test-suite datadog-ipc-macros datadog-sidecar-macros libdd-capabilities libdd-common libdd-data-pipeline libdd-ddsketch libdd-dogstatsd-client libdd-log libdd-otel-thread-ctx libdd-otel-thread-ctx-ffi libdd-profiling-protobuf libdd-remote-config libdd-sampling libdd-shared-runtime libdd-tinybytes libdd-trace-normalization libdd-trace-obfuscation libdd-trace-protobuf libdd-trace-stats libdd-trace-utils sidecar_mockgen"
+          if [[ -z "$CLIPPY_PACKAGES" ]]; then
+            WASM_PACKAGES=$(for p in $WASM_ALLOWLIST; do echo "-p $p"; done | xargs)
+          else
+            WASM_PACKAGES=""
+            for pkg in $WASM_ALLOWLIST; do
+              if echo "$CLIPPY_PACKAGES" | grep -qw -- "$pkg"; then
+                WASM_PACKAGES="$WASM_PACKAGES -p $pkg"
+              fi
+            done
+          fi
+          if [[ -z "$WASM_PACKAGES" ]]; then
+            echo "No wasm-compatible crates affected by this change; skipping."
+          else
+            # shellcheck disable=SC2086
+            cargo clippy $WASM_PACKAGES --no-default-features --target wasm32-unknown-unknown -- -D warnings
           fi
 
   licensecheck:
