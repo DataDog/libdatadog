@@ -24,11 +24,30 @@ use std::ffi::c_void;
 use libdd_profiling_heap_sampler::{dd_sample_flag_peek, dd_tl_state_get_or_init};
 use serial_test::serial;
 
+/// Warn (once) when these tests aren't running under nextest. The GOT install
+/// is permanent, so isolation depends on each test getting its own process;
+/// nextest sets `NEXTEST=1`, plain `cargo test` shares one process and leaks
+/// a prior test's install into later ones.
+fn warn_if_not_isolated() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        if std::env::var_os("NEXTEST").is_none() {
+            eprintln!(
+                "warning: heap-gotter install tests need per-test process isolation; \
+                 run with `cargo nextest run`. Under `cargo test` a prior test's \
+                 permanent GOT install leaks into later ones."
+            );
+        }
+    });
+}
+
 /// After install the heap should still be functional and no recursive
 /// crash should occur when malloc/free go through the patched GOT.
 #[test]
 #[serial]
 fn install_keeps_heap_functional() {
+    warn_if_not_isolated();
     extern "C" {
         fn malloc(size: usize) -> *mut c_void;
     }
@@ -40,9 +59,17 @@ fn install_keeps_heap_functional() {
     );
 
     unsafe {
-        let p = malloc(64);
+        let p = malloc(64) as *mut u8;
         assert!(!p.is_null(), "malloc returned NULL post-install");
-        libc::free(p);
+        // Write then read back the whole buffer to prove it's real, usable
+        // memory, not just a non-NULL (possibly mis-offset) pointer.
+        for i in 0..64 {
+            p.add(i).write((i as u8) ^ 0xA5);
+        }
+        for i in 0..64 {
+            assert_eq!(p.add(i).read(), (i as u8) ^ 0xA5, "byte {i} corrupted");
+        }
+        libc::free(p as *mut c_void);
     }
 }
 
@@ -54,6 +81,7 @@ fn install_keeps_heap_functional() {
 #[test]
 #[serial]
 fn install_produces_sampled_allocations() {
+    warn_if_not_isolated();
     let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
@@ -97,6 +125,7 @@ fn install_produces_sampled_allocations() {
 #[test]
 #[serial]
 fn realloc_null_produces_sampled_allocation() {
+    warn_if_not_isolated();
     let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
@@ -130,6 +159,7 @@ fn realloc_null_produces_sampled_allocation() {
 #[test]
 #[serial]
 fn page_aligned_allocations_are_unsampled() {
+    warn_if_not_isolated();
     let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
@@ -162,6 +192,7 @@ fn page_aligned_allocations_are_unsampled() {
 #[test]
 #[serial]
 fn realloc_of_sampled_allocation_preserves_data() {
+    warn_if_not_isolated();
     let installed = libdd_profiling_heap_gotter::install_heap_overrides();
     assert!(installed);
 
@@ -246,6 +277,7 @@ unsafe fn alloc_aligned(align: usize, size: usize) -> *mut c_void {
 #[test]
 #[serial]
 fn realloc_stress_across_alignments_preserves_data() {
+    warn_if_not_isolated();
     // Mirrors the demo's menu, plus 2048 to bracket the 1024 cap on both
     // sides. Small alignments sample; those above the cap pass through.
     const ALIGNMENTS: &[usize] = &[1, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
@@ -335,4 +367,37 @@ fn realloc_stress_across_alignments_preserves_data() {
     );
     #[cfg(not(feature = "live-heap"))]
     let _ = saw_sampled;
+}
+
+/// A failing allocation must surface the real allocator's error/errno through
+/// our hooks unchanged. Avoids relying on `aligned_alloc` rejecting a bad
+/// alignment, since older glibc (e.g. CentOS 7) doesn't validate that.
+#[test]
+#[serial]
+fn invalid_alignment_passes_through_error() {
+    warn_if_not_isolated();
+    let installed = libdd_profiling_heap_gotter::install_heap_overrides();
+    assert!(installed);
+
+    unsafe {
+        // posix_memalign with a non-power-of-two alignment must return EINVAL.
+        // POSIX-specified, so reliable across glibc versions; exercises our
+        // hook forwarding the real return code unchanged.
+        let mut out: *mut c_void = std::ptr::null_mut();
+        let rc = libc::posix_memalign(&mut out, 3, 64);
+        assert_eq!(rc, libc::EINVAL, "posix_memalign should return EINVAL");
+
+        // A failing allocation must preserve the real allocator's errno through
+        // our post-call bookkeeping. A huge aligned_alloc reliably fails with
+        // ENOMEM on every libc (size is a multiple of the alignment).
+        *libc::__errno_location() = 0;
+        let huge = usize::MAX & !0xfff;
+        let p = libc::aligned_alloc(16, huge);
+        assert!(p.is_null(), "huge aligned_alloc should fail");
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ENOMEM),
+            "errno must survive our post-call bookkeeping"
+        );
+    }
 }

@@ -677,6 +677,8 @@ impl<
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
             r.client_computed_stats = self.otlp_stats_enabled;
+            r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
+            r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
             r
         };
         // Single prost OTLP IR; the configured protocol encodes the same request to its wire

@@ -383,7 +383,12 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         if trace_id_high != 0 {
             // Lower-case hex without `0x` prefix — the agent expects this format.
             write_const_msgpack_str!(writer, "_dd.p.tid")?;
-            write_str(writer, &format!("{trace_id_high:016x}"))?;
+            let mut buf = [0u8; 16];
+            let hex_str = hex::encode_to_slice(trace_id_high.to_be_bytes(), &mut buf)
+                .ok()
+                .and_then(|_| std::str::from_utf8(&buf).ok())
+                .unwrap_or_default();
+            write_str(writer, hex_str)?;
         }
         if !chunk.origin.borrow().is_empty() {
             write_const_msgpack_str!(writer, "_dd.origin")?;
@@ -391,7 +396,8 @@ pub(super) fn encode_span<W: RmpWrite, T: TraceData>(
         }
         if let Some(mechanism) = chunk.sampling_mechanism {
             write_const_msgpack_str!(writer, "_dd.p.dm")?;
-            write_str(writer, &format!("-{mechanism}"))?;
+            let mut buf = itoa::Buffer::new();
+            write_str(writer, buf.format(-(mechanism as i64)))?;
         }
         for (k, v) in &meta_leaves {
             write_str(writer, k)?;
