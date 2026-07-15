@@ -269,7 +269,6 @@ jobs:
     needs: setup
     if: needs.setup.outputs.packages-count != '0'
     runs-on: ubuntu-latest
-    timeout-minutes: 720
     env:
       PACKAGES: ${{ needs.setup.outputs.packages }}
       CRASHTRACKER_FEATURE: ${{ needs.setup.outputs.crashtracker-feature }}
@@ -298,7 +297,7 @@ jobs:
           cache-bin: true # cache the ~/.cargo/bin directory
       - name: Build CentOS 7 Docker image
         run: docker build -t libdatadog-centos7 -f tools/docker/Dockerfile.centos .
-      - name: "cargo nextest run (centos7) x100"
+      - name: "cargo nextest run (centos7)"
         # Run docker as a user, not the default root
         # Mount and use the runner's toolchain as it's the same arch
         # exclude tracing integration tests since they require docker in docker to run a test-agent
@@ -311,20 +310,17 @@ jobs:
             # shellcheck disable=SC2086
             NEXTEST_CMD="cargo nextest run $PACKAGES $CRASHTRACKER_FEATURE --profile ci --no-tests=pass -E '!test(tracing_integration_tests::)'"
           fi
-          for i in $(seq 1 100); do
-            echo "=== Run $i/100 ==="
-            docker run --rm \
-              --user "$(id -u):$(id -g)" \
-              -v "${{ github.workspace }}:/workspace" \
-              -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo" \
-              -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup" \
-              -e CARGO_HOME=/usr/local/cargo \
-              -e RUSTUP_HOME=/usr/local/rustup \
-              -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-              -w /workspace \
-              libdatadog-centos7 \
-              sh -c "$NEXTEST_CMD"
-          done
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo" \
+            -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup" \
+            -e CARGO_HOME=/usr/local/cargo \
+            -e RUSTUP_HOME=/usr/local/rustup \
+            -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            -w /workspace \
+            libdatadog-centos7 \
+            sh -c "$NEXTEST_CMD"
       - name: Add file attributes to JUnit XML
         if: success() || failure()
         run: cargo run --bin add_junit_file_attributes -- target/nextest/ci/junit.xml

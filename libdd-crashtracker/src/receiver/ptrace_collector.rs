@@ -403,13 +403,9 @@ pub fn capture_thread_context(
 }
 
 /// Maximum time to wait for a single thread to enter ptrace-stop.
-///
-/// 200ms accommodates CI environments with heavy CPU contention where the thread
-/// may take tens of milliseconds to be scheduled and enter ptrace-stop after
-/// PTRACE_INTERRUPT. On unloaded machines the stop typically arrives in <1ms.
 const STOP_TIMEOUT_PER_THREAD: Duration = Duration::from_millis(200);
 
-/// Delay between retry attempts. Uses an exponential back-off starting from
+/// Delay between retry attempts that is used as a base for an exponential back-off starting from
 /// this value (10ms, 20ms, 40ms).
 const RETRY_BASE_DELAY: Duration = Duration::from_millis(10);
 
@@ -428,16 +424,14 @@ fn is_transient_ptrace_error(err: &PtraceError) -> bool {
 ///
 /// Each attempt gets its own `STOP_TIMEOUT_PER_THREAD` budget (capped at the
 /// overall deadline) so that a retry after a timeout-induced failure actually
-/// has enough time to succeed. On older kernels (e.g. CentOS 7 / kernel 3.10)
+/// has enough time to succeed. On older kernels (CentOS 7 / kernel 3.10)
 /// the first attempt can consume its entire budget waiting for registers to
 /// become readable; reusing that exhausted deadline would make the retry a
 /// no-op.
 ///
 /// A capture that succeeds but produces zero frames is also retried: on a
 /// running thread with a confirmed non-zero IP, empty frames indicates a
-/// transient libunwind issue (e.g. stale address-space cache state) rather
-/// than a permanent problem. Retries use exponential back-off to give the
-/// kernel time to fully commit thread state between attempts.
+/// transient issue.
 fn capture_with_retry(
     tid: libc::pid_t,
     resolve_frames: crate::StacktraceCollection,
