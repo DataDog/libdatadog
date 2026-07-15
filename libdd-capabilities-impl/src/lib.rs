@@ -8,6 +8,7 @@
 //! etc.). Leaf crates (FFI, benchmarks) pin this type as the generic parameter.
 
 pub mod env;
+pub mod file;
 mod http;
 pub mod sleep;
 
@@ -15,10 +16,12 @@ use core::future::Future;
 use std::time::Duration;
 
 pub use env::NativeEnvCapability;
+pub use file::NativeFileCapability;
 pub use http::NativeHttpClient;
 use libdd_capabilities::{http::HttpError, MaybeSend};
 pub use libdd_capabilities::{
-    EnvCapability, EnvError, HttpClientCapability, LogWriterCapability, SleepCapability,
+    EnvCapability, EnvError, FileCapability, FileError, FileMetadata, HttpClientCapability,
+    LogWriterCapability, SleepCapability,
 };
 pub use sleep::NativeSleepCapability;
 
@@ -36,6 +39,7 @@ pub struct NativeCapabilities {
     http: NativeHttpClient,
     sleep: NativeSleepCapability,
     env: NativeEnvCapability,
+    file: NativeFileCapability,
 }
 
 impl Default for NativeCapabilities {
@@ -50,6 +54,7 @@ impl NativeCapabilities {
             http: NativeHttpClient::new_client(),
             sleep: NativeSleepCapability,
             env: NativeEnvCapability,
+            file: NativeFileCapability,
         }
     }
 }
@@ -96,5 +101,37 @@ impl EnvCapability for NativeCapabilities {
 
     fn get(&self, name: &str) -> Result<Option<String>, EnvError> {
         self.env.get(name)
+    }
+}
+
+impl FileCapability for NativeCapabilities {
+    fn new() -> Self {
+        Self::new()
+    }
+
+    fn read(
+        &self,
+        path: &str,
+    ) -> impl Future<Output = Result<bytes::Bytes, FileError>> + MaybeSend {
+        self.file.read(path)
+    }
+
+    fn write(
+        &self,
+        path: &str,
+        contents: bytes::Bytes,
+    ) -> impl Future<Output = Result<(), FileError>> + MaybeSend {
+        self.file.write(path, contents)
+    }
+
+    fn metadata(
+        &self,
+        path: &str,
+    ) -> impl Future<Output = Result<FileMetadata, FileError>> + MaybeSend {
+        self.file.metadata(path)
+    }
+
+    fn exists(&self, path: &str) -> impl Future<Output = Result<bool, FileError>> + MaybeSend {
+        self.file.exists(path)
     }
 }
