@@ -1,10 +1,13 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
+#[cfg(feature = "alloc")]
 pub use libdd_common::tag::Tag;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "alloc")]
 #[derive(Serialize, Debug)]
 pub struct Serie {
     pub namespace: MetricNamespace,
@@ -17,6 +20,7 @@ pub struct Serie {
     pub interval: u64,
 }
 
+#[cfg(feature = "alloc")]
 #[derive(Serialize, Debug)]
 pub struct Distribution {
     pub namespace: MetricNamespace,
@@ -30,6 +34,7 @@ pub struct Distribution {
     pub _type: MetricType,
 }
 
+#[cfg(feature = "alloc")]
 #[derive(Serialize, Debug)]
 #[serde(untagged)]
 pub enum SerializedSketch {

@@ -16,11 +16,14 @@ use tracing::{debug, error};
 
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
+    use crate::protocol;
     use http::header::HeaderName;
-    pub const REQUEST_TYPE: HeaderName = HeaderName::from_static("dd-telemetry-request-type");
-    pub const API_VERSION: HeaderName = HeaderName::from_static("dd-telemetry-api-version");
-    pub const LIBRARY_LANGUAGE: HeaderName = HeaderName::from_static("dd-client-library-language");
-    pub const LIBRARY_VERSION: HeaderName = HeaderName::from_static("dd-client-library-version");
+    pub const REQUEST_TYPE: HeaderName = HeaderName::from_static(protocol::REQUEST_TYPE_HEADER);
+    pub const API_VERSION: HeaderName = HeaderName::from_static(protocol::API_VERSION_HEADER);
+    pub const LIBRARY_LANGUAGE: HeaderName =
+        HeaderName::from_static(protocol::LIBRARY_LANGUAGE_HEADER);
+    pub const LIBRARY_VERSION: HeaderName =
+        HeaderName::from_static(protocol::LIBRARY_VERSION_HEADER);
 
     pub const DEBUG_ENABLED: HeaderName = HeaderName::from_static("dd-telemetry-debug-enabled");
 

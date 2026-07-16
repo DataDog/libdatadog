@@ -3732,8 +3732,10 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-ddsketch",
+ "libdd-http-client-lite",
  "libdd-shared-runtime",
  "serde",
+ "serde-json-core",
  "serde_json",
  "sys-info",
  "tokio",
@@ -5646,6 +5648,16 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fdd050c9c2ed5ae1fb29e71be0a6efdd9df43c7cb13ea5826528cfe10c51db0"
 dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "serde-json-core"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b81787e655bd59cecadc91f7b6b8651330b2be6c33246039a65e5cd6f4e0828"
+dependencies = [
+ "ryu",
  "serde",
 ]
 

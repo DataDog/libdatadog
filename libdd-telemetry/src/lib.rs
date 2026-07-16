@@ -20,12 +20,14 @@ use tracing::debug;
 
 #[cfg(feature = "std")]
 pub mod config;
-#[cfg(feature = "alloc")]
 pub mod data;
 #[cfg(feature = "std")]
 pub mod info;
 #[cfg(feature = "std")]
 pub mod metrics;
+mod protocol;
+/// Allocation-free telemetry metric encoding and constrained submission.
+pub mod signal_safe;
 #[cfg(feature = "std")]
 pub mod worker;
 

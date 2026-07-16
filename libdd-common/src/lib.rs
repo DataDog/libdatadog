@@ -56,7 +56,6 @@ pub mod http_common;
 pub mod multipart;
 #[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub mod rate_limiter;
-#[cfg(feature = "alloc")]
 pub mod tag;
 #[cfg(all(feature = "std", any(test, feature = "test-utils")))]
 pub mod test_utils;
