@@ -13,6 +13,8 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
 };
 
+use super::super::retry_on_eintr;
+
 /// The shared memory mapped area to publish the context to. The memory region is owned by a
 /// [MemMapping] instance and is automatically unmapped upon drop.
 ///
@@ -93,26 +95,30 @@ impl MemMapping {
             .or_else(|_| try_memfd(crate::otel_process_ctx::linux::MAPPING_NAME, libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING))
             .and_then(|fd| {
                 // SAFETY: fd is a valid open file descriptor.
-                check_syscall_retval(
-                    unsafe {
-                        libc::ftruncate(fd.as_raw_fd(), super::mapping_size() as libc::off_t)
-                    },
-                    "ftruncate failed"
-                )?;
+                retry_on_eintr(|| {
+                    check_syscall_retval(
+                        unsafe {
+                            libc::ftruncate(fd.as_raw_fd(), super::mapping_size() as libc::off_t)
+                        },
+                        "ftruncate failed",
+                    )
+                })?;
                 // SAFETY: we pass a null pointer to mmap which is unconditionally ok
-                let start_addr = check_mapping_addr(
-                    unsafe {
-                        libc::mmap(
-                            ptr::null_mut(),
-                            size,
-                            libc::PROT_WRITE | libc::PROT_READ,
-                            libc::MAP_PRIVATE,
-                            fd.as_raw_fd(),
-                            0,
-                        )
-                    },
-                    "mmap failed"
-                )?;
+                let start_addr = retry_on_eintr(|| {
+                    check_mapping_addr(
+                        unsafe {
+                            libc::mmap(
+                                ptr::null_mut(),
+                                size,
+                                libc::PROT_WRITE | libc::PROT_READ,
+                                libc::MAP_PRIVATE,
+                                fd.as_raw_fd(),
+                                0,
+                            )
+                        },
+                        "mmap failed",
+                    )
+                })?;
 
                 // We (implicitly) close the file descriptor right away on purpose: this doesn't
                 // invalidate the mapping.
@@ -124,19 +130,21 @@ impl MemMapping {
             // If any previous step failed, we fallback to an anonymous mapping
             .or_else(|_| {
                 // SAFETY: we pass a null pointer to mmap, no precondition to uphold
-                let start_addr = check_mapping_addr(
-                    unsafe {
-                        libc::mmap(
-                            ptr::null_mut(),
-                            size,
-                            libc::PROT_WRITE | libc::PROT_READ,
-                            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                            -1,
-                            0,
-                        )
-                    },
-                    "mmap failed: couldn't create a memfd or anonymous mmapped region for process context publication"
-                )?;
+                let start_addr = retry_on_eintr(|| {
+                    check_mapping_addr(
+                        unsafe {
+                            libc::mmap(
+                                ptr::null_mut(),
+                                size,
+                                libc::PROT_WRITE | libc::PROT_READ,
+                                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                                -1,
+                                0,
+                            )
+                        },
+                        "mmap failed: couldn't create a memfd or anonymous mmapped region for process context publication",
+                    )
+                })?;
 
                 Ok::<_, io::Error>(MemMapping {
                     start_addr,
@@ -146,14 +154,20 @@ impl MemMapping {
 
         // SAFETY: MemMapping owns a live mapping of mapping_size() bytes. Failure is harmless;
         // the mapping then follows the default inheritance behavior.
-        mapping.only_for_pid = (unsafe {
-            libc::madvise(
-                mapping.start_addr.as_ptr(),
-                super::mapping_size(),
-                libc::MADV_DONTFORK,
+        mapping.only_for_pid = retry_on_eintr(|| {
+            check_syscall_retval(
+                unsafe {
+                    libc::madvise(
+                        mapping.start_addr.as_ptr(),
+                        super::mapping_size(),
+                        libc::MADV_DONTFORK,
+                    )
+                },
+                "madvise MADV_DONTFORK failed",
             )
-        } == 0)
-            .then_some(std::process::id());
+        })
+        .is_ok()
+        .then_some(std::process::id());
 
         Ok(mapping)
     }
@@ -162,22 +176,24 @@ impl MemMapping {
     fn set_name(&mut self) -> io::Result<()> {
         // SAFETY: self.start_addr is valid for mapping_size() bytes as per MemMapping
         // invariants. name is a valid NUL-terminated string that outlives the prctl call.
-        check_syscall_retval(
-            unsafe {
-                // int prctl(PR_SET_VMA, long attr, unsigned long addr, unsigned long size,
-                // const char *_Nullable val);
-                libc::prctl(
-                    libc::PR_SET_VMA,
-                    libc::PR_SET_VMA_ANON_NAME as libc::c_ulong,
-                    TryInto::<libc::c_ulong>::try_into(self.start_addr.as_ptr() as usize)
-                        .expect("start addr overflowed"),
-                    TryInto::<libc::c_ulong>::try_into(super::mapping_size())
-                        .expect("mapping size overflowed"),
-                    crate::otel_process_ctx::linux::MAPPING_NAME.as_ptr(),
-                )
-            },
-            "prctl PR_SET_VMA_ANON_NAME failed",
-        )?;
+        retry_on_eintr(|| {
+            check_syscall_retval(
+                unsafe {
+                    // int prctl(PR_SET_VMA, long attr, unsigned long addr, unsigned long size,
+                    // const char *_Nullable val);
+                    libc::prctl(
+                        libc::PR_SET_VMA,
+                        libc::PR_SET_VMA_ANON_NAME as libc::c_ulong,
+                        TryInto::<libc::c_ulong>::try_into(self.start_addr.as_ptr() as usize)
+                            .expect("start addr overflowed"),
+                        TryInto::<libc::c_ulong>::try_into(super::mapping_size())
+                            .expect("mapping size overflowed"),
+                        crate::otel_process_ctx::linux::MAPPING_NAME.as_ptr(),
+                    )
+                },
+                "prctl PR_SET_VMA_ANON_NAME failed",
+            )
+        })?;
 
         Ok(())
     }
@@ -214,11 +230,13 @@ impl MemMapping {
             return Ok(());
         }
 
-        check_syscall_retval(
-            // SAFETY: upheld by the caller.
-            unsafe { libc::munmap(self.start_addr.as_ptr(), super::mapping_size()) },
-            "munmap failed when freeing the process context",
-        )?;
+        retry_on_eintr(|| {
+            check_syscall_retval(
+                // SAFETY: upheld by the caller.
+                unsafe { libc::munmap(self.start_addr.as_ptr(), super::mapping_size()) },
+                "munmap failed when freeing the process context",
+            )
+        })?;
 
         Ok(())
     }

@@ -15,6 +15,7 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
 };
 
+use super::super::retry_on_eintr;
 use super::{PipeCopyError, ProcessMemoryCopy};
 
 /// A cached pipe used to probe-copy process memory through the kernel.
@@ -41,7 +42,7 @@ impl ProcessMemoryCopy for CopyPipe {
 
             // SAFETY: write asks the kernel to copy from chunk_addr. Invalid user memory is
             // reported as EFAULT or a short write without being dereferenced by Rust.
-            let written = loop {
+            let written = match retry_on_eintr(|| {
                 let result = unsafe {
                     libc::write(
                         self.write_fd.as_raw_fd(),
@@ -49,10 +50,13 @@ impl ProcessMemoryCopy for CopyPipe {
                         chunk_len,
                     )
                 };
-                if result > 0 {
-                    break result as usize;
+                if result < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(result as usize)
                 }
-                if result == 0 {
+            }) {
+                Ok(0) => {
                     return Err(PipeCopyError {
                         err: io::Error::new(
                             io::ErrorKind::WriteZero,
@@ -61,39 +65,40 @@ impl ProcessMemoryCopy for CopyPipe {
                         pipe_dirty: false,
                     });
                 }
-
-                let err = io::Error::last_os_error();
-                match err.raw_os_error() {
-                    Some(libc::EINTR) => continue,
-                    Some(errno) if errno == libc::EAGAIN || errno == libc::EWOULDBLOCK => {
-                        return Err(PipeCopyError {
-                            err: io::Error::other(
-                                "process context copy pipe blocked despite an empty pipe",
-                            ),
-                            pipe_dirty: true,
-                        });
-                    }
-                    Some(libc::EFAULT) => {
-                        return Err(PipeCopyError {
-                            err: io::Error::new(
-                                io::ErrorKind::WouldBlock,
-                                "process context memory was unmapped during read",
-                            ),
-                            // actually false on Linux: if EFAULT is returned, nothing was written;
-                            // should anything have been written already we would get a short write
-                            // However, this is not the case for macOS, despite what its manual
-                            // says: See https://github.com/apple-oss-distributions/xnu/blob/5c306bec31e314fa4d8bbdafb2f6f5a6b7e7b291/bsd/man/man2/write.2#L168-L186
-                            pipe_dirty: true,
-                        });
-                    }
-                    _ => {
-                        return Err(PipeCopyError {
-                            err: io::Error::new(
-                                err.kind(),
-                                format!("failed to copy process context memory: {err}"),
-                            ),
-                            pipe_dirty: false,
-                        });
+                Ok(written) => written,
+                Err(err) => {
+                    match err.raw_os_error() {
+                        Some(errno) if errno == libc::EAGAIN || errno == libc::EWOULDBLOCK => {
+                            return Err(PipeCopyError {
+                                err: io::Error::other(
+                                    "process context copy pipe blocked despite an empty pipe",
+                                ),
+                                pipe_dirty: true,
+                            });
+                        }
+                        Some(libc::EFAULT) => {
+                            return Err(PipeCopyError {
+                                err: io::Error::new(
+                                    io::ErrorKind::WouldBlock,
+                                    "process context memory was unmapped during read",
+                                ),
+                                // actually false on Linux: if EFAULT is returned, nothing was
+                                // written; if anything had been written already, we would get a
+                                // short write
+                                // However, this is not the case for macOS, despite what its manual
+                                // says: See https://github.com/apple-oss-distributions/xnu/blob/5c306bec31e314fa4d8bbdafb2f6f5a6b7e7b291/bsd/man/man2/write.2#L168-L186
+                                pipe_dirty: true,
+                            });
+                        }
+                        _ => {
+                            return Err(PipeCopyError {
+                                err: io::Error::new(
+                                    err.kind(),
+                                    format!("failed to copy process context memory: {err}"),
+                                ),
+                                pipe_dirty: false,
+                            });
+                        }
                     }
                 }
             };
@@ -111,31 +116,31 @@ impl ProcessMemoryCopy for CopyPipe {
                 // SAFETY: destination is an exclusively borrowed byte slice, so its pointer is
                 // valid and writable for destination.len() bytes. read_fd owns a live pipe
                 // descriptor.
-                let result = unsafe {
-                    libc::read(
-                        self.read_fd.as_raw_fd(),
-                        destination.as_mut_ptr().cast::<c_void>(),
-                        destination.len(),
-                    )
-                };
-                if result > 0 {
-                    drained += result as usize;
-                    continue;
-                }
-                if result == 0 {
-                    return Err(PipeCopyError {
-                        err: io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "process context copy pipe reported EOF",
-                        ),
-                        pipe_dirty: true,
-                    });
-                }
-
-                let err = io::Error::last_os_error();
-                match err.raw_os_error() {
-                    Some(libc::EINTR) => continue,
-                    _ => {
+                match retry_on_eintr(|| {
+                    let result = unsafe {
+                        libc::read(
+                            self.read_fd.as_raw_fd(),
+                            destination.as_mut_ptr().cast::<c_void>(),
+                            destination.len(),
+                        )
+                    };
+                    if result < 0 {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(result as usize)
+                    }
+                }) {
+                    Ok(0) => {
+                        return Err(PipeCopyError {
+                            err: io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "process context copy pipe reported EOF",
+                            ),
+                            pipe_dirty: true,
+                        });
+                    }
+                    Ok(read) => drained += read,
+                    Err(err) => {
                         return Err(PipeCopyError {
                             err: io::Error::new(
                                 err.kind(),
@@ -196,7 +201,7 @@ fn last_error(context: &'static str) -> io::Error {
 mod tests {
     use core::ptr;
 
-    use super::{io, CopyPipe, ProcessMemoryCopy};
+    use super::{io, retry_on_eintr, CopyPipe, ProcessMemoryCopy};
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -220,28 +225,40 @@ mod tests {
         assert!(page_size > 0, "page size query should succeed");
         let page_size = page_size as usize;
         let len = page_size * 2;
-        let address = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                len,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANON,
-                -1,
-                0,
-            )
-        };
-        assert_ne!(address, libc::MAP_FAILED);
+        let address = retry_on_eintr(|| {
+            let address = unsafe {
+                libc::mmap(
+                    ptr::null_mut(),
+                    len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANON,
+                    -1,
+                    0,
+                )
+            };
+            if address == libc::MAP_FAILED {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(address)
+            }
+        })
+        .expect("memory mapping should succeed");
         // SAFETY: the second page is part of the mapping above.
-        assert_eq!(
-            unsafe {
+        retry_on_eintr(|| {
+            if unsafe {
                 libc::mprotect(
                     address.cast::<u8>().add(page_size).cast(),
                     page_size,
                     libc::PROT_NONE,
                 )
-            },
-            0
-        );
+            } == 0
+            {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        })
+        .expect("memory protection should succeed");
 
         let err = CopyPipe::new()
             .expect("pipe creation should succeed")
@@ -252,6 +269,13 @@ mod tests {
         assert_eq!(err.err.kind(), io::ErrorKind::WouldBlock);
         assert!(err.pipe_dirty);
         // SAFETY: address and len came from mmap above.
-        assert_eq!(unsafe { libc::munmap(address, len) }, 0);
+        retry_on_eintr(|| {
+            if unsafe { libc::munmap(address, len) } == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        })
+        .expect("memory unmapping should succeed");
     }
 }

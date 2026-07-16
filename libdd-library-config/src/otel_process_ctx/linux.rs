@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use core::ffi::CStr;
+use std::io;
 
 /// The discoverable name of the memory mapping.
 pub const MAPPING_NAME: &CStr = c"OTEL_CTX";

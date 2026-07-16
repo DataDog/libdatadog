@@ -49,6 +49,16 @@ struct MappingHeaderSnapshot {
     payload_ptr: *const u8,
 }
 
+/// Runs an operation until it succeeds or fails for a reason other than `EINTR`.
+fn retry_on_eintr<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match operation() {
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
+}
+
 #[cfg(all(
     test,
     feature = "process-context-reader",
