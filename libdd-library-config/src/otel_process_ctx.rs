@@ -48,6 +48,13 @@ pub const SIGNATURE: &[u8; 8] = b"OTEL_CTX";
 /// Sentinel timestamp indicating that the context is unpublished or being updated.
 const UNPUBLISHED_OR_UPDATING: u64 = 0;
 
+#[cfg(any(feature = "process-context-reader", feature = "process-context-writer"))]
+#[cold]
+fn last_error(context: &'static str) -> std::io::Error {
+    let error = std::io::Error::last_os_error();
+    std::io::Error::new(error.kind(), format!("{context}: {error}"))
+}
+
 #[repr(C)]
 #[cfg(feature = "process-context-reader")]
 struct MappingHeaderSnapshot {

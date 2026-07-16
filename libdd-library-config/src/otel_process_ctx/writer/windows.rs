@@ -12,6 +12,7 @@ use std::{io, sync::OnceLock};
 
 use super::super::UNPUBLISHED_OR_UPDATING;
 use super::{HeaderMemoryHolder, MappingHeader, MonotonicTime};
+use crate::otel_process_ctx::last_error;
 
 #[cfg(target_env = "msvc")]
 #[used]
@@ -111,11 +112,6 @@ fn performance_frequency() -> io::Result<u64> {
 
     let _ = FREQUENCY.set(frequency);
     Ok(FREQUENCY.get().copied().unwrap_or(frequency))
-}
-
-fn last_error(context: &'static str) -> io::Error {
-    let error = io::Error::last_os_error();
-    io::Error::new(error.kind(), format!("{context}: {error}"))
 }
 
 #[cfg(test)]

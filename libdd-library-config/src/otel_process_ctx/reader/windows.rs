@@ -12,6 +12,8 @@ use std::io;
 use std::sync::OnceLock;
 
 use super::ReaderPlatform;
+#[cfg(not(feature = "process-context-writer"))]
+use crate::otel_process_ctx::last_error;
 
 #[cfg(not(feature = "process-context-writer"))]
 type Handle = *mut c_void;
@@ -113,12 +115,6 @@ fn find_process_context_global() -> io::Result<usize> {
             "couldn't resolve otel_process_ctx_v2 in the current process",
         ));
     }
-}
-
-#[cfg(not(feature = "process-context-writer"))]
-fn last_error(context: &'static str) -> io::Error {
-    let error = io::Error::last_os_error();
-    io::Error::new(error.kind(), format!("{context}: {error}"))
 }
 
 #[cfg(all(test, not(feature = "process-context-writer")))]

@@ -5,6 +5,7 @@ use core::{ffi::c_void, ptr};
 use std::io;
 
 use super::{PipeCopyError, ProcessMemoryCopy};
+use crate::otel_process_ctx::last_error;
 
 type Handle = *mut c_void;
 
@@ -203,11 +204,6 @@ impl Drop for CopyPipe {
             CloseHandle(self.write_handle);
         }
     }
-}
-
-fn last_error(context: &'static str) -> io::Error {
-    let err = io::Error::last_os_error();
-    io::Error::new(err.kind(), format!("{context}: {err}"))
 }
 
 #[cfg(test)]

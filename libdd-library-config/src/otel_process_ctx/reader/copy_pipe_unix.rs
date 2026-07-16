@@ -8,6 +8,7 @@ use std::{
 };
 
 use super::{PipeCopyError, ProcessMemoryCopy};
+use crate::otel_process_ctx::last_error;
 
 /// A cached pipe used to probe-copy process memory through the kernel.
 ///
@@ -230,11 +231,6 @@ fn configure_fd(fd: &OwnedFd) -> io::Result<()> {
         ));
     }
     Ok(())
-}
-
-fn last_error(context: &'static str) -> io::Error {
-    let err = io::Error::last_os_error();
-    io::Error::new(err.kind(), format!("{context}: {err}"))
 }
 
 #[cfg(test)]

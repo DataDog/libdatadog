@@ -13,7 +13,10 @@ use core::{
 use std::io;
 
 use super::{HeaderMemoryHolder, MappingHeader, MonotonicTime};
-use crate::otel_process_ctx::macos::{AtomicPublishedHeader, PUBLISHER_PID_SHIFT};
+use crate::otel_process_ctx::{
+    last_error,
+    macos::{AtomicPublishedHeader, PUBLISHER_PID_SHIFT},
+};
 
 // A child inherits this global after fork even when minherit excludes the header mapping. Store
 // the publisher PID with the pointer so the child cannot discover its parent's unmapped address.
@@ -131,9 +134,4 @@ impl Drop for VmRegion {
     fn drop(&mut self) {
         let _ = self.unmap();
     }
-}
-
-fn last_error(context: &'static str) -> io::Error {
-    let error = io::Error::last_os_error();
-    io::Error::new(error.kind(), format!("{context}: {error}"))
 }
