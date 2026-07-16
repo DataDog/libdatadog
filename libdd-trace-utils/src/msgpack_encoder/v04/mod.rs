@@ -8,14 +8,12 @@ use libdd_common::ResultInfallibleExt;
 use rmp::encode::{write_array_len, ByteBuf, RmpWrite, ValueWriteError};
 
 const fn msgpack_string_encoding_len(s: &str) -> usize {
-    let length_marker_len = if s.len() < 32 {
-        1
-    } else if s.len() < 256 {
-        2
-    } else if s.len() <= (u16::MAX as usize) {
-        3
-    } else {
-        5
+    const U16_MAX: usize = u16::MAX as usize;
+    let length_marker_len = match s.len() {
+        0..32 => 1,
+        32..256 => 2,
+        256..=U16_MAX => 3,
+        _ => 5,
     };
     length_marker_len + s.len()
 }
