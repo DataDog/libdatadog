@@ -24,6 +24,7 @@ pub static otel_process_ctx_v2: AtomicPublishedHeader = AtomicPublishedHeader::n
 // From <mach/vm_inherit.h>; the libc crate does not expose this constant.
 const VM_INHERIT_NONE: libc::c_int = 2;
 
+// SAFETY: these signatures match their documentation.
 unsafe extern "C" {
     fn minherit(address: *mut c_void, size: usize, inheritance: libc::c_int) -> libc::c_int;
     fn clock_gettime_nsec_np(clock_id: libc::clockid_t) -> u64;
@@ -43,29 +44,24 @@ unsafe impl Send for VmRegion {}
 impl HeaderMemoryHolder for VmRegion {
     fn new() -> io::Result<Self> {
         let size = super::mapping_size();
-        // SAFETY: a null address lets the kernel choose the address; the other arguments describe
-        // a private, anonymous, readable and writable mapping.
-        let address = unsafe {
-            libc::mmap(
-                ptr::null_mut(),
-                size,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANON,
-                -1,
-                0,
-            )
-        };
+        let prot = libc::PROT_READ | libc::PROT_WRITE;
+        let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+        // SAFETY: it's always safe to call mmap with null as it will not
+        // override any extant mappings.
+        let address = unsafe { libc::mmap(ptr::null_mut(), size, prot, flags, -1, 0) };
         if address == libc::MAP_FAILED {
             return Err(last_error("failed to allocate process context header"));
         }
 
-        // SAFETY: the region is a dedicated live mapping of size bytes. Failure is harmless; the
-        // mapping then follows the default inheritance behavior.
+        // SAFETY: minherit is safe, and the parameters are valid anyhow.
+        // Failure is harmless; the mapping then follows the default
+        // inheritance behavior.
         let only_for_pid = (unsafe { minherit(address, size, VM_INHERIT_NONE) } == 0)
             .then_some(std::process::id());
 
-        // SAFETY: mmap returned a non-null address for a live mapping.
         Ok(Self {
+            // SAFETY: POSIX guarantees that when not using MAP_FIXED that the
+            // returned address will not start at zero.
             start_addr: unsafe { NonNull::new_unchecked(address) },
             only_for_pid,
         })
