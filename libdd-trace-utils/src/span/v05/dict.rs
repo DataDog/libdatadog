@@ -8,7 +8,7 @@ use crate::span::SpanText;
 #[derive(Debug, Clone)]
 pub struct SharedDict<T> {
     /// Map strings with their index and keep insertion order(O(1) retrieval complexity).
-    map: indexmap::IndexSet<T>,
+    pub(crate) map: indexmap::IndexMap<T, ()>,
 }
 
 impl<T: SpanText> serde::Serialize for SharedDict<T> {
@@ -16,7 +16,11 @@ impl<T: SpanText> serde::Serialize for SharedDict<T> {
     where
         S: serde::Serializer,
     {
-        serializer.collect_seq(self.map.iter().map(|entry| -> &str { entry.borrow() }))
+        serializer.collect_seq(
+            self.map
+                .iter()
+                .map(|(entry, ())| -> &str { entry.borrow() }),
+        )
     }
 }
 
@@ -32,7 +36,7 @@ impl<T: SpanText> SharedDict<T> {
             (index).try_into()
         } else {
             let index = self.map.len();
-            self.map.insert(s);
+            self.map.insert(s, ());
             index.try_into()
         }
     }
@@ -43,14 +47,14 @@ impl<T: SpanText> SharedDict<T> {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.map.iter()
+        self.map.keys()
     }
 }
 
 impl<T: SpanText> Default for SharedDict<T> {
     fn default() -> Self {
         Self {
-            map: indexmap::indexset! {T::default()},
+            map: indexmap::indexmap! {T::default() => ()},
         }
     }
 }
@@ -84,8 +88,8 @@ mod tests {
 
         assert_eq!(dict.map.len(), 3);
 
-        assert_eq!(dict.map[0].as_str(), "");
-        assert_eq!(dict.map[1].as_str(), "foo");
-        assert_eq!(dict.map[2].as_str(), "bar");
+        assert_eq!(dict.map.get_index(0).unwrap().0.as_str(), "");
+        assert_eq!(dict.map.get_index(1).unwrap().0.as_str(), "foo");
+        assert_eq!(dict.map.get_index(2).unwrap().0.as_str(), "bar");
     }
 }

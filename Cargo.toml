@@ -5,6 +5,10 @@
 members = [
   "builder",
   "libdd-alloc",
+  "libdd-profiling-heap-sampler",
+  "libdd-profiling-heap-allocator",
+  "libdd-profiling-heap-gotter",
+  "libdd-profiling-heap-gotter-ffi",
   "libdd-crashtracker",
   "libdd-crashtracker-ffi",
   "datadog-ffe",
@@ -76,7 +80,7 @@ resolver = "2"
 [workspace.package]
 rust-version = "1.87.0"
 edition = "2021"
-version = "35.0.0"
+version = "37.0.0"
 license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
@@ -137,6 +141,8 @@ todo = "warn"
 unimplemented = "warn"
 unreachable = "warn"
 panic_in_result_fn = "warn"
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"
 # TODO: Re-enable once every crate defines package keywords and categories.
 cargo_common_metadata = "allow"
 # TODO: Re-enable once the workspace dependency graph is deduplicated.

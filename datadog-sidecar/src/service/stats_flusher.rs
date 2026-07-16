@@ -9,21 +9,25 @@
 //! automatically once idle: an empty drain sets the `please_reload` bit (telling PHP workers
 //! to stop writing), and the subsequent flush performs a final drain before removal.
 
+use crate::service::RuntimeMetadata;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
 use datadog_ipc::shm_stats::{
     ShmSpanConcentrator, DEFAULT_SLOT_COUNT, DEFAULT_STRING_POOL_BYTES, RELOAD_FILL_RATIO,
 };
+use futures::{future::join_all, TryFutureExt};
 use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
+use libdd_telemetry::config::Config;
+use libdd_telemetry::worker::TelemetryWorkerHandle;
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use zwohash::ZwoHasher;
 
 /// Build the stats endpoint by appending `/v0.6/stats` to the agent base URL.
@@ -75,6 +79,8 @@ pub struct SpanConcentratorState {
     pub(crate) endpoint: Endpoint,
     /// Metadata for StatsExporter payload annotation (hostname, env, version, service, …).
     pub(crate) meta: StatsMetadata,
+    /// Telemetry client to pass to the stats exporter.
+    pub telemetry: Option<TelemetryWorkerHandle>,
 }
 
 // SAFETY: ShmSpanConcentrator is designed for cross-process sharing; all internal state
@@ -110,14 +116,10 @@ fn make_exporter(
         s.meta.clone(),
         endpoint,
         NativeCapabilities::new_client(),
-        // Sidecar does not perform client-side stats obfuscation. Pass a disabled
-        // default so the `datadog-obfuscation-version` header is never sent.
-        #[cfg(feature = "stats-obfuscation")]
-        Arc::new(arc_swap::ArcSwap::from_pointee(
-            libdd_trace_stats::span_concentrator::StatsComputationObfuscationConfig::default(),
-        )),
         #[cfg(feature = "stats-obfuscation")]
         "0",
+        s.telemetry.clone(),
+        None,
     )
 }
 
@@ -143,6 +145,7 @@ pub async fn run_stats_flush_loop(
     let Some(state) = state else {
         return;
     };
+
     let exporter = make_exporter(&state, state.endpoint.clone(), flush_interval);
 
     loop {
@@ -188,7 +191,10 @@ pub async fn run_stats_flush_loop(
                         guard.remove(&map_key);
                     }
                 }
-                if let Err(e) = exporter.send(true).await {
+                if let Err(e) = make_exporter(&state, state.endpoint.clone(), flush_interval)
+                    .send(true)
+                    .await
+                {
                     warn!("Failed final stats flush: {e}");
                 }
                 break;
@@ -207,6 +213,7 @@ pub async fn run_stats_flush_loop(
 /// Returns `None` when stats config is not available (agentless or not yet configured).
 pub(crate) fn get_or_create_concentrator(
     concentrators: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
+    telemetry_clients: &crate::service::telemetry::TelemetryCachedClientSet,
     env: &str,
     version: &str,
     runtime_id: &str,
@@ -259,14 +266,54 @@ pub(crate) fn get_or_create_concentrator(
         DEFAULT_STRING_POOL_BYTES,
     ) {
         Ok(concentrator) => {
+            let runtime_metadata = {
+                let trace_config = session.get_trace_config();
+                RuntimeMetadata::new(
+                    trace_config.language.clone(),
+                    trace_config.language_version.clone(),
+                    trace_config.tracer_version.clone(),
+                )
+            };
+
+            let process_tags = session.process_tags.lock_or_panic().clone();
+            let instance_id = session.get_runtime(&runtime_id.to_string()).instance_id;
+            let session_config_closure = || {
+                session
+                .session_config
+                .lock_or_panic()
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| {
+                    warn!("Session telemetry config unavailable for env={env} version={version} service={service_name}; telemetry disabled in stats");
+                    Config::default()
+                })
+            };
+            let telemetry = {
+                let telemetry_mutex = telemetry_clients.get_or_create(
+                    &service_name,
+                    env,
+                    &instance_id,
+                    &runtime_metadata,
+                    session_config_closure,
+                    process_tags,
+                );
+                let worker = telemetry_mutex
+                    .lock_or_panic()
+                    .as_ref()
+                    .map(|c| c.worker.clone());
+                worker
+            };
+
             let state = Arc::new(SpanConcentratorState {
                 concentrator,
                 endpoint: config.endpoint.clone(),
                 meta,
+                telemetry,
             });
             guard.insert(map_key.clone(), state.clone());
             let weak = Arc::downgrade(concentrators);
             let flush_interval = config.flush_interval;
+
             tokio::spawn(async move {
                 run_stats_flush_loop(weak, map_key, flush_interval).await;
             });
@@ -283,14 +330,29 @@ pub(crate) fn get_or_create_concentrator(
 pub async fn flush_all_stats_now(
     state: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
 ) {
-    let states: Vec<Arc<SpanConcentratorState>> = {
+    let states: Vec<_> = {
         let guard = state.lock_or_panic();
-        guard.values().cloned().collect()
+        guard
+            .values()
+            .map(|s| {
+                (
+                    make_exporter(s, s.endpoint.clone(), Duration::from_secs(10)),
+                    s.endpoint.clone(),
+                )
+            })
+            .collect()
     };
-    for s in states {
-        let exporter = make_exporter(&s, s.endpoint.clone(), Duration::from_secs(10));
-        if let Err(e) = exporter.send(false).await {
-            warn!("flush_all_stats_now: failed to send stats: {e}");
-        }
-    }
+    debug!(
+        "Flushing all stats now: {} different exporters",
+        states.len()
+    );
+    join_all(states.iter().map(|(exporter, endpoint)| {
+        exporter.send(false).inspect_err(move |e| {
+            warn!(
+                "flush_all_stats_now: failed to send stats to {:?}: {}",
+                endpoint, e
+            );
+        })
+    }))
+    .await;
 }

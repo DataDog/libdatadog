@@ -80,7 +80,7 @@ pub struct TracingSamplingRule {
 #[cfg_attr(feature = "test", derive(Default, Serialize))]
 pub struct DynamicConfig {
     pub(crate) tracing_header_tags: Option<Vec<TracingHeaderTag>>,
-    pub(crate) tracing_sample_rate: Option<f64>,
+    pub(crate) tracing_sampling_rate: Option<f64>,
     pub(crate) log_injection_enabled: Option<bool>,
     pub(crate) tracing_tags: Option<Vec<String>>,
     pub(crate) tracing_enabled: Option<bool>,
@@ -92,14 +92,14 @@ pub struct DynamicConfig {
 
 impl From<DynamicConfig> for Vec<Configs> {
     fn from(value: DynamicConfig) -> Self {
-        let mut vec = vec![];
+        let mut vec = Vec::with_capacity(9);
         if let Some(tags) = value.tracing_header_tags {
             vec.push(Configs::TracingHeaderTags(
                 tags.into_iter().map(|t| (t.header, t.tag_name)).collect(),
-            ))
+            ));
         }
-        if let Some(sample_rate) = value.tracing_sample_rate {
-            vec.push(Configs::TracingSampleRate(sample_rate));
+        if let Some(sampling_rate) = value.tracing_sampling_rate {
+            vec.push(Configs::TracingSamplingRate(sampling_rate));
         }
         if let Some(log_injection) = value.log_injection_enabled {
             vec.push(Configs::LogInjectionEnabled(log_injection));
@@ -129,7 +129,7 @@ impl From<DynamicConfig> for Vec<Configs> {
 #[derive(Clone)]
 pub enum Configs {
     TracingHeaderTags(HashMap<String, String>),
-    TracingSampleRate(f64),
+    TracingSamplingRate(f64),
     LogInjectionEnabled(bool),
     TracingTags(Vec<String>), // "key:val" format
     TracingEnabled(bool),
@@ -156,5 +156,54 @@ pub mod tests {
                 ..DynamicConfig::default()
             },
         }
+    }
+
+    #[test]
+    fn absent_field_emits_no_variant() {
+        let cfg: DynamicConfigFile = parse_json(br#"{"action": "", "lib_config": {}}"#).unwrap();
+        assert!(cfg.lib_config.tracing_sampling_rate.is_none());
+        assert!(<Vec<Configs>>::from(cfg.lib_config).is_empty());
+    }
+
+    #[test]
+    fn explicit_null_is_indistinguishable_from_absent() {
+        // No three-state model: null and absent both become `None`, so
+        // neither produces a `Configs` variant. Clearing prior remote state
+        // is the file-level responsibility (file removal), not an in-file
+        // signal.
+        let cfg: DynamicConfigFile =
+            parse_json(br#"{"action": "", "lib_config": {"tracing_sampling_rate": null}}"#)
+                .unwrap();
+        assert!(cfg.lib_config.tracing_sampling_rate.is_none());
+        assert!(<Vec<Configs>>::from(cfg.lib_config).is_empty());
+    }
+
+    #[test]
+    fn concrete_value_emits_set_variant() {
+        let cfg: DynamicConfigFile =
+            parse_json(br#"{"action": "", "lib_config": {"tracing_sampling_rate": 0.25}}"#)
+                .unwrap();
+        assert_eq!(cfg.lib_config.tracing_sampling_rate, Some(0.25));
+        let configs: Vec<Configs> = cfg.lib_config.into();
+        assert_eq!(configs.len(), 1);
+        assert!(matches!(configs[0], Configs::TracingSamplingRate(r) if r == 0.25));
+    }
+
+    #[test]
+    fn unrelated_field_does_not_emit_sampling_variants() {
+        // Regression guard: a payload that updates only `tracing_tags` must
+        // not produce a phantom `TracingSamplingRate` / `TracingSamplingRules`
+        // variant. Each field's absence is independent.
+        let cfg: DynamicConfigFile =
+            parse_json(br#"{"action": "", "lib_config": {"tracing_tags": ["foo:bar"]}}"#).unwrap();
+        let configs: Vec<Configs> = cfg.lib_config.into();
+        assert_eq!(configs.len(), 1);
+        assert!(matches!(configs[0], Configs::TracingTags(_)));
+        assert!(!configs
+            .iter()
+            .any(|c| matches!(c, Configs::TracingSamplingRate(_))));
+        assert!(!configs
+            .iter()
+            .any(|c| matches!(c, Configs::TracingSamplingRules(_))));
     }
 }

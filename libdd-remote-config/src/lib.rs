@@ -22,22 +22,63 @@ mod targets;
 pub use parse::*;
 pub use path::*;
 
-use {
-    libdd_common::tag::Tag,
-    serde::{Deserialize, Serialize},
-};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Target {
-    pub service: String,
-    pub env: String,
-    pub app_version: String,
-    pub tags: Vec<Tag>,
-    pub process_tags: Vec<Tag>,
+    service: String,
+    env: String,
+    app_version: String,
+    tags: Vec<String>,
+    process_tags: Vec<String>,
+}
+
+impl Target {
+    /// Creates a new `Target`. `tags` and `process_tags` are expected as
+    /// already-formatted `"key:value"` strings.
+    pub fn new(
+        service: String,
+        env: String,
+        app_version: String,
+        tags: Vec<String>,
+        process_tags: Vec<String>,
+    ) -> Target {
+        Target {
+            service: service.to_string(),
+            env: env.to_string(),
+            app_version: app_version.to_string(),
+            tags,
+            process_tags,
+        }
+    }
+
+    pub fn service(&self) -> &str {
+        self.service.as_str()
+    }
+
+    pub fn env(&self) -> &str {
+        self.env.as_str()
+    }
+
+    pub fn app_version(&self) -> &str {
+        self.app_version.as_str()
+    }
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    Hash,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
+    strum_macros::Display,
+)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RemoteConfigCapabilities {
     AsmActivation = 1,
@@ -83,6 +124,9 @@ pub enum RemoteConfigCapabilities {
     ApmTracingEnableLiveDebugging = 41,
     AsmDdMulticonfig = 42,
     AsmTraceTaggingRules = 43,
+    AsmExtendedDataCollection = 44,
     ApmTracingMulticonfig = 45,
     FfeFlagConfigurationRules = 46,
+    DdDataStreamsTransactionExtractors = 47,
+    LlmObsActivation = 48,
 }

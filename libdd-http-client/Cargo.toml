@@ -8,6 +8,7 @@ authors.workspace = true
 description = "HTTP client library intended for use by other languages via FFI"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client"
+publish = false
 
 [lib]
 bench = false
@@ -28,7 +29,7 @@ fastrand = "2"
 tokio = { version = "1.23", features = ["rt", "time"] }
 reqwest = { version = "0.13", default-features = false, optional = true }
 rustls = { version = "0.23", default-features = false, optional = true }
-libdd-common = { version = "4.2.0", path = "../libdd-common", default-features = false, features = ["std"], optional = true }
+libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false, features = ["std"], optional = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 http-body-util = { version = "0.1", optional = true }

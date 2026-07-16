@@ -13,6 +13,9 @@ use std::borrow::{Borrow, Cow};
 
 use crate::span_concentrator::StatSpan;
 
+/// Sentinel value used for cardinality limiting.
+pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
+
 const TAG_STATUS_CODE: &str = "http.status_code";
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
@@ -47,7 +50,7 @@ pub struct FixedAggregationKey<T> {
     pub http_status_code: u32,
     pub grpc_status_code: Option<u8>,
     pub is_synthetics_request: bool,
-    pub is_trace_root: bool,
+    pub is_trace_root: pb::Trilean,
 }
 
 impl<T> FixedAggregationKey<T> {
@@ -250,7 +253,6 @@ impl<'a> BorrowedAggregationKey<'a> {
         };
 
         let grpc_status_code = get_grpc_status_code(span);
-
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
 
         Self {
@@ -268,9 +270,36 @@ impl<'a> BorrowedAggregationKey<'a> {
                 is_synthetics_request: span
                     .get_meta(TAG_ORIGIN)
                     .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
-                is_trace_root: span.is_trace_root(),
+                is_trace_root: if span.is_trace_root() {
+                    pb::Trilean::True
+                } else {
+                    pb::Trilean::False
+                },
             },
             peer_tags,
+        }
+    }
+}
+
+impl OwnedAggregationKey {
+    /// Return the overflow sentinel key.
+    pub(super) fn overflow_key() -> Self {
+        OwnedAggregationKey {
+            fixed: FixedAggregationKey {
+                resource_name: TRACER_BLOCKED_VALUE.to_owned(),
+                service_name: TRACER_BLOCKED_VALUE.to_owned(),
+                operation_name: TRACER_BLOCKED_VALUE.to_owned(),
+                span_type: TRACER_BLOCKED_VALUE.to_owned(),
+                span_kind: TRACER_BLOCKED_VALUE.to_owned(),
+                http_method: TRACER_BLOCKED_VALUE.to_owned(),
+                http_endpoint: TRACER_BLOCKED_VALUE.to_owned(),
+                service_source: TRACER_BLOCKED_VALUE.to_owned(),
+                http_status_code: 0,
+                grpc_status_code: None,
+                is_synthetics_request: false,
+                is_trace_root: pb::Trilean::NotSet,
+            },
+            peer_tags: vec![],
         }
     }
 }
@@ -290,7 +319,8 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
                 http_status_code: value.http_status_code,
                 grpc_status_code: value.grpc_status_code.parse().ok(),
                 is_synthetics_request: value.synthetics,
-                is_trace_root: value.is_trace_root == 1,
+                is_trace_root: pb::Trilean::try_from(value.is_trace_root)
+                    .unwrap_or(pb::Trilean::NotSet),
             },
             peer_tags: value
                 .peer_tags
@@ -324,6 +354,14 @@ pub(super) struct GroupedStats {
     top_level_hits: u64,
     ok_summary: libdd_ddsketch::DDSketch,
     error_summary: libdd_ddsketch::DDSketch,
+    // Exact per-cell (ok/error) scalars used by the OTLP trace-metrics path. These are tracked
+    // separately from `duration` so the /v0.6/stats agent payload is byte-for-byte unchanged.
+    ok_duration: u64,
+    ok_min: u64,
+    ok_max: u64,
+    error_duration: u64,
+    error_min: u64,
+    error_max: u64,
 }
 
 impl GroupedStats {
@@ -331,17 +369,55 @@ impl GroupedStats {
     fn insert(&mut self, duration: i64, is_error: bool, is_top_level: bool) {
         self.hits += 1;
         self.duration += duration as u64;
-
+        let d = duration as u64;
         if is_error {
             self.errors += 1;
             let _ = self.error_summary.add(duration as f64);
+            self.error_duration += d;
+            self.error_min = if self.errors == 1 {
+                d
+            } else {
+                self.error_min.min(d)
+            };
+            self.error_max = self.error_max.max(d);
         } else {
             let _ = self.ok_summary.add(duration as f64);
+            self.ok_duration += d;
+            let ok_count = self.hits - self.errors;
+            self.ok_min = if ok_count == 1 { d } else { self.ok_min.min(d) };
+            self.ok_max = self.ok_max.max(d);
         }
         if is_top_level {
             self.top_level_hits += 1;
         }
     }
+}
+
+/// Exact per-cell (ok or error) scalars for one aggregation group, surfaced to the OTLP
+/// trace-metrics path. `count` is exact; `duration_ns`/`min_ns`/`max_ns` are exact when
+/// `count > 0` and meaningless otherwise (the OTLP mapper suppresses empty cells).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OtlpExactCell {
+    pub count: u64,
+    pub duration_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+}
+
+/// Exact OK/ERROR cells for one aggregation group, in the same order as the `stats` vector
+/// of the accompanying [`pb::ClientStatsBucket`].
+#[derive(Debug, Clone, Default)]
+pub struct OtlpExactGroup {
+    pub ok: OtlpExactCell,
+    pub error: OtlpExactCell,
+}
+
+/// A bucket flushed for the OTLP trace-metrics path. `exact[i]` is the exact-scalar sidecar
+/// for `bucket.stats[i]`; the protobuf bucket itself is identical to what the agent path uses.
+#[derive(Debug, Clone)]
+pub struct OtlpStatsBucket {
+    pub bucket: pb::ClientStatsBucket,
+    pub exact: Vec<OtlpExactGroup>,
 }
 
 /// A time bucket used for stats aggregation. It stores a map of GroupedStats storing the stats of
@@ -350,19 +426,45 @@ impl GroupedStats {
 pub(super) struct StatsBucket {
     data: HashMap<OwnedAggregationKey, GroupedStats>,
     start: u64,
+    /// Maximum number of distinct aggregation keys this bucket will hold before collapsing new
+    /// ones into the overflow sentinel key.
+    max_entries: usize,
+    /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
+    collapsed_count: u64,
+    /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
+    /// constant per bucket
+    #[cfg(feature = "stats-obfuscation")]
+    pub(super) obfuscated: bool,
 }
 
 impl StatsBucket {
-    /// Return a new StatsBucket starting at the given timestamp
-    pub(super) fn new(start_timestamp: u64) -> Self {
+    /// Return a new StatsBucket starting at `start_timestamp`.
+    ///
+    /// `max_entries` is the maximum number of distinct aggregation keys the bucket will hold.
+    /// Once the limit is reached, new distinct keys are collapsed into the overflow sentinel key.
+    pub(super) fn new(
+        start_timestamp: u64,
+        max_entries: usize,
+        #[cfg(feature = "stats-obfuscation")] obfuscation_enabled: bool,
+    ) -> Self {
         Self {
             data: HashMap::new(),
             start: start_timestamp,
+            max_entries,
+            collapsed_count: 0,
+            #[cfg(feature = "stats-obfuscation")]
+            obfuscated: obfuscation_enabled,
         }
     }
 
-    /// Insert a value as stats in the group corresponding to the aggregation key, if it does
-    /// not exist it creates it.
+    /// Return the number of spans collapsed into the overflow bucket.
+    pub(super) fn collapsed_count(&self) -> u64 {
+        self.collapsed_count
+    }
+
+    /// Insert a value as stats in the group corresponding to the aggregation key. If the key is new
+    /// and the `max_entries` limit has not been reached, a new entry is created, else the span is
+    /// instead merged into the overflow sentinel key.
     pub(super) fn insert(
         &mut self,
         key: BorrowedAggregationKey<'_>,
@@ -370,6 +472,14 @@ impl StatsBucket {
         is_error: bool,
         is_top_level: bool,
     ) {
+        if self.data.len() >= self.max_entries && !self.data.contains_key(&key) {
+            self.collapsed_count += 1;
+            self.data
+                .entry(OwnedAggregationKey::overflow_key())
+                .or_default()
+                .insert(duration, is_error, is_top_level);
+            return;
+        }
         self.data
             .entry_ref(&key)
             .or_default()
@@ -379,16 +489,39 @@ impl StatsBucket {
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
     /// `bucket_duration` is the size of buckets for the concentrator containing the bucket.
     pub(super) fn flush(self, bucket_duration: u64) -> pb::ClientStatsBucket {
-        pb::ClientStatsBucket {
-            start: self.start,
-            duration: bucket_duration,
-            stats: self
-                .data
-                .into_iter()
-                .map(|(k, b)| encode_grouped_stats(k, b))
-                .collect(),
-            // Agent-only field
-            agent_time_shift: 0,
+        self.flush_with_otlp_exact(bucket_duration).bucket
+    }
+
+    /// Like [`Self::flush`], but additionally produces exact per-cell scalars for the OTLP
+    /// trace-metrics path. The `bucket` field is identical to what [`Self::flush`] returns.
+    pub(super) fn flush_with_otlp_exact(self, bucket_duration: u64) -> OtlpStatsBucket {
+        let mut stats = Vec::with_capacity(self.data.len());
+        let mut exact = Vec::with_capacity(self.data.len());
+        for (k, g) in self.data {
+            exact.push(OtlpExactGroup {
+                ok: OtlpExactCell {
+                    count: g.hits.saturating_sub(g.errors),
+                    duration_ns: g.ok_duration,
+                    min_ns: g.ok_min,
+                    max_ns: g.ok_max,
+                },
+                error: OtlpExactCell {
+                    count: g.errors,
+                    duration_ns: g.error_duration,
+                    min_ns: g.error_min,
+                    max_ns: g.error_max,
+                },
+            });
+            stats.push(encode_grouped_stats(k, g));
+        }
+        OtlpStatsBucket {
+            bucket: pb::ClientStatsBucket {
+                start: self.start,
+                duration: bucket_duration,
+                stats,
+                agent_time_shift: 0,
+            },
+            exact,
         }
     }
 }
@@ -419,11 +552,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .into_iter()
             .map(|(k, v)| format!("{k}:{v}"))
             .collect(),
-        is_trace_root: if f.is_trace_root {
-            pb::Trilean::True.into()
-        } else {
-            pb::Trilean::False.into()
-        },
+        is_trace_root: f.is_trace_root.into(),
         http_method: f.http_method,
         http_endpoint: f.http_endpoint,
         grpc_status_code: f
@@ -431,7 +560,8 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .map(|c| c.to_string())
             .unwrap_or_default(),
         service_source: f.service_source,
-        span_derived_primary_tags: vec![], // Todo
+        span_derived_primary_tags: vec![],
+        additional_metric_tags: vec![],
     }
 }
 
@@ -440,6 +570,7 @@ mod tests {
     use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
 
     use super::*;
+    use libdd_trace_protobuf::pb;
     use std::hash::Hash;
 
     fn get_hash(v: &impl Hash) -> u64 {
@@ -481,7 +612,7 @@ mod tests {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -502,7 +633,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -527,7 +658,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -554,7 +685,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -582,7 +713,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -603,7 +734,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: true,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -624,7 +755,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     http_status_code: 418,
                     ..Default::default()
                 }
@@ -646,7 +777,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -667,7 +798,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     http_status_code: 418,
                     ..Default::default()
                 }
@@ -695,7 +826,7 @@ mod tests {
                     http_method: "GET".into(),
                     http_endpoint: "/api/v1/users".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -723,7 +854,7 @@ mod tests {
                     http_method: "POST".into(),
                     http_endpoint: "/users/create2".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -736,7 +867,19 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(0),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // grpc.method.name is carried in GroupedStats (for OTLP), not in the aggregation key.
+            (
+                SpanBytes {
+                    meta: vec![("grpc.method.name".into(), "/pkg.Svc/Method".into())].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -749,7 +892,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(14),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -762,7 +905,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(14),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -776,7 +919,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(7),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -789,7 +932,7 @@ mod tests {
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(3),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -801,7 +944,7 @@ mod tests {
                     ..Default::default()
                 },
                 FixedAggregationKey {
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -821,7 +964,7 @@ mod tests {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "redis".into(),
                     ..Default::default()
                 }
@@ -842,7 +985,7 @@ mod tests {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "opt.split_by_tag".into(),
                     ..Default::default()
                 }
@@ -862,7 +1005,7 @@ mod tests {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "".into(),
                     ..Default::default()
                 }
@@ -893,7 +1036,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key_with_peers(vec![("aws.s3.bucket".into(), "bucket-a".into())]),
@@ -920,7 +1063,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key_with_peers(vec![
@@ -952,7 +1095,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),

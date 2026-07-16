@@ -14,7 +14,7 @@ bench = false
 [dependencies]
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
-libdd-library-config = { path = "../libdd-library-config" }
+libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-writer"] }
 anyhow = "1.0"
 constcat = "0.4.1"
 
@@ -29,3 +29,7 @@ build_common = { path = "../build-common" }
 
 [dev-dependencies]
 tempfile = { version = "3.3" }
+
+[lints.clippy]
+std_instead_of_alloc = "warn"
+std_instead_of_core = "warn"

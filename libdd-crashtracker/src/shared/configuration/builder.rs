@@ -1,9 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 use crate::{default_signals, shared::constants, signal_from_signum};
+use alloc::borrow::Cow;
+use core::time::Duration;
 use libdd_common::Endpoint;
-use std::borrow::Cow;
-use std::time::Duration;
 
 use super::{default_max_threads, CrashtrackerConfiguration, StacktraceCollection};
 
@@ -23,6 +23,8 @@ pub struct CrashtrackerConfigurationBuilder {
     signals: Vec<i32>,
     timeout: Option<Duration>,
     unix_socket_path: Option<String>,
+    #[cfg(unix)]
+    unix_socket_connector: Option<fn(&str) -> std::os::fd::RawFd>,
     use_alt_stack: bool,
 }
 
@@ -104,6 +106,11 @@ impl CrashtrackerConfigurationBuilder {
         self
     }
 
+    pub fn unix_socket_connector(mut self, connector: fn(&str) -> std::os::fd::RawFd) -> Self {
+        self.unix_socket_connector = Some(connector);
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<CrashtrackerConfiguration> {
         // Requesting to create, but not use, the altstack is considered paradoxical.
         anyhow::ensure!(
@@ -159,6 +166,9 @@ impl CrashtrackerConfigurationBuilder {
             signals,
             timeout,
             unix_socket_path: self.unix_socket_path,
+            unix_socket_connector: self
+                .unix_socket_connector
+                .unwrap_or(super::default_unix_socket_connector),
             demangle_names: self.demangle_names,
         })
     }
@@ -168,7 +178,7 @@ impl CrashtrackerConfigurationBuilder {
 mod tests {
     use super::*;
     use crate::{default_signals, shared::constants};
-    use std::time::Duration;
+    use core::time::Duration;
 
     #[test]
     fn test_build_defaults() -> anyhow::Result<()> {

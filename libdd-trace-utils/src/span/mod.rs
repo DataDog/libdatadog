@@ -4,6 +4,7 @@
 pub mod trace_utils;
 pub mod v04;
 pub mod v05;
+pub mod v1;
 pub mod vec_map;
 
 use crate::msgpack_decoder::decode::buffer::read_string_ref_nomut;
@@ -23,6 +24,16 @@ use std::{fmt, ptr};
 /// from a static str and check if the string is empty.
 pub trait SpanText: Debug + Eq + Hash + Borrow<str> + Serialize + Default {
     fn from_static_str(value: &'static str) -> Self;
+
+    /// Copies this text into an owned [`BytesString`].
+    ///
+    /// Used by the v0.5 conversion, whose shared dictionary always owns its strings so it
+    /// can hold both interned span text and dynamically-built JSON (span links / events).
+    /// The default copies the bytes; owned text types (e.g. `BytesString`) should override
+    /// with a cheaper reference-counted clone.
+    fn to_bytes_string(&self) -> BytesString {
+        BytesString::from(<Self as Borrow<str>>::borrow(self).to_string())
+    }
 }
 
 impl SpanText for &str {
@@ -34,6 +45,10 @@ impl SpanText for &str {
 impl SpanText for BytesString {
     fn from_static_str(value: &'static str) -> Self {
         BytesString::from_static(value)
+    }
+
+    fn to_bytes_string(&self) -> BytesString {
+        self.clone()
     }
 }
 

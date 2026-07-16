@@ -10,6 +10,9 @@ use super::signal_handler_manager::chain_signal_handler;
 use crate::crash_info::Metadata;
 use crate::shared::configuration::CrashtrackerConfiguration;
 use crate::StackTrace;
+use core::ptr;
+use core::sync::atomic::Ordering::{Relaxed, SeqCst};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64};
 use errno::{errno, set_errno};
 use libc::{c_void, pid_t, siginfo_t, ucontext_t};
 use libdd_common::timeout::TimeoutManager;
@@ -18,9 +21,6 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 use std::panic;
 use std::panic::PanicHookInfo;
-use std::ptr;
-use std::sync::atomic::Ordering::{Relaxed, SeqCst};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU64};
 
 // Note that this file makes use the following async-signal safe functions in a signal handler.
 // <https://man7.org/linux/man-pages/man7/signal-safety.7.html>
@@ -104,7 +104,7 @@ pub fn update_metadata(metadata: Metadata) -> anyhow::Result<()> {
     if !old.is_null() {
         // Safety: This can only come from a box above.
         unsafe {
-            std::mem::drop(Box::from_raw(old));
+            core::mem::drop(Box::from_raw(old));
         }
     }
     Ok(())
@@ -163,7 +163,7 @@ pub fn register_panic_hook() -> anyhow::Result<()> {
         // message_ptr should be null, but just in case.
         if !message_ptr.is_null() {
             unsafe {
-                std::mem::drop(Box::from_raw(message_ptr));
+                core::mem::drop(Box::from_raw(message_ptr));
             }
         }
 
@@ -210,7 +210,7 @@ pub fn update_config(config: CrashtrackerConfiguration) -> anyhow::Result<()> {
     if !old.is_null() {
         // Safety: This can only come from a box above.
         unsafe {
-            std::mem::drop(Box::from_raw(old));
+            core::mem::drop(Box::from_raw(old));
         }
     }
     Ok(())
@@ -334,41 +334,7 @@ fn handle_posix_signal_impl(
     // expected receiver PID that was registered during trusted initialization
     #[cfg(target_os = "linux")]
     if config.collect_all_threads() {
-        let ptracer_pid = match receiver.handle.pid {
-            Some(pid) => pid,
-            None => {
-                let expected_pid = get_expected_receiver_pid();
-                if expected_pid <= 0 {
-                    // No expected PID registered; fail closed.
-                    0
-                } else {
-                    let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
-                    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-                    // SAFETY: getsockopt is async-signal-safe
-                    let ret = unsafe {
-                        libc::getsockopt(
-                            receiver.handle.uds_fd,
-                            libc::SOL_SOCKET,
-                            libc::SO_PEERCRED,
-                            &mut cred as *mut _ as *mut libc::c_void,
-                            &mut len,
-                        )
-                    };
-                    if ret == 0 && cred.pid == expected_pid {
-                        cred.pid
-                    } else {
-                        // Peer PID doesn't match expected receiver; fail closed.
-                        0
-                    }
-                }
-            }
-        };
-        if ptracer_pid > 0 {
-            // SAFETY: prctl is async-signal-safe and we're just setting ptrace permissions
-            unsafe {
-                libc::prctl(libc::PR_SET_PTRACER, ptracer_pid as libc::c_ulong);
-            }
-        }
+        grant_ptracer_permission(&receiver);
     }
 
     let collector = Collector::spawn(
@@ -438,6 +404,50 @@ fn take_config() -> Option<(
     }
 }
 
+/// Grant the receiver process permission to ptrace this process via `PR_SET_PTRACER`.
+///
+/// For fork/exec receivers we have the child PID directly (trusted: we spawned it).
+/// For socket-based receivers (e.g. PHP sidecar), we verify the peer PID via
+/// `SO_PEERCRED` matches the expected receiver PID registered during initialization.
+///
+/// This is async-signal-safe: only calls `getsockopt` and `prctl`.
+#[cfg(target_os = "linux")]
+fn grant_ptracer_permission(receiver: &Receiver) {
+    let ptracer_pid = match receiver.handle.pid {
+        Some(pid) => pid,
+        None => {
+            let expected_pid = get_expected_receiver_pid();
+            if expected_pid <= 0 {
+                0
+            } else {
+                let mut cred: libc::ucred = unsafe { core::mem::zeroed() };
+                let mut len = core::mem::size_of::<libc::ucred>() as libc::socklen_t;
+                // SAFETY: getsockopt is async-signal-safe
+                let ret = unsafe {
+                    libc::getsockopt(
+                        receiver.handle.uds_fd,
+                        libc::SOL_SOCKET,
+                        libc::SO_PEERCRED,
+                        &mut cred as *mut _ as *mut libc::c_void,
+                        &mut len,
+                    )
+                };
+                if ret == 0 && cred.pid == expected_pid {
+                    cred.pid
+                } else {
+                    0
+                }
+            }
+        }
+    };
+    if ptracer_pid > 0 {
+        // SAFETY: prctl is async-signal-safe
+        unsafe {
+            libc::prctl(libc::PR_SET_PTRACER, ptracer_pid as libc::c_ulong);
+        }
+    }
+}
+
 /// This function is designed to be when a program is at a terminal state
 /// and the application wants to report an unhandled exception to the crashtracker
 /// If this crashes, then the application will also crash. Ensure that this API is
@@ -483,17 +493,27 @@ pub fn report_unhandled_exception(
 
     let receiver = Receiver::from_crashtracker_config(&config)?;
 
+    #[cfg(target_os = "linux")]
+    if config.collect_all_threads() {
+        grant_ptracer_permission(&receiver);
+    }
+
     let timeout_manager = TimeoutManager::new(config.timeout());
 
     let pid = unsafe { libc::getpid() };
     let tid = libdd_common::threading::get_current_thread_id() as libc::pid_t;
 
-    let error_type_str = exception_type.unwrap_or("<unknown>");
-
-    // This allocates but this is okay because we are not in a signal handler.
-    // This is necessary, because user defined exception messages can have newlines
-    // and the receiver state machine parsing depends on newlines for different sections
-    // of the crash report.
+    // This allocates but that is okay because we are not in the signal handling path
+    // Both error type and error message are user-controlled and may contain newlines or protocol
+    // sentinel strings (DD_CRASHTRACK_*). We need to escape newlines here, as the receiver treats
+    // new lines as separate sections in the crash report, and this allows consumers to
+    // potentially inject artitrary configuration and other sections into the crash report.
+    // emit_message adds a second sanitization pass as defense-in-depth at the protocol
+    // boundary.
+    let error_type_str = exception_type
+        .unwrap_or("<unknown>")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
     let error_message_str = exception_message
         .unwrap_or("<no message>")
         .replace('\n', "\\n")
@@ -541,7 +561,7 @@ pub fn report_unhandled_exception(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use core::time::Duration;
 
     fn make_test_metadata() -> Metadata {
         Metadata {

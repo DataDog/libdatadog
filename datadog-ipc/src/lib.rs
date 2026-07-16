@@ -10,6 +10,7 @@
 pub mod example_interface;
 pub mod handles;
 
+pub mod one_way_shared_memory;
 pub mod platform;
 pub mod rate_limiter;
 pub mod shm_stats;
@@ -17,6 +18,8 @@ pub mod shm_stats;
 mod atomic_option;
 pub mod client;
 pub mod codec;
+pub mod ipc_server;
+
 pub use atomic_option::AtomicOption;
 
 pub use client::IpcClientConn;

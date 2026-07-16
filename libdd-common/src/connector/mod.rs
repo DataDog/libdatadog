@@ -5,10 +5,10 @@ use futures::future::BoxFuture;
 use futures::{future, FutureExt};
 use hyper_util::client::legacy::connect;
 
-use std::future::Future;
-use std::pin::Pin;
+use core::future::Future;
+use core::pin::Pin;
+use core::task::{Context, Poll};
 use std::sync::LazyLock;
-use std::task::{Context, Poll};
 
 #[cfg(unix)]
 pub mod uds;
@@ -123,44 +123,25 @@ mod https {
     }
 
     #[cfg(not(feature = "use_webpki_roots"))]
+    /// Returns a default connector that uses the system trust roots.
+    /// `SSL_CERT_FILE` and `SSL_CERT_DIR` variable are only supported on linux, see
+    /// `rustls_platform_verifier` doc for details.
     pub(super) fn build_https_connector() -> anyhow::Result<
         hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
     > {
+        use rustls_platform_verifier::BuilderVerifierExt;
+
         ensure_crypto_provider_initialized(); // One-time initialization of a crypto provider if needed
 
-        let certs = load_root_certs()?;
         let client_config = ClientConfig::builder()
-            .with_root_certificates(certs)
+            .with_platform_verifier()?
             .with_no_client_auth();
+
         Ok(hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(client_config)
             .https_or_http()
             .enable_http1()
             .build())
-    }
-
-    #[cfg(not(feature = "use_webpki_roots"))]
-    fn load_root_certs() -> anyhow::Result<rustls::RootCertStore> {
-        use super::errors;
-
-        let mut roots = rustls::RootCertStore::empty();
-
-        let cert_result = rustls_native_certs::load_native_certs();
-        if cert_result.certs.is_empty() {
-            if let Some(err) = cert_result.errors.into_iter().next() {
-                return Err(err.into());
-            }
-        }
-        // TODO(paullgdfc): log errors even if there are valid certs, instead of ignoring them
-
-        for cert in cert_result.certs {
-            //TODO: log when invalid cert is loaded
-            roots.add(cert).ok();
-        }
-        if roots.is_empty() {
-            return Err(errors::Error::NoValidCertifacteRootsFound.into());
-        }
-        Ok(roots)
     }
 }
 
@@ -194,9 +175,10 @@ impl tower_service::Service<hyper::Uri> for Connector {
 #[cfg(test)]
 mod tests {
     use crate::http_common;
-    use std::env;
-
-    use super::*;
+    #[cfg(any(feature = "use_webpki_roots", target_os = "linux"))]
+    use {super::*, std::env};
+    #[cfg(feature = "tls-core")]
+    use {crate::http_common::Body, hyper::Request};
 
     #[test]
     #[cfg_attr(miri, ignore)]
@@ -217,6 +199,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     #[cfg(not(feature = "use_webpki_roots"))]
+    // Only Linux eagerly loads roots at connector construction; macOS/Windows verify lazily
+    // during the TLS handshake, so SSL_CERT_FILE/SSL_CERT_DIR cannot be exercised there.
+    #[cfg(target_os = "linux")]
     /// Verify that Connector falls back to Http when native root certificates
     /// are not available and webpki roots are not enabled.
     fn test_missing_root_certificates_only_allow_http_connections() {
@@ -250,5 +235,27 @@ mod tests {
         assert!(matches!(connector, Connector::Https(_)));
 
         env::set_var(ENV_SSL_CERT_FILE, old_value);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "tls-core")]
+    /// Verify that a HTTPS GET request succeeds using
+    /// the default Connector (native platform TLS verifier or webpki roots).
+    async fn test_https_request_succeeds() {
+        let client = http_common::new_default_client();
+        let request = Request::get("https://www.datadoghq.com")
+            .body(Body::empty())
+            .expect("failed to build request");
+        let response = client
+            .request(request)
+            .await
+            .expect("HTTPS request to datadoghq.com failed");
+        let status = response.status();
+        // Accept any successful (2xx) or redirect (3xx) response.
+        assert!(
+            status.is_success() || status.is_redirection(),
+            "unexpected status code: {status}"
+        );
     }
 }

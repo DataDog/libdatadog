@@ -88,29 +88,36 @@ where
     fn get_shm_mut(&mut self) -> &mut ShmHandle;
     #[cfg(all(unix, not(target_os = "macos")))]
     fn resize(&mut self, size: usize) -> anyhow::Result<()> {
-        unsafe {
-            self.set_mapping_size(size)?;
-        }
-        let new_size = self.get_shm().size as libc::off_t;
-        let fd = self.get_shm().handle.as_owned_fd()?;
-        // Try to se fallocate on Linux to eagerly commit the new pages: ENOSPC at resize time is
-        // recoverable; a later SIGBUS mid-execution is not.
-        #[cfg(target_os = "linux")]
-        match nix::fcntl::fallocate(
-            fd.as_raw_fd(),
-            nix::fcntl::FallocateFlags::empty(),
-            0,
-            new_size,
-        ) {
-            Err(nix::Error::EPERM | nix::Error::ENOSYS | nix::Error::ENOTSUP) => {
-                nix::unistd::ftruncate(fd, new_size)?
+        let old_size = self.get_shm().size;
+        fn do_resize<F: FileBackedHandle>(handle: &mut F, size: usize) -> anyhow::Result<()> {
+            unsafe {
+                handle.set_mapping_size(size)?;
             }
-            Err(e) => return Err(e.into()),
-            Ok(_) => {}
+            let new_size = handle.get_shm().size as libc::off_t;
+            let fd = handle.get_shm().handle.as_owned_fd()?;
+            // Try to use fallocate on Linux to eagerly commit the new pages: ENOSPC at resize time
+            // is recoverable; a later SIGBUS mid-execution is not.
+            #[cfg(target_os = "linux")]
+            match nix::fcntl::fallocate(
+                fd.as_raw_fd(),
+                nix::fcntl::FallocateFlags::empty(),
+                0,
+                new_size,
+            ) {
+                Err(nix::Error::EPERM | nix::Error::ENOSYS | nix::Error::ENOTSUP) => {
+                    nix::unistd::ftruncate(fd, new_size)?
+                }
+                Err(e) => return Err(e.into()),
+                Ok(_) => {}
+            }
+            #[cfg(not(target_os = "linux"))]
+            nix::unistd::ftruncate(&fd, new_size)?;
+            Ok(())
         }
-        #[cfg(not(target_os = "linux"))]
-        nix::unistd::ftruncate(&fd, new_size)?;
-        Ok(())
+        // Reset on failure
+        do_resize(self, size).inspect_err(|_| unsafe {
+            let _ = self.set_mapping_size(old_size);
+        })
     }
     /// # Safety
     /// Calling function needs to ensure it's appropriately resized

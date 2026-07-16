@@ -35,7 +35,7 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     }
 
     if let Some(code) = s.meta.get("http.status_code") {
-        if !is_valid_status_code(code) {
+        if !is_valid_http_status_code(code) {
             s.meta.remove("http.status_code");
         }
     };
@@ -43,7 +43,7 @@ pub(crate) fn normalize_span(s: &mut pb::Span) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn is_valid_status_code(sc: &str) -> bool {
+pub fn is_valid_http_status_code(sc: &str) -> bool {
     if let Ok(code) = sc.parse::<i64>() {
         return (100..600).contains(&code);
     }
@@ -476,11 +476,13 @@ mod tests {
 
     #[test]
     fn test_is_valid_status_code() {
-        assert!(normalizer::is_valid_status_code("100"));
-        assert!(normalizer::is_valid_status_code("599"));
-        assert!(!normalizer::is_valid_status_code("99"));
-        assert!(!normalizer::is_valid_status_code("600"));
-        assert!(!normalizer::is_valid_status_code("Invalid status code"));
+        assert!(normalizer::is_valid_http_status_code("100"));
+        assert!(normalizer::is_valid_http_status_code("599"));
+        assert!(!normalizer::is_valid_http_status_code("99"));
+        assert!(!normalizer::is_valid_http_status_code("600"));
+        assert!(!normalizer::is_valid_http_status_code(
+            "Invalid status code"
+        ));
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-shared-runtime"
-version = "1.0.0"
+version = "2.0.0"
 description = "Shared tokio runtime with fork-safe worker management for Datadog libraries"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-shared-runtime"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-shared-runtime"
@@ -22,8 +22,8 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 tokio = { version = "1.23", features = ["rt", "macros", "time"] }
 tokio-util = "0.7.11"
 tracing = { version = "0.1", default-features = false }
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.0.0" }
-libdd-common = { version = "4.2.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
+libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false, features = ["std"] }
 
 [features]
 default = ["https"]
@@ -32,7 +32,7 @@ fips = ["libdd-capabilities-impl/fips"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "2.0.0", default-features = false }
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "3.0.0", default-features = false }
 tokio = { version = "1.23", features = ["rt-multi-thread"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

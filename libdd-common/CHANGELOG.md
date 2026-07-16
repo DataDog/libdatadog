@@ -2,6 +2,38 @@
 
 
 
+## [5.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.0.0..libdd-common-v5.1.0) - 2026-07-07
+
+### Added
+
+- Add helpers in ddcommon to fetch the machine UUID l… ([#2163](https://github.com/datadog/libdatadog/issues/2163)) - ([e646931](https://github.com/datadog/libdatadog/commit/e6469314304c3eaae9a0b76ad48ff859e8bb8657))
+
+### Fixed
+
+- Update rustls-webpki to 0.103.13 ([#2187](https://github.com/datadog/libdatadog/issues/2187)) - ([3ba5431](https://github.com/datadog/libdatadog/commit/3ba543127039a0b785ede64d8eec2d367e49cb1a))
+- Update anyhow for unsoundness ([#2186](https://github.com/datadog/libdatadog/issues/2186)) - ([f8b9cc1](https://github.com/datadog/libdatadog/commit/f8b9cc1d8db5cf69a070588fa6b728a75842653a))
+
+
+
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.2.0..libdd-common-v5.0.0) - 2026-06-19
+
+### Added
+
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+
+### Changed
+
+- Replace native-certs with platform-verifier ([#2078](https://github.com/datadog/libdatadog/issues/2078)) - ([59db709](https://github.com/datadog/libdatadog/commit/59db7092373d33acc833c4ccfc13bbb486554e98))
+- Use SECURITY_ANONYMOUS when connecting to named pipe server ([#2134](https://github.com/datadog/libdatadog/issues/2134)) - ([b10b1d4](https://github.com/datadog/libdatadog/commit/b10b1d46577e95e057bd2b310641f965e6167d58))
+- Fix timeouts on heavily contended scenarios ([#2093](https://github.com/datadog/libdatadog/issues/2093)) - ([e780619](https://github.com/datadog/libdatadog/commit/e780619d5e0626a8cc161c4cb848057fbbe13533))
+
+### Fixed
+
+- Add fallback logic for resolving Azure Functions instance name [SVLS-8931] ([#2077](https://github.com/datadog/libdatadog/issues/2077)) - ([a820699](https://github.com/datadog/libdatadog/commit/a820699426f28cbabb3a74d87c7309d030b52e7c))
+- Fix http PathAndQuery Uri Parsing ([#2122](https://github.com/datadog/libdatadog/issues/2122)) - ([e746d26](https://github.com/datadog/libdatadog/commit/e746d26c489c518db9dc61e112dd8e2db97d0656))
+
+
+
 ## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.1.0..libdd-common-v4.2.0) - 2026-05-29
 
 ### Added

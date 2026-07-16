@@ -48,6 +48,15 @@ impl SidecarTransport {
         Ok(creds.pid)
     }
 
+    #[cfg(unix)]
+    pub fn as_raw_fd(&mut self) -> std::os::fd::RawFd {
+        let sender = match self.inner.get_mut() {
+            Ok(s) => s,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        sender.channel.0.conn.as_raw_fd()
+    }
+
     pub fn reconnect<F>(&mut self, factory: F)
     where
         F: FnOnce() -> Option<Box<SidecarTransport>>,
@@ -268,6 +277,22 @@ pub fn set_session_process_tags(
     process_tags: Vec<Tag>,
 ) -> io::Result<()> {
     lock_sender(transport)?.set_session_process_tags(process_tags);
+    Ok(())
+}
+
+pub fn set_session_default_service_name(
+    transport: &mut SidecarTransport,
+    name: Option<String>,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_default_service_name(name);
+    Ok(())
+}
+
+pub fn set_session_user_service_defined(
+    transport: &mut SidecarTransport,
+    is_defined: bool,
+) -> io::Result<()> {
+    lock_sender(transport)?.set_session_user_service_defined(is_defined);
     Ok(())
 }
 

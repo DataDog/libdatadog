@@ -1,7 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{net::SocketAddr, process::ExitCode};
+use core::net::SocketAddr;
+use std::process::ExitCode;
 
 use libdd_http_client_lite::{
     io::embedded_io::{Read as _, Write as _},

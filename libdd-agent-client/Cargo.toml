@@ -11,6 +11,7 @@ authors.workspace = true
 description = "A Datadog-agent-specialized HTTP client library"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-agent-client"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-agent-client"
+publish = false
 
 [lib]
 bench = false
@@ -28,8 +29,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
 tokio = { version = "1.23", features = ["rt"] }
-libdd-http-client = { version = "35.0", path = "../libdd-http-client", default-features = false }
-libdd-common = { version = "4.0", path = "../libdd-common", default-features = false, features = ["std"] }
+libdd-http-client = { path = "../libdd-http-client", default-features = false }
+libdd-common = { version = "5.1", path = "../libdd-common", default-features = false, features = ["std"] }
 tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]

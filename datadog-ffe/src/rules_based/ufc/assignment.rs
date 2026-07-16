@@ -11,10 +11,12 @@ use crate::rules_based::{ufc::VariationType, FlagType, Str};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AssignmentReason {
-    /// Assignment was made based on targeting rules or time bounds.
+    /// Assignment was made based on targeting rules.
     TargetingMatch,
     /// Assignment was made based on traffic split allocation.
     Split,
+    /// Assignment was made from a platform/default allocation value.
+    Default,
     /// Assignment was made as a static/default value.
     Static,
 }

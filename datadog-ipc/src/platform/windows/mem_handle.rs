@@ -111,6 +111,12 @@ impl ShmHandle {
             size: size | NOT_COMMITTED,
         })
     }
+
+    /// Refresh the size of the shared memory segment
+    pub fn adjust_to_file_size(&mut self) -> std::io::Result<()> {
+        self.size = NOT_COMMITTED;
+        Ok(())
+    }
 }
 
 impl NamedShmHandle {

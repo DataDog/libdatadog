@@ -90,7 +90,7 @@ impl fmt::Display for Error {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 /// A blocking TCP connection backed by an owned `rustix` socket.
 ///
@@ -207,8 +207,8 @@ const fn send_flags() -> SendFlags {
 
 #[cfg(all(test, feature = "std"))]
 mod tests {
+    use core::error::Error as StdError;
     use std::{
-        error::Error as StdError,
         io::{Error as IoError, ErrorKind as IoErrorKind, Read as _, Write as _},
         net::TcpListener,
     };

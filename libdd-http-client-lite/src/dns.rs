@@ -51,7 +51,7 @@ impl<E> fmt::Display for Error<E> {
 }
 
 #[cfg(feature = "std")]
-impl<E> std::error::Error for Error<E> where E: fmt::Debug + std::error::Error + 'static {}
+impl<E> core::error::Error for Error<E> where E: fmt::Debug + core::error::Error + 'static {}
 
 /// A `no_std` resolver backed by an environment-like key/value source.
 ///

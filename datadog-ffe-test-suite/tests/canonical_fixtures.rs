@@ -5,7 +5,8 @@ use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use datadog_ffe::rules_based::{
-    get_assignment, Attribute, Configuration, EvaluationContext, FlagType, Str, UniversalFlagConfig,
+    get_assignment, AssignmentReason, Attribute, Configuration, EvaluationContext, EvaluationError,
+    FlagType, Str, UniversalFlagConfig,
 };
 use serde::Deserialize;
 
@@ -21,8 +22,11 @@ struct TestCase {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct TestResult {
     value: serde_json::Value,
+    reason: Option<String>,
+    error_code: Option<String>,
 }
 
 fn fixture_root() -> PathBuf {
@@ -63,9 +67,18 @@ fn evaluates_canonical_json_fixtures() {
                 now,
             );
 
-            let actual = result
-                .map(|assignment| assignment.value.variation_value())
-                .unwrap_or(test_case.default_value);
+            let (actual, actual_reason, actual_error_code) = match result {
+                Ok(assignment) => (
+                    assignment.value.variation_value(),
+                    reason_from_assignment(assignment.reason),
+                    None,
+                ),
+                Err(err) => (
+                    test_case.default_value.clone(),
+                    reason_from_error(&err),
+                    error_code_from_error(&err),
+                ),
+            };
 
             assert_eq!(
                 actual,
@@ -74,8 +87,62 @@ fn evaluates_canonical_json_fixtures() {
                 test_case.flag,
                 path.display()
             );
+
+            if let Some(expected_reason) = test_case.result.reason.as_deref() {
+                assert_eq!(
+                    actual_reason,
+                    expected_reason,
+                    "unexpected reason for flag {} in {}",
+                    test_case.flag,
+                    path.display()
+                );
+            }
+
+            if let Some(expected_error_code) = test_case.result.error_code.as_deref() {
+                assert_eq!(
+                    actual_error_code,
+                    Some(expected_error_code),
+                    "unexpected error code for flag {} in {}",
+                    test_case.flag,
+                    path.display()
+                );
+            }
         }
     }
 
     assert!(fixture_count > 0, "no canonical FFE fixtures loaded");
+}
+
+fn reason_from_assignment(reason: AssignmentReason) -> &'static str {
+    match reason {
+        AssignmentReason::TargetingMatch => "TARGETING_MATCH",
+        AssignmentReason::Split => "SPLIT",
+        AssignmentReason::Default => "DEFAULT",
+        AssignmentReason::Static => "STATIC",
+    }
+}
+
+fn reason_from_error(err: &EvaluationError) -> &'static str {
+    match err {
+        EvaluationError::FlagDisabled => "DISABLED",
+        EvaluationError::DefaultAllocationNull | EvaluationError::FlagConfigurationInvalid => {
+            "DEFAULT"
+        }
+        _ => "ERROR",
+    }
+}
+
+fn error_code_from_error(err: &EvaluationError) -> Option<&'static str> {
+    match err {
+        EvaluationError::FlagDisabled
+        | EvaluationError::DefaultAllocationNull
+        | EvaluationError::FlagConfigurationInvalid => None,
+        EvaluationError::TypeMismatch { .. } => Some("TYPE_MISMATCH"),
+        EvaluationError::TargetingKeyMissing => Some("TARGETING_KEY_MISSING"),
+        EvaluationError::ConfigurationParseError => Some("PARSE_ERROR"),
+        EvaluationError::ConfigurationMissing => Some("PROVIDER_NOT_READY"),
+        EvaluationError::FlagUnrecognizedOrDisabled => Some("FLAG_NOT_FOUND"),
+        EvaluationError::Internal(_) => Some("GENERAL"),
+        _ => Some("GENERAL"),
+    }
 }

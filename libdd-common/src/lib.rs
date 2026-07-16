@@ -11,7 +11,11 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
+use alloc::borrow::Cow;
+#[cfg(feature = "std")]
 use anyhow::Context;
+#[cfg(feature = "std")]
+use core::{ops::Deref, str::FromStr};
 #[cfg(feature = "std")]
 use http::uri;
 #[cfg(feature = "std")]
@@ -19,9 +23,9 @@ use serde::de::Error;
 #[cfg(feature = "std")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[cfg(feature = "std")]
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::path::PathBuf;
 #[cfg(feature = "std")]
-use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[cfg(feature = "std")]
 pub mod azure_app_services;
@@ -33,6 +37,8 @@ pub mod connector;
 pub mod dump_server;
 #[cfg(feature = "std")]
 pub mod entity_id;
+#[cfg(feature = "std")]
+pub mod machine_id;
 #[cfg(feature = "std")]
 pub mod regex_engine;
 #[cfg(feature = "std")]
@@ -317,6 +323,20 @@ where
     builder.build().map_err(Error::custom)
 }
 
+/// Converts a human-facing URL string into the internal [`http::Uri`]
+/// representation.
+///
+/// NOTE: the name is misleading. For `http`/`https` this is an ordinary parse,
+/// but for the `file`/`unix`/`windows` schemes it *encodes* the path into the
+/// URI authority (see `encode_uri_path_in_authority`), so it is a
+/// URL-string-to-`Uri` *constructor*, not a pure parser.
+///
+/// WARNING: this is NOT idempotent for those three schemes. The `Uri` it
+/// returns stringifies back to the encoded form (`file://<hex>/`), and feeding
+/// that string in again re-encodes it, double-encoding the path. Only ever call
+/// this on an original URL string — never on the `.to_string()` of a `Uri` that
+/// already came out of here.
+///
 /// TODO: we should properly handle malformed urls
 /// * For windows and unix schemes:
 ///     * For compatibility reasons with existing implementation this parser stores the encoded path
@@ -346,7 +366,7 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<http
     let path = hex::encode(path);
 
     parts.authority = uri::Authority::from_str(path.as_str()).ok();
-    parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
+    parts.path_and_query = Some(uri::PathAndQuery::from_static("/"));
     Ok(http::Uri::from_parts(parts)?)
 }
 
@@ -500,7 +520,7 @@ impl Endpoint {
         // configuration will mutate the system environment (it doesn't pass
         // it as part of the SAPI env, it changes the actual system env).
         let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .timeout(core::time::Duration::from_millis(self.timeout_ms))
             .hickory_dns(!self.use_system_resolver)
             .no_proxy();
 
@@ -551,5 +571,24 @@ impl Endpoint {
         };
 
         Ok((builder, request_url))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_uri;
+
+    /// A scheme prefix with an empty path produces an empty (and therefore
+    /// dropped) authority. parsing must reject these as malformed rather
+    /// than accept them.
+    #[test]
+    fn empty_authority_uris_are_rejected() {
+        for input in ["unix://", "windows:", "file://"] {
+            let result = parse_uri(input);
+            assert!(
+                result.is_err(),
+                "expected {input:?} to be rejected, got {result:?}"
+            );
+        }
     }
 }

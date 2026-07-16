@@ -3,8 +3,10 @@
 
 //! Trace-utils functionalities implementation for tinybytes based spans
 
+use tracing::debug;
+
 use super::{v04::Span, SpanText, TraceData};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Span metric the mini agent must set for the backend to recognize top level span
 const TOP_LEVEL_KEY: &str = "_top_level";
@@ -54,6 +56,49 @@ where
             }
         }
     }
+}
+
+pub fn get_root_span_index<T>(trace: &[Span<T>]) -> anyhow::Result<usize>
+where
+    T: TraceData,
+{
+    if trace.is_empty() {
+        anyhow::bail!("Cannot find root span index in an empty trace.");
+    }
+
+    // Do a first pass to find if we have an obvious root span (starting from the end) since some
+    // clients put the root span last.
+    for (i, span) in trace.iter().enumerate().rev() {
+        if span.parent_id == 0 {
+            return Ok(i);
+        }
+    }
+
+    let span_ids: HashSet<_> = trace.iter().map(|span| span.span_id).collect();
+
+    let mut root_span_id = None;
+    for (i, span) in trace.iter().enumerate() {
+        // If a span's parent is not in the trace, it is a root
+        if !span_ids.contains(&span.parent_id) {
+            if root_span_id.is_some() {
+                debug!(
+                    trace_id = &trace[0].trace_id,
+                    "trace has multiple root spans"
+                );
+            }
+            root_span_id = Some(i);
+        }
+    }
+    Ok(match root_span_id {
+        Some(i) => i,
+        None => {
+            debug!(
+                trace_id = &trace[0].trace_id,
+                "Could not find the root span for trace"
+            );
+            trace.len() - 1
+        }
+    })
 }
 
 /// Return true if the span has a top level key set

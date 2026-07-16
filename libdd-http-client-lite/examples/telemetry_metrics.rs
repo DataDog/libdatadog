@@ -1,13 +1,12 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
+use core::{
     future::Future,
     pin::pin,
-    process::ExitCode,
     task::{Context, Poll, Waker},
-    time::UNIX_EPOCH,
 };
+use std::{process::ExitCode, time::UNIX_EPOCH};
 
 use libdd_http_client_lite::{
     client::{HttpConnection, HttpResource},
@@ -150,7 +149,7 @@ fn block_on<F: Future>(future: F) -> F::Output {
     loop {
         match future.as_mut().poll(&mut context) {
             Poll::Ready(output) => return output,
-            Poll::Pending => std::hint::spin_loop(),
+            Poll::Pending => core::hint::spin_loop(),
         }
     }
 }

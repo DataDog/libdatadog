@@ -1,0 +1,68 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+# Computes the set of crates impacted by a PR (the changed crates plus their transitive
+# dependents) and publishes it for downstream test-stage jobs to consume.
+#
+# It reuses the crates-reporter tool that already backs GitHub CI (.github/actions/). That
+# tool writes its results to the file named by $GITHUB_OUTPUT, so we point $GITHUB_OUTPUT at
+# a temp file and parse it here -- no changes to the Rust code are required.
+#
+# Only the benchmarks job consumes this today; other test jobs can depend on it later.
+
+variables:
+  BASE_CI_IMAGE: registry.ddbuild.io/ci/benchmarking-platform:libdatadog-benchmarks
+
+compute_impacted_crates:
+  stage: test
+  tags: ["arch:amd64"]
+  image:
+    name: $BASE_CI_IMAGE
+  needs: []
+  rules:
+    # Nothing to compute where benchmarks won't consume it: main runs the full suite, and
+    # release/hotfix/merge-queue/scheduled pipelines don't run benchmarks at all.
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^(release|hotfix)\//'
+      when: never
+    - if: '$CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME =~ /^(release|hotfix)\//'
+      when: never
+    - if: '$CI_COMMIT_BRANCH =~ /^mq-working-branch-/'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - when: on_success
+  variables:
+    # Full history so the three-dot merge-base diff against origin/main resolves.
+    GIT_DEPTH: 0
+  # A failure leaves the outputs absent; downstream jobs then fall back to running everything.
+  allow_failure: true
+  script:
+    # Always emit impacted-crates.env and changed_files.txt, even if crate detection fails -- that
+    # way the benchmarks job always receives its needed artifacts and falls back to the full suite
+    # (IMPACTED_STATUS=skipped) instead of erroring on a missing archive.
+    - |
+      export GITHUB_OUTPUT="$(mktemp)"
+      git fetch --no-tags origin main || :
+      if (cd .github/actions && cargo build --release -p crates-reporter) \
+         && ./.github/actions/target/release/crates-reporter main; then
+        :
+      else
+        echo "status=skipped" >> "$GITHUB_OUTPUT"
+      fi
+      # Surface the crates-reporter outputs as dotenv variables for downstream jobs.
+      AFFECTED_CRATES=$(sed -n 's/^affected_crates=//p' "$GITHUB_OUTPUT" | tail -n1)
+      IMPACTED_STATUS=$(sed -n 's/^status=//p' "$GITHUB_OUTPUT" | tail -n1)
+      : "${AFFECTED_CRATES:=[]}"
+      : "${IMPACTED_STATUS:=skipped}"
+      printf 'AFFECTED_CRATES=%s\nIMPACTED_STATUS=%s\n' "$AFFECTED_CRATES" "$IMPACTED_STATUS" | tee impacted-crates.env
+      # Record the changed files so downstream jobs can make path-based decisions.
+      git diff --name-only origin/main...HEAD > changed_files.txt || : > changed_files.txt
+  artifacts:
+    when: always
+    reports:
+      dotenv: impacted-crates.env
+    paths:
+      - changed_files.txt
+    expire_in: 1 week
