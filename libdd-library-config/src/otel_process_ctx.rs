@@ -255,4 +255,115 @@ mod tests {
         assert!(reader.read().is_err());
         assert!(ProcessContextSelfReader::new().is_err());
     }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn child_can_republish_after_fork() {
+        fn context(service_name: &str) -> ProcessContext {
+            ProcessContext {
+                resource: None,
+                extra_attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue(service_name.to_string())),
+                    }),
+                    key_ref: 0,
+                }],
+            }
+        }
+
+        let parent_context = context("fork-parent");
+        let child_context = context("fork-child");
+
+        super::publish(&parent_context).expect("publication before fork should succeed");
+        let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+        assert_eq!(
+            reader
+                .read()
+                .expect("parent read before fork should succeed"),
+            parent_context
+        );
+
+        // SAFETY: the process context lock is not held and the child immediately limits itself to
+        // the operations under test before exiting with `_exit`.
+        let child_pid = unsafe { libc::fork() };
+        if child_pid < 0 {
+            let fork_error = std::io::Error::last_os_error();
+            drop(reader);
+            super::unpublish().expect("cleanup after failed fork should succeed");
+            panic!("fork failed: {fork_error}");
+        }
+
+        if child_pid == 0 {
+            let exit_code = child_actions(&reader, &child_context);
+            // SAFETY: `_exit` terminates the child without running parent-owned destructors.
+            unsafe { libc::_exit(exit_code) };
+        }
+
+        fn child_actions(
+            stale_reader: &ProcessContextSelfReader,
+            child_context: &ProcessContext,
+        ) -> libc::c_int {
+            match stale_reader.read() {
+                Err(err) if err.kind() == std::io::ErrorKind::InvalidInput => {}
+                Err(_) | Ok(_) => return 4,
+            }
+            match ProcessContextSelfReader::new() {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) | Ok(_) => return 4,
+            }
+
+            if super::publish(child_context).is_err() {
+                return 5;
+            }
+
+            let reader = match ProcessContextSelfReader::new() {
+                Ok(reader) => reader,
+                Err(_) => return 6,
+            };
+
+            match reader.read() {
+                Ok(read_context) if read_context == *child_context => 0,
+                Ok(_) | Err(_) => 7,
+            }
+        }
+
+        let mut status = 0;
+        let wait_result = super::linux::retry_on_eintr(|| {
+            // SAFETY: child_pid identifies the child created above, and status is writable.
+            let waited_pid = unsafe { libc::waitpid(child_pid, &mut status, 0) };
+            if waited_pid < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(waited_pid)
+            }
+        });
+
+        assert_eq!(
+            reader
+                .read()
+                .expect("parent read after fork should succeed"),
+            parent_context
+        );
+
+        drop(reader);
+        super::unpublish().expect("parent cleanup should succeed");
+
+        assert_eq!(
+            wait_result.expect("waiting for child should succeed"),
+            child_pid,
+            "waitpid returned a different child"
+        );
+        assert!(
+            libc::WIFEXITED(status),
+            "child did not exit normally: status={status}"
+        );
+        assert_eq!(
+            libc::WEXITSTATUS(status),
+            0,
+            "child process failed at step {}",
+            libc::WEXITSTATUS(status)
+        );
+    }
 }
