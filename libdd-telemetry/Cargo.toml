@@ -78,7 +78,7 @@ bytes = { version = "1.4", optional = true }
 libdd-common = { version = "4.2.0", path = "../libdd-common", default-features = false, optional = true }
 libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime", default-features = false, optional = true }
 libdd-ddsketch = { version = "1.0.1", path = "../libdd-ddsketch", optional = true }
-libdd-http-client-lite = { version = "35.0.0", path = "../libdd-http-client-lite", optional = true }
+libdd-http-client-lite = { version = "35.0.0", path = "../libdd-http-client-lite", features = ["rustix-tcp"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sys-info = { version = "0.9.0", optional = true }

@@ -6,54 +6,23 @@ use std::{
     pin::pin,
     process::ExitCode,
     task::{Context, Poll, Waker},
-    time::UNIX_EPOCH,
 };
 
 use libdd_http_client_lite::{
     client::{HttpConnection, HttpResource},
     dns::{DnsResolver, Resolver as _},
     env::Environment,
+    request::Method,
     rustix::TcpStream,
-};
-use libdd_telemetry::{
-    data::metrics::{MetricNamespace, MetricType},
-    signal_safe::{self, Application, Metric, MetricsRequest},
+    Error,
 };
 
 const AGENT_HOST: &str = "agent.local";
 const AGENT_PORT: u16 = 8126;
-const AGENT_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+const AGENT_PATH: &str = "/info";
 const DNS_ENTRIES: &[(&str, &str)] = &[("agent.local", "127.0.0.1")];
-const TAGS: &[&str] = &["component:libdd-telemetry", "runtime:signal-safe"];
 
 fn main() -> ExitCode {
-    let timestamp = UNIX_EPOCH
-        .elapsed()
-        .map_or(0, |duration| duration.as_secs());
-    let metrics = [Metric {
-        namespace: MetricNamespace::Telemetry,
-        name: "signal_safe.metrics_submissions",
-        timestamp,
-        value: 1.0,
-        tags: TAGS,
-        common: false,
-        kind: MetricType::Count,
-        interval: 0,
-    }];
-    let telemetry = MetricsRequest {
-        tracer_time: timestamp,
-        runtime_id: "00000000-0000-0000-0000-000000000000",
-        seq_id: 0,
-        application: Application {
-            service_name: "libdd-telemetry-signal-safe-example",
-            language_name: "rust",
-            language_version: "unknown",
-            library_version: env!("CARGO_PKG_VERSION"),
-        },
-        hostname: "unknown_hostname",
-        metrics: &metrics,
-    };
-
     let dns = DnsResolver::new(Environment::new(DNS_ENTRIES));
     let address = match dns.resolve(
         AGENT_HOST,
@@ -77,25 +46,24 @@ fn main() -> ExitCode {
         host: AGENT_HOST,
         base_path: "",
     };
-    let mut body_buffer = [0_u8; 2_048];
-    let mut response_buffer = [0_u8; 1_024];
 
-    match block_on(signal_safe::send_metrics(
-        &mut resource,
-        AGENT_PATH,
-        &telemetry,
-        &mut body_buffer,
-        &mut response_buffer,
-    )) {
+    match block_on(get_agent_info(&mut resource)) {
         Ok(status) => {
-            println!("telemetry metric submitted, status={status}");
+            println!("HTTP response status: {status}");
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("telemetry metric submission failed: {error:?}");
+            eprintln!("HTTP request failed: {error:?}");
             ExitCode::FAILURE
         }
     }
+}
+
+async fn get_agent_info(resource: &mut HttpResource<'_, TcpStream>) -> Result<u16, Error> {
+    let mut response_buffer = [0_u8; 4_096];
+    let request = resource.request(Method::GET, AGENT_PATH);
+    let response = request.send(&mut response_buffer).await?;
+    Ok(response.status.0)
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {

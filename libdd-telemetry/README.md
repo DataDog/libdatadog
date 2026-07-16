@@ -55,11 +55,12 @@ let app = data::Application {
 
 ## Signal-safe metric submission
 
-The `signal-safe` feature builds without `std` and accepts caller-owned
-transports, resolvers, and request/response buffers. It is intended for code
-paths where allocation, runtime startup, and process-global configuration are
-not available. Whether a call is async-signal-safe still depends on the
-platform implementations supplied by the caller.
+The `signal-safe` feature builds without `std` and uses the blocking `rustix`
+TCP transport from `libdd-http-client-lite` with caller-owned resolvers and
+request/response buffers. It is intended for code paths where allocation,
+runtime startup, and process-global configuration are not available. Whether a
+call is async-signal-safe still depends on the platform implementations
+supplied by the caller.
 
 The no-std library build can be checked directly:
 

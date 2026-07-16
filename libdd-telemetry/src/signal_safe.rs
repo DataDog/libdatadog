@@ -13,9 +13,9 @@
 use core::fmt::{self, Write as _};
 
 use libdd_http_client_lite::{
-    client::HttpClient,
+    client::HttpResource,
     headers::ContentType,
-    io::{embedded_nal_async::Dns, embedded_nal_async::TcpConnect},
+    io::embedded_io_async::{Read, Write},
     request::{Method, RequestBuilder},
 };
 
@@ -165,16 +165,15 @@ pub fn encode_metrics(request: &MetricsRequest<'_>, buffer: &mut [u8]) -> Result
 ///
 /// The response buffer only needs to hold the HTTP response headers. A status
 /// in the `200..=299` range is considered successful.
-pub async fn send_metrics<T, D>(
-    client: &mut HttpClient<'_, T, D>,
-    url: &str,
+pub async fn send_metrics<C>(
+    resource: &mut HttpResource<'_, C>,
+    path: &str,
     request: &MetricsRequest<'_>,
     body_buffer: &mut [u8],
     response_buffer: &mut [u8],
 ) -> Result<u16, Error>
 where
-    T: TcpConnect,
-    D: Dns,
+    C: Read + Write,
 {
     let body_len = encode_metrics(request, body_buffer)?;
     let headers = [
@@ -192,9 +191,8 @@ where
             request.application.library_version,
         ),
     ];
-    let mut http_request = client
-        .request(Method::POST, url)
-        .await?
+    let http_request = resource
+        .request(Method::POST, path)
         .headers(&headers)
         .content_type(ContentType::ApplicationJson)
         .body(&body_buffer[..body_len]);

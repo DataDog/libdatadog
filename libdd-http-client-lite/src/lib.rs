@@ -12,9 +12,19 @@
 //! Allocation-free HTTP primitives for caller-provided transports and buffers.
 //!
 //! Request encoding and response parsing are provided by [`reqwless`]. This
-//! crate does not allocate, start a runtime, open sockets, or perform name
-//! resolution itself. Async-signal-safety therefore also depends on the
-//! transport, resolver, executor, and platform hooks supplied by the caller.
+//! crate does not allocate or start a runtime. The optional `rustix-tcp`
+//! feature provides a blocking TCP transport without performing name
+//! resolution. Async-signal-safety also depends on the resolver, executor, and
+//! platform hooks supplied by the caller.
+
+pub mod dns;
+pub mod env;
+
+#[cfg(feature = "libc_dns")]
+pub mod libc_dns;
+
+#[cfg(feature = "rustix-tcp")]
+pub mod rustix;
 
 /// Embedded I/O traits used to provide transports and name resolution.
 pub mod io {
@@ -28,6 +38,8 @@ pub use reqwless::{client, headers, request, response, Error, TryBufRead};
 #[cfg(test)]
 mod tests {
     use super::request::{Request, RequestBuilder};
+    #[cfg(feature = "rustix-tcp")]
+    use super::rustix;
 
     #[test]
     fn builds_request_without_allocating() {
@@ -39,5 +51,17 @@ mod tests {
             .build();
 
         let _ = request;
+    }
+
+    #[cfg(feature = "rustix-tcp")]
+    #[test]
+    fn rustix_stream_supports_sync_and_async_io() {
+        fn assert_sync<T: embedded_io::Read + embedded_io::Write>() {}
+        fn assert_async<T: embedded_io_async::Read + embedded_io_async::Write>() {}
+        fn assert_connector<T: embedded_nal_async::TcpConnect>() {}
+
+        assert_sync::<rustix::TcpStream>();
+        assert_async::<rustix::TcpStream>();
+        assert_connector::<rustix::TcpConnector>();
     }
 }
