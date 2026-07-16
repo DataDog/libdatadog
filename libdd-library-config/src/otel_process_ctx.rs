@@ -68,7 +68,7 @@ fn retry_on_eintr<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result
 ))]
 #[serial_test::serial]
 mod tests {
-    use core::time::Duration;
+    use core::{io::ErrorKind, time::Duration};
 
     use super::ProcessContextSelfReader;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
@@ -318,11 +318,11 @@ mod tests {
             child_context: &ProcessContext,
         ) -> libc::c_int {
             match stale_reader.read() {
-                Err(err) if err.kind() == std::io::ErrorKind::InvalidInput => {}
+                Err(err) if err.kind() == ErrorKind::InvalidInput => {}
                 Err(_) | Ok(_) => return 4,
             }
             match ProcessContextSelfReader::new() {
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) if err.kind() == ErrorKind::NotFound => {}
                 Err(_) | Ok(_) => return 4,
             }
 
