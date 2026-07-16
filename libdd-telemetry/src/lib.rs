@@ -3,21 +3,34 @@
 
 #![allow(clippy::mutex_atomic)]
 #![allow(clippy::nonminimal_bool)]
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(feature = "std")]
 use libdd_common::entity_id;
+#[cfg(feature = "std")]
 use tracing::debug;
 
+#[cfg(feature = "std")]
 pub mod config;
 pub mod data;
+#[cfg(feature = "std")]
 pub mod info;
+#[cfg(feature = "std")]
 pub mod metrics;
+#[cfg(any(feature = "std", feature = "signal-safe"))]
+mod protocol;
+/// Fixed-buffer telemetry metric submission for constrained contexts.
+#[cfg(feature = "signal-safe")]
+pub mod signal_safe;
+#[cfg(feature = "std")]
 pub mod worker;
 
+#[cfg(feature = "std")]
 pub fn build_host() -> data::Host {
     debug!("Building telemetry host information");
     let hostname = info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname"));

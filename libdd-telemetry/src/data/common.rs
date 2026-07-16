@@ -14,7 +14,7 @@ pub enum ApiVersion {
 impl ApiVersion {
     pub fn to_str(&self) -> &'static str {
         match self {
-            ApiVersion::V2 => "v2",
+            ApiVersion::V2 => crate::protocol::API_VERSION,
         }
     }
 }

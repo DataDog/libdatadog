@@ -1,0 +1,30 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-http-client-lite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Allocation-free HTTP primitives for caller-provided transports"
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client-lite"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-http-client-lite"
+
+[lib]
+bench = false
+
+[lints]
+workspace = true
+
+[features]
+default = []
+alloc = ["reqwless/alloc"]
+std = ["alloc", "embedded-io/std", "embedded-io-async/std"]
+
+[dependencies]
+embedded-io = { version = "0.6", default-features = false }
+embedded-io-async = { version = "0.6", default-features = false }
+embedded-nal-async = { version = "0.8.0", default-features = false }
+reqwless = { version = "0.13.0", default-features = false }

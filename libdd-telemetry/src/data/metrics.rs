@@ -1,9 +1,12 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(feature = "std")]
 use libdd_common::tag::Tag;
-use serde::{Deserialize, Serialize};
+#[cfg(feature = "std")]
+use serde::Serialize;
 
+#[cfg(feature = "std")]
 #[derive(Serialize, Debug)]
 pub struct Serie {
     pub namespace: MetricNamespace,
@@ -16,6 +19,7 @@ pub struct Serie {
     pub interval: u64,
 }
 
+#[cfg(feature = "std")]
 #[derive(Serialize, Debug)]
 pub struct Distribution {
     pub namespace: MetricNamespace,
@@ -29,6 +33,7 @@ pub struct Distribution {
     pub _type: MetricType,
 }
 
+#[cfg(feature = "std")]
 #[derive(Serialize, Debug)]
 #[serde(untagged)]
 pub enum SerializedSketch {
@@ -36,8 +41,9 @@ pub enum SerializedSketch {
     B64 { sketch_b64: String },
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
-#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "std", serde(rename_all = "snake_case"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub enum MetricNamespace {
     Tracers,
@@ -53,11 +59,42 @@ pub enum MetricNamespace {
     Sidecar,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
+#[cfg(feature = "signal-safe")]
+impl MetricNamespace {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tracers => "tracers",
+            Self::Profilers => "profilers",
+            Self::Rum => "rum",
+            Self::Appsec => "appsec",
+            Self::IdePlugins => "ide_plugins",
+            Self::LiveDebugger => "live_debugger",
+            Self::Iast => "iast",
+            Self::General => "general",
+            Self::Telemetry => "telemetry",
+            Self::Apm => "apm",
+            Self::Sidecar => "sidecar",
+        }
+    }
+}
+
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "std", serde(rename_all = "snake_case"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub enum MetricType {
     Gauge,
     Count,
     Distribution,
+}
+
+#[cfg(feature = "signal-safe")]
+impl MetricType {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Gauge => "gauge",
+            Self::Count => "count",
+            Self::Distribution => "distribution",
+        }
+    }
 }

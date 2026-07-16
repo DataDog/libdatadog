@@ -6,4 +6,3 @@
 
 # This crate is missing a license in its metadata.
 "stringmetrics" = { license = "MIT" }
-"rs-libc" = { license = "MPL-2.0 AND MIT AND BSD-3-Clause AND Patrick-Powell" }
