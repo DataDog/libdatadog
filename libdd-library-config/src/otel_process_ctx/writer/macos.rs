@@ -106,9 +106,11 @@ fn pack_published_header(publisher_pid: u32, header: *mut u8) -> u128 {
 
 impl MonotonicTime for MonotonicClock {
     fn monotonic_time_ns() -> io::Result<u64> {
-        // SAFETY: CLOCK_MONOTONIC_RAW is a valid clock ID and this function has no pointer
-        // arguments. It returns continuous time directly in nanoseconds.
-        Ok(unsafe { clock_gettime_nsec_np(libc::CLOCK_MONOTONIC_RAW) }.max(1))
+        // SAFETY: clock_gettime_nsec_np is always safe.
+        let ns = unsafe { clock_gettime_nsec_np(libc::CLOCK_MONOTONIC_RAW) };
+        (ns != 0)
+            .then_some(ns)
+            .ok_or_else(|| last_error("clock_gettime_nsec_np failed"))
     }
 }
 
