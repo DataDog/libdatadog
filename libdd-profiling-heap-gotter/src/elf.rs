@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use libc::{
-    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym, PROT_EXEC,
-    PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
+    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
+    _SC_PAGESIZE, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD,
 };
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicUsize, Ordering};

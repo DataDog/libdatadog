@@ -21,7 +21,7 @@
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
-//! let span_id  = [1u8; 8];
+//! let span_id = [1u8; 8];
 //! let local_root_span_id = [2u8; 8];
 //!
 //! // First call allocates a record and attaches it.
@@ -40,7 +40,7 @@
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
-//! let span_id  = [1u8; 8];
+//! let span_id = [1u8; 8];
 //! let local_root_span_id = [2u8; 8];
 //! let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
 //!
