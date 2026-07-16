@@ -61,7 +61,7 @@ pub struct Set<T: Hash + Eq + 'static> {
 }
 
 impl<T: Eq + Hash + 'static> Set<T> {
-    pub const SIZE_HINT: usize = 1024 * 1024;
+    pub const SIZE_HINT: usize = 256 * 1024;
 
     pub fn try_new() -> Result<Self, SetError> {
         Self::try_with_capacity(SET_MIN_CAPACITY)
