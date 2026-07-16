@@ -61,17 +61,17 @@ impl<K, V> Default for VecMap<K, V> {
     }
 }
 
-// This implementation allocates, which isn't ideal for equality testing (not allocating would be
-// rather tedious though), but is needed both by production code (e.g. comparing V1 tracer metadata
-// before coalescing) and by tests.
+// Only enabled for tests: this allocates (builds two `HashMap`s), which would be surprising
+// behind a plain `==` in production code. Production callers should use `slow_compare` instead,
+// so the cost is visible at the call site.
+#[cfg(any(test, feature = "test-utils"))]
 impl<K: Eq + Hash, V: PartialEq> PartialEq for VecMap<K, V> {
     fn eq(&self, other: &Self) -> bool {
-        let lhs: HashMap<&K, &V> = self.data.iter().map(|(k, v)| (k, v)).collect();
-        let rhs: HashMap<&K, &V> = other.data.iter().map(|(k, v)| (k, v)).collect();
-        lhs == rhs
+        self.slow_compare(other)
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl<K: Eq + Hash, V: Eq> Eq for VecMap<K, V> {}
 
 impl<K, V> VecMap<K, V> {
@@ -134,6 +134,20 @@ impl<K, V> VecMap<K, V> {
         Q: ?Sized + PartialEq,
     {
         self.data.iter().any(|(k, _)| k.borrow() == key)
+    }
+
+    /// Compares two maps for equality, ignoring insertion order and duplicate entries (the last
+    /// value for a given key wins on both sides). This allocates two intermediate `HashMap`s, so
+    /// it's exposed as a named method rather than [PartialEq]/[Eq], to keep that cost visible at
+    /// the call site instead of hiding it behind `==`.
+    pub fn slow_compare(&self, other: &Self) -> bool
+    where
+        K: Eq + Hash,
+        V: PartialEq,
+    {
+        let lhs: HashMap<&K, &V> = self.data.iter().map(|(k, v)| (k, v)).collect();
+        let rhs: HashMap<&K, &V> = other.data.iter().map(|(k, v)| (k, v)).collect();
+        lhs == rhs
     }
 
     /// Remove all entries matching this key from the map. This method uses [Vec::retain], and is
