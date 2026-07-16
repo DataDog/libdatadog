@@ -5,6 +5,11 @@
 //!
 //! Sync: env access is a single map lookup on both native (`std::env`) and
 //! wasm (`process.env`).
+//!
+//! `set` and `unset` are intentionally absent from this trait. libdatadog is
+//! embedded in many kinds of runtime, where mutating the process environment
+//! very much unsafe. Exposing mutation here would make it trivially easy for
+//! callers to corrupt the environment of a multi-threaded host process.
 
 #[derive(Debug, thiserror::Error)]
 pub enum EnvError {
