@@ -2166,6 +2166,63 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn test_otlp_timeout_decoupled_from_agent_connection_timeout() {
+        use crate::otlp::config::DEFAULT_OTLP_TIMEOUT;
+        use std::time::Duration;
+
+        let otlp_endpoint = "http://127.0.0.1:4318/v1/traces";
+
+        // Only the OTLP timeout is set: OTLP uses it; the agent endpoint keeps its default.
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint(otlp_endpoint)
+            .set_otlp_timeout(Some(250));
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
+        assert_eq!(
+            exporter.otlp_config.as_ref().unwrap().timeout,
+            Duration::from_millis(250)
+        );
+
+        // Only the connection timeout is set: it drives the agent endpoint and, for backward
+        // compatibility, is also used as the OTLP timeout fallback.
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint(otlp_endpoint)
+            .set_connection_timeout(Some(1234));
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        assert_eq!(exporter.endpoint.timeout_ms, 1234);
+        assert_eq!(
+            exporter.otlp_config.as_ref().unwrap().timeout,
+            Duration::from_millis(1234)
+        );
+
+        // Both set: the OTLP timeout wins for OTLP while the agent endpoint keeps its own value.
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint(otlp_endpoint)
+            .set_connection_timeout(Some(1234))
+            .set_otlp_timeout(Some(250));
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        assert_eq!(exporter.endpoint.timeout_ms, 1234);
+        assert_eq!(
+            exporter.otlp_config.as_ref().unwrap().timeout,
+            Duration::from_millis(250)
+        );
+
+        // Neither set: OTLP uses its default, agent endpoint uses its default.
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_otlp_endpoint(otlp_endpoint);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        assert_eq!(exporter.endpoint.timeout_ms, Endpoint::default().timeout_ms);
+        assert_eq!(
+            exporter.otlp_config.as_ref().unwrap().timeout,
+            DEFAULT_OTLP_TIMEOUT
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_otlp_export_via_builder() {
         let server = MockServer::start();
         let mock_otlp = server.mock(|when, then| {
