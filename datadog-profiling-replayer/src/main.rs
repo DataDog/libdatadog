@@ -166,6 +166,9 @@ fn main() -> anyhow::Result<()> {
     let mut outprof =
         libdd_profiling::internal::Profile::try_new(&replayer.sample_types, replayer.period)?
             .with_start_time(replayer.start_time)?;
+    for (slot, value_type) in replayer.custom_type_mappings.iter().copied() {
+        outprof.set_custom_sample_type(slot, value_type)?;
+    }
 
     // Before benchmarking, let's calculate some statistics.
     // No point doing that if there aren't at least 4 samples though.

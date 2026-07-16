@@ -21,6 +21,13 @@ jobs:
           fetch-depth: 0
           # Checkout PR head (not the synthetic merge commit) so version comparison matches the proposal branch.
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Exclude from Green CI
+        env:
+          DATADOG_SITE: datadoghq.com
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: ./scripts/exclude-from-green-ci.sh
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.92.0

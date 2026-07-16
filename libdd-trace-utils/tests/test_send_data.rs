@@ -396,7 +396,7 @@ mod tracing_integration_tests {
     // ───────────────────────── V1 integration tests ──────────────────────────
     //
     // These tests cover the v1::Span encoder end-to-end: the payload is built directly from the
-    // `TracerPayload` data model in Rust, encoded with `to_vec_from_payload_v1`, POSTed to the
+    // `TracerPayload` data model in Rust, encoded with `to_vec_from_v1`, POSTed to the
     // `dd-apm-test-agent`'s `/v1.0/traces`, and validated via snapshot. The test-agent is the V1
     // decoder, so this exercises the full round-trip without us having to maintain one in this
     // crate.
@@ -413,10 +413,11 @@ mod tracing_integration_tests {
         out
     }
 
-    /// POSTs a raw V1 msgpack payload to the test-agent's `/v1.0/traces` and asserts the agent
-    /// returns 2xx. Headers are the minimum the agent needs to attach the payload to a snapshot
-    /// session (`X-Datadog-Test-Session-Token` query param + `Datadog-Meta-Lang*` for routing).
-    async fn post_v1_payload(uri: hyper::Uri, body: Vec<u8>) {
+    /// POSTs a raw msgpack trace payload to the test-agent (the endpoint — `/v0.4/traces` or
+    /// `/v1.0/traces` — is baked into `uri` by the caller). Asserts the agent returns 2xx.
+    /// Headers are the minimum the agent needs to attach the payload to a snapshot session
+    /// (`X-Datadog-Test-Session-Token` query param + `Datadog-Meta-Lang*` for routing).
+    async fn post_msgpack_traces(uri: hyper::Uri, body: Vec<u8>) {
         use libdd_capabilities_impl::HttpClientCapability;
         let client = NativeCapabilities::new_client();
         let req = http::Request::builder()
@@ -520,15 +521,16 @@ mod tracing_integration_tests {
             app_version: bs_v1("1.2.3"),
             attributes: VecMap::new(),
             chunks: vec![chunk],
+            ..Default::default()
         }
     }
 
     /// End-to-end round-trip: builds a V1 payload directly from `TracerPayload`, encodes it
-    /// with `to_vec_from_payload_v1`, POSTs to the test-agent, and asserts the snapshot.
+    /// with `to_vec_from_v1`, POSTs to the test-agent, and asserts the snapshot.
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v1_native_trace_snapshot_test() {
-        use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_payload_v1;
+        use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
 
         let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
         let snapshot_name = "compare_send_data_v1_native_trace_snapshot_test";
@@ -541,9 +543,9 @@ mod tracing_integration_tests {
         test_agent.start_session(snapshot_name, None).await;
 
         let payload = make_v1_payload("test_send_data_v1_native_snapshot");
-        let encoded = to_vec_from_payload_v1(&payload);
+        let encoded = to_vec_from_v1(&payload);
 
-        post_v1_payload(uri, encoded).await;
+        post_msgpack_traces(uri, encoded).await;
 
         test_agent.assert_snapshot(snapshot_name).await;
     }
@@ -555,7 +557,7 @@ mod tracing_integration_tests {
     #[cfg_attr(miri, ignore)]
     #[tokio::test]
     async fn compare_v04_and_v1_encoders_snapshot_test() {
-        use libdd_trace_utils::msgpack_encoder::v1::{to_vec, to_vec_from_payload_v1};
+        use libdd_trace_utils::msgpack_encoder::v1::{to_vec_from_v04, to_vec_from_v1};
         use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
         use libdd_trace_utils::span::v1::{
             AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
@@ -618,13 +620,97 @@ mod tracing_integration_tests {
         };
 
         // ── POST both into the same session ────────────────────────────────────────
-        let bytes_v04 = to_vec(&v04_traces, &metadata);
-        let bytes_v1 = to_vec_from_payload_v1(&v1_payload);
-        post_v1_payload(uri.clone(), bytes_v04).await;
-        post_v1_payload(uri, bytes_v1).await;
+        let bytes_v04 = to_vec_from_v04(&v04_traces, &metadata);
+        let bytes_v1 = to_vec_from_v1(&v1_payload);
+        post_msgpack_traces(uri.clone(), bytes_v04).await;
+        post_msgpack_traces(uri, bytes_v1).await;
 
         // Both POSTs share trace_id=1, so the test-agent merges them into a single trace of
         // 2 decoded spans. The checked-in snapshot is the canonical equivalent decoded form.
+        test_agent.assert_snapshot(snapshot_name).await;
+    }
+
+    /// Round-trip: the v1::Span → v0.4 downgrade encoder
+    /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1`]) must produce a v0.4
+    /// payload that decodes to the same canonical form as the native v0.4 encoder
+    /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04`]) when fed equivalent input.
+    ///
+    /// Both encodings are POSTed to `/v0.4/traces` in the same session with distinct
+    /// `trace_id`s, and the checked-in snapshot records the two traces side by side. Any
+    /// drift in either encoder makes its trace diverge from the canonical decoded form.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn compare_v04_native_and_v1_to_v04_encoders_snapshot_test() {
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v04 as to_vec_v04_native;
+        use libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1;
+        use libdd_trace_utils::span::v04::SpanBytes as V04SpanBytes;
+        use libdd_trace_utils::span::v1::{
+            AttributeValue, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes, TracerPayloadBytes,
+        };
+
+        let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
+        let snapshot_name = "compare_v04_native_and_v1_to_v04_encoders_snapshot_test";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
+        let uri = test_agent
+            .get_uri_for_endpoint("v0.4/traces", Some(snapshot_name))
+            .await;
+
+        test_agent.start_session(snapshot_name, None).await;
+
+        // ── v0.4 native input — trace_id = 1 ───────────────────────────────────────
+        // Note: v0.4's `meta["span.kind"]` is the downgrade target for the v1::SpanKind enum,
+        // so we set it explicitly here for parity with the v1::Span path below.
+        let mut meta_v04 = VecMap::new();
+        meta_v04.insert(bs_v1("env"), bs_v1("test-env"));
+        meta_v04.insert(bs_v1("http.method"), bs_v1("GET"));
+        meta_v04.insert(bs_v1("span.kind"), bs_v1("server"));
+        let mut metrics_v04 = VecMap::new();
+        metrics_v04.insert(bs_v1("http.duration_ms"), 12.5_f64);
+        let v04_traces: Vec<Vec<V04SpanBytes>> = vec![vec![V04SpanBytes {
+            service: bs_v1("svc"),
+            name: bs_v1("op"),
+            resource: bs_v1("res"),
+            trace_id: 1,
+            span_id: 1,
+            start: 1_000_000,
+            duration: 5_000,
+            meta: meta_v04,
+            metrics: metrics_v04,
+            ..Default::default()
+        }]];
+
+        // ── v1::Span input — trace_id = 2, semantically equivalent otherwise ───────
+        // The v1 model carries `env` / `span_kind` as typed fields rather than meta strings;
+        // the downgrade encoder must place them back under `meta["env"]` / `meta["span.kind"]`.
+        let mut attrs_v1 = VecMap::new();
+        attrs_v1.insert(bs_v1("http.method"), AttributeValue::String(bs_v1("GET")));
+        attrs_v1.insert(bs_v1("http.duration_ms"), AttributeValue::Float(12.5));
+        let v1_payload = TracerPayloadBytes {
+            chunks: vec![TraceChunkBytes {
+                trace_id: tid_bytes(0, 2),
+                spans: vec![V1SpanBytes {
+                    service: bs_v1("svc"),
+                    name: bs_v1("op"),
+                    resource: bs_v1("res"),
+                    span_id: 1,
+                    start: 1_000_000,
+                    duration: 5_000,
+                    span_kind: SpanKind::Server,
+                    env: bs_v1("test-env"),
+                    attributes: attrs_v1,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        // ── Encode each via its respective encoder and POST both ───────────────────
+        let bytes_v04 = to_vec_v04_native(&v04_traces);
+        let bytes_v1_to_v04 = to_vec_from_v1(&v1_payload);
+        post_msgpack_traces(uri.clone(), bytes_v04).await;
+        post_msgpack_traces(uri, bytes_v1_to_v04).await;
+
         test_agent.assert_snapshot(snapshot_name).await;
     }
 }

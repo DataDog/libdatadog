@@ -2878,6 +2878,7 @@ dependencies = [
 name = "libdd-capabilities-impl"
 version = "3.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "http",
  "http-body-util",
@@ -3263,6 +3264,7 @@ dependencies = [
  "libdd-ddsketch-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
+ "libdd-otel-thread-ctx-ffi",
  "libdd-profiling",
  "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
@@ -3540,6 +3542,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "indexmap 2.12.1",
+ "itoa",
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",

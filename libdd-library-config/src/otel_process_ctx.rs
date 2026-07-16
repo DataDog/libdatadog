@@ -18,6 +18,8 @@
 //! reads even when the clock returns the same value twice. Concurrent writers are rejected, and
 //! retry policy is left to the reader's caller.
 
+use std::io;
+
 #[cfg(feature = "process-context-reader")]
 mod reader;
 #[cfg(feature = "process-context-writer")]
@@ -340,7 +342,7 @@ mod tests {
         }
 
         let mut status = 0;
-        let wait_result = super::linux::retry_on_eintr(|| {
+        let wait_result = super::retry_on_eintr(|| {
             // SAFETY: child_pid identifies the child created above, and status is writable.
             let waited_pid = unsafe { libc::waitpid(child_pid, &mut status, 0) };
             if waited_pid < 0 {

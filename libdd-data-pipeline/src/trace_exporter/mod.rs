@@ -677,6 +677,8 @@ impl<
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
             r.client_computed_stats = self.otlp_stats_enabled;
+            r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
+            r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
             r
         };
         // Single prost OTLP IR; the configured protocol encodes the same request to its wire
@@ -1422,7 +1424,7 @@ mod tests {
             span_id: 2,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
 
         let resp = exporter.send(data.as_ref()).unwrap();
         assert!(matches!(resp, AgentResponse::Unchanged));
@@ -1463,7 +1465,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         // `send` is synchronous and, in log mode, returns after writing through the
         // capability without initiating any HTTP; combined with the structural assert
         // above this is deterministic (no background worker can race the mock).
@@ -1504,7 +1506,7 @@ mod tests {
                 ..Default::default()
             }],
         ];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
 
         let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
@@ -1604,7 +1606,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -1712,7 +1714,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -1816,7 +1818,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
 
         let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
@@ -1876,7 +1878,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref()).unwrap();
 
         assert_eq!(
@@ -1918,7 +1920,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let code = match exporter.send(data.as_ref()).unwrap_err() {
             TraceExporterError::Request(e) => Some(e.status()),
             _ => None,
@@ -1953,7 +1955,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let err = exporter.send(data.as_ref());
 
         assert!(err.is_err());
@@ -2132,7 +2134,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
         while mock_info.calls() == 0 {
@@ -2200,7 +2202,7 @@ mod tests {
             error: 0,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(
@@ -2252,7 +2254,7 @@ mod tests {
             error: 0,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(
@@ -2309,7 +2311,7 @@ mod tests {
             duration: 1,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         exporter.send(data.as_ref()).unwrap();
         mock_intake.assert();
     }
@@ -2562,7 +2564,7 @@ mod single_threaded_tests {
             ..Default::default()
         }];
 
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
         while agent_info::get_agent_info().is_none() {
@@ -2663,7 +2665,7 @@ mod single_threaded_tests {
             ..Default::default()
         }];
 
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
 
         // Wait for agent_info to be present so that sending a trace will trigger the stats worker
         // to start
@@ -2762,7 +2764,7 @@ mod single_threaded_tests {
             duration: 10,
             ..Default::default()
         }];
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
         let _ = exporter.send(data.as_ref());
 
         let start = std::time::Instant::now();
@@ -2870,7 +2872,7 @@ mod single_threaded_tests {
             duration: 10,
             ..Default::default()
         }];
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
 
         // 1st send: /info has promoted v1_active=true, so this hits /v1.0/traces and 404s.
         let result1 = exporter.send(&data);

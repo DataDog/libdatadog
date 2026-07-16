@@ -216,6 +216,38 @@ mod tests {
         }
     }
 
+    // With live-heap tracking compiled out, dd_allocation_freed is a
+    // straight passthrough: it never inspects the sample-flag header and
+    // never fires ddheap:free. Verify this even when the underlying
+    // memory happens to contain the magic pattern that *would* trigger
+    // the slow path if live-heap were enabled.
+    #[cfg(not(feature = "live-heap"))]
+    #[test]
+    fn freed_is_passthrough_when_live_heap_disabled() {
+        const MAGIC: u64 = 0xfab1eddec0dedca7;
+        const HEADER_BYTES: usize = 16;
+
+        // Set up a buffer with the magic header so that, if the flag-check
+        // were compiled in, it would consider this allocation sampled.
+        let mut buf = vec![0u8; 128];
+        let base = buf.as_mut_ptr() as usize;
+        let user_addr = base + HEADER_BYTES;
+
+        // Stamp magic at ptr - HEADER_BYTES
+        buf[0..8].copy_from_slice(&MAGIC.to_ne_bytes());
+        // Stamp a plausible offset
+        buf[8..16].copy_from_slice(&(HEADER_BYTES as u64).to_ne_bytes());
+
+        let ptr = user_addr as *mut c_void;
+        unsafe {
+            let freed = dd_allocation_freed(ptr, 64, 8);
+            // Without live-heap the pointer is returned unchanged (no
+            // flag-check, no raw-pointer recovery).
+            assert_eq!(freed.ptr, ptr);
+            assert_eq!(freed.size, 64);
+        }
+    }
+
     #[test]
     fn zero_sampling_interval_disables_sampling() {
         let mut tl = dd_tl_state_t {
