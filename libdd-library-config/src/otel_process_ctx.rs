@@ -62,6 +62,7 @@ mod tests {
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
         any_value, AnyValue, KeyValue, ProcessContext,
     };
+    use libdd_trace_protobuf::opentelemetry::proto::resource::v1::Resource;
     use prost::Message;
 
     #[cfg(target_os = "linux")]
@@ -209,20 +210,34 @@ mod tests {
         );
     }
 
-    /// The only end-to-end test with `ProcessContextSelfReader`
+    /// End-to-end test using `ProcessContextSelfReader`.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn publish_read_update_read_and_unpublish() {
         fn context(service_name: &str) -> ProcessContext {
             ProcessContext {
-                resource: None,
-                extra_attributes: vec![KeyValue {
-                    key: "service.name".to_string(),
-                    value: Some(AnyValue {
-                        value: Some(any_value::Value::StringValue(service_name.to_string())),
-                    }),
-                    key_ref: 0,
-                }],
+                resource: Some(Resource {
+                    attributes: vec![
+                        string_attribute("service.name", service_name),
+                        string_attribute("telemetry.sdk.language", "rust"),
+                    ],
+                    dropped_attributes_count: 0,
+                    entity_refs: vec![],
+                }),
+                extra_attributes: vec![string_attribute(
+                    "datadog.process_tags",
+                    "region:us-east-1",
+                )],
+            }
+        }
+
+        fn string_attribute(key: &str, value: &str) -> KeyValue {
+            KeyValue {
+                key: key.to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(value.to_string())),
+                }),
+                key_ref: 0,
             }
         }
 

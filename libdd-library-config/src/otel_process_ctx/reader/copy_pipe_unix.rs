@@ -1,6 +1,14 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Fault-safe process-memory copying through a Unix pipe.
+//!
+//! [`CopyPipe`] asks the kernel to copy the source range into a pipe and then
+//! drains those bytes into owned memory. On the supported Unix targets, an
+//! inaccessible source range is reported as `EFAULT`, allowing the copy to
+//! return [`io::ErrorKind::WouldBlock`] without dereferencing the source pointer
+//! in Rust.
+
 use core::ffi::c_void;
 use std::{
     io,
@@ -20,17 +28,11 @@ pub(super) struct CopyPipe {
 
 impl ProcessMemoryCopy for CopyPipe {
     fn new() -> io::Result<Self> {
-        let (read_fd, write_fd, chunk_size) = create_pipe()?;
-
-        Ok(Self {
-            read_fd,
-            write_fd,
-            chunk_size,
-        })
+        create_pipe()
     }
 
     fn copy(&self, addr: *const u8, len: usize) -> Result<Vec<u8>, PipeCopyError> {
-        let mut bytes: Vec<u8> = Vec::with_capacity(len);
+        let mut bytes = vec![0; len];
         let mut offset = 0;
 
         while offset < len {
@@ -94,13 +96,22 @@ impl ProcessMemoryCopy for CopyPipe {
 
             let mut drained = 0;
             while drained < written {
-                // SAFETY: bytes owns len bytes of spare capacity and
-                // offset + written <= len, so the destination is writable.
+                // Bounds proof:
+                // { offset < len
+                //   && 0 < written <= chunk_len <= len - offset
+                //   && 0 <= drained < written
+                //   && bytes.len() == len }
+                // offset + drained < offset + written <= len == bytes.len()
+                // { offset + drained..offset + written is a valid, nonempty slice range }
+                let destination = &mut bytes[offset + drained..offset + written];
+                // SAFETY: destination is an exclusively borrowed byte slice, so its pointer is
+                // valid and writable for destination.len() bytes. read_fd owns a live pipe
+                // descriptor.
                 let result = unsafe {
                     libc::read(
                         self.read_fd.as_raw_fd(),
-                        bytes.as_mut_ptr().add(offset + drained).cast::<c_void>(),
-                        written - drained,
+                        destination.as_mut_ptr().cast::<c_void>(),
+                        destination.len(),
                     )
                 };
                 if result > 0 {
@@ -135,14 +146,12 @@ impl ProcessMemoryCopy for CopyPipe {
             offset += written;
         }
 
-        // SAFETY: every byte was initialized by the pipe reads above.
-        unsafe { bytes.set_len(len) };
         Ok(bytes)
     }
 }
 
 #[cfg(target_os = "linux")]
-fn create_pipe() -> io::Result<(OwnedFd, OwnedFd, usize)> {
+fn create_pipe() -> io::Result<CopyPipe> {
     let mut fds = [0; 2];
     // SAFETY: fds points to space for the two descriptors returned by pipe2.
     if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
@@ -167,7 +176,11 @@ fn create_pipe() -> io::Result<(OwnedFd, OwnedFd, usize)> {
         ));
     }
 
-    Ok((read_fd, write_fd, capacity as usize))
+    Ok(CopyPipe {
+        read_fd,
+        write_fd,
+        chunk_size: capacity as usize,
+    })
 }
 
 fn last_error(context: &'static str) -> io::Error {

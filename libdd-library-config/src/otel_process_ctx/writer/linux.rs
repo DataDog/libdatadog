@@ -117,7 +117,8 @@ impl MemMapping {
                     "mmap failed"
                 )?;
 
-                // We (implicitly) close the file descriptor right away, but this ok
+                // We (implicitly) close the file descriptor right away on purpose: this doesn't
+                // invalidate the mapping.
                 Ok(MemMapping { start_addr })
             })
             // If any previous step failed, we fallback to an anonymous mapping
