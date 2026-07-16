@@ -97,16 +97,4 @@ impl EnvCapability for NativeCapabilities {
     fn get(&self, name: &str) -> Result<Option<String>, EnvError> {
         self.env.get(name)
     }
-
-    unsafe fn set(&self, name: &str, value: &str) -> Result<(), EnvError> {
-        // SAFETY: forwarded verbatim; caller upholds `EnvCapability::set`'s
-        // single-threaded-env precondition.
-        unsafe { self.env.set(name, value) }
-    }
-
-    unsafe fn unset(&self, name: &str) -> Result<(), EnvError> {
-        // SAFETY: forwarded verbatim; caller upholds `EnvCapability::unset`'s
-        // single-threaded-env precondition.
-        unsafe { self.env.unset(name) }
-    }
 }
