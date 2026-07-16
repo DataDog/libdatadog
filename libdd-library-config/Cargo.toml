@@ -15,7 +15,10 @@ crate-type = ["lib"]
 bench = false
 
 [features]
-otel-thread-ctx = []
+default = ["process-context-reader", "process-context-writer"]
+otel-thread-ctx = ["process-context-writer"]
+process-context-reader = []
+process-context-writer = []
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
