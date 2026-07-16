@@ -82,6 +82,7 @@ scripts/check_crypto_providers.sh    @DataDog/libdatadog-core
 scripts/commits-since-release.sh     @DataDog/libdatadog-core
 scripts/create-release.sh            @DataDog/apm-common-components-core
 scripts/crates-to-package.sh         @DataDog/libdatadog-core
+scripts/exclude-from-green-ci.sh     @DataDog/libdatadog-core
 scripts/major-bumps-level.sh         @DataDog/libdatadog-core
 scripts/publication-order.sh         @DataDog/libdatadog-core
 scripts/reformat_copyright.sh        @DataDog/libdatadog-core
