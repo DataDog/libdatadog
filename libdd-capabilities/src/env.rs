@@ -8,7 +8,7 @@
 
 #[derive(Debug, thiserror::Error)]
 pub enum EnvError {
-    #[error("Env var value is not valid UTF-8: {0}")]
+    #[error("The value of the environment variable `{0}` is not valid UTF-8")]
     NotUnicode(String),
     #[error("IO error: {0}")]
     Io(anyhow::Error),
