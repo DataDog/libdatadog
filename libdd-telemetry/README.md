@@ -13,7 +13,7 @@ Internal telemetry library for reporting Datadog library metrics and events.
 - **Error Tracking**: Track and report library errors
 - **Host Information**: Automatic host and container metadata
 - **HTTP Transport**: Send telemetry data to Datadog intake
-- **Constrained Submission**: Submit preallocated metrics without `std` or an allocator
+- **Alloc-only Data Model**: Build and serialize telemetry payloads without `std`
 - **Worker Pattern**: Async background telemetry worker
 - **Dependency Tracking**: Report library dependencies
 - **Application Metadata**: Track application information
@@ -24,7 +24,6 @@ Internal telemetry library for reporting Datadog library metrics and events.
 - `data`: Telemetry data types and structures
 - `info`: System and host information gathering
 - `metrics`: Metrics collection and aggregation
-- `signal_safe`: Fixed-buffer metric encoding and submission
 - `worker`: Background telemetry worker
 
 ## Telemetry Data Types
@@ -53,38 +52,20 @@ let app = data::Application {
 };
 ```
 
-## Signal-safe metric submission
+## Alloc-only data model
 
-The `signal-safe` feature builds without `std` and uses the blocking `rustix`
-TCP transport from `libdd-http-client-lite` with caller-owned resolvers and
-request/response buffers. It is intended for code paths where allocation,
-runtime startup, and process-global configuration are not available. Whether a
-call is async-signal-safe still depends on the platform implementations
-supplied by the caller.
-
-The no-std library build can be checked directly:
+The `alloc` feature exposes the complete `data` module, including telemetry
+envelopes, payloads, metrics, and allocation-backed tags, in a `no_std` build.
+Runtime services such as configuration, host discovery, aggregation, and the
+worker remain behind the default `std` feature.
 
 ```bash
-cargo +nightly-2026-02-08 build \
-  -p libdd-telemetry \
-  --lib \
-  --no-default-features \
-  --features signal-safe \
-  --target x86_64-unknown-linux-none \
-  -Zbuild-std=core,compiler_builtins \
-  -Zbuild-std-features=compiler-builtins-mem
+cargo check -p libdd-telemetry --lib --no-default-features --features alloc
 ```
 
-The example posts a real `generate-metrics` payload to the Agent at
-`127.0.0.1:8126` while keeping telemetry serialization and HTTP buffers
-caller-owned:
-
-```bash
-cargo run -p libdd-telemetry \
-  --example signal_safe_metrics \
-  --no-default-features \
-  --features signal-safe
-```
+The metric `Tag` is defined by the alloc-compatible `libdd-common` crate, so
+existing `libdd_common::tag::Tag` callers continue to use the same concrete
+type.
 
 ## Host Information
 

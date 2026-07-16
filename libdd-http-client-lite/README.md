@@ -31,4 +31,12 @@ cargo run -p libdd-http-client-lite \
 cargo run -p libdd-http-client-lite \
   --example rustix_async_client \
   --features std,rustix-tcp
+
+cargo run -p libdd-http-client-lite \
+  --example telemetry_metrics \
+  --features std,rustix-tcp
 ```
+
+`telemetry_metrics` uses the existing `libdd-telemetry` data model and Serde
+implementation unchanged. It allocates the serialized request body before
+passing it to the lite client, so it is not suitable for a signal handler.

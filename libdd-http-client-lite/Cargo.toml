@@ -41,3 +41,11 @@ required-features = ["rustix-tcp", "std"]
 [[example]]
 name = "rustix_async_client"
 required-features = ["rustix-tcp", "std"]
+
+[[example]]
+name = "telemetry_metrics"
+required-features = ["rustix-tcp", "std"]
+
+[dev-dependencies]
+libdd-telemetry = { path = "../libdd-telemetry" }
+serde_json = "1.0"

@@ -29,7 +29,7 @@ serde_json = "1.0"
 thiserror = "2"
 tokio = { version = "1.23", features = ["rt"] }
 libdd-http-client = { version = "35.0", path = "../libdd-http-client", default-features = false }
-libdd-common = { version = "4.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "4.0", path = "../libdd-common", default-features = false, features = ["std"] }
 tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]

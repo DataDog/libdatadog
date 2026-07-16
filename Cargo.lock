@@ -3405,8 +3405,10 @@ dependencies = [
  "embedded-io-async",
  "embedded-nal-async",
  "libc",
+ "libdd-telemetry",
  "reqwless",
  "rustix 1.1.3",
+ "serde_json",
 ]
 
 [[package]]
@@ -3654,7 +3656,6 @@ dependencies = [
  "libc",
  "libdd-common",
  "libdd-ddsketch",
- "libdd-http-client-lite",
  "libdd-shared-runtime",
  "serde",
  "serde_json",

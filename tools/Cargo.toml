@@ -20,7 +20,7 @@ cargo_metadata = "0.18"
 clap = { version = "4.0", features = ["derive"] }
 colored = "2"
 quick-xml = "0.37"
-libdd-common = { path = "../libdd-common", default-features = false }
+libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
 toml = "0.8"
 wait-timeout = "0.2"
 

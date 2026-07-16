@@ -47,7 +47,7 @@ tar = "0.4.45"
 tools = { path = "../tools" }
 toml = "0.8.19"
 serde = "1.0.209"
-libdd-common = { path = "../libdd-common", default-features = false }
+libdd-common = { path = "../libdd-common", default-features = false, features = ["std"] }
 
 [[bin]]
 name = "release"
