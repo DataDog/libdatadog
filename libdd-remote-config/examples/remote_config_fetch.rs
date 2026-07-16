@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use libdd_capabilities_impl::NativeHttpClient;
 use libdd_common::Endpoint;
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher};
 use libdd_remote_config::file_change_tracker::{Change, FilePath};
@@ -21,7 +22,7 @@ async fn main() {
     // Otherwise a SharedFetcher (or even a MultiTargetFetcher for a potentially high number of
     // targets) for multiple targets is needed. These can be manually wired together with a
     // ChangeTracker to keep track of changes. The SingleChangesTracker does it for you.
-    let mut fetcher = SingleChangesFetcher::new(
+    let mut fetcher = SingleChangesFetcher::with_client(
         // Use SimpleFileStorage if you desire just the raw, unparsed contents
         // (e.g. to do processing directly in your language)
         // For more complicated use cases, like needing to store data in shared memory, a custom
@@ -50,6 +51,7 @@ async fn main() {
             products: vec![ApmTracing],
             capabilities: vec![],
         },
+        NativeHttpClient::new_periodic_client(),
     );
 
     loop {

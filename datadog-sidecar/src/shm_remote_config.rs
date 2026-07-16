@@ -10,6 +10,7 @@ use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWay
 use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
 use datadog_live_debugger::LiveDebuggingData;
+use libdd_capabilities_impl::NativeHttpClient;
 use libdd_common::{tag::Tag, MutexExt};
 use libdd_remote_config::config::dynamic::{parse_json, Configs};
 use libdd_remote_config::fetch::{
@@ -245,10 +246,12 @@ fn dynamic_instrumentation_is_enabled(apm_config: Option<bool>, info: &TargetInf
     }
 }
 
-impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStorage<N> {
+impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeHttpClient>
+    for ConfigFileStorage<N>
+{
     fn fetched(
         &self,
-        fetcher: &Arc<MultiTargetFetcher<N, Self>>,
+        fetcher: &Arc<MultiTargetFetcher<N, Self, NativeHttpClient>>,
         runtime_id: &Arc<String>,
         target: &Arc<Target>,
         files: &[Arc<StoredShmFile>],
@@ -422,7 +425,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
 
 #[derive(Clone)]
 pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
-    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>>>,
+    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>, NativeHttpClient>>,
 );
 
 // we collect services per env, so that we always query, for each runtime + env, all the services
@@ -448,7 +451,8 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
             _phantom: Default::default(),
         };
-        let fetcher = MultiTargetFetcher::new(storage, invariants);
+        let fetcher =
+            MultiTargetFetcher::new(storage, invariants, NativeHttpClient::new_periodic_client());
         fetcher
             .remote_config_interval
             .store(interval.as_nanos() as u64, Ordering::Relaxed);

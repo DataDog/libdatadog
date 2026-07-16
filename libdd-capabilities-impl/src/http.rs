@@ -11,20 +11,39 @@ mod native {
     use libdd_capabilities::http::{HttpClientCapability, HttpError};
     use libdd_capabilities::maybe_send::MaybeSend;
     use libdd_common::connector::Connector;
-    use libdd_common::http_common::{new_default_client, Body, GenericHttpClient};
+    use libdd_common::http_common::{
+        new_client_periodic, new_default_client, Body, GenericHttpClient,
+    };
 
     use http_body_util::BodyExt;
 
     #[derive(Clone)]
     pub struct NativeHttpClient {
         client: Arc<OnceLock<GenericHttpClient<Connector>>>,
+        periodic: bool,
     }
 
     impl std::fmt::Debug for NativeHttpClient {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             f.debug_struct("NativeHttpClient")
                 .field("initialized", &self.client.get().is_some())
+                .field("periodic", &self.periodic)
                 .finish()
+        }
+    }
+
+    impl NativeHttpClient {
+        /// Like [`HttpClientCapability::new_client`], but disables connection pooling.
+        ///
+        /// Intended for clients that issue requests on a fixed interval (e.g. remote
+        /// config polling): the agent's low keep-alive setting can close an idle
+        /// connection between polls, which turns a pooled/reused connection into
+        /// intermittent request failures.
+        pub fn new_periodic_client() -> Self {
+            Self {
+                client: Arc::new(OnceLock::new()),
+                periodic: true,
+            }
         }
     }
 
@@ -56,6 +75,7 @@ mod native {
         fn new_client() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
+                periodic: false,
             }
         }
 
@@ -65,7 +85,17 @@ mod native {
             req: http::Request<bytes::Bytes>,
         ) -> impl std::future::Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
         {
-            let client_lock = self.client.clone();
+            let periodic = self.periodic;
+            let client_lock = self
+                .client
+                .get_or_init(|| {
+                    if periodic {
+                        new_client_periodic()
+                    } else {
+                        new_default_client()
+                    }
+                })
+                .clone();
             async move {
                 // file:// URIs short-circuit to the on-disk recorder used by tests.
                 if req.uri().scheme_str() == Some("file") {
