@@ -119,7 +119,6 @@ pub mod linux {
     #[inline(always)]
     unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
         let ptr: usize;
-        //
         // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
         // rely on these exact relocation-bearing instruction patterns for TLS relaxation,
         // especially when this crate is linked statically. Harmless-looking rewrites can hide part
