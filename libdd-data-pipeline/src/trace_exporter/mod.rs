@@ -676,7 +676,8 @@ impl<
             r.language = self.metadata.language.clone();
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
-            r.client_computed_stats = self.otlp_stats_enabled;
+            r.client_computed_stats =
+                self.metadata.client_computed_stats || self.otlp_stats_enabled;
             r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
             r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
             r
@@ -694,7 +695,7 @@ impl<
         })?;
         // Also set the header: resource attributes survive Collector hops, headers don't.
         let effective_config;
-        let config_to_use = if self.otlp_stats_enabled {
+        let config_to_use = if self.metadata.client_computed_stats || self.otlp_stats_enabled {
             effective_config = {
                 let mut c = config.clone();
                 c.headers.insert(
