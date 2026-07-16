@@ -4,7 +4,7 @@
 use core::{
     convert::TryInto,
     marker::PhantomData,
-    mem::swap,
+    mem::replace,
     ptr::{self, NonNull},
     sync::atomic::{fence, AtomicPtr, AtomicU32, AtomicU64, Ordering},
 };
@@ -71,7 +71,6 @@ pub(super) trait HeaderMemoryHolder: Sized {
     fn as_ptr(&self) -> Option<NonNull<MappingHeader>>;
     fn make_discoverable(&mut self);
     fn unpublish_and_release(self) -> io::Result<()>;
-    fn after_fork(self);
 }
 
 pub(super) trait MonotonicTime {
@@ -252,16 +251,8 @@ pub(super) fn publish_raw_payload(payload: Vec<u8>) -> io::Result<()> {
     match &mut *guard {
         Some(handler) if handler.mapping.as_ptr().is_some() => handler.update(payload),
         Some(handler) => {
-            let mut local_handler = ProcessContextHandleGen::publish(payload)?;
-            // If we've been forked, we need to prevent the mapping from being dropped
-            // normally, as it would try to unmap a region that isn't mapped anymore in the
-            // child process, or worse, could have been remapped to something else in the
-            // meantime.
-            //
-            // To do so, we get the old handler back in `local_handler` and prevent `mapping`
-            // from being dropped specifically.
-            swap(&mut local_handler, handler);
-            local_handler.mapping.after_fork();
+            let new_handler = ProcessContextHandleGen::publish(payload)?;
+            let _old_handler = replace(handler, new_handler);
 
             Ok(())
         }

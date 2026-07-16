@@ -60,10 +60,6 @@ impl super::HeaderMemoryHolder for MemMapping {
     fn unpublish_and_release(self) -> io::Result<()> {
         self.free()
     }
-
-    fn after_fork(self) {
-        drop(self);
-    }
 }
 
 pub(super) struct MonotonicClock;
