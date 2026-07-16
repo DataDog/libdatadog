@@ -135,8 +135,6 @@ impl Module for Profiling {
         let features = self.features.to_string() + "," + "cbindgen";
         #[cfg(feature = "crashtracker")]
         let features = features.add(",crashtracker-collector,crashtracker-receiver,demangler");
-        #[cfg(feature = "otel-thread-ctx")]
-        let features = features.add(",otel-thread-ctx-ffi");
 
         // Using rustc instead of build in order to overcome issues with LTO optimization.
         let mut cargo_args = vec![

@@ -20,7 +20,6 @@ default = [
   "ddsketch",
   "ffe",
   "shared-runtime",
-  "otel-thread-ctx",
 ]
 crashtracker = []
 profiling = []
