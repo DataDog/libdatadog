@@ -278,7 +278,7 @@ where
 {
     let count = decode::read_array_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("V1 chunks array len read failure".to_owned()))?;
-    let mut chunks = Vec::with_capacity(count as usize);
+    let mut chunks = Vec::with_capacity(buf.capped_capacity(count as usize));
     for _ in 0..count {
         chunks.push(decode_chunk(buf, table)?);
     }
@@ -324,7 +324,7 @@ where
                 let count = decode::read_array_len(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 chunk spans array len read failure".to_owned())
                 })?;
-                let mut spans = Vec::with_capacity(count as usize);
+                let mut spans = Vec::with_capacity(buf.capped_capacity(count as usize));
                 for _ in 0..count {
                     spans.push(span::decode_span(buf, table)?);
                 }

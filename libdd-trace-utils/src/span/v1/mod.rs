@@ -32,6 +32,19 @@ impl SpanKind {
     }
 }
 
+impl From<u32> for SpanKind {
+    /// OTEL SpanKind wire value → enum; unset/unknown → Internal (per OTEL spec).
+    fn from(kind: u32) -> Self {
+        match kind {
+            2 => SpanKind::Server,
+            3 => SpanKind::Client,
+            4 => SpanKind::Producer,
+            5 => SpanKind::Consumer,
+            _ => SpanKind::Internal,
+        }
+    }
+}
+
 /// Typed V1 attribute value.
 /// Replaces v0.4's split `meta` / `metrics` / `meta_struct` maps.
 #[derive(Debug, PartialEq)]

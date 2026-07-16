@@ -90,14 +90,7 @@ where
                 let kind: u32 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 span_kind u32 read failure".to_owned())
                 })?;
-                // OTEL spec: unset / unknown → Internal.
-                span.span_kind = match kind {
-                    2 => SpanKind::Server,
-                    3 => SpanKind::Client,
-                    4 => SpanKind::Producer,
-                    5 => SpanKind::Consumer,
-                    _ => SpanKind::Internal,
-                };
+                span.span_kind = SpanKind::from(kind);
             }
             _unknown => skip_unknown_value(buf)?,
         }
@@ -136,7 +129,7 @@ where
     }
 
     let entries = (flat_len / FLAT_ATTR_STRIDE) as usize;
-    let mut map = VecMap::with_capacity(entries);
+    let mut map = VecMap::with_capacity(buf.capped_capacity(entries));
 
     for _ in 0..entries {
         let key = read_interned_string(buf, table)?;
@@ -197,7 +190,7 @@ where
                 )));
             }
             let n = (array_len_with_stride / TYPED_VALUE_STRIDE) as usize;
-            let mut items = Vec::with_capacity(n);
+            let mut items = Vec::with_capacity(buf.capped_capacity(n));
             for _ in 0..n {
                 items.push(read_typed_attribute_value(buf, table)?);
             }
@@ -230,7 +223,7 @@ where
 {
     let count = decode::read_array_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("V1 span_links len read failure".to_owned()))?;
-    let mut links = ThinVec::with_capacity(count as usize);
+    let mut links = ThinVec::with_capacity(buf.capped_capacity(count as usize));
     for _ in 0..count {
         links.push(decode_span_link(buf, table)?);
     }
@@ -298,7 +291,7 @@ where
 {
     let count = decode::read_array_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("V1 span_events len read failure".to_owned()))?;
-    let mut events = ThinVec::with_capacity(count as usize);
+    let mut events = ThinVec::with_capacity(buf.capped_capacity(count as usize));
     for _ in 0..count {
         events.push(decode_span_event(buf, table)?);
     }
