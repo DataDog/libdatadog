@@ -313,7 +313,7 @@ fn metadata_matches_v1(
         ("env", dest.env == src.env),
         ("hostname", dest.hostname == src.hostname),
         ("app_version", dest.app_version == src.app_version),
-        ("attributes", attributes_match),
+        ("attributes", dest.attributes.slow_compare(&src.attributes)),
     ]
     .into_iter()
     .filter_map(|(label, eq)| (!eq).then_some(label))

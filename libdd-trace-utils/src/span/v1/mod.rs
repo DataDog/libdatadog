@@ -58,28 +58,19 @@ pub enum AttributeValue<T: TraceData> {
     List(Vec<AttributeValue<T>>),
 }
 
-// `#[derive(PartialEq)]` only bounds the type parameter `T` itself, not the associated types
-// (`T::Text`, `T::Bytes`) actually used in the fields below, so it can't be used here.
-//
-// `VecMap`'s own `PartialEq` impl is cfg-gated to `test`/`test-utils` (it allocates two
-// `HashMap`s), so the `KeyValue` variant below can't just delegate to `VecMap::eq` — it
-// reimplements the same last-write-wins comparison directly instead.
+// Implemented manually rather than derived: `VecMap`'s `PartialEq` is gated to
+// test/test-utils (see its definition) to keep its allocation cost out of casual `==`, so the
+// `KeyValue` variant compares via `slow_compare` instead of relying on that trait impl.
 impl<T: TraceData> PartialEq for AttributeValue<T> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::String(a), Self::String(b)) => a == b,
-            (Self::Float(a), Self::Float(b)) => a == b,
-            (Self::Int(a), Self::Int(b)) => a == b,
-            (Self::Bool(a), Self::Bool(b)) => a == b,
-            (Self::Bytes(a), Self::Bytes(b)) => a == b,
-            (Self::KeyValue(a), Self::KeyValue(b)) => {
-                let lhs: std::collections::HashMap<&T::Text, &AttributeValue<T>> =
-                    a.iter().map(|(k, v)| (k, v)).collect();
-                let rhs: std::collections::HashMap<&T::Text, &AttributeValue<T>> =
-                    b.iter().map(|(k, v)| (k, v)).collect();
-                lhs == rhs
-            }
-            (Self::List(a), Self::List(b)) => a == b,
+            (AttributeValue::String(a), AttributeValue::String(b)) => a == b,
+            (AttributeValue::Float(a), AttributeValue::Float(b)) => a == b,
+            (AttributeValue::Int(a), AttributeValue::Int(b)) => a == b,
+            (AttributeValue::Bool(a), AttributeValue::Bool(b)) => a == b,
+            (AttributeValue::Bytes(a), AttributeValue::Bytes(b)) => a == b,
+            (AttributeValue::KeyValue(a), AttributeValue::KeyValue(b)) => a.slow_compare(b),
+            (AttributeValue::List(a), AttributeValue::List(b)) => a == b,
             _ => false,
         }
     }
