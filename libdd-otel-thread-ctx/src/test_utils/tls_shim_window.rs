@@ -167,7 +167,6 @@ pub struct TlsDescWindow {
 }
 
 impl TlsDescWindow {
-    /// Lowercase hex SHA-256 of the sequence bytes.
     pub fn hash_hex(&self) -> String {
         let digest = Sha256::digest(&self.bytes);
         let mut out = String::with_capacity(digest.len() * 2);
