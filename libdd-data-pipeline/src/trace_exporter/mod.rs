@@ -668,6 +668,7 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
+        let client_computed_stats = self.otlp_stats_enabled || self.metadata.client_computed_stats;
         let resource_info = {
             let mut r = OtlpResourceInfo::default();
             r.service = self.metadata.service.clone();
@@ -676,7 +677,7 @@ impl<
             r.language = self.metadata.language.clone();
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
-            r.client_computed_stats = self.otlp_stats_enabled;
+            r.client_computed_stats = client_computed_stats;
             r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
             r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
             r
@@ -694,7 +695,7 @@ impl<
         })?;
         // Also set the header: resource attributes survive Collector hops, headers don't.
         let effective_config;
-        let config_to_use = if self.otlp_stats_enabled {
+        let config_to_use = if client_computed_stats {
             effective_config = {
                 let mut c = config.clone();
                 c.headers.insert(
@@ -2171,7 +2172,10 @@ mod tests {
         let mock_otlp = server.mock(|when, then| {
             when.method(POST)
                 .path("/v1/traces")
-                .header("Content-Type", "application/json");
+                .header("Content-Type", "application/json")
+                .header("datadog-client-computed-stats", "yes")
+                .body_includes("\"key\":\"_dd.stats_computed\"")
+                .body_includes("\"stringValue\":\"true\"");
             then.status(200).body("");
         });
 
@@ -2185,6 +2189,7 @@ mod tests {
             .set_language("rust")
             .set_language_version("1.0")
             .set_language_interpreter("rustc")
+            .set_client_computed_stats()
             .set_otlp_endpoint(&otlp_endpoint)
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04);
