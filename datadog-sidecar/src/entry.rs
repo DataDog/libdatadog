@@ -108,23 +108,26 @@ where
         drop(SHM_LIMITER.lock());
     }
 
-    #[cfg(unix)]
-    let appsec = config
-        .appsec_config
-        .as_ref()
-        .and_then(crate::appsec::AppSec::start);
-
     let server = SidecarServer::default();
+    // Initialize telemetry synchronously so both the in-process helper and FFI callers can enqueue
+    // actions before the receiver task gets its first poll.
+    let (in_process_telemetry, telemetry_rx) = init_telemetry_sender();
+
+    #[cfg(unix)]
+    let appsec = config.appsec_config.as_ref().and_then(|appsec_config| {
+        crate::appsec::AppSec::start(appsec_config, in_process_telemetry.clone())
+    });
+
+    #[cfg(not(unix))]
+    drop(in_process_telemetry);
+
     #[cfg(unix)]
     let server = match appsec.as_ref() {
         Some(appsec) => server.with_appsec_backend(appsec.backend()),
         None => server,
     };
 
-    // Initialize telemetry sender synchronously before spawning the receiver task
-    // This ensures the sender is available immediately, avoiding race conditions
-    // where FFI calls might try to send telemetry before the receiver task starts
-    if let Some(rx) = init_telemetry_sender() {
+    if let Some(rx) = telemetry_rx {
         tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
     }
 

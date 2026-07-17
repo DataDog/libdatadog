@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::config::AppSecConfig;
+use crate::service::telemetry::InProcessTelemetryClientFactory;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::OnceLock;
 use tracing::{error, info};
 
-pub type AppSecBackendFactory = fn(&AppSecConfig) -> anyhow::Result<AppSecBackend>;
+pub type AppSecBackendFactory =
+    fn(&AppSecConfig, InProcessTelemetryClientFactory) -> anyhow::Result<AppSecBackend>;
 
 static APPSEC_BACKEND_FACTORY: OnceLock<AppSecBackendFactory> = OnceLock::new();
 
@@ -23,7 +25,10 @@ pub struct AppSec {
 }
 
 impl AppSec {
-    pub fn start(config: &AppSecConfig) -> Option<Self> {
+    pub fn start(
+        config: &AppSecConfig,
+        telemetry: InProcessTelemetryClientFactory,
+    ) -> Option<Self> {
         info!("Starting appsec backend");
 
         let Some(factory) = APPSEC_BACKEND_FACTORY.get() else {
@@ -31,7 +36,7 @@ impl AppSec {
             return None;
         };
 
-        let backend = match factory(config) {
+        let backend = match factory(config, telemetry) {
             Ok(backend) => backend,
             Err(err) => {
                 error!("Appsec backend failed to start: {err:#}");
