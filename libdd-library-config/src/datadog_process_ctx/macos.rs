@@ -3,10 +3,17 @@
 
 use portable_atomic::AtomicU128;
 
+#[cfg(feature = "process-context-reader")]
+pub(crate) mod copy_pipe;
+#[cfg(feature = "process-context-reader")]
+pub(crate) mod reader;
+#[cfg(feature = "process-context-writer")]
+pub(crate) mod writer;
+
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-compile_error!("OTel process context only supports aarch64 and x86_64 on macOS");
+compile_error!("Datadog process context only supports aarch64 and x86_64 on macOS");
 #[cfg(not(target_endian = "little"))]
-compile_error!("OTel process context requires a little-endian macOS target");
+compile_error!("Datadog process context requires a little-endian macOS target");
 
 pub(super) type AtomicPublishedHeader = AtomicU128;
 

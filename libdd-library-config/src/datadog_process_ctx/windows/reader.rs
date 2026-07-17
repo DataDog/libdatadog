@@ -11,9 +11,9 @@ use std::io;
 #[cfg(not(feature = "process-context-writer"))]
 use std::sync::OnceLock;
 
-use super::ReaderPlatform;
 #[cfg(not(feature = "process-context-writer"))]
 use crate::otel_process_ctx::last_error;
+use crate::otel_process_ctx::reader::ReaderBackend;
 
 #[cfg(not(feature = "process-context-writer"))]
 type Handle = *mut c_void;
@@ -31,9 +31,15 @@ unsafe extern "system" {
     ) -> i32;
 }
 
-pub(super) struct HeaderDiscovery;
+mod sealed {
+    pub struct WindowsReaderBackend;
+}
 
-impl ReaderPlatform for HeaderDiscovery {
+pub(crate) use sealed::WindowsReaderBackend;
+
+impl ReaderBackend for WindowsReaderBackend {
+    type MemoryCopy = super::copy_pipe::CopyPipe;
+
     fn discover_header() -> io::Result<NonNull<u8>> {
         let header = process_context_global()?.load(Ordering::Acquire);
         NonNull::new(header).ok_or_else(|| {
@@ -44,7 +50,7 @@ impl ReaderPlatform for HeaderDiscovery {
 
 #[cfg(feature = "process-context-writer")]
 fn process_context_global() -> io::Result<&'static AtomicPtr<u8>> {
-    Ok(&crate::otel_process_ctx::writer::windows::otel_process_ctx_v2)
+    Ok(&super::writer::datadog_process_ctx_v1)
 }
 
 #[cfg(not(feature = "process-context-writer"))]
@@ -104,7 +110,8 @@ fn find_process_context_global() -> io::Result<usize> {
         for module in modules.into_iter().take(actual_module_count) {
             // SAFETY: module was returned by K32EnumProcessModules and the symbol name is
             // NUL-terminated.
-            let symbol = unsafe { GetProcAddress(module, c"otel_process_ctx_v2".as_ptr().cast()) };
+            let symbol =
+                unsafe { GetProcAddress(module, c"datadog_process_ctx_v1".as_ptr().cast()) };
             if let Some(symbol) = NonNull::new(symbol) {
                 return Ok(symbol.as_ptr() as usize);
             }
@@ -112,7 +119,7 @@ fn find_process_context_global() -> io::Result<usize> {
 
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            "couldn't resolve otel_process_ctx_v2 in the current process",
+            "couldn't resolve datadog_process_ctx_v1 in the current process",
         ));
     }
 }
@@ -126,23 +133,24 @@ mod tests {
 
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{KeyValue, ProcessContext};
 
-    use crate::otel_process_ctx::{
-        MappingHeaderSnapshot, ProcessContextSelfReader, PROCESS_CTX_VERSION, SIGNATURE,
+    use crate::{
+        datadog_process_ctx::ProcessContextSelfReader,
+        otel_process_ctx::{reader::MappingHeaderSnapshot, PROCESS_CTX_VERSION, SIGNATURE},
     };
 
     #[cfg(target_env = "msvc")]
     #[used]
     #[link_section = ".drectve"]
-    static EXPORT_OTEL_PROCESS_CTX_V2: [u8; 28] = *b" /EXPORT:otel_process_ctx_v2";
+    static EXPORT_DATADOG_PROCESS_CTX_V1: [u8; 31] = *b" /EXPORT:datadog_process_ctx_v1";
 
     #[cfg(target_env = "gnu")]
     #[used]
     #[link_section = ".drectve"]
-    static EXPORT_OTEL_PROCESS_CTX_V2: [u8; 28] = *b" -export:otel_process_ctx_v2";
+    static EXPORT_DATADOG_PROCESS_CTX_V1: [u8; 31] = *b" -export:datadog_process_ctx_v1";
 
     #[no_mangle]
     #[allow(non_upper_case_globals)]
-    pub static otel_process_ctx_v2: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
+    pub static datadog_process_ctx_v1: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 
     #[test]
     fn reads_context_from_exported_global() {
@@ -162,11 +170,11 @@ mod tests {
             monotonic_published_at_ns: 1,
             payload_ptr: payload.as_ptr(),
         };
-        otel_process_ctx_v2.store(ptr::from_ref(&header).cast_mut().cast(), Ordering::Release);
+        datadog_process_ctx_v1.store(ptr::from_ref(&header).cast_mut().cast(), Ordering::Release);
 
         let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
         assert_eq!(reader.read().expect("read should succeed"), expected);
 
-        otel_process_ctx_v2.store(ptr::null_mut(), Ordering::Relaxed);
+        datadog_process_ctx_v1.store(ptr::null_mut(), Ordering::Relaxed);
     }
 }

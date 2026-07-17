@@ -221,7 +221,7 @@ mod linux {
         data: &super::TracerMetadata,
     ) -> anyhow::Result<super::AnonymousFileHandle> {
         #[cfg(feature = "process-context-writer")]
-        let _ = crate::otel_process_ctx::publish(&data.to_otel_process_ctx());
+        let _ = crate::datadog_process_ctx::publish(&data.to_otel_process_ctx());
 
         let uid: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
@@ -255,13 +255,13 @@ mod linux {
 
 #[cfg(not(target_os = "linux"))]
 mod other {
-    /// Publishes tracer metadata as an OTel process context.
+    /// Publishes tracer metadata through the Datadog process-context API.
     pub fn store_tracer_metadata(
         data: &super::TracerMetadata,
     ) -> anyhow::Result<super::AnonymousFileHandle> {
         #[cfg(feature = "process-context-writer")]
         {
-            crate::otel_process_ctx::publish(&data.to_otel_process_ctx())?;
+            crate::datadog_process_ctx::publish(&data.to_otel_process_ctx())?;
             Ok(super::AnonymousFileHandle::Other(()))
         }
 
@@ -329,7 +329,7 @@ mod tests {
     ))]
     #[test]
     #[serial_test::serial]
-    fn store_tracer_metadata_publishes_otel_process_context() {
+    fn store_tracer_metadata_publishes_process_context() {
         let metadata = TracerMetadata {
             tracer_language: "python".to_owned(),
             tracer_version: "1.2.3".to_owned(),
@@ -339,11 +339,11 @@ mod tests {
         let expected = metadata.to_otel_process_ctx();
 
         store_tracer_metadata(&metadata).expect("metadata storage should succeed");
-        let reader = crate::otel_process_ctx::ProcessContextSelfReader::new()
+        let reader = crate::datadog_process_ctx::ProcessContextSelfReader::new()
             .expect("reader creation should succeed");
         assert_eq!(reader.read().expect("read should succeed"), expected);
 
-        crate::otel_process_ctx::unpublish().expect("unpublish should succeed");
+        crate::datadog_process_ctx::unpublish().expect("unpublish should succeed");
     }
 
     #[cfg(feature = "otel-thread-ctx")]

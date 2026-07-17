@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Same-process reader for the OTel process context.
+//! Shared same-process reader for process context.
 //!
 //! Although it reads the current process, the reader does not coordinate with
 //! the publisher: it neither acquires the publisher's lock nor retains a guard
@@ -28,89 +28,88 @@ use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
 };
 use prost::Message;
 
-use super::{MappingHeaderSnapshot, PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
-
-#[cfg(unix)]
-mod copy_pipe_unix;
-#[cfg(windows)]
-mod copy_pipe_windows;
-#[cfg(target_os = "linux")]
-pub(super) mod linux;
-#[cfg(target_os = "macos")]
-pub(super) mod macos;
-#[cfg(target_os = "windows")]
-pub(super) mod windows;
-
-#[cfg(unix)]
-use copy_pipe_unix::CopyPipe as PlatformCopyPipe;
-#[cfg(windows)]
-use copy_pipe_windows::CopyPipe as PlatformCopyPipe;
+use super::{PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
 
 #[cfg(target_os = "linux")]
-type PlatformHeaderDiscovery = linux::HeaderDiscovery;
-#[cfg(target_os = "macos")]
-type PlatformHeaderDiscovery = macos::HeaderDiscovery;
-#[cfg(target_os = "windows")]
-type PlatformHeaderDiscovery = windows::HeaderDiscovery;
+pub(crate) mod copy_pipe_unix;
+#[cfg(target_os = "linux")]
+pub(crate) mod linux;
 
-pub(super) trait ReaderPlatform {
-    fn discover_header() -> io::Result<NonNull<u8>>;
+#[repr(C)]
+pub(crate) struct MappingHeaderSnapshot {
+    pub(crate) signature: [u8; 8],
+    pub(crate) version: u32,
+    pub(crate) payload_size: u32,
+    pub(crate) monotonic_published_at_ns: u64,
+    pub(crate) payload_ptr: *const u8,
 }
 
-pub(super) trait ProcessMemoryCopy: Sized + Send {
-    fn new() -> io::Result<Self>;
+mod sealed {
+    use super::{io, NonNull};
 
-    /// Copies exactly `len` bytes starting at `addr`.
-    ///
-    /// The caller is not required to establish that the source range is
-    /// aligned, initialized, mapped, or remains mapped for the duration of the
-    /// copy. Implementations must not dereference `addr` directly in Rust.
-    ///
-    /// If any part of the source range is inaccessible, the implementation must
-    /// return a [`PipeCopyError`] whose inner error has
-    /// [`io::ErrorKind::WouldBlock`], rather than causing undefined behavior or
-    /// terminating the process.
-    ///
-    /// On success, the returned vector contains exactly `len` bytes. The copy is
-    /// not an atomic snapshot: the source memory may change while it is copied.
-    fn copy(&self, addr: *const u8, len: usize) -> Result<Vec<u8>, PipeCopyError>;
+    pub trait ReaderBackend {
+        type MemoryCopy: ProcessMemoryCopy;
+
+        fn discover_header() -> io::Result<NonNull<u8>>;
+    }
+
+    pub trait ProcessMemoryCopy: Sized + Send {
+        fn new() -> io::Result<Self>;
+
+        /// Copies exactly `len` bytes starting at `addr`.
+        ///
+        /// The caller is not required to establish that the source range is
+        /// aligned, initialized, mapped, or remains mapped for the duration of the
+        /// copy. Implementations must not dereference `addr` directly in Rust.
+        ///
+        /// If any part of the source range is inaccessible, the implementation must
+        /// return a [`PipeCopyError`] whose inner error has
+        /// [`io::ErrorKind::WouldBlock`], rather than causing undefined behavior or
+        /// terminating the process.
+        ///
+        /// On success, the returned vector contains exactly `len` bytes. The copy is
+        /// not an atomic snapshot: the source memory may change while it is copied.
+        fn copy(&self, addr: *const u8, len: usize) -> Result<Vec<u8>, PipeCopyError>;
+    }
+
+    #[derive(Debug)]
+    pub struct PipeCopyError {
+        pub(crate) err: io::Error,
+        /// If true, the pipe may contain leftover bytes and must not be reused.
+        pub(crate) pipe_dirty: bool,
+    }
 }
 
-#[derive(Debug)]
-pub(super) struct PipeCopyError {
-    pub(super) err: io::Error,
-    /// If true, the pipe may contain leftover bytes and must not be reused.
-    pub(super) pipe_dirty: bool,
-}
+pub(crate) use sealed::{PipeCopyError, ProcessMemoryCopy, ReaderBackend};
 
-/// Reader for the current process's OTel process context.
+/// Reader for the current process context.
 ///
 /// The platform implementation locates the header at construction. Reads use a kernel-mediated
 /// copy so unpublish and payload replacement races return errors instead of dereferencing freed
 /// memory.
-pub struct ProcessContextSelfReader {
+pub struct ProcessContextReader<B: ReaderBackend> {
     pid: u32,
-    pub(in crate::otel_process_ctx) header_ptr: NonNull<u8>,
-    pipe: Cell<Option<PlatformCopyPipe>>,
+    pub(crate) header_ptr: NonNull<u8>,
+    pipe: Cell<Option<B::MemoryCopy>>,
 }
 
 // SAFETY: ProcessMemoryCopy requires the cached platform pipe to be Send. Moving header_ptr between
 // threads is safe because it is a process-global address that is never dereferenced directly; all
 // access goes through ProcessMemoryCopy. Cell keeps the type !Sync, so the cached pipe cannot be
 // used concurrently through shared references.
-unsafe impl Send for ProcessContextSelfReader {}
+unsafe impl<B: ReaderBackend> Send for ProcessContextReader<B> {}
 
-impl ProcessContextSelfReader {
-    /// Locates the current process's published OTel process context header.
+impl<B: ReaderBackend> ProcessContextReader<B> {
+    /// Locates the current process's published process-context header.
     pub fn new() -> io::Result<Self> {
         Ok(Self {
             pid: std::process::id(),
-            header_ptr: <PlatformHeaderDiscovery as ReaderPlatform>::discover_header()?,
+            header_ptr: B::discover_header()?,
             pipe: Cell::new(None),
         })
     }
 
-    /// Reads and decodes the current process's OTel process context.
+    /// Reads and decodes the current process context.
     ///
     /// Returns [`io::ErrorKind::WouldBlock`] if a writer is publishing or updating the context,
     /// or if the context changed while it was being read. Callers may retry later.
@@ -291,7 +290,7 @@ impl ProcessContextSelfReader {
 
         let pipe = match self.pipe.take() {
             Some(pipe) => pipe,
-            None => PlatformCopyPipe::new()?,
+            None => B::MemoryCopy::new()?,
         };
 
         match pipe.copy(addr, len) {

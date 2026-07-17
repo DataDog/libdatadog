@@ -6,7 +6,17 @@ extern crate alloc;
     any(feature = "process-context-reader", feature = "process-context-writer"),
     any(target_os = "linux", target_os = "macos", target_os = "windows")
 ))]
+pub mod datadog_process_ctx;
+#[cfg(all(
+    any(feature = "process-context-reader", feature = "process-context-writer"),
+    target_os = "linux"
+))]
 pub mod otel_process_ctx;
+#[cfg(all(
+    any(feature = "process-context-reader", feature = "process-context-writer"),
+    any(target_os = "macos", target_os = "windows")
+))]
+mod otel_process_ctx;
 pub mod tracer_metadata;
 
 use alloc::borrow::Cow;

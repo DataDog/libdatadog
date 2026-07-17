@@ -7,11 +7,17 @@ use std::{
     io::{self, BufRead, BufReader},
 };
 
-use super::ReaderPlatform;
+use super::ReaderBackend;
 
-pub(super) struct HeaderDiscovery;
+mod sealed {
+    pub struct LinuxReaderBackend;
+}
 
-impl ReaderPlatform for HeaderDiscovery {
+pub(crate) use sealed::LinuxReaderBackend;
+
+impl ReaderBackend for LinuxReaderBackend {
+    type MemoryCopy = super::copy_pipe_unix::CopyPipe;
+
     fn discover_header() -> io::Result<NonNull<u8>> {
         let address = find_otel_mapping()?;
         NonNull::new(ptr::with_exposed_provenance::<u8>(address).cast_mut()).ok_or_else(|| {
@@ -21,7 +27,7 @@ impl ReaderPlatform for HeaderDiscovery {
 }
 
 /// Finds the OTEL_CTX mapping in `/proc/self/maps`.
-pub(in crate::otel_process_ctx) fn find_otel_mapping() -> io::Result<usize> {
+pub(crate) fn find_otel_mapping() -> io::Result<usize> {
     let file = File::open("/proc/self/maps")?;
     let reader = BufReader::new(file);
 
@@ -83,16 +89,21 @@ mod tests {
         use core::sync::atomic::Ordering;
 
         use super::super::io;
-        use crate::otel_process_ctx::ProcessContextSelfReader;
-        use crate::otel_process_ctx::{writer::MappingHeader, UNPUBLISHED_OR_UPDATING};
+        use crate::otel_process_ctx::{
+            reader::{linux::LinuxReaderBackend, ProcessContextReader},
+            tests::publish_raw_payload,
+            unpublish,
+            writer::MappingHeader,
+            UNPUBLISHED_OR_UPDATING,
+        };
 
         #[test]
         #[cfg_attr(miri, ignore)]
         #[serial_test::serial]
         fn read_returns_would_block_while_context_is_being_updated() {
-            crate::otel_process_ctx::writer::publish_raw_payload(b"published payload".to_vec())
-                .expect("publish should succeed");
-            let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+            publish_raw_payload(b"published payload".to_vec()).expect("publish should succeed");
+            let reader = ProcessContextReader::<LinuxReaderBackend>::new()
+                .expect("reader creation should succeed");
             // SAFETY: the mapping is live and this serial test excludes concurrent publishers.
             let header = reader.header_ptr.as_ptr().cast::<MappingHeader>();
             let published_at = unsafe {
@@ -112,24 +123,24 @@ mod tests {
                     .monotonic_published_at_ns
                     .store(published_at, Ordering::Relaxed);
             }
-            crate::otel_process_ctx::unpublish().expect("unpublish should succeed");
+            unpublish().expect("unpublish should succeed");
         }
 
         #[test]
         #[cfg_attr(miri, ignore)]
         #[serial_test::serial]
         fn discovers_and_reads_published_context() {
-            crate::otel_process_ctx::writer::publish_raw_payload(b"published payload".to_vec())
-                .expect("publish should succeed");
+            publish_raw_payload(b"published payload".to_vec()).expect("publish should succeed");
 
-            let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+            let reader = ProcessContextReader::<LinuxReaderBackend>::new()
+                .expect("reader creation should succeed");
             let error = reader
                 .read()
                 .expect_err("raw test payload is not a protobuf context");
             assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 
-            crate::otel_process_ctx::unpublish().expect("unpublish should succeed");
-            assert!(ProcessContextSelfReader::new().is_err());
+            unpublish().expect("unpublish should succeed");
+            assert!(ProcessContextReader::<LinuxReaderBackend>::new().is_err());
         }
     }
 }

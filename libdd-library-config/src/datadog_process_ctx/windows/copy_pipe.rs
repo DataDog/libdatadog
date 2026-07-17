@@ -4,8 +4,10 @@
 use core::{ffi::c_void, ptr};
 use std::io;
 
-use super::{PipeCopyError, ProcessMemoryCopy};
-use crate::otel_process_ctx::last_error;
+use crate::otel_process_ctx::{
+    last_error,
+    reader::{PipeCopyError, ProcessMemoryCopy},
+};
 
 type Handle = *mut c_void;
 
@@ -46,7 +48,7 @@ unsafe extern "system" {
 }
 
 /// A cached anonymous pipe used to probe-copy process memory through the Windows kernel.
-pub(super) struct CopyPipe {
+pub struct CopyPipe {
     read_handle: Handle,
     write_handle: Handle,
     chunk_size: u32,

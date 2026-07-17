@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Fault-safe process-memory copying through a Linux pipe.
+//! Fault-safe process-memory copying through a macOS pipe.
 //!
 //! [`CopyPipe`] asks the kernel to copy the source range into a pipe and then
 //! drains those bytes into owned memory. On the supported Unix targets, an
@@ -15,9 +15,11 @@ use std::{
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
 };
 
-use super::super::retry_on_eintr;
-use super::{PipeCopyError, ProcessMemoryCopy};
-use crate::otel_process_ctx::last_error;
+use crate::otel_process_ctx::{
+    last_error,
+    reader::{PipeCopyError, ProcessMemoryCopy},
+    retry_on_eintr,
+};
 
 /// A cached pipe used to probe-copy process memory through the kernel.
 ///
@@ -83,9 +85,9 @@ impl ProcessMemoryCopy for CopyPipe {
                                     io::ErrorKind::WouldBlock,
                                     "process context memory was unmapped during read",
                                 ),
-                                // If EFAULT is returned, nothing was written; a partial copy would
-                                // instead be reported as a short write.
-                                pipe_dirty: false,
+                                // macOS may leave bytes in the pipe when it returns EFAULT.
+                                // See https://github.com/apple-oss-distributions/xnu/blob/5c306bec31e314fa4d8bbdafb2f6f5a6b7e7b291/bsd/man/man2/write.2#L168-L186
+                                pipe_dirty: true,
                             });
                         }
                         _ => {
@@ -159,34 +161,62 @@ impl ProcessMemoryCopy for CopyPipe {
 
 fn create_pipe() -> io::Result<CopyPipe> {
     let mut fds = [0; 2];
-    // SAFETY: fds points to space for the two descriptors returned by pipe2.
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
+    // SAFETY: fds points to space for the two descriptors returned by pipe.
+    if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
         return Err(last_error("failed to create process context copy pipe"));
     }
 
-    // SAFETY: pipe2 initialized both descriptors and ownership is transferred exactly once.
+    // SAFETY: pipe initialized both descriptors and ownership is transferred exactly once.
     let (read_fd, write_fd) =
         unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    configure_fd(&read_fd)?;
+    configure_fd(&write_fd)?;
 
+    // POSIX guarantees that an empty pipe accepts at least PIPE_BUF bytes without blocking.
     // SAFETY: write_fd is a valid pipe descriptor.
-    let capacity = unsafe { libc::fcntl(write_fd.as_raw_fd(), libc::F_GETPIPE_SZ) };
-    if capacity < 0 {
+    let chunk_size = unsafe { libc::fpathconf(write_fd.as_raw_fd(), libc::_PC_PIPE_BUF) };
+    if chunk_size <= 0 {
         return Err(last_error(
             "failed to query process context copy pipe capacity",
-        ));
-    }
-    if capacity == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "process context copy pipe has zero capacity",
         ));
     }
 
     Ok(CopyPipe {
         read_fd,
         write_fd,
-        chunk_size: capacity as usize,
+        chunk_size: chunk_size as usize,
     })
+}
+
+fn configure_fd(fd: &OwnedFd) -> io::Result<()> {
+    // SAFETY: fd is a valid descriptor.
+    let status = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+    if status < 0 {
+        return Err(last_error(
+            "failed to query process context copy pipe status flags",
+        ));
+    }
+    // SAFETY: fd is valid and F_SETFL accepts the status flags returned above.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, status | libc::O_NONBLOCK) } < 0 {
+        return Err(last_error(
+            "failed to make process context copy pipe non-blocking",
+        ));
+    }
+
+    // SAFETY: fd is a valid descriptor.
+    let descriptor = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFD) };
+    if descriptor < 0 {
+        return Err(last_error(
+            "failed to query process context copy pipe descriptor flags",
+        ));
+    }
+    // SAFETY: fd is valid and F_SETFD accepts the descriptor flags returned above.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, descriptor | libc::FD_CLOEXEC) } < 0 {
+        return Err(last_error(
+            "failed to mark process context copy pipe close-on-exec",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -259,7 +289,7 @@ mod tests {
             .expect_err("a copy crossing into inaccessible memory should fail");
 
         assert_eq!(err.err.kind(), io::ErrorKind::WouldBlock);
-        assert!(!err.pipe_dirty);
+        assert!(err.pipe_dirty);
         // SAFETY: address and len came from mmap above.
         retry_on_eintr(|| {
             if unsafe { libc::munmap(address, len) } == 0 {

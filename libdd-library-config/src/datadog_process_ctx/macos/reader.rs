@@ -9,14 +9,18 @@ use std::io;
 #[cfg(not(feature = "process-context-writer"))]
 use std::sync::OnceLock;
 
-use super::ReaderPlatform;
-use crate::otel_process_ctx::macos::{
-    AtomicPublishedHeader, HEADER_ADDRESS_MASK, PUBLISHER_PID_SHIFT,
-};
+use super::{AtomicPublishedHeader, HEADER_ADDRESS_MASK, PUBLISHER_PID_SHIFT};
+use crate::otel_process_ctx::reader::ReaderBackend;
 
-pub(super) struct HeaderDiscovery;
+mod sealed {
+    pub struct MacosReaderBackend;
+}
 
-impl ReaderPlatform for HeaderDiscovery {
+pub(crate) use sealed::MacosReaderBackend;
+
+impl ReaderBackend for MacosReaderBackend {
+    type MemoryCopy = super::copy_pipe::CopyPipe;
+
     fn discover_header() -> io::Result<NonNull<u8>> {
         let global = process_context_global()?;
         let current_pid = std::process::id();
@@ -43,7 +47,7 @@ fn not_found() -> io::Error {
 
 #[cfg(feature = "process-context-writer")]
 fn process_context_global() -> io::Result<&'static AtomicPublishedHeader> {
-    Ok(&crate::otel_process_ctx::writer::macos::otel_process_ctx_v2)
+    Ok(&super::writer::datadog_process_ctx_v1)
 }
 
 #[cfg(not(feature = "process-context-writer"))]
@@ -55,14 +59,18 @@ fn process_context_global() -> io::Result<&'static AtomicPublishedHeader> {
         None => {
             // SAFETY: RTLD_DEFAULT searches globally visible symbols in the current process and
             // the symbol name is NUL-terminated.
-            let symbol =
-                unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"otel_process_ctx_v2".as_ptr().cast()) };
+            let symbol = unsafe {
+                libc::dlsym(
+                    libc::RTLD_DEFAULT,
+                    c"datadog_process_ctx_v1".as_ptr().cast(),
+                )
+            };
             let address = NonNull::new(symbol)
                 .map(|symbol| symbol.as_ptr() as usize)
                 .ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::NotFound,
-                        "couldn't resolve otel_process_ctx_v2 in the current process",
+                        "couldn't resolve datadog_process_ctx_v1 in the current process",
                     )
                 })?;
 
@@ -92,14 +100,15 @@ mod tests {
 
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{KeyValue, ProcessContext};
 
-    use crate::otel_process_ctx::{
-        macos::{AtomicPublishedHeader, PUBLISHER_PID_SHIFT},
-        MappingHeaderSnapshot, ProcessContextSelfReader, PROCESS_CTX_VERSION, SIGNATURE,
+    use super::super::{AtomicPublishedHeader, PUBLISHER_PID_SHIFT};
+    use crate::{
+        datadog_process_ctx::ProcessContextSelfReader,
+        otel_process_ctx::{reader::MappingHeaderSnapshot, PROCESS_CTX_VERSION, SIGNATURE},
     };
 
     #[no_mangle]
     #[allow(non_upper_case_globals)]
-    pub static otel_process_ctx_v2: AtomicPublishedHeader = AtomicPublishedHeader::new(0);
+    pub static datadog_process_ctx_v1: AtomicPublishedHeader = AtomicPublishedHeader::new(0);
 
     #[test]
     fn reads_context_from_exported_global() {
@@ -121,11 +130,11 @@ mod tests {
         };
         let published_header = (u128::from(std::process::id()) << PUBLISHER_PID_SHIFT)
             | ptr::from_ref(&header).expose_provenance() as u128;
-        otel_process_ctx_v2.store(published_header, Ordering::Release);
+        datadog_process_ctx_v1.store(published_header, Ordering::Release);
 
         let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
         assert_eq!(reader.read().expect("read should succeed"), expected);
 
-        otel_process_ctx_v2.store(0, Ordering::Relaxed);
+        datadog_process_ctx_v1.store(0, Ordering::Relaxed);
     }
 }

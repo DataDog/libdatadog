@@ -19,11 +19,7 @@ use prost::Message;
 use super::{PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
 
 #[cfg(target_os = "linux")]
-pub(super) mod linux;
-#[cfg(target_os = "macos")]
-pub(super) mod macos;
-#[cfg(target_os = "windows")]
-pub(super) mod windows;
+pub(crate) mod linux;
 
 /// The header structure written at the start of the mapping. This must match the C
 /// layout of the specification.
@@ -32,12 +28,12 @@ pub(super) mod windows;
 /// provide the aligned word-sized accesses required by the publication protocol, while explicit
 /// fences constrain store/load ordering.
 #[repr(C)]
-pub(super) struct MappingHeader {
-    pub(super) signature: [u8; 8],
-    pub(super) version: u32,
-    pub(super) payload_size: AtomicU32,
-    pub(super) monotonic_published_at_ns: AtomicU64,
-    pub(super) payload_ptr: AtomicPtr<u8>,
+pub(crate) struct MappingHeader {
+    pub(crate) signature: [u8; 8],
+    pub(crate) version: u32,
+    pub(crate) payload_size: AtomicU32,
+    pub(crate) monotonic_published_at_ns: AtomicU64,
+    pub(crate) payload_ptr: AtomicPtr<u8>,
 }
 
 // Compile-time verification that MappingHeader matches the field offsets and total size
@@ -55,37 +51,19 @@ const _: () = {
     assert!(size_of::<*const u8>() == size_of::<usize>());
 };
 
-#[cfg(target_os = "linux")]
-type HeaderMemory = linux::MemMapping;
-#[cfg(target_os = "macos")]
-type HeaderMemory = macos::VmRegion;
-#[cfg(target_os = "windows")]
-type HeaderMemory = windows::HeapHeader;
+pub(crate) trait WriterBackend {
+    type HeaderMemory: HeaderMemoryHolder;
+    type Clock: MonotonicTime;
+}
 
-#[cfg(target_os = "linux")]
-type PlatformMonotonicClock = linux::MonotonicClock;
-#[cfg(target_os = "macos")]
-type PlatformMonotonicClock = macos::MonotonicClock;
-#[cfg(target_os = "windows")]
-type PlatformMonotonicClock = windows::MonotonicClock;
-
-type ProcessContextHandle = ProcessContextHandleGen<HeaderMemory, PlatformMonotonicClock>;
-
-/// The global instance of the context for the current process.
-///
-/// We need a mutex to put the handle in a static and avoid bothering the users of this API
-/// with storing the handle, but we don't expect this mutex to actually be contended. Ideally a
-/// single thread should handle context updates, even if it's not strictly required.
-static PROCESS_CONTEXT_HANDLER: Mutex<Option<ProcessContextHandle>> = Mutex::new(None);
-
-pub(super) trait HeaderMemoryHolder: Sized {
+pub(crate) trait HeaderMemoryHolder: Sized {
     fn new() -> io::Result<Self>;
     fn as_ptr(&self) -> Option<NonNull<MappingHeader>>;
     fn make_discoverable(&mut self);
     fn unpublish_and_release(self) -> io::Result<()>;
 }
 
-pub(super) trait MonotonicTime {
+pub(crate) trait MonotonicTime {
     fn monotonic_time_ns() -> io::Result<u64>;
 }
 
@@ -97,6 +75,9 @@ struct ProcessContextHandleGen<M: HeaderMemoryHolder, T: MonotonicTime> {
     payload: Vec<u8>,
     monotonic_clock: PhantomData<T>,
 }
+
+type ProcessContextHandle<B> =
+    ProcessContextHandleGen<<B as WriterBackend>::HeaderMemory, <B as WriterBackend>::Clock>;
 
 impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
     /// Initial publication of the process context. Creates an appropriate header allocation.
@@ -220,93 +201,83 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
 
 // The returned size is guaranteed to be larger or equal to the size of `MappingHeader`.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(super) const fn mapping_size() -> usize {
+pub(crate) const fn mapping_size() -> usize {
     core::mem::size_of::<MappingHeader>()
 }
 
-/// Locks the context handle. Returns a uniform error if the lock has been poisoned.
-fn lock_context_handle() -> io::Result<MutexGuard<'static, Option<ProcessContextHandle>>> {
-    PROCESS_CONTEXT_HANDLER.lock().map_err(|_| {
-        io::Error::other("a thread panicked while operating on the process context handler")
-    })
+/// Writer state for a concrete process-context backend.
+///
+/// Each public API owns a separate static instance so distinct publication mechanisms never share
+/// a process-global handle.
+pub(crate) struct ProcessContextWriter<B: WriterBackend> {
+    handler: Mutex<Option<ProcessContextHandle<B>>>,
 }
 
-/// Publishes or updates the process context for it to be visible by external readers.
-///
-/// If any of the following condition holds:
-///
-/// - this is the first publication
-/// - [unpublish] has been called last
-/// - the previous header mapping is unavailable after `fork()`
-///
-/// Then we follow the Publish protocol of the OTel process context specification (allocating a
-/// fresh header).
-///
-/// Otherwise, if a context has been previously published from the same process and hasn't been
-/// unpublished since, we follow the Update protocol.
-///
-/// # Fork safety
-///
-/// If we're a forked children of the original publisher, we are extremely restricted in the
-/// set of operations that we can do (we must be async-signal-safe). On paper, heap allocation
-/// is Undefined Behavior, for example. We assume that a forking runtime (such as Python or
-/// Ruby) that doesn't follow with an immediate `exec` is already "taking that risk", so to
-/// speak (typically, if no thread is ever spawned before the fork, things are mostly fine).
-#[inline]
-pub fn publish(context: &ProcessContext) -> io::Result<()> {
-    publish_raw_payload(context.encode_to_vec())
-}
-
-pub(super) fn publish_raw_payload(payload: Vec<u8>) -> io::Result<()> {
-    let mut guard = lock_context_handle()?;
-
-    match &mut *guard {
-        Some(handler) if handler.mapping.as_ptr().is_some() => handler.update(payload),
-        Some(handler) => {
-            let new_handler = ProcessContextHandleGen::publish(payload)?;
-            let _old_handler = replace(handler, new_handler);
-
-            Ok(())
-        }
-        None => {
-            *guard = Some(ProcessContextHandleGen::publish(payload)?);
-            Ok(())
+impl<B: WriterBackend> ProcessContextWriter<B> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            handler: Mutex::new(None),
         }
     }
-}
 
-/// Removes the process context publication and releases its header allocation. If no context has
-/// ever been published, this is a no-op.
-///
-/// A call to [publish] following an [unpublish] will create a new mapping.
-pub fn unpublish() -> io::Result<()> {
-    let mut guard = lock_context_handle()?;
+    #[inline]
+    pub(crate) fn publish(&self, context: &ProcessContext) -> io::Result<()> {
+        self.publish_raw_payload(context.encode_to_vec())
+    }
 
-    if let Some(ProcessContextHandleGen {
-        mapping, payload, ..
-    }) = guard.take()
-    {
-        if let Some(header) = mapping.as_ptr() {
-            // Mark the context as unavailable before freeing the mapping/payload. The fence
-            // forces the writing CPU not to reorder the unavailable timestamp store and the
-            // deallocation stores. This gives readers more of a chance (but no guarantee) to
-            // observe an unavailable context before the publication is removed.
-            //
-            // SAFETY: the mapping is still live and valid, and the global mutex prevents
-            // concurrent in-process writers from mutating the plain header fields.
-            let header = header.as_ptr();
-            unsafe {
-                (*header)
-                    .monotonic_published_at_ns
-                    .store(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
+    pub(crate) fn publish_raw_payload(&self, payload: Vec<u8>) -> io::Result<()> {
+        let mut guard = self.lock_context_handle()?;
+
+        match &mut *guard {
+            Some(handler) if handler.mapping.as_ptr().is_some() => handler.update(payload),
+            Some(handler) => {
+                let new_handler = ProcessContextHandleGen::publish(payload)?;
+                let _old_handler = replace(handler, new_handler);
+
+                Ok(())
             }
-            fence(Ordering::SeqCst);
+            None => {
+                *guard = Some(ProcessContextHandleGen::publish(payload)?);
+                Ok(())
+            }
         }
-
-        // The payload will still drop if this fails, leaving a zero timestamp behind.
-        mapping.unpublish_and_release()?;
-        drop(payload);
     }
 
-    Ok(())
+    pub(crate) fn unpublish(&self) -> io::Result<()> {
+        let mut guard = self.lock_context_handle()?;
+
+        if let Some(ProcessContextHandleGen {
+            mapping, payload, ..
+        }) = guard.take()
+        {
+            if let Some(header) = mapping.as_ptr() {
+                // Mark the context as unavailable before freeing the mapping/payload. The fence
+                // forces the writing CPU not to reorder the unavailable timestamp store and the
+                // deallocation stores. This gives readers more of a chance (but no guarantee) to
+                // observe an unavailable context before the publication is removed.
+                //
+                // SAFETY: the mapping is still live and valid, and the global mutex prevents
+                // concurrent in-process writers from mutating the plain header fields.
+                let header = header.as_ptr();
+                unsafe {
+                    (*header)
+                        .monotonic_published_at_ns
+                        .store(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
+                }
+                fence(Ordering::SeqCst);
+            }
+
+            // The payload will still drop if this fails, leaving a zero timestamp behind.
+            mapping.unpublish_and_release()?;
+            drop(payload);
+        }
+
+        Ok(())
+    }
+
+    fn lock_context_handle(&self) -> io::Result<MutexGuard<'_, Option<ProcessContextHandle<B>>>> {
+        self.handler.lock().map_err(|_| {
+            io::Error::other("a thread panicked while operating on the process context handler")
+        })
+    }
 }

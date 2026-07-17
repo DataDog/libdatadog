@@ -103,8 +103,8 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
 }
 
 /// Stores the `TracerMetadata` using the platform's supported mechanisms. Linux serializes the
-/// metadata into a memfd and attempts to publish it as an OTel process context. Other platforms
-/// publish only the OTel process context.
+/// metadata into a memfd and attempts to publish it through the process-context API. Other
+/// platforms publish only through the process-context API.
 ///
 /// # Safety
 /// - `ptr` must be a valid, non-null pointer to a `TracerMetadata`.
@@ -154,6 +154,6 @@ mod tests {
         let handle = unsafe { ddog_tracer_metadata_store(&mut metadata) }.unwrap();
         assert_eq!(handle.fd, -1);
 
-        libdd_library_config::otel_process_ctx::unpublish().expect("unpublish should succeed");
+        libdd_library_config::datadog_process_ctx::unpublish().expect("unpublish should succeed");
     }
 }

@@ -15,6 +15,13 @@ use std::{
 
 use super::super::retry_on_eintr;
 
+pub(crate) struct LinuxWriterBackend;
+
+impl super::WriterBackend for LinuxWriterBackend {
+    type HeaderMemory = MemMapping;
+    type Clock = MonotonicClock;
+}
+
 /// The shared memory mapped area to publish the context to. The memory region is owned by a
 /// [MemMapping] instance and is automatically unmapped upon drop.
 ///
@@ -25,7 +32,7 @@ use super::super::retry_on_eintr;
 ///   mapping of `mapping_size()` bytes created by `mmap`.
 /// - once `self` has been dropped, no memory access must be performed on the memory previously
 ///   pointed to by `start_addr`.
-pub(super) struct MemMapping {
+pub(crate) struct MemMapping {
     start_addr: NonNull<c_void>,
     only_for_pid: u32,
 }
@@ -58,7 +65,7 @@ impl super::HeaderMemoryHolder for MemMapping {
     }
 }
 
-pub(super) struct MonotonicClock;
+pub(crate) struct MonotonicClock;
 
 impl super::MonotonicTime for MonotonicClock {
     fn monotonic_time_ns() -> io::Result<u64> {

@@ -1,8 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implements the publication strategy for Windows.
-//! This is not part of the OTEL process context specification, which deals only with Linux.
+//! Implements the Datadog publication strategy for Windows.
 
 use core::{
     ptr::{self, NonNull},
@@ -10,23 +9,32 @@ use core::{
 };
 use std::{io, sync::OnceLock};
 
-use super::super::UNPUBLISHED_OR_UPDATING;
-use super::{HeaderMemoryHolder, MappingHeader, MonotonicTime};
-use crate::otel_process_ctx::last_error;
+use crate::otel_process_ctx::{
+    last_error,
+    writer::{HeaderMemoryHolder, MappingHeader, MonotonicTime, WriterBackend},
+    UNPUBLISHED_OR_UPDATING,
+};
+
+pub(crate) struct WindowsWriterBackend;
+
+impl WriterBackend for WindowsWriterBackend {
+    type HeaderMemory = HeapHeader;
+    type Clock = MonotonicClock;
+}
 
 #[cfg(target_env = "msvc")]
 #[used]
 #[link_section = ".drectve"]
-static EXPORT_OTEL_PROCESS_CTX_V2: [u8; 28] = *b" /EXPORT:otel_process_ctx_v2";
+static EXPORT_DATADOG_PROCESS_CTX_V1: [u8; 31] = *b" /EXPORT:datadog_process_ctx_v1";
 
 #[cfg(target_env = "gnu")]
 #[used]
 #[link_section = ".drectve"]
-static EXPORT_OTEL_PROCESS_CTX_V2: [u8; 28] = *b" -export:otel_process_ctx_v2";
+static EXPORT_DATADOG_PROCESS_CTX_V1: [u8; 31] = *b" -export:datadog_process_ctx_v1";
 
 #[no_mangle]
 #[allow(non_upper_case_globals)]
-pub static otel_process_ctx_v2: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
+pub static datadog_process_ctx_v1: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
@@ -34,11 +42,11 @@ unsafe extern "system" {
     fn QueryPerformanceFrequency(frequency: *mut i64) -> i32;
 }
 
-pub(super) struct HeapHeader {
+pub(crate) struct HeapHeader {
     header: Box<MappingHeader>,
 }
 
-pub(super) struct MonotonicClock;
+pub(crate) struct MonotonicClock;
 
 impl HeaderMemoryHolder for HeapHeader {
     fn new() -> io::Result<Self> {
@@ -58,20 +66,18 @@ impl HeaderMemoryHolder for HeapHeader {
     }
 
     fn make_discoverable(&mut self) {
-        otel_process_ctx_v2.store(
+        datadog_process_ctx_v1.store(
             ptr::from_ref(self.header.as_ref()).cast_mut().cast(),
             Ordering::Release,
         );
     }
 
     fn unpublish_and_release(self) -> io::Result<()> {
-        otel_process_ctx_v2.store(ptr::null_mut(), Ordering::Relaxed);
+        datadog_process_ctx_v1.store(ptr::null_mut(), Ordering::Relaxed);
         fence(Ordering::SeqCst);
         drop(self);
         Ok(())
     }
-
-    fn after_fork(self) {}
 }
 
 impl MonotonicTime for MonotonicClock {
@@ -118,7 +124,7 @@ fn performance_frequency() -> io::Result<u64> {
 mod tests {
     use core::{ffi::c_void, ptr};
 
-    use super::otel_process_ctx_v2;
+    use super::datadog_process_ctx_v1;
 
     type Handle = *mut c_void;
 
@@ -135,10 +141,10 @@ mod tests {
         assert!(!module.is_null());
 
         // SAFETY: module is the current executable and the symbol name is NUL-terminated.
-        let symbol = unsafe { GetProcAddress(module, c"otel_process_ctx_v2".as_ptr().cast()) };
+        let symbol = unsafe { GetProcAddress(module, c"datadog_process_ctx_v1".as_ptr().cast()) };
         assert_eq!(
             symbol.cast_const(),
-            ptr::from_ref(&otel_process_ctx_v2).cast::<c_void>()
+            ptr::from_ref(&datadog_process_ctx_v1).cast::<c_void>()
         );
     }
 }

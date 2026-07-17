@@ -1,8 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implements the publication strategy for MacOS.
-//! This is not part of the OTEL process context specification, which deals only with Linux.
+//! Implements the Datadog publication strategy for macOS.
 
 use core::{
     ffi::c_void,
@@ -12,17 +11,24 @@ use core::{
 };
 use std::io;
 
-use super::{HeaderMemoryHolder, MappingHeader, MonotonicTime};
+use super::{AtomicPublishedHeader, PUBLISHER_PID_SHIFT};
 use crate::otel_process_ctx::{
     last_error,
-    macos::{AtomicPublishedHeader, PUBLISHER_PID_SHIFT},
+    writer::{mapping_size, HeaderMemoryHolder, MappingHeader, MonotonicTime, WriterBackend},
 };
+
+pub(crate) struct MacosWriterBackend;
+
+impl WriterBackend for MacosWriterBackend {
+    type HeaderMemory = VmRegion;
+    type Clock = MonotonicClock;
+}
 
 // A child inherits this global after fork even when minherit excludes the header mapping. Store
 // the publisher PID with the pointer so the child cannot discover its parent's unmapped address.
 #[no_mangle]
 #[allow(non_upper_case_globals)]
-pub static otel_process_ctx_v2: AtomicPublishedHeader = AtomicPublishedHeader::new(0);
+pub static datadog_process_ctx_v1: AtomicPublishedHeader = AtomicPublishedHeader::new(0);
 
 // From <mach/vm_inherit.h>; the libc crate does not expose this constant.
 const VM_INHERIT_NONE: libc::c_int = 2;
@@ -33,20 +39,20 @@ unsafe extern "C" {
     fn clock_gettime_nsec_np(clock_id: libc::clockid_t) -> u64;
 }
 
-pub(super) struct VmRegion {
+pub(crate) struct VmRegion {
     start_addr: NonNull<c_void>,
     /// `Some(pid)` when `VM_INHERIT_NONE` succeeded, otherwise `None`.
     only_for_pid: Option<u32>,
 }
 
-pub(super) struct MonotonicClock;
+pub(crate) struct MonotonicClock;
 
 // SAFETY: VmRegion exclusively owns its mapping, which may be unmapped from any thread.
 unsafe impl Send for VmRegion {}
 
 impl HeaderMemoryHolder for VmRegion {
     fn new() -> io::Result<Self> {
-        let size = super::mapping_size();
+        let size = mapping_size();
         let prot = libc::PROT_READ | libc::PROT_WRITE;
         let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
         // SAFETY: it's always safe to call mmap with null as it will not
@@ -83,20 +89,16 @@ impl HeaderMemoryHolder for VmRegion {
 
     fn make_discoverable(&mut self) {
         let value = pack_published_header(std::process::id(), self.start_addr.as_ptr().cast());
-        otel_process_ctx_v2.store(value, Ordering::Release);
+        datadog_process_ctx_v1.store(value, Ordering::Release);
     }
 
     fn unpublish_and_release(mut self) -> io::Result<()> {
-        otel_process_ctx_v2.store(0, Ordering::Relaxed);
+        datadog_process_ctx_v1.store(0, Ordering::Relaxed);
         // Make it slightly more likely that a reader will observe the unavailability.
         fence(Ordering::SeqCst);
         self.unmap()?;
         forget(self);
         Ok(())
-    }
-
-    fn after_fork(self) {
-        drop(self);
     }
 }
 
@@ -125,7 +127,7 @@ impl VmRegion {
 
         // SAFETY: start_addr owns the live mapping and this method is called at most once unless
         // munmap fails.
-        if unsafe { libc::munmap(self.start_addr.as_ptr(), super::mapping_size()) } != 0 {
+        if unsafe { libc::munmap(self.start_addr.as_ptr(), mapping_size()) } != 0 {
             return Err(last_error("failed to free process context header"));
         }
         Ok(())
