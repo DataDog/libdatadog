@@ -177,9 +177,6 @@ impl TlsDescWindow {
         out
     }
 
-    /// Render the sequence bytes as hex, one 4-byte little-endian word per group on aarch64
-    /// (matching the fixed-width instruction encoding) or a single hex string on x86-64. Used in
-    /// failure messages so a human can eyeball which bytes differ.
     pub fn hex_dump(&self) -> String {
         match self.arch {
             Arch::Aarch64 => self
