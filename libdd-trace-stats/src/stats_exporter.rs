@@ -464,8 +464,8 @@ mod tests {
         send_status.unwrap_err();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 6, true).await,
-            "Expected max retry attempts"
+            poll_for_mock_hit(&mut mock, 10, 100, 1, true).await,
+            "Expected a single attempt with no retries"
         );
     }
 
