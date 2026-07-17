@@ -124,6 +124,8 @@ pub mod linux {
         // especially when this crate is linked statically. Harmless-looking rewrites can hide part
         // of the sequence from the linker and produce a partially relaxed access that computes an
         // invalid TLS address.
+        //
+        // This code match byte-per-byte what clang generates, and this is verified during tests.
         core::arch::asm!(
             "leaq otel_thread_ctx_v1@tlsdesc(%rip), %rax",
             "call *otel_thread_ctx_v1@TLSCALL(%rax)",
