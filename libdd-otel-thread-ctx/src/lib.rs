@@ -18,6 +18,8 @@
 //! This avoids allocation in the hot path.
 //!
 //! ```rust
+//! # #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+//! # fn main() {
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
@@ -28,6 +30,9 @@
 //! ThreadContext::new(trace_id, span_id, local_root_span_id, &[(0, "first")]).attach();
 //! ThreadContext::update(trace_id, span_id, local_root_span_id, &[(0, "second")]);
 //! ThreadContext::detach();
+//! # }
+//! # #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+//! # fn main() {}
 //! ```
 //!
 //! ### Swapping
@@ -37,6 +42,8 @@
 //! might run on the same thread, or even move from one thread to another, for example.
 //!
 //! ```rust
+//! # #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+//! # fn main() {
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
@@ -55,6 +62,9 @@
 //!     // here we drop `ctx`, but we could store for later usage
 //!     let _ = prev.attach();
 //! }
+//! # }
+//! # #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+//! # fn main() {}
 //! ```
 //!
 //! ## Synchronization
