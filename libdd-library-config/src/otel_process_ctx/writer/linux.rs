@@ -27,8 +27,7 @@ use super::super::retry_on_eintr;
 ///   pointed to by `start_addr`.
 pub(super) struct MemMapping {
     start_addr: NonNull<c_void>,
-    /// `Some(pid)` when `MADV_DONTFORK` succeeded, otherwise `None`.
-    only_for_pid: Option<u32>,
+    only_for_pid: u32,
 }
 
 // SAFETY: MemMapping represents ownership over the mapped region. It never leaks or
@@ -41,10 +40,7 @@ impl super::HeaderMemoryHolder for MemMapping {
     }
 
     fn as_ptr(&self) -> Option<NonNull<super::MappingHeader>> {
-        if self
-            .only_for_pid
-            .is_some_and(|pid| pid != std::process::id())
-        {
+        if self.only_for_pid != std::process::id() {
             None
         } else {
             Some(self.start_addr.cast())
@@ -87,7 +83,7 @@ impl MemMapping {
     fn new() -> io::Result<Self> {
         let size = super::mapping_size();
 
-        let mut mapping = try_memfd(crate::otel_process_ctx::linux::MAPPING_NAME, libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL | libc::MFD_ALLOW_SEALING)
+        let mapping = try_memfd(crate::otel_process_ctx::linux::MAPPING_NAME, libc::MFD_CLOEXEC | libc::MFD_NOEXEC_SEAL | libc::MFD_ALLOW_SEALING)
             .or_else(|_| try_memfd(crate::otel_process_ctx::linux::MAPPING_NAME, libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING))
             .and_then(|fd| {
                 // SAFETY: fd is a valid open file descriptor.
@@ -120,7 +116,7 @@ impl MemMapping {
                 // invalidate the mapping.
                 Ok(MemMapping {
                     start_addr,
-                    only_for_pid: None,
+                    only_for_pid: std::process::id(),
                 })
             })
             // If any previous step failed, we fallback to an anonymous mapping
@@ -144,13 +140,13 @@ impl MemMapping {
 
                 Ok::<_, io::Error>(MemMapping {
                     start_addr,
-                    only_for_pid: None,
+                    only_for_pid: std::process::id(),
                 })
             })?;
 
         // SAFETY: MemMapping owns a live mapping of mapping_size() bytes. Failure is harmless;
         // the mapping then follows the default inheritance behavior.
-        mapping.only_for_pid = retry_on_eintr(|| {
+        retry_on_eintr(|| {
             check_syscall_retval(
                 unsafe {
                     libc::madvise(
@@ -161,9 +157,7 @@ impl MemMapping {
                 },
                 "madvise MADV_DONTFORK failed",
             )
-        })
-        .is_ok()
-        .then_some(std::process::id());
+        })?;
 
         Ok(mapping)
     }
@@ -219,10 +213,7 @@ impl MemMapping {
     /// Practically, `self` must be put in a `ManuallyDrop` wrapper and forgotten, or being in
     /// the process of being dropped.
     unsafe fn unmap(&mut self) -> io::Result<()> {
-        if self
-            .only_for_pid
-            .is_some_and(|pid| pid != std::process::id())
-        {
+        if self.only_for_pid != std::process::id() {
             return Ok(());
         }
 
