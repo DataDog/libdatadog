@@ -16,10 +16,11 @@
 //! The target architecture is read from the ELF header at runtime, so the generator can process a
 //! cross-compiled reference object for either architecture from any host.
 //!
-//! The "window" is the full TLSDESC access sequence, in program order:
-//! - **x86-64**: `lea …@tlsdesc(%rip), %rax` / `call *…@tlscall(%rax)` / `add %fs:0x0, %rax`.
-//! - **aarch64**: `adrp`/`ldr`/`add`/`blr` (the relocation-bearing core) followed by the
-//!   thread-pointer computation `mrs x8, tpidr_el0` / `add x0, x8, x0`.
+//! The "window" is the full TLSDESC access sequence, in program order. The size of the window is
+//! different on x86 and ARM, but in general the sequence includes (not necessarily in this order):
+//!
+//! - (fast) call to the TLSDESC accessor to get an offset
+//! - load the thread pointer and add the offset
 //!
 //! The window is located from the object's TLSDESC relocations and then sliced out with a fixed,
 //! architecture-specific offset formula that matches how both Clang and our inline assembly lay the
