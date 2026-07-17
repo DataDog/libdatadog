@@ -67,40 +67,11 @@ mod native {
         {
             let client_lock = self.client.clone();
             async move {
-                // ===== TEMP DEBUG PROBE (branch: ekump/telemetry-wasm-debug) ===============
-                // Diagnosing the aarch64-only crashtracker `panic_hook_unknown_type` hang/OOM.
-                // Log the request scheme/URI + which branch runs. By default, BAIL on any
-                // non-file request instead of driving hyper, so the crashtracker receiver
-                // returns quickly, the test completes, and the receiver's stderr (surfaced by
-                // `validate_std_outputs` as "Unexpected stderr") reaches CI. Set
-                // LIBDD_HTTP_PROBE_ALLOW_HYPER=1 to restore the real network path.
-                let probe_scheme = req.uri().scheme_str().map(str::to_owned);
-                let probe_uri = req.uri().to_string();
-                eprintln!("[HTTP-PROBE] request scheme={probe_scheme:?} uri={probe_uri}");
-                // ===========================================================================
-
                 // file:// URIs short-circuit to the on-disk recorder used by tests.
                 if req.uri().scheme_str() == Some("file") {
-                    eprintln!("[HTTP-PROBE] -> file:// short-circuit (write_to_file_endpoint)");
                     let (parts, body) = req.into_parts();
-                    let r = write_to_file_endpoint(&parts.uri, body);
-                    eprintln!("[HTTP-PROBE] <- file write ok={}", r.is_ok());
-                    return r;
+                    return write_to_file_endpoint(&parts.uri, body);
                 }
-
-                // ===== TEMP DEBUG PROBE ====================================================
-                if std::env::var_os("LIBDD_HTTP_PROBE_ALLOW_HYPER").is_none() {
-                    eprintln!(
-                        "[HTTP-PROBE] -> NON-file path (would build hyper new_default_client); \
-                         bailing before hyper. scheme={probe_scheme:?} uri={probe_uri}"
-                    );
-                    return Err(HttpError::Other(anyhow::anyhow!(
-                        "[HTTP-PROBE] non-file request bailed before hyper: \
-                         scheme={probe_scheme:?} uri={probe_uri}"
-                    )));
-                }
-                eprintln!("[HTTP-PROBE] -> NON-file path: driving hyper (ALLOW_HYPER set)");
-                // ===========================================================================
 
                 let client = client_lock.get_or_init(new_default_client).clone();
                 let hyper_req = req.map(Body::from_bytes);

@@ -18,6 +18,17 @@ use tokio::{
 ------------------------------------------*/
 
 pub fn receiver_entry_point_stdin() -> anyhow::Result<()> {
+    // ===== TEMP DEBUG PROBE (branch: ekump/telemetry-wasm-debug) =====================
+    // Watchdog: the receiver normally finishes in <15s. If it's still alive after 60s,
+    // print a marker and abort. Aborting unblocks the waiting collector so the crashing
+    // process exits, the test's `p.wait()` returns, and the phase markers below reach CI
+    // via `validate_std_outputs` ("Unexpected stderr").
+    std::thread::spawn(|| {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        eprintln!("[CT-PROBE] WATCHDOG: receiver still alive after 60s; aborting to surface state");
+        std::process::abort();
+    });
+    // =================================================================================
     let stream = BufReader::new(tokio::io::stdin());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -101,22 +112,32 @@ pub(crate) async fn receiver_entry_point(
     timeout: Duration,
     stream: impl AsyncBufReadExt + std::marker::Unpin,
 ) -> anyhow::Result<()> {
+    eprintln!("[CT-PROBE] phase=receive_report:start");
     if let Some((config, mut crash_info)) = receive_report_from_stream(timeout, stream).await? {
+        eprintln!("[CT-PROBE] phase=receive_report:done");
+        eprintln!("[CT-PROBE] phase=resolve_frames:start");
         if let Err(e) = resolve_frames(&config, &mut crash_info) {
             crash_info
                 .log_messages
                 .push(format!("Error resolving frames: {e}"));
         }
+        eprintln!("[CT-PROBE] phase=resolve_frames:done");
         if config.demangle_names() {
+            eprintln!("[CT-PROBE] phase=demangle:start");
             if let Err(e) = crash_info.demangle_names() {
                 crash_info
                     .log_messages
                     .push(format!("Error demangling names: {e}"));
             }
+            eprintln!("[CT-PROBE] phase=demangle:done");
         }
+        eprintln!("[CT-PROBE] phase=upload:start");
         crash_info
             .async_upload_to_endpoint(config.endpoint())
             .await?;
+        eprintln!("[CT-PROBE] phase=upload:done");
+    } else {
+        eprintln!("[CT-PROBE] phase=receive_report:none (no data)");
     }
     Ok(())
 }

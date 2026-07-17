@@ -144,9 +144,20 @@ impl CrashInfo {
                 self.to_file(&path)?;
             }
         }
+        eprintln!("[CT-PROBE] phase=upload:to_file:done");
 
-        let telemetry_future = self.upload_to_telemetry(endpoint);
-        let errors_intake_future = self.upload_to_errors_intake(endpoint);
+        let telemetry_future = async {
+            eprintln!("[CT-PROBE] phase=upload:telemetry:start");
+            let r = self.upload_to_telemetry(endpoint).await;
+            eprintln!("[CT-PROBE] phase=upload:telemetry:done ok={}", r.is_ok());
+            r
+        };
+        let errors_intake_future = async {
+            eprintln!("[CT-PROBE] phase=upload:errors_intake:start");
+            let r = self.upload_to_errors_intake(endpoint).await;
+            eprintln!("[CT-PROBE] phase=upload:errors_intake:done ok={}", r.is_ok());
+            r
+        };
         let (_telemetry_result, _errors_intake_result) =
             tokio::join!(telemetry_future, errors_intake_future);
         Ok(())
