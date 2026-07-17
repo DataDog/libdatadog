@@ -32,7 +32,6 @@ use std::{path::Path, str::FromStr};
 
 use elf::{abi, endian::AnyEndian, symbol::SymbolTable, ElfBytes};
 use object::read::archive::ArchiveFile;
-use sha2::{Digest, Sha256};
 
 /// The exported TLS symbol whose access sequence we hash.
 pub const SYMBOL: &str = "otel_thread_ctx_v1";
@@ -165,15 +164,6 @@ pub struct TlsDescWindow {
 }
 
 impl TlsDescWindow {
-    pub fn hash_hex(&self) -> String {
-        let digest = Sha256::digest(&self.bytes);
-        let mut out = String::with_capacity(digest.len() * 2);
-        for byte in digest {
-            out.push_str(&format!("{byte:02x}"));
-        }
-        out
-    }
-
     pub fn hex_dump(&self) -> String {
         match self.arch {
             Arch::Aarch64 => self

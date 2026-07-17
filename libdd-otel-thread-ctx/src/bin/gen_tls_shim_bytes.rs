@@ -1,16 +1,16 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Generate the "golden" hash of the TLSDESC access sequence for `otel_thread_ctx_v1` from a
+//! Generate the "golden" bytes of the TLSDESC access sequence for `otel_thread_ctx_v1` from a
 //! clang's output for a small C shim (inlined as [`TLS_SHIM_C`], written to a temp file and
 //! compiled at runtime).
 //!
-//! This is the reference side of the `tlsdesc_inline_sequence` integration test: the test hashes
-//! the sequence our inline assembly produces and asserts it equals the hash printed here. When the
-//! inline assembly (or the pinned toolchain) legitimately changes, re-run this to obtain the new
-//! hash and paste it into the test.
+//! This is the reference side of the `tlsdesc_inline_sequence` integration test: the test compares
+//! the sequence our inline assembly produces against the bytes printed here. When the inline
+//! assembly (or the pinned toolchain) legitimately changes, re-run this to obtain the new bytes and
+//! paste them into the test.
 //!
-//! This is a dev tool, not part of a normal build: it lives behind the `gen-tls-shim-hash` feature
+//! This is a dev tool, not part of a normal build: it lives behind the `gen-tls-shim-bytes` feature
 //! (via the `[[bin]]` `required-features`), so it is only compiled when that feature is enabled.
 //!
 //! # Reference compilers
@@ -27,16 +27,16 @@
 //!
 //! # Reproducibility
 //!
-//! For a *reproducible* hash, run this inside the latest [Ubuntu Datadog CI build
-//! image](https://github.com/DataDog/libddprof-build/blob/main/ubuntu.Dockerfile). The current hash
-//! was built from rev `758a114281f3545b40598272ea1c41404b43f2f6`.
+//! For *reproducible* bytes, run this inside the latest [Ubuntu Datadog CI build
+//! image](https://github.com/DataDog/libddprof-build/blob/main/ubuntu.Dockerfile). The current
+//! bytes were built from rev `758a114281f3545b40598272ea1c41404b43f2f6`.
 //!
 //! ```text
 //! docker run --rm -v "$PWD":/repo:ro -e CARGO_TARGET_DIR=/tmp/target -e CARGO_HOME=/tmp/cargo \
 //!   -w /repo registry.ddbuild.io/ci/libddprof-build:dependencies_ubuntu_30 \
 //!   bash -c 'for a in x86_64 aarch64; do \
-//!     cargo run --quiet --features gen-tls-shim-hash \
-//!       --bin gen_tls_shim_hash -p libdd-otel-thread-ctx -- "$a"; done'
+//!     cargo run --quiet --features gen-tls-shim-bytes \
+//!       --bin gen_tls_shim_bytes -p libdd-otel-thread-ctx -- "$a"; done'
 //! ```
 
 use std::{path::Path, process::Command};
@@ -95,7 +95,7 @@ fn main() {
         None => Arch::host(),
     };
 
-    let out_dir = std::env::temp_dir().join(format!("gen_tls_shim_hash-{}", std::process::id()));
+    let out_dir = std::env::temp_dir().join(format!("gen_tls_shim_bytes-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir)
         .unwrap_or_else(|e| panic!("failed to create {}: {e}", out_dir.display()));
     let source = out_dir.join("tls_shim.c");
@@ -123,7 +123,14 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(&out_dir);
 
+    let rust_literal = window
+        .bytes
+        .iter()
+        .map(|b| format!("0x{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
     println!("arch:  {arch:?}");
     println!("bytes: {}", window.hex_dump());
-    println!("hash:  {}", window.hash_hex());
+    println!("rust:  &[{rust_literal}]");
 }

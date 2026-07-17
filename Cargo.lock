@@ -3187,7 +3187,6 @@ dependencies = [
  "elf",
  "libdd-otel-thread-ctx",
  "object 0.36.5",
- "sha2",
 ]
 
 [[package]]
