@@ -112,11 +112,11 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
             ptr::addr_of_mut!((*header).signature).write(*SIGNATURE);
             ptr::addr_of_mut!((*header).version).write(PROCESS_CTX_VERSION);
             (*header)
-                .payload_size
-                .store(payload_size, Ordering::Relaxed);
-            (*header)
                 .payload_ptr
                 .store(payload.as_ptr().cast_mut(), Ordering::Relaxed);
+            (*header)
+                .payload_size
+                .store(payload_size, Ordering::Relaxed);
 
             fence(Ordering::SeqCst);
             (*header)
@@ -184,11 +184,11 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
 
         unsafe {
             (*header)
-                .payload_size
-                .store(payload_size, Ordering::Relaxed);
-            (*header)
                 .payload_ptr
                 .store(self.payload.as_ptr().cast_mut(), Ordering::Relaxed);
+            (*header)
+                .payload_size
+                .store(payload_size, Ordering::Relaxed);
         }
 
         // Prevent the final timestamp publication from moving above either the payload metadata
