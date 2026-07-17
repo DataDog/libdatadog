@@ -10,6 +10,13 @@
 //! note; a regression (e.g. `static inline` + bindgen's `wrap_static_fns`, or
 //! LTO inlining across TUs) could duplicate the entry. This check catches that.
 //!
+//! `ddheap:alloc` is expected in every build. `ddheap:free` is only expected
+//! when compiled with live-heap tracking (the `live-heap` feature): its
+//! absence is how external profilers detect that a binary doesn't support
+//! live-heap correlation (see `probes.h`), so callers must pass the probe
+//! list that matches the build under test rather than assume both are always
+//! present.
+//!
 //! Call [`sanity_check`] from within a shared object or statically linked
 //! executable, or point [`check_usdt_probes_in`] at a built artifact.
 //!
@@ -23,23 +30,28 @@ use std::path::{Path, PathBuf};
 
 /// USDT provider name emitted by `probes.c` (`USDT(ddheap, ...)`).
 const PROVIDER: &str = "ddheap";
-/// Probes we expect, each exactly once.
-const EXPECTED_PROBES: &[&str] = &["alloc", "free"];
 
 /// As [`sanity_check`], but takes the object file as an argument. Useful for a
-/// test setting where the test code is separate from the artifact to validate.
-pub fn check_usdt_probes_in(path: &Path) -> anyhow::Result<()> {
+/// test setting where the test code is separate from the artifact to
+/// validate. `expected_probes` lists the probe names (without the `ddheap:`
+/// provider prefix) that must each appear exactly once.
+pub fn check_usdt_probes_in(path: &Path, expected_probes: &[&str]) -> anyhow::Result<()> {
     let data = std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     let elf = ElfBytes::<AnyEndian>::minimal_parse(&data)
         .with_context(|| format!("failed to parse ELF at {}", path.display()))?;
-    check_one_note_per_probe(&elf)?;
+    check_one_note_per_probe(&elf, expected_probes)?;
     Ok(())
 }
 
 /// Check that the current running module carries exactly one `.note.stapsdt`
-/// entry per ddheap probe.
+/// entry per ddheap probe expected in this build (`alloc` always, `free`
+/// only when the `live-heap` feature is enabled).
 pub fn sanity_check() -> anyhow::Result<()> {
-    check_usdt_probes_in(&own_elf_path()?)
+    let mut expected = vec!["alloc"];
+    if cfg!(feature = "live-heap") {
+        expected.push("free");
+    }
+    check_usdt_probes_in(&own_elf_path()?, &expected)
 }
 
 /// Locate the current running module (shared or not) via `/proc/self/maps`.
@@ -79,7 +91,10 @@ fn own_elf_path() -> anyhow::Result<PathBuf> {
 }
 
 /// Parse `.note.stapsdt` and assert each expected probe appears exactly once.
-fn check_one_note_per_probe(elf: &ElfBytes<'_, AnyEndian>) -> anyhow::Result<()> {
+fn check_one_note_per_probe(
+    elf: &ElfBytes<'_, AnyEndian>,
+    expected_probes: &[&str],
+) -> anyhow::Result<()> {
     let shdr = elf
         .section_header_by_name(".note.stapsdt")
         .context("failed to read section headers")?
@@ -118,7 +133,7 @@ fn check_one_note_per_probe(elf: &ElfBytes<'_, AnyEndian>) -> anyhow::Result<()>
         }
     }
 
-    for &probe in EXPECTED_PROBES {
+    for &probe in expected_probes {
         match counts.get(probe).copied().unwrap_or(0) {
             1 => {}
             0 => bail!("USDT probe '{PROVIDER}:{probe}' has no .note.stapsdt entry"),

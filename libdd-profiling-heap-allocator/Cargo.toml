@@ -10,7 +10,6 @@ repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-he
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
 
 [lib]
 bench = false
@@ -22,7 +21,7 @@ bench = false
 live-heap = ["libdd-profiling-heap-sampler/live-heap"]
 
 [dependencies]
-libdd-profiling-heap-sampler = { path = "../libdd-profiling-heap-sampler" }
+libdd-profiling-heap-sampler = { version = "0.1.0", path = "../libdd-profiling-heap-sampler" }
 
 [dev-dependencies]
 criterion = "0.5.1"
