@@ -290,7 +290,7 @@ fn metadata_matches_v1(
     dest: &v1::TracerPayload<BytesData>,
     src: &v1::TracerPayload<BytesData>,
 ) -> bool {
-    let differing: Vec<&'static str> = [
+    let fields = [
         ("container_id", dest.container_id == src.container_id),
         ("language_name", dest.language_name == src.language_name),
         (
@@ -303,15 +303,15 @@ fn metadata_matches_v1(
         ("hostname", dest.hostname == src.hostname),
         ("app_version", dest.app_version == src.app_version),
         ("attributes", dest.attributes.slow_compare(&src.attributes)),
-    ]
-    .into_iter()
-    .filter_map(|(label, eq)| (!eq).then_some(label))
-    .collect();
+    ];
 
-    if !differing.is_empty() {
+    if fields.iter().any(|(_, eq)| !eq) {
         warn!(
             "Skipping V1 TracerPayload append: diverging metadata fields {:?}",
-            differing
+            fields
+                .iter()
+                .filter_map(|(label, eq)| (!eq).then_some(*label))
+                .collect::<Vec<_>>()
         );
         return false;
     }
