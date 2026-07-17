@@ -3,8 +3,8 @@
 extern crate alloc;
 
 #[cfg(all(
-    target_os = "linux",
-    any(feature = "process-context-reader", feature = "process-context-writer")
+    any(feature = "process-context-reader", feature = "process-context-writer"),
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
 ))]
 pub mod otel_process_ctx;
 pub mod tracer_metadata;

@@ -30,16 +30,28 @@ use prost::Message;
 
 use super::{MappingHeaderSnapshot, PROCESS_CTX_VERSION, SIGNATURE, UNPUBLISHED_OR_UPDATING};
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 mod copy_pipe_unix;
+#[cfg(windows)]
+mod copy_pipe_windows;
 #[cfg(target_os = "linux")]
 pub(super) mod linux;
+#[cfg(target_os = "macos")]
+pub(super) mod macos;
+#[cfg(target_os = "windows")]
+pub(super) mod windows;
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 use copy_pipe_unix::CopyPipe as PlatformCopyPipe;
+#[cfg(windows)]
+use copy_pipe_windows::CopyPipe as PlatformCopyPipe;
 
 #[cfg(target_os = "linux")]
 type PlatformHeaderDiscovery = linux::HeaderDiscovery;
+#[cfg(target_os = "macos")]
+type PlatformHeaderDiscovery = macos::HeaderDiscovery;
+#[cfg(target_os = "windows")]
+type PlatformHeaderDiscovery = windows::HeaderDiscovery;
 
 pub(super) trait ReaderPlatform {
     fn discover_header() -> io::Result<NonNull<u8>>;

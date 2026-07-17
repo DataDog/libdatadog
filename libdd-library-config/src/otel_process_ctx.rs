@@ -1,8 +1,15 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implementation of the Linux parts of the [OTEL process
+//! Implementation of the [OTEL process
 //! context specification](https://github.com/open-telemetry/opentelemetry-specification/blob/main/oteps/profiles/4719-process-ctx.md).
+//!
+//! Note: the Linux implementation follows the discovery method described in the OTEL process
+//! specification linked above, that is, uses a memfd or a named mapping with the name OTEL_CTX.
+//! This is a strategy only viable on Linux, since MacOS and Windows do not have those exact
+//! features. Here, the MacOS and Windows implementations, on the other hand, use a global atomic
+//! pointer to the mapping header that is published as a symbol named `otel_process_ctx_v2`.
+//! SUCH MECHANISM IS NOT PART OF THE SPECIFICATION, which deals only with Linux.
 //!
 //! The update/read protocol is seqlock-style: the publisher marks the mapping as unavailable,
 //! writes the payload metadata, publishes a non-zero version, and readers accept a copy only if
@@ -28,6 +35,8 @@ mod writer;
 compile_error!("OTel process context requires 64-bit atomics on Linux");
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 
 #[cfg(feature = "process-context-reader")]
 pub use reader::ProcessContextSelfReader;
@@ -40,6 +49,13 @@ pub const PROCESS_CTX_VERSION: u32 = 2;
 pub const SIGNATURE: &[u8; 8] = b"OTEL_CTX";
 /// Sentinel timestamp indicating that the context is unpublished or being updated.
 const UNPUBLISHED_OR_UPDATING: u64 = 0;
+
+#[cfg(any(feature = "process-context-reader", feature = "process-context-writer"))]
+#[cold]
+fn last_error(context: &'static str) -> std::io::Error {
+    let error = std::io::Error::last_os_error();
+    std::io::Error::new(error.kind(), format!("{context}: {error}"))
+}
 
 #[repr(C)]
 #[cfg(feature = "process-context-reader")]
@@ -100,8 +116,74 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    mod macos {
+        use core::{ptr, sync::atomic::Ordering};
+        use std::io;
+
+        use super::super::{
+            macos::{HEADER_ADDRESS_MASK, PUBLISHER_PID_SHIFT},
+            writer::macos::otel_process_ctx_v2,
+            MappingHeaderSnapshot,
+        };
+
+        fn published_header() -> *mut u8 {
+            let value = otel_process_ctx_v2.load(Ordering::Acquire);
+            let publisher_pid = (value >> PUBLISHER_PID_SHIFT) as u32;
+            if publisher_pid != std::process::id() {
+                return ptr::null_mut();
+            }
+
+            let header_address = (value & HEADER_ADDRESS_MASK) as usize;
+            ptr::with_exposed_provenance_mut(header_address)
+        }
+
+        pub(super) fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
+            let header_ptr: *const MappingHeaderSnapshot = published_header().cast();
+            if header_ptr.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "no process context is published",
+                ));
+            }
+            Ok(unsafe { ptr::read(header_ptr) })
+        }
+
+        pub(super) fn is_published() -> bool {
+            !published_header().is_null()
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    mod windows {
+        use core::{ptr, sync::atomic::Ordering};
+        use std::io;
+
+        use super::super::{writer::windows::otel_process_ctx_v2, MappingHeaderSnapshot};
+
+        pub(super) fn read_process_context() -> io::Result<MappingHeaderSnapshot> {
+            let header_ptr: *const MappingHeaderSnapshot =
+                otel_process_ctx_v2.load(Ordering::Acquire).cast();
+            if header_ptr.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "no process context is published",
+                ));
+            }
+            Ok(unsafe { ptr::read(header_ptr) })
+        }
+
+        pub(super) fn is_published() -> bool {
+            !otel_process_ctx_v2.load(Ordering::Acquire).is_null()
+        }
+    }
+
     #[cfg(target_os = "linux")]
     use linux::{is_published, read_process_context};
+    #[cfg(target_os = "macos")]
+    use macos::{is_published, read_process_context};
+    #[cfg(target_os = "windows")]
+    use windows::{is_published, read_process_context};
 
     #[test]
     #[cfg_attr(miri, ignore)]

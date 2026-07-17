@@ -163,6 +163,14 @@ jobs:
           fi
         env:
           RUST_BACKTRACE: full
+      - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run -p libdd-library-config --no-default-features --features process-context-reader"
+        shell: bash
+        run: |
+          if [[ -z "$PACKAGES" ]] || echo "$PACKAGES" | grep -q "libdd-library-config"; then
+            cargo nextest run -p libdd-library-config --no-default-features --features process-context-reader --profile ci --verbose --no-tests=pass
+          fi
+        env:
+          RUST_BACKTRACE: full
       - name: "[${{ steps.rust-version.outputs.version}}] cargo nextest run --all-features"
         shell: bash
         run: |

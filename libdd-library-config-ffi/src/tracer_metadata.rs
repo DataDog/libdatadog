@@ -11,7 +11,7 @@ use std::os::raw::{c_char, c_int};
 /// C-compatible representation of an anonymous file handle
 #[repr(C)]
 pub struct TracerMemfdHandle {
-    /// File descriptor (relevant only on Linux)
+    /// File descriptor on Linux; `-1` on other platforms.
     pub fd: c_int,
 }
 
@@ -102,21 +102,17 @@ pub unsafe extern "C" fn ddog_tracer_metadata_set(
     }
 }
 
-/// Serializes the `TracerMetadata` into a platform-specific memory handle (e.g., memfd on Linux).
-/// This function also attempts to publish the tracer metadata as an OTel process context
-/// separately, but will ignore resulting errors.
+/// Stores the `TracerMetadata` using the platform's supported mechanisms. Linux serializes the
+/// metadata into a memfd and attempts to publish it as an OTel process context. Other platforms
+/// publish only the OTel process context.
 ///
 /// # Safety
 /// - `ptr` must be a valid, non-null pointer to a `TracerMetadata`.
 ///
 /// # Returns
 /// - On Linux: a `TracerMemfdHandle` containing a raw file descriptor to a memory file.
-/// - On unsupported platforms: an error.
+/// - On other platforms: a `TracerMemfdHandle` with `fd` set to `-1`.
 /// - On failure: propagates any internal errors from the metadata storage process.
-///
-/// # Platform Support
-/// This function currently only supports Linux via `memfd`. On other platforms,
-/// it will return an error.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_tracer_metadata_store(
     ptr: *mut TracerMetadata,
@@ -141,8 +137,23 @@ pub unsafe extern "C" fn ddog_tracer_metadata_store(
                 })
             }
             #[cfg(not(target_os = "linux"))]
-            Ok(_) => Err(anyhow::anyhow!("Unsupported platform")),
+            Ok(_) => Ok(TracerMemfdHandle { fd: -1 }),
             Err(err) => Err(err),
         };
     result.into()
+}
+
+#[cfg(all(test, not(target_os = "linux")))]
+mod tests {
+    use super::{ddog_tracer_metadata_store, TracerMetadata};
+
+    #[test]
+    fn store_returns_success_without_a_file_descriptor() {
+        let mut metadata = TracerMetadata::default();
+
+        let handle = unsafe { ddog_tracer_metadata_store(&mut metadata) }.unwrap();
+        assert_eq!(handle.fd, -1);
+
+        libdd_library_config::otel_process_ctx::unpublish().expect("unpublish should succeed");
+    }
 }
