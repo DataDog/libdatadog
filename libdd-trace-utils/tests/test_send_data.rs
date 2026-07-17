@@ -630,6 +630,132 @@ mod tracing_integration_tests {
         test_agent.assert_snapshot(snapshot_name).await;
     }
 
+    /// Builds a V1 payload exercising the full attribute surface that the current test-agent
+    /// (v1.56.0) is able to decode: `AttributeValue::String/Bool/Int/Float`, span links with
+    /// non-empty attributes, span events with non-empty attributes, plus chunk-level attributes.
+    ///
+    /// APMSP-3479 - TODO: `AttributeValue::Bytes`, `AttributeValue::List` and
+    /// `AttributeValue::KeyValue` are deliberately omitted — `ddapm-test-agent` v1.56.0 rejects
+    /// Bytes with `400 "Bytes values are not supported yet."` and does not handle List / KeyValue.
+    /// Add them here once test-agent V1 support catches up.
+    fn make_v1_full_payload(name_prefix: &str) -> libdd_trace_utils::span::v1::TracerPayloadBytes {
+        use libdd_trace_utils::span::v1::{
+            AttributeValue, AttributeValueBytes, SpanBytes as V1SpanBytes, SpanEventBytes,
+            SpanKind, SpanLinkBytes, TraceChunkBytes, TracerPayloadBytes,
+        };
+
+        // Root span attributes — primitives supported by the test-agent today.
+        let mut root_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        root_attrs.insert(bs_v1("http.method"), AttributeValue::String(bs_v1("POST")));
+        root_attrs.insert(bs_v1("http.status_code"), AttributeValue::Int(201));
+        root_attrs.insert(bs_v1("http.success"), AttributeValue::Bool(true));
+        root_attrs.insert(bs_v1("http.duration_ms"), AttributeValue::Float(42.75));
+
+        // Span link with non-empty attributes (String-only — primitives are enough to exercise
+        // the encoder/decoder paths for link attribute maps).
+        let mut link_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        link_attrs.insert(bs_v1("link.reason"), AttributeValue::String(bs_v1("retry")));
+        let span_link = SpanLinkBytes {
+            trace_id: tid_bytes(0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210),
+            span_id: 0xa0a0_a0a0_a0a0_a0a0,
+            tracestate: bs_v1("dd=t.tid:abc"),
+            flags: 1,
+            attributes: link_attrs,
+        };
+
+        // Span event with attributes (String + Int + Bool to exercise typed values).
+        let mut event_attrs: VecMap<BytesString, AttributeValueBytes> = VecMap::new();
+        event_attrs.insert(
+            bs_v1("exception.type"),
+            AttributeValue::String(bs_v1("RuntimeError")),
+        );
+        event_attrs.insert(bs_v1("exception.code"), AttributeValue::Int(500));
+        event_attrs.insert(bs_v1("exception.handled"), AttributeValue::Bool(false));
+        let span_event = SpanEventBytes {
+            time_unix_nano: 1_727_211_691_770_715_042,
+            name: bs_v1("exception"),
+            attributes: event_attrs,
+        };
+
+        let root_span = V1SpanBytes {
+            service: bs_v1("test-service"),
+            name: bs_v1(&format!("{name_prefix}_root")),
+            resource: bs_v1("/api/users"),
+            r#type: bs_v1("web"),
+            span_id: 1,
+            parent_id: 0,
+            start: 1_000_000,
+            duration: 5_000,
+            span_kind: SpanKind::Server,
+            env: bs_v1("test-env"),
+            version: bs_v1("1.2.3"),
+            component: bs_v1("http"),
+            attributes: root_attrs,
+            span_links: thin_vec::thin_vec![span_link],
+            span_events: thin_vec::thin_vec![span_event],
+            ..Default::default()
+        };
+
+        let mut chunk_attrs = VecMap::new();
+        chunk_attrs.insert(bs_v1("_dd.p.dm"), AttributeValue::String(bs_v1("-4")));
+        chunk_attrs.insert(
+            bs_v1("_dd.p.tid"),
+            AttributeValue::String(bs_v1("0123456789abcdef")),
+        );
+
+        let chunk = TraceChunkBytes {
+            trace_id: tid_bytes(0, 0xfeedface),
+            priority: Some(1),
+            origin: bs_v1("synthetics"),
+            sampling_mechanism: Some(4),
+            attributes: chunk_attrs,
+            dropped_trace: false,
+            spans: vec![root_span],
+        };
+
+        TracerPayloadBytes {
+            language_name: bs_v1("test-lang"),
+            language_version: bs_v1("2.0"),
+            tracer_version: bs_v1("1.0"),
+            runtime_id: bs_v1("test-runtime-id-full"),
+            env: bs_v1("test-env"),
+            hostname: bs_v1("test-host"),
+            app_version: bs_v1("1.2.3"),
+            attributes: VecMap::new(),
+            chunks: vec![chunk],
+            ..Default::default()
+        }
+    }
+
+    /// Big V1 integration test: encodes a payload covering every primitive attribute variant
+    /// the test-agent supports today (String/Bool/Int/Float) plus non-empty span_link and
+    /// span_event attribute maps, then POSTs to `/v1.0/traces` and asserts the snapshot.
+    ///
+    /// APMSP-3479 - TODO: extend this with `AttributeValue::Bytes`, `AttributeValue::List`
+    /// and `AttributeValue::KeyValue` once `ddapm-test-agent` v1 support catches up. See
+    /// [`make_v1_full_payload`] for the payload builder and the omitted variants.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn compare_v1_full_payload_snapshot_test() {
+        use libdd_trace_utils::msgpack_encoder::v1::to_vec_from_v1;
+
+        let relative_snapshot_path = "libdd-trace-utils/tests/snapshots/";
+        let snapshot_name = "compare_v1_full_payload_snapshot_test";
+        let test_agent = DatadogTestAgent::new(Some(relative_snapshot_path), None, &[]).await;
+        let uri = test_agent
+            .get_uri_for_endpoint("v1.0/traces", Some(snapshot_name))
+            .await;
+
+        test_agent.start_session(snapshot_name, None).await;
+
+        let payload = make_v1_full_payload("test_send_data_v1_full");
+        let encoded = to_vec_from_v1(&payload);
+
+        post_msgpack_traces(uri, encoded).await;
+
+        test_agent.assert_snapshot(snapshot_name).await;
+    }
+
     /// Round-trip: the v1::Span → v0.4 downgrade encoder
     /// ([`libdd_trace_utils::msgpack_encoder::v04::to_vec_from_v1`]) must produce a v0.4
     /// payload that decodes to the same canonical form as the native v0.4 encoder
