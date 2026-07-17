@@ -120,7 +120,7 @@ impl TraceSerializer {
             .max(MIN_BUFFER_CAPACITY);
         let buff = match payload {
             tracer_payload::TraceChunks::V04(p) => {
-                msgpack_encoder::v04::to_vec_with_capacity(p, capacity as u32)
+                msgpack_encoder::v04::to_vec_with_capacity_from_v04(p, capacity as u32)
             }
             tracer_payload::TraceChunks::V05(p) => {
                 let mut buff = Vec::with_capacity(capacity);
@@ -129,7 +129,7 @@ impl TraceSerializer {
                 buff
             }
             tracer_payload::TraceChunks::V1(p) => {
-                msgpack_encoder::v1::to_vec_with_capacity(p, capacity as u32, metadata)
+                msgpack_encoder::v1::to_vec_with_capacity_from_v04(p, capacity as u32, metadata)
             }
         };
         self.previous_serialised_len

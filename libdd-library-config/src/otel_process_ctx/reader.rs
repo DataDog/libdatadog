@@ -1,6 +1,20 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+//! Same-process reader for the OTel process context.
+//!
+//! Although it reads the current process, the reader does not coordinate with
+//! the publisher: it neither acquires the publisher's lock nor retains a guard
+//! that keeps the published mapping alive. It therefore faces the same mapping
+//! lifetime and concurrent-update races as an external observer, while using a
+//! platform-specific same-process memory-copy mechanism.
+//!
+//! Publication timestamps and fences can detect concurrent changes, but they
+//! cannot keep the underlying memory mapped. Memory is therefore copied through
+//! a [`ProcessMemoryCopy`] implementation that turns inaccessible or concurrently
+//! unmapped memory into a recoverable error instead of dereferencing an invalid
+//! pointer in Rust.
+
 use core::{
     cell::Cell,
     mem::{offset_of, size_of},
@@ -43,8 +57,22 @@ pub(super) trait ReaderPlatform {
     fn discover_header() -> io::Result<NonNull<u8>>;
 }
 
-pub(super) trait ProcessMemoryCopy: Sized {
+pub(super) trait ProcessMemoryCopy: Sized + Send {
     fn new() -> io::Result<Self>;
+
+    /// Copies exactly `len` bytes starting at `addr`.
+    ///
+    /// The caller is not required to establish that the source range is
+    /// aligned, initialized, mapped, or remains mapped for the duration of the
+    /// copy. Implementations must not dereference `addr` directly in Rust.
+    ///
+    /// If any part of the source range is inaccessible, the implementation must
+    /// return a [`PipeCopyError`] whose inner error has
+    /// [`io::ErrorKind::WouldBlock`], rather than causing undefined behavior or
+    /// terminating the process.
+    ///
+    /// On success, the returned vector contains exactly `len` bytes. The copy is
+    /// not an atomic snapshot: the source memory may change while it is copied.
     fn copy(&self, addr: *const u8, len: usize) -> Result<Vec<u8>, PipeCopyError>;
 }
 
@@ -66,8 +94,10 @@ pub struct ProcessContextSelfReader {
     pipe: Cell<Option<PlatformCopyPipe>>,
 }
 
-// SAFETY: the reader owns its copy pipe and only stores a process-global address. Cell keeps the
-// type !Sync, so the cached pipe cannot be used concurrently through shared references.
+// SAFETY: ProcessMemoryCopy requires the cached platform pipe to be Send. Moving header_ptr between
+// threads is safe because it is a process-global address that is never dereferenced directly; all
+// access goes through ProcessMemoryCopy. Cell keeps the type !Sync, so the cached pipe cannot be
+// used concurrently through shared references.
 unsafe impl Send for ProcessContextSelfReader {}
 
 impl ProcessContextSelfReader {

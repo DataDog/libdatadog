@@ -18,6 +18,8 @@ default = ["cbindgen"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 # See libdd-profiling-heap-gotter's test-support feature. Not for production use.
 test-support = ["libdd-profiling-heap-gotter/test-support"]
+# Forward live-heap (retained-heap) tracking down to the sampler
+live-heap = ["libdd-profiling-heap-gotter/live-heap"]
 
 [build-dependencies]
 build_common = { path = "../build-common" }

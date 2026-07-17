@@ -25,6 +25,8 @@
 //! reads even when the clock returns the same value twice. Concurrent writers are rejected, and
 //! retry policy is left to the reader's caller.
 
+use std::io;
+
 #[cfg(feature = "process-context-reader")]
 mod reader;
 #[cfg(feature = "process-context-writer")]
@@ -65,6 +67,16 @@ struct MappingHeaderSnapshot {
     payload_ptr: *const u8,
 }
 
+/// Runs an operation until it succeeds or fails for a reason other than `EINTR`.
+fn retry_on_eintr<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match operation() {
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
+}
+
 #[cfg(all(
     test,
     feature = "process-context-reader",
@@ -73,11 +85,14 @@ struct MappingHeaderSnapshot {
 #[serial_test::serial]
 mod tests {
     use core::time::Duration;
+    #[cfg(target_os = "linux")]
+    use std::io;
 
     use super::ProcessContextSelfReader;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{
         any_value, AnyValue, KeyValue, ProcessContext,
     };
+    use libdd_trace_protobuf::opentelemetry::proto::resource::v1::Resource;
     use prost::Message;
 
     #[cfg(target_os = "linux")]
@@ -291,20 +306,34 @@ mod tests {
         );
     }
 
-    /// The only end-to-end test with `ProcessContextSelfReader`
+    /// End-to-end test using `ProcessContextSelfReader`.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn publish_read_update_read_and_unpublish() {
         fn context(service_name: &str) -> ProcessContext {
             ProcessContext {
-                resource: None,
-                extra_attributes: vec![KeyValue {
-                    key: "service.name".to_string(),
-                    value: Some(AnyValue {
-                        value: Some(any_value::Value::StringValue(service_name.to_string())),
-                    }),
-                    key_ref: 0,
-                }],
+                resource: Some(Resource {
+                    attributes: vec![
+                        string_attribute("service.name", service_name),
+                        string_attribute("telemetry.sdk.language", "rust"),
+                    ],
+                    dropped_attributes_count: 0,
+                    entity_refs: vec![],
+                }),
+                extra_attributes: vec![string_attribute(
+                    "datadog.process_tags",
+                    "region:us-east-1",
+                )],
+            }
+        }
+
+        fn string_attribute(key: &str, value: &str) -> KeyValue {
+            KeyValue {
+                key: key.to_string(),
+                value: Some(AnyValue {
+                    value: Some(any_value::Value::StringValue(value.to_string())),
+                }),
+                key_ref: 0,
             }
         }
 
@@ -321,5 +350,116 @@ mod tests {
         super::unpublish().expect("unpublish should succeed");
         assert!(reader.read().is_err());
         assert!(ProcessContextSelfReader::new().is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    #[cfg_attr(miri, ignore)]
+    fn child_can_republish_after_fork() {
+        fn context(service_name: &str) -> ProcessContext {
+            ProcessContext {
+                resource: None,
+                extra_attributes: vec![KeyValue {
+                    key: "service.name".to_string(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue(service_name.to_string())),
+                    }),
+                    key_ref: 0,
+                }],
+            }
+        }
+
+        let parent_context = context("fork-parent");
+        let child_context = context("fork-child");
+
+        super::publish(&parent_context).expect("publication before fork should succeed");
+        let reader = ProcessContextSelfReader::new().expect("reader creation should succeed");
+        assert_eq!(
+            reader
+                .read()
+                .expect("parent read before fork should succeed"),
+            parent_context
+        );
+
+        // SAFETY: the process context lock is not held and the child immediately limits itself to
+        // the operations under test before exiting with `_exit`.
+        let child_pid = unsafe { libc::fork() };
+        if child_pid < 0 {
+            let fork_error = std::io::Error::last_os_error();
+            drop(reader);
+            super::unpublish().expect("cleanup after failed fork should succeed");
+            panic!("fork failed: {fork_error}");
+        }
+
+        if child_pid == 0 {
+            let exit_code = child_actions(&reader, &child_context);
+            // SAFETY: `_exit` terminates the child without running parent-owned destructors.
+            unsafe { libc::_exit(exit_code) };
+        }
+
+        fn child_actions(
+            stale_reader: &ProcessContextSelfReader,
+            child_context: &ProcessContext,
+        ) -> libc::c_int {
+            match stale_reader.read() {
+                Err(err) if err.kind() == io::ErrorKind::InvalidInput => {}
+                Err(_) | Ok(_) => return 4,
+            }
+            match ProcessContextSelfReader::new() {
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                Err(_) | Ok(_) => return 4,
+            }
+
+            if super::publish(child_context).is_err() {
+                return 5;
+            }
+
+            let reader = match ProcessContextSelfReader::new() {
+                Ok(reader) => reader,
+                Err(_) => return 6,
+            };
+
+            match reader.read() {
+                Ok(read_context) if read_context == *child_context => 0,
+                Ok(_) | Err(_) => 7,
+            }
+        }
+
+        let mut status = 0;
+        let wait_result = super::retry_on_eintr(|| {
+            // SAFETY: child_pid identifies the child created above, and status is writable.
+            let waited_pid = unsafe { libc::waitpid(child_pid, &mut status, 0) };
+            if waited_pid < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(waited_pid)
+            }
+        });
+
+        assert_eq!(
+            reader
+                .read()
+                .expect("parent read after fork should succeed"),
+            parent_context
+        );
+
+        drop(reader);
+        super::unpublish().expect("parent cleanup should succeed");
+
+        assert_eq!(
+            wait_result.expect("waiting for child should succeed"),
+            child_pid,
+            "waitpid returned a different child"
+        );
+        assert!(
+            libc::WIFEXITED(status),
+            "child did not exit normally: status={status}"
+        );
+        assert_eq!(
+            libc::WEXITSTATUS(status),
+            0,
+            "child process failed at step {}",
+            libc::WEXITSTATUS(status)
+        );
     }
 }
