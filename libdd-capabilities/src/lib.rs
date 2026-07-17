@@ -13,10 +13,13 @@ pub mod spawn;
 
 pub use self::env::{EnvCapability, EnvError};
 pub use self::file::{FileCapability, FileError, FileMetadata};
-pub use self::http::{HttpClientCapability, HttpError};
+pub use self::http::{
+    BodySender, BufferingBodySender, ChunkFuture, HttpClientCapability, HttpError, ResponseFuture,
+    StreamingBodySender,
+};
 pub use self::log_output::LogWriterCapability;
 pub use self::sleep::SleepCapability;
 pub use self::spawn::SpawnError;
 pub use ::http::{Request, Response};
 pub use bytes::Bytes;
-pub use maybe_send::MaybeSend;
+pub use maybe_send::{MaybeSend, MaybeSendFuture};

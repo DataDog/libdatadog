@@ -7,8 +7,8 @@ use constcat::concat;
 use futures::future;
 use http::uri::PathAndQuery;
 use http::{Method, Uri};
-use http_body_util::BodyExt;
-use libdd_common::http_common;
+use libdd_capabilities::{BodySender, HttpClientCapability, ResponseFuture};
+use libdd_capabilities_impl::NativeHttpClient;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
@@ -19,6 +19,7 @@ use std::borrow::Cow;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::str::FromStr;
+use std::time::Duration;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -270,15 +271,16 @@ pub fn generate_tags(
 enum SenderFuture {
     #[default]
     Error,
-    Outstanding(http_common::ResponseFuture),
-    Submitted(JoinHandle<anyhow::Result<http_common::HttpResponse>>),
+    Outstanding(ResponseFuture),
+    Submitted(JoinHandle<anyhow::Result<http::Response<Bytes>>>),
 }
 
 pub struct PayloadSender {
     future: SenderFuture,
-    sender: http_common::Sender,
+    sender: BodySender,
     needs_boundary: bool,
     payloads: u32,
+    timeout_ms: u64,
 }
 
 const BOUNDARY: &str = "------------------------44617461646f67";
@@ -290,6 +292,20 @@ impl PayloadSender {
         debugger_type: DebuggerType,
         percent_encoded_tags: &str,
     ) -> anyhow::Result<Self> {
+        Self::new_with_client(
+            config,
+            debugger_type,
+            percent_encoded_tags,
+            NativeHttpClient::new_client(),
+        )
+    }
+
+    pub fn new_with_client<C: HttpClientCapability + Send + 'static>(
+        config: &Config,
+        debugger_type: DebuggerType,
+        percent_encoded_tags: &str,
+        http_client: C,
+    ) -> anyhow::Result<Self> {
         let endpoint = match debugger_type {
             DebuggerType::Diagnostics => &config.diagnostics_endpoint,
             DebuggerType::Snapshots => &config.snapshots_endpoint,
@@ -297,7 +313,12 @@ impl PayloadSender {
         }
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("missing endpoint for {debugger_type:?}"))?;
-        Self::new_to_endpoint(endpoint, debugger_type, percent_encoded_tags)
+        Self::new_to_endpoint_with_client(
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            http_client,
+        )
     }
 
     /// Creates a sender targeting a specific endpoint. Used to fan a payload out
@@ -306,6 +327,20 @@ impl PayloadSender {
         endpoint: &Endpoint,
         debugger_type: DebuggerType,
         percent_encoded_tags: &str,
+    ) -> anyhow::Result<Self> {
+        Self::new_to_endpoint_with_client(
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            NativeHttpClient::new_client(),
+        )
+    }
+
+    pub fn new_to_endpoint_with_client<C: HttpClientCapability + Send + 'static>(
+        endpoint: &Endpoint,
+        debugger_type: DebuggerType,
+        percent_encoded_tags: &str,
+        http_client: C,
     ) -> anyhow::Result<Self> {
         let mut url = endpoint.url.clone();
         let mut parts = url.into_parts();
@@ -328,8 +363,6 @@ impl PayloadSender {
             req = req.header("DD-EVP-ORIGIN", "agent-debugger");
         }
 
-        let (sender, body) = http_common::Body::channel();
-
         let needs_boundary = debugger_type == DebuggerType::Diagnostics;
         let req = req.header(
             "Content-type",
@@ -340,12 +373,13 @@ impl PayloadSender {
             },
         );
 
-        let future = http_common::new_default_client().request(req.body(body)?);
+        let (sender, future) = http_client.request_streamed(req.body(())?);
         Ok(PayloadSender {
             future: SenderFuture::Outstanding(future),
             sender,
             needs_boundary,
             payloads: 0,
+            timeout_ms: endpoint.timeout_ms,
         })
     }
 
@@ -359,11 +393,11 @@ impl PayloadSender {
                         "Content-Type: application/json\r\n",
                         "\r\n",
                     );
-                    self.sender.send_data(header.into()).await?;
+                    self.sender.send_chunk(header.into()).await?;
                 }
 
-                self.future = SenderFuture::Submitted(tokio::spawn(async {
-                    let resp = http_common::into_response(future.await?);
+                self.future = SenderFuture::Submitted(tokio::spawn(async move {
+                    let resp = future.await?;
                     Ok(resp)
                 }));
                 true
@@ -380,39 +414,43 @@ impl PayloadSender {
         if !first {
             data[0] = b',';
         }
-        self.sender.send_data(Bytes::from(data)).await?;
+        self.sender.send_chunk(Bytes::from(data)).await?;
 
         self.payloads += 1;
         Ok(())
     }
 
-    pub async fn finish(self) -> anyhow::Result<u32> {
+    pub async fn finish(mut self) -> anyhow::Result<u32> {
         if let SenderFuture::Submitted(future) = self.future {
             // insert a trailing ]
             if self.needs_boundary {
                 self.sender
-                    .send_data(concat!("]\r\n", BOUNDARY_LINE).into())
+                    .send_chunk(concat!("]\r\n", BOUNDARY_LINE).into())
                     .await?;
             } else {
-                self.sender.send_data(Bytes::from_static(b"]")).await?;
+                self.sender.send_chunk(Bytes::from_static(b"]")).await?;
             }
 
             drop(self.sender);
-            match future.await? {
-                Ok(response) => {
-                    let status = response.status().as_u16();
-                    if status >= 400 {
-                        let body_bytes = response.into_body().collect().await?.to_bytes();
-                        let response_body =
-                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                        anyhow::bail!(
-                            "Server did not accept debugger payload ({status}): {response_body}"
-                        );
-                    }
-                    Ok(self.payloads)
+            // Once the body is fully sent, bound the wait for the response headers and (if
+            // needed) the response body under a single timeout - a slow/stalled server must
+            // not be able to hang this indefinitely.
+            let result = tokio::time::timeout(Duration::from_millis(self.timeout_ms), async {
+                let response = future.await??;
+                let status = response.status().as_u16();
+                if status >= 400 {
+                    let response_body =
+                        String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
+                    anyhow::bail!(
+                        "Server did not accept debugger payload ({status}): {response_body}"
+                    );
                 }
-                Err(e) => anyhow::bail!("Failed to send traces: {e}"),
-            }
+                Ok(())
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("debugger payload request timed out"))?;
+
+            result.map(|()| self.payloads)
         } else {
             Ok(0)
         }
@@ -425,6 +463,25 @@ pub async fn send(
     debugger_type: DebuggerType,
     percent_encoded_tags: &str,
 ) -> anyhow::Result<()> {
+    send_with_client(
+        payload,
+        config,
+        debugger_type,
+        percent_encoded_tags,
+        NativeHttpClient::new_client(),
+    )
+    .await
+}
+
+/// Like `send()`, but allows plugging in a non-default `HttpClientCapability`
+/// implementation (e.g. for testing/mocking).
+pub async fn send_with_client<C: HttpClientCapability + Send + 'static>(
+    payload: &[u8],
+    config: &Config,
+    debugger_type: DebuggerType,
+    percent_encoded_tags: &str,
+    http_client: C,
+) -> anyhow::Result<()> {
     let endpoints = config.debugger_endpoints_for(debugger_type);
     let (primary, additional) = endpoints
         .split_first()
@@ -435,22 +492,39 @@ pub async fn send(
     // responses are best-effort and discarded; only the primary endpoint's
     // result is returned to the caller. Running concurrently keeps a slow or
     // stalled additional endpoint from delaying the primary.
-    let primary_send = send_to_endpoint(payload, primary, debugger_type, percent_encoded_tags);
-    let additional_sends =
-        future::join_all(additional.iter().map(|&endpoint| {
-            send_to_endpoint(payload, endpoint, debugger_type, percent_encoded_tags)
-        }));
+    let primary_send = send_to_endpoint(
+        payload,
+        primary,
+        debugger_type,
+        percent_encoded_tags,
+        http_client.clone(),
+    );
+    let additional_sends = future::join_all(additional.iter().map(|&endpoint| {
+        send_to_endpoint(
+            payload,
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            http_client.clone(),
+        )
+    }));
     let (result, _) = future::join(primary_send, additional_sends).await;
     result
 }
 
-async fn send_to_endpoint(
+async fn send_to_endpoint<C: HttpClientCapability + Send + 'static>(
     payload: &[u8],
     endpoint: &Endpoint,
     debugger_type: DebuggerType,
     percent_encoded_tags: &str,
+    http_client: C,
 ) -> anyhow::Result<()> {
-    let mut batch = PayloadSender::new_to_endpoint(endpoint, debugger_type, percent_encoded_tags)?;
+    let mut batch = PayloadSender::new_to_endpoint_with_client(
+        endpoint,
+        debugger_type,
+        percent_encoded_tags,
+        http_client,
+    )?;
     batch.append(payload).await?;
     batch.finish().await?;
     Ok(())
@@ -466,6 +540,25 @@ pub async fn send_symdb(
     config: &Config,
     tags: &str,
 ) -> anyhow::Result<()> {
+    send_symdb_with_client(
+        payload,
+        content_type,
+        config,
+        tags,
+        NativeHttpClient::new_client(),
+    )
+    .await
+}
+
+/// Like `send_symdb()`, but allows plugging in a non-default
+/// `HttpClientCapability` implementation (e.g. for testing/mocking).
+pub async fn send_symdb_with_client<C: HttpClientCapability>(
+    payload: &[u8],
+    content_type: &str,
+    config: &Config,
+    tags: &str,
+    http_client: C,
+) -> anyhow::Result<()> {
     let endpoints = config.symdb_endpoints();
     let (primary, additional) = endpoints
         .split_first()
@@ -473,21 +566,21 @@ pub async fn send_symdb(
 
     // Send the primary and any additional dual-ship endpoints concurrently;
     // additional responses are best-effort and discarded.
-    let primary_send = send_symdb_to_endpoint(payload, content_type, primary, tags);
-    let additional_sends = future::join_all(
-        additional
-            .iter()
-            .map(|&endpoint| send_symdb_to_endpoint(payload, content_type, endpoint, tags)),
-    );
+    let primary_send =
+        send_symdb_to_endpoint(payload, content_type, primary, tags, http_client.clone());
+    let additional_sends = future::join_all(additional.iter().map(|&endpoint| {
+        send_symdb_to_endpoint(payload, content_type, endpoint, tags, http_client.clone())
+    }));
     let (result, _) = future::join(primary_send, additional_sends).await;
     result
 }
 
-async fn send_symdb_to_endpoint(
+async fn send_symdb_to_endpoint<C: HttpClientCapability>(
     payload: &[u8],
     content_type: &str,
     endpoint: &Endpoint,
     tags: &str,
+    http_client: C,
 ) -> anyhow::Result<()> {
     let mut req = endpoint
         .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
@@ -502,16 +595,22 @@ async fn send_symdb_to_endpoint(
         req = req.header("DD-EVP-ORIGIN", "agent-symdb");
     }
 
-    let body = http_common::Body::from(payload.to_vec());
-    let response = http_common::into_response(
-        http_common::new_default_client()
-            .request(req.body(body)?)
-            .await?,
-    );
+    let body = Bytes::from(payload.to_vec());
+    let (status, body_bytes) =
+        tokio::time::timeout(Duration::from_millis(endpoint.timeout_ms), async {
+            let response = http_client
+                .request(req.body(body)?)
+                .await
+                .map_err(anyhow::Error::new)?;
 
-    let status = response.status().as_u16();
+            let status = response.status().as_u16();
+            let body_bytes = response.into_body();
+            Ok::<_, anyhow::Error>((status, body_bytes))
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("symdb payload request to {} timed out", endpoint.url))??;
+
     if status >= 400 {
-        let body_bytes = response.into_body().collect().await?.to_bytes();
         let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
         anyhow::bail!("Server did not accept symdb payload ({status}): {response_body}");
     }
