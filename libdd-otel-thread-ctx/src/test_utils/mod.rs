@@ -1,8 +1,8 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Test utilities shared between this crate's tests, the `libdd-otel-thread-ctx-ffi` integration
-//! tests and the `gen_tls_shim_hash` dev tool.
+//! Test utilities used by this crate's own tests and `gen_tls_shim_hash` dev tool, and by
+//! `libdd-otel-thread-ctx-ffi`'s `elf_properties` integration test.
 
 pub mod artifacts;
 pub mod tls_shim_window;

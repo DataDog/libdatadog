@@ -35,8 +35,8 @@
 //! docker run --rm -v "$PWD":/repo:ro -e CARGO_TARGET_DIR=/tmp/target -e CARGO_HOME=/tmp/cargo \
 //!   -w /repo registry.ddbuild.io/ci/libddprof-build:dependencies_ubuntu_30 \
 //!   bash -c 'for a in x86_64 aarch64; do \
-//!     cargo run --quiet --no-default-features --features gen-tls-shim-hash \
-//!       --bin gen_tls_shim_hash -p libdd-otel-thread-ctx-ffi -- "$a"; done'
+//!     cargo run --quiet --features gen-tls-shim-hash \
+//!       --bin gen_tls_shim_hash -p libdd-otel-thread-ctx -- "$a"; done'
 //! ```
 
 use std::{path::Path, process::Command};

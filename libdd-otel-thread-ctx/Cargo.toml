@@ -24,5 +24,19 @@ sha2 = { version = "0.10", optional = true }
 
 [features]
 sanity-check = ["dep:elf", "dep:anyhow"]
-# Test helpers shared with `libdd-otel-thread-ctx-ffi`'s integration tests and examples.
+# Test helpers used by this crate's own tests and `libdd-otel-thread-ctx-ffi`'s
+# integration tests.
 test-utils = ["dep:elf", "dep:object", "dep:sha2"]
+# Gate for the gen_tls_shim_hash binary. Do not build it by default; it's very
+# rarely needed (and maybe won't ever be): only if the corresponding test is
+# failing one day, and we need to update the TLSDESC inline assembly to match
+# what newer versions of clang generate.
+gen-tls-shim-hash = ["test-utils"]
+
+# Dev tool to regenerate the TLSDESC golden hash for tests.
+[[bin]]
+name = "gen_tls_shim_hash"
+required-features = ["gen-tls-shim-hash"]
+
+[dev-dependencies]
+libdd-otel-thread-ctx = { path = ".", features = ["test-utils"] }

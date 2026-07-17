@@ -12,7 +12,8 @@
 //!   relocation.
 //!
 //! The complementary check that our inline assembly emits the exact TLSDESC instruction sequence a
-//! compiler would (so the linker relaxes it correctly) lives in `tlsdesc_inline_sequence.rs`.
+//! compiler would (so the linker relaxes it correctly) lives in `libdd-otel-thread-ctx`'s
+//! `tlsdesc_inline_sequence.rs` test.
 //!
 //! Library artifact paths are derived at runtime from the test executable location.
 

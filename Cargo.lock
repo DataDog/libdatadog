@@ -3185,6 +3185,7 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "elf",
+ "libdd-otel-thread-ctx",
  "object 0.36.5",
  "sha2",
 ]
