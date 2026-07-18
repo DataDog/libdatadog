@@ -378,7 +378,7 @@ impl TelemetryCrashUploader {
                 &payload,
             )?))?;
 
-        let timeout = std::time::Duration::from_millis({
+        let timeout = core::time::Duration::from_millis({
             if let Some(endp) = self.cfg.endpoint() {
                 endp.timeout_ms
             } else {
