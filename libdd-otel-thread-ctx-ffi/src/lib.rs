@@ -48,9 +48,11 @@ mod linux {
     pub extern "C" fn ddog_otel_thread_ctx_new(
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
+        trace_flags: u8,
         local_root_span_id: &[u8; 8],
     ) -> NonNull<ThreadContextHandle> {
-        ThreadContext::new(*trace_id, *span_id, *local_root_span_id, &[]).into_opaque_ptr()
+        ThreadContext::new(*trace_id, *span_id, trace_flags, *local_root_span_id, &[])
+            .into_opaque_ptr()
     }
 
     /// Free an owned thread context.
@@ -101,8 +103,9 @@ mod linux {
     pub extern "C" fn ddog_otel_thread_ctx_update(
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
+        trace_flags: u8,
         local_root_span_id: &[u8; 8],
     ) {
-        ThreadContext::update(*trace_id, *span_id, *local_root_span_id, &[]);
+        ThreadContext::update(*trace_id, *span_id, trace_flags, *local_root_span_id, &[]);
     }
 }
