@@ -103,7 +103,7 @@ pub fn wait_for_pollhup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use core::time::Duration;
 
     #[cfg_attr(miri, ignore)] // miri doesn't support waitpid
     #[test]

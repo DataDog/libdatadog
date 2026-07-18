@@ -17,7 +17,7 @@ use windows_sys::Win32::System::Registry::{
 };
 
 fn to_wide_null(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0u16)).collect()
+    s.encode_utf16().chain(core::iter::once(0u16)).collect()
 }
 
 pub fn get_machine_id_impl() -> String {
@@ -44,9 +44,9 @@ pub fn get_machine_id_impl() -> String {
         RegQueryValueExW(
             hkey,
             value_wide.as_ptr(),
-            std::ptr::null_mut(),
+            core::ptr::null_mut(),
             &mut data_type,
-            std::ptr::null_mut(),
+            core::ptr::null_mut(),
             &mut data_len,
         )
     };
@@ -65,7 +65,7 @@ pub fn get_machine_id_impl() -> String {
         RegQueryValueExW(
             hkey,
             value_wide.as_ptr(),
-            std::ptr::null_mut(),
+            core::ptr::null_mut(),
             &mut data_type,
             buf.as_mut_ptr().cast(),
             &mut actual_len,

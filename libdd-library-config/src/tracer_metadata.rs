@@ -1,7 +1,7 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+use core::default::Default;
 use libdd_trace_protobuf::opentelemetry::proto as otel_proto;
-use std::default::Default;
 
 /// Thread-level context metadata the tracer wants to publish as part of the OTel process context.
 /// Set [TracerMetadata::threadlocal_metadata] to `Some(_)` to enable the threadlocal section; the
@@ -167,7 +167,7 @@ impl TracerMetadata {
                 key: "threadlocal.attribute_key_map".to_owned(),
                 value: Some(AnyValue {
                     value: Some(any_value::Value::ArrayValue(ArrayValue {
-                        values: std::iter::once(AnyValue {
+                        values: core::iter::once(AnyValue {
                             value: Some(any_value::Value::StringValue(
                                 "datadog.local_root_span_id".to_owned(),
                             )),
@@ -220,7 +220,8 @@ mod linux {
     pub fn store_tracer_metadata(
         data: &super::TracerMetadata,
     ) -> anyhow::Result<super::AnonymousFileHandle> {
-        let _ = crate::otel_process_ctx::linux::publish(&data.to_otel_process_ctx());
+        #[cfg(feature = "process-context-writer")]
+        let _ = crate::otel_process_ctx::publish(&data.to_otel_process_ctx());
 
         let uid: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)

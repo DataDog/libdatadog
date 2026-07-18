@@ -17,7 +17,6 @@ use datadog_live_debugger::debugger_defs::DebuggerPayload;
 use datadog_sidecar::agent_remote_config::{new_reader, reader_from_shm, AgentRemoteConfigWriter};
 use datadog_sidecar::config;
 use datadog_sidecar::config::LogMethod;
-use datadog_sidecar::crashtracker::crashtracker_unix_socket_path;
 use datadog_sidecar::service::agent_info::AgentInfoReader;
 use datadog_sidecar::service::telemetry::InternalTelemetryAction;
 use datadog_sidecar::service::{
@@ -1614,21 +1613,6 @@ pub extern "C" fn ddog_sidecar_reconnect(
     transport.reconnect(|| unsafe { factory() });
 }
 
-/// Return the path of the crashtracker unix domain socket.
-#[no_mangle]
-#[allow(clippy::missing_safety_doc)]
-pub unsafe extern "C" fn ddog_sidecar_get_crashtracker_unix_socket_path() -> ffi::CharSlice<'static>
-{
-    let socket_path = crashtracker_unix_socket_path();
-    let str = socket_path.to_str().unwrap_or_default();
-
-    let size = str.len();
-    let malloced = libc::malloc(size) as *mut u8;
-    let buf = slice::from_raw_parts_mut(malloced, size);
-    buf.copy_from_slice(str.as_bytes());
-    ffi::CharSlice::from_raw_parts(malloced as *mut c_char, size)
-}
-
 /// Gets an agent info reader.
 #[no_mangle]
 #[allow(clippy::missing_safety_doc)]
@@ -1731,7 +1715,7 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     // Write traces to the shared memory
     let mut shm_slice = mapped_shm.as_slice_mut();
     let shm_slice_len = shm_slice.len();
-    let written = match msgpack_encoder::v04::write_to_slice(&mut shm_slice, traces) {
+    let written = match msgpack_encoder::v04::write_to_slice_from_v04(&mut shm_slice, traces) {
         Ok(()) => shm_slice_len - shm_slice.len(),
         Err(_) => {
             tracing::error!("Failed serializing the traces");
@@ -1761,7 +1745,7 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
         match blocking::send_trace_v04_bytes(
             &mut parameters.transport,
             &parameters.instance_id,
-            msgpack_encoder::v04::to_vec_with_capacity(traces, written as u32),
+            msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, written as u32),
             check!(
                 (&parameters.tracer_headers_tags).try_into(),
                 "Failed to convert tracer headers tags"

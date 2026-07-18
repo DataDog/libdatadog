@@ -76,6 +76,10 @@ pub struct OtlpTraceConfig {
     pub timeout: Duration,
     /// OTLP export protocol (selects body encoding and content-type).
     pub protocol: OtlpProtocol,
+    /// OTLP instrumentation scope name for exported traces.
+    pub instrumentation_scope_name: String,
+    /// OTLP instrumentation scope version for exported traces.
+    pub instrumentation_scope_version: String,
     /// When `true`, omit DD-specific per-span attributes (`service.name`, `operation.name`,
     /// `resource.name`, `span.type`, `error.*`, `span.kind`) from the OTLP payload.
     pub otel_trace_semantics_enabled: bool,

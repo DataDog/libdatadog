@@ -1,6 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
-use std::{fmt::Write, time::SystemTime};
+use core::fmt::Write;
+use std::time::SystemTime;
 
 use crate::{ErrorKind, SigInfo};
 
@@ -199,23 +200,25 @@ impl TelemetryCrashUploader {
             // But do we want to support direct submission to the intake?
 
             // ignore result because what are we going to do?
-            let telemetry_endpoint = if endpoint.url.scheme_str() == Some("file") {
+            if endpoint.url.scheme_str() == Some("file") {
+                // Write telemetry alongside the crash file. Rebuild from the
+                // decoded path so the file path is re-encoded exactly once.
                 let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
-                libdd_telemetry::config::TelemetryEndpoint {
+                let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
                     url: Some(format!("file://{}.telemetry", path.display())),
                     ..Default::default()
-                }
+                });
             } else {
-                libdd_telemetry::config::TelemetryEndpoint {
-                    url: Some(endpoint.url.to_string()),
+                let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
                     api_key: endpoint.api_key.as_deref().map(str::to_owned),
                     test_token: endpoint.test_token.as_deref().map(str::to_owned),
                     timeout_ms: endpoint.timeout_ms,
                     use_system_resolver: endpoint.use_system_resolver,
-                }
-            };
-            let _ = cfg.set_endpoint(telemetry_endpoint);
+                    ..Default::default()
+                });
+                let _ = cfg.set_endpoint_uri(endpoint.url.clone());
+            }
         }
 
         parse_tags!(

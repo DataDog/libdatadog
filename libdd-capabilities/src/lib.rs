@@ -3,12 +3,14 @@
 
 //! Portable capability traits for cross-platform libdatadog.
 
+pub mod env;
 pub mod http;
 pub mod log_output;
 pub mod maybe_send;
 pub mod sleep;
 pub mod spawn;
 
+pub use self::env::{EnvCapability, EnvError};
 pub use self::http::{HttpClientCapability, HttpError};
 pub use self::log_output::LogWriterCapability;
 pub use self::sleep::SleepCapability;

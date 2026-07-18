@@ -662,6 +662,8 @@ impl<
             r.tracer_version = self.metadata.tracer_version.clone();
             r.runtime_id = self.metadata.runtime_id.clone();
             r.client_computed_stats = self.otlp_stats_enabled;
+            r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
+            r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
             r
         };
         // Single prost OTLP IR; the configured protocol encodes the same request to its wire
@@ -1103,11 +1105,7 @@ mod tests {
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::msgpack_encoder;
     use libdd_trace_utils::span::v04::SpanBytes;
-    use libdd_trace_utils::span::v05;
     use std::net;
-
-    // v05 messagepack empty payload -> [[""], []]
-    const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
 
     #[test]
     fn test_from_tracer_tags_to_tracer_header_tags() {
@@ -1307,7 +1305,7 @@ mod tests {
         datagram.trim_matches(char::from(0)).to_string()
     }
 
-    fn build_test_exporter(
+    pub(crate) fn build_test_exporter(
         url: String,
         dogstatsd_url: Option<String>,
         input: TraceExporterInputFormat,
@@ -1336,6 +1334,7 @@ mod tests {
         };
 
         if enable_telemetry {
+            #[cfg(feature = "telemetry")]
             builder.enable_telemetry(TelemetryConfig {
                 heartbeat: 100,
                 ..Default::default()
@@ -1410,7 +1409,7 @@ mod tests {
             span_id: 2,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
 
         let resp = exporter.send(data.as_ref()).unwrap();
         assert!(matches!(resp, AgentResponse::Unchanged));
@@ -1451,7 +1450,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         // `send` is synchronous and, in log mode, returns after writing through the
         // capability without initiating any HTTP; combined with the structural assert
         // above this is deterministic (no background worker can race the mock).
@@ -1492,7 +1491,7 @@ mod tests {
                 ..Default::default()
             }],
         ];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
 
         let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
@@ -1592,7 +1591,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -1700,7 +1699,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(result.is_err());
@@ -1804,7 +1803,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
 
         let _result = exporter.send(data.as_ref()).expect("failed to send trace");
 
@@ -1864,7 +1863,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref()).unwrap();
 
         assert_eq!(
@@ -1906,7 +1905,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let code = match exporter.send(data.as_ref()).unwrap_err() {
             TraceExporterError::Request(e) => Some(e.status()),
             _ => None,
@@ -1941,7 +1940,7 @@ mod tests {
             name: BytesString::from_slice(b"test").unwrap(),
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let err = exporter.send(data.as_ref());
 
         assert!(err.is_err());
@@ -1952,172 +1951,6 @@ mod tests {
             },
             Some(AgentErrorKind::EmptyResponse)
         );
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_v4() {
-        let server = MockServer::start();
-        let response_body = r#"{
-                        "rate_by_service": {
-                            "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8
-                        }
-                    }"#;
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path(V04_TRACES_ENDPOINT);
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(response_body);
-        });
-
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.bytes\"")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body("");
-        });
-
-        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
-        builder
-            .set_url(&server.url("/"))
-            .set_service("foo")
-            .set_env("foo-env")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .enable_telemetry(TelemetryConfig {
-                heartbeat: 100,
-                ..Default::default()
-            });
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-
-        let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref()).unwrap();
-        let AgentResponse::Changed { body } = result else {
-            panic!("Expected Changed response");
-        };
-        assert_eq!(body, response_body);
-
-        traces_endpoint.assert_calls(1);
-        while metrics_endpoint.calls() == 0 {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_v5() {
-        let server = MockServer::start();
-        let response_body = r#"{
-                        "rate_by_service": {
-                            "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8
-                        }
-                    }"#;
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path(V05_TRACES_ENDPOINT);
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(response_body);
-        });
-
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.bytes\"")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body("");
-        });
-
-        let exporter = build_test_exporter(
-            server.url("/"),
-            None,
-            TraceExporterInputFormat::V05,
-            TraceExporterOutputFormat::V05,
-            true,
-            true,
-        );
-
-        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
-        let traces = rmp_serde::to_vec(&v5).unwrap();
-        let result = exporter.send(traces.as_ref()).unwrap();
-        let AgentResponse::Changed { body } = result else {
-            panic!("Expected Changed response");
-        };
-        assert_eq!(body, response_body);
-
-        traces_endpoint.assert_calls(1);
-        while metrics_endpoint.calls() == 0 {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_exporter_metrics_v4_to_v5() {
-        let server = MockServer::start();
-        let response_body = r#"{
-                        "rate_by_service": {
-                            "service:foo,env:staging": 1.0,
-                            "service:,env:": 0.8
-                        }
-                    }"#;
-        let traces_endpoint = server.mock(|when, then| {
-            when.method(POST).path(V05_TRACES_ENDPOINT).is_true(|req| {
-                let bytes = libdd_tinybytes::Bytes::copy_from_slice(req.body_ref());
-                bytes.to_vec() == V5_EMPTY
-            });
-            then.status(200)
-                .header("content-type", "application/json")
-                .body(response_body);
-        });
-
-        let metrics_endpoint = server.mock(|when, then| {
-            when.method(POST)
-                .body_includes("\"metric\":\"trace_api.bytes\"")
-                .path("/telemetry/proxy/api/v2/apmtelemetry");
-            then.status(200)
-                .header("content-type", "application/json")
-                .body("");
-        });
-
-        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
-        builder
-            .set_url(&server.url("/"))
-            .set_service("foo")
-            .set_env("foo-env")
-            .set_tracer_version("v0.1")
-            .set_language("nodejs")
-            .set_language_version("1.0")
-            .set_language_interpreter("v8")
-            .enable_telemetry(TelemetryConfig {
-                heartbeat: 100,
-                ..Default::default()
-            })
-            .set_input_format(TraceExporterInputFormat::V04)
-            .set_output_format(TraceExporterOutputFormat::V05);
-
-        let exporter = builder.build::<NativeCapabilities>().unwrap();
-
-        let traces = vec![0x90];
-        let result = exporter.send(traces.as_ref()).unwrap();
-        let AgentResponse::Changed { body } = result else {
-            panic!("Expected Changed response");
-        };
-        assert_eq!(body, response_body);
-
-        traces_endpoint.assert_calls(1);
-        while metrics_endpoint.calls() == 0 {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        metrics_endpoint.assert_calls(1);
     }
 
     #[test]
@@ -2286,7 +2119,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
         while mock_info.calls() == 0 {
@@ -2354,7 +2187,7 @@ mod tests {
             error: 0,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(
@@ -2406,7 +2239,7 @@ mod tests {
             error: 0,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         let result = exporter.send(data.as_ref());
 
         assert!(
@@ -2463,9 +2296,191 @@ mod tests {
             duration: 1,
             ..Default::default()
         }]];
-        let data = msgpack_encoder::v04::to_vec(&traces);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&traces);
         exporter.send(data.as_ref()).unwrap();
         mock_intake.assert();
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "telemetry")]
+mod telemetry_metrics_tests {
+    use super::*;
+    use crate::trace_exporter::tests::build_test_exporter;
+    use httpmock::prelude::*;
+    use httpmock::MockServer;
+    use libdd_capabilities_impl::NativeCapabilities;
+    use libdd_shared_runtime::ForkSafeRuntime;
+    use libdd_tinybytes::BytesString;
+    use libdd_trace_utils::span::v05;
+
+    // v05 messagepack empty payload -> [[""], []]
+    const V5_EMPTY: [u8; 4] = [0x92, 0x91, 0xA0, 0x90];
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_metrics_v4() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8
+                    }
+                }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path(V04_TRACES_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .enable_telemetry(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            });
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces = vec![0x90];
+        let result = exporter.send(traces.as_ref()).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        metrics_endpoint.assert_calls(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_metrics_v5() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8
+                    }
+                }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path(V05_TRACES_ENDPOINT);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let exporter = build_test_exporter(
+            server.url("/"),
+            None,
+            TraceExporterInputFormat::V05,
+            TraceExporterOutputFormat::V05,
+            true,
+            true,
+        );
+
+        let v5: (Vec<BytesString>, Vec<Vec<v05::Span>>) = (vec![], vec![]);
+        let traces = rmp_serde::to_vec(&v5).unwrap();
+        let result = exporter.send(traces.as_ref()).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        metrics_endpoint.assert_calls(1);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_exporter_metrics_v4_to_v5() {
+        let server = MockServer::start();
+        let response_body = r#"{
+                    "rate_by_service": {
+                        "service:foo,env:staging": 1.0,
+                        "service:,env:": 0.8
+                    }
+                }"#;
+        let traces_endpoint = server.mock(|when, then| {
+            when.method(POST).path(V05_TRACES_ENDPOINT).is_true(|req| {
+                let bytes = libdd_tinybytes::Bytes::copy_from_slice(req.body_ref());
+                bytes.to_vec() == V5_EMPTY
+            });
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(response_body);
+        });
+
+        let metrics_endpoint = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes("\"metric\":\"trace_api.bytes\"")
+                .path("/telemetry/proxy/api/v2/apmtelemetry");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body("");
+        });
+
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
+        builder
+            .set_url(&server.url("/"))
+            .set_service("foo")
+            .set_env("foo-env")
+            .set_tracer_version("v0.1")
+            .set_language("nodejs")
+            .set_language_version("1.0")
+            .set_language_interpreter("v8")
+            .enable_telemetry(TelemetryConfig {
+                heartbeat: 100,
+                ..Default::default()
+            })
+            .set_input_format(TraceExporterInputFormat::V04)
+            .set_output_format(TraceExporterOutputFormat::V05);
+
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+
+        let traces = vec![0x90];
+        let result = exporter.send(traces.as_ref()).unwrap();
+        let AgentResponse::Changed { body } = result else {
+            panic!("Expected Changed response");
+        };
+        assert_eq!(body, response_body);
+
+        traces_endpoint.assert_calls(1);
+        while metrics_endpoint.calls() == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        metrics_endpoint.assert_calls(1);
     }
 }
 
@@ -2534,7 +2549,7 @@ mod single_threaded_tests {
             ..Default::default()
         }];
 
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
 
         // Wait for the info fetcher to get the config
         while agent_info::get_agent_info().is_none() {
@@ -2635,7 +2650,7 @@ mod single_threaded_tests {
             ..Default::default()
         }];
 
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
 
         // Wait for agent_info to be present so that sending a trace will trigger the stats worker
         // to start
@@ -2734,7 +2749,7 @@ mod single_threaded_tests {
             duration: 10,
             ..Default::default()
         }];
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
         let _ = exporter.send(data.as_ref());
 
         let start = std::time::Instant::now();
@@ -2842,7 +2857,7 @@ mod single_threaded_tests {
             duration: 10,
             ..Default::default()
         }];
-        let data = msgpack_encoder::v04::to_vec(&[trace_chunk]);
+        let data = msgpack_encoder::v04::to_vec_from_v04(&[trace_chunk]);
 
         // 1st send: /info has promoted v1_active=true, so this hits /v1.0/traces and 404s.
         let result1 = exporter.send(&data);

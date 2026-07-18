@@ -1,13 +1,13 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v05::dict::SharedDict;
-use crate::span::{v04, v05, BytesData, SharedDictBytes, TraceData};
-use crate::trace_utils::collect_trace_chunks;
+use crate::span::{v04, v05, v1, BytesData, SharedDictBytes, TraceData};
+use crate::trace_utils::convert_trace_chunks_v04_to_v05;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
 use libdd_trace_protobuf::pb;
 use std::cmp::Ordering;
 use std::iter::Iterator;
+use tracing::warn;
 
 pub type TracerPayloadV04 = Vec<v04::SpanBytes>;
 pub type TracerPayloadV05 = Vec<v05::Span>;
@@ -19,6 +19,8 @@ pub enum TraceEncoding {
     V04,
     /// v0.5 encoding (TracerPayloadV05).
     V05,
+    /// v1 encoding (TracerPayloadV1).
+    V1,
 }
 
 #[derive(Debug)]
@@ -26,9 +28,13 @@ pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan.
     V04(Vec<Vec<v04::Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
+    ///
+    /// The dictionary always owns its strings ([`SharedDictBytes`]) because the v0.5
+    /// conversion interns dynamically-built JSON (span links / events) alongside the
+    /// (possibly borrowed) span text.
+    V05((SharedDictBytes, Vec<Vec<v05::Span>>)),
     /// Collection of v0.4 spans to be serialized as a V1 msgpack payload.
-    V1(Vec<Vec<v04::Span<T>>>),
+    V1(Box<v1::TracerPayload<BytesData>>),
 }
 
 impl TraceChunks<BytesData> {
@@ -36,8 +42,7 @@ impl TraceChunks<BytesData> {
         match self {
             TraceChunks::V04(traces) => TracerPayloadCollection::V04(traces),
             TraceChunks::V05(traces) => TracerPayloadCollection::V05(traces),
-            // V1 uses the same underlying span structure as V04.
-            TraceChunks::V1(traces) => TracerPayloadCollection::V04(traces),
+            TraceChunks::V1(traces) => TracerPayloadCollection::V1(traces),
         }
     }
 }
@@ -48,7 +53,7 @@ impl<T: TraceData> TraceChunks<T> {
         match self {
             TraceChunks::V04(traces) => traces.len(),
             TraceChunks::V05((_, traces)) => traces.len(),
-            TraceChunks::V1(traces) => traces.len(),
+            TraceChunks::V1(trace) => trace.chunks.len(),
         }
     }
 }
@@ -62,6 +67,8 @@ pub enum TracerPayloadCollection {
     V04(Vec<Vec<v04::SpanBytes>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
     V05((SharedDictBytes, Vec<Vec<v05::Span>>)),
+    // /// V0.4-shaped spans that must be serialized as a V1 msgpack payload on send.
+    V1(Box<v1::TracerPayload<BytesData>>),
 }
 
 impl TracerPayloadCollection {
@@ -80,21 +87,41 @@ impl TracerPayloadCollection {
     /// let mut col2 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// col1.append(&mut col2);
     /// ```
-    pub fn append(&mut self, other: &mut Self) {
-        match self {
-            TracerPayloadCollection::V07(dest) => {
-                if let TracerPayloadCollection::V07(src) = other {
-                    dest.append(src)
-                }
+    ///
+    /// # Returns
+    ///
+    /// `true` if `other`'s data was merged into `self`, `false` if the append was skipped (e.g.
+    /// diverging V1 tracer metadata). Callers that rely on `other` being fully drained must check
+    /// this return value rather than assuming success.
+    pub fn append(&mut self, other: &mut Self) -> bool {
+        match (self, other) {
+            (TracerPayloadCollection::V07(dest), TracerPayloadCollection::V07(src)) => {
+                dest.append(src);
+                true
             }
-            TracerPayloadCollection::V04(dest) => {
-                if let TracerPayloadCollection::V04(src) = other {
-                    dest.append(src)
+            (TracerPayloadCollection::V04(dest), TracerPayloadCollection::V04(src)) => {
+                dest.append(src);
+                true
+            }
+            (TracerPayloadCollection::V1(dest), TracerPayloadCollection::V1(src)) => {
+                // Same-target SendData entries are coalesced by
+                // trace_utils::coalesce_send_data, so both V1 payloads
+                // typically share tracer-level metadata. If all metadata
+                // fields match we append `src`'s chunks into `dest`; if any diverge we no-op
+                // (logging a warning) rather than silently dropping `src`'s metadata.
+                if metadata_matches_v1(dest, src) {
+                    dest.chunks.append(&mut src.chunks);
+                    true
+                } else {
+                    false
                 }
             }
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
             #[allow(clippy::unimplemented)]
-            TracerPayloadCollection::V05(_) => unimplemented!("Append for V05 not implemented"),
+            (TracerPayloadCollection::V05(_), _) => {
+                unimplemented!("Append for V05 not implemented")
+            }
+            _ => false,
         }
     }
 
@@ -144,6 +171,7 @@ impl TracerPayloadCollection {
             }
             TracerPayloadCollection::V04(collection) => collection.len(),
             TracerPayloadCollection::V05((_, collection)) => collection.len(),
+            TracerPayloadCollection::V1(collection) => collection.chunks.len(),
         }
     }
 }
@@ -228,13 +256,66 @@ pub fn decode_to_trace_chunks(
     data: libdd_tinybytes::Bytes,
     encoding_type: TraceEncoding,
 ) -> Result<(TraceChunks<BytesData>, usize), anyhow::Error> {
-    let (data, size) = match encoding_type {
-        TraceEncoding::V04 => msgpack_decoder::v04::from_bytes(data),
-        TraceEncoding::V05 => msgpack_decoder::v05::from_bytes(data),
+    match encoding_type {
+        TraceEncoding::V04 => {
+            let (data, size) = msgpack_decoder::v04::from_bytes(data).map_err(|e| {
+                anyhow::format_err!("Error deserializing trace from request body: {e}")
+            })?;
+            Ok((TraceChunks::V04(data), size))
+        }
+        TraceEncoding::V05 => {
+            let (data, size) = msgpack_decoder::v05::from_bytes(data).map_err(|e| {
+                anyhow::format_err!("Error deserializing trace from request body: {e}")
+            })?;
+            Ok((convert_trace_chunks_v04_to_v05(data)?, size))
+        }
+        TraceEncoding::V1 => {
+            let (data, size) = msgpack_decoder::v1::from_bytes(data).map_err(|e| {
+                anyhow::format_err!("Error deserializing trace from request body: {e}")
+            })?;
+            Ok((TraceChunks::V1(Box::new(data)), size))
+        }
     }
-    .map_err(|e| anyhow::format_err!("Error deserializing trace from request body: {e}"))?;
+}
 
-    Ok((collect_trace_chunks(data, encoding_type)?, size))
+/// Returns `true` if and only if every tracer-level metadata field (string fields and attributes)
+/// of `src` matches `dest`.
+///
+/// V1 payloads carry tracer metadata (env, hostname, language, …) inside the payload itself, so
+/// merging two payloads whose metadata diverges would silently drop one set of values. Callers
+/// use this to gate the merge: on a `false` return, append is skipped (no-op) and the two
+/// payloads stay separate. A warning is logged listing the diverging fields so the situation
+/// is observable rather than silent.
+fn metadata_matches_v1(
+    dest: &v1::TracerPayload<BytesData>,
+    src: &v1::TracerPayload<BytesData>,
+) -> bool {
+    let fields = [
+        ("container_id", dest.container_id == src.container_id),
+        ("language_name", dest.language_name == src.language_name),
+        (
+            "language_version",
+            dest.language_version == src.language_version,
+        ),
+        ("tracer_version", dest.tracer_version == src.tracer_version),
+        ("runtime_id", dest.runtime_id == src.runtime_id),
+        ("env", dest.env == src.env),
+        ("hostname", dest.hostname == src.hostname),
+        ("app_version", dest.app_version == src.app_version),
+        ("attributes", dest.attributes.slow_compare(&src.attributes)),
+    ];
+
+    if fields.iter().any(|(_, eq)| !eq) {
+        warn!(
+            "Skipping V1 TracerPayload append: diverging metadata fields {:?}",
+            fields
+                .iter()
+                .filter_map(|(label, eq)| (!eq).then_some(*label))
+                .collect::<Vec<_>>()
+        );
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]
