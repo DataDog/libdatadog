@@ -1,49 +1,69 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+#[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(feature = "std")]
 use alloc::borrow::Cow;
+#[cfg(feature = "std")]
 use anyhow::Context;
+#[cfg(feature = "std")]
 use core::{ops::Deref, str::FromStr};
+#[cfg(feature = "std")]
 use http::uri;
+#[cfg(feature = "std")]
 use serde::de::Error;
+#[cfg(feature = "std")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+#[cfg(feature = "std")]
 use std::path::PathBuf;
+#[cfg(feature = "std")]
 use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+#[cfg(feature = "std")]
 pub mod azure_app_services;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub mod cc_utils;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub mod connector;
 #[cfg(feature = "reqwest")]
 pub mod dump_server;
+#[cfg(feature = "std")]
 pub mod entity_id;
+#[cfg(feature = "std")]
 pub mod machine_id;
+#[cfg(feature = "std")]
 pub mod regex_engine;
+#[cfg(feature = "std")]
 #[macro_use]
 pub mod cstr;
 #[cfg(feature = "bench-utils")]
 pub mod bench_utils;
+#[cfg(feature = "std")]
 pub mod config;
+#[cfg(feature = "std")]
 pub mod error;
+#[cfg(feature = "std")]
 pub mod http_common;
+#[cfg(feature = "std")]
 pub mod multipart;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub mod rate_limiter;
 pub mod tag;
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(all(feature = "std", any(test, feature = "test-utils")))]
 pub mod test_utils;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub mod threading;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub mod timeout;
+#[cfg(feature = "std")]
 pub mod unix_utils;
 
 /// Extension trait for `Mutex` to provide a method that acquires a lock, panicking if the lock is
@@ -82,10 +102,12 @@ pub mod unix_utils;
 ///
 /// assert_eq!(*data.lock_or_panic(), 6);
 /// ```
+#[cfg(feature = "std")]
 pub trait MutexExt<T> {
     fn lock_or_panic(&self) -> MutexGuard<'_, T>;
 }
 
+#[cfg(feature = "std")]
 impl<T> MutexExt<T> for Mutex<T> {
     #[inline(always)]
     #[track_caller]
@@ -119,11 +141,13 @@ impl<T> MutexExt<T> for Mutex<T> {
 ///
 /// assert_eq!(*data.read_or_panic(), 6);
 /// ```
+#[cfg(feature = "std")]
 pub trait RwLockExt<T> {
     fn read_or_panic(&self) -> RwLockReadGuard<'_, T>;
     fn write_or_panic(&self) -> RwLockWriteGuard<'_, T>;
 }
 
+#[cfg(feature = "std")]
 impl<T> RwLockExt<T> for RwLock<T> {
     #[inline(always)]
     #[track_caller]
@@ -155,10 +179,12 @@ impl<T> RwLockExt<T> for RwLock<T> {
 /// let result: Result<i32, Infallible> = Ok(42);
 /// assert_eq!(result.unwrap_infallible(), 42);
 /// ```
+#[cfg(feature = "std")]
 pub trait ResultInfallibleExt<T>: sealed::Sealed {
     fn unwrap_infallible(self) -> T;
 }
 
+#[cfg(feature = "std")]
 impl<T> ResultInfallibleExt<T> for Result<T, core::convert::Infallible> {
     #[inline(always)]
     fn unwrap_infallible(self) -> T {
@@ -169,11 +195,13 @@ impl<T> ResultInfallibleExt<T> for Result<T, core::convert::Infallible> {
     }
 }
 
+#[cfg(feature = "std")]
 mod sealed {
     pub trait Sealed {}
     impl<T> Sealed for Result<T, core::convert::Infallible> {}
 }
 
+#[cfg(feature = "std")]
 pub mod header {
     #![allow(clippy::declare_interior_mutable_const)]
     use http::{header::HeaderName, HeaderValue};
@@ -199,25 +227,29 @@ pub mod header {
         HeaderName::from_static("x-datadog-test-session-token");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub type HttpClient = http_common::GenericHttpClient<connector::Connector>;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub type HttpResponse = http_common::HttpResponse;
+#[cfg(feature = "std")]
 pub type HttpRequestBuilder = http::request::Builder;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 pub trait Connect:
     hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static
 {
 }
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "std", not(target_arch = "wasm32")))]
 impl<C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static> Connect
     for C
 {
 }
 
 // Used by tag! macro
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
 pub use const_format;
 
+#[cfg(feature = "std")]
 #[derive(Clone, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub struct Endpoint {
     #[serde(serialize_with = "serialize_uri", deserialize_with = "deserialize_uri")]
@@ -232,6 +264,7 @@ pub struct Endpoint {
     pub use_system_resolver: bool,
 }
 
+#[cfg(feature = "std")]
 impl Default for Endpoint {
     fn default() -> Self {
         Endpoint {
@@ -244,6 +277,7 @@ impl Default for Endpoint {
     }
 }
 
+#[cfg(feature = "std")]
 #[derive(serde::Deserialize, serde::Serialize)]
 struct SerializedUri<'a> {
     scheme: Option<Cow<'a, str>>,
@@ -251,6 +285,7 @@ struct SerializedUri<'a> {
     path_and_query: Option<Cow<'a, str>>,
 }
 
+#[cfg(feature = "std")]
 fn serialize_uri<S>(uri: &http::Uri, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -267,6 +302,7 @@ where
     uri.serialize(serializer)
 }
 
+#[cfg(feature = "std")]
 fn deserialize_uri<'de, D>(deserializer: D) -> Result<http::Uri, D::Error>
 where
     D: Deserializer<'de>,
@@ -308,6 +344,7 @@ where
 ///     * For windows, interprets everything after windows: as path
 ///     * For unix, interprets everything after unix:// as path
 /// * For file scheme implementation will simply backfill missing authority section
+#[cfg(feature = "std")]
 pub fn parse_uri(uri: &str) -> anyhow::Result<http::Uri> {
     if let Some(path) = uri.strip_prefix("unix://") {
         encode_uri_path_in_authority("unix", path)
@@ -320,6 +357,7 @@ pub fn parse_uri(uri: &str) -> anyhow::Result<http::Uri> {
     }
 }
 
+#[cfg(feature = "std")]
 fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<http::Uri> {
     let mut parts = uri::Parts::default();
     parts.scheme = uri::Scheme::from_str(scheme).ok();
@@ -331,6 +369,7 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<http
     Ok(http::Uri::from_parts(parts)?)
 }
 
+#[cfg(feature = "std")]
 pub fn decode_uri_path_in_authority(uri: &http::Uri) -> anyhow::Result<PathBuf> {
     let path = hex::decode(uri.authority().context("missing uri authority")?.as_str())?;
     #[cfg(unix)]
@@ -347,6 +386,7 @@ pub fn decode_uri_path_in_authority(uri: &http::Uri) -> anyhow::Result<PathBuf> 
     }
 }
 
+#[cfg(feature = "std")]
 impl Endpoint {
     /// Default value for the timeout field in milliseconds.
     pub const DEFAULT_TIMEOUT: u64 = 3_000;

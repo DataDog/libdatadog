@@ -47,6 +47,10 @@ let tag1 = tag!("service", "my-service");
 // Runtime tag creation
 use libdd_common::tag::Tag;
 let tag2 = Tag::new("env", "production")?;
+
+// Allocation-free borrowed tag creation
+use libdd_common::tag::TagRef;
+let tag3 = TagRef::new("env", "production")?;
 ```
 
 ### Entity ID detection
@@ -61,8 +65,16 @@ if let Some(container_id) = entity_id::get_container_id() {
 
 ## Features Flags
 
-- `https` (default): Enable HTTPS support with rustls
+- `std` (default): Enable the standard-library-dependent utilities
+- `alloc`: Enable allocation-backed tag creation and parsing without `std`
+- `https` (default): Enable HTTPS support with rustls; implies `std`
 - `use_webpki_roots`: Use webpki roots instead of native certs
 - `cgroup_testing`: Enable cgroup stubbing for testing
 - `fips`: Use FIPS-compliant cryptographic provider (Unix only)
 
+`TagRef` is available without feature flags. To use the allocation-backed
+`Tag` from a `no_std` crate:
+
+```bash
+cargo check -p libdd-common --lib --no-default-features --features alloc
+```

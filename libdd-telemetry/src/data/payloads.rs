@@ -1,7 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::hash::Hasher;
+use alloc::{string::String, vec::Vec};
+use core::hash::{Hash, Hasher};
 
 use crate::data::metrics;
 
@@ -151,7 +152,7 @@ impl PartialEq for Endpoint {
 
 impl Eq for Endpoint {}
 
-impl std::hash::Hash for Endpoint {
+impl Hash for Endpoint {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.resource_name.hash(state);
     }

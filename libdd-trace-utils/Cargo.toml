@@ -47,7 +47,7 @@ rmp = { version = "0.8.14", default-features = false }
 rustc-hash = "2.1.1"
 
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
-libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
+libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false, features = ["std"] }
 libdd-trace-normalization = { version = "3.0.0", path = "../libdd-trace-normalization" }
 libdd-trace-protobuf = { version = "4.0.0", path = "../libdd-trace-protobuf" }
 libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
@@ -77,7 +77,7 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl" }
-libdd-common = { path = "../libdd-common", default-features = false, features = ["bench-utils"] }
+libdd-common = { path = "../libdd-common", default-features = false, features = ["std", "bench-utils"] }
 bolero = "0.13"
 criterion = "0.5.1"
 httpmock = { version = "0.8.0-alpha.1" }
