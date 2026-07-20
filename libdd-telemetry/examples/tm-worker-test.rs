@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .unwrap();
     builder.config.telemetry_heartbeat_interval = Duration::from_secs(1);
 
-    let handle = builder.run()?;
+    let handle = builder.run::<libdd_capabilities_impl::NativeCapabilities>()?;
 
     let ping_metric = handle.register_metric_context(
         "test_telemetry.ping".into(),
