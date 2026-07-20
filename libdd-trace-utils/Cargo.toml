@@ -77,7 +77,9 @@ getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl" }
-libdd-common = { path = "../libdd-common", default-features = false, features = ["bench-utils"] }
+libdd-common = { path = "../libdd-common", default-features = false, features = [
+    "bench-utils",
+] }
 bolero = "0.13"
 criterion = "0.5.1"
 httpmock = { version = "0.8.0-alpha.1" }
@@ -89,7 +91,7 @@ tempfile = "3.3.0"
 [features]
 default = ["https"]
 https = ["libdd-common/https", "libdd-capabilities-impl/https"]
-mini_agent = ["compression", "libdd-common/use_webpki_roots"]
+mini_agent = ["compression", "libdd-common/use_webpki_roots", "dep:flate2"]
 test-utils = [
     "hyper/server",
     "httpmock",
@@ -100,6 +102,6 @@ test-utils = [
 change-buffer = []
 # Opt-in switch for crate-internal microbenchmarks (e.g. `vec_map_bench`).
 bench-internals = []
-compression = ["zstd", "flate2"]
+compression = ["zstd"]
 # FIPS mode uses the FIPS-compliant cryptographic provider (Unix only)
 fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]

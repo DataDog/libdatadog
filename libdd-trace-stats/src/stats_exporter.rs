@@ -17,7 +17,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use libdd_trace_utils::send_with_retry::{send_with_retry, CompressionStrategy, RetryStrategy};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use std::fmt::Debug;
@@ -249,6 +249,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             body,
             &headers,
             &RetryStrategy::default(),
+            CompressionStrategy::None,
         )
         .await;
 

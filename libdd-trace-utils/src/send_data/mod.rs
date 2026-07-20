@@ -4,7 +4,10 @@
 pub mod send_data_result;
 
 use crate::msgpack_encoder;
-use crate::send_with_retry::{send_with_retry, RetryStrategy, SendWithRetryResult};
+use crate::send_with_retry::compression::{add_headers, compress};
+use crate::send_with_retry::{
+    send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryResult,
+};
 use crate::trace_utils::TracerHeaderTags;
 use crate::tracer_payload::TracerPayloadCollection;
 use anyhow::{anyhow, Context};
@@ -22,10 +25,6 @@ use libdd_common::{
 use libdd_trace_protobuf::pb::{AgentPayload, TracerPayload};
 use send_data_result::SendDataResult;
 use std::collections::HashMap;
-#[cfg(feature = "compression")]
-use std::io::Write;
-#[cfg(feature = "compression")]
-use zstd::stream::write::Encoder;
 
 #[derive(Debug)]
 /// `SendData` is a structure that holds the data to be sent to a target endpoint.
@@ -71,15 +70,7 @@ pub struct SendData {
     target: Endpoint,
     headers: HeaderMap,
     retry_strategy: RetryStrategy,
-    #[cfg(feature = "compression")]
-    compression: Compression,
-}
-
-#[cfg(feature = "compression")]
-#[derive(Debug, Clone)]
-pub enum Compression {
-    Zstd(i32),
-    None,
+    compression: CompressionStrategy,
 }
 
 pub struct SendDataBuilder {
@@ -88,8 +79,7 @@ pub struct SendDataBuilder {
     target: Endpoint,
     headers: HeaderMap,
     retry_strategy: RetryStrategy,
-    #[cfg(feature = "compression")]
-    compression: Compression,
+    compression: CompressionStrategy,
 }
 
 impl SendDataBuilder {
@@ -107,13 +97,11 @@ impl SendDataBuilder {
             target: target.clone(),
             headers,
             retry_strategy: RetryStrategy::default(),
-            #[cfg(feature = "compression")]
-            compression: Compression::None,
+            compression: CompressionStrategy::None,
         }
     }
 
-    #[cfg(feature = "compression")]
-    pub fn with_compression(mut self, compression: Compression) -> SendDataBuilder {
+    pub fn with_compression(mut self, compression: CompressionStrategy) -> SendDataBuilder {
         self.compression = compression;
         self
     }
@@ -135,7 +123,6 @@ impl SendDataBuilder {
             target: self.target,
             headers: self.headers,
             retry_strategy: self.retry_strategy,
-            #[cfg(feature = "compression")]
             compression: self.compression,
         }
     }
@@ -169,8 +156,7 @@ impl SendData {
             target: target.clone(),
             headers,
             retry_strategy: RetryStrategy::default(),
-            #[cfg(feature = "compression")]
-            compression: Compression::None,
+            compression: CompressionStrategy::None,
         }
     }
 
@@ -248,9 +234,14 @@ impl SendData {
         capabilities: &C,
         chunks: u64,
         payload: Vec<u8>,
-        headers: HeaderMap,
+        mut headers: HeaderMap,
         endpoint: Option<&Endpoint>,
+        compression_strategy: CompressionStrategy,
     ) -> (SendWithRetryResult, u64, u64) {
+        // Compress here (rather than inside `send_with_retry`) so that the reported
+        // `bytes_sent` metric reflects the number of bytes actually put on the wire.
+        let (payload, compression_strategy) = compress(payload, compression_strategy);
+        add_headers(&mut headers, compression_strategy);
         #[allow(clippy::unwrap_used)]
         let payload_len = u64::try_from(payload.len()).unwrap();
         (
@@ -260,6 +251,7 @@ impl SendData {
                 payload,
                 &headers,
                 &self.retry_strategy,
+                CompressionStrategy::None,
             )
             .await,
             payload_len,
@@ -269,31 +261,6 @@ impl SendData {
 
     fn use_protobuf(&self) -> bool {
         self.target.api_key.is_some()
-    }
-
-    #[cfg(feature = "compression")]
-    fn compress_payload(&self, payload: Vec<u8>, headers: &mut HeaderMap) -> Vec<u8> {
-        match self.compression {
-            Compression::Zstd(level) => {
-                let result = (|| -> std::io::Result<Vec<u8>> {
-                    let mut encoder = Encoder::new(Vec::new(), level)?;
-                    encoder.write_all(&payload)?;
-                    encoder.finish()
-                })();
-
-                match result {
-                    Ok(compressed_payload) => {
-                        headers.insert(
-                            http::header::CONTENT_ENCODING,
-                            HeaderValue::from_static("zstd"),
-                        );
-                        compressed_payload
-                    }
-                    Err(_) => payload,
-                }
-            }
-            _ => payload,
-        }
     }
 
     async fn send_with_protobuf<C: HttpClientCapability + SleepCapability>(
@@ -317,22 +284,16 @@ impl SendData {
                 };
                 let mut request_headers = self.headers.clone();
 
-                #[cfg(feature = "compression")]
-                let final_payload =
-                    self.compress_payload(serialized_trace_payload, &mut request_headers);
-
-                #[cfg(not(feature = "compression"))]
-                let final_payload = serialized_trace_payload;
-
                 request_headers.insert(CONTENT_TYPE, APPLICATION_PROTOBUF);
 
                 let (response, bytes_sent, chunks) = self
                     .send_payload(
                         capabilities,
                         chunks,
-                        final_payload,
+                        serialized_trace_payload,
                         request_headers,
                         endpoint.as_ref(),
+                        self.compression,
                     )
                     .await;
 
@@ -373,6 +334,7 @@ impl SendData {
                         payload,
                         headers,
                         endpoint.as_ref(),
+                        CompressionStrategy::None,
                     ));
                 }
             }
@@ -392,6 +354,7 @@ impl SendData {
                     payload,
                     headers,
                     endpoint.as_ref(),
+                    CompressionStrategy::None,
                 ));
             }
             TracerPayloadCollection::V05(payload) => {
@@ -413,6 +376,7 @@ impl SendData {
                     payload,
                     headers,
                     endpoint.as_ref(),
+                    CompressionStrategy::None,
                 ));
             }
             TracerPayloadCollection::V1(payload) => {

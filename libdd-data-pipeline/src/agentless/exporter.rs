@@ -9,7 +9,7 @@ use http::HeaderMap;
 use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, RetryBackoffType, RetryStrategy, SendWithRetryError,
+    send_with_retry, CompressionStrategy, RetryBackoffType, RetryStrategy, SendWithRetryError,
 };
 use tracing::error;
 
@@ -46,7 +46,21 @@ pub async fn send_agentless_traces_http<C: HttpClientCapability + SleepCapabilit
         None,
     );
 
-    match send_with_retry(capabilities, &target, json_body, &headers, &retry_strategy).await {
+    #[cfg(feature = "compression")]
+    let compression_strategy = CompressionStrategy::Zstd { level: 1 };
+    #[cfg(not(feature = "compression"))]
+    let compression_strategy = CompressionStrategy::None;
+
+    match send_with_retry(
+        capabilities,
+        &target,
+        json_body,
+        &headers,
+        &retry_strategy,
+        compression_strategy,
+    )
+    .await
+    {
         Ok(_) => Ok(()),
         Err(e) => Err(map_send_error(e)),
     }

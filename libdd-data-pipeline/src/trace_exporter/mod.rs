@@ -48,7 +48,7 @@ use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use libdd_trace_utils::msgpack_decoder;
 use libdd_trace_utils::send_with_retry::{
-    send_with_retry, RetryStrategy, SendWithRetryError, SendWithRetryResult,
+    send_with_retry, CompressionStrategy, RetryStrategy, SendWithRetryError, SendWithRetryResult,
 };
 use libdd_trace_utils::span::{v04::Span, TraceData};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
@@ -735,6 +735,7 @@ impl<
             mp_payload,
             &headers,
             &strategy,
+            CompressionStrategy::None,
         )
         .await;
 
@@ -2272,16 +2273,32 @@ mod tests {
     fn test_agentless_export_body_shape() {
         let server = MockServer::start();
         let mock_intake = server.mock(|when, then| {
-            when.method(POST)
-                .path("/v1/input")
-                .body_includes("\"traces\":")
-                .body_includes("\"spans\":")
-                .body_includes("\"hostname\":\"h-1\"")
-                .body_includes("\"languageName\":\"nodejs\"")
-                .body_includes("\"_dd.compute_stats\":\"1\"")
-                .body_includes("\"_top_level\":1")
-                .body_includes("\"_trace_root\":1")
-                .body_includes("\"parent_id\":\"0000000000000000\"");
+            fn check_body(body: &str) -> bool {
+                body.contains("\"traces\":")
+                    && body.contains("\"spans\":")
+                    && body.contains("\"hostname\":\"h-1\"")
+                    && body.contains("\"languageName\":\"nodejs\"")
+                    && body.contains("\"_dd.compute_stats\":\"1\"")
+                    && body.contains("\"_top_level\":1")
+                    && body.contains("\"_trace_root\":1")
+                    && body.contains("\"parent_id\":\"0000000000000000\"")
+            }
+            let when = when.method(POST).path("/v1/input");
+            #[cfg(feature = "compression")]
+            let when = when.header("content-encoding", "zstd").is_true(|req| {
+                let Ok(body) = zstd::decode_all(req.body_ref()) else {
+                    return false;
+                };
+                let body = String::from_utf8(body).unwrap();
+                check_body(&body)
+            });
+            #[cfg(not(feature = "compression"))]
+            let when = when
+                .is_true(|req| {
+                let body = String::from_utf8(req.body_vec()).unwrap();
+                check_body(&body)
+            });
+            let _ = when;
             then.status(200).body("");
         });
 

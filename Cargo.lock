@@ -3046,6 +3046,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "zstd",
 ]
 
 [[package]]
