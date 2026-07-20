@@ -159,6 +159,7 @@ RUN echo \
     tools/src/bin/dedup_headers.rs \
     tools/src/bin/ffi_test.rs \
     tools/src/bin/add_junit_file_attributes.rs \
+    libdd-otel-thread-ctx/src/bin/gen_tls_shim_bytes.rs \
     libdd-trace-normalization/benches/normalization_utils.rs \
     libdd-trace-obfuscation/benches/trace_obfuscation.rs \
     libdd-trace-utils/benches/deserialization.rs \

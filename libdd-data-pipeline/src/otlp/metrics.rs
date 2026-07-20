@@ -16,8 +16,9 @@ use libdd_trace_utils::otlp_encoder::mapper::status_code;
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tracing::error;
+use web_time::SystemTime;
 
 const METRIC_NAME: &str = "traces.span.sdk.metrics.duration";
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;

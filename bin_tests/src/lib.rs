@@ -136,11 +136,20 @@ fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     };
 
     if c.panic_abort == Some(true) {
+        // `-C panic=abort` suppresses `.eh_frame` unwind tables, which the aarch64
+        // backtrace unwinder relies on; without them `RUST_BACKTRACE` can loop forever
+        // on certain binary layouts (rust-lang/rust#123733), hanging the test until the
+        // runner OOMs. Force the tables back on so backtraces terminate. This is
+        // layout-sensitive, so it can appear/disappear across unrelated changes; keep
+        // until #123733 (fix: rust-lang/rust#143613) ships in a stable toolchain.
         let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
         let new_rustflags = if existing_rustflags.is_empty() {
-            "-C panic=abort".to_string()
+            "-C panic=abort -C force-unwind-tables=yes".to_string()
         } else {
-            format!("{} -C panic=abort", existing_rustflags)
+            format!(
+                "{} -C panic=abort -C force-unwind-tables=yes",
+                existing_rustflags
+            )
         };
         build_cmd.env("RUSTFLAGS", new_rustflags);
     }
