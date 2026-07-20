@@ -3184,9 +3184,9 @@ name = "libdd-otel-thread-ctx"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "build_common",
- "cc",
  "elf",
+ "libdd-otel-thread-ctx",
+ "object 0.36.5",
 ]
 
 [[package]]
