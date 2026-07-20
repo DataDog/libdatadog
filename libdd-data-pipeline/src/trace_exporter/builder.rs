@@ -75,8 +75,6 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     // Stats specific fields
     /// A Some value enables stats-computation, None if it is disabled
     stats_bucket_size: Option<Duration>,
-    peer_tags_aggregation: bool,
-    compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
     stats_cardinality_limit: Option<usize>,
     #[cfg(feature = "stats-obfuscation")]
@@ -146,8 +144,6 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             client_computed_stats: false,
             client_computed_top_level: false,
             stats_bucket_size: None,
-            peer_tags_aggregation: false,
-            compute_stats_by_span_kind: false,
             peer_tags: Vec::new(),
             stats_cardinality_limit: None,
             #[cfg(feature = "stats-obfuscation")]
@@ -330,18 +326,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
-    /// Enable peer tags aggregation for stats computation (requires stats computation to be
-    /// enabled)
-    pub fn enable_stats_peer_tags_aggregation(&mut self, peer_tags: Vec<String>) -> &mut Self {
-        self.peer_tags_aggregation = true;
+    /// Seed the peer tags used for peer tags aggregation in stats computation (requires stats
+    /// computation to be enabled).
+    pub fn set_peer_tags(&mut self, peer_tags: Vec<String>) -> &mut Self {
         self.peer_tags = peer_tags;
-        self
-    }
-
-    /// Enable stats eligibility by span kind (requires stats computation to be
-    /// enabled)
-    pub fn enable_compute_stats_by_span_kind(&mut self) -> &mut Self {
-        self.compute_stats_by_span_kind = true;
         self
     }
 
