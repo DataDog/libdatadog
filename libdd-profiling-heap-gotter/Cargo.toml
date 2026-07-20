@@ -29,5 +29,5 @@ libdd-profiling-heap-sampler = { version = "0.1.0", path = "../libdd-profiling-h
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"
-libdd-profiling-heap-sampler = { path = "../libdd-profiling-heap-sampler" }
+libdd-profiling-heap-sampler = { version = "0.1.0", path = "../libdd-profiling-heap-sampler" }
 serial_test = "3.2"
