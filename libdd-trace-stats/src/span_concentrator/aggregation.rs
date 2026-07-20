@@ -286,7 +286,11 @@ impl<'a> BorrowedAggregationKey<'a> {
             .iter()
             .filter_map(|key| match span.get_meta(key.as_str()) {
                 Some(v) if !v.is_empty() => {
-                    if v.chars().count() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN {
+                    // Byte length >= char count, so skip the char walk when byte length alone
+                    // is within the max character length, otherwise stop as soon as we pass the max character length.
+                    if v.len() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN
+                        && v.chars().nth(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN).is_some()
+                    {
                         warn!(
                             "additional_metric_tags: value for key '{}' exceeds {} characters; substituting tracer_blocked_value",
                             key, ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN,
