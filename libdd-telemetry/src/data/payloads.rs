@@ -18,6 +18,26 @@ pub struct Dependency {
     pub metadata: Option<Vec<DependencyMetadata>>,
 }
 
+/// SCA metadata may be attached to a dependency after it was first reported; keying the store
+/// by this instead of the full struct means that update refreshes the existing entry instead of
+/// being stored (and re-sent) as a second entry for the same package/version.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DependencyKey {
+    name: String,
+    version: Option<String>,
+    hash: Option<String>,
+}
+
+impl crate::worker::store::Keyed<DependencyKey> for Dependency {
+    fn key(&self) -> DependencyKey {
+        DependencyKey {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            hash: self.hash.clone(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
 pub struct DependencyMetadata {
     pub r#type: String,

@@ -131,7 +131,7 @@ pub struct LogIdentifier {
 #[derive(Debug)]
 struct TelemetryWorkerData {
     started: bool,
-    dependencies: store::Store<Dependency>,
+    dependencies: store::Store<data::Dependency, data::DependencyKey>,
     configurations: store::Store<data::Configuration>,
     integrations: store::Store<data::Integration>,
     endpoints: HashSet<data::Endpoint>,
@@ -1285,7 +1285,7 @@ pub struct TelemetryWorkerBuilder {
     pub host: Host,
     pub application: Application,
     pub runtime_id: Option<String>,
-    pub dependencies: store::Store<data::Dependency>,
+    pub dependencies: store::Store<data::Dependency, data::DependencyKey>,
     pub integrations: store::Store<data::Integration>,
     pub configurations: store::Store<data::Configuration>,
     pub endpoints: HashSet<data::Endpoint>,
