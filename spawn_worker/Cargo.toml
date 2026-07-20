@@ -8,7 +8,7 @@ publish = false
 bench = false
 
 [dependencies]
-anyhow = { version = "1.0" }
+anyhow.workspace = true
 io-lifetimes = { version = "1.0" }
 fastrand = "2.0.1"
 libc = "0.2"

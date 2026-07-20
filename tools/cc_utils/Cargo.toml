@@ -7,7 +7,7 @@ publish = false
 # Important: This crate is not published and only exists as a way to include cc_utils without all the heavy dependencies of libdd-common. (like in spawn_worker build.rs or php_sidecar_mockgen of dd-trace-php.)
 
 [dependencies]
-anyhow = {version = "1.0"}
+anyhow.workspace = true
 cc = {version = "1.0"}
 
 [lib]

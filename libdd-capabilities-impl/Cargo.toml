@@ -16,12 +16,12 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
-anyhow = "1.0"
+anyhow.workspace = true
 bytes = "1"
 http = "1"
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
 libdd-common = { path = "../libdd-common", version = "5.1.0", default-features = false }
-tokio = { version = "1", features = ["fs", "time"] }
+tokio = { workspace = true, features = ["fs", "time"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 http-body-util = "0.1"
