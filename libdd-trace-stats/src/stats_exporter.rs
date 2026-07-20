@@ -17,7 +17,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use libdd_trace_utils::send_with_retry::{send_with_retry, RetryBackoffType, RetryStrategy};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use std::fmt::Debug;
@@ -250,7 +250,7 @@ impl<
             &self.endpoint,
             body,
             &headers,
-            &RetryStrategy::default(),
+            &RetryStrategy::new(0, 0, RetryBackoffType::Constant, None),
         )
         .await;
 
@@ -466,8 +466,8 @@ mod tests {
         send_status.unwrap_err();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 6, true).await,
-            "Expected max retry attempts"
+            poll_for_mock_hit(&mut mock, 10, 100, 1, true).await,
+            "Expected a single attempt with no retries"
         );
     }
 
