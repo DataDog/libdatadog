@@ -421,7 +421,7 @@ impl PayloadSender {
     }
 
     pub async fn finish(mut self) -> anyhow::Result<u32> {
-        if let SenderFuture::Submitted(future) = self.future {
+        if let SenderFuture::Submitted(mut future) = self.future {
             // insert a trailing ]
             if self.needs_boundary {
                 self.sender
@@ -434,23 +434,26 @@ impl PayloadSender {
             drop(self.sender);
             // Once the body is fully sent, bound the wait for the response headers and (if
             // needed) the response body under a single timeout - a slow/stalled server must
-            // not be able to hang this indefinitely.
-            let result = tokio::time::timeout(Duration::from_millis(self.timeout_ms), async {
-                let response = future.await??;
-                let status = response.status().as_u16();
-                if status >= 400 {
-                    let response_body =
-                        String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
-                    anyhow::bail!(
-                        "Server did not accept debugger payload ({status}): {response_body}"
-                    );
-                }
-                Ok(())
-            })
-            .await
-            .map_err(|_| anyhow::anyhow!("debugger payload request timed out"))?;
+            // not be able to hang this indefinitely. Abort the spawned task on timeout so the
+            // underlying request is actually cancelled instead of left running detached.
+            let response =
+                match tokio::time::timeout(Duration::from_millis(self.timeout_ms), &mut future)
+                    .await
+                {
+                    Ok(joined) => joined??,
+                    Err(_) => {
+                        future.abort();
+                        return Err(anyhow::anyhow!("debugger payload request timed out"));
+                    }
+                };
 
-            result.map(|()| self.payloads)
+            let status = response.status().as_u16();
+            if status >= 400 {
+                let response_body =
+                    String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
+                anyhow::bail!("Server did not accept debugger payload ({status}): {response_body}");
+            }
+            Ok(self.payloads)
         } else {
             Ok(0)
         }

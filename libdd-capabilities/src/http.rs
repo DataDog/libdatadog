@@ -61,6 +61,8 @@ pub trait HttpClientCapability: Clone + std::fmt::Debug {
         req: http::Request<bytes::Bytes>,
     ) -> impl Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend;
 
+    /// Like [`Self::request`], but the request body is provided incrementally, one chunk at a
+    /// time, via the returned [`BodySender`].
     fn request_streamed(&self, req: http::Request<()>) -> (BodySender, ResponseFuture)
     where
         Self: MaybeSend + 'static,
