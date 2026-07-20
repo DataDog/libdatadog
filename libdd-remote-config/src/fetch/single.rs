@@ -28,7 +28,7 @@ pub struct ConfigOptions {
 }
 
 impl<S: FileStorage, C: HttpClientCapability> SingleFetcher<S, C> {
-    pub fn with_client(
+    pub fn new(
         sink: S,
         target: Target,
         runtime_id: String,
@@ -118,7 +118,7 @@ impl<S: FileStorage, C: HttpClientCapability> SingleChangesFetcher<S, C>
 where
     S::StoredFile: FilePath,
 {
-    pub fn with_client(
+    pub fn new(
         sink: S,
         target: Target,
         runtime_id: String,
@@ -127,7 +127,7 @@ where
     ) -> Self {
         SingleChangesFetcher {
             changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::with_client(sink, target, runtime_id, options, http_client),
+            fetcher: SingleFetcher::new(sink, target, runtime_id, options, http_client),
         }
     }
 

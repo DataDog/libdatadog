@@ -22,7 +22,7 @@ async fn main() {
     // Otherwise a SharedFetcher (or even a MultiTargetFetcher for a potentially high number of
     // targets) for multiple targets is needed. These can be manually wired together with a
     // ChangeTracker to keep track of changes. The SingleChangesTracker does it for you.
-    let mut fetcher = SingleChangesFetcher::with_client(
+    let mut fetcher = SingleChangesFetcher::new(
         // Use SimpleFileStorage if you desire just the raw, unparsed contents
         // (e.g. to do processing directly in your language)
         // For more complicated use cases, like needing to store data in shared memory, a custom
