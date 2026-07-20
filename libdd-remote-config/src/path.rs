@@ -81,7 +81,13 @@ impl RemoteConfigPath {
                     if parts.len() != 5 {
                         anyhow::bail!("{} is datadog and does not have exactly 5 parts", path);
                     }
-                    RemoteConfigSource::Datadog(parts[1].parse()?)
+                    let org_id: u64 = parts[1].parse()?;
+                    // The agent parses org_id as an int64; reject values it would
+                    // reject (> i64::MAX) so both clients accept/reject the same paths.
+                    if org_id > i64::MAX as u64 {
+                        anyhow::bail!("org_id {} exceeds i64::MAX in path {}", org_id, path);
+                    }
+                    RemoteConfigSource::Datadog(org_id)
                 }
                 "employee" => {
                     if parts.len() != 4 {
@@ -104,8 +110,20 @@ impl RemoteConfigPath {
                 "LIVE_DEBUGGING_SYMBOL_DB" => RemoteConfigProduct::LiveDebuggerSymbolDb,
                 product => anyhow::bail!("Unknown product {}", product),
             },
-            config_id: parts[parts.len() - 2],
-            name: parts[parts.len() - 1],
+            config_id: {
+                let config_id = parts[parts.len() - 2];
+                if config_id.is_empty() {
+                    anyhow::bail!("empty config_id in path {}", path);
+                }
+                config_id
+            },
+            name: {
+                let name = parts[parts.len() - 1];
+                if name.is_empty() {
+                    anyhow::bail!("empty name in path {}", path);
+                }
+                name
+            },
         })
     }
 }

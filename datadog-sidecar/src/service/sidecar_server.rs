@@ -801,6 +801,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 language: config.language,
                 tracer_version: config.tracer_version,
                 endpoint: config.endpoint,
+                agentless: None,
             },
             products: config.remote_config_products,
             capabilities: config.remote_config_capabilities,
