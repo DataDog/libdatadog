@@ -569,6 +569,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
     )
 }
 
+/// Returns a `CardinalityLimitConfig` with default values
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_default_stats_cardinality_limit(
+) -> CardinalityLimitConfig {
+    CardinalityLimitConfig::default()
+}
+
 /// Configure the exporter to write traces as newline-delimited JSON to stdout (the Datadog
 /// Forwarder "log exporter" path) instead of sending them to a Datadog agent. Used in serverless
 /// environments (e.g. AWS Lambda) when no agent is reachable.
