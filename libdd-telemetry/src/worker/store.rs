@@ -65,6 +65,14 @@ mod queuehashmap {
             Some(&self.items[*idx - self.popped].1)
         }
 
+        pub fn get_mut(&mut self, k: &K) -> Option<&mut V> {
+            let hash = make_hash(&self.hash_builder, k);
+            let idx = *self
+                .table
+                .find(hash, |other| &self.items[other - self.popped].0 == k)?;
+            Some(&mut self.items[idx - self.popped].1)
+        }
+
         pub fn get_idx(&self, idx: usize) -> Option<&(K, V)> {
             self.items.get(idx - self.popped)
         }
@@ -143,6 +151,17 @@ mod queuehashmap {
 
 pub use queuehashmap::QueueHashMap;
 
+/// Stable key to use as hash for stored items.
+pub trait Keyed<K> {
+    fn key(&self) -> K;
+}
+
+impl<T: Clone> Keyed<T> for T {
+    fn key(&self) -> T {
+        self.clone()
+    }
+}
+
 #[derive(Debug, Default)]
 /// Stores telemetry data item, like dependencies and integrations
 ///
@@ -150,16 +169,17 @@ pub use queuehashmap::QueueHashMap;
 /// * Tries to keep a list of items that it has seen (within max number of items)
 /// * Tries to keep a list of items that haven't been sent to datadog yet
 /// * Deduplicates items, to make sure we don't send the item twice
-pub struct Store<T> {
+pub struct Store<T, K = T> {
     // unflushed and set contain indices into
     unflushed: VecDeque<usize>,
-    items: QueueHashMap<T, ()>,
+    items: QueueHashMap<K, T>,
     max_items: usize,
 }
 
-impl<T> Store<T>
+impl<T, K> Store<T, K>
 where
-    T: PartialEq + Eq + Hash,
+    T: Keyed<K>,
+    K: PartialEq + Eq + Hash + Clone,
 {
     pub fn new(max_items: usize) -> Self {
         Self {
@@ -170,13 +190,15 @@ where
     }
 
     pub fn insert(&mut self, item: T) {
-        if self.items.get(&item).is_some() {
+        let key = item.key();
+        if let Some(existing) = self.items.get_mut(&key) {
+            *existing = item;
             return;
         }
         if self.items.len() == self.max_items {
             self.items.pop_front();
         }
-        let (idx, _) = self.items.insert(item, ());
+        let (idx, _) = self.items.insert(key, item);
         if self.unflushed.len() == self.max_items {
             self.unflushed.pop_front();
         }
@@ -205,7 +227,7 @@ where
     pub fn unflushed(&self) -> impl Iterator<Item = &T> {
         self.unflushed
             .iter()
-            .flat_map(|i| Some(&self.items.get_idx(*i)?.0))
+            .flat_map(|i| Some(&self.items.get_idx(*i)?.1))
     }
 
     pub fn len_unflushed(&self) -> usize {
@@ -223,9 +245,10 @@ where
     }
 }
 
-impl<T> Extend<T> for Store<T>
+impl<T, K> Extend<T> for Store<T, K>
 where
-    T: PartialEq + Eq + Hash,
+    T: Keyed<K>,
+    K: PartialEq + Eq + Hash + Clone,
 {
     fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
         for i in iter {
