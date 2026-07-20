@@ -37,4 +37,4 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
 tokio-util = "0.7.11"
-tracing = { workspace = true, default-features = false }
+tracing.workspace = true

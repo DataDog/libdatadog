@@ -27,7 +27,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { version = "1.0" }
 tokio = { workspace = true, features = ["sync", "io-util"] }
 tokio-util = { version = "0.7", features = ["codec"] }
-tracing = { workspace = true, default-features = false }
+tracing.workspace = true
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = "0.15"
 bytes = "1.4"

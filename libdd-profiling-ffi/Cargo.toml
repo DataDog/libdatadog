@@ -55,7 +55,7 @@ libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional 
 function_name = "0.3.0"
 futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
-hyper = { workspace = true}
+hyper = { workspace = true, features = ["http1", "client"] }
 libc = "0.2"
 serde_json = { version = "1.0" }
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }

@@ -31,7 +31,7 @@ thiserror = "2"
 tokio = { workspace = true, features = ["rt"] }
 libdd-http-client = { path = "../libdd-http-client", default-features = false }
 libdd-common = { version = "5.1", path = "../libdd-common", default-features = false }
-tracing = { workspace = true, default-features = false }
+tracing.workspace = true
 
 [dev-dependencies]
 httpmock = "0.8.0-alpha.1"

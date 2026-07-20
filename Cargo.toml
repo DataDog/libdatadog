@@ -84,24 +84,16 @@ license = "Apache-2.0"
 authors = ["Datadog Inc. <info@datadoghq.com>"]
 
 [workspace.dependencies]
-arc-swap = "1.7.1"
-anyhow = "1.0"
-hyper = { version = "1.6", features = [
-  "http1",
-  "client",
-], default-features = false }
-hyper-util = { version = "0.1.10", features = [
-  "http1",
-  "client",
-  "client-legacy",
-] }
-serde = "1.0"
-tokio = { version = "1.36", features = [
-  "rt",
-  "sync",
-  "time",
-] }
-tracing = "0.1"
+# Workspace dependencies are declared version-only with default features
+# disabled. Feature selection (including default features) is left to each leaf
+# crate so that present and future crates opt into exactly what they use.
+arc-swap = { version = "1.7.1", default-features = false }
+anyhow = { version = "1.0", default-features = false }
+hyper = { version = "1.6", default-features = false }
+hyper-util = { version = "0.1.10", default-features = false }
+serde = { version = "1.0", default-features = false }
+tokio = { version = "1.36", default-features = false }
+tracing = { version = "0.1", default-features = false }
 
 [profile.dev]
 debug = 2 # full debug info

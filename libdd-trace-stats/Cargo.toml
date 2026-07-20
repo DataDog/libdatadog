@@ -25,9 +25,9 @@ hashbrown = { version = "0.15" }
 http = "1.1"
 rmp-serde = "1.3.0"
 serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["macros", "time"], default-features = false }
+tokio = { workspace = true, features = ["macros", "time"] }
 tokio-util = "0.7.11"
-tracing = { workspace = true, default-features = false }
+tracing.workspace = true
 async-trait = "0.1.85"
 # Cross-platform `SystemTime`; `std::time::SystemTime::now()` panics on wasm32.
 web-time = "1"
