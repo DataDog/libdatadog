@@ -14,6 +14,8 @@
 #![cfg(all(target_os = "linux", target_pointer_width = "64", not(miri)))]
 
 use libdd_common_ffi::VoidResult;
+#[cfg(feature = "test-support")]
+use libdd_profiling_heap_gotter_ffi::ddog_heap_gotter_test_hook_hits;
 use libdd_profiling_heap_gotter_ffi::{ddog_heap_gotter_install, ddog_heap_gotter_is_installed};
 
 #[track_caller]
@@ -37,9 +39,19 @@ fn install_patches_the_got() {
         "is_installed should be true after install"
     );
 
-    // Touch the heap while installed so the patched GOT actually gets
-    // used. We just need the process to still be alive after this.
+    // Touch the heap while installed so the patched GOT actually gets used.
+    #[cfg(feature = "test-support")]
+    let hits_before = ddog_heap_gotter_test_hook_hits();
+
     let v: Vec<u8> = vec![0; 128];
     assert_eq!(v.len(), 128);
     drop(v);
+
+    // With test-support, prove the hooks actually ran rather than just that
+    // the process survived.
+    #[cfg(feature = "test-support")]
+    assert!(
+        ddog_heap_gotter_test_hook_hits() > hits_before,
+        "expected the malloc/free hooks to run"
+    );
 }

@@ -65,6 +65,10 @@ const _: () = {
         [::std::mem::offset_of!(dd_alloc_req_t, weight) - 24usize];
 };
 unsafe extern "C" {
+    #[link_name = "dd_alloc_req_is_sampled__extern"]
+    pub fn dd_alloc_req_is_sampled(req: dd_alloc_req_t) -> bool;
+}
+unsafe extern "C" {
     pub fn dd_allocation_requested_slow(
         tl: *mut dd_tl_state_t,
         size: usize,
@@ -105,8 +109,8 @@ unsafe extern "C" {
     ) -> bool;
 }
 unsafe extern "C" {
-    #[link_name = "dd_sample_flag_check__extern"]
-    pub fn dd_sample_flag_check(
+    #[link_name = "dd_sample_flag_check_and_clear__extern"]
+    pub fn dd_sample_flag_check_and_clear(
         user: *mut ::std::os::raw::c_void,
         raw_out: *mut *mut ::std::os::raw::c_void,
     ) -> bool;

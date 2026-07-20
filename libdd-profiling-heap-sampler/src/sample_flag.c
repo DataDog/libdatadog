@@ -29,21 +29,16 @@ bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out) {
         return false;
     }
 
-    void *header = (char *)user - DD_HEADER_BYTES;
-    uint64_t magic;
-    memcpy(&magic, header, sizeof(magic));
-    if (magic != DD_MAGIC) {
+    x86_header_t hdr = x86_header_read(user);
+    if (hdr.magic != DD_MAGIC) {
+        return false;
+    }
+    if (hdr.offset < DD_HEADER_BYTES || hdr.offset > 2 * DD_SAMPLE_ALIGNMENT_CAP) {
         return false;
     }
 
-    uint64_t offset;
-    memcpy(&offset, (char *)header + sizeof(magic), sizeof(offset));
-    if (offset < DD_HEADER_BYTES || offset > 2 * DD_SAMPLE_ALIGNMENT_CAP) {
-        return false;
-    }
-
-    *raw_out = x86_raw_from_user(user, offset);
-    *offset_out = (size_t)offset;
+    *raw_out = x86_raw_from_user(user, hdr.offset);
+    *offset_out = (size_t)hdr.offset;
     return true;
 }
 
@@ -74,7 +69,7 @@ void *dd_sample_flag_apply(void *raw, size_t alignment) {
 }
 
 bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out) {
-    if (!dd_sample_flag_check(user, raw_out)) {
+    if (!dd_sample_flag_check_and_clear(user, raw_out)) {
         return false;
     }
     *offset_out = 0;
