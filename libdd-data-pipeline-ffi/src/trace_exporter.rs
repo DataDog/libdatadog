@@ -1407,7 +1407,7 @@ mod tests {
                 input_format: TraceExporterInputFormat::V04,
                 output_format: TraceExporterOutputFormat::V04,
                 telemetry_cfg: Some(TelemetryConfig {
-                    heartbeat: 100,
+                    heartbeat: 10000,
                     runtime_id: Some("foo".to_string()),
                     debug_enabled: true,
                 }),
@@ -1437,13 +1437,6 @@ mod tests {
                 String::from_utf8_lossy(&response.assume_init().body.unwrap()),
                 response_body
             );
-
-            for _ in 0..50 {
-                if mock_metrics.calls() >= 1 {
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
 
             ddog_trace_exporter_free(exporter);
             // It should receive 1 metrics payload (excluding heartbeats)

@@ -241,6 +241,21 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     }
 
     async fn shutdown(&mut self) {
+        // Drain queued actions before Stop so the final flush includes anything
+        // enqueued between the last runloop tick and shutdown.
+        let mut pending: Vec<TelemetryActions> = self.next_action.take().into_iter().collect();
+        while let Ok(action) = self.mailbox.try_recv() {
+            pending.push(action);
+        }
+        for action in pending {
+            let _ = match self.flavor {
+                TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
+                TelemetryWorkerFlavor::MetricsLogs => {
+                    self.dispatch_metrics_logs_action(action).await
+                }
+            };
+        }
+
         let stop_action = TelemetryActions::Lifecycle(LifecycleAction::Stop);
         let _action_result = match self.flavor {
             TelemetryWorkerFlavor::Full => self.dispatch_action(stop_action).await,
@@ -1959,5 +1974,70 @@ mod tests {
             "worker must stop POSTing after parking; observed {} extra hits",
             mock.calls().saturating_sub(stable_hits),
         );
+    }
+
+    /// An action enqueued into the mailbox but not yet processed by the runloop
+    /// must still be reflected in the final Stop flush. Drives `shutdown()`
+    /// directly (no `run_loop`) so the assertion is deterministic.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn shutdown_drains_pending_actions_before_stop() {
+        use crate::data::metrics::{MetricNamespace, MetricType};
+        use httpmock::prelude::*;
+
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+        const METRIC_NAME: &str = "regression.drain_before_stop";
+
+        let server = MockServer::start();
+        let metric_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path(TELEMETRY_PATH)
+                .body_includes(format!(r#""metric":"{METRIC_NAME}""#));
+            then.status(202).body("");
+        });
+        // Absorb the AppStarted / AppClosing payloads that don't carry the metric.
+        let _lifecycle = server.mock(|when, then| {
+            when.method(POST).path(TELEMETRY_PATH);
+            then.status(202).body("");
+        });
+
+        let mut builder = TelemetryWorkerBuilder::new(
+            "host".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        builder
+            .config
+            .set_endpoint(TelemetryEndpoint {
+                url: Some(server.url("/")),
+                ..Default::default()
+            })
+            .unwrap();
+        builder.runtime_id = Some("rid".into());
+        let (handle, mut worker) =
+            builder.build_worker::<NativeCapabilities>(Some(tokio::runtime::Handle::current()));
+
+        let context = handle.register_metric_context(
+            METRIC_NAME.into(),
+            Vec::new(),
+            MetricType::Count,
+            false,
+            MetricNamespace::Tracers,
+        );
+
+        // Get the worker into `started == true` so Stop performs the flush.
+        let _ = worker
+            .dispatch_action(TelemetryActions::Lifecycle(LifecycleAction::Start))
+            .await;
+
+        handle
+            .add_point(1.0, &context, Vec::new())
+            .expect("add_point");
+
+        <TelemetryWorker<_> as libdd_shared_runtime::Worker>::shutdown(&mut worker).await;
+
+        metric_mock.assert_calls(1);
     }
 }
