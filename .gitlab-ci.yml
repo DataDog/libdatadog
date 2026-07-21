@@ -4,11 +4,15 @@ variables:
   DOWNSTREAM_BRANCH:
     value: "main"
     description: "downstream jobs are triggered on this branch"
+  DD_TRACE_PY_BRANCH:
+    value: "fayssal/auto-update-libdatadog"
+    description: "the dd-trace-py branch the manual trigger_dd_trace_py job runs on"
 
 include:
   - local: .gitlab/impacted-crates.yml
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/fuzz.yml
+  - local: .gitlab/dd-trace-py.yml
 
 trigger_internal_build:
   variables:
