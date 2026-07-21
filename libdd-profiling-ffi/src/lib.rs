@@ -9,12 +9,14 @@
 
 mod arc_handle;
 mod exporter;
+mod panic_handler;
 mod profile_error;
 mod profile_status;
 mod profiles;
 mod string_storage;
 
 pub use arc_handle::*;
+pub use panic_handler::*;
 pub use profile_error::*;
 pub use profile_status::*;
 
