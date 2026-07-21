@@ -15,7 +15,7 @@ crate-type = ["lib"]
 bench = false
 
 [features]
-default = ["process-context-reader", "process-context-writer"]
+default = ["process-context-writer"]
 otel-thread-ctx = ["process-context-writer"]
 process-context-reader = []
 process-context-writer = []
