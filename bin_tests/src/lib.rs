@@ -34,28 +34,21 @@ fn get_base_target_dir() -> &'static PathBuf {
     })
 }
 
-/// Returns the target directory for a specific build configuration.
-/// For builds with variants (like panic_abort), returns a variant-specific subdirectory.
-fn get_target_dir_for_build(c: &ArtifactsBuild) -> PathBuf {
-    let base = get_base_target_dir().clone();
-
-    // If this is a variant build (e.g., panic_abort), use a variant-specific target directory
-    if c.panic_abort == Some(true) {
-        base.join("panic-abort")
-    } else {
-        base
-    }
-}
-
 /// Computes the path where the artifact will be located after building.
 pub fn compute_artifact_path(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
-    let target_dir = get_target_dir_for_build(c);
+    let mut artifact_path = get_base_target_dir().clone();
 
-    let mut artifact_path = target_dir;
-    artifact_path.push(match c.build_profile {
-        BuildProfile::Debug => "debug",
-        BuildProfile::Release => "release",
-    });
+    // `panic_abort` variants are built with the dedicated `panic-abort` Cargo
+    // profile, so their artifacts live directly under `target/panic-abort/`
+    // (custom profiles are their own subdir, not nested under `debug`/`release`).
+    if c.panic_abort == Some(true) {
+        artifact_path.push("panic-abort");
+    } else {
+        artifact_path.push(match c.build_profile {
+            BuildProfile::Debug => "debug",
+            BuildProfile::Release => "release",
+        });
+    }
 
     match c.artifact_type {
         ArtifactType::ExecutablePackage | ArtifactType::Bin => artifact_path.push(&c.name),
@@ -119,14 +112,25 @@ fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
 
-    // For variant builds (like panic_abort), use a separate target directory
-    // so they don't conflict with standard builds
-    let target_dir = get_target_dir_for_build(c);
-    if target_dir != *get_base_target_dir() {
-        build_cmd.arg("--target-dir").arg(&target_dir);
-    }
+    if c.panic_abort == Some(true) {
+        // Build with the dedicated `panic-abort` Cargo profile
+        build_cmd.arg("--profile").arg("panic-abort");
 
-    if let BuildProfile::Release = c.build_profile {
+        // `-C force-unwind-tables=yes` has no profile equivalent, so it stays a
+        // scoped RUSTFLAG applied only to this build invocation. `panic=abort`
+        // strips the `.eh_frame` unwind tables that the aarch64 backtrace unwinder
+        // relies on; without them `RUST_BACKTRACE` can loop forever on certain
+        // binary layouts (rust-lang/rust#123733), hanging the test until the runner
+        // OOMs. Keep until #123733 (fix: rust-lang/rust#143613) ships in a stable
+        // toolchain.
+        let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+        let new_rustflags = if existing_rustflags.is_empty() {
+            "-C force-unwind-tables=yes".to_string()
+        } else {
+            format!("{} -C force-unwind-tables=yes", existing_rustflags)
+        };
+        build_cmd.env("RUSTFLAGS", new_rustflags);
+    } else if let BuildProfile::Release = c.build_profile {
         build_cmd.arg("--release");
     }
 
@@ -134,25 +138,6 @@ fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
         ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
         ArtifactType::Bin => build_cmd.arg("--bin"),
     };
-
-    if c.panic_abort == Some(true) {
-        // `-C panic=abort` suppresses `.eh_frame` unwind tables, which the aarch64
-        // backtrace unwinder relies on; without them `RUST_BACKTRACE` can loop forever
-        // on certain binary layouts (rust-lang/rust#123733), hanging the test until the
-        // runner OOMs. Force the tables back on so backtraces terminate. This is
-        // layout-sensitive, so it can appear/disappear across unrelated changes; keep
-        // until #123733 (fix: rust-lang/rust#143613) ships in a stable toolchain.
-        let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
-        let new_rustflags = if existing_rustflags.is_empty() {
-            "-C panic=abort -C force-unwind-tables=yes".to_string()
-        } else {
-            format!(
-                "{} -C panic=abort -C force-unwind-tables=yes",
-                existing_rustflags
-            )
-        };
-        build_cmd.env("RUSTFLAGS", new_rustflags);
-    }
 
     build_cmd.arg(&c.name);
 

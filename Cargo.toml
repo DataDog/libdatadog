@@ -117,6 +117,10 @@ opt-level = 3
 incremental = false
 codegen-units = 1
 
+[profile.panic-abort]
+inherits = "dev"
+panic = "abort"
+
 [patch.crates-io]
 # proptest pulls in a dependency on libm, which changes the runtime of some math functions
 # so benchmarks are not measuring the same thing as the release build. This patch removes
