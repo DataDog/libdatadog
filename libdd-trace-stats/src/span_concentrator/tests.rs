@@ -2165,7 +2165,7 @@ fn test_additional_metric_tag_value_at_length_cap_passes_through() {
 
 #[test]
 fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
-    // 101 two-byte characters: 202 bytes but only 101 chars, well under the 200-character cap.
+    // 101 two byte characters: 202 bytes but only 101 chars, well under the 200 character cap.
     let now = SystemTime::now();
     let ok_value = "é".repeat(101);
     let meta = [("region", ok_value.as_str())];
@@ -2204,8 +2204,6 @@ fn test_additional_metric_tag_value_multibyte_at_length_cap_passes_through() {
 
 #[test]
 fn test_additional_metric_tag_value_multibyte_over_length_cap_substitutes_blocked_value() {
-    // 201 two-byte characters exceeds the 200-character cap even though earlier bytes-based
-    // checks would have let a 201-char, sub-200-byte value like this through incorrectly.
     let now = SystemTime::now();
     let long_value = "é".repeat(201);
     let meta = [("region", long_value.as_str())];
