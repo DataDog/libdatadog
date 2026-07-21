@@ -4,8 +4,8 @@
 use core::{
     convert::TryInto,
     marker::PhantomData,
-    mem::swap,
-    ptr,
+    mem::replace,
+    ptr::{self, NonNull},
     sync::atomic::{fence, AtomicPtr, AtomicU32, AtomicU64, Ordering},
 };
 use std::{
@@ -68,10 +68,9 @@ static PROCESS_CONTEXT_HANDLER: Mutex<Option<ProcessContextHandle>> = Mutex::new
 
 pub(super) trait HeaderMemoryHolder: Sized {
     fn new() -> io::Result<Self>;
-    fn as_ptr(&self) -> *mut MappingHeader;
+    fn as_ptr(&self) -> Option<NonNull<MappingHeader>>;
     fn make_discoverable(&mut self);
     fn unpublish_and_release(self) -> io::Result<()>;
-    fn after_fork(self);
 }
 
 pub(super) trait MonotonicTime {
@@ -84,9 +83,6 @@ struct ProcessContextHandleGen<M: HeaderMemoryHolder, T: MonotonicTime> {
     /// Once published, and until the next update is complete, the backing allocation of
     /// `payload` might be read and thus must not move (e.g. by resizing or drop).
     payload: Vec<u8>,
-    /// The process id of the last publisher. This is useful to detect forks(), and publish a
-    /// new context accordingly.
-    pid: u32,
     monotonic_clock: PhantomData<T>,
 }
 
@@ -101,7 +97,11 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
         let mut mapping = M::new()?;
         let published_at_ns = T::monotonic_time_ns()?;
 
-        let header = mapping.as_ptr();
+        let header = mapping
+            .as_ptr()
+            // should never happen; as_ptr should only return None after a fork
+            .ok_or_else(|| io::Error::other("new process context header mapping is unavailable"))?
+            .as_ptr();
 
         // SAFETY: header points to a zero-filled, writable allocation of at least
         // mapping_size() bytes with MappingHeader alignment; field projections are in-bounds.
@@ -129,14 +129,22 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
         Ok(ProcessContextHandleGen {
             mapping,
             payload,
-            pid: std::process::id(),
             monotonic_clock: PhantomData,
         })
     }
 
     /// Updates the context after initial publication.
     fn update(&mut self, payload: Vec<u8>) -> io::Result<()> {
-        let header = self.mapping.as_ptr();
+        let header = self
+            .mapping
+            .as_ptr()
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "process context header mapping is unavailable after fork",
+                )
+            })?
+            .as_ptr();
 
         let monotonic_published_at_ns = T::monotonic_time_ns()?;
         let payload_size: u32 = payload.len().try_into().map_err(|_| {
@@ -157,7 +165,10 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
                 .swap(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed)
         };
         if last_monotonic_published_at_ns == UNPUBLISHED_OR_UPDATING {
-            panic!("concurrent update of the process context is not supported");
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "context is already being updated",
+            ));
         }
 
         let monotonic_published_at_ns =
@@ -191,6 +202,8 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
                 .store(monotonic_published_at_ns, Ordering::Relaxed);
         }
 
+        self.mapping.make_discoverable();
+
         Ok(())
     }
 }
@@ -214,8 +227,7 @@ fn lock_context_handle() -> io::Result<MutexGuard<'static, Option<ProcessContext
 ///
 /// - this is the first publication
 /// - [unpublish] has been called last
-/// - the previous context has been published from a different process id (that is, a `fork()`
-///   happened and we're the child process)
+/// - the previous header mapping is unavailable after `fork()`
 ///
 /// Then we follow the Publish protocol of the OTel process context specification (allocating a
 /// fresh header).
@@ -239,18 +251,11 @@ pub(super) fn publish_raw_payload(payload: Vec<u8>) -> io::Result<()> {
     let mut guard = lock_context_handle()?;
 
     match &mut *guard {
-        Some(handler) if handler.pid == std::process::id() => handler.update(payload),
+        Some(handler) if handler.mapping.as_ptr().is_some() => handler.update(payload),
+        // If as_ptr() returns None, then we are a forked child and we must republish
         Some(handler) => {
-            let mut local_handler = ProcessContextHandleGen::publish(payload)?;
-            // If we've been forked, we need to prevent the mapping from being dropped
-            // normally, as it would try to unmap a region that isn't mapped anymore in the
-            // child process, or worse, could have been remapped to something else in the
-            // meantime.
-            //
-            // To do so, we get the old handler back in `local_handler` and prevent `mapping`
-            // from being dropped specifically.
-            swap(&mut local_handler, handler);
-            local_handler.mapping.after_fork();
+            let new_handler = ProcessContextHandleGen::publish(payload)?;
+            let _old_handler = replace(handler, new_handler);
 
             Ok(())
         }
@@ -272,20 +277,22 @@ pub fn unpublish() -> io::Result<()> {
         mapping, payload, ..
     }) = guard.take()
     {
-        // Mark the context as unavailable before freeing the mapping/payload. The fence forces
-        // the writing CPU not to reorder the unavailable timestamp store and the deallocation
-        // stores. This gives readers more of a chance (but no guarantee) to observe an
-        // unavailable context before the publication is removed.
-        //
-        // SAFETY: the mapping is still live and valid, and the global mutex prevents
-        // concurrent in-process writers from mutating the plain header fields.
-        let header = mapping.as_ptr();
-        unsafe {
-            (*header)
-                .monotonic_published_at_ns
-                .store(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
+        if let Some(header) = mapping.as_ptr() {
+            // Mark the context as unavailable before freeing the mapping/payload. The fence
+            // forces the writing CPU not to reorder the unavailable timestamp store and the
+            // deallocation stores. This gives readers more of a chance (but no guarantee) to
+            // observe an unavailable context before the publication is removed.
+            //
+            // SAFETY: the mapping is still live and valid, and the global mutex prevents
+            // concurrent in-process writers from mutating the plain header fields.
+            let header = header.as_ptr();
+            unsafe {
+                (*header)
+                    .monotonic_published_at_ns
+                    .store(UNPUBLISHED_OR_UPDATING, Ordering::Relaxed);
+            }
+            fence(Ordering::SeqCst);
         }
-        fence(Ordering::SeqCst);
 
         // The payload will still drop if this fails, leaving a zero timestamp behind.
         mapping.unpublish_and_release()?;
@@ -293,4 +300,60 @@ pub fn unpublish() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestHeaderMemory {
+        header: Box<MappingHeader>,
+        discovery_count: usize,
+    }
+
+    impl HeaderMemoryHolder for TestHeaderMemory {
+        fn new() -> io::Result<Self> {
+            Ok(Self {
+                header: Box::new(MappingHeader {
+                    signature: [0; 8],
+                    version: 0,
+                    payload_size: AtomicU32::new(0),
+                    monotonic_published_at_ns: AtomicU64::new(UNPUBLISHED_OR_UPDATING),
+                    payload_ptr: AtomicPtr::new(ptr::null_mut()),
+                }),
+                discovery_count: 0,
+            })
+        }
+
+        fn as_ptr(&self) -> Option<NonNull<MappingHeader>> {
+            Some(NonNull::from(self.header.as_ref()))
+        }
+
+        fn make_discoverable(&mut self) {
+            self.discovery_count += 1;
+        }
+
+        fn unpublish_and_release(self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct TestClock;
+
+    impl MonotonicTime for TestClock {
+        fn monotonic_time_ns() -> io::Result<u64> {
+            Ok(1)
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn successful_update_republishes_mapping() {
+        let mut handle = ProcessContextHandleGen::<TestHeaderMemory, TestClock>::publish(vec![1])
+            .expect("initial publication should succeed");
+        assert_eq!(handle.mapping.discovery_count, 1);
+
+        handle.update(vec![2]).expect("update should succeed");
+        assert_eq!(handle.mapping.discovery_count, 2);
+    }
 }
