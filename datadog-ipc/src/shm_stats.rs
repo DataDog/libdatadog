@@ -57,7 +57,8 @@ use zwohash::ZwoHasher;
 use libdd_ddsketch::DDSketch;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{
-    CollapsedFieldsMetrics, FixedAggregationKey, FlushResult, FlushableConcentrator,
+    cardinality_limit_telemetry::CollapsedFieldsMetrics, FixedAggregationKey, FlushResult,
+    FlushableConcentrator,
 };
 
 use crate::platform::{FileBackedHandle, MappedMem, NamedShmHandle};

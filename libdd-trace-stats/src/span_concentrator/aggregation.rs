@@ -6,7 +6,6 @@
 //! span.
 
 use hashbrown::{HashMap, HashSet};
-use libdd_common::tag::const_assert;
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
@@ -16,9 +15,12 @@ use std::{
 };
 use tracing::warn;
 
-use crate::span_concentrator::StatSpan;
+use crate::span_concentrator::{cardinality_limit_telemetry::collapsed_field, StatSpan};
 
-use super::CardinalityLimitConfig;
+use super::{
+    cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
+    CardinalityLimitConfig,
+};
 
 /// Sentinel value used for cardinality limiting.
 pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
@@ -511,147 +513,6 @@ pub(super) struct StatsBucket {
     pub(super) obfuscated: bool,
 }
 
-#[repr(transparent)]
-pub struct CollapsedField;
-impl CollapsedField {
-    pub const RESOURCE_NAME: usize = 1 << 1;
-    pub const HTTP_ENDPOINT: usize = 1 << 2;
-    pub const PEER_TAGS: usize = 1 << 3;
-    #[allow(
-        unused,
-        reason = "FIXME(SVLS-8787|github.com/DataDog/libdatadog/pull/2170): implement stats additional tags"
-    )]
-    pub const ADDITIONAL_TAGS: usize = 1 << 4;
-    pub const COUNT: u8 = 5;
-}
-
-const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << CollapsedField::COUNT;
-#[derive(Debug, Clone, Default, Copy)]
-// Note: slot 0 is a counter for non_collapsed spans. It's not used for emitting telemetry
-pub struct CollapsedFieldsMetrics([usize; COLLAPSED_FIELD_METRIC_SIZE]);
-
-const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 32); // Metrics table is of reasonable size
-
-impl CollapsedFieldsMetrics {
-    pub fn zero() -> Self {
-        Self::default()
-    }
-
-    #[cfg(feature = "dogstatsd")]
-    pub fn emit_dogstatsd(&self, dogstatsd: &libdd_dogstatsd_client::DogStatsDClient) {
-        // skip the first slot that is used to count span which have no collapsed fields.
-        for (mask, &count) in self.0.iter().enumerate().skip(1) {
-            if count > 0 {
-                let mut tags = Vec::new();
-                for field_pow in 1..CollapsedField::COUNT {
-                    let field_value = 1 << field_pow;
-                    assert!([
-                        CollapsedField::RESOURCE_NAME,
-                        CollapsedField::HTTP_ENDPOINT,
-                        CollapsedField::PEER_TAGS,
-                        CollapsedField::ADDITIONAL_TAGS
-                    ]
-                    .contains(&field_value));
-                    let has_field = (mask & field_value) != 0;
-                    if !has_field {
-                        continue;
-                    }
-                    let field_tag = match field_value {
-                        CollapsedField::RESOURCE_NAME => {
-                            libdd_common::tag!("collapsed_spans", "resource")
-                        }
-                        CollapsedField::HTTP_ENDPOINT => {
-                            libdd_common::tag!("collapsed_spans", "http_endpoint")
-                        }
-                        CollapsedField::PEER_TAGS => {
-                            libdd_common::tag!("collapsed_spans", "peer_tags")
-                        }
-                        CollapsedField::ADDITIONAL_TAGS => {
-                            libdd_common::tag!("collapsed_spans", "additional_metric_tags")
-                        }
-                        #[allow(
-                            clippy::unreachable,
-                            reason = "field pow is between 1..CollapsedField::COUNT, so field_value is a valid CollapsedField value. (Asserted just above)"
-                        )]
-                        _ => unreachable!(),
-                    };
-                    tags.push(field_tag);
-                }
-                assert!(!tags.is_empty());
-                dogstatsd.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
-                    "datadog.tracer.stats.collapsed_spans",
-                    count as i64,
-                    tags.iter(),
-                )]);
-            }
-        }
-    }
-
-    #[cfg(feature = "telemetry")]
-    pub fn emit_telemetry<
-        Cap: libdd_capabilities::HttpClientCapability
-            + libdd_capabilities::SleepCapability
-            + libdd_capabilities::MaybeSend
-            + Sync
-            + 'static,
-    >(
-        &self,
-        handle: &libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
-        context_key: &libdd_telemetry::metrics::ContextKey,
-    ) {
-        // skip the first slot that is used to count span which have no collapsed fields.
-        for (mask, &count) in self.0.iter().enumerate().skip(1) {
-            if count > 0 {
-                let mut tags = Vec::new();
-                for field_pow in 1..CollapsedField::COUNT {
-                    let field_value = 1 << field_pow;
-                    assert!([
-                        CollapsedField::RESOURCE_NAME,
-                        CollapsedField::HTTP_ENDPOINT,
-                        CollapsedField::PEER_TAGS,
-                        CollapsedField::ADDITIONAL_TAGS
-                    ]
-                    .contains(&field_value));
-                    let has_field = (mask & field_value) != 0;
-                    if !has_field {
-                        continue;
-                    }
-                    let field_tag = match field_value {
-                        CollapsedField::RESOURCE_NAME => {
-                            libdd_common::tag!("collapsed_spans", "resource")
-                        }
-                        CollapsedField::HTTP_ENDPOINT => {
-                            libdd_common::tag!("collapsed_spans", "http_endpoint")
-                        }
-                        CollapsedField::PEER_TAGS => {
-                            libdd_common::tag!("collapsed_spans", "peer_tags")
-                        }
-                        CollapsedField::ADDITIONAL_TAGS => {
-                            libdd_common::tag!("collapsed_spans", "additional_metric_tags")
-                        }
-                        #[allow(
-                            clippy::unreachable,
-                            reason = "field pow is between 1..CollapsedField::COUNT, so field_value is a valid CollapsedField value. (Asserted just above)"
-                        )]
-                        _ => unreachable!(),
-                    };
-                    tags.push(field_tag);
-                }
-                assert!(!tags.is_empty());
-                let _ = handle.add_point(count as f64, context_key, tags);
-            }
-        }
-    }
-}
-
-impl std::ops::AddAssign for CollapsedFieldsMetrics {
-    fn add_assign(&mut self, rhs: Self) {
-        for i in 0..self.0.len() {
-            self.0[i] += rhs.0[i];
-        }
-    }
-}
-
 impl StatsBucket {
     /// Return a new StatsBucket starting at `start_timestamp`.
     ///
@@ -672,12 +533,12 @@ impl StatsBucket {
             distinct_http_endpoints: HashSet::new(),
             distinct_peer_tags: HashSet::new(),
             distinct_additional_tags: HashSet::new(),
-            collapsed_fields_metrics: CollapsedFieldsMetrics::zero(),
+            collapsed_fields_metrics: cardinality_limit_telemetry::CollapsedFieldsMetrics::zero(),
         }
     }
 
     /// Returns metrics on spans field collapse with reasons.
-    pub fn collapsed_fields_metrics(&self) -> CollapsedFieldsMetrics {
+    pub fn collapsed_fields_metrics(&self) -> cardinality_limit_telemetry::CollapsedFieldsMetrics {
         self.collapsed_fields_metrics
     }
 
@@ -744,7 +605,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_resources.entry(resource_hash) {
             if resources_count >= self.cardinality_limits.resource_limit {
                 key.fixed.resource_name = TRACER_BLOCKED_VALUE;
-                collapsed_fields |= CollapsedField::RESOURCE_NAME;
+                collapsed_fields |= collapsed_field::RESOURCE_NAME;
             } else {
                 slot.insert();
             }
@@ -755,7 +616,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_http_endpoints.entry(http_endpoint_hash) {
             if http_endpoints_count >= self.cardinality_limits.http_endpoint_limit {
                 key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
-                collapsed_fields |= CollapsedField::HTTP_ENDPOINT;
+                collapsed_fields |= collapsed_field::HTTP_ENDPOINT;
             } else {
                 slot.insert();
             }
@@ -766,7 +627,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_peer_tags.entry(peer_tags_hash) {
             if peer_tags_count >= self.cardinality_limits.peer_tags_limit {
                 key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
-                collapsed_fields |= CollapsedField::PEER_TAGS;
+                collapsed_fields |= collapsed_field::PEER_TAGS;
             } else {
                 slot.insert();
             }
