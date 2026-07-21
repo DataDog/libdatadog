@@ -202,6 +202,8 @@ impl<M: HeaderMemoryHolder, T: MonotonicTime> ProcessContextHandleGen<M, T> {
                 .store(monotonic_published_at_ns, Ordering::Relaxed);
         }
 
+        self.mapping.make_discoverable();
+
         Ok(())
     }
 }
@@ -298,4 +300,60 @@ pub fn unpublish() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestHeaderMemory {
+        header: Box<MappingHeader>,
+        discovery_count: usize,
+    }
+
+    impl HeaderMemoryHolder for TestHeaderMemory {
+        fn new() -> io::Result<Self> {
+            Ok(Self {
+                header: Box::new(MappingHeader {
+                    signature: [0; 8],
+                    version: 0,
+                    payload_size: AtomicU32::new(0),
+                    monotonic_published_at_ns: AtomicU64::new(UNPUBLISHED_OR_UPDATING),
+                    payload_ptr: AtomicPtr::new(ptr::null_mut()),
+                }),
+                discovery_count: 0,
+            })
+        }
+
+        fn as_ptr(&self) -> Option<NonNull<MappingHeader>> {
+            Some(NonNull::from(self.header.as_ref()))
+        }
+
+        fn make_discoverable(&mut self) {
+            self.discovery_count += 1;
+        }
+
+        fn unpublish_and_release(self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct TestClock;
+
+    impl MonotonicTime for TestClock {
+        fn monotonic_time_ns() -> io::Result<u64> {
+            Ok(1)
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn successful_update_republishes_mapping() {
+        let mut handle = ProcessContextHandleGen::<TestHeaderMemory, TestClock>::publish(vec![1])
+            .expect("initial publication should succeed");
+        assert_eq!(handle.mapping.discovery_count, 1);
+
+        handle.update(vec![2]).expect("update should succeed");
+        assert_eq!(handle.mapping.discovery_count, 2);
+    }
 }
