@@ -73,7 +73,7 @@ impl CollapsedFieldsMetrics {
         let mut tags = Vec::new();
         for field_pow in 1..collapsed_field::COUNT {
             let field_value = 1 << field_pow;
-            assert!([
+            debug_assert!([
                 collapsed_field::RESOURCE_NAME,
                 collapsed_field::HTTP_ENDPOINT,
                 collapsed_field::PEER_TAGS,
@@ -97,11 +97,8 @@ impl CollapsedFieldsMetrics {
                 collapsed_field::ADDITIONAL_TAGS => {
                     libdd_common::tag!("collapsed_spans", "additional_metric_tags")
                 }
-                #[allow(
-                    clippy::unreachable,
-                    reason = "field pow is between 1..CollapsedField::COUNT, so field_value is a valid CollapsedField value. (Asserted just above)"
-                )]
-                _ => unreachable!(),
+                // Unreachable: asserted just above that field is one of the 4 possible values
+                _ => continue,
             };
             tags.push(field_tag);
         }
