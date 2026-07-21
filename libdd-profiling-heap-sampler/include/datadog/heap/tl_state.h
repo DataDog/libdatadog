@@ -85,7 +85,8 @@
 extern _Atomic uint64_t dd_sampling_interval_override;
 
 /* Set the default mean sampling interval (bytes between samples).
- * Pass 0 to revert to DD_SAMPLING_INTERVAL_DEFAULT. */
+ * Pass 0 to revert to DD_SAMPLING_INTERVAL_DEFAULT. Values below
+ * 64 KiB are clamped to 64 KiB to avoid excessive overhead. */
 void dd_set_default_sampling_interval(uint64_t interval_bytes);
 
 /* Per-thread state for the Poisson sampler. See file header for the

@@ -79,7 +79,16 @@ void dd_tl_state_init(void) {
     errno = saved_errno;
 }
 
+/* 64 KiB floor: intervals below this produce excessive overhead for
+ * negligible additional insight. The sampler's internal gap floor is 8
+ * bytes, but we clamp much higher here to protect callers from
+ * accidental misconfiguration. */
+#define DD_SAMPLING_INTERVAL_MIN (64u * 1024u)
+
 void dd_set_default_sampling_interval(uint64_t interval_bytes) {
+    if (interval_bytes != 0 && interval_bytes < DD_SAMPLING_INTERVAL_MIN) {
+        interval_bytes = DD_SAMPLING_INTERVAL_MIN;
+    }
     atomic_store_explicit(&dd_sampling_interval_override, interval_bytes,
                           memory_order_relaxed);
 }

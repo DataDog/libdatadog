@@ -57,8 +57,9 @@ pub extern "C" fn ddog_heap_gotter_update() -> VoidResult {
 
 /// Set the default mean sample distance (bytes between samples).
 ///
-/// Pass `0` to revert to the compiled-in default (512 KiB). Call this
-/// early in process startup, before significant allocation activity begins.
+/// Pass `0` to revert to the compiled-in default (512 KiB). Values below
+/// 64 KiB are clamped to 64 KiB. Call this early in process startup,
+/// before significant allocation activity begins.
 #[no_mangle]
 pub extern "C" fn ddog_heap_gotter_set_default_sampling_distance(distance_bytes: u64) {
     libdd_profiling_heap_gotter::set_default_sampling_distance(distance_bytes);

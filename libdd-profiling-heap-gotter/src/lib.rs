@@ -143,7 +143,8 @@ pub fn update_heap_overrides() {}
 ///
 /// The sampler draws from an exponential distribution around this mean,
 /// so individual gaps vary but average to the configured value. Pass `0`
-/// to revert to the compiled-in default (512 KiB).
+/// to revert to the compiled-in default (512 KiB). Values below 64 KiB
+/// are clamped to 64 KiB to avoid excessive overhead.
 ///
 /// Call this early in process startup, before significant allocation
 /// activity begins.

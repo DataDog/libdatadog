@@ -43,7 +43,8 @@ pub const DD_HEAP_SAMPLING_ENABLED: &str = "DD_HEAP_SAMPLING_ENABLED";
 /// Set the default mean sample distance (bytes between samples).
 ///
 /// Pass `0` to revert to the compiled-in default (`DD_SAMPLING_INTERVAL_DEFAULT`,
-/// 512 KiB).
+/// 512 KiB). Values below 64 KiB are clamped to 64 KiB to avoid
+/// excessive overhead.
 #[cfg(target_os = "linux")]
 pub fn set_default_sampling_distance(distance_bytes: u64) {
     // SAFETY: dd_set_default_sampling_interval performs a single relaxed atomic
