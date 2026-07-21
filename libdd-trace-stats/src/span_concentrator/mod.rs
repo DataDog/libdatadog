@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! This module implements the SpanConcentrator used to aggregate spans into stats
 use std::collections::HashMap;
-use std::time::{self, Duration, SystemTime};
+use std::time::Duration;
 use tracing::{debug, warn};
+// std::time::SystemTime panics on wasm32.
+use web_time::{SystemTime, UNIX_EPOCH};
 
 use libdd_trace_protobuf::pb;
 
@@ -59,7 +61,7 @@ impl FlushableConcentrator for SpanConcentrator {
 /// Return a Duration between t and the unix epoch
 /// If t is before the unix epoch return 0
 fn system_time_to_unix_duration(t: SystemTime) -> Duration {
-    t.duration_since(time::UNIX_EPOCH)
+    t.duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::from_nanos(0))
 }
 

@@ -724,13 +724,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 &config.endpoint,
             );
             cfg.set_endpoint(TelemetryEndpoint {
-                url: Some(endpoint.url.to_string()),
                 api_key: endpoint.api_key.as_deref().map(str::to_owned),
                 test_token: endpoint.test_token.as_deref().map(str::to_owned),
                 timeout_ms: endpoint.timeout_ms,
                 use_system_resolver: endpoint.use_system_resolver,
+                ..Default::default()
             })
             .ok();
+            cfg.set_endpoint_uri(endpoint.url).ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             cfg.telemetry_extended_heartbeat_interval =
                 config.telemetry_extended_heartbeat_interval;
@@ -1083,6 +1084,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         // Lazily create the concentrator on first IPC span for this (env, version, service).
         if let Some(state) = get_or_create_concentrator(
             &self.server.span_concentrators,
+            &self.server.telemetry_clients,
             &env,
             &version,
             session_id,

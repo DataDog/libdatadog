@@ -4,6 +4,7 @@
 #include <datadog/heap/tl_state.h>
 #include <datadog/heap/sample_flag.h>
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <time.h>
@@ -68,5 +69,8 @@ static void tl_state_populate(dd_tl_state_t *st) {
 void dd_tl_state_init(void) {
     if (dd_tl_state_storage.initialized) return;
 
+    /* Save / restore errno: first-touch init calls prctl() / clock_gettime(). */
+    int saved_errno = errno;
     tl_state_populate(&dd_tl_state_storage);
+    errno = saved_errno;
 }

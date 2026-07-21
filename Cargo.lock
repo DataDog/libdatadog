@@ -2878,6 +2878,7 @@ dependencies = [
 name = "libdd-capabilities-impl"
 version = "3.0.0"
 dependencies = [
+ "anyhow",
  "bytes",
  "http",
  "http-body-util",
@@ -2962,6 +2963,8 @@ dependencies = [
  "goblin",
  "http",
  "libc",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-libunwind-sys",
  "libdd-telemetry",
@@ -3015,6 +3018,7 @@ dependencies = [
  "criterion",
  "duplicate 2.0.1",
  "either",
+ "futures",
  "getrandom 0.2.15",
  "http",
  "http-body-util",
@@ -3045,6 +3049,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "web-time",
 ]
 
 [[package]]
@@ -3183,9 +3188,9 @@ name = "libdd-otel-thread-ctx"
 version = "1.0.0"
 dependencies = [
  "anyhow",
- "build_common",
- "cc",
  "elf",
+ "libdd-otel-thread-ctx",
+ "object 0.36.5",
 ]
 
 [[package]]
@@ -3263,6 +3268,7 @@ dependencies = [
  "libdd-ddsketch-ffi",
  "libdd-library-config-ffi",
  "libdd-log-ffi",
+ "libdd-otel-thread-ctx-ffi",
  "libdd-profiling",
  "libdd-shared-runtime-ffi",
  "libdd-telemetry-ffi",
@@ -3299,14 +3305,17 @@ dependencies = [
  "libc",
  "libdd-common-ffi",
  "libdd-profiling-heap-gotter",
+ "libdd-profiling-heap-sampler",
 ]
 
 [[package]]
 name = "libdd-profiling-heap-sampler"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bindgen 0.71.1",
  "cc",
+ "elf",
 ]
 
 [[package]]
@@ -3395,11 +3404,13 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures",
+ "getrandom 0.2.15",
  "hashbrown 0.15.1",
  "http",
- "http-body-util",
  "httpmock",
  "libc",
+ "libdd-capabilities",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-ddsketch",
  "libdd-shared-runtime",
@@ -3411,6 +3422,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "web-time",
  "winver",
 ]
 
@@ -3421,6 +3433,7 @@ dependencies = [
  "build_common",
  "function_name",
  "libc",
+ "libdd-capabilities-impl",
  "libdd-common",
  "libdd-common-ffi",
  "libdd-telemetry",
@@ -3514,6 +3527,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
@@ -3537,6 +3551,7 @@ dependencies = [
  "httpmock",
  "hyper",
  "indexmap 2.12.1",
+ "itoa",
  "libdd-capabilities",
  "libdd-capabilities-impl",
  "libdd-common",
@@ -6584,6 +6599,16 @@ name = "web-sys"
 version = "0.3.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6488b90108c040df0fe62fa815cbdee25124641df01814dd7282749234c6112"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "web-time"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

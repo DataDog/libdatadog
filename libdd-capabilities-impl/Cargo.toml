@@ -16,6 +16,7 @@ crate-type = ["lib"]
 bench = false
 
 [dependencies]
+anyhow = "1.0"
 bytes = "1"
 http = "1"
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
