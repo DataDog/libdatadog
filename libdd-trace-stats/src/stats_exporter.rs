@@ -137,7 +137,7 @@ impl<
         let telemetry = telemetry.map(|handle| {
             let key = handle.register_metric_context(
                 COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
-                vec![libdd_common::tag!("collapsed_spans", "whole_key")],
+                vec![],
                 libdd_telemetry::data::metrics::MetricType::Count,
                 true,
                 libdd_telemetry::data::metrics::MetricNamespace::Tracers,
@@ -183,23 +183,27 @@ impl<
             concentrator.flush_buckets(force_flush)
         };
 
-        if flush.collapsed_spans > 0 {
-            #[cfg(feature = "telemetry")]
-            if let Some((handle, key)) = &self.telemetry {
-                let _ = handle.add_point(flush.collapsed_spans as f64, key, vec![]);
+        #[cfg(feature = "telemetry")]
+        if let Some((handle, key)) = &self.telemetry {
+            if flush.collapsed_spans > 0 {
+                let _ = handle.add_point(
+                    flush.collapsed_spans as f64,
+                    key,
+                    vec![libdd_common::tag!("collapsed_spans", "whole_key")],
+                );
             }
-            #[cfg(feature = "dogstatsd")]
-            if let Some(client) = &self.dogstatsd {
+            flush.collapsed_fields_metrics.emit_telemetry(handle, key);
+        }
+
+        #[cfg(feature = "dogstatsd")]
+        if let Some(client) = &self.dogstatsd {
+            if flush.collapsed_spans > 0 {
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
                     flush.collapsed_spans as i64,
                     [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
                 )]);
             }
-        }
-
-        #[cfg(feature = "dogstatsd")]
-        if let Some(client) = &self.dogstatsd {
             flush.collapsed_fields_metrics.emit_dogstatsd(client);
         }
 
@@ -330,7 +334,6 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span_concentrator::CardinalityLimitConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;

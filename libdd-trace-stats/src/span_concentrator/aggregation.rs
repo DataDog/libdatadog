@@ -527,13 +527,13 @@ impl CollapsedField {
 
 const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << CollapsedField::COUNT;
 #[derive(Debug, Clone, Default, Copy)]
-// note slot 0 is a counter for non_collapsed spans. useless
+// Note: slot 0 is a counter for non_collapsed spans. It's not used for emitting telemetry
 pub struct CollapsedFieldsMetrics([usize; COLLAPSED_FIELD_METRIC_SIZE]);
 
 const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 32); // Metrics table is of reasonable size
 
 impl CollapsedFieldsMetrics {
-    pub(crate) fn zero() -> Self {
+    pub fn zero() -> Self {
         Self::default()
     }
 
@@ -583,6 +583,62 @@ impl CollapsedFieldsMetrics {
                     count as i64,
                     tags.iter(),
                 )]);
+            }
+        }
+    }
+
+    #[cfg(feature = "telemetry")]
+    pub fn emit_telemetry<
+        Cap: libdd_capabilities::HttpClientCapability
+            + libdd_capabilities::SleepCapability
+            + libdd_capabilities::MaybeSend
+            + Sync
+            + 'static,
+    >(
+        &self,
+        handle: &libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
+        context_key: &libdd_telemetry::metrics::ContextKey,
+    ) {
+        // skip the first slot that is used to count span which have no collapsed fields.
+        for (mask, &count) in self.0.iter().enumerate().skip(1) {
+            if count > 0 {
+                let mut tags = Vec::new();
+                for field_pow in 1..CollapsedField::COUNT {
+                    let field_value = 1 << field_pow;
+                    assert!([
+                        CollapsedField::RESOURCE_NAME,
+                        CollapsedField::HTTP_ENDPOINT,
+                        CollapsedField::PEER_TAGS,
+                        CollapsedField::ADDITIONAL_TAGS
+                    ]
+                    .contains(&field_value));
+                    let has_field = (mask & field_value) != 0;
+                    if !has_field {
+                        continue;
+                    }
+                    let field_tag = match field_value {
+                        CollapsedField::RESOURCE_NAME => {
+                            libdd_common::tag!("collapsed_spans", "resource")
+                        }
+                        CollapsedField::HTTP_ENDPOINT => {
+                            libdd_common::tag!("collapsed_spans", "http_endpoint")
+                        }
+                        CollapsedField::PEER_TAGS => {
+                            libdd_common::tag!("collapsed_spans", "peer_tags")
+                        }
+                        CollapsedField::ADDITIONAL_TAGS => {
+                            libdd_common::tag!("collapsed_spans", "additional_metric_tags")
+                        }
+                        #[allow(
+                            clippy::unreachable,
+                            reason = "field pow is between 1..CollapsedField::COUNT, so field_value is a valid CollapsedField value. (Asserted just above)"
+                        )]
+                        _ => unreachable!(),
+                    };
+                    tags.push(field_tag);
+                }
+                assert!(!tags.is_empty());
+                let _ = handle.add_point(count as f64, context_key, tags);
             }
         }
     }
