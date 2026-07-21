@@ -144,8 +144,7 @@ impl MemMapping {
                 })
             })?;
 
-        // SAFETY: MemMapping owns a live mapping of mapping_size() bytes. Failure is harmless;
-        // the mapping then follows the default inheritance behavior.
+        // SAFETY: MemMapping owns a live mapping of mapping_size() bytes.
         retry_on_eintr(|| {
             check_syscall_retval(
                 unsafe {
