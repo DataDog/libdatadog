@@ -122,6 +122,10 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
+      - name: "Clear macOS panic-abort cache"
+        if: runner.os == 'macOS'
+        shell: bash
+        run: rm -rf target/panic-abort
       - name: "Remove nextest CI report"
         shell: bash
         run: rm -rf target/nextest/ci/junit.xml
