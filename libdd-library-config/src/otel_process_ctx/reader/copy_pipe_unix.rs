@@ -16,7 +16,7 @@ use std::{
 };
 
 use super::super::retry_on_eintr;
-use super::{PipeCopyError, ProcessMemoryCopy};
+use super::ProcessMemoryCopy;
 
 /// A cached pipe used to probe-copy process memory through the kernel.
 ///
@@ -32,7 +32,7 @@ impl ProcessMemoryCopy for CopyPipe {
         create_pipe()
     }
 
-    fn copy(&self, addr: *const u8, len: usize) -> Result<Vec<u8>, PipeCopyError> {
+    fn copy(self, addr: *const u8, len: usize) -> (io::Result<Vec<u8>>, Option<Self>) {
         let mut bytes = vec![0; len];
         let mut offset = 0;
 
@@ -57,47 +57,44 @@ impl ProcessMemoryCopy for CopyPipe {
                 }
             }) {
                 Ok(0) => {
-                    return Err(PipeCopyError {
-                        err: io::Error::new(
+                    return (
+                        Err(io::Error::new(
                             io::ErrorKind::WriteZero,
                             "zero-length write while copying process context memory",
-                        ),
-                        pipe_dirty: false,
-                    });
+                        )),
+                        Some(self),
+                    );
                 }
                 Ok(written) => written,
                 Err(err) => {
                     match err.raw_os_error() {
                         Some(errno) if errno == libc::EAGAIN || errno == libc::EWOULDBLOCK => {
-                            return Err(PipeCopyError {
-                                err: io::Error::other(
+                            return (
+                                Err(io::Error::other(
                                     "process context copy pipe blocked despite an empty pipe",
-                                ),
-                                pipe_dirty: true,
-                            });
+                                )),
+                                None,
+                            );
                         }
                         Some(libc::EFAULT) => {
-                            return Err(PipeCopyError {
-                                err: io::Error::new(
+                            return (
+                                Err(io::Error::new(
                                     io::ErrorKind::WouldBlock,
                                     "process context memory was unmapped during read",
-                                ),
-                                // actually false on Linux: if EFAULT is returned, nothing was
-                                // written; if anything had been written already, we would get a
-                                // short write
-                                // However, this is not the case for macOS, despite what its manual
-                                // says: See https://github.com/apple-oss-distributions/xnu/blob/5c306bec31e314fa4d8bbdafb2f6f5a6b7e7b291/bsd/man/man2/write.2#L168-L186
-                                pipe_dirty: true,
-                            });
+                                )),
+                                // If EFAULT is returned, nothing was written; a partial copy would
+                                // instead be reported as a short write.
+                                Some(self),
+                            );
                         }
                         _ => {
-                            return Err(PipeCopyError {
-                                err: io::Error::new(
+                            return (
+                                Err(io::Error::new(
                                     err.kind(),
                                     format!("failed to copy process context memory: {err}"),
-                                ),
-                                pipe_dirty: false,
-                            });
+                                )),
+                                Some(self),
+                            );
                         }
                     }
                 }
@@ -131,23 +128,23 @@ impl ProcessMemoryCopy for CopyPipe {
                     }
                 }) {
                     Ok(0) => {
-                        return Err(PipeCopyError {
-                            err: io::Error::new(
+                        return (
+                            Err(io::Error::new(
                                 io::ErrorKind::UnexpectedEof,
                                 "process context copy pipe reported EOF",
-                            ),
-                            pipe_dirty: true,
-                        });
+                            )),
+                            None,
+                        );
                     }
                     Ok(read) => drained += read,
                     Err(err) => {
-                        return Err(PipeCopyError {
-                            err: io::Error::new(
+                        return (
+                            Err(io::Error::new(
                                 err.kind(),
                                 format!("failed to drain process context copy pipe: {err}"),
-                            ),
-                            pipe_dirty: true,
-                        });
+                            )),
+                            None,
+                        );
                     }
                 }
             }
@@ -155,7 +152,7 @@ impl ProcessMemoryCopy for CopyPipe {
             offset += written;
         }
 
-        Ok(bytes)
+        (Ok(bytes), Some(self))
     }
 }
 
@@ -210,11 +207,11 @@ mod tests {
         let len = pipe.chunk_size + 1;
         let source: Vec<_> = (0..len).map(|index| index as u8).collect();
 
-        let copied = pipe
-            .copy(source.as_ptr(), source.len())
-            .expect("memory copy should succeed");
+        let (result, pipe) = pipe.copy(source.as_ptr(), source.len());
+        let copied = result.expect("memory copy should succeed");
 
         assert_eq!(copied, source);
+        assert!(pipe.is_some(), "pipe should remain reusable");
     }
 
     #[test]
@@ -260,14 +257,14 @@ mod tests {
         })
         .expect("memory protection should succeed");
 
-        let err = CopyPipe::new()
+        let (result, pipe) = CopyPipe::new()
             .expect("pipe creation should succeed")
             // SAFETY: the last byte of the first page is inside the live mapping.
-            .copy(unsafe { address.cast::<u8>().add(page_size - 1) }, 2)
-            .expect_err("a copy crossing into inaccessible memory should fail");
+            .copy(unsafe { address.cast::<u8>().add(page_size - 1) }, 2);
+        let err = result.expect_err("a copy crossing into inaccessible memory should fail");
 
-        assert_eq!(err.err.kind(), io::ErrorKind::WouldBlock);
-        assert!(err.pipe_dirty);
+        assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+        assert!(pipe.is_some(), "pipe should remain reusable");
         // SAFETY: address and len came from mmap above.
         retry_on_eintr(|| {
             if unsafe { libc::munmap(address, len) } == 0 {
