@@ -28,10 +28,11 @@
 //! static ALLOC: SampledAllocator<System> = SampledAllocator::<System>::DEFAULT;
 //!
 //! fn main() {
-//!     // Optional: tune the mean sample distance. Smaller values capture
-//!     // more samples at higher runtime cost; larger values reduce overhead
-//!     // but may miss short-lived allocation patterns.
-//!     set_default_sampling_distance(128 * 1024);
+//!     // Configure the mean sample distance before the application's
+//!     // allocation-heavy work begins. New threads pick up this value
+//!     // when their sampler state is first initialized.
+//!     set_default_sampling_distance(256 * 1024);
+//!
 //!     // ... application runs ...
 //! }
 //! ```
@@ -48,8 +49,9 @@ pub use allocator::SampledAllocator;
 /// to revert to the compiled-in default (512 KiB). Values below 64 KiB
 /// are clamped to 64 KiB to avoid excessive overhead.
 ///
-/// Call this early in process startup, before significant allocation
-/// activity begins.
+/// Call this at the top of `main`, before the application's
+/// allocation-heavy work begins. Threads that have already initialized
+/// their sampler state will not pick up the new value.
 #[cfg(target_os = "linux")]
 pub fn set_default_sampling_distance(distance_bytes: u64) {
     libdd_profiling_heap_sampler::set_default_sampling_distance(distance_bytes);
