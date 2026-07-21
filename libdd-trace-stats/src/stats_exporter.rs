@@ -378,6 +378,7 @@ mod tests {
             vec![],
             vec![],
             None,
+            vec![],
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config,
         );
@@ -645,6 +646,7 @@ mod tests {
             vec![],
             vec![],
             Some(1), // max 1 distinct key → second span collapses
+            vec![],
             #[cfg(feature = "stats-obfuscation")]
             None,
         );
