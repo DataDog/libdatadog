@@ -105,7 +105,7 @@ pub struct StatsExporter<
     )>,
     /// Optional DogStatsD client.
     #[cfg(feature = "dogstatsd")]
-    dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
+    dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
 }
 
 impl<
@@ -131,7 +131,7 @@ impl<
         #[cfg(feature = "telemetry")] telemetry: Option<
             libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
         >,
-        #[cfg(feature = "dogstatsd")] dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
+        #[cfg(feature = "dogstatsd")] dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     ) -> Self {
         #[cfg(feature = "telemetry")]
         let telemetry = telemetry.map(|handle| {
@@ -703,10 +703,9 @@ mod tests {
             .unwrap();
         let addr = socket.local_addr().unwrap().to_string();
 
-        let dogstatsd_client = Arc::new(
-            libdd_dogstatsd_client::new(libdd_common::Endpoint::from_slice(&addr))
-                .expect("failed to create dogstatsd client"),
-        );
+        let dogstatsd_client =
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+                .expect("failed to create dogstatsd client");
 
         // get_test_concentrator() has no cardinality collapse: collapsed_spans will be 0.
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
@@ -753,10 +752,9 @@ mod tests {
             .unwrap();
         let addr = socket.local_addr().unwrap().to_string();
 
-        let dogstatsd_client = Arc::new(
-            libdd_dogstatsd_client::new(libdd_common::Endpoint::from_slice(&addr))
-                .expect("failed to create dogstatsd client"),
-        );
+        let dogstatsd_client =
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+                .expect("failed to create dogstatsd client");
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,

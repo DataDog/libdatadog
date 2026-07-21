@@ -49,7 +49,7 @@ pub(crate) struct StatsContext<
     pub shared_runtime: &'a R,
     pub stats_cardinality_limit: Option<usize>,
     /// Optional DogStatsD client forwarded to the [`StatsExporter`].
-    pub dogstatsd: Option<std::sync::Arc<libdd_dogstatsd_client::Client>>,
+    pub dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     /// Optional telemetry handle forwarded to the [`StatsExporter`].
     #[cfg(feature = "telemetry")]
     pub telemetry: Option<libdd_telemetry::worker::TelemetryWorkerHandle<C>>,

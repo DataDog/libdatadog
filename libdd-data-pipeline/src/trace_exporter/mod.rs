@@ -43,7 +43,7 @@ use http::Uri;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
-use libdd_dogstatsd_client::Client;
+use libdd_dogstatsd_client::DogStatsDClient;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::BlockingRuntime;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
@@ -252,7 +252,7 @@ pub struct TraceExporter<
     serializer: TraceSerializer,
     shared_runtime: Arc<R>,
     /// None if dogstatsd is disabled
-    dogstatsd: Option<Arc<Client>>,
+    dogstatsd: Option<DogStatsDClient>,
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     client_side_stats: StatsComputationConfig,
@@ -552,7 +552,7 @@ impl<
     /// Emit a health metric to dogstatsd
     fn emit_metric(&self, metric: HealthMetric, custom_tags: Option<Vec<&Tag>>) {
         if self.health_metrics_enabled {
-            let emitter = MetricsEmitter::new(self.dogstatsd.as_deref(), &self.common_stats_tags);
+            let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
             emitter.emit(metric, custom_tags);
         }
     }
@@ -560,7 +560,7 @@ impl<
     /// Emit all health metrics from a SendResult
     fn emit_send_result(&self, result: &SendResult) {
         if self.health_metrics_enabled {
-            let emitter = MetricsEmitter::new(self.dogstatsd.as_deref(), &self.common_stats_tags);
+            let emitter = MetricsEmitter::new(self.dogstatsd.as_ref(), &self.common_stats_tags);
             emitter.emit_from_send_result(result);
         }
     }
