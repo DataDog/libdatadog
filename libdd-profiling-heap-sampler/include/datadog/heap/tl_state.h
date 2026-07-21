@@ -72,12 +72,21 @@
 #ifndef DD_SAMPLERS_TL_STATE_H
 #define DD_SAMPLERS_TL_STATE_H
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 /* 512 KiB mean between samples. */
 #define DD_SAMPLING_INTERVAL_DEFAULT (512u * 1024u)
+
+/* Process-wide override for the target mean sampling interval. 0 means
+ * "use DD_SAMPLING_INTERVAL_DEFAULT". Set via dd_set_default_sampling_interval(). */
+extern _Atomic uint64_t dd_sampling_interval_override;
+
+/* Set the default mean sampling interval (bytes between samples).
+ * Pass 0 to revert to DD_SAMPLING_INTERVAL_DEFAULT. */
+void dd_set_default_sampling_interval(uint64_t interval_bytes);
 
 /* Per-thread state for the Poisson sampler. See file header for the
  * rationale behind _Thread_local vs pthread TLS. */
@@ -116,6 +125,15 @@ typedef struct {
 } dd_tl_state_t;
 
 extern _Thread_local dd_tl_state_t dd_tl_state_storage;
+
+/* Returns the effective sampling interval: the process-wide override if
+ * non-zero, otherwise DD_SAMPLING_INTERVAL_DEFAULT. */
+static inline __attribute__((always_inline))
+uint64_t dd_sampling_interval_effective(void) {
+    uint64_t ov = atomic_load_explicit(&dd_sampling_interval_override,
+                                       memory_order_relaxed);
+    return (ov != 0) ? ov : DD_SAMPLING_INTERVAL_DEFAULT;
+}
 
 /*
  * Returns the current thread's state, or NULL if not yet initialised.
