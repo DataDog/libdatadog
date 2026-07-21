@@ -17,7 +17,7 @@ use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::Endpoint;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
-use libdd_trace_utils::send_with_retry::{send_with_retry, RetryStrategy};
+use libdd_trace_utils::send_with_retry::{send_with_retry, RetryBackoffType, RetryStrategy};
 use libdd_trace_utils::trace_utils::TracerHeaderTags;
 use libdd_trace_utils::tracer_metadata::TracerMetadata;
 use std::fmt::Debug;
@@ -86,7 +86,7 @@ impl From<TracerMetadata> for StatsMetadata {
 /// concrete type (`NativeCapabilities` or `WasmCapabilities`).
 #[derive(Debug)]
 pub struct StatsExporter<
-    Cap: HttpClientCapability + SleepCapability,
+    Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
     Con: FlushableConcentrator = SpanConcentrator,
 > {
     flush_interval: time::Duration,
@@ -100,7 +100,7 @@ pub struct StatsExporter<
     /// Optional telemetry handle and context key.
     #[cfg(feature = "telemetry")]
     telemetry: Option<(
-        libdd_telemetry::worker::TelemetryWorkerHandle,
+        libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
         libdd_telemetry::metrics::ContextKey,
     )>,
     /// Optional DogStatsD client.
@@ -108,8 +108,10 @@ pub struct StatsExporter<
     dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
 }
 
-impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
-    StatsExporter<Cap, Con>
+impl<
+        Cap: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+        Con: FlushableConcentrator,
+    > StatsExporter<Cap, Con>
 {
     /// Return a new StatsExporter
     ///
@@ -127,7 +129,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
         capabilities: Cap,
         #[cfg(feature = "stats-obfuscation")] supported_obfuscation_version: &'static str,
         #[cfg(feature = "telemetry")] telemetry: Option<
-            libdd_telemetry::worker::TelemetryWorkerHandle,
+            libdd_telemetry::worker::TelemetryWorkerHandle<Cap>,
         >,
         #[cfg(feature = "dogstatsd")] dogstatsd: Option<Arc<libdd_dogstatsd_client::Client>>,
     ) -> Self {
@@ -248,7 +250,7 @@ impl<Cap: HttpClientCapability + SleepCapability, Con: FlushableConcentrator>
             &self.endpoint,
             body,
             &headers,
-            &RetryStrategy::default(),
+            &RetryStrategy::new(0, 0, RetryBackoffType::Constant, None),
         )
         .await;
 
@@ -464,8 +466,8 @@ mod tests {
         send_status.unwrap_err();
 
         assert!(
-            poll_for_mock_hit(&mut mock, 10, 100, 6, true).await,
-            "Expected max retry attempts"
+            poll_for_mock_hit(&mut mock, 10, 100, 1, true).await,
+            "Expected a single attempt with no retries"
         );
     }
 

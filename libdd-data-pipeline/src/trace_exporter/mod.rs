@@ -36,6 +36,7 @@ use crate::{
 };
 use arc_swap::{ArcSwap, ArcSwapOption};
 use bytes::Bytes;
+use futures::stream::{FuturesUnordered, StreamExt};
 use http::header::HeaderMap;
 use http::uri::PathAndQuery;
 use http::Uri;
@@ -57,7 +58,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 use std::{borrow::Borrow, str::FromStr};
-use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -186,7 +186,6 @@ fn add_path(url: &Uri, path: &str) -> Uri {
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
 /// Handles for the background workers owned by a [`TraceExporter`].
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
     /// `None` when no background `/info` fetcher is started (agentless trace
@@ -257,14 +256,12 @@ pub struct TraceExporter<
     common_stats_tags: Vec<Tag>,
     client_computed_top_level: bool,
     client_side_stats: StatsComputationConfig,
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     previous_info_state: ArcSwapOption<String>,
     info_response_observer: ResponseObserver,
-    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
-    telemetry: Option<TelemetryClient>,
+    #[cfg(feature = "telemetry")]
+    telemetry: Option<TelemetryClient<C>>,
     health_metrics_enabled: bool,
     capabilities: C,
-    #[cfg(not(target_arch = "wasm32"))]
     workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
     /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
@@ -276,7 +273,6 @@ pub struct TraceExporter<
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
     /// skipped.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     otlp_stats_enabled: bool,
     /// When `Some(max_line_size)`, traces are written as newline-delimited JSON
     /// through the [`LogWriterCapability`] (the Datadog Forwarder "log exporter"
@@ -317,53 +313,49 @@ impl<
     /// # Errors
     /// Returns [`TraceExporterError::Shutdown(ShutdownError::TimedOut)`] if a timeout was
     /// given and elapsed before all workers finished.
-    #[cfg(not(target_arch = "wasm32"))]
     pub async fn shutdown_async(self, timeout: Option<Duration>) -> Result<(), TraceExporterError> {
-        if let Some(timeout) = timeout {
-            match tokio::time::timeout(timeout, self.shutdown_workers()).await {
-                Ok(()) => Ok(()),
-                Err(_) => Err(TraceExporterError::Shutdown(ShutdownError::TimedOut(
-                    timeout,
-                ))),
-            }
-        } else {
+        let Some(timeout) = timeout else {
             self.shutdown_workers().await;
-            Ok(())
+            return Ok(());
+        };
+        // Runtime-agnostic timeout: race the shutdown work against a capability-driven
+        // sleep, same pattern as `worker::send_request` / `agent_info::fetcher`.
+        // `tokio::time::timeout` would tie us to a tokio reactor we don't have on wasm.
+        let sleeper = <C as SleepCapability>::new();
+        tokio::select! {
+            biased;
+            _ = self.shutdown_workers() => Ok(()),
+            _ = sleeper.sleep(timeout) => Err(TraceExporterError::Shutdown(
+                ShutdownError::TimedOut(timeout),
+            )),
         }
     }
 
     async fn shutdown_workers(self) {
-        #[cfg(not(target_arch = "wasm32"))]
+        let mut handles: Vec<WorkerHandle> = Vec::new();
+
+        if let StatsComputationStatus::Enabled { worker_handle, .. } =
+            &**self.client_side_stats.status.load()
         {
-            let mut join_set = JoinSet::new();
-
-            // Extract the stats handle before moving other fields.
-            if let StatsComputationStatus::Enabled { worker_handle, .. } =
-                &**self.client_side_stats.status.load()
-            {
-                let handle = worker_handle.clone();
-                join_set.spawn(async move { handle.stop().await });
-            }
-
-            if let Some(info_fetcher) = self.workers.info_fetcher {
-                join_set.spawn(async move { info_fetcher.stop().await });
-            }
-
-            #[cfg(feature = "telemetry")]
-            if let Some(telemetry) = self.workers.telemetry {
-                join_set.spawn(async move { telemetry.stop().await });
-            }
-
-            while let Some(result) = join_set.join_next().await {
-                if let Ok(Err(e)) = result {
-                    error!("Worker failed to shutdown: {:?}", e);
-                }
-            }
+            handles.push(worker_handle.clone());
         }
 
-        // On wasm32 workers are no-ops, nothing to stop.
-        #[cfg(target_arch = "wasm32")]
-        let _ = self;
+        if let Some(info_fetcher) = self.workers.info_fetcher {
+            handles.push(info_fetcher);
+        }
+
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = self.workers.telemetry {
+            handles.push(telemetry);
+        }
+
+        let mut futures: FuturesUnordered<_> = handles.into_iter().map(|h| h.stop()).collect();
+
+        while let Some(result) = futures.next().await {
+            if let Err(e) = result {
+                error!("Worker failed to shutdown: {:?}", e);
+            }
+        }
     }
 
     /// Send msgpack serialized traces to the agent.
@@ -421,7 +413,6 @@ impl<
         Ok(res)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     /// Check if agent info state has changed
     fn has_agent_info_state_changed(&self, agent_info: &Arc<AgentInfo>) -> bool {
         Some(agent_info.state_hash.as_str())
@@ -434,7 +425,6 @@ impl<
 
     /// Reconcile in-process stats state with the latest agent info.
     /// Async so the `Enabled` arm can await a stats-worker shutdown without `block_on`.
-    #[cfg(not(target_arch = "wasm32"))]
     async fn check_agent_info(&self) {
         let Some(agent_info) = agent_info::get_agent_info() else {
             return;
@@ -477,6 +467,8 @@ impl<
                     },
                     #[cfg(feature = "telemetry")]
                     telemetry: self.telemetry.as_ref().map(|t| t.clone_handle()),
+                    #[cfg(not(feature = "telemetry"))]
+                    _phantom: std::marker::PhantomData,
                 };
                 stats::handle_stats_disabled_by_agent(
                     &ctx,
@@ -500,18 +492,11 @@ impl<
             .store(Some(agent_info.state_hash.clone().into()))
     }
 
-    #[cfg(target_arch = "wasm32")]
-    async fn check_agent_info(&self) {
-        // No background workers on wasm — agent info is never fetched, stats are
-        // never computed. This is intentionally a no-op.
-    }
-
     /// Reconcile `v1_active` with the agent's currently-advertised endpoints. Called only when
     /// V1 is configured and the agent info state has changed, so transitions are logged at most
     /// once per change. Note: `v1_active` can also transition `true → false` outside this path,
     /// via the fail-closed hook in `send_trace_chunks_inner` when the agent returns 404 on
     /// `/v1.0/traces` (the agent does not bump its state hash on 404).
-    #[cfg(not(target_arch = "wasm32"))]
     fn refresh_v1_active(&self, agent_info: &Arc<AgentInfo>) {
         let supports_v1 = agent_info
             .info
@@ -738,7 +723,7 @@ impl<
         )
         .await;
 
-        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        #[cfg(feature = "telemetry")]
         if let Some(telemetry) = &self.telemetry {
             if let Err(e) = telemetry.send(&SendPayloadTelemetry::from_retry_result(
                 &result,
@@ -809,7 +794,7 @@ impl<
             &self.client_side_stats.status,
             self.client_computed_top_level,
             &self.trace_filterer.load(),
-            #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+            #[cfg(feature = "telemetry")]
             self.telemetry.as_ref(),
         );
 

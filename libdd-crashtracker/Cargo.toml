@@ -49,6 +49,8 @@ anyhow = "1.0"
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 cxx = { version = "1.0", optional = true }
 errno = "0.3"
+libdd-capabilities = { version = "2.1.0", path = "../libdd-capabilities" }
+libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl" }
 libdd-common = { version = "5.1.0", path = "../libdd-common" }
 libdd-telemetry = { version = "6.0.0", path = "../libdd-telemetry" }
 http = "1.1"
