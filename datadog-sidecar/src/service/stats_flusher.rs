@@ -20,7 +20,9 @@ use http::uri::PathAndQuery;
 use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_telemetry::config::Config;
-use libdd_telemetry::worker::TelemetryWorkerHandle;
+/// Sidecar's telemetry worker is native-only, so its handle is pinned to
+/// [`NativeCapabilities`].
+type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use std::collections::HashMap;
 use std::ffi::CString;

@@ -22,7 +22,6 @@ anyhow = { version = "1.0" }
 async-trait = "0.1"
 base64 = "0.22"
 futures = { version = "0.3", default-features = false }
-http-body-util = "0.1"
 http = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0" }
@@ -32,12 +31,18 @@ tracing = { version = "0.1", default-features = false }
 uuid = { version = "1.3", features = ["v4"] }
 hashbrown = "0.15"
 bytes = "1.4"
+libdd-capabilities = { version = "2.1.0", path = "../libdd-capabilities" }
 libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
 libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime", default-features = false }
 libdd-ddsketch = { version = "1.1.0", path = "../libdd-ddsketch" }
+web-time = "1" # cross-platform Instant/SystemTime; shims via js-sys on wasm32
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sys-info = { version = "0.9.0" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+uuid = { version = "1", features = ["js"] }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.176"
@@ -48,5 +53,6 @@ winver = "1.0.0"
 [dev-dependencies]
 tracing-subscriber = "0.3.22"
 tokio = { version = "1.23", features = ["sync", "io-util", "rt-multi-thread"] }
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 libdd-common = { path = "../libdd-common", features = ["test-utils"] }
 httpmock = "0.8.0-alpha.1"

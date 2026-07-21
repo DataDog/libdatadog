@@ -4,6 +4,8 @@
 //! Native HTTP client implementation backed by hyper.
 
 mod native {
+    use std::fs::OpenOptions;
+    use std::io::Write;
     use std::sync::{Arc, OnceLock};
 
     use libdd_capabilities::http::{HttpClientCapability, HttpError};
@@ -26,6 +28,30 @@ mod native {
         }
     }
 
+    /// Write `body` as a newline-terminated record to the file referenced by `uri` (which must
+    /// have a `file://` scheme), then return a synthetic 202 response.
+    fn write_to_file_endpoint(
+        uri: &http::Uri,
+        body: bytes::Bytes,
+    ) -> Result<http::Response<bytes::Bytes>, HttpError> {
+        let path = libdd_common::decode_uri_path_in_authority(uri)
+            .map_err(|e| HttpError::Other(anyhow::anyhow!("invalid file:// URI: {e}")))?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| HttpError::Other(anyhow::anyhow!("opening {path:?}: {e}")))?;
+        let mut record = body.to_vec();
+        record.push(b'\n');
+        file.write_all(&record)
+            .map_err(|e| HttpError::Other(anyhow::anyhow!("writing {path:?}: {e}")))?;
+
+        http::Response::builder()
+            .status(http::StatusCode::ACCEPTED)
+            .body(bytes::Bytes::new())
+            .map_err(|e| HttpError::Other(e.into()))
+    }
+
     impl HttpClientCapability for NativeHttpClient {
         fn new_client() -> Self {
             Self {
@@ -39,8 +65,15 @@ mod native {
             req: http::Request<bytes::Bytes>,
         ) -> impl std::future::Future<Output = Result<http::Response<bytes::Bytes>, HttpError>> + MaybeSend
         {
-            let client = self.client.get_or_init(new_default_client).clone();
+            let client_lock = self.client.clone();
             async move {
+                // file:// URIs short-circuit to the on-disk recorder used by tests.
+                if req.uri().scheme_str() == Some("file") {
+                    let (parts, body) = req.into_parts();
+                    return write_to_file_endpoint(&parts.uri, body);
+                }
+
+                let client = client_lock.get_or_init(new_default_client).clone();
                 let hyper_req = req.map(Body::from_bytes);
 
                 let response = client
