@@ -3310,7 +3310,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-sampler"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",

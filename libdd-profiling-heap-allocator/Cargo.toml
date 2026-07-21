@@ -21,7 +21,7 @@ bench = false
 live-heap = ["libdd-profiling-heap-sampler/live-heap"]
 
 [dependencies]
-libdd-profiling-heap-sampler = { version = "0.1.0", path = "../libdd-profiling-heap-sampler" }
+libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
 
 [dev-dependencies]
 criterion = "0.5.1"
