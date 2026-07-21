@@ -833,7 +833,7 @@ mod tests {
             assert!(cfg.connection_timeout.is_none());
             assert!(!cfg.output_to_log);
             assert_eq!(cfg.log_max_line_size, None);
-            assert_eq!(cfg.stats_cardinality_limit, None);
+            assert_eq!(cfg.stats_cardinality_limits, None);
             assert!(cfg.otlp_instrumentation_scope_name.is_none());
             assert!(cfg.otlp_instrumentation_scope_version.is_none());
 

@@ -326,8 +326,6 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 mod tests {
     use super::*;
     use crate::span_concentrator::CardinalityLimitConfig;
-    #[cfg(feature = "stats-obfuscation")]
-    use crate::span_concentrator::StatsComputationObfuscationConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
