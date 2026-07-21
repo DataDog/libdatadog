@@ -9,11 +9,13 @@ use web_time::{SystemTime, UNIX_EPOCH};
 
 use libdd_trace_protobuf::pb;
 
-use aggregation::{CollapsedFieldsMetrics, StatsBucket};
+use aggregation::StatsBucket;
 
 mod aggregation;
 use aggregation::BorrowedAggregationKey;
-pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
+pub use aggregation::{
+    CollapsedFieldsMetrics, FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket,
+};
 
 pub mod stat_span;
 pub use stat_span::StatSpan;
