@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "libc",
  "libdd-profiling-heap-sampler",
