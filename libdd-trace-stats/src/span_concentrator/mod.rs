@@ -1,6 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module implements the SpanConcentrator used to aggregate spans into stats
+mod aggregation;
+pub mod cardinality_limit_telemetry;
+pub mod stat_span;
+
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -11,13 +15,10 @@ use libdd_trace_protobuf::pb;
 
 use aggregation::StatsBucket;
 
-mod aggregation;
 use aggregation::BorrowedAggregationKey;
-pub use aggregation::{
-    CollapsedFieldsMetrics, FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket,
-};
+pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
+use cardinality_limit_telemetry::CollapsedFieldsMetrics;
 
-pub mod stat_span;
 pub use stat_span::StatSpan;
 
 const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
