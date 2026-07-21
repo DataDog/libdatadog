@@ -7,7 +7,15 @@ pub mod test_runner;
 pub mod test_types;
 pub mod validation;
 
-use std::{collections::HashMap, env, ops::DerefMut, path::PathBuf, process, sync::Mutex};
+use std::{
+    collections::HashMap,
+    env,
+    ffi::OsStr,
+    ops::DerefMut,
+    path::{Path, PathBuf},
+    process,
+    sync::Mutex,
+};
 
 use once_cell::sync::OnceCell;
 
@@ -34,14 +42,24 @@ fn get_base_target_dir() -> &'static PathBuf {
     })
 }
 
+fn panic_abort_target_dir(base: &Path) -> PathBuf {
+    let mut name = base
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("target"))
+        .to_os_string();
+    name.push("-panic-abort");
+    base.with_file_name(name)
+}
+
 /// Returns the target directory for a specific build configuration.
-/// For builds with variants (like panic_abort), returns a variant-specific subdirectory.
+/// For builds with variants (like panic_abort), returns a sibling target directory.
 fn get_target_dir_for_build(c: &ArtifactsBuild) -> PathBuf {
     let base = get_base_target_dir().clone();
 
-    // If this is a variant build (e.g., panic_abort), use a variant-specific target directory
+    // If this is a variant build (e.g., panic_abort), use a separate target directory
+    // outside the cached workspace target tree.
     if c.panic_abort == Some(true) {
-        base.join("panic-abort")
+        panic_abort_target_dir(&base)
     } else {
         base
     }
