@@ -9,6 +9,7 @@ include:
   - local: .gitlab/impacted-crates.yml
   - local: .gitlab/benchmarks.yml
   - local: .gitlab/fuzz.yml
+  - local: .gitlab/bench-analysis.yml
 
 trigger_internal_build:
   variables:
