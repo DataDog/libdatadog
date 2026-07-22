@@ -243,19 +243,15 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
     async fn shutdown(&mut self) {
         // Drain queued actions before Stop so the final flush includes anything
         // enqueued between the last runloop tick and shutdown.
-        let mut pending: Vec<TelemetryActions> = self.next_action.take().into_iter().collect();
         for _ in 0..self.mailbox.len() {
             if let Ok(action) = self.mailbox.try_recv() {
-                pending.push(action);
+                let _ = match self.flavor {
+                    TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
+                    TelemetryWorkerFlavor::MetricsLogs => {
+                        self.dispatch_metrics_logs_action(action).await
+                    }
+                };
             }
-        }
-        for action in pending {
-            let _ = match self.flavor {
-                TelemetryWorkerFlavor::Full => self.dispatch_action(action).await,
-                TelemetryWorkerFlavor::MetricsLogs => {
-                    self.dispatch_metrics_logs_action(action).await
-                }
-            };
         }
 
         let stop_action = TelemetryActions::Lifecycle(LifecycleAction::Stop);
