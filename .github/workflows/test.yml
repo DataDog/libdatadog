@@ -297,20 +297,6 @@ jobs:
           cache-bin: true # cache the ~/.cargo/bin directory
       - name: Build CentOS 7 Docker image
         run: docker build -t libdatadog-centos7 -f tools/docker/Dockerfile.centos .
-      - name: "stress-test exporter_send_telemetry_test x100 (centos7)"
-        shell: bash
-        run: |
-          docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            -v "${{ github.workspace }}:/workspace" \
-            -v "${CARGO_HOME:-$HOME/.cargo}:/usr/local/cargo" \
-            -v "${RUSTUP_HOME:-$HOME/.rustup}:/usr/local/rustup" \
-            -e CARGO_HOME=/usr/local/cargo \
-            -e RUSTUP_HOME=/usr/local/rustup \
-            -e PATH=/usr/local/cargo/bin:/usr/local/rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:/opt/rh/devtoolset-11/root/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            -w /workspace \
-            libdatadog-centos7 \
-            sh -c 'for i in $(seq 1 100); do cargo nextest run -p libdd-data-pipeline-ffi exporter_send_telemetry_test --profile ci --no-tests=pass || exit 1; done'
       - name: "cargo nextest run (centos7)"
         # Run docker as a user, not the default root
         # Mount and use the runner's toolchain as it's the same arch
