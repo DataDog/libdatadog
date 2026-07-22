@@ -279,6 +279,9 @@ pub struct TraceExporter<
     /// path) instead of being sent to an agent. Used in serverless environments
     /// where no agent is reachable.
     log_output: Option<usize>,
+    /// Whether background workers should be restarted
+    /// after a `fork()`.
+    restart_after_fork: bool,
 }
 
 impl<
@@ -460,6 +463,7 @@ impl<
                     endpoint_url: &self.endpoint.url,
                     shared_runtime: &*self.shared_runtime,
                     stats_cardinality_limit: self.client_side_stats.stats_cardinality_limit,
+                    restart_after_fork: self.restart_after_fork,
                     dogstatsd: if self.health_metrics_enabled {
                         self.dogstatsd.clone()
                     } else {
