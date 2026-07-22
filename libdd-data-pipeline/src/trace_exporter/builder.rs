@@ -754,6 +754,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 span_kinds,
                 self.peer_tags.clone(),
                 None,
+                vec![],
                 #[cfg(feature = "stats-obfuscation")]
                 None,
             )));
