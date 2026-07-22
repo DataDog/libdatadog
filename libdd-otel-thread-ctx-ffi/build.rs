@@ -12,7 +12,7 @@ fn main() {
     println!("cargo:rustc-env=LIBDD_OTEL_THREAD_CTX_FFI_CROSS_COMPILING={cross_compiling}");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
-    if target_os != "linux" {
+    if target_os != "linux" || env::var_os("CARGO_FEATURE_TLS_STORAGE").is_none() {
         return;
     }
 

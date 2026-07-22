@@ -133,7 +133,7 @@ impl TracerMetadata {
             threadlocal_metadata,
         } = self;
 
-        let resource_attrs = vec![
+        let mut resource_attrs = vec![
             key_value_opt("service.name", service_name),
             key_value_opt("service.instance.id", runtime_id),
             key_value_opt("service.version", service_version),
@@ -141,9 +141,13 @@ impl TracerMetadata {
             key_value("telemetry.sdk.language", tracer_language.clone()),
             key_value("telemetry.sdk.version", tracer_version.clone()),
             key_value("telemetry.sdk.name", Self::OTEL_SDK_NAME.to_owned()),
-            key_value("host.name", hostname.clone()),
-            key_value_opt("container.id", container_id),
         ];
+        if !hostname.is_empty() {
+            resource_attrs.push(key_value("host.name", hostname.clone()));
+        }
+        if let Some(container_id) = container_id.as_ref().filter(|id| !id.is_empty()) {
+            resource_attrs.push(key_value("container.id", container_id.clone()));
+        }
 
         // `mut` is only needed when `otel-thread-ctx` is enabled.
         #[allow(unused_mut)]
@@ -270,7 +274,6 @@ pub use other::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "otel-thread-ctx")]
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::any_value;
     use libdd_trace_protobuf::opentelemetry::proto::common::v1::{AnyValue, ProcessContext};
 
@@ -280,6 +283,51 @@ mod tests {
             .find(|kv| kv.key == key)?
             .value
             .as_ref()
+    }
+
+    fn find_resource_attr<'a>(ctx: &'a ProcessContext, key: &str) -> Option<&'a AnyValue> {
+        ctx.resource
+            .as_ref()?
+            .attributes
+            .iter()
+            .find(|kv| kv.key == key)?
+            .value
+            .as_ref()
+    }
+
+    #[test]
+    fn process_context_sdk_and_optional_host_attributes() {
+        let absent = TracerMetadata {
+            tracer_language: "php".to_owned(),
+            tracer_version: "1.2.3".to_owned(),
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+        assert!(find_resource_attr(&absent, "host.name").is_none());
+        assert!(find_resource_attr(&absent, "container.id").is_none());
+        assert!(matches!(
+            find_resource_attr(&absent, "telemetry.sdk.language").and_then(|v| v.value.as_ref()),
+            Some(any_value::Value::StringValue(value)) if value == "php"
+        ));
+        assert!(matches!(
+            find_resource_attr(&absent, "telemetry.sdk.version").and_then(|v| v.value.as_ref()),
+            Some(any_value::Value::StringValue(value)) if value == "1.2.3"
+        ));
+
+        let present = TracerMetadata {
+            hostname: "host-a".to_owned(),
+            container_id: Some("container-a".to_owned()),
+            ..Default::default()
+        }
+        .to_otel_process_ctx();
+        assert!(matches!(
+            find_resource_attr(&present, "host.name").and_then(|v| v.value.as_ref()),
+            Some(any_value::Value::StringValue(value)) if value == "host-a"
+        ));
+        assert!(matches!(
+            find_resource_attr(&present, "container.id").and_then(|v| v.value.as_ref()),
+            Some(any_value::Value::StringValue(value)) if value == "container-a"
+        ));
     }
 
     #[test]

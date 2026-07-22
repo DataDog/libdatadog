@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! Implementation of the Linux parts of the [OTEL process
+//! Platform-neutral mapping operations and Linux publication/discovery for the [OTEL process
 //! context specification](https://github.com/open-telemetry/opentelemetry-specification/blob/main/oteps/profiles/4719-process-ctx.md).
 //!
 //! The update/read protocol is seqlock-style: the publisher marks the mapping as unavailable,
@@ -18,20 +18,28 @@
 //! reads even when the clock returns the same value twice. Concurrent writers are rejected, and
 //! retry policy is left to the reader's caller.
 
+#[cfg(target_os = "linux")]
 use std::io;
 
-#[cfg(feature = "process-context-reader")]
+mod mapping;
+
+pub use mapping::{
+    decode, initialize, invalidate, read, threadlocal_attribute_key_map, update, validate,
+    ProcessContextMapping,
+};
+
+#[cfg(all(target_os = "linux", feature = "process-context-reader"))]
 mod reader;
-#[cfg(feature = "process-context-writer")]
+#[cfg(all(target_os = "linux", feature = "process-context-writer"))]
 mod writer;
 #[cfg(all(target_os = "linux", not(target_has_atomic = "64")))]
 compile_error!("OTel process context requires 64-bit atomics on Linux");
 #[cfg(target_os = "linux")]
 pub mod linux;
 
-#[cfg(feature = "process-context-reader")]
+#[cfg(all(target_os = "linux", feature = "process-context-reader"))]
 pub use reader::ProcessContextSelfReader;
-#[cfg(feature = "process-context-writer")]
+#[cfg(all(target_os = "linux", feature = "process-context-writer"))]
 pub use writer::{publish, unpublish};
 
 /// Current version of the process context format
@@ -42,7 +50,7 @@ pub const SIGNATURE: &[u8; 8] = b"OTEL_CTX";
 const UNPUBLISHED_OR_UPDATING: u64 = 0;
 
 #[repr(C)]
-#[cfg(feature = "process-context-reader")]
+#[cfg(all(target_os = "linux", feature = "process-context-reader"))]
 struct MappingHeaderSnapshot {
     signature: [u8; 8],
     version: u32,
@@ -52,6 +60,7 @@ struct MappingHeaderSnapshot {
 }
 
 /// Runs an operation until it succeeds or fails for a reason other than `EINTR`.
+#[cfg(target_os = "linux")]
 fn retry_on_eintr<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     loop {
         match operation() {
@@ -63,6 +72,7 @@ fn retry_on_eintr<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result
 
 #[cfg(all(
     test,
+    target_os = "linux",
     feature = "process-context-reader",
     feature = "process-context-writer"
 ))]

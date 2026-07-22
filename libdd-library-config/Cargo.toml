@@ -35,7 +35,7 @@ libdd-trace-protobuf = { version = "4.0.0", path = "../libdd-trace-protobuf" }
 tempfile = { version = "3.3" }
 serial_test = "3.2"
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 memfd = { version = "0.6" }
 libc = "0.2"
 

@@ -22,7 +22,11 @@ elf = { version = "0.7", optional = true }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core"], optional = true }
 
 [features]
-sanity-check = ["dep:elf", "dep:anyhow"]
+default = ["tls-storage"]
+# The standalone publisher owns the discoverable Linux TLS slot. Embedders that provide the
+# slot themselves can disable default features and use only the common record operations.
+tls-storage = []
+sanity-check = ["tls-storage", "dep:elf", "dep:anyhow"]
 # Test helpers used by this crate's own tests and `libdd-otel-thread-ctx-ffi`'s
 # integration tests.
 test-utils = ["dep:elf", "dep:object"]
