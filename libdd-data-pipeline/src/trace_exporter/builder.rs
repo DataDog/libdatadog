@@ -757,7 +757,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 web_time::SystemTime::now(),
                 span_kinds,
                 self.peer_tags.clone(),
-                None,
+                self.stats_cardinality_limits,
                 #[cfg(feature = "stats-obfuscation")]
                 None,
             )));
