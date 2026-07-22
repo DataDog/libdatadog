@@ -493,6 +493,10 @@ pub(super) struct StatsBucket {
     /// Maximum number of distinct aggregation keys this bucket will hold before collapsing new
     /// ones into the overflow sentinel key.
     cardinality_limits: CardinalityLimitConfig,
+    // HashSet of hashes of field values so we save memory
+    // This is not 100% accurate but the probability of getting collision is close to 0
+    // In the very rare case we get a collision, we would get one extra bucket which is totally
+    // fine
     distinct_resources: HashSet<u64>,
     distinct_http_endpoints: HashSet<u64>,
     distinct_peer_tags: HashSet<u64>,
