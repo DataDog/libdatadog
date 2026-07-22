@@ -638,6 +638,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_additional_tags.entry(additional_tags_hash) {
             if additional_tags_count >= self.cardinality_limits.additional_tags_limit {
                 key.additional_metric_tags = vec![(TRACER_BLOCKED_VALUE, "")];
+                collapsed_fields |= collapsed_field::ADDITIONAL_TAGS;
             } else {
                 slot.insert();
             }
