@@ -3280,7 +3280,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-allocator"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "libdd-profiling-heap-sampler",
@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "libc",
  "libdd-profiling-heap-sampler",
@@ -3310,7 +3310,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-sampler"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",

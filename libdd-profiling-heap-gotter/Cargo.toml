@@ -3,7 +3,7 @@
 
 [package]
 name = "libdd-profiling-heap-gotter"
-version = "0.1.0"
+version = "1.0.0"
 description = "GOT-table interposition that routes a running process's allocator through libdd-profiling-heap-sampler."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-gotter"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-gotter"
@@ -25,9 +25,9 @@ test-support = []
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
-libdd-profiling-heap-sampler = { version = "0.1.0", path = "../libdd-profiling-heap-sampler" }
+libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"
-libdd-profiling-heap-sampler = { version = "0.1.0", path = "../libdd-profiling-heap-sampler" }
+libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
 serial_test = "3.2"
