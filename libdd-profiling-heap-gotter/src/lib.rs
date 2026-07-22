@@ -20,7 +20,12 @@
 //! # Quickstart
 //!
 //! ```no_run
-//! libdd_profiling_heap_gotter::install_heap_overrides();
+//! use libdd_profiling_heap_gotter::{install_heap_overrides, set_default_sampling_distance};
+//!
+//! // Optional: configure the mean sample distance before installing.
+//! set_default_sampling_distance(256 * 1024);
+//!
+//! install_heap_overrides();
 //! // ... application runs for the rest of its life; malloc/free/calloc/
 //! //     realloc/etc. flow through libdd-profiling-heap-sampler and emit
 //! //     ddheap:alloc / ddheap:free USDTs ...
@@ -137,6 +142,25 @@ pub fn update_heap_overrides() {
 /// See the Linux variant above.
 #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
 pub fn update_heap_overrides() {}
+
+/// Set the default mean sample distance (bytes between samples) for the
+/// heap sampler.
+///
+/// The sampler draws from an exponential distribution around this mean,
+/// so individual gaps vary but average to the configured value. Pass `0`
+/// to revert to the compiled-in default (512 KiB). Values below 64 KiB
+/// are clamped to 64 KiB to avoid excessive overhead.
+///
+/// Call this before [`install_heap_overrides`]. Threads that have already
+/// initialized their sampler state will not pick up the new value.
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub fn set_default_sampling_distance(distance_bytes: u64) {
+    libdd_profiling_heap_sampler::set_default_sampling_distance(distance_bytes);
+}
+
+/// See the Linux variant above.
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+pub fn set_default_sampling_distance(_distance_bytes: u64) {}
 
 /// Return whether heap GOT overrides are currently installed. Always
 /// returns `false` on non-Linux targets, since `install_heap_overrides`

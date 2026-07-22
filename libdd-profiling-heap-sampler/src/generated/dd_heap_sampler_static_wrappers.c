@@ -13,6 +13,7 @@
 
 // Static wrappers
 
+uint64_t dd_sampling_interval_effective__extern(void) { return dd_sampling_interval_effective(); }
 dd_tl_state_t * dd_tl_state_get__extern(void) { return dd_tl_state_get(); }
 dd_tl_state_t * dd_tl_state_get_or_init__extern(void) { return dd_tl_state_get_or_init(); }
 bool dd_alloc_req_is_sampled__extern(dd_alloc_req_t req) { return dd_alloc_req_is_sampled(req); }

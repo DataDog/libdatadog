@@ -18,6 +18,25 @@ pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpSt
 pub mod stat_span;
 pub use stat_span::StatSpan;
 
+const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
+
+/// Deduplicate, sort alphabetically, and cap `keys` using [`ADDITIONAL_METRIC_TAGS_MAX_KEYS`].
+/// Excess keys are dropped and logged as a one time warning.
+fn normalize_additional_metric_tag_keys(mut keys: Vec<String>) -> Vec<String> {
+    keys.sort_unstable();
+    keys.dedup();
+    if keys.len() > ADDITIONAL_METRIC_TAGS_MAX_KEYS {
+        let dropped = keys.split_off(ADDITIONAL_METRIC_TAGS_MAX_KEYS);
+        warn!(
+            "additional_metric_tag_keys: {} additional metric tag keys exceed the cap of {}; dropping: {:?}",
+            dropped.len() + ADDITIONAL_METRIC_TAGS_MAX_KEYS,
+            ADDITIONAL_METRIC_TAGS_MAX_KEYS,
+            dropped,
+        );
+    }
+    keys
+}
+
 /// Result of flushing a concentrator.
 ///
 /// Obfuscated and un-obfuscated buckets are kept separate because they must be sent in distinct
@@ -166,6 +185,8 @@ pub struct SpanConcentrator {
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
     peer_tag_keys: Vec<String>,
+    /// keys for additional tags on trace stats
+    additional_metric_tag_keys: Vec<String>,
     #[cfg(feature = "stats-obfuscation")]
     obfuscation_config: SharedStatsComputationObfuscationConfig,
 }
@@ -176,8 +197,9 @@ impl SpanConcentrator {
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
     /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
-    /// - `override_cardinality_limits` config values for whole-key and per-field cardinality limi.
+    /// - `override_cardinality_limits` config values for whole-key and per-field cardinality limit.
     ///   Pass `None` to use defaults (see [`CardinalityLimitConfig`]).
+    /// - `additional_metric_tag_keys` list of keys considered as addtional tags for aggregation
     /// - `obfuscation_config` optional and updatable config for resource key obfuscation
     pub fn new(
         bucket_size: Duration,
@@ -185,6 +207,7 @@ impl SpanConcentrator {
         span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
         override_cardinality_limits: Option<CardinalityLimitConfig>,
+        additional_metric_tag_keys: Vec<String>,
         #[cfg(feature = "stats-obfuscation")] obfuscation_config: Option<
             SharedStatsComputationObfuscationConfig,
         >,
@@ -225,6 +248,9 @@ impl SpanConcentrator {
             cardinality_limits: override_cardinality_limits.unwrap_or_default(),
             span_kinds_stats_computed,
             peer_tag_keys,
+            additional_metric_tag_keys: normalize_additional_metric_tag_keys(
+                additional_metric_tag_keys,
+            ),
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config: obfuscation_config.unwrap_or_default(),
         }
@@ -248,6 +274,16 @@ impl SpanConcentrator {
     /// Set the list of keys considered as peer_tags for aggregation
     pub fn set_peer_tags(&mut self, peer_tags: Vec<String>) {
         self.peer_tag_keys = peer_tags;
+    }
+
+    /// Return the list of keys considered as additional_metric_tag_keys for aggregation
+    pub fn additional_metric_tag_keys(&self) -> &[String] {
+        &self.additional_metric_tag_keys
+    }
+
+    /// Set the list of keys considered as additional_metric_tag_keys for aggregation
+    pub fn set_additional_metric_tag_keys(&mut self, tag_keys: Vec<String>) {
+        self.additional_metric_tag_keys = normalize_additional_metric_tag_keys(tag_keys);
     }
 
     /// Return the bucket size used for aggregation
@@ -290,8 +326,13 @@ impl SpanConcentrator {
                 res,
                 span,
                 self.peer_tag_keys.as_slice(),
+                self.additional_metric_tag_keys.as_slice(),
             ),
-            None => BorrowedAggregationKey::from_span(span, self.peer_tag_keys.as_slice()),
+            None => BorrowedAggregationKey::from_span(
+                span,
+                self.peer_tag_keys.as_slice(),
+                self.additional_metric_tag_keys.as_slice(),
+            ),
         };
         target_bucket.insert(
             agg_key,
