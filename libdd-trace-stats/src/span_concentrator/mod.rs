@@ -214,6 +214,7 @@ impl SpanConcentrator {
     ) -> SpanConcentrator {
         if let Some(cardinality_limit_config) = override_cardinality_limits.as_ref() {
             if cardinality_limit_config.whole_key_limit == 0
+                || cardinality_limit_config.resource_limit == 0
                 || cardinality_limit_config.http_endpoint_limit == 0
                 || cardinality_limit_config.peer_tags_limit == 0
                 || cardinality_limit_config.additional_tags_limit == 0
