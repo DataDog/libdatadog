@@ -13,10 +13,6 @@ pub(super) mod collapsed_field {
     pub const RESOURCE_NAME: usize = 1 << 1;
     pub const HTTP_ENDPOINT: usize = 1 << 2;
     pub const PEER_TAGS: usize = 1 << 3;
-    #[allow(
-        unused,
-        reason = "FIXME(SVLS-8787|github.com/DataDog/libdatadog/pull/2170): implement stats additional tags"
-    )]
     pub const ADDITIONAL_TAGS: usize = 1 << 4;
     pub const COUNT: u8 = 5;
 }
