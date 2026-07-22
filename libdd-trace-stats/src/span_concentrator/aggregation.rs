@@ -5,7 +5,7 @@
 //! This includes the aggregation key to group spans together and the computation of stats from a
 //! span.
 
-use hashbrown::{hash_set::Entry, HashMap, HashSet};
+use hashbrown::{HashMap, HashSet};
 use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
@@ -355,7 +355,7 @@ impl OwnedAggregationKey {
                 is_trace_root: pb::Trilean::NotSet,
             },
             peer_tags: vec![(TRACER_BLOCKED_VALUE.to_owned(), "".to_owned())],
-            additional_metric_tags: vec![],
+            additional_metric_tags: vec![(TRACER_BLOCKED_VALUE.to_owned(), "".to_owned())],
         }
     }
 }
@@ -500,10 +500,6 @@ pub(super) struct StatsBucket {
     distinct_resources: HashSet<u64>,
     distinct_http_endpoints: HashSet<u64>,
     distinct_peer_tags: HashSet<u64>,
-    #[allow(
-        unused,
-        reason = "FIXME(SVLS-8787|github.com/DataDog/libdatadog/pull/2170): implement stats additional tags"
-    )]
     distinct_additional_tags: HashSet<u64>,
     /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
     collapsed_count: u64,
@@ -585,6 +581,7 @@ impl StatsBucket {
 
     /// Collapse an aggregation key fields following the bucket's `CardinalityLimitConfig`
     fn collapse_key_fields_cardinality(&mut self, key: &mut BorrowedAggregationKey<'_>) {
+        use hashbrown::hash_set::Entry;
         fn hash(input: &impl Hash) -> u64 {
             let mut hasher = DefaultHasher::new();
             input.hash(&mut hasher);
@@ -616,6 +613,16 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_peer_tags.entry(peer_tags_hash) {
             if peer_tags_count >= self.cardinality_limits.peer_tags_limit {
                 key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
+            } else {
+                slot.insert();
+            }
+        }
+
+        let additional_tags_hash = hash(&key.additional_metric_tags);
+        let additional_tags_count = self.distinct_additional_tags.len();
+        if let Entry::Vacant(slot) = self.distinct_additional_tags.entry(additional_tags_hash) {
+            if additional_tags_count >= self.cardinality_limits.additional_tags_limit {
+                key.additional_metric_tags = vec![(TRACER_BLOCKED_VALUE, "")];
             } else {
                 slot.insert();
             }
