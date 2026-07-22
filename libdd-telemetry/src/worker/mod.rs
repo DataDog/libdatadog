@@ -244,8 +244,10 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         // Drain queued actions before Stop so the final flush includes anything
         // enqueued between the last runloop tick and shutdown.
         let mut pending: Vec<TelemetryActions> = self.next_action.take().into_iter().collect();
-        while let Ok(action) = self.mailbox.try_recv() {
-            pending.push(action);
+        for _ in 0..self.mailbox.len() {
+            if let Ok(action) = self.mailbox.try_recv() {
+                pending.push(action);
+            }
         }
         for action in pending {
             let _ = match self.flavor {
