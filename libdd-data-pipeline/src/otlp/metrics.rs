@@ -8,6 +8,7 @@ use super::config::OtlpMetricsConfig;
 use super::exporter::{send_otlp_http, OTLP_MAX_RETRIES, OTLP_SHUTDOWN_MAX_RETRIES};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::MutexExt;
 use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
@@ -257,8 +258,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
     /// Flush the concentrator and export stats; returns `Ok(true)` if anything was sent.
     async fn send(&self, force_flush: bool, max_retries: u32) -> anyhow::Result<bool> {
         let buckets = {
-            #[allow(clippy::unwrap_used)]
-            let mut c = self.concentrator.lock().unwrap();
+            let mut c = self.concentrator.lock_or_panic();
             c.flush_with_otlp_exact(SystemTime::now(), force_flush)
         };
         if buckets.is_empty() {
@@ -299,6 +299,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         if let Err(e) = self.send(false, OTLP_MAX_RETRIES).await {
             error!(?e, "Error exporting OTLP trace metrics");
         }
+    }
+
+    fn reset(&mut self) {
+        let _ = self
+            .concentrator
+            .lock_or_panic()
+            .flush(SystemTime::now(), true);
     }
 
     async fn shutdown(&mut self) {
