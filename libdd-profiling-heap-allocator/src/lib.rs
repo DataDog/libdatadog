@@ -21,7 +21,9 @@
 //! # Example
 //!
 //! ```no_run
-//! use libdd_profiling_heap_allocator::{set_default_sampling_distance, SampledAllocator};
+//! use libdd_profiling_heap_allocator::{
+//!     is_profiler_attached, set_default_sampling_distance, SampledAllocator,
+//! };
 //! use std::alloc::System;
 //!
 //! #[global_allocator]
@@ -40,6 +42,17 @@
 mod allocator;
 
 pub use allocator::SampledAllocator;
+
+/// Returns true when an external profiler is currently attached to the
+/// allocator's `ddheap:alloc` USDT.
+///
+/// This is a direct read of the USDT semaphore. It is intentionally racy: a
+/// profiler can attach or detach immediately after this returns. Use it as a
+/// best-effort readiness/diagnostic signal, not as a synchronization primitive.
+#[inline]
+pub fn is_profiler_attached() -> bool {
+    libdd_profiling_heap_sampler::is_profiler_attached()
+}
 
 /// Set the default mean sample distance (bytes between samples) for the
 /// heap sampler.

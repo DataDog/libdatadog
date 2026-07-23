@@ -52,6 +52,34 @@ pub fn set_default_sampling_distance(distance_bytes: u64) {
     unsafe { sys::dd_set_default_sampling_interval(distance_bytes) }
 }
 
+#[cfg(target_os = "linux")]
+extern "C" {
+    #[link_name = "dd_heap_profiler_attached"]
+    fn dd_heap_profiler_attached_ffi() -> bool;
+}
+
+/// Returns true when an external profiler is currently attached to the
+/// `ddheap:alloc` USDT in this object file.
+///
+/// This is a direct read of the alloc probe's USDT semaphore. It is intentionally
+/// racy: a profiler can attach or detach immediately after this returns. Use it
+/// as a best-effort readiness/diagnostic signal, not as a synchronization
+/// primitive.
+#[cfg(target_os = "linux")]
+#[inline]
+pub fn is_profiler_attached() -> bool {
+    // SAFETY: dd_heap_profiler_attached performs a single semaphore read and
+    // has no preconditions.
+    unsafe { dd_heap_profiler_attached_ffi() }
+}
+
+/// Non-Linux builds do not expose USDT heap probes.
+#[cfg(not(target_os = "linux"))]
+#[inline]
+pub fn is_profiler_attached() -> bool {
+    false
+}
+
 /// Whether heap sampling is enabled for this process. Users of this
 /// library can use this to check if they should setup allocation tracking
 /// or not.

@@ -21,6 +21,7 @@
 #include <datadog/heap/sample_flag.h>
 
 #include <errno.h>
+#include <stdbool.h>
 
 /* Save / restore errno: an attached USDT consumer may perturb it. */
 void dd_probe_alloc(void *user, uint64_t size, uint64_t weight) {
@@ -38,4 +39,8 @@ void dd_probe_free(void *ptr) {
 #else
     (void)ptr;
 #endif
+}
+
+bool dd_heap_profiler_attached(void) {
+    return USDT_IS_ACTIVE(ddheap, alloc);
 }

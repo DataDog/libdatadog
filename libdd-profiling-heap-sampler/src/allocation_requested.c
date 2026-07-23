@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <datadog/heap/allocation_requested.h>
-#include <datadog/heap/probes.h>
 #include <datadog/heap/sample_flag.h>
 
 #include <errno.h>
@@ -125,15 +124,6 @@ static bool bumped_alloc_size(size_t user_size, size_t alignment,
 
 dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
                                              size_t alignment) {
-    /* If no tracer is attached to ddheap:alloc, skip the entire sampling slow
-     * path. Reset the counter so we re-check after the next interval rather
-     * than re-entering the slow path on every allocation. */
-    if (!USDT_IS_ACTIVE(ddheap, alloc)) {
-        tl->remaining_bytes = -(int64_t)tl->sampling_interval;
-        dd_alloc_req_t out = { size, size, alignment, 0 };
-        return out;
-    }
-
     /* Open the reentry guard before doing anything else. Any allocation that
      * happens between here and dd_allocation_created_slow (e.g. inside log()
      * or the USDT machinery) will see the guard set and pass through unsampled. */
