@@ -162,6 +162,20 @@ pub fn set_default_sampling_distance(distance_bytes: u64) {
 #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
 pub fn set_default_sampling_distance(_distance_bytes: u64) {}
 
+/// Set the target sample rate for adaptive interval control
+/// (samples per second per thread). Default is 10.
+///
+/// Pass `0` to disable adaptation and use the fixed interval.
+/// Call this before [`install_heap_overrides`].
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+pub fn set_target_sample_rate(samples_per_sec: u64) {
+    libdd_profiling_heap_sampler::set_target_sample_rate(samples_per_sec);
+}
+
+/// No-op on non-Linux targets.
+#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+pub fn set_target_sample_rate(_samples_per_sec: u64) {}
+
 /// Return whether heap GOT overrides are currently installed. Always
 /// returns `false` on non-Linux targets, since `install_heap_overrides`
 /// is a no-op there.

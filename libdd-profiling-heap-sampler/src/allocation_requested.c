@@ -8,6 +8,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <time.h>
 
 /*
  * Advances the Park-Miller LCG one step and returns the new 31-bit state.
@@ -122,6 +123,38 @@ static bool bumped_alloc_size(size_t user_size, size_t alignment,
 #endif
 }
 
+/*
+ * Adaptive interval adjustment. Every DD_ADAPT_WINDOW samples, measure
+ * elapsed time vs expected and nudge the interval proportionally.
+ * P-controller with gain 0.5; converges without oscillation.
+ */
+#define DD_SAMPLING_INTERVAL_MAX (64u * 1024u * 1024u)
+
+static void maybe_adapt(dd_tl_state_t *tl) {
+    if (tl->ns_per_sample_target == 0) return;
+    if (++tl->samples_since_adjust < DD_ADAPT_WINDOW) return;
+    tl->samples_since_adjust = 0;
+
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    uint64_t now = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+    uint64_t elapsed = now - tl->last_ns;
+    tl->last_ns = now;
+
+    uint64_t expected = (uint64_t)DD_ADAPT_WINDOW * tl->ns_per_sample_target;
+    if (expected == 0) return;
+
+    double ratio = (double)elapsed / (double)expected;
+    double adjusted = (double)tl->sampling_interval * (1.0 + 0.5 * (ratio - 1.0));
+
+    if (adjusted < (double)DD_SAMPLING_INTERVAL_MIN)
+        adjusted = (double)DD_SAMPLING_INTERVAL_MIN;
+    if (adjusted > (double)DD_SAMPLING_INTERVAL_MAX)
+        adjusted = (double)DD_SAMPLING_INTERVAL_MAX;
+
+    tl->sampling_interval = (uint64_t)adjusted;
+}
+
 dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
                                              size_t alignment) {
     /* Open the reentry guard before doing anything else. Any allocation that
@@ -140,6 +173,8 @@ dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
         dd_alloc_req_t out = { size, size, alignment, 0 };
         return out;
     }
+
+    maybe_adapt(tl);
 
     size_t bumped;
     if (!bumped_alloc_size(size, alignment, &bumped)) {

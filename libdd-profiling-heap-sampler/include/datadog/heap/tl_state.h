@@ -80,14 +80,28 @@
 /* 512 KiB mean between samples. */
 #define DD_SAMPLING_INTERVAL_DEFAULT (512u * 1024u)
 
+/* 64 KiB floor: intervals below this produce excessive overhead. */
+#define DD_SAMPLING_INTERVAL_MIN (64u * 1024u)
+
+/* Number of samples between adaptive interval adjustments. */
+#define DD_ADAPT_WINDOW 10
+
 /* Process-wide override for the target mean sampling interval. 0 means
  * "use DD_SAMPLING_INTERVAL_DEFAULT". Set via dd_set_default_sampling_interval(). */
 extern _Atomic uint64_t dd_sampling_interval_override;
+
+/* Process-wide target sample rate (samples/sec/thread). Default 10.
+ * 0 = disabled (fixed interval). Set via dd_set_target_sample_rate(). */
+extern _Atomic uint64_t dd_target_samples_per_sec;
 
 /* Set the default mean sampling interval (bytes between samples).
  * Pass 0 to revert to DD_SAMPLING_INTERVAL_DEFAULT. Values below
  * 64 KiB are clamped to 64 KiB to avoid excessive overhead. */
 void dd_set_default_sampling_interval(uint64_t interval_bytes);
+
+/* Set the target sample rate for adaptive interval control.
+ * Pass 0 to disable adaptation (uses fixed interval). */
+void dd_set_target_sample_rate(uint64_t samples_per_sec);
 
 /* Per-thread state for the Poisson sampler. See file header for the
  * rationale behind _Thread_local vs pthread TLS. */
@@ -123,6 +137,10 @@ typedef struct {
                                                inner allocation is passed through unsampled. */
     uint32_t rng;                           /* LCG state */
 
+    /* --- Adaptive rate control --- */
+    uint64_t last_ns;                       /* CLOCK_MONOTONIC ns at last adjustment */
+    uint64_t ns_per_sample_target;          /* 1e9 / target_rate; 0 = adapt off */
+    uint8_t  samples_since_adjust;          /* counts up to DD_ADAPT_WINDOW */
 } dd_tl_state_t;
 
 extern _Thread_local dd_tl_state_t dd_tl_state_storage;

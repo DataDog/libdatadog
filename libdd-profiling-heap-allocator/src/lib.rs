@@ -60,3 +60,13 @@ pub fn set_default_sampling_distance(distance_bytes: u64) {
 /// See the Linux variant above.
 #[cfg(not(target_os = "linux"))]
 pub fn set_default_sampling_distance(_distance_bytes: u64) {}
+
+/// Set the target sample rate for adaptive interval control
+/// (samples per second per thread). Default is 10.
+///
+/// Pass `0` to disable adaptation and use the fixed interval.
+/// Call this at the top of `main`, before the application's
+/// allocation-heavy work begins.
+pub fn set_target_sample_rate(samples_per_sec: u64) {
+    libdd_profiling_heap_sampler::set_target_sample_rate(samples_per_sec);
+}

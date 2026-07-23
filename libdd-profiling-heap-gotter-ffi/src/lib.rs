@@ -65,6 +65,16 @@ pub extern "C" fn ddog_heap_gotter_set_default_sampling_distance(distance_bytes:
     libdd_profiling_heap_gotter::set_default_sampling_distance(distance_bytes);
 }
 
+/// Set the target sample rate for adaptive interval control
+/// (samples per second per thread). Default is 10.
+///
+/// Pass `0` to disable adaptation and use the fixed interval.
+/// Call this early in process startup.
+#[no_mangle]
+pub extern "C" fn ddog_heap_gotter_set_target_sample_rate(samples_per_sec: u64) {
+    libdd_profiling_heap_gotter::set_target_sample_rate(samples_per_sec);
+}
+
 /// Return whether heap GOT overrides are currently installed in this process. Always `false` on
 /// non-Linux targets.
 #[no_mangle]

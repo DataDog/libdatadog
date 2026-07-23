@@ -15,6 +15,9 @@ _Thread_local dd_tl_state_t dd_tl_state_storage;
 /* Process-wide override; 0 = use compiled-in default. */
 _Atomic uint64_t dd_sampling_interval_override = 0;
 
+/* Process-wide target sample rate; 0 = adaptation disabled. */
+_Atomic uint64_t dd_target_samples_per_sec = 10;
+
 /*
  * Fills a freshly zeroed dd_tl_state_t with its initial values.
  *
@@ -54,6 +57,15 @@ static void tl_state_populate(dd_tl_state_t *st) {
     st->rng = seed ? seed : 1u;
 
     st->sampling_interval = dd_sampling_interval_effective();
+
+    /* Adaptive rate control. */
+    uint64_t target = atomic_load_explicit(&dd_target_samples_per_sec,
+                                           memory_order_relaxed);
+    if (target != 0) {
+        st->ns_per_sample_target = 1000000000ULL / target;
+        st->last_ns = (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+    }
+
     /* If the per-thread flagging scheme is unavailable (arm64 prctl
      * failure), leave reentry_guard set. The fast path in
      * dd_allocation_requested short-circuits on reentry_guard, so this
@@ -79,16 +91,15 @@ void dd_tl_state_init(void) {
     errno = saved_errno;
 }
 
-/* 64 KiB floor: intervals below this produce excessive overhead for
- * negligible additional insight. The sampler's internal gap floor is 8
- * bytes, but we clamp much higher here to protect callers from
- * accidental misconfiguration. */
-#define DD_SAMPLING_INTERVAL_MIN (64u * 1024u)
-
 void dd_set_default_sampling_interval(uint64_t interval_bytes) {
     if (interval_bytes != 0 && interval_bytes < DD_SAMPLING_INTERVAL_MIN) {
         interval_bytes = DD_SAMPLING_INTERVAL_MIN;
     }
     atomic_store_explicit(&dd_sampling_interval_override, interval_bytes,
+                          memory_order_relaxed);
+}
+
+void dd_set_target_sample_rate(uint64_t samples_per_sec) {
+    atomic_store_explicit(&dd_target_samples_per_sec, samples_per_sec,
                           memory_order_relaxed);
 }

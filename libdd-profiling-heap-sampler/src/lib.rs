@@ -52,6 +52,20 @@ pub fn set_default_sampling_distance(distance_bytes: u64) {
     unsafe { sys::dd_set_default_sampling_interval(distance_bytes) }
 }
 
+/// Set the target sample rate for adaptive interval control
+/// (samples per second per thread).
+///
+/// Pass `0` to disable adaptation and use the fixed interval.
+#[cfg(target_os = "linux")]
+pub fn set_target_sample_rate(samples_per_sec: u64) {
+    // SAFETY: dd_set_target_sample_rate performs a single relaxed atomic store.
+    unsafe { sys::dd_set_target_sample_rate(samples_per_sec) }
+}
+
+/// No-op on non-Linux targets.
+#[cfg(not(target_os = "linux"))]
+pub fn set_target_sample_rate(_samples_per_sec: u64) {}
+
 /// Whether heap sampling is enabled for this process. Users of this
 /// library can use this to check if they should setup allocation tracking
 /// or not.
@@ -172,7 +186,7 @@ mod tests {
 
     #[test]
     fn tl_state_layout_matches_c() {
-        assert_eq!(core::mem::size_of::<dd_tl_state_t>(), 24);
+        assert_eq!(core::mem::size_of::<dd_tl_state_t>(), 48);
         assert_eq!(core::mem::align_of::<dd_tl_state_t>(), 8);
     }
 
@@ -269,6 +283,9 @@ mod tests {
             initialized: true,
             reentry_guard: false,
             rng: 1,
+            last_ns: 0,
+            ns_per_sample_target: 0,
+            samples_since_adjust: 0,
         };
 
         let req = unsafe { dd_allocation_requested_slow(&mut tl, 64, 8) };

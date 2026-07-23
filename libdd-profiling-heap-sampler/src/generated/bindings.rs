@@ -9,6 +9,9 @@ pub const DD_SAMPLING_INTERVAL_DEFAULT: u32 = 524288;
 unsafe extern "C" {
     pub fn dd_set_default_sampling_interval(interval_bytes: u64);
 }
+unsafe extern "C" {
+    pub fn dd_set_target_sample_rate(samples_per_sec: u64);
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dd_tl_state_t {
@@ -18,10 +21,13 @@ pub struct dd_tl_state_t {
     pub initialized: bool,
     pub reentry_guard: bool,
     pub rng: u32,
+    pub last_ns: u64,
+    pub ns_per_sample_target: u64,
+    pub samples_since_adjust: u8,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of dd_tl_state_t"][::std::mem::size_of::<dd_tl_state_t>() - 24usize];
+    ["Size of dd_tl_state_t"][::std::mem::size_of::<dd_tl_state_t>() - 48usize];
     ["Alignment of dd_tl_state_t"][::std::mem::align_of::<dd_tl_state_t>() - 8usize];
     ["Offset of field: dd_tl_state_t::sampling_interval"]
         [::std::mem::offset_of!(dd_tl_state_t, sampling_interval) - 0usize];
@@ -34,6 +40,12 @@ const _: () = {
     ["Offset of field: dd_tl_state_t::reentry_guard"]
         [::std::mem::offset_of!(dd_tl_state_t, reentry_guard) - 18usize];
     ["Offset of field: dd_tl_state_t::rng"][::std::mem::offset_of!(dd_tl_state_t, rng) - 20usize];
+    ["Offset of field: dd_tl_state_t::last_ns"]
+        [::std::mem::offset_of!(dd_tl_state_t, last_ns) - 24usize];
+    ["Offset of field: dd_tl_state_t::ns_per_sample_target"]
+        [::std::mem::offset_of!(dd_tl_state_t, ns_per_sample_target) - 32usize];
+    ["Offset of field: dd_tl_state_t::samples_since_adjust"]
+        [::std::mem::offset_of!(dd_tl_state_t, samples_since_adjust) - 40usize];
 };
 unsafe extern "C" {
     #[link_name = "dd_sampling_interval_effective__extern"]
