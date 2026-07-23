@@ -689,11 +689,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .transpose()?;
             match telemetry {
                 Some((client_tel, worker)) => {
-                    let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
-                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                            e.to_string(),
-                        ))
-                    })?;
+                    let handle = shared_runtime
+                        .spawn_worker(worker, self.restart_after_fork)
+                        .map_err(|e| {
+                            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                                e.to_string(),
+                            ))
+                        })?;
                     if let Err(e) = client_tel.start() {
                         tracing::warn!("Failed to start telemetry: {e}");
                     }
@@ -789,9 +791,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 test_token: self.test_session_token.clone(),
                 capabilities: capabilities.clone(),
             };
-            let worker_handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?;
+            let worker_handle = shared_runtime
+                .spawn_worker(worker, self.restart_after_fork)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
             stats = StatsComputationStatus::Enabled {
                 stats_concentrator: concentrator,
                 worker_handle,
