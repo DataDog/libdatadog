@@ -46,6 +46,7 @@ path = "benches/main.rs"
 
 [dev-dependencies]
 criterion = "0.5.1"
+duplicate = "2.0.1"
 httpmock = "0.8.0-alpha.1"
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
 rand = "0.8.5"
