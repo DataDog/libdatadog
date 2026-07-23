@@ -34,22 +34,22 @@ fips = ["libdd-common/fips"]
 test = ["hyper/server", "hyper-util"]
 
 [dependencies]
-anyhow = { version = "1.0" }
+anyhow.workspace = true
 libdd-common = { path = "../libdd-common", version = "5.1.0", default-features = false }
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf", version = "4.0.0", optional = true }
-hyper = { workspace = true, optional = true, default-features = false }
+hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 http-body-util = {version = "0.1", optional = true }
 http = { version = "1.1", optional = true }
 base64 = { version = "0.22.1", optional = true }
 sha2 = { version = "0.10", optional = true }
 uuid = { version = "1.7.0", features = ["v4"], optional = true }
 futures-util = { version = "0.3", optional = true }
-tokio = { version = "1.36.0", optional = true }
+tokio = { workspace = true, optional = true }
 tokio-util = { version = "0.7.10",  optional = true }
 manual_future = { version = "0.1.1", optional = true }
 time = { version = "0.3", features = ["parsing", "serde", "formatting"], optional = true }
-tracing = { version = "0.1", default-features = false, optional = true }
-serde = "1.0"
+tracing = { workspace = true, optional = true }
+serde.workspace = true
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = "3"
 thiserror = "2"
@@ -59,7 +59,7 @@ strum = { version = "0.26", default-features = false }
 strum_macros = "0.26"
 
 # Test feature
-hyper-util = { workspace = true, features = ["service"], optional = true }
+hyper-util = { workspace = true, features = ["http1", "client", "client-legacy", "service"], optional = true }
 
 [dev-dependencies]
 futures = "0.3"

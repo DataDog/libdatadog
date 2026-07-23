@@ -45,7 +45,7 @@ blazesym = "=0.2.3"
 libdd-libunwind-sys = { version = "1.0.2" }
 
 [dependencies]
-anyhow = "1.0"
+anyhow.workspace = true
 chrono = {version = "0.4", default-features = false, features = ["std", "clock", "serde"]}
 cxx = { version = "1.0", optional = true }
 errno = "0.3"
@@ -63,11 +63,11 @@ page_size = "0.6.0"
 portable-atomic = { version = "1.6.0", features = ["serde"] }
 rand = "0.8.5"
 schemars = "0.8.21"
-serde = {version = "1.0", features = ["derive"]}
+serde = { workspace = true, features = ["derive"] }
 serde_json = {version = "1.0"}
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
 symbolic-common = { version = "12.8.0", default-features = false }
-tokio = { version = "1.23", features = ["rt", "macros", "io-std", "io-util"] }
+tokio = { workspace = true, features = ["rt", "macros", "io-std", "io-util"] }
 uuid = { version = "1.4.1", features = ["v4", "serde"] }
 thiserror = "1.0"
 
