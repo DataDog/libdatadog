@@ -2279,9 +2279,10 @@ fn test_normalize_additional_metric_tag_keys_limit() {
 
 /// Test that the SpanConcentrator truncates inserted span's fields after obfuscation is applied
 #[duplicate_item(
-    test_name                                          big_resource;
-    [ test_concentrator_truncate_fields              ] [ false ]   ;
-    [ test_concentrator_truncate_fields_big_resource ] [ true  ]   ;
+    test_name                                            big_resource obfuscation;
+    [ test_concentrator_truncate_fields                ] [ false ]    [ true  ];
+    [ test_concentrator_truncate_fields_big_resource   ] [ true  ]    [ true  ];
+    [ test_concentrator_truncate_fields_no_obfuscation ] [ false ]    [ false ];
 )]
 #[cfg(feature = "stats-obfuscation")]
 #[test]
@@ -2299,7 +2300,7 @@ fn test_name() {
         vec![],
         Some(Arc::new(ArcSwap::from_pointee(
             StatsComputationObfuscationConfig {
-                enabled: true,
+                enabled: obfuscation,
                 ..Default::default()
             },
         ))),
@@ -2332,25 +2333,49 @@ fn test_name() {
     let stats = concentrator.flush(SystemTime::now(), true).all_buckets();
 
     let bucket = stats.first().unwrap().stats.first().unwrap();
-    let expected_resource_len = if big_resource { 15_000 } else { 5_000 };
-    assert_eq!(
-        bucket.resource.len(),
-        expected_resource_len,
-        "Stats bucket resource got truncated to {expected_resource_len} bytes"
-    );
-    assert_eq!(
-        bucket.service.len(),
-        100,
-        "Stats bucket service got truncated to 100 bytes"
-    );
-    assert_eq!(
-        bucket.r#type.len(),
-        100,
-        "Stats bucket type got truncated to 100 bytes"
-    );
-    assert_eq!(
-        bucket.name.len(),
-        100,
-        "Stats bucket name (operation) got truncated to 100 bytes"
-    );
+
+    if obfuscation {
+        let expected_resource_len = if big_resource { 15_000 } else { 5_000 };
+        assert_eq!(
+            bucket.resource.len(),
+            expected_resource_len,
+            "Stats bucket resource got truncated to {expected_resource_len} bytes"
+        );
+        assert_eq!(
+            bucket.service.len(),
+            100,
+            "Stats bucket service got truncated to 100 bytes"
+        );
+        assert_eq!(
+            bucket.r#type.len(),
+            100,
+            "Stats bucket type got truncated to 100 bytes"
+        );
+        assert_eq!(
+            bucket.name.len(),
+            100,
+            "Stats bucket name (operation) got truncated to 100 bytes"
+        );
+    } else {
+        assert_eq!(
+            bucket.resource.len(),
+            80_000,
+            "Stats bucket resource did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.service.len(),
+            20_000,
+            "Stats bucket service did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.r#type.len(),
+            80_000,
+            "Stats bucket type did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.name.len(),
+            100_000,
+            "Stats bucket name (operation) did not get truncated because obfuscation is disabled"
+        );
+    }
 }
