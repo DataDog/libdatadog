@@ -581,9 +581,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             })?),
         };
 
-        let dogstatsd = self
+        let (dogstatsd, dogstatsd_handle) = self
             .dogstatsd_url
-            .and_then(|u| DogStatsDClient::new(Endpoint::from_slice(&u)).ok());
+            .and_then(|u| {
+                DogStatsDClient::new_with_shared_runtime(Endpoint::from_slice(&u), &*shared_runtime)
+                    .ok()
+            })
+            .unzip();
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
 
@@ -841,6 +845,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             health_metrics_enabled: self.health_metrics_enabled,
             capabilities,
             workers: TraceExporterWorkers {
+                dogstatsd: dogstatsd_handle,
                 info_fetcher: info_fetcher_handle,
                 #[cfg(feature = "telemetry")]
                 telemetry: telemetry_handle,
