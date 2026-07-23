@@ -330,6 +330,7 @@ impl<'a> BorrowedAggregationKey<'a> {
         }
     }
 
+    #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))]
     pub(crate) fn truncate(&mut self, big_resource: bool) {
         let resource_length_limit = if big_resource { 15_000 } else { 5000 };
         self.fixed.resource_name = slice_up_to(self.fixed.resource_name, resource_length_limit);
