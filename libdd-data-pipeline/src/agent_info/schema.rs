@@ -24,7 +24,8 @@ pub struct AgentInfoStruct {
     /// List of available endpoints
     pub endpoints: Option<Vec<String>>,
     /// List of feature flags
-    pub feature_flags: Option<Vec<String>>,
+    #[serde(default)]
+    pub feature_flags: Vec<String>,
     pub client_drop_p0s: Option<bool>,
     pub span_meta_structs: Option<bool>,
     pub long_running_spans: Option<bool>,

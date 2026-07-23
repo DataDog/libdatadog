@@ -277,6 +277,13 @@ pub(crate) async fn handle_stats_enabled(
         let mut concentrator = stats_concentrator.lock_or_panic();
         concentrator.set_span_kinds(get_span_kinds_for_stats(agent_info));
         concentrator.set_peer_tags(agent_info.info.peer_tags.clone().unwrap_or_default());
+        concentrator.set_big_resource(
+            agent_info
+                .info
+                .feature_flags
+                .iter()
+                .any(|flag| flag == "big_resource"),
+        );
         #[cfg(feature = "stats-obfuscation")]
         update_obfuscation_config(agent_info, client_side_stats);
     } else {
