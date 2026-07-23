@@ -98,7 +98,7 @@ impl CollapsedFieldsMetrics {
             };
             tags.push(field_tag);
         }
-        assert!(!tags.is_empty());
+        debug_assert!(!tags.is_empty());
         tags
     }
 }
