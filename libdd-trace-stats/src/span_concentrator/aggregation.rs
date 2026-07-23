@@ -330,6 +330,9 @@ impl<'a> BorrowedAggregationKey<'a> {
         }
     }
 
+    /// Truncates string fields in accordance with the cardinality limit RFC
+    ///
+    /// This should be called only after obfuscation
     #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))]
     pub(crate) fn truncate(&mut self, big_resource: bool) {
         let resource_length_limit = if big_resource { 15_000 } else { 5000 };
