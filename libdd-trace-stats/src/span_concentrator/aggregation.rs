@@ -329,6 +329,26 @@ impl<'a> BorrowedAggregationKey<'a> {
             additional_metric_tags,
         }
     }
+
+    pub(crate) fn truncate(&mut self, big_resource: bool) {
+        let resource_length_limit = if big_resource { 15_000 } else { 5000 };
+        self.fixed.resource_name = slice_up_to(self.fixed.resource_name, resource_length_limit);
+        self.fixed.service_name = slice_up_to(self.fixed.service_name, 100);
+        self.fixed.operation_name = slice_up_to(self.fixed.operation_name, 100);
+        self.fixed.span_type = slice_up_to(self.fixed.span_type, 100);
+    }
+}
+
+/// Truncate `s` to at most `max_len` bytes
+fn slice_up_to(s: &str, max_len: usize) -> &str {
+    if max_len >= s.len() {
+        return s;
+    }
+    let mut idx = max_len;
+    while !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &s[..idx]
 }
 
 impl OwnedAggregationKey {

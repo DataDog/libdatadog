@@ -278,7 +278,7 @@ impl SpanConcentrator {
         };
         #[cfg(not(feature = "stats-obfuscation"))]
         let obfuscated_resource: Option<String> = None;
-        let agg_key = match obfuscated_resource.as_deref() {
+        let mut agg_key = match obfuscated_resource.as_deref() {
             Some(res) => BorrowedAggregationKey::from_obfuscated_span(
                 res,
                 span,
@@ -291,6 +291,10 @@ impl SpanConcentrator {
                 self.additional_metric_tag_keys.as_slice(),
             ),
         };
+        // Apply field truncation only when obfuscation was applied
+        if target_bucket.obfuscated {
+            agg_key.truncate(self.big_resource);
+        }
         target_bucket.insert(
             agg_key,
             span.duration(),
