@@ -52,6 +52,33 @@ pub fn set_default_sampling_distance(distance_bytes: u64) {
     unsafe { sys::dd_set_default_sampling_interval(distance_bytes) }
 }
 
+#[cfg(target_os = "linux")]
+extern "C" {
+    #[link_name = "dd_heap_profiler_attached"]
+    fn dd_heap_profiler_attached_ffi() -> bool;
+}
+
+/// Returns true when an external profiler is currently attached to the
+/// `ddheap:alloc` USDT in this object file.
+///
+/// This is a point-in-time read of the alloc probe's USDT semaphore. A profiler
+/// can attach or detach immediately after this returns. Use it as a
+/// diagnostic/readiness signal, not as a synchronization primitive.
+#[cfg(target_os = "linux")]
+#[inline]
+pub fn is_profiler_attached() -> bool {
+    // SAFETY: dd_heap_profiler_attached performs a single semaphore read and
+    // has no preconditions.
+    unsafe { dd_heap_profiler_attached_ffi() }
+}
+
+/// Non-Linux builds do not expose USDT heap probes.
+#[cfg(not(target_os = "linux"))]
+#[inline]
+pub fn is_profiler_attached() -> bool {
+    false
+}
+
 /// Whether heap sampling is enabled for this process. Users of this
 /// library can use this to check if they should setup allocation tracking
 /// or not.
@@ -177,19 +204,14 @@ mod tests {
     }
 
     #[test]
-    fn requested_initializes_tls_on_first_use() {
+    fn requested_skips_tls_init_when_no_profiler_attached() {
         std::thread::spawn(|| unsafe {
-            assert!(
-                dd_tl_state_get().is_null(),
-                "fresh thread should start without sampler TLS"
-            );
+            assert!(dd_tl_state_get().is_null());
             let req = dd_allocation_requested(1, 1);
             assert_eq!(req.size, 1);
             assert_eq!(req.weight, 0);
-            assert!(
-                !dd_tl_state_get().is_null(),
-                "request should initialize sampler TLS"
-            );
+            // Semaphore is inactive (no profiler), so TLS is never touched.
+            assert!(dd_tl_state_get().is_null());
         })
         .join()
         .unwrap();

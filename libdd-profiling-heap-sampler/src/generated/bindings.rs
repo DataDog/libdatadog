@@ -201,3 +201,9 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn dd_probe_free(ptr: *mut ::std::os::raw::c_void);
 }
+unsafe extern "C" {
+    pub fn dd_heap_profiler_attached() -> bool;
+}
+unsafe extern "C" {
+    pub fn dd_test_set_profiler_active(active: bool);
+}

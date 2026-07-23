@@ -17,7 +17,7 @@ mod linux_bench {
     use libdd_profiling_heap_allocator::SampledAllocator;
     use libdd_profiling_heap_sampler::{
         dd_allocation_created, dd_allocation_freed, dd_allocation_requested,
-        dd_tl_state_get_or_init,
+        dd_test_set_profiler_active, dd_tl_state_get_or_init,
     };
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::hint::black_box;
@@ -210,6 +210,25 @@ mod linux_bench {
         group.finish();
     }
 
+    fn bench_sampled_noop_slow_path_force_attach(c: &mut Criterion) {
+        let alloc = SampledAllocator::new(NoopAllocator);
+        let mut group = c.benchmark_group("alloc_free/sampled_noop_slow_path_force_attach");
+        unsafe { dd_test_set_profiler_active(true) };
+        for &size in SIZES {
+            let layout = Layout::from_size_align(size, ALIGN).unwrap();
+            group.bench_with_input(BenchmarkId::from_parameter(size), &layout, |b, &layout| {
+                b.iter(|| unsafe {
+                    force_next_allocation_to_sample();
+                    let ptr = alloc.alloc(layout);
+                    black_box(ptr);
+                    alloc.dealloc(ptr, layout);
+                });
+            });
+        }
+        group.finish();
+        unsafe { dd_test_set_profiler_active(false) };
+    }
+
     fn bench_sampler_only_slow_path(c: &mut Criterion) {
         let mut group = c.benchmark_group("sampler_only/slow_path");
         for &size in SIZES {
@@ -235,6 +254,7 @@ mod linux_bench {
         bench_sampler_only,
         bench_sampled_system_slow_path,
         bench_sampled_noop_slow_path,
+        bench_sampled_noop_slow_path_force_attach,
         bench_sampler_only_slow_path,
     );
 } // mod linux_bench

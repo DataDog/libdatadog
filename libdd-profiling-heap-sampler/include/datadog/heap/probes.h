@@ -12,6 +12,7 @@
 #ifndef DD_SAMPLERS_PROBES_H
 #define DD_SAMPLERS_PROBES_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __linux__
@@ -41,5 +42,26 @@ void dd_probe_alloc(void *user, uint64_t size, uint64_t weight);
  * support live-heap correlation.
  */
 void dd_probe_free(void *ptr);
+
+/*
+ * Returns true when an external profiler is currently attached to the
+ * ddheap:alloc USDT in this object file.
+ *
+ * This is a point-in-time read of the alloc probe's USDT semaphore. A profiler
+ * can attach or detach immediately after this returns. Use it as a
+ * diagnostic/readiness signal, not as a synchronization primitive.
+ */
+bool dd_heap_profiler_attached(void);
+
+/*
+ * Test-only: manually activate the ddheap:alloc USDT semaphore so that
+ * dd_allocation_requested's fast-path guard allows sampling in a process
+ * where no real profiler is attached. Call with `active=true` before
+ * exercising the sampler and `active=false` to restore the default state.
+ *
+ * This writes the same 2-byte counter the kernel would increment when
+ * bpftrace/eBPF attaches to the USDT.
+ */
+void dd_test_set_profiler_active(bool active);
 
 #endif
