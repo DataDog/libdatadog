@@ -1,6 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module implements the SpanConcentrator used to aggregate spans into stats
+mod aggregation;
+pub mod cardinality_limit_telemetry;
+pub mod stat_span;
+
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -11,11 +15,10 @@ use libdd_trace_protobuf::pb;
 
 use aggregation::StatsBucket;
 
-mod aggregation;
 use aggregation::BorrowedAggregationKey;
 pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
+use cardinality_limit_telemetry::CollapsedFieldsMetrics;
 
-pub mod stat_span;
 pub use stat_span::StatSpan;
 
 const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
@@ -49,6 +52,7 @@ pub struct FlushResult {
     /// Total number of spans that were collapsed into the overflow sentinel bucket due to
     /// cardinality limiting across all flushed time buckets.
     pub collapsed_spans: u64,
+    pub collapsed_fields_metrics: CollapsedFieldsMetrics,
 }
 
 impl FlushResult {
@@ -362,7 +366,8 @@ impl SpanConcentrator {
     ///
     /// Obfuscated and un-obfuscated buckets are returned separately, see [`FlushResult`].
     pub fn flush(&mut self, now: SystemTime, force: bool) -> FlushResult {
-        let (buckets, collapsed_spans) = self.drain_due_buckets(now, force, StatsBucket::flush);
+        let (buckets, collapsed_spans, collapsed_fields_metrics) =
+            self.drain_due_buckets(now, force, StatsBucket::flush);
         let mut obfuscated_buckets = Vec::new();
         let mut unobfuscated_buckets = Vec::new();
         for (obfuscated, bucket) in buckets {
@@ -376,6 +381,7 @@ impl SpanConcentrator {
             obfuscated_buckets,
             unobfuscated_buckets,
             collapsed_spans,
+            collapsed_fields_metrics,
         }
     }
 
@@ -383,7 +389,9 @@ impl SpanConcentrator {
     /// OTLP trace-metrics path. The protobuf bucket inside each [`OtlpStatsBucket`] is identical
     /// to what [`Self::flush`] would produce, so the /v0.6/stats agent path is unaffected.
     pub fn flush_with_otlp_exact(&mut self, now: SystemTime, force: bool) -> Vec<OtlpStatsBucket> {
-        let (buckets, _) = self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact);
+        let buckets = self
+            .drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact)
+            .0;
         buckets.into_iter().map(|(_, bucket)| bucket).collect()
     }
 
@@ -398,7 +406,7 @@ impl SpanConcentrator {
         now: SystemTime,
         force: bool,
         encode: impl Fn(StatsBucket, u64) -> T,
-    ) -> (Vec<(bool, T)>, u64) {
+    ) -> (Vec<(bool, T)>, u64, CollapsedFieldsMetrics) {
         // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
         let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
@@ -409,6 +417,7 @@ impl SpanConcentrator {
                 - (self.buffer_len as u64 - 1) * self.bucket_size
         };
         let mut total_collapsed = 0;
+        let mut total_collapsed_fields = CollapsedFieldsMetrics::zero();
         let buckets_pb = buckets
             .into_iter()
             .filter_map(|(timestamp, bucket)| {
@@ -426,6 +435,7 @@ impl SpanConcentrator {
                     return None;
                 }
                 total_collapsed += bucket.collapsed_count();
+                total_collapsed_fields += bucket.collapsed_fields_metrics();
                 #[cfg(feature = "stats-obfuscation")]
                 let obfuscated = bucket.obfuscated;
                 #[cfg(not(feature = "stats-obfuscation"))]
@@ -440,7 +450,7 @@ impl SpanConcentrator {
                 "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT"
             );
         }
-        (buckets_pb, total_collapsed)
+        (buckets_pb, total_collapsed, total_collapsed_fields)
     }
 }
 

@@ -137,7 +137,7 @@ impl<
         let telemetry = telemetry.map(|handle| {
             let key = handle.register_metric_context(
                 COLLAPSED_SPANS_TELEMETRY_METRIC.to_string(),
-                vec![libdd_common::tag!("collapsed_spans", "whole_key")],
+                vec![],
                 libdd_telemetry::data::metrics::MetricType::Count,
                 true,
                 libdd_telemetry::data::metrics::MetricNamespace::Tracers,
@@ -183,19 +183,28 @@ impl<
             concentrator.flush_buckets(force_flush)
         };
 
-        if flush.collapsed_spans > 0 {
-            #[cfg(feature = "telemetry")]
-            if let Some((handle, key)) = &self.telemetry {
-                let _ = handle.add_point(flush.collapsed_spans as f64, key, vec![]);
+        #[cfg(feature = "telemetry")]
+        if let Some((handle, key)) = &self.telemetry {
+            if flush.collapsed_spans > 0 {
+                let _ = handle.add_point(
+                    flush.collapsed_spans as f64,
+                    key,
+                    vec![libdd_common::tag!("collapsed_spans", "whole_key")],
+                );
             }
-            #[cfg(feature = "dogstatsd")]
-            if let Some(client) = &self.dogstatsd {
+            flush.collapsed_fields_metrics.emit_telemetry(handle, key);
+        }
+
+        #[cfg(feature = "dogstatsd")]
+        if let Some(client) = &self.dogstatsd {
+            if flush.collapsed_spans > 0 {
                 client.send(vec![libdd_dogstatsd_client::DogStatsDAction::Count(
                     COLLAPSED_SPANS_HEALTH_METRIC,
                     flush.collapsed_spans as i64,
                     [libdd_common::tag!("collapsed_spans", "whole_key")].iter(),
                 )]);
             }
+            flush.collapsed_fields_metrics.emit_dogstatsd(client);
         }
 
         let futures = FuturesUnordered::new();
@@ -325,7 +334,6 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::span_concentrator::CardinalityLimitConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
@@ -638,18 +646,31 @@ mod tests {
 
     /// Build a concentrator with `max_entries_per_bucket = 1` pre-seeded with four distinct spans
     /// so that three spans are collapsed into the overflow bucket.
-    fn get_collapsed_concentrator() -> SpanConcentrator {
-        use libdd_trace_utils::span::{trace_utils, v04::SpanSlice};
+    ///
+    /// per_key_collapsed: enable small per-key limits to also collapse on `resource` and
+    /// `http_endpoint`
+    #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
+    fn get_collapsed_concentrator(per_key_collapsed: bool) -> SpanConcentrator {
+        use crate::span_concentrator::CardinalityLimitConfig;
+        use libdd_trace_utils::span::{
+            trace_utils,
+            v04::{SpanSlice, VecMap},
+        };
 
+        let mut cardinality_limit_config = CardinalityLimitConfig {
+            whole_key_limit: 2, // max 2 distinct key → third distinct span collapses
+            ..Default::default()
+        };
+        if per_key_collapsed {
+            cardinality_limit_config.resource_limit = 1;
+            cardinality_limit_config.http_endpoint_limit = 1;
+        }
         let mut concentrator = SpanConcentrator::new(
             BUCKETS_DURATION,
             SystemTime::now(),
             vec![],
             vec![],
-            Some(CardinalityLimitConfig {
-                whole_key_limit: 1, // max 1 distinct key → second span collapses
-                ..Default::default()
-            }),
+            Some(cardinality_limit_config),
             vec![],
             #[cfg(feature = "stats-obfuscation")]
             None,
@@ -657,26 +678,32 @@ mod tests {
 
         let mut trace = vec![
             SpanSlice {
-                service: "svc",
+                service: "svc-a",
                 resource: "resource-a",
                 duration: 10,
+                meta: VecMap::from_iter([("http.endpoint", "/")]),
                 ..Default::default()
             },
+            // only resource get collapsed if per-key limits are enabled
             SpanSlice {
-                service: "svc",
+                service: "svc-a",
                 resource: "resource-b",
                 duration: 20,
+                meta: VecMap::from_iter([("http.endpoint", "/")]),
                 ..Default::default()
             },
+            // both resource and http_endpoint get collapsed if per-key limits are enabled
             SpanSlice {
-                service: "svc",
+                service: "svc-b",
                 resource: "resource-c",
                 duration: 20,
+                meta: VecMap::from_iter([("http.endpoint", "/hello.txt")]),
                 ..Default::default()
             },
+            // both resource and http_endpoint get collapsed if per-key limits are enabled
             SpanSlice {
-                service: "svc",
-                resource: "resource-d",
+                service: "svc-b",
+                resource: "resource-b",
                 duration: 20,
                 ..Default::default()
             },
@@ -734,7 +761,8 @@ mod tests {
         let result = socket.recv(&mut buf);
         assert!(
             result.is_err(),
-            "No DogStatsD datagram expected when collapsed_spans == 0"
+            "No DogStatsD datagram expected when collapsed_spans == 0. Got {}",
+            std::str::from_utf8(&buf[..result.unwrap()]).unwrap()
         );
     }
 
@@ -764,7 +792,7 @@ mod tests {
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
-            Arc::new(Mutex::new(get_collapsed_concentrator())),
+            Arc::new(Mutex::new(get_collapsed_concentrator(false))),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
@@ -783,7 +811,78 @@ mod tests {
             .expect("expected a DogStatsD datagram");
         let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
         assert_eq!(
-            datagram, "datadog.tracer.stats.collapsed_spans:3|c|#collapsed_spans:whole_key",
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:whole_key",
+            "DogStatsD datagram must match the expected format"
+        );
+    }
+
+    /// Verify that `COLLAPSED_SPANS_METRIC` is emitted to DogStatsD when spans are collapsed by
+    /// per-key limits.
+    #[cfg(feature = "dogstatsd")]
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn test_collapsed_spans_per_key_dogstatsd() {
+        use std::net;
+
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|_when, then| {
+                then.status(200).body("");
+            })
+            .await;
+
+        let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind UDP socket");
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+            .unwrap();
+        let addr = socket.local_addr().unwrap().to_string();
+
+        let dogstatsd_client =
+            libdd_dogstatsd_client::DogStatsDClient::new(libdd_common::Endpoint::from_slice(&addr))
+                .expect("failed to create dogstatsd client");
+
+        let stats_exporter = StatsExporter::<NativeCapabilities>::new(
+            BUCKETS_DURATION,
+            Arc::new(Mutex::new(get_collapsed_concentrator(true))),
+            get_test_metadata(),
+            Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
+            NativeCapabilities::new_client(),
+            #[cfg(feature = "stats-obfuscation")]
+            "1",
+            #[cfg(feature = "telemetry")]
+            None,
+            Some(dogstatsd_client),
+        );
+
+        stats_exporter.send(true).await.unwrap();
+
+        let mut buf = [0u8; 256];
+
+        // Whole-key metric emitted first
+        let n = socket
+            .recv(&mut buf)
+            .expect("expected a DogStatsD datagram");
+        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
+        assert_eq!(
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:whole_key",
+            "DogStatsD datagram must match the expected format"
+        );
+
+        // Then comes the per-key collapse telemetry
+        let n = socket
+            .recv(&mut buf)
+            .expect("expected a DogStatsD datagram");
+        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
+        assert_eq!(
+            datagram, "datadog.tracer.stats.collapsed_spans:1|c|#collapsed_spans:resource",
+            "DogStatsD datagram must match the expected format"
+        );
+        let n = socket
+            .recv(&mut buf)
+            .expect("expected a DogStatsD datagram");
+        let datagram = std::str::from_utf8(&buf[..n]).expect("valid utf-8");
+        assert_eq!(
+            datagram, "datadog.tracer.stats.collapsed_spans:2|c|#collapsed_spans:resource,collapsed_spans:http_endpoint",
             "DogStatsD datagram must match the expected format"
         );
     }
@@ -814,7 +913,7 @@ mod tests {
 
         let stats_exporter = StatsExporter::<NativeCapabilities>::new(
             BUCKETS_DURATION,
-            Arc::new(Mutex::new(get_collapsed_concentrator())),
+            Arc::new(Mutex::new(get_collapsed_concentrator(true))),
             get_test_metadata(),
             Endpoint::from_url(stats_url_from_agent_url(&server.url("/")).unwrap()),
             NativeCapabilities::new_client(),
@@ -844,8 +943,8 @@ mod tests {
             "exactly one metric context (COLLAPSED_SPANS_METRIC) should be registered"
         );
         assert_eq!(
-            stats.metric_buckets.buckets, 1,
-            "exactly one metric bucket expected after one collapsed-spans emission"
+            stats.metric_buckets.buckets, 3,
+            "exactly 3 metric bucket expected after one whole-key collapsed-spans, one resource key collapsed-span and one resource key+http_endpoint key emissions"
         );
     }
 }
