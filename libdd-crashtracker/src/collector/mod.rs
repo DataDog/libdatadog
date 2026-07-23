@@ -3,11 +3,14 @@
 #![cfg(unix)]
 mod additional_tags;
 mod api;
+mod assert_interceptor;
 mod atomic_set;
 mod collector_manager;
 mod counters;
 mod crash_handler;
 mod emitters;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+mod got_hook;
 mod process_handle;
 mod receiver_manager;
 mod saguard;

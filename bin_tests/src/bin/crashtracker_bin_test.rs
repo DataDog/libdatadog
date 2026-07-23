@@ -158,6 +158,25 @@ mod unix {
             "raise_sigill" => raise(Signal::SIGILL)?,
             "raise_sigbus" => raise(Signal::SIGBUS)?,
             "raise_sigsegv" => raise(Signal::SIGSEGV)?,
+            #[cfg(target_os = "linux")]
+            "assert_fail" => {
+                extern "C" {
+                    fn __assert_fail(
+                        assertion: *const libc::c_char,
+                        file: *const libc::c_char,
+                        line: libc::c_uint,
+                        function: *const libc::c_char,
+                    ) -> !;
+                }
+                unsafe {
+                    __assert_fail(
+                        c"test_value > 0".as_ptr(),
+                        c"test_file.c".as_ptr(),
+                        42,
+                        c"test_function".as_ptr(),
+                    );
+                }
+            }
             "unhandled_exception" => {
                 let mut stacktrace = StackTrace::new_incomplete();
                 let mut stackframe1 = StackFrame::new();

@@ -160,6 +160,45 @@ fn test_crash_tracking_bin_unhandled_exception() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Tests that when a C `assert()` fails, the crash report contains the assertion
+/// expression string in the error message.
+///
+/// Currently, assert fail tracking is only on linux
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_assert_fail() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::DoNothing,
+        CrashType::AssertFail,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, fixtures| {
+        PayloadValidator::new(payload)
+            .validate_error_kind("UnixSignal")?
+            .validate_error_message_contains("test_value > 0")?
+            .validate_error_message_contains("test_file.c")?
+            .validate_error_message_contains("test_function")?
+            .validate_error_message_contains("42")?;
+
+        let sig_info = &payload["sig_info"];
+        let signo_hr = sig_info["si_signo_human_readable"].as_str().unwrap_or("");
+        anyhow::ensure!(
+            signo_hr.contains("SIGABRT"),
+            "Expected SIGABRT in signal info, got: {signo_hr}"
+        );
+
+        validate_telemetry(&fixtures.crash_telemetry_path, "assert_fail")?;
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
 /// Tests that when `collect_all_threads` is enabled and the crash is reported via
 /// `report_unhandled_exception`, the crash report contains entries in `error.threads`
 /// for background threads with valid stack traces.
@@ -1772,6 +1811,10 @@ fn assert_siginfo_message(sig_info: &Value, crash_typ: &str) {
                     || sig_info.is_object() && sig_info.as_object().is_none_or(|m| m.is_empty())
             );
         }
+        "assert_fail" => {
+            assert_eq!(sig_info["si_signo"], libc::SIGABRT);
+            assert_eq!(sig_info["si_signo_human_readable"], "SIGABRT");
+        }
         _ => panic!("unexpected crash_typ {crash_typ}"),
     }
 }
@@ -1905,6 +1948,10 @@ fn assert_telemetry_message(crash_telemetry: &[u8], crash_typ: &str) {
         }
         "unhandled_exception" => {
             // Unhandled exceptions have no signal info tags
+        }
+        "assert_fail" => {
+            assert!(tags.contains("si_signo_human_readable:SIGABRT"), "{tags:?}");
+            assert!(tags.contains("si_signo:6"), "{tags:?}");
         }
         _ => panic!("{crash_typ}"),
     }
