@@ -364,7 +364,15 @@ pub struct InitialTelemetryData {
 }
 
 impl InitialTelemetryData {
-    pub(crate) fn from_actions(actions: &[SidecarAction]) -> Self {
+    pub fn from_actions(actions: &[SidecarAction]) -> Self {
+        Self::from_action_refs(actions.iter())
+    }
+
+    fn from_pending_actions(actions: &[PendingApplicationAction]) -> Self {
+        Self::from_action_refs(actions.iter().map(|pending_action| &pending_action.action))
+    }
+
+    fn from_action_refs<'a>(actions: impl Iterator<Item = &'a SidecarAction>) -> Self {
         let mut initial = Self::default();
         for action in actions {
             match action {
@@ -397,15 +405,47 @@ impl InitialTelemetryData {
 
 struct PendingTelemetryActions {
     last_used: Instant,
-    actions: Vec<SidecarAction>,
+    actions: Vec<PendingApplicationAction>,
+}
+
+pub(crate) struct PendingApplicationAction {
+    pub(crate) origin: InstanceId,
+    pub(crate) action: SidecarAction,
+    pub(crate) metric_registration: Option<MetricContext>,
+}
+
+impl PendingApplicationAction {
+    pub(crate) fn from_actions(
+        origin: &InstanceId,
+        actions: Vec<SidecarAction>,
+        metric_registrations: &HashMap<String, MetricContext>,
+    ) -> Vec<Self> {
+        actions
+            .into_iter()
+            .map(|action| {
+                let metric_registration = match &action {
+                    SidecarAction::AddTelemetryMetricPoint((name, _, _)) => {
+                        metric_registrations.get(name).cloned()
+                    }
+                    _ => None,
+                };
+                Self {
+                    origin: origin.clone(),
+                    action,
+                    metric_registration,
+                }
+            })
+            .collect()
+    }
 }
 
 pub(crate) enum ApplicationTelemetryDispatch {
     Pending,
     Ready {
         client: Arc<Mutex<Option<TelemetryCachedClient>>>,
-        actions: Vec<SidecarAction>,
+        actions: Vec<PendingApplicationAction>,
         created: bool,
+        remove_client: bool,
     },
 }
 
@@ -871,9 +911,13 @@ impl TelemetryCachedClientSet {
         env: &str,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
-        actions: Vec<SidecarAction>,
+        actions: Vec<PendingApplicationAction>,
         get_config: impl FnOnce() -> Config,
         process_tags: Vec<Tag>,
+        initialize: impl FnOnce(
+            &Arc<Mutex<Option<TelemetryCachedClient>>>,
+            Vec<PendingApplicationAction>,
+        ) -> bool,
     ) -> ApplicationTelemetryDispatch {
         let mut clients = self.inner.lock_or_panic();
         let key = (
@@ -894,6 +938,7 @@ impl TelemetryCachedClientSet {
                     client: entry.client.clone(),
                     actions,
                     created: false,
+                    remove_client: false,
                 };
             }
         }
@@ -911,9 +956,9 @@ impl TelemetryCachedClientSet {
         pending_actions.actions.extend(actions);
         pending_actions.last_used = Instant::now();
 
-        let should_promote = pending_actions.actions.iter().any(|action| {
+        let should_promote = pending_actions.actions.iter().any(|pending_action| {
             matches!(
-                action,
+                pending_action.action,
                 SidecarAction::Telemetry(TelemetryActions::AddConfig(_))
                     | SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop))
             )
@@ -928,7 +973,7 @@ impl TelemetryCachedClientSet {
             .actions;
         drop(pending);
 
-        let initial = InitialTelemetryData::from_actions(&actions);
+        let initial = InitialTelemetryData::from_pending_actions(&actions);
         match TelemetryCachedClient::new(
             service,
             env,
@@ -940,6 +985,27 @@ impl TelemetryCachedClientSet {
         ) {
             Ok(client) => {
                 let client = Arc::new(Mutex::new(Some(client)));
+                {
+                    let mut telemetry = client.lock_or_panic();
+                    let telemetry = telemetry
+                        .as_mut()
+                        .expect("new telemetry client should be available");
+                    for pending_action in &actions {
+                        match &pending_action.action {
+                            SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
+                                telemetry.shared.config_sent = true;
+                            }
+                            SidecarAction::Telemetry(TelemetryActions::AddIntegration(
+                                integration,
+                            )) => {
+                                telemetry.shared.integrations.insert(integration.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                    telemetry.write_shm_file();
+                }
+                let remove_client = initialize(&client, actions);
                 clients.insert(
                     key,
                     TelemetryCachedEntry {
@@ -950,8 +1016,9 @@ impl TelemetryCachedClientSet {
                 info!("Created new telemetry client for {service:?}/{env:?}");
                 ApplicationTelemetryDispatch::Ready {
                     client,
-                    actions,
+                    actions: Vec::new(),
                     created: true,
+                    remove_client,
                 }
             }
             Err(error) => {
@@ -1518,6 +1585,115 @@ mod tests {
         .await
         .expect("exactly one app-started request should arrive");
         assert_eq!(app_started.calls_async().await, 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[cfg_attr(miri, ignore)]
+    async fn promotion_initialization_precedes_visible_duplicate_integration() {
+        const SERVICE: &str = "atomic-promotion";
+        const ENV: &str = "test";
+
+        let clients = TelemetryCachedClientSet::default();
+        let initial_instance = InstanceId::new("session", "initial-runtime");
+        let duplicate_instance = InstanceId::new("session", "duplicate-runtime");
+        let integration = data::Integration {
+            name: "initial-integration".to_string(),
+            enabled: true,
+            version: None,
+            compatible: None,
+            auto_enabled: None,
+        };
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+
+        let initial_clients = clients.clone();
+        let initial_barrier = barrier.clone();
+        let initial_integration = integration.clone();
+        let initial = tokio::task::spawn_blocking(move || {
+            initial_clients.get_or_create_for_actions(
+                SERVICE,
+                ENV,
+                &initial_instance,
+                &RuntimeMetadata::new("php", "8.3", "test"),
+                PendingApplicationAction::from_actions(
+                    &initial_instance,
+                    vec![
+                        SidecarAction::Telemetry(TelemetryActions::AddIntegration(
+                            initial_integration,
+                        )),
+                        SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                            initial_configuration("initial-config"),
+                        )),
+                    ],
+                    &HashMap::new(),
+                ),
+                Config::default,
+                Vec::new(),
+                move |_, _| {
+                    started_tx
+                        .send(())
+                        .expect("test receiver should be available");
+                    initial_barrier.wait();
+                    false
+                },
+            )
+        });
+
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("promotion initializer should begin");
+
+        let duplicate_clients = clients.clone();
+        let duplicate_integration = integration.clone();
+        let duplicate = tokio::task::spawn_blocking(move || {
+            duplicate_clients.get_or_create_for_actions(
+                SERVICE,
+                ENV,
+                &duplicate_instance,
+                &RuntimeMetadata::new("php", "8.3", "test"),
+                PendingApplicationAction::from_actions(
+                    &duplicate_instance,
+                    vec![SidecarAction::Telemetry(TelemetryActions::AddIntegration(
+                        duplicate_integration,
+                    ))],
+                    &HashMap::new(),
+                ),
+                Config::default,
+                Vec::new(),
+                |_, _| panic!("active client should not be initialized again"),
+            )
+        });
+
+        sleep(Duration::from_millis(50)).await;
+        assert!(
+            !duplicate.is_finished(),
+            "a duplicate integration must wait until startup initialization completes"
+        );
+        barrier.wait();
+
+        let initial = initial.await.expect("initial promotion task");
+        assert!(matches!(
+            initial,
+            ApplicationTelemetryDispatch::Ready { created: true, .. }
+        ));
+        let ApplicationTelemetryDispatch::Ready {
+            client,
+            actions,
+            created,
+            ..
+        } = duplicate.await.expect("duplicate task")
+        else {
+            panic!("duplicate integration should find the published client");
+        };
+        assert!(!created);
+        assert_eq!(actions.len(), 1);
+        assert!(client
+            .lock_or_panic()
+            .as_ref()
+            .expect("published telemetry client")
+            .shared
+            .integrations
+            .contains(&integration));
     }
 
     #[tokio::test]

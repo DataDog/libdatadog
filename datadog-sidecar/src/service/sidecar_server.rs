@@ -6,7 +6,7 @@ use crate::service::{
     sidecar_interface::serve_sidecar_interface_connection,
     telemetry::{
         ApplicationTelemetryDispatch, InitialTelemetryData, MetricsLogsClientSet,
-        TelemetryCachedClient, TelemetryCachedClientSet,
+        PendingApplicationAction, TelemetryCachedClient, TelemetryCachedClientSet,
     },
     tracing::TraceFlusher,
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeInfo, RuntimeMetadata,
@@ -411,6 +411,122 @@ impl SidecarServer {
     }
 }
 
+fn schedule_application_actions(
+    telemetry_mutex: &Arc<Mutex<Option<TelemetryCachedClient>>>,
+    actions: Vec<PendingApplicationAction>,
+    created: bool,
+    instance_id: &InstanceId,
+    queue_id: QueueId,
+) -> bool {
+    let mut telemetry_guard = telemetry_mutex.lock_or_panic();
+    let Some(telemetry) = telemetry_guard.as_mut() else {
+        warn!("enqueue_actions: telemetry client unavailable for instance {instance_id:?}");
+        return false;
+    };
+
+    for pending_action in &actions {
+        if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = &pending_action.action {
+            if !telemetry.telemetry_metrics.contains_key(name) {
+                if let Some(metric) = &pending_action.metric_registration {
+                    debug!(
+                        "Registering pending telemetry metric {name} from instance {:?}",
+                        pending_action.origin
+                    );
+                    telemetry.register_metric(metric.clone());
+                }
+            }
+        }
+    }
+
+    let mut actions_to_process = Vec::new();
+    let mut composer_paths_to_process = Vec::new();
+    let mut buffered_info_changed = false;
+    let mut remove_client = false;
+
+    for pending_action in actions {
+        let action = pending_action.action;
+        if created && InitialTelemetryData::contains_seeded_action(&action) {
+            continue;
+        }
+        match action {
+            SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
+                if telemetry.shared.integrations.insert(integration.clone()) {
+                    actions_to_process.push(action);
+                    buffered_info_changed = true;
+                }
+            }
+            SidecarAction::PhpComposerTelemetryFile(path) => {
+                if telemetry.shared.composer_paths.insert(path.clone()) {
+                    composer_paths_to_process.push(path);
+                    buffered_info_changed = true;
+                }
+            }
+            SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
+                telemetry.shared.config_sent = true;
+                buffered_info_changed = true;
+                actions_to_process.push(action);
+            }
+            SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
+                telemetry.shared.last_endpoints_push = SystemTime::now();
+                buffered_info_changed = true;
+                actions_to_process.push(action);
+            }
+            SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop)) => {
+                telemetry.mark_stopping();
+                remove_client = true;
+                actions_to_process.push(action);
+            }
+            _ => actions_to_process.push(action),
+        }
+    }
+
+    if buffered_info_changed {
+        info!(
+            "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
+        );
+        telemetry.write_shm_file();
+    }
+
+    let do_take = remove_client;
+    if !actions_to_process.is_empty() {
+        let telemetry_mutex_clone = telemetry_mutex.clone();
+        let worker = telemetry.worker.clone();
+        let last_handle = telemetry.handle.take();
+        telemetry.handle = Some(tokio::spawn(async move {
+            if let Some(last_handle) = last_handle {
+                last_handle.await.ok();
+            };
+            let processed = {
+                let mut guard = telemetry_mutex_clone.lock_or_panic();
+                let processed = guard
+                    .as_mut()
+                    .map(|t| t.process_actions(actions_to_process))
+                    .unwrap_or_default();
+                if do_take {
+                    guard.take();
+                }
+                processed
+            };
+            debug!("Sending Processed Actions :{processed:?}");
+            worker.send_msgs(processed).await.ok();
+        }));
+    }
+    if !composer_paths_to_process.is_empty() {
+        let worker = telemetry.worker.clone();
+        let last_handle = telemetry.handle.take();
+        telemetry.handle = Some(tokio::spawn(async move {
+            if let Some(last_handle) = last_handle {
+                last_handle.await.ok();
+            };
+            let composer_actions =
+                TelemetryCachedClient::process_composer_paths(composer_paths_to_process).await;
+            debug!("Sending Composer Paths :{composer_actions:?}");
+            worker.send_msgs(composer_actions).await.ok();
+        }));
+    }
+    remove_client
+}
+
 impl SidecarInterface for ConnectionSidecarHandler {
     fn recv_counter(&self) -> &AtomicU64 {
         &self.submitted_payloads
@@ -515,34 +631,44 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     Config::default()
                 });
 
-            let (mut telemetry_mutex, mut actions, mut created) =
+            let initial_actions = PendingApplicationAction::from_actions(
+                &instance_id,
+                actions,
+                &connection_metric_registrations,
+            );
+            let (mut telemetry_mutex, mut actions, mut created, mut remove_client) =
                 match self.server.telemetry_clients.get_or_create_for_actions(
                     service,
                     env,
                     &instance_id,
                     &runtime_metadata,
-                    actions,
+                    initial_actions,
                     || session_config.clone(),
                     process_tags.clone(),
+                    |client, actions| {
+                        schedule_application_actions(client, actions, true, &instance_id, queue_id)
+                    },
                 ) {
                     ApplicationTelemetryDispatch::Pending => return,
                     ApplicationTelemetryDispatch::Ready {
                         client,
                         actions,
                         created,
-                    } => (client, actions, created),
+                        remove_client,
+                    } => (client, actions, created, remove_client),
                 };
 
             // Stop marks a client before releasing its mutex. If that happens after lookup but
             // before this caller acquires the client, retry against the atomically replaced cache
             // entry so the next application's first actions are not queued behind Stop.
             let mut telemetry_guard = telemetry_mutex.lock_or_panic();
-            while telemetry_guard
-                .as_ref()
-                .is_none_or(TelemetryCachedClient::is_stopping)
+            while !remove_client
+                && telemetry_guard
+                    .as_ref()
+                    .is_none_or(TelemetryCachedClient::is_stopping)
             {
                 drop(telemetry_guard);
-                (telemetry_mutex, actions, created) =
+                (telemetry_mutex, actions, created, remove_client) =
                     match self.server.telemetry_clients.get_or_create_for_actions(
                         service,
                         env,
@@ -551,150 +677,37 @@ impl SidecarInterface for ConnectionSidecarHandler {
                         actions,
                         || session_config.clone(),
                         process_tags.clone(),
+                        |client, actions| {
+                            schedule_application_actions(
+                                client,
+                                actions,
+                                true,
+                                &instance_id,
+                                queue_id,
+                            )
+                        },
                     ) {
                         ApplicationTelemetryDispatch::Pending => return,
                         ApplicationTelemetryDispatch::Ready {
                             client,
                             actions,
                             created,
-                        } => (client, actions, created),
+                            remove_client,
+                        } => (client, actions, created, remove_client),
                     };
                 telemetry_guard = telemetry_mutex.lock_or_panic();
             }
-            let Some(telemetry) = telemetry_guard.as_mut() else {
-                warn!(
-                    "enqueue_actions: telemetry client unavailable after replacement for instance \
-                     {instance_id:?}"
-                );
-                return;
-            };
-
-            // Auto-register any metrics known to this connection but not yet registered
-            // in this telemetry client (e.g., the client was just created for a new service/env).
-            for action in &actions {
-                if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = action {
-                    if !telemetry.telemetry_metrics.contains_key(name) {
-                        if let Some(metric) = connection_metric_registrations.get(name) {
-                            telemetry.register_metric(metric.clone());
-                        }
-                    }
-                }
-            }
-
-            let mut actions_to_process: Vec<SidecarAction> = vec![];
-            let mut composer_paths_to_process = vec![];
-            let mut buffered_info_changed = false;
-            let mut remove_client = false;
-
-            for action in actions {
-                if created && InitialTelemetryData::contains_seeded_action(&action) {
-                    match action {
-                        SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
-                            telemetry.shared.config_sent = true;
-                            buffered_info_changed = true;
-                        }
-                        SidecarAction::Telemetry(TelemetryActions::AddIntegration(
-                            ref integration,
-                        )) => {
-                            telemetry.shared.integrations.insert(integration.clone());
-                            buffered_info_changed = true;
-                        }
-                        _ => {}
-                    }
-                    continue;
-                }
-
-                match action {
-                    SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
-                        if telemetry.shared.integrations.insert(integration.clone()) {
-                            actions_to_process.push(action);
-                            buffered_info_changed = true;
-                        }
-                    }
-                    SidecarAction::PhpComposerTelemetryFile(path) => {
-                        if telemetry.shared.composer_paths.insert(path.clone()) {
-                            composer_paths_to_process.push(path);
-                            buffered_info_changed = true;
-                        }
-                    }
-                    SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
-                        telemetry.shared.config_sent = true;
-                        buffered_info_changed = true;
-                        actions_to_process.push(action);
-                    }
-                    SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
-                        telemetry.shared.last_endpoints_push = SystemTime::now();
-                        buffered_info_changed = true;
-                        actions_to_process.push(action);
-                    }
-                    SidecarAction::Telemetry(TelemetryActions::Lifecycle(
-                        LifecycleAction::Stop,
-                    )) => {
-                        telemetry.mark_stopping();
-                        remove_client = true;
-                        actions_to_process.push(action);
-                    }
-                    _ => {
-                        actions_to_process.push(action);
-                    }
-                }
-            }
-
-            if buffered_info_changed {
-                info!(
-                    "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
-                );
-                telemetry.write_shm_file();
-            }
-
-            // take() must happen INSIDE the spawned task, after process_actions completes,
-            // so that a Config batch spawned before a Stop batch still finds Some when it
-            // runs (the last_handle chain guarantees Stop runs after Config).
-            let do_take = remove_client;
-
-            if !actions_to_process.is_empty() {
-                let telemetry_mutex_clone = telemetry_mutex.clone();
-                let worker = telemetry.worker.clone();
-                let last_handle = telemetry.handle.take();
-                telemetry.handle = Some(tokio::spawn(async move {
-                    if let Some(last_handle) = last_handle {
-                        last_handle.await.ok();
-                    };
-                    let processed = {
-                        let mut guard = telemetry_mutex_clone.lock_or_panic();
-                        let processed = guard
-                            .as_mut()
-                            .map(|t| t.process_actions(actions_to_process))
-                            .unwrap_or_default();
-                        if do_take {
-                            guard.take(); // drop client after Stop action is processed
-                        }
-                        processed
-                    };
-                    debug!("Sending Processed Actions :{processed:?}");
-                    worker.send_msgs(processed).await.ok();
-                }));
-            }
-
-            if !composer_paths_to_process.is_empty() {
-                let worker = telemetry.worker.clone();
-                let last_handle = telemetry.handle.take();
-                telemetry.handle = Some(tokio::spawn(async move {
-                    if let Some(last_handle) = last_handle {
-                        last_handle.await.ok();
-                    };
-                    let composer_actions =
-                        TelemetryCachedClient::process_composer_paths(composer_paths_to_process)
-                            .await;
-                    debug!("Sending Composer Paths :{composer_actions:?}");
-                    worker.send_msgs(composer_actions).await.ok();
-                }));
-            }
-
-            // telemetry borrow ends after the last use of telemetry.handle above.
-            // Remove from the map synchronously so new get_or_create calls get a fresh entry;
-            // take() is deferred to the spawned task to avoid racing with in-flight tasks.
             drop(telemetry_guard);
+
+            if !actions.is_empty() {
+                remove_client |= schedule_application_actions(
+                    &telemetry_mutex,
+                    actions,
+                    created,
+                    &instance_id,
+                    queue_id,
+                );
+            }
             if remove_client {
                 self.server.telemetry_clients.remove_telemetry_client(
                     service,
@@ -1694,6 +1707,91 @@ mod tests {
         assert_eq!(complete_start.calls_async().await, 1);
         assert_eq!(dependency_change.calls_async().await, 0);
         assert_eq!(integration_change.calls_async().await, 0);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn pending_metric_point_uses_originating_runtime_registration() {
+        const SERVICE: &str = "pending-metric-origin";
+        const ENV: &str = "test";
+        const METRIC: &str = "originating.runtime.metric";
+
+        let server = SidecarServer::default();
+        let origin_handler = test_handler(server.clone());
+        let promoting_handler = test_handler(server.clone());
+        let origin_instance = InstanceId::new("session", "origin-runtime");
+        let promoting_instance = InstanceId::new("session", "promoting-runtime");
+        let origin_queue = QueueId::from(1);
+        let promoting_queue = QueueId::from(2);
+
+        *server.get_session("session").session_config.lock_or_panic() = Some(Config::default());
+
+        for (instance_id, queue_id) in [
+            (&origin_instance, origin_queue),
+            (&promoting_instance, promoting_queue),
+        ] {
+            server
+                .get_runtime(instance_id)
+                .lock_applications()
+                .entry(queue_id)
+                .or_default()
+                .set_metadata(
+                    ENV.to_string(),
+                    String::new(),
+                    SERVICE.to_string(),
+                    Vec::new(),
+                );
+        }
+
+        origin_handler
+            .register_telemetry_metric(MetricContext {
+                name: METRIC.to_string(),
+                tags: Vec::new(),
+                metric_type: libdd_telemetry::data::metrics::MetricType::Count,
+                common: true,
+                namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+            })
+            .await;
+        origin_handler
+            .enqueue_actions(
+                origin_instance,
+                origin_queue,
+                vec![SidecarAction::AddTelemetryMetricPoint((
+                    METRIC.to_string(),
+                    1.0,
+                    Vec::new(),
+                ))],
+            )
+            .await;
+
+        promoting_handler
+            .enqueue_actions(
+                promoting_instance,
+                promoting_queue,
+                vec![SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                    libdd_telemetry::data::Configuration {
+                        name: "startup-config".to_string(),
+                        value: "present".to_string(),
+                        origin: libdd_telemetry::data::ConfigurationOrigin::Default,
+                        config_id: None,
+                        seq_id: None,
+                    },
+                ))],
+            )
+            .await;
+
+        let app_client = server
+            .telemetry_clients
+            .clients()
+            .into_iter()
+            .next()
+            .expect("promoting config should create the application worker");
+        assert!(app_client
+            .lock_or_panic()
+            .as_ref()
+            .expect("application telemetry client")
+            .telemetry_metrics
+            .contains_key(METRIC));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
