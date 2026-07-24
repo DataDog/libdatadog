@@ -4,6 +4,7 @@
 use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_VALUE};
 
 use super::*;
+use duplicate::duplicate_item;
 use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
 use rand::{thread_rng, Rng};
@@ -2274,4 +2275,107 @@ fn test_normalize_additional_metric_tag_keys_limit() {
     let result = normalize_additional_metric_tag_keys(keys);
     assert_eq!(result, vec!["aaa", "bbb", "ccc", "ddd"]);
     assert_eq!(result.len(), 4);
+}
+
+/// Test that the SpanConcentrator truncates inserted span's fields after obfuscation is applied
+#[duplicate_item(
+    test_name                                            big_resource obfuscation;
+    [ test_concentrator_truncate_fields                ] [ false ]    [ true  ];
+    [ test_concentrator_truncate_fields_big_resource   ] [ true  ]    [ true  ];
+    [ test_concentrator_truncate_fields_no_obfuscation ] [ false ]    [ false ];
+)]
+#[cfg(feature = "stats-obfuscation")]
+#[test]
+fn test_name() {
+    use arc_swap::ArcSwap;
+    use std::sync::Arc;
+
+    let now = SystemTime::now();
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        vec![],
+        vec![],
+        None,
+        vec![],
+        Some(Arc::new(ArcSwap::from_pointee(
+            StatsComputationObfuscationConfig {
+                enabled: obfuscation,
+                ..Default::default()
+            },
+        ))),
+    );
+    concentrator.set_big_resource(big_resource);
+    let aligned_now = align_timestamp(
+        system_time_to_unix_duration(now).as_nanos() as u64,
+        BUCKET_SIZE,
+    );
+    let duration = 50;
+    let span = SpanSlice {
+        span_id: 1,
+        parent_id: 0,
+        duration,
+        start: get_timestamp_in_bucket(aligned_now, BUCKET_SIZE, 5) as i64 - duration,
+        error: 0,
+        name: &"query".repeat(20_000),
+        resource: &"🤠".repeat(20_000),
+        service: &"A".repeat(20_000),
+        r#type: &"🫵".repeat(20_000),
+        ..Default::default()
+    };
+
+    let mut spans = vec![span];
+    compute_top_level_span(spans.as_mut_slice());
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let stats = concentrator.flush(SystemTime::now(), true).all_buckets();
+
+    let bucket = stats.first().unwrap().stats.first().unwrap();
+
+    if obfuscation {
+        let expected_resource_len = if big_resource { 15_000 } else { 5_000 };
+        assert_eq!(
+            bucket.resource.len(),
+            expected_resource_len,
+            "Stats bucket resource got truncated to {expected_resource_len} bytes"
+        );
+        assert_eq!(
+            bucket.service.len(),
+            100,
+            "Stats bucket service got truncated to 100 bytes"
+        );
+        assert_eq!(
+            bucket.r#type.len(),
+            100,
+            "Stats bucket type got truncated to 100 bytes"
+        );
+        assert_eq!(
+            bucket.name.len(),
+            100,
+            "Stats bucket name (operation) got truncated to 100 bytes"
+        );
+    } else {
+        assert_eq!(
+            bucket.resource.len(),
+            80_000,
+            "Stats bucket resource did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.service.len(),
+            20_000,
+            "Stats bucket service did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.r#type.len(),
+            80_000,
+            "Stats bucket type did not get truncated because obfuscation is disabled"
+        );
+        assert_eq!(
+            bucket.name.len(),
+            100_000,
+            "Stats bucket name (operation) did not get truncated because obfuscation is disabled"
+        );
+    }
 }

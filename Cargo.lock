@@ -3510,6 +3510,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "criterion",
+ "duplicate 2.0.1",
  "futures",
  "hashbrown 0.15.1",
  "http",

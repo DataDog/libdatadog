@@ -160,6 +160,8 @@ pub struct SpanConcentrator {
     peer_tag_keys: Vec<String>,
     /// keys for additional tags on trace stats
     additional_metric_tag_keys: Vec<String>,
+    /// If true, the maximum length for a resource goes from `5_000` to `15_000`
+    big_resource: bool,
     #[cfg(feature = "stats-obfuscation")]
     obfuscation_config: SharedStatsComputationObfuscationConfig,
 }
@@ -200,6 +202,7 @@ impl SpanConcentrator {
             additional_metric_tag_keys: normalize_additional_metric_tag_keys(
                 additional_metric_tag_keys,
             ),
+            big_resource: false,
             #[cfg(feature = "stats-obfuscation")]
             obfuscation_config: obfuscation_config.unwrap_or_default(),
         }
@@ -223,6 +226,11 @@ impl SpanConcentrator {
     /// Set the list of keys considered as peer_tags for aggregation
     pub fn set_peer_tags(&mut self, peer_tags: Vec<String>) {
         self.peer_tag_keys = peer_tags;
+    }
+
+    /// Set the `big_resource` flag, it changes the resource field limit from `5_000` to `15_000`
+    pub fn set_big_resource(&mut self, big_resource: bool) {
+        self.big_resource = big_resource;
     }
 
     /// Return the list of keys considered as additional_metric_tag_keys for aggregation
@@ -283,6 +291,13 @@ impl SpanConcentrator {
                 self.additional_metric_tag_keys.as_slice(),
             ),
         };
+        // Apply field truncation only when obfuscation was applied
+        #[cfg(feature = "stats-obfuscation")]
+        let mut agg_key = agg_key;
+        #[cfg(feature = "stats-obfuscation")]
+        if target_bucket.obfuscated {
+            agg_key.truncate(self.big_resource);
+        }
         target_bucket.insert(
             agg_key,
             span.duration(),
