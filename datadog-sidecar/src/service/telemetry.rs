@@ -35,7 +35,7 @@ use std::time::SystemTime;
 use libdd_telemetry::config::Config;
 use libdd_telemetry::data::{self, Integration};
 use libdd_telemetry::metrics::{ContextKey, MetricContext};
-use libdd_telemetry::worker::{TelemetryActions, TelemetryWorkerFlavor};
+use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerFlavor};
 
 /// Sidecar's telemetry worker is native-only, so its handle is pinned to
 /// [`NativeCapabilities`].
@@ -356,6 +356,59 @@ pub struct TelemetryCachedEntry {
     pub client: Arc<Mutex<Option<TelemetryCachedClient>>>,
 }
 
+#[derive(Default)]
+pub struct InitialTelemetryData {
+    configurations: Vec<data::Configuration>,
+    dependencies: Vec<data::Dependency>,
+    integrations: Vec<data::Integration>,
+}
+
+impl InitialTelemetryData {
+    pub(crate) fn from_actions(actions: &[SidecarAction]) -> Self {
+        let mut initial = Self::default();
+        for action in actions {
+            match action {
+                SidecarAction::Telemetry(TelemetryActions::AddConfig(value)) => {
+                    initial.configurations.push(value.clone());
+                }
+                SidecarAction::Telemetry(TelemetryActions::AddDependency(value)) => {
+                    initial.dependencies.push(value.clone());
+                }
+                SidecarAction::Telemetry(TelemetryActions::AddIntegration(value)) => {
+                    initial.integrations.push(value.clone());
+                }
+                _ => {}
+            }
+        }
+        initial
+    }
+
+    pub(crate) fn contains_seeded_action(action: &SidecarAction) -> bool {
+        matches!(
+            action,
+            SidecarAction::Telemetry(
+                TelemetryActions::AddConfig(_)
+                    | TelemetryActions::AddDependency(_)
+                    | TelemetryActions::AddIntegration(_)
+            )
+        )
+    }
+}
+
+struct PendingTelemetryActions {
+    last_used: Instant,
+    actions: Vec<SidecarAction>,
+}
+
+pub(crate) enum ApplicationTelemetryDispatch {
+    Pending,
+    Ready {
+        client: Arc<Mutex<Option<TelemetryCachedClient>>>,
+        actions: Vec<SidecarAction>,
+        created: bool,
+    },
+}
+
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
     pub shm_writer: Option<OneWayShmWriter<NamedShmHandle>>,
@@ -417,18 +470,20 @@ impl TelemetryCachedClient {
         env: &str,
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
-        get_config: impl FnOnce() -> (Config, Vec<data::Configuration>),
+        get_config: impl FnOnce() -> Config,
+        initial: InitialTelemetryData,
         process_tags: Vec<Tag>,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut builder =
             Self::worker_builder(service, env, instance_id, runtime_meta, process_tags);
-        let (config, configurations) = get_config();
-        builder.config = config;
-        builder.configurations.extend(configurations);
+        builder.config = get_config();
+        builder.configurations.extend(initial.configurations);
+        builder.dependencies.extend(initial.dependencies);
+        builder.integrations.extend(initial.integrations);
 
         let (handle, _join) = builder.spawn();
         info!("spawned telemetry worker");
-        handle.send_start().ok();
+        handle.send_start()?;
 
         let shm_writer =
             match OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)) {
@@ -439,14 +494,14 @@ impl TelemetryCachedClient {
                 }
             };
 
-        Self {
+        Ok(Self {
             worker: handle,
             shm_writer,
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
             stopping: false,
-        }
+        })
     }
 
     pub(crate) fn spawn_metrics_logs_worker(
@@ -656,6 +711,7 @@ type TelemetryMetricRegistrations =
 
 pub struct TelemetryCachedClientSet {
     inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
+    pending: Arc<Mutex<HashMap<(ServiceString, EnvString), PendingTelemetryActions>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -670,17 +726,25 @@ impl TelemetryCachedClientSet {
         let inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>> =
             Arc::new(Default::default());
         let clients = inner.clone();
+        let pending: Arc<Mutex<HashMap<(ServiceString, EnvString), PendingTelemetryActions>>> =
+            Arc::new(Default::default());
+        let pending_actions = pending.clone();
 
         let handle = tokio::spawn(async move {
             loop {
                 sleep(Duration::from_secs(60)).await;
-                let mut lock = clients.lock_or_panic();
-                lock.retain(|_, client| client.last_used.elapsed() < ttl);
+                clients
+                    .lock_or_panic()
+                    .retain(|_, client| client.last_used.elapsed() < ttl);
+                pending_actions
+                    .lock_or_panic()
+                    .retain(|_, actions| actions.last_used.elapsed() < ttl);
             }
         });
 
         Self {
             inner,
+            pending,
             cleanup_handle: Some(handle),
         }
     }
@@ -698,6 +762,7 @@ impl Clone for TelemetryCachedClientSet {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            pending: Arc::clone(&self.pending),
             cleanup_handle: None,
         }
     }
@@ -775,10 +840,11 @@ impl TelemetryCachedClientSet {
         instance_id: &InstanceId,
         runtime_meta: &RuntimeMetadata,
         get_config: F,
+        initial: InitialTelemetryData,
         process_tags: Vec<Tag>,
     ) -> Arc<Mutex<Option<TelemetryCachedClient>>>
     where
-        F: FnOnce() -> (Config, Vec<data::Configuration>),
+        F: FnOnce() -> Config,
     {
         self.get_or_create_with(
             TelemetryCachedClientOwner::Application,
@@ -791,10 +857,115 @@ impl TelemetryCachedClientSet {
                     instance_id,
                     runtime_meta,
                     get_config,
+                    initial,
                     process_tags,
                 )
+                .expect("explicitly constructed application telemetry worker should start")
             },
         )
+    }
+
+    pub(crate) fn get_or_create_for_actions(
+        &self,
+        service: &str,
+        env: &str,
+        instance_id: &InstanceId,
+        runtime_meta: &RuntimeMetadata,
+        actions: Vec<SidecarAction>,
+        get_config: impl FnOnce() -> Config,
+        process_tags: Vec<Tag>,
+    ) -> ApplicationTelemetryDispatch {
+        let mut clients = self.inner.lock_or_panic();
+        let key = (
+            TelemetryCachedClientOwner::Application,
+            service.to_string(),
+            env.to_string(),
+        );
+
+        if let Some(entry) = clients.get_mut(&key) {
+            let active = entry
+                .client
+                .lock_or_panic()
+                .as_ref()
+                .is_some_and(|client| !client.is_stopping());
+            if active {
+                entry.last_used = Instant::now();
+                return ApplicationTelemetryDispatch::Ready {
+                    client: entry.client.clone(),
+                    actions,
+                    created: false,
+                };
+            }
+        }
+        clients.remove(&key);
+
+        let pending_key = (service.to_string(), env.to_string());
+        let mut pending = self.pending.lock_or_panic();
+        let pending_actions =
+            pending
+                .entry(pending_key.clone())
+                .or_insert_with(|| PendingTelemetryActions {
+                    last_used: Instant::now(),
+                    actions: Vec::new(),
+                });
+        pending_actions.actions.extend(actions);
+        pending_actions.last_used = Instant::now();
+
+        let should_promote = pending_actions.actions.iter().any(|action| {
+            matches!(
+                action,
+                SidecarAction::Telemetry(TelemetryActions::AddConfig(_))
+                    | SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop))
+            )
+        });
+        if !should_promote {
+            return ApplicationTelemetryDispatch::Pending;
+        }
+
+        let actions = pending
+            .remove(&pending_key)
+            .expect("pending telemetry actions should exist")
+            .actions;
+        drop(pending);
+
+        let initial = InitialTelemetryData::from_actions(&actions);
+        match TelemetryCachedClient::new(
+            service,
+            env,
+            instance_id,
+            runtime_meta,
+            get_config,
+            initial,
+            process_tags,
+        ) {
+            Ok(client) => {
+                let client = Arc::new(Mutex::new(Some(client)));
+                clients.insert(
+                    key,
+                    TelemetryCachedEntry {
+                        last_used: Instant::now(),
+                        client: client.clone(),
+                    },
+                );
+                info!("Created new telemetry client for {service:?}/{env:?}");
+                ApplicationTelemetryDispatch::Ready {
+                    client,
+                    actions,
+                    created: true,
+                }
+            }
+            Err(error) => {
+                self.pending.lock_or_panic().insert(
+                    pending_key,
+                    PendingTelemetryActions {
+                        last_used: Instant::now(),
+                        actions,
+                    },
+                );
+                warn!("Failed to create telemetry client for {service:?}/{env:?}: {error:?}");
+                ApplicationTelemetryDispatch::Pending
+            }
+        }
     }
 
     pub(crate) fn workers(&self) -> Vec<TelemetryWorkerHandle> {
@@ -1211,11 +1382,10 @@ mod tests {
             ENV,
             &instance_id,
             &RuntimeMetadata::new("php", "8.3", "test"),
-            || {
-                (
-                    test_config(&http_server),
-                    vec![initial_configuration("initial_config")],
-                )
+            || test_config(&http_server),
+            InitialTelemetryData {
+                configurations: vec![initial_configuration("initial_config")],
+                ..Default::default()
             },
             Vec::new(),
         );
@@ -1316,7 +1486,11 @@ mod tests {
                     ENV,
                     &instance_id,
                     &RuntimeMetadata::new("php", "8.3", "test"),
-                    || (config, vec![initial_configuration("concurrent_config")]),
+                    || config,
+                    InitialTelemetryData {
+                        configurations: vec![initial_configuration("concurrent_config")],
+                        ..Default::default()
+                    },
                     Vec::new(),
                 )
             })
@@ -1359,7 +1533,8 @@ mod tests {
             ENV,
             &InstanceId::new("session", "old"),
             &runtime_metadata,
-            || (Config::default(), Vec::new()),
+            Config::default,
+            InitialTelemetryData::default(),
             Vec::new(),
         );
 
@@ -1372,7 +1547,8 @@ mod tests {
             ENV,
             &InstanceId::new("session", "replacement"),
             &runtime_metadata,
-            || (Config::default(), Vec::new()),
+            Config::default,
+            InitialTelemetryData::default(),
             Vec::new(),
         );
         assert!(!Arc::ptr_eq(&old, &replacement));

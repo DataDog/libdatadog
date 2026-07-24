@@ -4,7 +4,10 @@
 use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER};
 use crate::service::{
     sidecar_interface::serve_sidecar_interface_connection,
-    telemetry::{MetricsLogsClientSet, TelemetryCachedClient, TelemetryCachedClientSet},
+    telemetry::{
+        ApplicationTelemetryDispatch, InitialTelemetryData, MetricsLogsClientSet,
+        TelemetryCachedClient, TelemetryCachedClientSet,
+    },
     tracing::TraceFlusher,
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeInfo, RuntimeMetadata,
     SerializedTracerHeaderTags, SessionConfig, SessionInfo, SidecarAction, SidecarFlushOptions,
@@ -500,16 +503,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
             let env = entry.get().env.as_deref().unwrap_or("none");
 
             let process_tags = session.process_tags_with_svc_source();
-            let initial_configurations = actions
-                .iter()
-                .filter_map(|action| match action {
-                    SidecarAction::Telemetry(TelemetryActions::AddConfig(config)) => {
-                        Some(config.clone())
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-
             // Pre-compute session config so replacement get_or_create calls can use it
             // without re-locking the session.
             let session_config = session
@@ -522,31 +515,50 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     Config::default()
                 });
 
+            let (mut telemetry_mutex, mut actions, mut created) =
+                match self.server.telemetry_clients.get_or_create_for_actions(
+                    service,
+                    env,
+                    &instance_id,
+                    &runtime_metadata,
+                    actions,
+                    || session_config.clone(),
+                    process_tags.clone(),
+                ) {
+                    ApplicationTelemetryDispatch::Pending => return,
+                    ApplicationTelemetryDispatch::Ready {
+                        client,
+                        actions,
+                        created,
+                    } => (client, actions, created),
+                };
+
             // Stop marks a client before releasing its mutex. If that happens after lookup but
             // before this caller acquires the client, retry against the atomically replaced cache
             // entry so the next application's first actions are not queued behind Stop.
-            let mut telemetry_mutex = self.server.telemetry_clients.get_or_create(
-                service,
-                env,
-                &instance_id,
-                &runtime_metadata,
-                || (session_config.clone(), initial_configurations.clone()),
-                process_tags.clone(),
-            );
             let mut telemetry_guard = telemetry_mutex.lock_or_panic();
             while telemetry_guard
                 .as_ref()
                 .is_none_or(TelemetryCachedClient::is_stopping)
             {
                 drop(telemetry_guard);
-                telemetry_mutex = self.server.telemetry_clients.get_or_create(
-                    service,
-                    env,
-                    &instance_id,
-                    &runtime_metadata,
-                    || (session_config.clone(), initial_configurations.clone()),
-                    process_tags.clone(),
-                );
+                (telemetry_mutex, actions, created) =
+                    match self.server.telemetry_clients.get_or_create_for_actions(
+                        service,
+                        env,
+                        &instance_id,
+                        &runtime_metadata,
+                        actions,
+                        || session_config.clone(),
+                        process_tags.clone(),
+                    ) {
+                        ApplicationTelemetryDispatch::Pending => return,
+                        ApplicationTelemetryDispatch::Ready {
+                            client,
+                            actions,
+                            created,
+                        } => (client, actions, created),
+                    };
                 telemetry_guard = telemetry_mutex.lock_or_panic();
             }
             let Some(telemetry) = telemetry_guard.as_mut() else {
@@ -575,6 +587,23 @@ impl SidecarInterface for ConnectionSidecarHandler {
             let mut remove_client = false;
 
             for action in actions {
+                if created && InitialTelemetryData::contains_seeded_action(&action) {
+                    match action {
+                        SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
+                            telemetry.shared.config_sent = true;
+                            buffered_info_changed = true;
+                        }
+                        SidecarAction::Telemetry(TelemetryActions::AddIntegration(
+                            ref integration,
+                        )) => {
+                            telemetry.shared.integrations.insert(integration.clone());
+                            buffered_info_changed = true;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 match action {
                     SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
                         if telemetry.shared.integrations.insert(integration.clone()) {
@@ -1214,7 +1243,8 @@ mod tests {
     use httpmock::{Method::POST, MockServer};
     use libdd_trace_stats::span_concentrator::FixedAggregationKey;
     use libdd_trace_utils::test_utils::create_send_data;
-    use tokio::time::{sleep, Duration as TokioDuration};
+    use std::path::PathBuf;
+    use tokio::time::{sleep, timeout, Duration as TokioDuration};
 
     /// Build a handler backed by a throwaway socketpair connection. These tests exercise
     /// `enqueue_actions`, which uses only the shared server state and never reads the connection,
@@ -1429,6 +1459,241 @@ mod tests {
 
         assert_eq!(exposures_mock.calls_async().await, 0);
         assert_eq!(metrics_mock.calls_async().await, 0);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn composer_before_config_waits_for_configured_app_started() {
+        const SERVICE: &str = "composer-before-config";
+        const ENV: &str = "test";
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        let http_server = MockServer::start_async().await;
+        let configured_start = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"request_type\":\"app-started\"")
+                    .body_includes("\"name\":\"php_config\"");
+                then.status(202);
+            })
+            .await;
+        let empty_start = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"request_type\":\"app-started\"")
+                    .body_excludes("\"name\":\"php_config\"");
+                then.status(202);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(1);
+        let session = handler.server.get_session(&instance_id.session_id);
+        *session.session_config.lock_or_panic() = Some({
+            let mut config = Config::default();
+            config
+                .set_endpoint_uri(http_server.url("/").parse().unwrap())
+                .unwrap();
+            config
+        });
+        handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .entry(queue_id)
+            .or_default()
+            .set_metadata(
+                ENV.to_string(),
+                String::new(),
+                SERVICE.to_string(),
+                Vec::new(),
+            );
+
+        handler
+            .enqueue_actions(
+                instance_id.clone(),
+                queue_id,
+                vec![SidecarAction::PhpComposerTelemetryFile(PathBuf::from(
+                    "/missing/vendor/composer/installed.json",
+                ))],
+            )
+            .await;
+        sleep(TokioDuration::from_millis(50)).await;
+        assert_eq!(configured_start.calls_async().await, 0);
+        assert_eq!(empty_start.calls_async().await, 0);
+
+        handler
+            .enqueue_actions(
+                instance_id,
+                queue_id,
+                vec![SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                    libdd_telemetry::data::Configuration {
+                        name: "php_config".to_string(),
+                        value: "present".to_string(),
+                        origin: libdd_telemetry::data::ConfigurationOrigin::Default,
+                        config_id: None,
+                        seq_id: None,
+                    },
+                ))],
+            )
+            .await;
+
+        timeout(TokioDuration::from_secs(5), async {
+            while configured_start.calls_async().await != 1 {
+                sleep(TokioDuration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("configured app-started request");
+        assert_eq!(empty_start.calls_async().await, 0);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn pending_startup_data_is_seeded_before_start() {
+        const SERVICE: &str = "startup-data-before-config";
+        const ENV: &str = "test";
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        let http_server = MockServer::start_async().await;
+        let any_start = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"request_type\":\"app-started\"");
+                then.status(202);
+            })
+            .await;
+        let complete_start = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"request_type\":\"app-started\"")
+                    .body_includes("\"name\":\"startup-dependency\"")
+                    .body_includes("\"name\":\"startup-integration\"")
+                    .body_includes("\"name\":\"startup-config\"");
+                then.status(202);
+            })
+            .await;
+        let dependency_change = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"request_type\":\"app-dependencies-loaded\"");
+                then.status(202);
+            })
+            .await;
+        let integration_change = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"request_type\":\"app-integrations-change\"");
+                then.status(202);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(1);
+        let session = handler.server.get_session(&instance_id.session_id);
+        *session.session_config.lock_or_panic() = Some({
+            let mut config = Config::default();
+            config
+                .set_endpoint_uri(http_server.url("/").parse().unwrap())
+                .unwrap();
+            config
+        });
+        handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .entry(queue_id)
+            .or_default()
+            .set_metadata(
+                ENV.to_string(),
+                String::new(),
+                SERVICE.to_string(),
+                Vec::new(),
+            );
+
+        handler
+            .enqueue_actions(
+                instance_id.clone(),
+                queue_id,
+                vec![
+                    SidecarAction::Telemetry(TelemetryActions::AddDependency(
+                        libdd_telemetry::data::Dependency {
+                            name: "startup-dependency".to_string(),
+                            version: None,
+                        },
+                    )),
+                    SidecarAction::Telemetry(TelemetryActions::AddIntegration(
+                        libdd_telemetry::data::Integration {
+                            name: "startup-integration".to_string(),
+                            enabled: true,
+                            version: None,
+                            compatible: None,
+                            auto_enabled: None,
+                        },
+                    )),
+                ],
+            )
+            .await;
+        sleep(TokioDuration::from_millis(50)).await;
+        assert_eq!(any_start.calls_async().await, 0);
+        assert_eq!(complete_start.calls_async().await, 0);
+        assert_eq!(dependency_change.calls_async().await, 0);
+        assert_eq!(integration_change.calls_async().await, 0);
+        any_start.delete_async().await;
+
+        handler
+            .enqueue_actions(
+                instance_id,
+                queue_id,
+                vec![SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                    libdd_telemetry::data::Configuration {
+                        name: "startup-config".to_string(),
+                        value: "present".to_string(),
+                        origin: libdd_telemetry::data::ConfigurationOrigin::Default,
+                        config_id: None,
+                        seq_id: None,
+                    },
+                ))],
+            )
+            .await;
+
+        timeout(TokioDuration::from_secs(5), async {
+            while complete_start.calls_async().await != 1 {
+                sleep(TokioDuration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("complete app-started request");
+
+        let worker = handler
+            .server
+            .telemetry_clients
+            .workers()
+            .into_iter()
+            .next()
+            .expect("application telemetry worker");
+        worker
+            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+            .await
+            .unwrap();
+        let (tx, rx) = futures::channel::oneshot::channel();
+        worker
+            .send_msg(TelemetryActions::CollectStats(tx))
+            .await
+            .unwrap();
+        rx.await.unwrap();
+
+        assert_eq!(complete_start.calls_async().await, 1);
+        assert_eq!(dependency_change.calls_async().await, 0);
+        assert_eq!(integration_change.calls_async().await, 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1833,7 +2098,8 @@ mod tests {
             ENV,
             &instance_id,
             &runtime_metadata,
-            || (telemetry_config.clone(), Vec::new()),
+            || telemetry_config.clone(),
+            InitialTelemetryData::default(),
             Vec::new(),
         );
         app_client
