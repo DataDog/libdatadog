@@ -195,7 +195,7 @@ impl TracerFlareManager {
             Target::new(service, env, app_version, vec![], vec![]),
             runtime_id,
             config_to_fetch,
-            NativeHttpClient::new_periodic_client(),
+            NativeHttpClient::new_without_connection_pooling(),
         ));
 
         Ok(tracer_flare)

@@ -51,7 +51,7 @@ async fn main() {
             products: vec![ApmTracing],
             capabilities: vec![],
         },
-        NativeHttpClient::new_periodic_client(),
+        NativeHttpClient::new_without_connection_pooling(),
     );
 
     loop {

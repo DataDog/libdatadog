@@ -451,8 +451,11 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
             _phantom: Default::default(),
         };
-        let fetcher =
-            MultiTargetFetcher::new(storage, invariants, NativeHttpClient::new_periodic_client());
+        let fetcher = MultiTargetFetcher::new(
+            storage,
+            invariants,
+            NativeHttpClient::new_without_connection_pooling(),
+        );
         fetcher
             .remote_config_interval
             .store(interval.as_nanos() as u64, Ordering::Relaxed);

@@ -696,7 +696,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_periodic_client(),
+                NativeHttpClient::new_without_connection_pooling(),
             )),
         );
         let mut opaque_state = ConfigClientState::default();
@@ -749,7 +749,7 @@ pub mod tests {
             storage.clone(),
             Arc::new(ConfigFetcherState::with_client(
                 invariants,
-                NativeHttpClient::new_periodic_client(),
+                NativeHttpClient::new_without_connection_pooling(),
             )),
         );
         let mut opaque_state = ConfigClientState::default();
@@ -936,7 +936,7 @@ pub mod tests {
             storage,
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_periodic_client(),
+                NativeHttpClient::new_without_connection_pooling(),
             )),
         );
         let mut opaque_state = ConfigClientState::default();
@@ -1037,7 +1037,7 @@ pub mod tests {
             storage,
             Arc::new(ConfigFetcherState::with_client(
                 server.dummy_options().invariants,
-                NativeHttpClient::new_periodic_client(),
+                NativeHttpClient::new_without_connection_pooling(),
             )),
         );
         let mut opaque_state = ConfigClientState::default();
