@@ -2197,6 +2197,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn full_metric_scope_preserves_existing_definitions() {
         let clients = MetricsLogsClientSet::with_registration_limit(2);
         let instance = InstanceId::new("session", "runtime");
