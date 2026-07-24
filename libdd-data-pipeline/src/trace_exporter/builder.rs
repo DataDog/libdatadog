@@ -101,6 +101,9 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     output_to_log: bool,
     /// Optional override for the maximum size of a single emitted log line.
     log_max_line_size: Option<usize>,
+    /// Whether background workers spawned should be
+    /// restarted after a `fork()`. Defaults to `true`.
+    restart_after_fork: bool,
 }
 
 /// Default is impl'd for `R = ForkSafeRuntime` only so that bare
@@ -167,6 +170,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agentless_timeout: None,
             output_to_log: false,
             log_max_line_size: None,
+            restart_after_fork: true,
         }
     }
 }
@@ -341,6 +345,16 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Has no effect unless stats computation is enabled.
     pub fn set_stats_cardinality_limit(&mut self, cardinality_limit: usize) -> &mut Self {
         self.stats_cardinality_limit = Some(cardinality_limit);
+        self
+    }
+
+    /// Sets whether background workers spawned by this exporter  are restarted after the process
+    /// `fork()`s. Defaults to `true`.
+    ///
+    /// Set to `false` if the trace exporter is recreated after the fork to avoid restarting workers
+    /// which are going to be discarded anyway.
+    pub fn set_restart_after_fork(&mut self, restart_after_fork: bool) -> &mut Self {
+        self.restart_after_fork = restart_after_fork;
         self
     }
 
@@ -624,7 +638,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         } else {
             Some(
                 shared_runtime
-                    .spawn_worker(info_fetcher, false)
+                    .spawn_worker(info_fetcher, self.restart_after_fork)
                     .map_err(|e| {
                         TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                             e.to_string(),
@@ -679,11 +693,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .transpose()?;
             match telemetry {
                 Some((client_tel, worker)) => {
-                    let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
-                        TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
-                            e.to_string(),
-                        ))
-                    })?;
+                    let handle = shared_runtime
+                        .spawn_worker(worker, self.restart_after_fork)
+                        .map_err(|e| {
+                            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                                e.to_string(),
+                            ))
+                        })?;
                     if let Err(e) = client_tel.start() {
                         tracing::warn!("Failed to start telemetry: {e}");
                     }
@@ -779,9 +795,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 test_token: self.test_session_token.clone(),
                 capabilities: capabilities.clone(),
             };
-            let worker_handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?;
+            let worker_handle = shared_runtime
+                .spawn_worker(worker, self.restart_after_fork)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
             stats = StatsComputationStatus::Enabled {
                 stats_concentrator: concentrator,
                 worker_handle,
@@ -858,6 +878,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
             log_output,
+            restart_after_fork: self.restart_after_fork,
         })
     }
 
@@ -998,7 +1019,8 @@ mod tests {
             .set_otlp_instrumentation_scope("dd-trace-js", "7.0.0-pre")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
-            .set_client_computed_stats();
+            .set_client_computed_stats()
+            .set_restart_after_fork(false);
         #[cfg(feature = "telemetry")]
         builder.enable_telemetry(TelemetryConfig {
             heartbeat: 1000,
@@ -1025,6 +1047,7 @@ mod tests {
         let otlp_config = exporter.otlp_config.as_ref().unwrap();
         assert_eq!(otlp_config.instrumentation_scope_name, "dd-trace-js");
         assert_eq!(otlp_config.instrumentation_scope_version, "7.0.0-pre");
+        assert!(!exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.is_some());
     }
@@ -1048,6 +1071,7 @@ mod tests {
         assert_eq!(exporter.metadata.language_version, "");
         assert_eq!(exporter.metadata.language_interpreter, "");
         assert!(!exporter.metadata.client_computed_stats);
+        assert!(exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.is_none());
     }
