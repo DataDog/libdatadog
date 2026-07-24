@@ -48,7 +48,7 @@ use datadog_ipc::ipc_server::OwnedServerConn;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
-use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
+use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
@@ -778,7 +778,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             *endpoint = config.otlp_metrics_endpoint.clone();
         });
         session.configure_dogstatsd(|dogstatsd| {
-            let d = new(config.dogstatsd_endpoint.clone()).ok();
+            let d = DogStatsDClient::new(config.dogstatsd_endpoint.clone()).ok();
             *dogstatsd = d;
         });
         session.modify_debugger_config(|cfg| {

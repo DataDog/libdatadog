@@ -3,14 +3,13 @@
 
 [package]
 name = "libdd-profiling-heap-sampler"
-version = "0.1.0"
+version = "1.0.0"
 description = "Sampling primitives for USDT-based heap profiling."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-sampler"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-sampler"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
 
 [lib]
 crate-type = ["lib", "staticlib"]

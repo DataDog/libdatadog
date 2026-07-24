@@ -7,11 +7,12 @@ use crate::fetch::{
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
+use libdd_capabilities::HttpClientCapability;
 use std::sync::Arc;
 
 /// Simple implementation
-pub struct SingleFetcher<S: FileStorage> {
-    fetcher: ConfigFetcher<S>,
+pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability> {
+    fetcher: ConfigFetcher<S, C>,
     target: Arc<Target>,
     product_capabilities: ConfigProductCapabilities,
     runtime_id: String,
@@ -26,12 +27,21 @@ pub struct ConfigOptions {
     pub capabilities: Vec<RemoteConfigCapabilities>,
 }
 
-impl<S: FileStorage> SingleFetcher<S> {
-    pub fn new(sink: S, target: Target, runtime_id: String, options: ConfigOptions) -> Self {
+impl<S: FileStorage, C: HttpClientCapability> SingleFetcher<S, C> {
+    pub fn new(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+        http_client: C,
+    ) -> Self {
         SingleFetcher {
             fetcher: ConfigFetcher::new(
                 sink,
-                Arc::new(ConfigFetcherState::new(options.invariants)),
+                Arc::new(ConfigFetcherState::with_client(
+                    options.invariants,
+                    http_client,
+                )),
             ),
             target: Arc::new(target),
             product_capabilities: ConfigProductCapabilities::new(
@@ -96,22 +106,28 @@ impl<S: FileStorage> SingleFetcher<S> {
     }
 }
 
-pub struct SingleChangesFetcher<S: FileStorage>
+pub struct SingleChangesFetcher<S: FileStorage, C: HttpClientCapability>
 where
     S::StoredFile: FilePath,
 {
     changes: ChangeTracker<S::StoredFile>,
-    pub fetcher: SingleFetcher<S>,
+    pub fetcher: SingleFetcher<S, C>,
 }
 
-impl<S: FileStorage> SingleChangesFetcher<S>
+impl<S: FileStorage, C: HttpClientCapability> SingleChangesFetcher<S, C>
 where
     S::StoredFile: FilePath,
 {
-    pub fn new(sink: S, target: Target, runtime_id: String, options: ConfigOptions) -> Self {
+    pub fn new(
+        sink: S,
+        target: Target,
+        runtime_id: String,
+        options: ConfigOptions,
+        http_client: C,
+    ) -> Self {
         SingleChangesFetcher {
             changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new(sink, target, runtime_id, options),
+            fetcher: SingleFetcher::new(sink, target, runtime_id, options, http_client),
         }
     }
 

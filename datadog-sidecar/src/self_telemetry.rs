@@ -9,12 +9,15 @@ use crate::service::ffe_flagevaluation_flusher::{
 };
 use crate::service::SidecarServer;
 use crate::watchdog::WatchdogHandle;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::{tag, tag::Tag, MutexExt};
 use libdd_telemetry::data::metrics::{MetricNamespace, MetricType};
 use libdd_telemetry::metrics::ContextKey;
-use libdd_telemetry::worker::{
-    LifecycleAction, TelemetryActions, TelemetryWorkerBuilder, TelemetryWorkerHandle,
-};
+use libdd_telemetry::worker::{LifecycleAction, TelemetryActions, TelemetryWorkerBuilder};
+
+/// The sidecar runs the telemetry worker on native, so its handle is pinned to
+/// [`NativeCapabilities`].
+type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 use manual_future::ManualFuture;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -252,7 +255,7 @@ impl SelfTelemetry {
             crate::sidecar_version!().to_string(),
         );
         builder.config = self.config.clone();
-        let (worker, join_handle) = builder.spawn();
+        let (worker, join_handle) = builder.spawn::<NativeCapabilities>();
 
         let metrics = MetricData {
             worker: &worker,

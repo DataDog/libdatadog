@@ -45,6 +45,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         vec![],
         vec!["db_name".into(), "bucket_s3".into()],
         None,
+        vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
     );

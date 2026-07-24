@@ -25,6 +25,7 @@ use libdd_remote_config::{
 use crate::error::FlareError;
 #[cfg(feature = "listener")]
 use {
+    libdd_capabilities_impl::NativeHttpClient,
     libdd_common::Endpoint,
     libdd_remote_config::{
         fetch::{ConfigInvariants, ConfigOptions, SingleChangesFetcher},
@@ -194,6 +195,7 @@ impl TracerFlareManager {
             Target::new(service, env, app_version, vec![], vec![]),
             runtime_id,
             config_to_fetch,
+            NativeHttpClient::new_without_connection_pooling(),
         ));
 
         Ok(tracer_flare)
@@ -361,7 +363,7 @@ impl TryFrom<&str> for LogLevel {
 #[cfg(feature = "listener")]
 pub type RemoteConfigFile = std::sync::Arc<RawFile<anyhow::Result<Option<RemoteConfigParsed>>>>;
 #[cfg(feature = "listener")]
-pub type Listener = SingleChangesFetcher<ParsedFileStorage>;
+pub type Listener = SingleChangesFetcher<ParsedFileStorage, NativeHttpClient>;
 
 #[cfg(feature = "listener")]
 impl TryFrom<RemoteConfigFile> for FlareAction {

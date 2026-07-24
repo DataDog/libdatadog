@@ -13,18 +13,19 @@ autobenches = false
 
 [dependencies]
 arc-swap.workspace = true
-anyhow = { version = "1.0" }
+anyhow.workspace = true
 async-trait = "0.1"
 http = "1"
 http-body-util = "0.1"
-tracing = { version = "0.1", default-features = false }
+tracing.workspace = true
 rmp-serde = "1.3.0"
-serde = "1.0.209"
+serde.workspace = true
 serde_json = "1.0.127"
 bytes = "1.11.1"
 sha2 = "0.10"
 either = "1.13.0"
-tokio = { version = "1.23", features = [
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
+tokio = { workspace = true, features = [
     "rt",
     "sync",
     "time",
@@ -41,11 +42,12 @@ libdd-trace-stats = { version = "6.0.0", path = "../libdd-trace-stats", default-
 libdd-trace-utils = { version = "9.0.0", path = "../libdd-trace-utils", default-features = false }
 libdd-trace-obfuscation = { version = "5.0.0", path = "../libdd-trace-obfuscation", default-features = false, optional = true }
 libdd-ddsketch = { version = "1.1.0", path = "../libdd-ddsketch" }
-libdd-dogstatsd-client = { version = "4.0.0", path = "../libdd-dogstatsd-client", default-features = false }
+libdd-dogstatsd-client = { version = "4.0.0", path = "../libdd-dogstatsd-client", default-features = false, features = ["shared-runtime"] }
 libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
 ] }
+web-time = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }

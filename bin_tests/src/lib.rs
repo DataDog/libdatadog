@@ -34,27 +34,17 @@ fn get_base_target_dir() -> &'static PathBuf {
     })
 }
 
-/// Returns the target directory for a specific build configuration.
-/// For builds with variants (like panic_abort), returns a variant-specific subdirectory.
-fn get_target_dir_for_build(c: &ArtifactsBuild) -> PathBuf {
-    let base = get_base_target_dir().clone();
-
-    // If this is a variant build (e.g., panic_abort), use a variant-specific target directory
-    if c.panic_abort == Some(true) {
-        base.join("panic-abort")
-    } else {
-        base
-    }
-}
-
 /// Computes the path where the artifact will be located after building.
 pub fn compute_artifact_path(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
-    let target_dir = get_target_dir_for_build(c);
+    let mut artifact_path = get_base_target_dir().clone();
 
-    let mut artifact_path = target_dir;
+    // Each profile writes to its own `target/` subdirectory. The `PanicAbort`
+    // profile is a custom Cargo profile, so it lives directly under
+    // `target/panic-abort/` rather than under `debug`/`release`.
     artifact_path.push(match c.build_profile {
         BuildProfile::Debug => "debug",
         BuildProfile::Release => "release",
+        BuildProfile::PanicAbort => "panic-abort",
     });
 
     match c.artifact_type {
@@ -101,6 +91,12 @@ pub enum BuildProfile {
     #[default]
     Debug,
     Release,
+    /// Debug opt-level built with `panic = "abort"` (via the dedicated
+    /// `panic-abort` Cargo profile). Used by crash-handler tests that must
+    /// exercise the abort path. Making this a `BuildProfile` variant — rather than
+    /// a separate flag — keeps illegal combinations (e.g. release + panic=abort)
+    /// unrepresentable.
+    PanicAbort,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
@@ -110,7 +106,6 @@ pub struct ArtifactsBuild {
     pub artifact_type: ArtifactType,
     pub build_profile: BuildProfile,
     pub triple_target: Option<String>,
-    pub panic_abort: Option<bool>,
 }
 
 fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
@@ -119,31 +114,39 @@ fn cargo_build_artifact(c: &ArtifactsBuild) -> anyhow::Result<PathBuf> {
     let mut build_cmd = process::Command::new(env!("CARGO"));
     build_cmd.arg("build");
 
-    // For variant builds (like panic_abort), use a separate target directory
-    // so they don't conflict with standard builds
-    let target_dir = get_target_dir_for_build(c);
-    if target_dir != *get_base_target_dir() {
-        build_cmd.arg("--target-dir").arg(&target_dir);
-    }
+    match c.build_profile {
+        BuildProfile::Debug => {}
+        BuildProfile::Release => {
+            build_cmd.arg("--release");
+        }
+        BuildProfile::PanicAbort => {
+            // Build with the dedicated `panic-abort` Cargo profile (defined in the
+            // workspace root Cargo.toml with `panic = "abort"`), so artifacts land
+            // in `target/panic-abort/` under the standard target layout and
+            // Swatinem/rust-cache manages and cleans them like any other profile.
+            build_cmd.arg("--profile").arg("panic-abort");
 
-    if let BuildProfile::Release = c.build_profile {
-        build_cmd.arg("--release");
+            // `-C force-unwind-tables=yes` has no profile equivalent, so it stays a
+            // scoped RUSTFLAG applied only to this build invocation. `panic=abort`
+            // strips the `.eh_frame` unwind tables that the aarch64 backtrace
+            // unwinder relies on; without them `RUST_BACKTRACE` can loop forever on
+            // certain binary layouts (rust-lang/rust#123733), hanging the test until
+            // the runner OOMs. Keep until #123733 (fix: rust-lang/rust#143613) ships
+            // in a stable toolchain.
+            let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+            let new_rustflags = if existing_rustflags.is_empty() {
+                "-C force-unwind-tables=yes".to_string()
+            } else {
+                format!("{} -C force-unwind-tables=yes", existing_rustflags)
+            };
+            build_cmd.env("RUSTFLAGS", new_rustflags);
+        }
     }
 
     match c.artifact_type {
         ArtifactType::ExecutablePackage | ArtifactType::CDylib => build_cmd.arg("-p"),
         ArtifactType::Bin => build_cmd.arg("--bin"),
     };
-
-    if c.panic_abort == Some(true) {
-        let existing_rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
-        let new_rustflags = if existing_rustflags.is_empty() {
-            "-C panic=abort".to_string()
-        } else {
-            format!("{} -C panic=abort", existing_rustflags)
-        };
-        build_cmd.env("RUSTFLAGS", new_rustflags);
-    }
 
     build_cmd.arg(&c.name);
 

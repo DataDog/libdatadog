@@ -3,14 +3,13 @@
 
 [package]
 name = "libdd-profiling-heap-allocator"
-version = "0.1.0"
+version = "1.0.0"
 description = "Rust GlobalAlloc wrapper that drives libdd-profiling-heap-sampler."
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-allocator"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-allocator"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-publish = false
 
 [lib]
 bench = false
@@ -22,7 +21,7 @@ bench = false
 live-heap = ["libdd-profiling-heap-sampler/live-heap"]
 
 [dependencies]
-libdd-profiling-heap-sampler = { path = "../libdd-profiling-heap-sampler" }
+libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
 
 [dev-dependencies]
 criterion = "0.5.1"

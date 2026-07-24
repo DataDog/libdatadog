@@ -40,6 +40,11 @@ impl<T: DeserializableTraceData> Buffer<T> {
         T::get_mut_slice(&mut self.0)
     }
 
+    /// Returns an immutable reference to the underlying slice, without advancing the buffer.
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.borrow()
+    }
+
     /// Tries to extract a slice of `bytes` from the buffer and advances the buffer.
     pub fn try_slice_and_advance(&mut self, bytes: usize) -> Option<T::Bytes> {
         T::try_slice_and_advance(&mut self.0, bytes)
@@ -51,6 +56,14 @@ impl<T: DeserializableTraceData> Buffer<T> {
     /// Fails if the buffer doesn't contain a valid utf8 msgpack string.
     pub fn read_string(&mut self) -> Result<T::Text, DecodeError> {
         T::read_string(&mut self.0)
+    }
+
+    /// Caps a decoded element count at the bytes remaining in the buffer. Each msgpack
+    /// element needs >=1 byte on the wire, so a length prefix can't legitimately exceed
+    /// the remaining bytes — this prevents a malicious count (e.g. 0xFFFFFFFF) from
+    /// forcing a huge pre-allocation before any element is read.
+    pub fn capped_capacity(&self, count: usize) -> usize {
+        count.min(self.len())
     }
 }
 

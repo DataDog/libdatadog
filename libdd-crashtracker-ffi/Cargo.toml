@@ -37,7 +37,7 @@ default = ["collector_windows"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-anyhow = "1.0"
+anyhow.workspace = true
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
