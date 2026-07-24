@@ -5,8 +5,9 @@ use crate::log::{TemporarilyRetainedMapStats, MULTI_LOG_FILTER, MULTI_LOG_WRITER
 use crate::service::{
     sidecar_interface::serve_sidecar_interface_connection,
     telemetry::{
-        ApplicationTelemetryDispatch, InitialTelemetryData, MetricsLogsClientSet,
-        PendingApplicationAction, TelemetryCachedClient, TelemetryCachedClientSet,
+        ApplicationTelemetryDispatch, DirectTelemetryRetirement, InitialTelemetryData,
+        MetricsLogsClientSet, PendingApplicationAction, TelemetryActionSender,
+        TelemetryCachedClient, TelemetryCachedClientSet, TelemetryWorkerMetadata,
     },
     tracing::TraceFlusher,
     DynamicInstrumentationConfigState, InstanceId, QueueId, RuntimeInfo, RuntimeMetadata,
@@ -25,11 +26,15 @@ use libdd_trace_utils::tracer_payload::TraceEncoding;
 use manual_future::ManualFutureCompleter;
 use std::borrow::Cow;
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info, trace, warn};
+
+#[cfg(test)]
+use crate::service::telemetry::{telemetry_action_receiver_task, InternalTelemetryActions};
 
 use crate::config::get_product_endpoint;
 use crate::service::agent_info::AgentInfos;
@@ -105,6 +110,9 @@ pub struct SidecarServer {
     pub(crate) telemetry_clients: TelemetryCachedClientSet,
     /// Telemetry clients for logs and metrics that are independent of application lifecycle.
     pub(crate) metrics_logs_clients: MetricsLogsClientSet,
+    /// Installed together with the direct-action receiver so lifecycle cleanup can be ordered
+    /// after every action already accepted by that receiver.
+    direct_telemetry_sender: Arc<Mutex<Option<TelemetryActionSender>>>,
     /// A `Mutex` guarded optional `ManualFutureCompleter` for telemetry configuration.
     pub self_telemetry_config:
         Arc<Mutex<Option<ManualFutureCompleter<libdd_telemetry::config::Config>>>>,
@@ -234,26 +242,65 @@ impl SidecarServer {
         }
     }
 
+    pub(crate) fn find_session(&self, session_id: &str) -> Option<SessionInfo> {
+        self.sessions.lock_or_panic().get(session_id).cloned()
+    }
+
     fn get_runtime(&self, instance_id: &InstanceId) -> RuntimeInfo {
         let session = self.get_session(&instance_id.session_id);
         session.get_runtime(&instance_id.runtime_id)
     }
 
+    pub(crate) fn find_runtime(&self, instance_id: &InstanceId) -> Option<RuntimeInfo> {
+        self.find_session(&instance_id.session_id)?
+            .find_runtime(&instance_id.runtime_id)
+    }
+
+    pub(crate) fn install_direct_telemetry_sender(&self, sender: TelemetryActionSender) {
+        self.direct_telemetry_sender.lock_or_panic().replace(sender);
+    }
+
+    async fn retire_direct_telemetry(&self, scope: DirectTelemetryRetirement) {
+        let sender = self.direct_telemetry_sender.lock_or_panic().clone();
+        if let Some(sender) = sender {
+            match sender.retire(scope.clone()).await {
+                Ok(()) => return,
+                Err(error) => {
+                    warn!(
+                        "Failed to order direct telemetry cleanup through receiver; \
+                         falling back to synchronous cleanup: {error}"
+                    );
+                }
+            }
+        }
+
+        match scope {
+            DirectTelemetryRetirement::Runtimes(instances) => {
+                self.metrics_logs_clients.remove_runtimes(&instances);
+            }
+            DirectTelemetryRetirement::Session(session_id) => {
+                self.metrics_logs_clients.remove_session(&session_id);
+            }
+        }
+    }
+
     async fn stop_runtime(&self, instance_id: &InstanceId) {
-        self.metrics_logs_clients.remove_runtime(instance_id);
-        let maybe_session = self
-            .sessions
-            .lock_or_panic()
-            .get(&instance_id.session_id)
-            .cloned();
-        if let Some(session) = maybe_session {
-            session.shutdown_runtime(&instance_id.runtime_id).await;
+        let runtime = self
+            .find_session(&instance_id.session_id)
+            .and_then(|session| session.take_runtime(&instance_id.runtime_id));
+        self.retire_direct_telemetry(DirectTelemetryRetirement::Runtimes(HashSet::from([
+            instance_id.clone(),
+        ])))
+        .await;
+        if let Some(runtime) = runtime {
+            runtime.shutdown().await;
         }
     }
 
     async fn stop_session(&self, session_id: &str) {
         let session = self.sessions.lock_or_panic().remove(session_id);
-        self.metrics_logs_clients.remove_session(session_id);
+        self.retire_direct_telemetry(DirectTelemetryRetirement::Session(session_id.to_string()))
+            .await;
         let Some(session) = session else {
             return;
         };
@@ -418,18 +465,58 @@ impl SidecarServer {
     }
 }
 
+#[derive(Debug)]
+struct ScheduledApplicationActions {
+    remove_client: bool,
+    next_lifecycle_actions: Vec<PendingApplicationAction>,
+}
+
+enum ScheduledApplicationWork {
+    Direct(Vec<TelemetryActions>),
+    Composer(Vec<PathBuf>),
+}
+
+fn push_direct_application_work(
+    work: &mut Vec<ScheduledApplicationWork>,
+    mut actions: Vec<TelemetryActions>,
+) {
+    if actions.is_empty() {
+        return;
+    }
+    match work.last_mut() {
+        Some(ScheduledApplicationWork::Direct(existing)) => existing.append(&mut actions),
+        _ => work.push(ScheduledApplicationWork::Direct(actions)),
+    }
+}
+
 fn schedule_application_actions(
     telemetry_mutex: &Arc<Mutex<Option<TelemetryCachedClient>>>,
-    actions: Vec<PendingApplicationAction>,
+    mut actions: Vec<PendingApplicationAction>,
     created: bool,
     instance_id: &InstanceId,
     queue_id: QueueId,
-) -> bool {
+) -> Result<ScheduledApplicationActions, Vec<PendingApplicationAction>> {
     let mut telemetry_guard = telemetry_mutex.lock_or_panic();
     let Some(telemetry) = telemetry_guard.as_mut() else {
         warn!("enqueue_actions: telemetry client unavailable for instance {instance_id:?}");
-        return false;
+        return Err(actions);
     };
+    if telemetry.is_stopping() {
+        warn!("enqueue_actions: telemetry client stopping for instance {instance_id:?}");
+        return Err(actions);
+    }
+
+    let next_lifecycle_actions = actions
+        .iter()
+        .position(|pending_action| {
+            matches!(
+                pending_action.action,
+                SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop))
+            )
+        })
+        .filter(|stop_index| *stop_index + 1 < actions.len())
+        .map(|stop_index| actions.split_off(stop_index + 1))
+        .unwrap_or_default();
 
     for pending_action in &actions {
         if let SidecarAction::AddTelemetryMetricPoint((name, _, _)) = &pending_action.action {
@@ -445,8 +532,7 @@ fn schedule_application_actions(
         }
     }
 
-    let mut actions_to_process = Vec::new();
-    let mut composer_paths_to_process = Vec::new();
+    let mut work = Vec::new();
     let mut buffered_info_changed = false;
     let mut remove_client = false;
 
@@ -458,32 +544,35 @@ fn schedule_application_actions(
         match action {
             SidecarAction::Telemetry(TelemetryActions::AddIntegration(ref integration)) => {
                 if telemetry.shared.integrations.insert(integration.clone()) {
-                    actions_to_process.push(action);
+                    push_direct_application_work(
+                        &mut work,
+                        telemetry.process_actions(vec![action]),
+                    );
                     buffered_info_changed = true;
                 }
             }
             SidecarAction::PhpComposerTelemetryFile(path) => {
                 if telemetry.shared.composer_paths.insert(path.clone()) {
-                    composer_paths_to_process.push(path);
+                    work.push(ScheduledApplicationWork::Composer(vec![path]));
                     buffered_info_changed = true;
                 }
             }
             SidecarAction::Telemetry(TelemetryActions::AddConfig(_)) => {
                 telemetry.shared.config_sent = true;
                 buffered_info_changed = true;
-                actions_to_process.push(action);
+                push_direct_application_work(&mut work, telemetry.process_actions(vec![action]));
             }
             SidecarAction::Telemetry(TelemetryActions::AddEndpoint(_)) => {
                 telemetry.shared.last_endpoints_push = SystemTime::now();
                 buffered_info_changed = true;
-                actions_to_process.push(action);
+                push_direct_application_work(&mut work, telemetry.process_actions(vec![action]));
             }
             SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop)) => {
                 telemetry.mark_stopping();
                 remove_client = true;
-                actions_to_process.push(action);
+                push_direct_application_work(&mut work, telemetry.process_actions(vec![action]));
             }
-            _ => actions_to_process.push(action),
+            _ => push_direct_application_work(&mut work, telemetry.process_actions(vec![action])),
         }
     }
 
@@ -492,46 +581,43 @@ fn schedule_application_actions(
             "Buffered telemetry info changed for instance {instance_id:?} and queue_id {queue_id:?}"
         );
         telemetry.write_shm_file();
+    } else if !remove_client {
+        telemetry.retry_shm_file_if_due();
     }
 
-    let do_take = remove_client;
-    if !actions_to_process.is_empty() {
-        let telemetry_mutex_clone = telemetry_mutex.clone();
+    if !work.is_empty() {
         let worker = telemetry.worker.clone();
         let last_handle = telemetry.handle.take();
-        telemetry.handle = Some(tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             if let Some(last_handle) = last_handle {
                 last_handle.await.ok();
             };
-            let processed = {
-                let mut guard = telemetry_mutex_clone.lock_or_panic();
-                let processed = guard
-                    .as_mut()
-                    .map(|t| t.process_actions(actions_to_process))
-                    .unwrap_or_default();
-                if do_take {
-                    guard.take();
+            for work_item in work {
+                let processed = match work_item {
+                    ScheduledApplicationWork::Direct(actions) => actions,
+                    ScheduledApplicationWork::Composer(paths) => {
+                        TelemetryCachedClient::process_composer_paths(paths).await
+                    }
+                };
+                if !processed.is_empty() {
+                    debug!("Sending processed application actions: {processed:?}");
+                    if let Err(error) = worker.send_msgs(processed).await {
+                        warn!("Failed to send application telemetry actions: {error}");
+                    }
                 }
-                processed
-            };
-            debug!("Sending Processed Actions :{processed:?}");
-            worker.send_msgs(processed).await.ok();
-        }));
+            }
+        });
+        if remove_client {
+            telemetry_guard.take();
+        } else if let Some(telemetry) = telemetry_guard.as_mut() {
+            telemetry.handle = Some(handle);
+        }
     }
-    if !composer_paths_to_process.is_empty() {
-        let worker = telemetry.worker.clone();
-        let last_handle = telemetry.handle.take();
-        telemetry.handle = Some(tokio::spawn(async move {
-            if let Some(last_handle) = last_handle {
-                last_handle.await.ok();
-            };
-            let composer_actions =
-                TelemetryCachedClient::process_composer_paths(composer_paths_to_process).await;
-            debug!("Sending Composer Paths :{composer_actions:?}");
-            worker.send_msgs(composer_actions).await.ok();
-        }));
-    }
-    remove_client
+
+    Ok(ScheduledApplicationActions {
+        remove_client,
+        next_lifecycle_actions,
+    })
 }
 
 impl SidecarInterface for ConnectionSidecarHandler {
@@ -638,60 +724,38 @@ impl SidecarInterface for ConnectionSidecarHandler {
                     Config::default()
                 });
 
-            let initial_actions = PendingApplicationAction::from_actions(
+            let mut pending_actions = PendingApplicationAction::from_actions(
                 &instance_id,
                 actions,
                 &connection_metric_registrations,
             );
-            let (mut telemetry_mutex, mut actions, mut created, mut remove_client) =
-                match self.server.telemetry_clients.get_or_create_for_actions(
-                    service,
-                    env,
-                    &instance_id,
-                    &runtime_metadata,
-                    initial_actions,
-                    || session_config.clone(),
-                    process_tags.clone(),
-                    |client, actions| {
-                        schedule_application_actions(client, actions, true, &instance_id, queue_id)
-                    },
-                ) {
-                    ApplicationTelemetryDispatch::Pending => return,
-                    ApplicationTelemetryDispatch::Ready {
-                        client,
-                        actions,
-                        created,
-                        remove_client,
-                    } => (client, actions, created, remove_client),
-                };
-
-            // Stop marks a client before releasing its mutex. If that happens after lookup but
-            // before this caller acquires the client, retry against the atomically replaced cache
-            // entry so the next application's first actions are not queued behind Stop.
-            let mut telemetry_guard = telemetry_mutex.lock_or_panic();
-            while !remove_client
-                && telemetry_guard
-                    .as_ref()
-                    .is_none_or(TelemetryCachedClient::is_stopping)
-            {
-                drop(telemetry_guard);
-                (telemetry_mutex, actions, created, remove_client) =
+            loop {
+                let (telemetry_mutex, actions, created, initialized_terminal) =
                     match self.server.telemetry_clients.get_or_create_for_actions(
-                        service,
-                        env,
-                        &instance_id,
-                        &runtime_metadata,
-                        actions,
+                        TelemetryWorkerMetadata::new(
+                            service,
+                            env,
+                            &instance_id,
+                            &runtime_metadata,
+                            process_tags.clone(),
+                        ),
+                        pending_actions,
                         || session_config.clone(),
-                        process_tags.clone(),
-                        |client, actions| {
-                            schedule_application_actions(
-                                client,
-                                actions,
-                                true,
-                                &instance_id,
-                                queue_id,
-                            )
+                        |client, actions| match schedule_application_actions(
+                            client,
+                            actions,
+                            true,
+                            &instance_id,
+                            queue_id,
+                        ) {
+                            Ok(scheduled) => scheduled.remove_client,
+                            Err(returned) => {
+                                warn!(
+                                    "New telemetry lifecycle rejected {} initialization actions",
+                                    returned.len()
+                                );
+                                false
+                            }
                         },
                     ) {
                         ApplicationTelemetryDispatch::Pending => return,
@@ -702,26 +766,52 @@ impl SidecarInterface for ConnectionSidecarHandler {
                             remove_client,
                         } => (client, actions, created, remove_client),
                     };
-                telemetry_guard = telemetry_mutex.lock_or_panic();
-            }
-            drop(telemetry_guard);
 
-            if !actions.is_empty() {
-                remove_client |= schedule_application_actions(
+                if initialized_terminal {
+                    self.server.telemetry_clients.remove_telemetry_client(
+                        service,
+                        env,
+                        &telemetry_mutex,
+                    );
+                    info!("Removing terminal telemetry client for instance {instance_id:?}");
+                    if actions.is_empty() {
+                        return;
+                    }
+                    pending_actions = actions;
+                    continue;
+                }
+                if actions.is_empty() {
+                    return;
+                }
+
+                match schedule_application_actions(
                     &telemetry_mutex,
                     actions,
                     created,
                     &instance_id,
                     queue_id,
-                );
-            }
-            if remove_client {
-                self.server.telemetry_clients.remove_telemetry_client(
-                    service,
-                    env,
-                    &telemetry_mutex,
-                );
-                info!("Removing telemetry client for instance {instance_id:?}");
+                ) {
+                    Ok(scheduled) => {
+                        if scheduled.remove_client {
+                            self.server.telemetry_clients.remove_telemetry_client(
+                                service,
+                                env,
+                                &telemetry_mutex,
+                            );
+                            info!("Removing telemetry client for instance {instance_id:?}");
+                        }
+                        if scheduled.next_lifecycle_actions.is_empty() {
+                            return;
+                        }
+                        pending_actions = scheduled.next_lifecycle_actions;
+                    }
+                    Err(returned) => {
+                        // The selected client became unavailable or terminal before this batch
+                        // acquired its mutex. Ownership remains here and is atomically offered to
+                        // the next cache lifecycle.
+                        pending_actions = returned;
+                    }
+                }
             }
         } else {
             info!("No application found for instance {instance_id:?} and queue_id {queue_id:?}");
@@ -895,20 +985,31 @@ impl SidecarInterface for ConnectionSidecarHandler {
         ));
 
         if let Some(completer) = self.server.self_telemetry_config.lock_or_panic().take() {
-            #[allow(clippy::expect_used)]
-            let config = session
-                .session_config
-                .lock_or_panic()
-                .as_ref()
-                .expect("Expected session_config to be Some(Config) but received None")
-                .clone();
-            tokio::spawn(async move {
-                completer.complete(config).await;
-            });
+            let config = session.session_config.lock_or_panic().as_ref().cloned();
+            if let Some(config) = config {
+                tokio::spawn(async move {
+                    completer.complete(config).await;
+                });
+            } else {
+                warn!("Session telemetry config unexpectedly unavailable for {session_id}");
+            }
         }
 
         if !is_fork {
-            session.shutdown_running_instances().await;
+            let runtimes = session.take_running_instances();
+            let instance_ids = runtimes
+                .iter()
+                .map(|runtime| runtime.instance_id.clone())
+                .collect::<HashSet<_>>();
+            self.server
+                .retire_direct_telemetry(DirectTelemetryRetirement::Runtimes(instance_ids))
+                .await;
+            futures::future::join_all(
+                runtimes
+                    .into_iter()
+                    .map(|runtime| async move { runtime.shutdown().await }),
+            )
+            .await;
         }
     }
 
@@ -946,14 +1047,12 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn shutdown_runtime(&self, instance_id: InstanceId) {
-        let server = self.server.clone();
-        tokio::spawn(async move { server.stop_runtime(&instance_id).await });
+        self.server.stop_runtime(&instance_id).await;
     }
 
     async fn shutdown_session(&self) {
-        let server = self.server.clone();
         let session_id = self.session_id.get().cloned().unwrap_or_default();
-        tokio::spawn(async move { server.stop_session(&session_id).await });
+        self.server.stop_session(&session_id).await;
     }
 
     async fn send_trace_v04_shm(
@@ -1152,13 +1251,9 @@ impl SidecarInterface for ConnectionSidecarHandler {
         let session_id = self.session_id.get().map(|s| s.as_str()).unwrap_or("");
         let session = self.server.get_session(session_id);
         // Lazily create the concentrator on first IPC span for this (env, version, service).
-        if let Some(state) = get_or_create_concentrator(
-            &self.server.span_concentrators,
-            &env,
-            &version,
-            session_id,
-            &session,
-        ) {
+        if let Some(state) =
+            get_or_create_concentrator(&self.server.span_concentrators, &env, &version, &session)
+        {
             let mut peer_tag_buf = Vec::new();
             let input = span.as_shm_input(&mut peer_tag_buf);
             state.concentrator.add_span(&input);
@@ -1264,6 +1359,8 @@ mod tests {
     use libdd_trace_stats::span_concentrator::FixedAggregationKey;
     use libdd_trace_utils::test_utils::create_send_data;
     use std::path::PathBuf;
+    use std::time::Instant;
+    use tokio::sync::Barrier;
     use tokio::time::{sleep, timeout, Duration as TokioDuration};
 
     /// Build a handler backed by a throwaway socketpair connection. These tests exercise
@@ -1274,6 +1371,36 @@ mod tests {
         drop(peer);
         let conn = OwnedServerConn::new(local).expect("OwnedServerConn");
         ConnectionSidecarHandler::new(server, conn)
+    }
+
+    fn test_session_config(endpoint: Endpoint, root_service: &str) -> SessionConfig {
+        SessionConfig {
+            dogstatsd_endpoint: endpoint.clone(),
+            endpoint,
+            language: "php".to_string(),
+            language_version: "8.3".to_string(),
+            tracer_version: "test".to_string(),
+            flush_interval: Duration::from_secs(60),
+            remote_config_poll_interval: Duration::from_secs(60),
+            telemetry_heartbeat_interval: Duration::from_secs(60),
+            telemetry_extended_heartbeat_interval: Duration::from_secs(3600),
+            force_flush_size: 0,
+            force_drop_size: 0,
+            retry_interval: Duration::from_millis(10),
+            log_level: "off".to_string(),
+            log_file: crate::config::LogMethod::Disabled,
+            remote_config_products: Vec::new(),
+            remote_config_capabilities: Vec::new(),
+            remote_config_enabled: false,
+            process_tags: Vec::new(),
+            peer_tag_keys: Vec::new(),
+            span_kinds_stats_computed: Vec::new(),
+            hostname: String::new(),
+            root_service: root_service.to_string(),
+            root_session_id: None,
+            parent_session_id: None,
+            otlp_metrics_endpoint: None,
+        }
     }
 
     #[tokio::test]
@@ -1390,11 +1517,7 @@ mod tests {
             .metrics_logs_clients
             .registered_metrics(&runtime_b, SERVICE, ENV)
             .is_empty());
-        assert!(server
-            .sessions
-            .lock_or_panic()
-            .get("session")
-            .is_none());
+        assert!(server.sessions.lock_or_panic().get("session").is_none());
         server.stop_session("session").await;
         assert!(server
             .metrics_logs_clients
@@ -1404,11 +1527,7 @@ mod tests {
             .metrics_logs_clients
             .registered_metrics(&runtime_b, SERVICE, ENV)
             .is_empty());
-        assert!(server
-            .sessions
-            .lock_or_panic()
-            .get("session")
-            .is_none());
+        assert!(server.sessions.lock_or_panic().get("session").is_none());
         assert!(server
             .metrics_logs_clients
             .get_existing_metrics_logs(&other_runtime, SERVICE, ENV)
@@ -1417,6 +1536,324 @@ mod tests {
             .metrics_logs_clients
             .registered_metrics(&other_runtime, SERVICE, ENV)
             .is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[cfg_attr(miri, ignore)]
+    async fn runtime_cleanup_is_terminal_relative_to_direct_action_receiver() {
+        const SERVICE: &str = "receiver-runtime-cleanup";
+        const ENV: &str = "test";
+
+        let hook = crate::service::telemetry::MetricRegistrationSnapshotHook::new();
+        let server = SidecarServer {
+            metrics_logs_clients: MetricsLogsClientSet::with_registration_snapshot_hook(
+                hook.clone(),
+            ),
+            ..Default::default()
+        };
+        let (sender, receiver) = crate::service::telemetry::direct_telemetry_channel();
+        server.install_direct_telemetry_sender(sender.clone());
+        let receiver_task = tokio::spawn(telemetry_action_receiver_task(server.clone(), receiver));
+
+        let instance = InstanceId::new("session", "runtime");
+        let session = server.get_session(&instance.session_id);
+        session.get_runtime(&instance.runtime_id);
+        *session.session_config.lock_or_panic() = Some(Config::default());
+
+        sender
+            .send_actions(InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![
+                    crate::service::telemetry::InternalTelemetryAction::TelemetryAction(
+                        TelemetryActions::AddLog((
+                            libdd_telemetry::worker::LogIdentifier { identifier: 1 },
+                            libdd_telemetry::data::Log {
+                                message: "in flight".to_string(),
+                                level: libdd_telemetry::data::LogLevel::Debug,
+                                count: 1,
+                                stack_trace: None,
+                                tags: String::new(),
+                                is_sensitive: false,
+                                is_crash: false,
+                            },
+                        )),
+                    ),
+                ],
+            })
+            .await
+            .expect("queue in-flight direct action");
+        hook.wait_until_snapshot();
+
+        let cleanup_server = server.clone();
+        let cleanup_instance = instance.clone();
+        let cleanup =
+            tokio::spawn(async move { cleanup_server.stop_runtime(&cleanup_instance).await });
+        hook.resume_creation();
+        cleanup.await.expect("runtime cleanup task");
+
+        sender
+            .send_actions(InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![
+                    crate::service::telemetry::InternalTelemetryAction::TelemetryAction(
+                        TelemetryActions::Lifecycle(LifecycleAction::FlushData),
+                    ),
+                ],
+            })
+            .await
+            .expect("queue late direct action");
+        sender.barrier().await.expect("receiver barrier");
+
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&instance, SERVICE, ENV)
+            .is_none());
+        assert!(session.lock_runtimes().get(&instance.runtime_id).is_none());
+        receiver_task.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[cfg_attr(miri, ignore)]
+    async fn session_cleanup_is_terminal_relative_to_direct_action_receiver() {
+        const SERVICE: &str = "receiver-session-cleanup";
+        const ENV: &str = "test";
+        const METRIC: &str = "receiver.session.metric";
+
+        let hook = crate::service::telemetry::MetricRegistrationSnapshotHook::new();
+        let server = SidecarServer {
+            metrics_logs_clients: MetricsLogsClientSet::with_registration_snapshot_hook(
+                hook.clone(),
+            ),
+            ..Default::default()
+        };
+        let (sender, receiver) = crate::service::telemetry::direct_telemetry_channel();
+        server.install_direct_telemetry_sender(sender.clone());
+        let receiver_task = tokio::spawn(telemetry_action_receiver_task(server.clone(), receiver));
+
+        let instance = InstanceId::new("session", "runtime");
+        let session = server.get_session(&instance.session_id);
+        session.get_runtime(&instance.runtime_id);
+        *session.session_config.lock_or_panic() = Some(Config::default());
+
+        sender
+            .send_actions(InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![
+                    crate::service::telemetry::InternalTelemetryAction::RegisterTelemetryMetric(
+                        MetricContext {
+                            name: METRIC.to_string(),
+                            tags: Vec::new(),
+                            metric_type: libdd_telemetry::data::metrics::MetricType::Count,
+                            common: true,
+                            namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+                        },
+                    ),
+                ],
+            })
+            .await
+            .expect("queue in-flight metric registration");
+        hook.wait_until_snapshot();
+
+        let cleanup_server = server.clone();
+        let cleanup = tokio::spawn(async move { cleanup_server.stop_session("session").await });
+        hook.resume_creation();
+        cleanup.await.expect("session cleanup task");
+
+        sender
+            .send_actions(InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![
+                    crate::service::telemetry::InternalTelemetryAction::RegisterTelemetryMetric(
+                        MetricContext {
+                            name: "late.metric".to_string(),
+                            tags: Vec::new(),
+                            metric_type: libdd_telemetry::data::metrics::MetricType::Count,
+                            common: true,
+                            namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+                        },
+                    ),
+                ],
+            })
+            .await
+            .expect("queue late session action");
+        sender.barrier().await.expect("receiver barrier");
+
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&instance, SERVICE, ENV)
+            .is_none());
+        assert!(server
+            .metrics_logs_clients
+            .registered_metrics(&instance, SERVICE, ENV)
+            .is_empty());
+        assert!(server
+            .sessions
+            .lock_or_panic()
+            .get(&instance.session_id)
+            .is_none());
+        receiver_task.abort();
+    }
+
+    #[tokio::test]
+    async fn closed_direct_receiver_falls_back_to_synchronous_cleanup() {
+        const SERVICE: &str = "closed-receiver-cleanup";
+        const ENV: &str = "test";
+
+        let server = SidecarServer::default();
+        let (sender, receiver) = crate::service::telemetry::direct_telemetry_channel();
+        drop(receiver);
+        server.install_direct_telemetry_sender(sender);
+
+        let instance = InstanceId::new("session", "runtime");
+        let session = server.get_session(&instance.session_id);
+        session.get_runtime(&instance.runtime_id);
+        server.metrics_logs_clients.get_or_create_metrics_logs(
+            SERVICE,
+            ENV,
+            &instance,
+            &RuntimeMetadata::new("php", "8.3", "test"),
+            Config::default,
+            Vec::new(),
+        );
+
+        server.stop_runtime(&instance).await;
+
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&instance, SERVICE, ENV)
+            .is_none());
+        assert!(session.find_runtime(&instance.runtime_id).is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[cfg_attr(miri, ignore)]
+    async fn non_fork_reconfiguration_recreates_direct_worker_with_new_endpoint() {
+        const SERVICE: &str = "reconfigured-direct-worker";
+        const ENV: &str = "test";
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        let old_server = MockServer::start_async().await;
+        let new_server = MockServer::start_async().await;
+        let old_log = old_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("before-reconfiguration");
+                then.status(202);
+            })
+            .await;
+        let stale_new_log = old_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("after-reconfiguration");
+                then.status(202);
+            })
+            .await;
+        let new_log = new_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("after-reconfiguration");
+                then.status(202);
+            })
+            .await;
+
+        let server = SidecarServer::default();
+        let (sender, receiver) = crate::service::telemetry::direct_telemetry_channel();
+        server.install_direct_telemetry_sender(sender.clone());
+        let receiver_task = tokio::spawn(telemetry_action_receiver_task(server.clone(), receiver));
+        let handler = test_handler(server.clone());
+        handler
+            .set_session_config(
+                "session".to_string(),
+                test_session_config(
+                    Endpoint {
+                        url: old_server.url("/").parse().unwrap(),
+                        ..Endpoint::default()
+                    },
+                    SERVICE,
+                ),
+                true,
+            )
+            .await;
+
+        let instance = InstanceId::new("session", "runtime");
+        server.get_runtime(&instance);
+        let direct_log = |message: &str| InternalTelemetryActions {
+            instance_id: instance.clone(),
+            service_name: SERVICE.to_string(),
+            env_name: ENV.to_string(),
+            actions: vec![
+                crate::service::telemetry::InternalTelemetryAction::TelemetryAction(
+                    TelemetryActions::AddLog((
+                        libdd_telemetry::worker::LogIdentifier { identifier: 7 },
+                        libdd_telemetry::data::Log {
+                            message: message.to_string(),
+                            level: libdd_telemetry::data::LogLevel::Debug,
+                            count: 1,
+                            stack_trace: None,
+                            tags: String::new(),
+                            is_sensitive: false,
+                            is_crash: false,
+                        },
+                    )),
+                ),
+                crate::service::telemetry::InternalTelemetryAction::TelemetryAction(
+                    TelemetryActions::Lifecycle(LifecycleAction::FlushData),
+                ),
+            ],
+        };
+        sender
+            .send_actions(direct_log("before-reconfiguration"))
+            .await
+            .unwrap();
+        timeout(TokioDuration::from_secs(5), async {
+            while old_log.calls_async().await != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("old worker should deliver to the original endpoint");
+
+        handler
+            .set_session_config(
+                "session".to_string(),
+                test_session_config(
+                    Endpoint {
+                        url: new_server.url("/").parse().unwrap(),
+                        ..Endpoint::default()
+                    },
+                    SERVICE,
+                ),
+                false,
+            )
+            .await;
+        server.get_runtime(&instance);
+        sender
+            .send_actions(direct_log("after-reconfiguration"))
+            .await
+            .unwrap();
+        timeout(TokioDuration::from_secs(5), async {
+            while new_log.calls_async().await != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("replacement worker should deliver to the new endpoint");
+
+        assert_eq!(old_log.calls_async().await, 1);
+        assert_eq!(stale_new_log.calls_async().await, 0);
+        assert_eq!(new_log.calls_async().await, 1);
+        receiver_task.abort();
     }
 
     fn ffe_context() -> FfeTelemetryContext {
@@ -1712,6 +2149,324 @@ mod tests {
         .await
         .expect("configured app-started request");
         assert_eq!(empty_start.calls_async().await, 0);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn composer_before_terminal_stop_is_delivered_before_app_closing() {
+        const SERVICE: &str = "composer-before-terminal-stop";
+        const ENV: &str = "test";
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        let http_server = MockServer::start_async().await;
+        let app_started = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"request_type\":\"app-started\"");
+                then.status(202);
+            })
+            .await;
+        let terminal_batch = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"request_type\":\"app-dependencies-loaded\"")
+                    .body_includes("\"name\":\"datadog/dd-trace\"")
+                    .body_includes("\"request_type\":\"app-closing\"");
+                then.status(202);
+            })
+            .await;
+
+        let handler = test_handler(SidecarServer::default());
+        let instance_id = InstanceId::new("session", "runtime");
+        let queue_id = QueueId::from(1);
+        let session = handler.server.get_session(&instance_id.session_id);
+        *session.session_config.lock_or_panic() = Some({
+            let mut config = Config::default();
+            config
+                .set_endpoint_uri(http_server.url("/").parse().unwrap())
+                .unwrap();
+            config
+        });
+        handler
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .entry(queue_id)
+            .or_default()
+            .set_metadata(
+                ENV.to_string(),
+                String::new(),
+                SERVICE.to_string(),
+                Vec::new(),
+            );
+
+        handler
+            .enqueue_actions(
+                instance_id.clone(),
+                queue_id,
+                vec![SidecarAction::PhpComposerTelemetryFile(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/installed.json"),
+                )],
+            )
+            .await;
+        handler
+            .enqueue_actions(
+                instance_id,
+                queue_id,
+                vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                    LifecycleAction::Stop,
+                ))],
+            )
+            .await;
+
+        let delivered = timeout(TokioDuration::from_secs(5), async {
+            loop {
+                if app_started.calls_async().await == 1 && terminal_batch.calls_async().await == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        if delivered.is_err() {
+            panic!(
+                "expected Start=1 and Composer+Stop batch=1; observed Start={}, batch={}",
+                app_started.calls_async().await,
+                terminal_batch.calls_async().await,
+            )
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[cfg_attr(miri, ignore)]
+    async fn stop_race_returns_untouched_actions_to_the_next_lifecycle() {
+        const SERVICE: &str = "stop-enqueue-race";
+        const ENV: &str = "test";
+
+        let clients = TelemetryCachedClientSet::default();
+        let runtime_metadata = RuntimeMetadata::new("php", "8.3", "test");
+        let instance = InstanceId::new("session", "runtime");
+        let active = clients
+            .get_or_create(
+                TelemetryWorkerMetadata::new(
+                    SERVICE,
+                    ENV,
+                    &instance,
+                    &runtime_metadata,
+                    Vec::new(),
+                ),
+                Config::default,
+                InitialTelemetryData::default(),
+            )
+            .expect("active application telemetry worker");
+        let selected = Arc::new(Barrier::new(2));
+        let resume = Arc::new(Barrier::new(2));
+
+        let racing_clients = clients.clone();
+        let racing_runtime = runtime_metadata.clone();
+        let racing_instance = instance.clone();
+        let selected_by_enqueue = selected.clone();
+        let resume_enqueue = resume.clone();
+        let enqueue = tokio::spawn(async move {
+            let dispatch = racing_clients.get_or_create_for_actions(
+                TelemetryWorkerMetadata::new(
+                    SERVICE,
+                    ENV,
+                    &racing_instance,
+                    &racing_runtime,
+                    Vec::new(),
+                ),
+                PendingApplicationAction::from_actions(
+                    &racing_instance,
+                    vec![SidecarAction::Telemetry(TelemetryActions::AddDependency(
+                        libdd_telemetry::data::Dependency {
+                            name: "survives-stop-race".to_string(),
+                            version: None,
+                        },
+                    ))],
+                    &HashMap::new(),
+                ),
+                Config::default,
+                |_, _| panic!("the active lifecycle should already exist"),
+            );
+            let ApplicationTelemetryDispatch::Ready {
+                client,
+                actions,
+                created,
+                ..
+            } = dispatch
+            else {
+                panic!("the racing batch should select the active lifecycle");
+            };
+            selected_by_enqueue.wait().await;
+            resume_enqueue.wait().await;
+            schedule_application_actions(
+                &client,
+                actions,
+                created,
+                &racing_instance,
+                QueueId::from(1),
+            )
+            .expect_err("a stopped lifecycle must return the untouched owned actions")
+        });
+
+        selected.wait().await;
+        let stop_result = schedule_application_actions(
+            &active,
+            PendingApplicationAction::from_actions(
+                &instance,
+                vec![SidecarAction::Telemetry(TelemetryActions::Lifecycle(
+                    LifecycleAction::Stop,
+                ))],
+                &HashMap::new(),
+            ),
+            false,
+            &instance,
+            QueueId::from(1),
+        )
+        .expect("Stop should schedule on the selected active lifecycle");
+        assert!(stop_result.remove_client);
+        clients.remove_telemetry_client(SERVICE, ENV, &active);
+        resume.wait().await;
+
+        let returned_actions = enqueue.await.expect("racing enqueue task");
+        assert_eq!(returned_actions.len(), 1);
+        let promoted = Arc::new(Mutex::new(Vec::new()));
+        let promoted_by_initializer = promoted.clone();
+        let mut next_actions = returned_actions;
+        next_actions.extend(PendingApplicationAction::from_actions(
+            &instance,
+            vec![SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                libdd_telemetry::data::Configuration {
+                    name: "next-lifecycle".to_string(),
+                    value: "configured".to_string(),
+                    origin: libdd_telemetry::data::ConfigurationOrigin::Default,
+                    config_id: None,
+                    seq_id: None,
+                },
+            ))],
+            &HashMap::new(),
+        ));
+        let dispatch = clients.get_or_create_for_actions(
+            TelemetryWorkerMetadata::new(SERVICE, ENV, &instance, &runtime_metadata, Vec::new()),
+            next_actions,
+            Config::default,
+            move |_, actions| {
+                promoted_by_initializer
+                    .lock_or_panic()
+                    .extend(actions.into_iter().map(|pending| pending.action));
+                false
+            },
+        );
+        assert!(matches!(
+            dispatch,
+            ApplicationTelemetryDispatch::Ready { created: true, .. }
+        ));
+        assert!(promoted.lock_or_panic().iter().any(|action| matches!(
+            action,
+            SidecarAction::Telemetry(TelemetryActions::AddDependency(dependency))
+                if dependency.name == "survives-stop-race"
+        )));
+    }
+
+    #[tokio::test]
+    async fn terminal_initialization_returns_suffix_to_the_next_lifecycle() {
+        const SERVICE: &str = "initial-stop-suffix";
+        const ENV: &str = "test";
+
+        let clients = TelemetryCachedClientSet::default();
+        let runtime_metadata = RuntimeMetadata::new("php", "8.3", "test");
+        let instance = InstanceId::new("session", "runtime");
+        let next_configuration = libdd_telemetry::data::Configuration {
+            name: "next-lifecycle".to_string(),
+            value: "configured".to_string(),
+            origin: libdd_telemetry::data::ConfigurationOrigin::Default,
+            config_id: None,
+            seq_id: None,
+        };
+        let actions = PendingApplicationAction::from_actions(
+            &instance,
+            vec![
+                SidecarAction::Telemetry(TelemetryActions::Lifecycle(LifecycleAction::Stop)),
+                SidecarAction::Telemetry(TelemetryActions::AddConfig(next_configuration)),
+            ],
+            &HashMap::new(),
+        );
+
+        let dispatch = clients.get_or_create_for_actions(
+            TelemetryWorkerMetadata::new(SERVICE, ENV, &instance, &runtime_metadata, Vec::new()),
+            actions,
+            Config::default,
+            |client, actions| {
+                schedule_application_actions(client, actions, true, &instance, QueueId::from(1))
+                    .expect("the initial lifecycle should accept its terminal prefix")
+                    .remove_client
+            },
+        );
+
+        let ApplicationTelemetryDispatch::Ready {
+            actions,
+            remove_client,
+            ..
+        } = dispatch
+        else {
+            panic!("Stop should promote the initial lifecycle");
+        };
+        assert!(remove_client);
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            &actions[0].action,
+            SidecarAction::Telemetry(TelemetryActions::AddConfig(configuration))
+                if configuration.name == "next-lifecycle"
+        ));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn non_state_application_action_retries_due_shared_memory_creation() {
+        const SERVICE: &str = "retry-on-dependency";
+        const ENV: &str = "test";
+
+        let retry_started = Instant::now() - Duration::from_secs(60);
+        let client = TelemetryCachedClient::new_with_shm_factory(
+            TelemetryWorkerMetadata::new(
+                SERVICE,
+                ENV,
+                &InstanceId::new("session", "runtime"),
+                &RuntimeMetadata::new("php", "8.3", "test"),
+                Vec::new(),
+            ),
+            Config::default,
+            InitialTelemetryData::default(),
+            retry_started,
+            |_| Err(std::io::Error::other("injected initial failure")),
+        )
+        .expect("worker should start even when initial SHM creation fails");
+        let client = Arc::new(Mutex::new(Some(client)));
+
+        let _ = schedule_application_actions(
+            &client,
+            PendingApplicationAction::from_actions(
+                &InstanceId::new("session", "runtime"),
+                vec![SidecarAction::Telemetry(TelemetryActions::AddDependency(
+                    libdd_telemetry::data::Dependency {
+                        name: "retry-trigger".to_string(),
+                        version: None,
+                    },
+                ))],
+                &HashMap::new(),
+            ),
+            false,
+            &InstanceId::new("session", "runtime"),
+            QueueId::from(1),
+        );
+
+        assert!(matches!(
+            client.lock_or_panic().as_ref(),
+            Some(application_client) if application_client.has_ready_shm()
+        ));
     }
 
     #[tokio::test]
@@ -2104,14 +2859,9 @@ mod tests {
                 Vec::new(),
             );
 
-        let concentrator = get_or_create_concentrator(
-            &handler.server.span_concentrators,
-            ENV,
-            "",
-            "runtime",
-            &session,
-        )
-        .expect("stats concentrator");
+        let concentrator =
+            get_or_create_concentrator(&handler.server.span_concentrators, ENV, "", &session)
+                .expect("stats concentrator");
 
         let worker = concentrator
             .telemetry
@@ -2191,14 +2941,9 @@ mod tests {
             tracer_version: "test".to_string(),
         });
 
-        let state = get_or_create_concentrator(
-            &handler.server.span_concentrators,
-            ENV,
-            "",
-            "runtime",
-            &session,
-        )
-        .expect("stats concentrator");
+        let state =
+            get_or_create_concentrator(&handler.server.span_concentrators, ENV, "", &session)
+                .expect("stats concentrator");
         let worker = state.telemetry.as_ref().expect("stats telemetry worker");
         let context = worker.register_metric_context(
             METRIC.to_string(),
@@ -2220,6 +2965,146 @@ mod tests {
             metric_request.calls_async().await,
             1,
             "flush returned before the dedicated stats telemetry worker sent its metric"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn explicit_stats_flush_reuses_exporter_metric_context() {
+        const SERVICE: &str = "stats-exporter-reuse";
+        const ENV: &str = "stats-exporter-reuse-env";
+
+        let server = SidecarServer::default();
+        let session = server.get_session("stats-exporter-reuse-session");
+        *session.session_config.lock_or_panic() = Some(Config::default());
+        *session.stats_config.lock_or_panic() = Some(StatsConfig {
+            endpoint: Endpoint::default(),
+            flush_interval: Duration::from_secs(3600),
+            hostname: String::new(),
+            process_tags: String::new(),
+            root_service: SERVICE.to_string(),
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+        });
+        let state = get_or_create_concentrator(&server.span_concentrators, ENV, "", &session)
+            .expect("stats concentrator");
+        tokio::task::yield_now().await;
+
+        let worker = state.telemetry.as_ref().expect("stats telemetry worker");
+        let before = worker
+            .stats()
+            .expect("stats collection request")
+            .await
+            .expect("stats collection response")
+            .metric_contexts;
+
+        flush_all_stats_now(std::slice::from_ref(&state)).await;
+        flush_all_stats_now(std::slice::from_ref(&state)).await;
+
+        let after = worker
+            .stats()
+            .expect("stats collection request")
+            .await
+            .expect("stats collection response")
+            .metric_contexts;
+        assert_eq!(
+            after, before,
+            "manual flushes must reuse the state-owned exporter telemetry context"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn stats_worker_uses_auxiliary_identity_without_registering_runtime() {
+        const SERVICE: &str = "stats-auxiliary";
+        const ENV: &str = "stats-auxiliary-env";
+        const METRIC: &str = "stats_auxiliary.metric";
+        const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
+
+        let http_server = MockServer::start_async().await;
+        let server = SidecarServer::default();
+        let session = server.get_session("stats-auxiliary-session");
+        session.get_runtime(&"application-runtime".to_string());
+        *session.process_tags.lock_or_panic() =
+            vec![Tag::new("custom", "value").expect("valid test tag")];
+        *session.auto_resolved_service_name.lock_or_panic() = Some(SERVICE.to_string());
+        let expected_process_tags = session
+            .process_tags_with_svc_source()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut telemetry_config = Config::default();
+        telemetry_config
+            .set_endpoint_uri(http_server.url("/").parse().unwrap())
+            .unwrap();
+        *session.session_config.lock_or_panic() = Some(telemetry_config);
+        *session.stats_config.lock_or_panic() = Some(StatsConfig {
+            endpoint: Endpoint::default(),
+            flush_interval: Duration::from_secs(3600),
+            hostname: String::new(),
+            process_tags: expected_process_tags.clone(),
+            root_service: SERVICE.to_string(),
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+        });
+        let runtime_count_before = session.lock_runtimes().len();
+        let sidecar_runtime_count_before = server.compute_stats().await.runtimes;
+
+        let state = get_or_create_concentrator(&server.span_concentrators, ENV, "", &session)
+            .expect("stats concentrator");
+
+        assert_eq!(session.lock_runtimes().len(), runtime_count_before);
+        assert_eq!(
+            server.compute_stats().await.runtimes,
+            sidecar_runtime_count_before,
+            "the auxiliary stats worker must not appear in SidecarStats.runtimes"
+        );
+        assert!(state.meta.runtime_id.starts_with("stats-"));
+        assert_ne!(state.meta.runtime_id, "application-runtime");
+        assert_ne!(state.meta.runtime_id, "caller-runtime");
+        assert_eq!(state.meta.process_tags, expected_process_tags);
+
+        let metric_request = http_server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes(format!("\"metric\":\"{METRIC}\""))
+                    .body_includes(format!("\"runtime_id\":\"{}\"", state.meta.runtime_id))
+                    .body_includes(format!("\"process_tags\":\"{expected_process_tags}\""));
+                then.status(202);
+            })
+            .await;
+        let worker = state.telemetry.as_ref().expect("stats telemetry worker");
+        let context = worker.register_metric_context(
+            METRIC.to_string(),
+            Vec::new(),
+            libdd_telemetry::data::metrics::MetricType::Count,
+            true,
+            libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+        );
+        worker.add_point(1.0, &context, Vec::new()).unwrap();
+        worker
+            .send_msg(TelemetryActions::Lifecycle(
+                LifecycleAction::FlushMetricAggr,
+            ))
+            .await
+            .unwrap();
+        worker
+            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+            .await
+            .unwrap();
+        let (tx, rx) = futures::channel::oneshot::channel();
+        worker
+            .send_msg(TelemetryActions::CollectStats(tx))
+            .await
+            .unwrap();
+        rx.await.unwrap();
+
+        assert_eq!(
+            metric_request.calls_async().await,
+            1,
+            "the auxiliary worker should use the synthetic runtime id and full process tags"
         );
     }
 
@@ -2287,9 +3172,8 @@ mod tests {
             language: "php".to_string(),
             tracer_version: "test".to_string(),
         });
-        let state =
-            get_or_create_concentrator(&server.span_concentrators, ENV, "", "runtime", &session)
-                .expect("stats concentrator");
+        let state = get_or_create_concentrator(&server.span_concentrators, ENV, "", &session)
+            .expect("stats concentrator");
         state.concentrator.add_span(&ShmSpanInput {
             fixed: FixedAggregationKey {
                 service_name: SERVICE,
@@ -2341,15 +3225,20 @@ mod tests {
             .set_endpoint_uri(http_server.url("/").parse().unwrap())
             .unwrap();
 
-        let app_client = server.telemetry_clients.get_or_create(
-            SERVICE,
-            ENV,
-            &instance_id,
-            &runtime_metadata,
-            || telemetry_config.clone(),
-            InitialTelemetryData::default(),
-            Vec::new(),
-        );
+        let app_client = server
+            .telemetry_clients
+            .get_or_create(
+                TelemetryWorkerMetadata::new(
+                    SERVICE,
+                    ENV,
+                    &instance_id,
+                    &runtime_metadata,
+                    Vec::new(),
+                ),
+                || telemetry_config.clone(),
+                InitialTelemetryData::default(),
+            )
+            .expect("application telemetry worker");
         app_client
             .lock_or_panic()
             .as_mut()
@@ -2393,14 +3282,8 @@ mod tests {
             language: "php".to_string(),
             tracer_version: "test".to_string(),
         });
-        let stats_state = get_or_create_concentrator(
-            &server.span_concentrators,
-            ENV,
-            "",
-            &instance_id.runtime_id,
-            &session,
-        )
-        .expect("stats concentrator");
+        let stats_state = get_or_create_concentrator(&server.span_concentrators, ENV, "", &session)
+            .expect("stats concentrator");
         stats_state
             .telemetry
             .as_ref()
@@ -2416,7 +3299,10 @@ mod tests {
         let stats = server.compute_stats().await;
         assert_eq!(stats.active_telemetry_clients, 1);
         assert_eq!(stats.telemetry_metrics_contexts, 2);
-        assert_eq!(stats.telemetry_worker.metric_contexts, 3);
+        assert_eq!(
+            stats.telemetry_worker.metric_contexts, 4,
+            "application, direct, stats-test, and state-owned exporter contexts are counted"
+        );
         assert_eq!(stats.telemetry_worker_errors, 0);
     }
 

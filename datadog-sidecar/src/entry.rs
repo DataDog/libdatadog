@@ -113,7 +113,7 @@ where
     // Initialize telemetry sender synchronously before spawning the receiver task
     // This ensures the sender is available immediately, avoiding race conditions
     // where FFI calls might try to send telemetry before the receiver task starts
-    if let Some(rx) = init_telemetry_sender() {
+    if let Some(rx) = init_telemetry_sender(&server) {
         tokio::spawn(telemetry_action_receiver_task(server.clone(), rx));
     }
 
