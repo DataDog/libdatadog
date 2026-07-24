@@ -20,6 +20,11 @@ use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
 use crate::agentless::exporter::send_agentless_traces;
 use crate::agentless::AgentlessTraceConfig;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{
+    exporter::{OTLP_MAX_RETRIES, OTLP_RETRY_DELAY_MS},
+    send_otlp_traces_grpc, OtlpGrpcTransport,
+};
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -145,6 +150,14 @@ fn add_path(url: &Uri, path: &str) -> Uri {
 
 pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 
+/// The transport used for OTLP trace export.
+#[derive(Debug)]
+pub(crate) enum OtlpExportMode {
+    Http(OtlpTraceConfig),
+    #[cfg(not(target_arch = "wasm32"))]
+    Grpc(OtlpGrpcTransport),
+}
+
 /// Handles for the background workers owned by a [`TraceExporter`].
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
@@ -225,8 +238,10 @@ pub struct TraceExporter<
     capabilities: C,
     workers: TraceExporterWorkers,
     agent_payload_response_version: Option<AgentResponsePayloadVersion>,
-    /// When set, traces are exported via OTLP HTTP/JSON instead of the Datadog agent.
-    otlp_config: Option<OtlpTraceConfig>,
+    /// When set, traces are exported via OTLP instead of the Datadog agent.
+    otlp: Option<OtlpExportMode>,
+    /// OTLP Resource attributes derived from tracer metadata.
+    otlp_resource_info: OtlpResourceInfo,
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
     agentless_config: Option<AgentlessTraceConfig>,
@@ -637,31 +652,25 @@ impl<
         traces: Vec<Vec<Span<T>>>,
         config: &OtlpTraceConfig,
     ) -> Result<AgentResponse, TraceExporterError> {
-        let resource_info = {
-            let mut r = OtlpResourceInfo::default();
-            r.service = self.metadata.service.clone();
-            r.env = self.metadata.env.clone();
-            r.app_version = self.metadata.app_version.clone();
-            r.language = self.metadata.language.clone();
-            r.tracer_version = self.metadata.tracer_version.clone();
-            r.runtime_id = self.metadata.runtime_id.clone();
-            r.client_computed_stats =
-                self.metadata.client_computed_stats || self.otlp_stats_enabled;
-            r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
-            r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
-            r
-        };
-        // Single prost OTLP IR; the configured protocol encodes the same request to its wire
-        // format (JSON or protobuf). OTel-semantics gating (omit DD-specific attrs) happens in
-        // the mapper.
-        let request =
-            map_traces_to_otlp(traces, &resource_info, config.otel_trace_semantics_enabled);
-        let body = config.protocol.encode(&request).map_err(|e| {
-            error!("OTLP serialization error: {e}");
-            TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
-                "failed to encode OTLP request: {e}"
-            )))
-        })?;
+        let request = map_traces_to_otlp(
+            traces,
+            &self.otlp_resource_info,
+            config.otel_trace_semantics_enabled,
+        );
+        let body = config
+            .protocol
+            .encode(&request)
+            .ok_or_else(|| {
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+                    "OTLP gRPC protocol cannot be encoded on the HTTP export path".to_string(),
+                ))
+            })?
+            .map_err(|e| {
+                error!("OTLP serialization error: {e}");
+                TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(format!(
+                    "failed to encode OTLP request: {e}"
+                )))
+            })?;
         // Also set the header: resource attributes survive Collector hops, headers don't.
         let effective_config;
         let config_to_use = if self.metadata.client_computed_stats || self.otlp_stats_enabled {
@@ -685,6 +694,45 @@ impl<
         )
         .await?;
         Ok(AgentResponse::Unchanged)
+    }
+
+    /// Sends trace chunks via OTLP gRPC.
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn send_otlp_grpc_inner<T: TraceData>(
+        &self,
+        traces: Vec<Vec<Span<T>>>,
+        transport: &OtlpGrpcTransport,
+    ) -> Result<AgentResponse, TraceExporterError> {
+        let request = map_traces_to_otlp(
+            traces,
+            &self.otlp_resource_info,
+            transport.config.otel_trace_semantics_enabled,
+        );
+        let test_token = self.endpoint.test_token.as_deref();
+        let mut attempt: u32 = 1;
+        loop {
+            match send_otlp_traces_grpc(
+                transport,
+                test_token,
+                self.metadata.client_computed_stats || self.otlp_stats_enabled,
+                request.clone(),
+            )
+            .await
+            {
+                Ok(()) => return Ok(AgentResponse::Unchanged),
+                Err(TraceExporterError::Io(e)) => {
+                    if attempt > OTLP_MAX_RETRIES {
+                        return Err(TraceExporterError::Io(e));
+                    }
+                    let delay_ms = OTLP_RETRY_DELAY_MS * 2u64.pow(attempt - 1);
+                    self.capabilities
+                        .sleep(Duration::from_millis(delay_ms))
+                        .await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Send traces payload to agent with retry and telemetry reporting
@@ -788,12 +836,18 @@ impl<
         // OTLP path: send sampled traces via OTLP when an OTLP endpoint is configured.
         // Unlike the agent path, there is no downstream agent to drop unsampled traces,
         // so drop_chunks is always called here regardless of whether stats are enabled.
-        if let Some(ref config) = self.otlp_config {
+        if let Some(otlp) = &self.otlp {
             libdd_trace_utils::span::trace_utils::drop_chunks(&mut traces);
             if traces.is_empty() {
                 return Ok(AgentResponse::Unchanged);
             }
-            return self.send_otlp_traces_inner(traces, config).await;
+            return match otlp {
+                OtlpExportMode::Http(config) => self.send_otlp_traces_inner(traces, config).await,
+                #[cfg(not(target_arch = "wasm32"))]
+                OtlpExportMode::Grpc(transport) => {
+                    self.send_otlp_grpc_inner(traces, transport).await
+                }
+            };
         }
 
         // Snapshot the effective format once so the serializer and the URL agree even if
