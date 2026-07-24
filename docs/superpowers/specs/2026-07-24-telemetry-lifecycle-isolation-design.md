@@ -61,6 +61,12 @@ are appended without starting a worker. When a batch containing at least one
 `AddConfig` action arrives, the cache atomically takes all pending actions and
 creates the worker.
 
+Non-promoting pending storage admits at most 1,024 actions. If accepting an
+incoming batch containing neither `AddConfig` nor `Stop` would exceed that
+limit, the whole batch is rejected and the existing startup data remains
+intact. Batches containing `AddConfig` or `Stop` are always admitted because
+they immediately promote the lifecycle.
+
 Before `Start` is queued, the worker builder receives every direct
 configuration, dependency, and integration from the pending and current
 batches. Those seeded actions are still reflected in the sidecar's deduplication
@@ -74,6 +80,12 @@ startup data, queues `Start`, then queues `Stop`. This preserves the telemetry
 protocol's lifecycle ordering without waiting for data that will never arrive.
 The normal cache expiry task removes abandoned pending entries that receive
 neither configuration nor `Stop`.
+
+The first `Stop` in a collected batch is the lifecycle boundary. Actions through
+that `Stop` remain with the current lifecycle; any suffix is retained in source
+order and dispatched through the cache again as the next lifecycle. If a
+selected worker becomes stopping before scheduling, the untouched batch follows
+the same redispatch path.
 
 Once a worker is active, later configuration actions retain their current
 configuration-change behavior. A stopped worker cannot be reused; the next
@@ -96,10 +108,13 @@ Metric definitions use a different scope:
 (session ID, service, environment)
 ```
 
-Each scope owns a bounded map from metric name to `MetricContext`. A registration
-from any runtime updates that scope. When a runtime worker is created, it copies
-the definitions from its session scope before processing the triggering batch.
-An already active runtime worker also receives the new definition.
+Each scope owns a bounded map from metric name to its latest `MetricContext`. A
+newly inserted definition is copied to active workers, and every new runtime
+worker copies the current scoped definitions before processing its triggering
+batch. If an existing name changes definition, the scoped entry is replaced and
+matching runtime workers are retired synchronously. The next worker-bound action
+creates a replacement from the latest snapshot; an unchanged registration
+leaves existing workers intact.
 
 This matches both helper implementations:
 
@@ -112,21 +127,25 @@ When the scope is full, a new definition is rejected with a warning. Existing
 definitions are not evicted, because eviction could make a later replacement
 worker silently lose a metric that an active helper still considers registered.
 
-Metric points no longer update registration recency. The point path looks up the
-context in its runtime worker and queues the point. It does not clone an
-`InstanceId`, service, environment, or metric name for a second global lookup.
+Metric points no longer update registration recency. After any required worker
+creation, subsequent points look up the context in the batch-local runtime
+worker and queue the point. They do not clone an `InstanceId`, service,
+environment, or metric name for a second global lookup.
 
 ## Cleanup
 
-`MetricsLogsClientSet` will expose two cleanup operations:
+The direct telemetry channel carries both action and retirement messages.
+Runtime retirement identifies one or more `InstanceId` values; session
+retirement identifies a session ID. When the receiver processes retirement, it
+discards matching deferred batches, removes matching workers, removes
+metric-definition scopes for session retirement, and acknowledges completion.
 
-- `remove_runtime(&InstanceId)` removes all workers owned by that runtime.
-- `remove_session(&str)` removes all workers and metric-definition scopes owned
-  by that session.
-
-The sidecar calls `remove_runtime` before or alongside `SessionInfo` runtime
-shutdown. Connection cleanup uses the same path. Session shutdown calls
-`remove_session` even when the runtime map is already empty.
+Runtime and session shutdown remove their lifecycle state before submitting
+retirement and wait for its acknowledgement before completing shutdown. This
+prevents later receiver work from recreating removed state; direct delivery uses
+non-creating session and runtime lookups. Non-fork reconfiguration uses the same
+runtime-retirement path. If the receiver is absent or closed, the same cleanup
+runs synchronously.
 
 Dropping the final worker handle performs the worker's existing final flush and
 shutdown behavior. The 30-minute cache expiry remains a fallback for clients
@@ -183,8 +202,9 @@ The lock order is:
 
 ## Error handling
 
-- Failure to seed or queue `Start` removes the new active entry and leaves a
-  warning. A later configuration batch may create another lifecycle.
+- Failure to construct a worker or queue `Start` restores the complete
+  source-ordered action vector to `Pending` and leaves a warning. A later
+  promoting batch retries the lifecycle.
 - A metric point without a definition remains a warning and is dropped.
 - A full definition scope rejects only the new definition.
 - Runtime and session cleanup are idempotent.
