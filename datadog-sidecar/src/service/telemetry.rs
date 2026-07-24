@@ -610,18 +610,15 @@ impl TelemetryCachedClient {
     }
 
     pub fn register_metric(&mut self, metric: MetricContext) {
-        if !self.telemetry_metrics.contains_key(&metric.name) {
-            self.telemetry_metrics.insert(
-                metric.name.clone(),
-                self.worker.register_metric_context(
-                    metric.name,
-                    metric.tags,
-                    metric.metric_type,
-                    metric.common,
-                    metric.namespace,
-                ),
-            );
-        }
+        let name = metric.name.clone();
+        let context_key = self.worker.register_metric_context(
+            metric.name,
+            metric.tags,
+            metric.metric_type,
+            metric.common,
+            metric.namespace,
+        );
+        self.telemetry_metrics.insert(name, context_key);
     }
 
     pub fn to_telemetry_point(
@@ -1103,6 +1100,30 @@ pub(crate) struct MetricsLogsClientSet {
     clients: TelemetryCachedClientSet,
     registrations: Arc<Mutex<TelemetryMetricRegistrations>>,
     registration_limit: usize,
+    #[cfg(test)]
+    registration_snapshot_hook: Option<MetricRegistrationSnapshotHook>,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct MetricRegistrationSnapshotHook {
+    snapshot_taken: Arc<std::sync::Barrier>,
+    resume_creation: Arc<std::sync::Barrier>,
+}
+
+#[cfg(test)]
+impl MetricRegistrationSnapshotHook {
+    fn new() -> Self {
+        Self {
+            snapshot_taken: Arc::new(std::sync::Barrier::new(2)),
+            resume_creation: Arc::new(std::sync::Barrier::new(2)),
+        }
+    }
+
+    fn wait(&self) {
+        self.snapshot_taken.wait();
+        self.resume_creation.wait();
+    }
 }
 
 impl Default for MetricsLogsClientSet {
@@ -1111,6 +1132,8 @@ impl Default for MetricsLogsClientSet {
             clients: TelemetryCachedClientSet::default(),
             registrations: Arc::new(Default::default()),
             registration_limit: libdd_telemetry::worker::MAX_ITEMS,
+            #[cfg(test)]
+            registration_snapshot_hook: None,
         }
     }
 }
@@ -1121,6 +1144,8 @@ impl Clone for MetricsLogsClientSet {
             clients: self.clients.clone(),
             registrations: self.registrations.clone(),
             registration_limit: self.registration_limit,
+            #[cfg(test)]
+            registration_snapshot_hook: self.registration_snapshot_hook.clone(),
         }
     }
 }
@@ -1138,6 +1163,14 @@ impl MetricsLogsClientSet {
     fn with_registration_limit(registration_limit: usize) -> Self {
         Self {
             registration_limit,
+            ..Default::default()
+        }
+    }
+
+    #[cfg(test)]
+    fn with_registration_snapshot_hook(hook: MetricRegistrationSnapshotHook) -> Self {
+        Self {
+            registration_snapshot_hook: Some(hook),
             ..Default::default()
         }
     }
@@ -1167,12 +1200,16 @@ impl MetricsLogsClientSet {
     where
         F: FnOnce() -> Config,
     {
-        let registrations = self.registered_metrics(instance_id, service, env);
         self.clients.get_or_create_with(
             TelemetryCachedClientOwner::Runtime(instance_id.clone()),
             service,
             env,
             || {
+                let registrations = self.registered_metrics(instance_id, service, env);
+                #[cfg(test)]
+                if let Some(hook) = &self.registration_snapshot_hook {
+                    hook.wait();
+                }
                 let mut client = TelemetryCachedClient::new_metrics_logs(
                     service,
                     env,
@@ -1895,7 +1932,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn metric_registration_is_shared_by_runtimes_in_one_session() {
+    async fn metric_registration_is_broadcast_to_existing_matching_runtimes() {
         const SERVICE: &str = "shared-appsec-service";
         const ENV: &str = "prod";
         const METRIC: &str = "waf.requests";
@@ -1905,6 +1942,9 @@ mod tests {
         let runtime_meta = RuntimeMetadata::new("php", "8.3", "test");
         let runtime_a = InstanceId::new("session", "runtime-a");
         let runtime_b = InstanceId::new("session", "runtime-b");
+        let other_session = InstanceId::new("other-session", "runtime-c");
+        let other_service = InstanceId::new("session", "runtime-d");
+        let other_env = InstanceId::new("session", "runtime-e");
 
         let client_a = clients.get_or_create_metrics_logs(
             SERVICE,
@@ -1914,6 +1954,39 @@ mod tests {
             || test_config(&server),
             Vec::new(),
         );
+        let client_b = clients.get_or_create_metrics_logs(
+            SERVICE,
+            ENV,
+            &runtime_b,
+            &runtime_meta,
+            || test_config(&server),
+            Vec::new(),
+        );
+        let client_other_session = clients.get_or_create_metrics_logs(
+            SERVICE,
+            ENV,
+            &other_session,
+            &runtime_meta,
+            || test_config(&server),
+            Vec::new(),
+        );
+        let client_other_service = clients.get_or_create_metrics_logs(
+            "other-service",
+            ENV,
+            &other_service,
+            &runtime_meta,
+            || test_config(&server),
+            Vec::new(),
+        );
+        let client_other_env = clients.get_or_create_metrics_logs(
+            SERVICE,
+            "other-env",
+            &other_env,
+            &runtime_meta,
+            || test_config(&server),
+            Vec::new(),
+        );
+
         assert!(clients.register_metric(
             &runtime_a,
             SERVICE,
@@ -1927,23 +2000,77 @@ mod tests {
             },
         ));
 
-        let client_b = clients.get_or_create_metrics_logs(
-            SERVICE,
-            ENV,
-            &runtime_b,
-            &runtime_meta,
-            || test_config(&server),
-            Vec::new(),
-        );
-
         for client in [&client_a, &client_b] {
             assert!(client
                 .lock_or_panic()
                 .as_ref()
                 .expect("runtime worker")
-                .telemetry_metrics
-                .contains_key(METRIC));
+                .to_telemetry_point((METRIC.to_string(), 1.0, Vec::new()))
+                .is_some());
         }
+        for client in [
+            &client_other_session,
+            &client_other_service,
+            &client_other_env,
+        ] {
+            assert!(client
+                .lock_or_panic()
+                .as_ref()
+                .expect("nonmatching runtime worker")
+                .to_telemetry_point((METRIC.to_string(), 1.0, Vec::new()))
+                .is_none());
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[cfg_attr(miri, ignore)]
+    async fn metric_registration_during_worker_creation_is_replayed() {
+        const SERVICE: &str = "creation-race-service";
+        const ENV: &str = "test";
+        const METRIC: &str = "creation.race.metric";
+
+        let hook = MetricRegistrationSnapshotHook::new();
+        let clients = MetricsLogsClientSet::with_registration_snapshot_hook(hook.clone());
+        let instance_id = InstanceId::new("session", "runtime");
+        let creating_clients = clients.clone();
+        let creating_instance = instance_id.clone();
+        let creation = tokio::task::spawn_blocking(move || {
+            creating_clients.get_or_create_metrics_logs(
+                SERVICE,
+                ENV,
+                &creating_instance,
+                &RuntimeMetadata::new("php", "8.3", "test"),
+                Config::default,
+                Vec::new(),
+            )
+        });
+
+        hook.snapshot_taken.wait();
+        let registering_clients = clients.clone();
+        let registering_instance = instance_id.clone();
+        let registration = tokio::task::spawn_blocking(move || {
+            registering_clients.register_metric(&registering_instance, SERVICE, ENV, metric(METRIC))
+        });
+        timeout(Duration::from_secs(1), async {
+            while !clients
+                .registered_metric_names(&instance_id, SERVICE, ENV)
+                .contains(METRIC)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("registration should be stored before worker creation resumes");
+
+        hook.resume_creation.wait();
+        let client = creation.await.expect("worker creation task");
+        assert!(registration.await.expect("registration task"));
+        assert!(client
+            .lock_or_panic()
+            .as_ref()
+            .expect("new runtime worker")
+            .to_telemetry_point((METRIC.to_string(), 1.0, Vec::new()))
+            .is_some());
     }
 
     #[tokio::test]
@@ -1995,12 +2122,34 @@ mod tests {
     async fn full_metric_scope_preserves_existing_definitions() {
         let clients = MetricsLogsClientSet::with_registration_limit(2);
         let instance = InstanceId::new("session", "runtime");
+        let server = MockServer::start_async().await;
+        let client = clients.get_or_create_metrics_logs(
+            "service",
+            "env",
+            &instance,
+            &RuntimeMetadata::new("php", "8.3", "test"),
+            || test_config(&server),
+            Vec::new(),
+        );
 
         assert!(clients.register_metric(&instance, "service", "env", metric("one")));
         assert!(clients.register_metric(&instance, "service", "env", metric("two")));
+        let mut updated_metric = metric("one");
+        updated_metric.metric_type = libdd_telemetry::data::metrics::MetricType::Gauge;
+        assert!(clients.register_metric(&instance, "service", "env", updated_metric));
         assert!(!clients.register_metric(&instance, "service", "env", metric("three")));
         let names = clients.registered_metric_names(&instance, "service", "env");
         assert_eq!(names, HashSet::from(["one".to_string(), "two".to_string()]));
+        let point = client
+            .lock_or_panic()
+            .as_ref()
+            .expect("runtime worker")
+            .to_telemetry_point(("one".to_string(), 1.0, Vec::new()))
+            .expect("updated metric should produce a point");
+        assert!(
+            format!("{point:?}").contains("Gauge"),
+            "point should use the updated gauge context: {point:?}"
+        );
     }
 
     #[tokio::test]
