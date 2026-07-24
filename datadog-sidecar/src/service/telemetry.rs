@@ -761,6 +761,14 @@ impl TelemetryMetricRegistrationScope {
 type TelemetryMetricRegistrations =
     HashMap<TelemetryMetricRegistrationScope, HashMap<String, MetricContext>>;
 
+fn metric_contexts_match(left: &MetricContext, right: &MetricContext) -> bool {
+    left.name == right.name
+        && left.tags == right.tags
+        && left.metric_type == right.metric_type
+        && left.common == right.common
+        && std::mem::discriminant(&left.namespace) == std::mem::discriminant(&right.namespace)
+}
+
 pub struct TelemetryCachedClientSet {
     inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     pending: Arc<Mutex<HashMap<(ServiceString, EnvString), PendingTelemetryActions>>>,
@@ -1280,8 +1288,12 @@ impl MetricsLogsClientSet {
         let scope = TelemetryMetricRegistrationScope::new(instance_id, service, env);
         let mut registrations = self.registrations.lock_or_panic();
         let metrics = registrations.entry(scope).or_default();
-        if !metrics.contains_key(&metric.name) && metrics.len() >= self.registration_limit {
-            return false;
+        match metrics.get(&metric.name) {
+            Some(registered_metric) if metric_contexts_match(registered_metric, &metric) => {
+                return true;
+            }
+            None if metrics.len() >= self.registration_limit => return false,
+            _ => {}
         }
         metrics.insert(metric.name.clone(), metric.clone());
         drop(registrations);
@@ -1438,6 +1450,33 @@ mod tests {
             common: true,
             namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
         }
+    }
+
+    async fn metric_context_count(worker: &TelemetryWorkerHandle) -> u32 {
+        let (tx, rx) = futures::channel::oneshot::channel();
+        worker
+            .send_msg(TelemetryActions::CollectStats(tx))
+            .await
+            .expect("metric worker should collect stats");
+        rx.await
+            .expect("metric worker should return stats")
+            .metric_contexts
+    }
+
+    fn metric_context_key(
+        client: &Arc<Mutex<Option<TelemetryCachedClient>>>,
+        metric_name: &str,
+    ) -> ContextKey {
+        let action = client
+            .lock_or_panic()
+            .as_ref()
+            .expect("runtime worker")
+            .to_telemetry_point((metric_name.to_string(), 1.0, Vec::new()))
+            .expect("registered metric should produce a point");
+        let TelemetryActions::AddPoint((_, context_key, _)) = action else {
+            panic!("metric point should use an AddPoint action");
+        };
+        context_key
     }
 
     #[tokio::test]
@@ -2119,10 +2158,58 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn identical_metric_registration_keeps_the_existing_worker_context() {
+        const SERVICE: &str = "identical-metric-service";
+        const ENV: &str = "test";
+        const METRIC: &str = "identical.metric";
+
+        let server = MockServer::start_async().await;
+        let clients = MetricsLogsClientSet::default();
+        let instance = InstanceId::new("session", "runtime");
+        let client = clients.get_or_create_metrics_logs(
+            SERVICE,
+            ENV,
+            &instance,
+            &RuntimeMetadata::new("php", "8.3", "test"),
+            || test_config(&server),
+            Vec::new(),
+        );
+        let worker = client
+            .lock_or_panic()
+            .as_ref()
+            .expect("runtime worker")
+            .worker
+            .clone();
+        let initial_context_count = metric_context_count(&worker).await;
+
+        assert!(clients.register_metric(&instance, SERVICE, ENV, metric(METRIC)));
+        let first_context = metric_context_key(&client, METRIC);
+        let registered_context_count = metric_context_count(&worker).await;
+        assert_eq!(registered_context_count, initial_context_count + 1);
+
+        assert!(clients.register_metric(&instance, SERVICE, ENV, metric(METRIC)));
+        assert_eq!(metric_context_key(&client, METRIC), first_context);
+        assert_eq!(
+            metric_context_count(&worker).await,
+            registered_context_count
+        );
+    }
+
+    #[tokio::test]
     async fn full_metric_scope_preserves_existing_definitions() {
         let clients = MetricsLogsClientSet::with_registration_limit(2);
         let instance = InstanceId::new("session", "runtime");
         let server = MockServer::start_async().await;
+        let gauge_metric = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("\"metric\":\"one\"")
+                    .body_includes("\"type\":\"gauge\"");
+                then.status(202);
+            })
+            .await;
         let client = clients.get_or_create_metrics_logs(
             "service",
             "env",
@@ -2146,10 +2233,36 @@ mod tests {
             .expect("runtime worker")
             .to_telemetry_point(("one".to_string(), 1.0, Vec::new()))
             .expect("updated metric should produce a point");
-        assert!(
-            format!("{point:?}").contains("Gauge"),
-            "point should use the updated gauge context: {point:?}"
-        );
+        let worker = client
+            .lock_or_panic()
+            .as_ref()
+            .expect("runtime worker")
+            .worker
+            .clone();
+        worker.send_msg(point).await.unwrap();
+        worker
+            .send_msg(TelemetryActions::Lifecycle(
+                LifecycleAction::FlushMetricAggr,
+            ))
+            .await
+            .unwrap();
+        worker
+            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+            .await
+            .unwrap();
+        let (tx, rx) = futures::channel::oneshot::channel();
+        worker
+            .send_msg(TelemetryActions::CollectStats(tx))
+            .await
+            .unwrap();
+        rx.await.unwrap();
+        timeout(Duration::from_secs(5), async {
+            while gauge_metric.calls_async().await != 1 {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("updated metric should be delivered as a gauge");
     }
 
     #[tokio::test]
