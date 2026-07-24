@@ -39,3 +39,10 @@ pub use config::{OtlpMetricsConfig, OtlpProtocol, OtlpTraceConfig};
 pub use exporter::send_otlp_traces_http;
 pub use libdd_trace_utils::otlp_encoder::{map_traces_to_otlp, OtlpResourceInfo};
 pub use metrics::OtlpStatsExporter;
+
+// gRPC OTLP export is native-only (tonic/hyper don't build for wasm32); the config type and the
+// transport/send symbols are consumed only by the native trace-exporter send loop and builder.
+#[cfg(not(target_arch = "wasm32"))]
+pub use config::OtlpGrpcTraceConfig;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use grpc_exporter::{build_grpc_transport, send_otlp_traces_grpc, OtlpGrpcTransport};

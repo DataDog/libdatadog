@@ -197,8 +197,6 @@ pub(crate) struct OtlpGrpcTransport {
 }
 
 /// Validate a gRPC endpoint (plaintext `http://` only) and build the transport.
-// Not yet wired to the trace exporter's send loop; exercised by tests only.
-#[allow(dead_code)]
 pub(crate) fn build_grpc_transport(
     endpoint_url: &str,
     config: OtlpGrpcTraceConfig,
@@ -280,8 +278,6 @@ type ExportCodec =
     prost_codec::ProstCodecImpl<ExportTraceServiceRequest, ExportTraceServiceResponse>;
 
 /// Send one OTLP trace export request over gRPC. Bounds connect + RPC with a single timeout.
-// Not yet wired to the trace exporter's send loop; exercised by tests only.
-#[allow(dead_code)]
 pub(crate) async fn send_otlp_traces_grpc(
     transport: &OtlpGrpcTransport,
     test_token: Option<&str>,
@@ -368,6 +364,13 @@ fn grpc_status_to_error(status: Status) -> TraceExporterError {
         )),
         Code::DeadlineExceeded => TraceExporterError::Io(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
+            status.message(),
+        )),
+        // A clean server GOAWAY / stream cancel (e.g. graceful connection close) surfaces as
+        // `Cancelled` with no io source. Treat it as a transient transport failure so it is
+        // retried, matching the HTTP path's behavior on transient network errors.
+        Code::Cancelled => TraceExporterError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionAborted,
             status.message(),
         )),
         _ => TraceExporterError::Request(RequestError::new(
@@ -568,10 +571,10 @@ mod integration_tests {
         let addr = listener.local_addr().unwrap();
         // Complete the H2 handshake and accept the request, then abort the TCP connection with a
         // RST (SO_LINGER=0) instead of a graceful close or a gRPC-status trailer. The client's
-        // in-flight read then fails with ECONNRESET. This is the FIX-1 case: the resulting
-        // `std::io::Error` is wrapped inside a `hyper::Error` below the tonic `Status`, so it is
-        // recovered only by walking the source chain in `grpc_status_to_error` — a graceful FIN
-        // instead surfaces as an h2 "canceled" status that would be misreported as `Request`.
+        // in-flight read then fails with ECONNRESET. The resulting `std::io::Error` is wrapped
+        // inside a `hyper::Error` below the tonic `Status`, so it is recovered only by walking the
+        // source chain in `grpc_status_to_error`. (A graceful FIN instead surfaces as a `Cancelled`
+        // status, which is now also mapped to `Io` and retried.)
         let server = tokio::spawn(async move {
             let (socket, _) = listener.accept().await.unwrap();
             // Force a RST on close rather than a graceful FIN. `set_linger` is deprecated because a
@@ -624,6 +627,11 @@ mod send_tests {
             (
                 Status::deadline_exceeded("slow"),
                 std::io::ErrorKind::TimedOut,
+            ),
+            // Graceful GOAWAY/stream cancel is retried like other transient transport failures.
+            (
+                Status::new(Code::Cancelled, "canceled"),
+                std::io::ErrorKind::ConnectionAborted,
             ),
         ] {
             match grpc_status_to_error(s) {
