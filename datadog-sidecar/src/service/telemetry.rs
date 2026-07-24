@@ -1353,6 +1353,7 @@ mod tests {
         {
             let mut registrations = clients.registrations.lock_or_panic();
             registrations.clear();
+            let last_used = Instant::now();
             for index in 0..MAX_REGISTRATIONS {
                 let name = format!("bounded.metric.{index}");
                 registrations.insert(
@@ -1365,7 +1366,7 @@ mod tests {
                             common: true,
                             namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
                         },
-                        Instant::now() - Duration::from_secs((index + 1) as u64),
+                        last_used,
                     ),
                 );
             }
