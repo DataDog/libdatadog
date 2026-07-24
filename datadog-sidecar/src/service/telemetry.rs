@@ -1304,12 +1304,14 @@ mod tests {
                 namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
             },
         );
+        let stale_last_used = Instant::now();
+        sleep(Duration::from_millis(1)).await;
         clients
             .inner
             .lock_or_panic()
             .get_mut(&(SERVICE.to_string(), ENV.to_string()))
             .expect("cached entry")
-            .last_used = Instant::now() - Duration::from_secs(3600);
+            .last_used = stale_last_used;
 
         let cached = clients
             .get_existing_client(SERVICE, ENV)
@@ -1328,8 +1330,7 @@ mod tests {
                 .get(&(SERVICE.to_string(), ENV.to_string()))
                 .expect("cached entry")
                 .last_used
-                .elapsed()
-                < Duration::from_secs(1)
+                > stale_last_used
         );
 
         clients.remove_telemetry_client(SERVICE, ENV, &client);
