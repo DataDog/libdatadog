@@ -171,11 +171,10 @@ async fn deliver_batch(
             }
             InternalTelemetryAction::RegisterTelemetryMetric(metric) => {
                 debug!("Registered telemetry metric: {metric:?}");
-                clients.register_metric(instance_id, service, env, telemetry_client, metric);
+                clients.register_metric(instance_id, service, env, metric);
             }
             InternalTelemetryAction::AddMetricPoint((value, name, tags)) => {
                 let metric_name = name.clone();
-                clients.touch_metric(instance_id, service, env, &metric_name);
                 let point = telemetry_client
                     .lock_or_panic()
                     .as_ref()
@@ -745,9 +744,25 @@ enum TelemetryCachedClientOwner {
     Runtime(InstanceId),
 }
 type TelemetryCachedClientKey = (TelemetryCachedClientOwner, ServiceString, EnvString);
-type TelemetryMetricRegistrationKey = (InstanceId, ServiceString, EnvString, String);
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct TelemetryMetricRegistrationScope {
+    session_id: String,
+    service: ServiceString,
+    env: EnvString,
+}
+
+impl TelemetryMetricRegistrationScope {
+    fn new(instance_id: &InstanceId, service: &str, env: &str) -> Self {
+        Self {
+            session_id: instance_id.session_id.clone(),
+            service: service.to_string(),
+            env: env.to_string(),
+        }
+    }
+}
+
 type TelemetryMetricRegistrations =
-    HashMap<TelemetryMetricRegistrationKey, (MetricContext, Instant)>;
+    HashMap<TelemetryMetricRegistrationScope, HashMap<String, MetricContext>>;
 
 pub struct TelemetryCachedClientSet {
     inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
@@ -1087,6 +1102,7 @@ impl TelemetryCachedClientSet {
 pub(crate) struct MetricsLogsClientSet {
     clients: TelemetryCachedClientSet,
     registrations: Arc<Mutex<TelemetryMetricRegistrations>>,
+    registration_limit: usize,
 }
 
 impl Default for MetricsLogsClientSet {
@@ -1094,6 +1110,7 @@ impl Default for MetricsLogsClientSet {
         Self {
             clients: TelemetryCachedClientSet::default(),
             registrations: Arc::new(Default::default()),
+            registration_limit: libdd_telemetry::worker::MAX_ITEMS,
         }
     }
 }
@@ -1103,6 +1120,7 @@ impl Clone for MetricsLogsClientSet {
         Self {
             clients: self.clients.clone(),
             registrations: self.registrations.clone(),
+            registration_limit: self.registration_limit,
         }
     }
 }
@@ -1114,6 +1132,14 @@ impl MetricsLogsClientSet {
 
     pub(crate) fn clients(&self) -> Vec<Arc<Mutex<Option<TelemetryCachedClient>>>> {
         self.clients.clients()
+    }
+
+    #[cfg(test)]
+    fn with_registration_limit(registration_limit: usize) -> Self {
+        Self {
+            registration_limit,
+            ..Default::default()
+        }
     }
 
     fn get_existing_metrics_logs(
@@ -1141,19 +1167,7 @@ impl MetricsLogsClientSet {
     where
         F: FnOnce() -> Config,
     {
-        let registrations = self
-            .registrations
-            .lock_or_panic()
-            .iter()
-            .filter(
-                |((registered_instance, registered_service, registered_env, _), _)| {
-                    registered_instance == instance_id
-                        && registered_service == service
-                        && registered_env == env
-                },
-            )
-            .map(|(_, (metric, _))| metric.clone())
-            .collect::<Vec<_>>();
+        let registrations = self.registered_metrics(instance_id, service, env);
         self.clients.get_or_create_with(
             TelemetryCachedClientOwner::Runtime(instance_id.clone()),
             service,
@@ -1191,50 +1205,73 @@ impl MetricsLogsClientSet {
         );
     }
 
+    fn registered_metrics(
+        &self,
+        instance_id: &InstanceId,
+        service: &str,
+        env: &str,
+    ) -> Vec<MetricContext> {
+        let scope = TelemetryMetricRegistrationScope::new(instance_id, service, env);
+        self.registrations
+            .lock_or_panic()
+            .get(&scope)
+            .into_iter()
+            .flat_map(|metrics| metrics.values().cloned())
+            .collect()
+    }
+
+    #[cfg(test)]
+    fn registered_metric_names(
+        &self,
+        instance_id: &InstanceId,
+        service: &str,
+        env: &str,
+    ) -> HashSet<String> {
+        self.registered_metrics(instance_id, service, env)
+            .into_iter()
+            .map(|metric| metric.name)
+            .collect()
+    }
+
     fn register_metric(
         &self,
         instance_id: &InstanceId,
         service: &str,
         env: &str,
-        client: &Arc<Mutex<Option<TelemetryCachedClient>>>,
         metric: MetricContext,
-    ) {
-        const MAX_REGISTRATIONS: usize = libdd_telemetry::worker::MAX_ITEMS;
-
+    ) -> bool {
+        let scope = TelemetryMetricRegistrationScope::new(instance_id, service, env);
         let mut registrations = self.registrations.lock_or_panic();
-        let key = (
-            instance_id.clone(),
-            service.to_string(),
-            env.to_string(),
-            metric.name.clone(),
-        );
-        if !registrations.contains_key(&key) && registrations.len() >= MAX_REGISTRATIONS {
-            if let Some(oldest) = registrations
-                .iter()
-                .min_by_key(|(_, (_, last_used))| *last_used)
-                .map(|(name, _)| name.clone())
-            {
-                registrations.remove(&oldest);
-            }
+        let metrics = registrations.entry(scope).or_default();
+        if !metrics.contains_key(&metric.name) && metrics.len() >= self.registration_limit {
+            return false;
         }
-        registrations.insert(key, (metric.clone(), Instant::now()));
+        metrics.insert(metric.name.clone(), metric.clone());
         drop(registrations);
 
-        if let Some(client) = client.lock_or_panic().as_mut() {
-            client.register_metric(metric);
+        let clients = self
+            .clients
+            .inner
+            .lock_or_panic()
+            .iter()
+            .filter_map(|((owner, client_service, client_env), entry)| {
+                let TelemetryCachedClientOwner::Runtime(owner_instance) = owner else {
+                    return None;
+                };
+                (owner_instance.session_id == instance_id.session_id
+                    && client_service == service
+                    && client_env == env)
+                    .then(|| entry.client.clone())
+            })
+            .collect::<Vec<_>>();
+        for client in clients {
+            if let Some(client) = client.lock_or_panic().as_mut() {
+                if !client.is_stopping() {
+                    client.register_metric(metric.clone());
+                }
+            }
         }
-    }
-
-    fn touch_metric(&self, instance_id: &InstanceId, service: &str, env: &str, name: &str) {
-        let key = (
-            instance_id.clone(),
-            service.to_string(),
-            env.to_string(),
-            name.to_string(),
-        );
-        if let Some((_, last_used)) = self.registrations.lock_or_panic().get_mut(&key) {
-            *last_used = Instant::now();
-        }
+        true
     }
 }
 
@@ -1354,6 +1391,16 @@ mod tests {
                 is_crash: false,
             },
         )))
+    }
+
+    fn metric(name: &str) -> MetricContext {
+        MetricContext {
+            name: name.to_string(),
+            tags: Vec::new(),
+            metric_type: libdd_telemetry::data::metrics::MetricType::Count,
+            common: true,
+            namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+        }
     }
 
     #[tokio::test]
@@ -1777,7 +1824,6 @@ mod tests {
             &instance_id,
             SERVICE,
             ENV,
-            &client,
             MetricContext {
                 name: METRIC.to_string(),
                 tags: Vec::new(),
@@ -1841,55 +1887,120 @@ mod tests {
             .expect("replacement metrics/logs client")
             .telemetry_metrics
             .contains_key(METRIC));
+        assert_eq!(
+            clients.registered_metric_names(&instance_id, SERVICE, ENV),
+            HashSet::from([METRIC.to_string()])
+        );
+    }
 
-        const MAX_REGISTRATIONS: usize = libdd_telemetry::worker::MAX_ITEMS;
-        {
-            let mut registrations = clients.registrations.lock_or_panic();
-            registrations.clear();
-            let last_used = Instant::now();
-            for index in 0..MAX_REGISTRATIONS {
-                let name = format!("bounded.metric.{index}");
-                registrations.insert(
-                    (
-                        instance_id.clone(),
-                        SERVICE.to_string(),
-                        ENV.to_string(),
-                        name.clone(),
-                    ),
-                    (
-                        MetricContext {
-                            name,
-                            tags: Vec::new(),
-                            metric_type: libdd_telemetry::data::metrics::MetricType::Count,
-                            common: true,
-                            namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
-                        },
-                        last_used,
-                    ),
-                );
-            }
-        }
-        clients.register_metric(
-            &instance_id,
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn metric_registration_is_shared_by_runtimes_in_one_session() {
+        const SERVICE: &str = "shared-appsec-service";
+        const ENV: &str = "prod";
+        const METRIC: &str = "waf.requests";
+
+        let server = MockServer::start_async().await;
+        let clients = MetricsLogsClientSet::default();
+        let runtime_meta = RuntimeMetadata::new("php", "8.3", "test");
+        let runtime_a = InstanceId::new("session", "runtime-a");
+        let runtime_b = InstanceId::new("session", "runtime-b");
+
+        let client_a = clients.get_or_create_metrics_logs(
             SERVICE,
             ENV,
-            &replacement,
+            &runtime_a,
+            &runtime_meta,
+            || test_config(&server),
+            Vec::new(),
+        );
+        assert!(clients.register_metric(
+            &runtime_a,
+            SERVICE,
+            ENV,
             MetricContext {
-                name: "bounded.metric.new".to_string(),
+                name: METRIC.to_string(),
                 tags: Vec::new(),
                 metric_type: libdd_telemetry::data::metrics::MetricType::Count,
                 common: true,
-                namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+                namespace: libdd_telemetry::data::metrics::MetricNamespace::Appsec,
             },
+        ));
+
+        let client_b = clients.get_or_create_metrics_logs(
+            SERVICE,
+            ENV,
+            &runtime_b,
+            &runtime_meta,
+            || test_config(&server),
+            Vec::new(),
         );
-        let registrations = clients.registrations.lock_or_panic();
-        assert_eq!(registrations.len(), MAX_REGISTRATIONS);
-        assert!(registrations.contains_key(&(
-            instance_id.clone(),
-            SERVICE.to_string(),
-            ENV.to_string(),
-            "bounded.metric.new".to_string()
-        )));
+
+        for client in [&client_a, &client_b] {
+            assert!(client
+                .lock_or_panic()
+                .as_ref()
+                .expect("runtime worker")
+                .telemetry_metrics
+                .contains_key(METRIC));
+        }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn metric_registrations_do_not_cross_sessions() {
+        const SERVICE: &str = "shared-appsec-service";
+        const ENV: &str = "prod";
+        const METRIC: &str = "waf.requests";
+
+        let server = MockServer::start_async().await;
+        let clients = MetricsLogsClientSet::default();
+        let runtime_meta = RuntimeMetadata::new("php", "8.3", "test");
+        let runtime_a = InstanceId::new("session-a", "runtime-a");
+        let runtime_b = InstanceId::new("session-b", "runtime-b");
+
+        let client_a = clients.get_or_create_metrics_logs(
+            SERVICE,
+            ENV,
+            &runtime_a,
+            &runtime_meta,
+            || test_config(&server),
+            Vec::new(),
+        );
+        assert!(clients.register_metric(&runtime_a, SERVICE, ENV, metric(METRIC)));
+        assert!(client_a
+            .lock_or_panic()
+            .as_ref()
+            .expect("runtime worker")
+            .telemetry_metrics
+            .contains_key(METRIC));
+
+        let client_b = clients.get_or_create_metrics_logs(
+            SERVICE,
+            ENV,
+            &runtime_b,
+            &runtime_meta,
+            || test_config(&server),
+            Vec::new(),
+        );
+        assert!(!client_b
+            .lock_or_panic()
+            .as_ref()
+            .expect("runtime worker")
+            .telemetry_metrics
+            .contains_key(METRIC));
+    }
+
+    #[tokio::test]
+    async fn full_metric_scope_preserves_existing_definitions() {
+        let clients = MetricsLogsClientSet::with_registration_limit(2);
+        let instance = InstanceId::new("session", "runtime");
+
+        assert!(clients.register_metric(&instance, "service", "env", metric("one")));
+        assert!(clients.register_metric(&instance, "service", "env", metric("two")));
+        assert!(!clients.register_metric(&instance, "service", "env", metric("three")));
+        let names = clients.registered_metric_names(&instance, "service", "env");
+        assert_eq!(names, HashSet::from(["one".to_string(), "two".to_string()]));
     }
 
     #[tokio::test]
@@ -2019,16 +2130,14 @@ mod tests {
             || test_config(&http_server),
             Vec::new(),
         );
-        for (service, client, unique_metric, metric_type) in [
+        for (service, unique_metric, metric_type) in [
             (
                 "service-a",
-                &service_a,
                 "service_a.metric",
                 libdd_telemetry::data::metrics::MetricType::Count,
             ),
             (
                 "service-b",
-                &service_b,
                 "service_b.metric",
                 libdd_telemetry::data::metrics::MetricType::Gauge,
             ),
@@ -2038,7 +2147,6 @@ mod tests {
                     &instance_id,
                     service,
                     ENV,
-                    client,
                     MetricContext {
                         name: name.to_string(),
                         tags: Vec::new(),
@@ -2049,7 +2157,14 @@ mod tests {
                 );
             }
         }
-        assert_eq!(clients.registrations.lock_or_panic().len(), 4);
+        assert_eq!(
+            clients.registered_metric_names(&instance_id, "service-a", ENV),
+            HashSet::from([SHARED_METRIC.to_string(), "service_a.metric".to_string(),])
+        );
+        assert_eq!(
+            clients.registered_metric_names(&instance_id, "service-b", ENV),
+            HashSet::from([SHARED_METRIC.to_string(), "service_b.metric".to_string(),])
+        );
 
         clients.remove_metrics_logs_client(&instance_id, "service-a", ENV, &service_a);
         clients.remove_metrics_logs_client(&instance_id, "service-b", ENV, &service_b);
