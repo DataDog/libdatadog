@@ -1346,18 +1346,11 @@ mod tests {
             .metrics_logs_clients
             .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
             .is_some());
-        handler.shutdown_runtime(runtime_a.clone()).await;
-        timeout(TokioDuration::from_secs(1), async {
-            while server
-                .metrics_logs_clients
-                .get_existing_metrics_logs(&runtime_a, SERVICE, ENV)
-                .is_some()
-            {
-                sleep(TokioDuration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("repeated runtime telemetry cleanup should complete");
+        server.stop_runtime(&runtime_a).await;
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&runtime_a, SERVICE, ENV)
+            .is_none());
         assert!(server
             .metrics_logs_clients
             .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
@@ -1400,22 +1393,20 @@ mod tests {
             .lock_or_panic()
             .get("session")
             .is_none());
-        handler.shutdown_session().await;
-        timeout(TokioDuration::from_secs(1), async {
-            while server
-                .metrics_logs_clients
-                .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
-                .is_some()
-                || !server
-                    .metrics_logs_clients
-                    .registered_metrics(&runtime_b, SERVICE, ENV)
-                    .is_empty()
-            {
-                sleep(TokioDuration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("repeated session telemetry cleanup should complete");
+        server.stop_session("session").await;
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
+            .is_none());
+        assert!(server
+            .metrics_logs_clients
+            .registered_metrics(&runtime_b, SERVICE, ENV)
+            .is_empty());
+        assert!(server
+            .sessions
+            .lock_or_panic()
+            .get("session")
+            .is_none());
         assert!(server
             .metrics_logs_clients
             .get_existing_metrics_logs(&other_runtime, SERVICE, ENV)
