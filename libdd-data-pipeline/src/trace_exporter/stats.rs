@@ -7,6 +7,8 @@
 //! including starting/stopping stats workers, managing the span concentrator,
 //! and processing traces for stats collection.
 
+pub use libdd_trace_stats::span_concentrator::CardinalityLimitConfig;
+
 use super::add_path;
 use super::TracerMetadata;
 use crate::agent_info::schema::AgentInfo;
@@ -47,7 +49,7 @@ pub(crate) struct StatsContext<
     pub metadata: &'a TracerMetadata,
     pub endpoint_url: &'a http::Uri,
     pub shared_runtime: &'a R,
-    pub stats_cardinality_limit: Option<usize>,
+    pub stats_cardinality_limits: Option<CardinalityLimitConfig>,
     /// Optional DogStatsD client forwarded to the [`StatsExporter`].
     pub dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     /// Optional telemetry handle forwarded to the [`StatsExporter`].
@@ -75,7 +77,7 @@ pub(crate) enum StatsComputationStatus {
 #[derive(Debug)]
 pub(crate) struct StatsComputationConfig {
     pub(crate) status: ArcSwap<StatsComputationStatus>,
-    pub(crate) stats_cardinality_limit: Option<usize>,
+    pub(crate) stats_cardinality_limits: Option<CardinalityLimitConfig>,
     #[cfg(feature = "stats-obfuscation")]
     pub(crate) obfuscation_config: SharedStatsComputationObfuscationConfig,
     /// Builder-level opt-in. When false, stats obfuscation stays off
@@ -137,7 +139,7 @@ pub(crate) fn start_stats_computation<
             SystemTime::now(),
             span_kinds,
             peer_tags,
-            ctx.stats_cardinality_limit,
+            ctx.stats_cardinality_limits,
             vec![],
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),

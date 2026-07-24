@@ -325,6 +325,7 @@ pub fn stats_url_from_agent_url(agent_url: &str) -> anyhow::Result<http::Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::span_concentrator::CardinalityLimitConfig;
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities_impl::NativeCapabilities;
@@ -645,7 +646,10 @@ mod tests {
             SystemTime::now(),
             vec![],
             vec![],
-            Some(1), // max 1 distinct key → second span collapses
+            Some(CardinalityLimitConfig {
+                whole_key_limit: 1, // max 1 distinct key → second span collapses
+                ..Default::default()
+            }),
             vec![],
             #[cfg(feature = "stats-obfuscation")]
             None,

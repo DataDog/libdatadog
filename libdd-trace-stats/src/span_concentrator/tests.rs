@@ -1700,14 +1700,14 @@ fn test_flush_with_otlp_exact_per_cell_scalars() {
 }
 
 /// Build a minimal concentrator with a tiny `max_entries_per_bucket` for cardinality tests.
-fn make_cardinality_concentrator(max_entries: usize) -> SpanConcentrator {
+fn make_cardinality_concentrator(cardinality_limits: CardinalityLimitConfig) -> SpanConcentrator {
     let now = SystemTime::now();
     SpanConcentrator::new(
         Duration::from_nanos(BUCKET_SIZE),
         now,
         get_span_kinds(),
-        vec![],
-        Some(max_entries),
+        vec!["peer.hostname".to_owned()],
+        Some(cardinality_limits),
         vec![],
         #[cfg(feature = "stats-obfuscation")]
         None,
@@ -1717,10 +1717,13 @@ fn make_cardinality_concentrator(max_entries: usize) -> SpanConcentrator {
 /// When the limit is 3 and we insert 5 distinct-resource spans, only 3 normal keys plus one
 /// overflow key must appear in the flushed stats. Total hits must equal 5.
 #[test]
-fn test_cardinality_limit_collapse() {
+fn test_whole_key_cardinality_limit_collapse() {
     let now = SystemTime::now();
     let limit: usize = 3;
-    let mut concentrator = make_cardinality_concentrator(limit);
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
 
     // Insert limit + 2 distinct-resource root spans all in the same time bucket.
     let resources: Vec<String> = (0..limit + 2).map(|i| format!("resource-{i}")).collect();
@@ -1773,12 +1776,185 @@ fn test_cardinality_limit_collapse() {
     );
 }
 
+/// When the `http_endpoint` cardinality limit is 3 and we insert 5 distinct spans differing only on
+/// their `http_endpoint`, only 3 normal keys plus one overflow key must appear in the flushed
+/// stats.
+///
+/// But then inserting spans differing on another field, it should not be collapsed.
+/// So total hits must equal 6.
+#[test]
+fn test_per_key_cardinality_limit_collapse_http_endpoint() {
+    let now = SystemTime::now();
+    let limit: usize = 3;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        http_endpoint_limit: limit,
+        ..Default::default()
+    });
+
+    // Insert limit + 2 distinct `http_endpoint` root spans all in the same time bucket.
+    let http_endpoints: Vec<String> = (0..limit + 2).map(|i| format!("endpoint-{i}")).collect();
+    for (i, http_endpoint) in http_endpoints.iter().enumerate() {
+        let meta = [("http.endpoint", http_endpoint.as_str())];
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            100,
+            2,
+            "svc",
+            "resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+    // Insert a distinct `resource` root span, this one won't get collapsed
+    {
+        let meta = [("http.endpoint", "endpoint-0")];
+        let span = get_test_span_with_meta(
+            now,
+            limit as u64 + 3,
+            0,
+            100,
+            2,
+            "svc",
+            "different-resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty(), "should get at least one time bucket");
+
+    let stats = &buckets[0].stats;
+
+    // Exactly limit normal keys + 1 overflow key + the distinct `resource` span
+    assert_eq!(
+        stats.len(),
+        limit + 2,
+        "expected {limit} normal groups + 1 overflow key + 1 for the distinct `resource` span, got {}",
+        stats.len()
+    );
+
+    // Total hits must be preserved.
+    let total_hits: u64 = stats.iter().map(|g| g.hits).sum();
+    assert_eq!(
+        total_hits,
+        (limit + 3) as u64,
+        "total hits must equal the number of inserted spans"
+    );
+
+    // No overflow group, identified by the sentinel resource.
+    let overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        overflow_groups.len(),
+        0,
+        "expected no overflow group, given whole key cardinality limit was not reached"
+    );
+    let http_overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.http_endpoint == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        http_overflow_groups.len(),
+        1,
+        "expected exactly one overflow key for the http_endpoint field"
+    );
+}
+
+/// When whole-key cardinality limit is reached, check that per-key fields are collapsed before
+/// falling back to whole-key
+#[test]
+fn test_per_key_cardinality_limit_collapse_before_whole_key() {
+    let now = SystemTime::now();
+    let peer_tags_limit = 3;
+    let whole_key_limit = peer_tags_limit + 1;
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit,
+        peer_tags_limit,
+        ..Default::default()
+    });
+
+    // Insert limit + 2 distinct `peer.hostname` root spans all in the same time bucket.
+    let inserted_spans = peer_tags_limit + 2;
+    let peer_tag_values: Vec<String> = (0..inserted_spans).map(|i| format!("peer-{i}")).collect();
+    for (i, peer_tag_value) in peer_tag_values.iter().enumerate() {
+        let meta = [
+            ("peer.hostname", peer_tag_value.as_str()),
+            ("span.kind", "client"),
+        ];
+        let span = get_test_span_with_meta(
+            now,
+            i as u64 + 1,
+            0,
+            100,
+            2,
+            "svc",
+            "resource",
+            0,
+            &meta,
+            &[("_dd.measured", 1.0)],
+        );
+        concentrator.add_span(&span);
+    }
+
+    let buckets = concentrator.flush(SystemTime::now(), true).all_buckets();
+    assert!(!buckets.is_empty(), "should get at least one time bucket");
+
+    let stats = &buckets[0].stats;
+
+    // Exactly peer_tags_limit normal keys + 1 overflow key
+    assert_eq!(
+        stats.len(),
+        peer_tags_limit + 1,
+        "expected {peer_tags_limit} normal groups + 1 overflow key, got {}",
+        stats.len()
+    );
+
+    // Total hits must be preserved.
+    let total_hits: u64 = stats.iter().map(|g| g.hits).sum();
+    assert_eq!(
+        total_hits, inserted_spans as u64,
+        "total hits must equal the number of inserted spans"
+    );
+
+    // No overflow group, identified by the sentinel resource.
+    let overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.resource == TRACER_BLOCKED_VALUE)
+        .collect();
+    assert_eq!(
+        overflow_groups.len(),
+        0,
+        "expected no overflow group: whole key cardinality limit was not reached because per-field cardinality limit collapsed keys before overflowing whole key"
+    );
+    let peer_tag_overflow_groups: Vec<_> = stats
+        .iter()
+        .filter(|g| g.peer_tags == [TRACER_BLOCKED_VALUE])
+        .collect();
+    assert_eq!(
+        peer_tag_overflow_groups.len(),
+        1,
+        "expected exactly one overflow key for the peer_tags field"
+    );
+}
+
 /// The overflow bucket must correctly aggregate the hits from overflow spans.
 #[test]
 fn test_overflow_bucket_counts() {
     let now = SystemTime::now();
     let limit: usize = 1;
-    let mut concentrator = make_cardinality_concentrator(limit);
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
 
     // First span fills the sole slot; the next 4 spans all have distinct keys → all overflow.
     for i in 0..5usize {
@@ -1827,7 +2003,10 @@ fn test_overflow_bucket_counts() {
 fn test_no_collapse_within_limit() {
     let now = SystemTime::now();
     let limit: usize = 10;
-    let mut concentrator = make_cardinality_concentrator(limit);
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
 
     // Insert exactly `limit` distinct-resource spans — no overflow expected.
     for i in 0..limit {
@@ -1868,7 +2047,10 @@ fn test_no_collapse_within_limit() {
 fn test_overflow_bucket_key_sentinel_values() {
     let now = SystemTime::now();
     let limit: usize = 1;
-    let mut concentrator = make_cardinality_concentrator(limit);
+    let mut concentrator = make_cardinality_concentrator(CardinalityLimitConfig {
+        whole_key_limit: limit,
+        ..Default::default()
+    });
 
     // First span occupies the only slot; second one overflows.
     let first = get_test_span_with_meta(
@@ -1950,7 +2132,7 @@ fn test_overflow_bucket_key_sentinel_values() {
         overflow.is_trace_root, 0,
         "is_trace_root must be NOT_SET (0)"
     );
-    assert!(overflow.peer_tags.is_empty(), "peer_tags must be empty");
+    assert_eq!(overflow.peer_tags, [TRACER_BLOCKED_VALUE]);
 
     // The normal group must be unaffected.
     let normal = stats
@@ -2274,4 +2456,445 @@ fn test_normalize_additional_metric_tag_keys_limit() {
     let result = normalize_additional_metric_tag_keys(keys);
     assert_eq!(result, vec!["aaa", "bbb", "ccc", "ddd"]);
     assert_eq!(result.len(), 4);
+}
+
+#[test]
+fn test_additional_metric_tags_max_entries_masks_overflow_entries() {
+    // With a cap of 1, the first distinct tag value is admitted; the second gets masked.
+    let now = SystemTime::now();
+    let meta_a = [("region", "us-east-1")];
+    let meta_b = [("region", "eu-west-1")];
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let mut tags: Vec<&str> = buckets[0]
+        .stats
+        .iter()
+        .flat_map(|s| s.additional_metric_tags.iter().map(String::as_str))
+        .collect();
+    tags.sort_unstable();
+    assert_eq!(tags, vec!["region:us-east-1", "tracer_blocked_value:"]);
+}
+
+#[test]
+fn test_additional_metric_tags_max_entries_existing_keys_merge_after_limit() {
+    // A key admitted before the cap is hit continues merging after the cap is exceeded.
+    let now = SystemTime::now();
+    let meta_a = [("region", "us-east-1")];
+    let meta_b = [("region", "eu-west-1")];
+    // Three spans: first two fill and exceed a cap of 1, third re-hits the admitted key.
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let admitted = buckets[0]
+        .stats
+        .iter()
+        .find(|s| s.additional_metric_tags == vec!["region:us-east-1"])
+        .expect("admitted entry should exist");
+    // spans 1 and 3 both have region:us-east-1 and the same agg key, so hits == 2.
+    assert_eq!(admitted.hits, 2);
+}
+
+#[test]
+fn test_additional_metric_tags_max_entries_resets_on_flush() {
+    // After flushing, a new bucket starts with a fresh cap budget.
+    let now = SystemTime::now();
+    let meta_a = [("region", "us-east-1")];
+    let meta_b = [("region", "eu-west-1")];
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &meta_a,
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &meta_b,
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+
+    // First bucket: cap of 1 means only us-east-1 is admitted unmasked.
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+    let flush1_time =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let _first_buckets = concentrator.flush(flush1_time, true);
+
+    // Second bucket: cap resets; eu-west-1 can now be admitted unmasked.
+    let later = flush1_time + Duration::from_nanos(BUCKET_SIZE);
+    let meta_b2 = [("region", "eu-west-1")];
+    let mut spans2 = vec![get_test_span_with_meta(
+        later,
+        4,
+        0,
+        100,
+        5,
+        "svc",
+        "GET /b",
+        0,
+        &meta_b2,
+        &[("_dd.measured", 1.0)],
+    )];
+    compute_top_level_span(spans2.as_mut_slice());
+    concentrator.add_span(&spans2[0]);
+
+    let flush2_time =
+        later + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let second_buckets = concentrator.flush(flush2_time, true).all_buckets();
+    let tags: Vec<&str> = second_buckets
+        .iter()
+        .flat_map(|b| b.stats.iter())
+        .flat_map(|s| s.additional_metric_tags.iter().map(String::as_str))
+        .collect();
+    assert!(
+        tags.contains(&"region:eu-west-1"),
+        "eu-west-1 should be admitted unmasked in a fresh bucket, got: {tags:?}"
+    );
+}
+
+#[test]
+fn test_additional_metric_tags_new_key_collapses_into_overflow_before_masking() {
+    // An untagged span already fills the bucket's max_entries. A new tagged span, even though
+    // it's under the additional_metric_tags_max_entries budget, must go straight to overflow
+    // instead of being masked.
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &[],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &[("region", "us-east-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        Some(CardinalityLimitConfig {
+            whole_key_limit: 1,
+            ..Default::default()
+        }),
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 5;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let stats = &buckets[0].stats;
+
+    assert_eq!(
+        stats.len(),
+        2,
+        "expected the untagged entry plus one overflow group, got {stats:?}"
+    );
+    let overflow = stats
+        .iter()
+        .find(|s| s.resource == TRACER_BLOCKED_VALUE)
+        .expect("overflow group must exist");
+    assert_eq!(overflow.hits, 1);
+    assert_eq!(overflow.additional_metric_tags, ["tracer_blocked_value:"]);
+}
+
+#[test]
+fn test_additional_metric_tags_masked_entry_collapses_into_overflow() {
+    // A span exceeds the additional_metric_tags_max_entries budget, so its tag values get
+    // masked. But the bucket's max_entries is also already full, so that masked key must also
+    // collapse into the overflow sentinel instead of becoming its own distinct entry.
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &[("region", "us-east-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &[("region", "eu-west-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        Some(CardinalityLimitConfig {
+            whole_key_limit: 1,
+            ..Default::default()
+        }),
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let stats = &buckets[0].stats;
+
+    assert_eq!(
+        stats.len(),
+        2,
+        "expected the admitted entry plus one overflow group, no separate masked group, got {stats:?}"
+    );
+    let overflow = stats
+        .iter()
+        .find(|s| s.resource == TRACER_BLOCKED_VALUE)
+        .expect("overflow group must exist");
+    assert_eq!(overflow.hits, 1);
+    assert_eq!(overflow.additional_metric_tags, ["tracer_blocked_value:"]);
+}
+
+#[test]
+fn test_additional_metric_tags_multiple_masked_entries_merge() {
+    // Two distinct source keys that both get masked to the same resource/tag combination must
+    // merge into a single masked entry rather than producing duplicate masked rows.
+    let now = SystemTime::now();
+    let mut spans = vec![
+        get_test_span_with_meta(
+            now,
+            1,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /a",
+            0,
+            &[("region", "us-east-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            2,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &[("region", "eu-west-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+        get_test_span_with_meta(
+            now,
+            3,
+            0,
+            100,
+            5,
+            "svc",
+            "GET /b",
+            0,
+            &[("region", "ap-south-1")],
+            &[("_dd.measured", 1.0)],
+        ),
+    ];
+    compute_top_level_span(spans.as_mut_slice());
+
+    let mut concentrator = SpanConcentrator::new(
+        Duration::from_nanos(BUCKET_SIZE),
+        now,
+        get_span_kinds(),
+        vec![],
+        None,
+        vec!["region".to_string()],
+        #[cfg(feature = "stats-obfuscation")]
+        None,
+    );
+    concentrator.cardinality_limits.additional_tags_limit = 1;
+    for span in &spans {
+        concentrator.add_span(span);
+    }
+
+    let flushtime =
+        now + Duration::from_nanos(concentrator.bucket_size * concentrator.buffer_len as u64);
+    let buckets = concentrator.flush(flushtime, false).all_buckets();
+    let stats = &buckets[0].stats;
+
+    assert_eq!(
+        stats.len(),
+        2,
+        "expected one admitted entry and one merged masked entry, got {stats:?}"
+    );
+    let masked = stats
+        .iter()
+        .find(|s| s.additional_metric_tags == vec!["tracer_blocked_value:".to_string()])
+        .unwrap_or_else(|| panic!("masked entry should exist. Got {stats:?}"));
+    assert_eq!(
+        masked.hits, 2,
+        "both GET /b spans should merge into the same masked entry"
+    );
 }

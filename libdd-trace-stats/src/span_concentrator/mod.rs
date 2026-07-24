@@ -3,12 +3,11 @@
 //! This module implements the SpanConcentrator used to aggregate spans into stats
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, warn};
 // std::time::SystemTime panics on wasm32.
 use web_time::{SystemTime, UNIX_EPOCH};
 
 use libdd_trace_protobuf::pb;
-use tracing::warn;
 
 use aggregation::StatsBucket;
 
@@ -114,13 +113,41 @@ pub struct StatsComputationObfuscationConfig {
 pub type SharedStatsComputationObfuscationConfig =
     std::sync::Arc<arc_swap::ArcSwap<StatsComputationObfuscationConfig>>;
 
-/// Default maximum number of distinct aggregation keys per time bucket.
-///
-/// 7 168 is the limit to exactly saturate hashbrown's internal table at its maximum load factor of
-/// 7/8. Any higher limit would immediately force a doubling of the table capacity, wasting
-/// half the allocated slots for a modest increase in cardinality. To avoid future changes going
-/// over this limit (e.g. adding extra overflow buckets) we set a slightly lower limit.
-pub const DEFAULT_MAX_ENTRIES_PER_BUCKET: usize = 7_000;
+/// Config to override the default stats cardinality limit values
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct CardinalityLimitConfig {
+    /// The whole-key cardinality limit (defaults to 7000)
+    pub whole_key_limit: usize,
+    /// The per-field cardinality limit for the Resource field (defaults to 1024)
+    pub resource_limit: usize,
+    /// The per-field cardinality limit for the HttpEndpoint field (defaults to 512)
+    pub http_endpoint_limit: usize,
+    /// The per-field cardinality limit for the PeerTags field (defaults to 512)
+    pub peer_tags_limit: usize,
+    /// The per-field cardinality limit for the AdditionalTags field (defaults to 100)
+    pub additional_tags_limit: usize,
+}
+
+impl Default for CardinalityLimitConfig {
+    fn default() -> Self {
+        Self {
+            // Default maximum number of distinct aggregation keys per time bucket.
+            //
+            // 7 168 is the limit to exactly saturate hashbrown's internal table at its maximum
+            // load factor of 7/8. Any higher limit would immediately force a doubling
+            // of the table capacity, wasting half the allocated slots for a modest
+            // increase in cardinality. To avoid future changes going over this limit
+            // (e.g. adding extra overflow buckets) we set a slightly lower limit.
+            whole_key_limit: 7_000,
+            // Other defaults from the spec
+            resource_limit: 1_024,
+            http_endpoint_limit: 512,
+            peer_tags_limit: 512,
+            additional_tags_limit: 100,
+        }
+    }
+}
 
 /// SpanConcentrator compute stats on span aggregated by time and span attributes
 ///
@@ -152,8 +179,8 @@ pub struct SpanConcentrator {
     oldest_timestamp: u64,
     /// bufferLen is the number stats bucket we keep when flushing.
     buffer_len: usize,
-    /// Maximum number of distinct aggregation keys per bucket.
-    max_entries_per_bucket: usize,
+    /// Config values for whole-key and per-field cardinality limits
+    cardinality_limits: CardinalityLimitConfig,
     /// span.kind fields eligible for stats computation
     span_kinds_stats_computed: Vec<String>,
     /// keys for supplementary tags that describe peer.service entities
@@ -169,9 +196,9 @@ impl SpanConcentrator {
     /// - `bucket_size` is the size of the time buckets
     /// - `now` the current system time, used to define the oldest bucket
     /// - `span_kinds_stats_computed` list of span kinds eligible for stats computation
-    /// - `peer_tag_keys` list of keys considered as peer tags for aggregation
-    /// - `override_max_entries_per_bucket` maximum distinct aggregation keys per time bucket before
-    ///   cardinality limiting applies. Pass `None` to use [`DEFAULT_MAX_ENTRIES_PER_BUCKET`].
+    /// - `peer_tags_keys` list of keys considered as peer tags for aggregation
+    /// - `override_cardinality_limits` config values for whole-key and per-field cardinality limit.
+    ///   Pass `None` to use defaults (see [`CardinalityLimitConfig`]).
     /// - `additional_metric_tag_keys` list of keys considered as addtional tags for aggregation
     /// - `obfuscation_config` optional and updatable config for resource key obfuscation
     pub fn new(
@@ -179,12 +206,38 @@ impl SpanConcentrator {
         now: SystemTime,
         span_kinds_stats_computed: Vec<String>,
         peer_tag_keys: Vec<String>,
-        override_max_entries_per_bucket: Option<usize>,
+        override_cardinality_limits: Option<CardinalityLimitConfig>,
         additional_metric_tag_keys: Vec<String>,
         #[cfg(feature = "stats-obfuscation")] obfuscation_config: Option<
             SharedStatsComputationObfuscationConfig,
         >,
     ) -> SpanConcentrator {
+        if let Some(cardinality_limit_config) = override_cardinality_limits.as_ref() {
+            if cardinality_limit_config.whole_key_limit == 0
+                || cardinality_limit_config.resource_limit == 0
+                || cardinality_limit_config.http_endpoint_limit == 0
+                || cardinality_limit_config.peer_tags_limit == 0
+                || cardinality_limit_config.additional_tags_limit == 0
+            {
+                warn!(
+                    ?cardinality_limit_config,
+                    "Stats cardinality limit is misconfigured: cardinality limits must not be 0 otherwise all the stats get collapsed!"
+                );
+            }
+            if cardinality_limit_config.whole_key_limit <= cardinality_limit_config.resource_limit
+                || cardinality_limit_config.whole_key_limit
+                    <= cardinality_limit_config.http_endpoint_limit
+                || cardinality_limit_config.whole_key_limit
+                    <= cardinality_limit_config.peer_tags_limit
+                || cardinality_limit_config.whole_key_limit
+                    <= cardinality_limit_config.additional_tags_limit
+            {
+                warn!(
+                    ?cardinality_limit_config,
+                    "Stats cardinality limit is misconfigured: per-field limits must be lower than whole-key limit otherwise they have no effect and you will get over-collapsed stats!"
+                );
+            }
+        }
         SpanConcentrator {
             bucket_size: bucket_size.as_nanos() as u64,
             buckets: HashMap::new(),
@@ -193,8 +246,7 @@ impl SpanConcentrator {
                 bucket_size.as_nanos() as u64,
             ),
             buffer_len: 2,
-            max_entries_per_bucket: override_max_entries_per_bucket
-                .unwrap_or(DEFAULT_MAX_ENTRIES_PER_BUCKET),
+            cardinality_limits: override_cardinality_limits.unwrap_or_default(),
             span_kinds_stats_computed,
             peer_tag_keys,
             additional_metric_tag_keys: normalize_additional_metric_tag_keys(
@@ -257,7 +309,7 @@ impl SpanConcentrator {
         let target_bucket = self.buckets.entry(bucket_timestamp).or_insert_with(|| {
             StatsBucket::new(
                 bucket_timestamp,
-                self.max_entries_per_bucket,
+                self.cardinality_limits,
                 #[cfg(feature = "stats-obfuscation")]
                 self.obfuscation_config.load().enabled,
             )
@@ -382,7 +434,11 @@ impl SpanConcentrator {
             })
             .collect();
         if total_collapsed > 0 {
-            debug!(max_entries_per_bucket = self.max_entries_per_bucket, total_collapsed, "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT");
+            debug!(
+                max_entries_per_bucket = self.cardinality_limits.whole_key_limit,
+                total_collapsed,
+                "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT"
+            );
         }
         (buckets_pb, total_collapsed)
     }
