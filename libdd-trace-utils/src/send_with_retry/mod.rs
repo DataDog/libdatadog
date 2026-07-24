@@ -108,6 +108,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
         request_attempt += 1;
 
         debug!(
+            url = %target.url,
             attempt = request_attempt,
             max_retries = retry_strategy.max_retries(),
             "Attempting request"
@@ -138,6 +139,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
             Ok(Ok(response)) => {
                 let status = response.status();
                 debug!(
+                    url = %target.url,
                     status = status.as_u16(),
                     attempt = request_attempt,
                     "Received response"
@@ -178,6 +180,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
             }
             Ok(Err(e)) => {
                 debug!(
+                    url = %target.url,
                     error = ?e,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
@@ -211,6 +214,7 @@ pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
             }
             Err(_) => {
                 debug!(
+                    url = %target.url,
                     attempt = request_attempt,
                     max_retries = retry_strategy.max_retries(),
                     "Request timed out"

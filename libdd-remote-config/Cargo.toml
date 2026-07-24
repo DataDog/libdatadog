@@ -13,6 +13,8 @@ description = "Datadog Remote Configuration client and config parsers"
 default = ["client", "https"]
 client = [
     "libdd-trace-protobuf",
+    "libdd-capabilities",
+    "bytes",
     "http-body-util",
     "http",
     "base64",
@@ -28,14 +30,16 @@ client = [
 
 regex-lite = ["libdd-common/regex-lite"]
 # Enable HTTPS support in the fetcher (rustls + ring via libdd-common).
-https = ["libdd-common/https"]
+https = ["libdd-common/https", "libdd-capabilities-impl/https"]
 # FIPS-compliant crypto provider (aws-lc-rs via libdd-common). Unix only.
-fips = ["libdd-common/fips"]
+fips = ["libdd-common/fips", "libdd-capabilities-impl/fips"]
 test = ["hyper/server", "hyper-util"]
 
 [dependencies]
 anyhow.workspace = true
+bytes = { version = "1", optional = true }
 libdd-common = { path = "../libdd-common", version = "5.1.0", default-features = false }
+libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0", optional = true }
 libdd-trace-protobuf = { path = "../libdd-trace-protobuf", version = "4.0.0", optional = true }
 hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 http-body-util = {version = "0.1", optional = true }
@@ -60,6 +64,9 @@ strum_macros = "0.26"
 
 # Test feature
 hyper-util = { workspace = true, features = ["http1", "client", "client-legacy", "service"], optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl", version = "3.0.0", default-features = false }
 
 [dev-dependencies]
 futures = "0.3"
