@@ -18,7 +18,10 @@ use std::time::Duration;
 pub use env::NativeEnvCapability;
 pub use file::NativeFileCapability;
 pub use http::NativeHttpClient;
-use libdd_capabilities::{http::HttpError, MaybeSend};
+use libdd_capabilities::{
+    http::{BodySender, HttpError, ResponseFuture},
+    MaybeSend,
+};
 pub use libdd_capabilities::{
     EnvCapability, EnvError, FileCapability, FileError, FileMetadata, HttpClientCapability,
     LogWriterCapability, SleepCapability,
@@ -69,6 +72,10 @@ impl HttpClientCapability for NativeCapabilities {
         req: ::http::Request<bytes::Bytes>,
     ) -> impl Future<Output = Result<::http::Response<bytes::Bytes>, HttpError>> + MaybeSend {
         self.http.request(req)
+    }
+
+    fn request_streamed(&self, req: ::http::Request<()>) -> (BodySender, ResponseFuture) {
+        self.http.request_streamed(req)
     }
 }
 

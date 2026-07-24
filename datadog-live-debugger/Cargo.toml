@@ -10,7 +10,7 @@ anyhow.workspace = true
 libdd-remote-config = { path = "../libdd-remote-config", default-features = false }
 libdd-common = { path = "../libdd-common" }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
-http-body-util = "0.1"
+libdd-capabilities = { path = "../libdd-capabilities" }
 "http" = "1"
 bytes =  "1.11.1"
 futures = "0.3"
@@ -23,6 +23,9 @@ uuid = { version = "1.0", features = ["v4"] }
 smallvec = "1.13.2"
 constcat = "0.4.1"
 tokio = "1.36.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
 
 [features]
 regex-lite = ["libdd-common/regex-lite"]
