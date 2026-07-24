@@ -190,9 +190,9 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> std
     }
 }
 
-impl TelemetryClient {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
     /// Allow sharing a telemetry worker with data-pipeline
-    pub fn with_handle(handle: TelemetryWorkerHandle) -> Self {
+    pub fn with_handle(handle: TelemetryWorkerHandle<C>) -> Self {
         TelemetryClient {
             metrics: Metrics::new(&handle),
             worker: handle,
