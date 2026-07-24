@@ -330,9 +330,12 @@ impl SidecarServer {
     }
 
     pub async fn compute_stats(&self) -> SidecarStats {
-        let cached_clients = self
-            .telemetry_clients
-            .clients()
+        let application_clients = self.telemetry_clients.clients();
+        let active_telemetry_clients = application_clients
+            .iter()
+            .filter(|client| client.lock_or_panic().as_ref().is_some())
+            .count() as u32;
+        let cached_clients = application_clients
             .into_iter()
             .chain(self.metrics_logs_clients.clients())
             .collect::<Vec<_>>();
@@ -351,7 +354,6 @@ impl SidecarServer {
                 .filter_map(|state| state.telemetry.clone()),
         );
 
-        let active_telemetry_clients = workers.len() as u32;
         let mut telemetry_stats_errors = 0;
         let futures = workers
             .into_iter()
@@ -2319,7 +2321,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg_attr(miri, ignore)]
-    async fn compute_stats_includes_every_telemetry_worker_source() {
+    async fn compute_stats_preserves_application_client_count() {
         const SERVICE: &str = "worker-stats";
         const ENV: &str = "test-env";
 
@@ -2412,7 +2414,7 @@ mod tests {
             );
 
         let stats = server.compute_stats().await;
-        assert_eq!(stats.active_telemetry_clients, 3);
+        assert_eq!(stats.active_telemetry_clients, 1);
         assert_eq!(stats.telemetry_metrics_contexts, 2);
         assert_eq!(stats.telemetry_worker.metric_contexts, 3);
         assert_eq!(stats.telemetry_worker_errors, 0);
