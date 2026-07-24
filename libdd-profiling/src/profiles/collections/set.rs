@@ -61,7 +61,10 @@ pub struct Set<T: Hash + Eq + 'static> {
 }
 
 impl<T: Eq + Hash + 'static> Set<T> {
-    pub const SIZE_HINT: usize = 1024 * 1024;
+    // Start each shard at 64 KiB to lower the small-dictionary floor, then
+    // grow back to historical 1 MiB chunks for larger dictionaries.
+    pub const INITIAL_SIZE_HINT: usize = 64 * 1024;
+    pub const MAX_SIZE_HINT: usize = 1024 * 1024;
 
     pub fn try_new() -> Result<Self, SetError> {
         Self::try_with_capacity(SET_MIN_CAPACITY)
@@ -146,7 +149,11 @@ impl<T: Hash + Eq + 'static> Drop for Set<T> {
 
 impl<T: Hash + Eq + 'static> Set<T> {
     pub(crate) fn try_with_capacity(capacity: usize) -> Result<Self, SetError> {
-        let arena = ChainAllocator::new_in(Self::SIZE_HINT, VirtualAllocator {});
+        let arena = ChainAllocator::new_capped_in(
+            Self::INITIAL_SIZE_HINT,
+            Self::MAX_SIZE_HINT,
+            VirtualAllocator {},
+        );
         let mut table = HashTable::new();
 
         // SAFETY: new empty table cannot require rehash, callback unreachable.
