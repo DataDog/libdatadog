@@ -96,11 +96,8 @@ prost-build = { version = "0.14.1", default-features = false }
 protoc-bin-vendored = { version = "3.0.0", default-features = false }
 serde = { version = "1.0", default-features = false }
 # serde_json requires at least one of `std` or `alloc` (enforced via compile_error!
-# in its lib.rs). We set `alloc` here as the baseline so every leaf crate that
-# does `serde_json.workspace = true` satisfies that constraint without luck-based
-# transitive enablement. Leaf crates that need `std`-only APIs (e.g. `to_writer`
-# which takes `io::Write`) still add `features = ["std"]` explicitly; combining
-# `alloc` and `std` is identical to `std` alone in serde_json's feature graph.
+# in its lib.rs). We set `alloc` here as the minimal working baseline, and to avoid
+# repeating alloc everywhere. Enabling `std` on top of it is fine.
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 tokio = { version = "1.36", default-features = false }
 tracing = { version = "0.1", default-features = false }
