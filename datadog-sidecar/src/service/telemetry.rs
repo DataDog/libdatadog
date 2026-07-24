@@ -28,7 +28,7 @@ use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::TelemetryWorkerBuilder;
 use serde::{Deserialize, Serialize};
-use std::ops::{Deref, Sub};
+use std::ops::Sub;
 use std::sync::LazyLock;
 use std::time::SystemTime;
 
@@ -128,8 +128,16 @@ async fn next_entry(
             }
             result = rx.recv() => match result {
                 Some(batch) => {
-                    let key = (batch.service_name.as_str(), batch.env_name.as_str());
-                    if let Some(deferred) = pending.iter_mut().find(|s| s.key.0 == key.0 && s.key.1 == key.1) {
+                    let key = (
+                        &batch.instance_id,
+                        batch.service_name.as_str(),
+                        batch.env_name.as_str(),
+                    );
+                    if let Some(deferred) = pending.iter_mut().find(|batch| {
+                        batch.key.0 == *key.0
+                            && batch.key.1 == key.1
+                            && batch.key.2 == key.2
+                    }) {
                         deferred.actions.push_back(batch);
                     } else {
                         return Some(TelemetryBatch::Fresh(batch));
@@ -144,6 +152,7 @@ async fn next_entry(
 async fn deliver_batch(
     actions: Vec<InternalTelemetryAction>,
     clients: &MetricsLogsClientSet,
+    instance_id: &InstanceId,
     service: &str,
     env: &str,
     telemetry_client: &Arc<Mutex<Option<TelemetryCachedClient>>>,
@@ -162,11 +171,11 @@ async fn deliver_batch(
             }
             InternalTelemetryAction::RegisterTelemetryMetric(metric) => {
                 debug!("Registered telemetry metric: {metric:?}");
-                clients.register_metric(service, env, telemetry_client, metric);
+                clients.register_metric(instance_id, service, env, telemetry_client, metric);
             }
             InternalTelemetryAction::AddMetricPoint((value, name, tags)) => {
                 let metric_name = name.clone();
-                clients.touch_metric(service, env, &metric_name);
+                clients.touch_metric(instance_id, service, env, &metric_name);
                 let point = telemetry_client
                     .lock_or_panic()
                     .as_ref()
@@ -195,14 +204,14 @@ impl TelemetryBatch {
     fn service_name(&self) -> &str {
         match self {
             TelemetryBatch::Fresh(a) => &a.service_name,
-            TelemetryBatch::Deferred(d) => &d.key.0,
+            TelemetryBatch::Deferred(d) => &d.key.1,
         }
     }
 
     fn env_name(&self) -> &str {
         match self {
             TelemetryBatch::Fresh(a) => &a.env_name,
-            TelemetryBatch::Deferred(d) => &d.key.1,
+            TelemetryBatch::Deferred(d) => &d.key.2,
         }
     }
 
@@ -222,19 +231,7 @@ impl TelemetryBatch {
                 get_telemetry_client(sidecar, &a.instance_id, &a.service_name, &a.env_name)
             }
             TelemetryBatch::Deferred(d) => {
-                let (service_name, env_name) = &d.key;
-                let mut tried_sessions = HashSet::new();
-                for b in &d.actions {
-                    if tried_sessions.insert(b.instance_id.session_id.as_str()) {
-                        // repeated calls to get_existing_client could be avoided
-                        if let Some(client) =
-                            get_telemetry_client(sidecar, &b.instance_id, service_name, env_name)
-                        {
-                            return Some(client);
-                        }
-                    }
-                }
-                None
+                get_telemetry_client(sidecar, &d.key.0, &d.key.1, &d.key.2)
             }
         }
     }
@@ -255,7 +252,11 @@ impl TelemetryBatch {
                 );
                 let next_at = TokioInstant::now() + Self::RETRY_DELAY;
                 pending.push(PerClientTelemetryBatch {
-                    key: (actions.service_name.clone(), actions.env_name.clone()),
+                    key: (
+                        actions.instance_id.clone(),
+                        actions.service_name.clone(),
+                        actions.env_name.clone(),
+                    ),
                     actions: VecDeque::from([actions]),
                     attempts_left: Self::MAX_ATTEMPTS - 1,
                     next_attempt_at: next_at,
@@ -263,7 +264,7 @@ impl TelemetryBatch {
             }
             TelemetryBatch::Deferred(deferred) => {
                 debug_assert!(!deferred.actions.is_empty());
-                let (service_name, env_name) = &deferred.key;
+                let (_, service_name, env_name) = &deferred.key;
                 let remaining = deferred.attempts_left - 1;
                 if remaining > 0 {
                     info!(
@@ -300,6 +301,7 @@ impl TelemetryBatch {
                 deliver_batch(
                     actions.actions,
                     clients,
+                    &actions.instance_id,
                     &actions.service_name,
                     &actions.env_name,
                     telemetry_client,
@@ -313,8 +315,9 @@ impl TelemetryBatch {
                     deliver_batch(
                         batch.actions,
                         clients,
-                        &deferred.key.0,
-                        &deferred.key.1,
+                        &batch.instance_id,
+                        &batch.service_name,
+                        &batch.env_name,
                         telemetry_client,
                         client,
                     )
@@ -326,7 +329,7 @@ impl TelemetryBatch {
 }
 
 struct PerClientTelemetryBatch {
-    key: TelemetryCachedClientKey,
+    key: (InstanceId, ServiceString, EnvString),
     actions: VecDeque<InternalTelemetryActions>, // invariant: non-empty
     attempts_left: u8,
     next_attempt_at: TokioInstant,
@@ -641,13 +644,18 @@ impl Drop for TelemetryCachedClient {
 
 type ServiceString = String;
 type EnvString = String;
-type TelemetryCachedClientKey = (ServiceString, EnvString);
-type TelemetryMetricRegistrationKey = (ServiceString, EnvString, String);
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+enum TelemetryCachedClientOwner {
+    Application,
+    Runtime(InstanceId),
+}
+type TelemetryCachedClientKey = (TelemetryCachedClientOwner, ServiceString, EnvString);
+type TelemetryMetricRegistrationKey = (InstanceId, ServiceString, EnvString, String);
 type TelemetryMetricRegistrations =
     HashMap<TelemetryMetricRegistrationKey, (MetricContext, Instant)>;
 
 pub struct TelemetryCachedClientSet {
-    pub inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
+    inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
     cleanup_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -696,12 +704,22 @@ impl Clone for TelemetryCachedClientSet {
 }
 
 impl TelemetryCachedClientSet {
+    #[cfg(test)]
     fn get_existing_client(
         &self,
         service: &str,
         env: &str,
     ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
-        let key = (service.to_string(), env.to_string());
+        self.get_existing_client_with(TelemetryCachedClientOwner::Application, service, env)
+    }
+
+    fn get_existing_client_with(
+        &self,
+        owner: TelemetryCachedClientOwner,
+        service: &str,
+        env: &str,
+    ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
+        let key = (owner, service.to_string(), env.to_string());
 
         let mut map = self.inner.lock_or_panic();
         map.get_mut(&key).map(|entry| {
@@ -712,12 +730,13 @@ impl TelemetryCachedClientSet {
 
     fn get_or_create_with(
         &self,
+        owner: TelemetryCachedClientOwner,
         service: &str,
         env: &str,
         create: impl FnOnce() -> TelemetryCachedClient,
     ) -> Arc<Mutex<Option<TelemetryCachedClient>>> {
         let mut map = self.inner.lock_or_panic();
-        let key = (service.to_string(), env.to_string());
+        let key = (owner, service.to_string(), env.to_string());
         match map.entry(key.clone()) {
             Entry::Occupied(mut entry) => {
                 let active = {
@@ -761,16 +780,21 @@ impl TelemetryCachedClientSet {
     where
         F: FnOnce() -> (Config, Vec<data::Configuration>),
     {
-        self.get_or_create_with(service, env, || {
-            TelemetryCachedClient::new(
-                service,
-                env,
-                instance_id,
-                runtime_meta,
-                get_config,
-                process_tags,
-            )
-        })
+        self.get_or_create_with(
+            TelemetryCachedClientOwner::Application,
+            service,
+            env,
+            || {
+                TelemetryCachedClient::new(
+                    service,
+                    env,
+                    instance_id,
+                    runtime_meta,
+                    get_config,
+                    process_tags,
+                )
+            },
+        )
     }
 
     pub(crate) fn workers(&self) -> Vec<TelemetryWorkerHandle> {
@@ -796,7 +820,22 @@ impl TelemetryCachedClientSet {
         env: &str,
         expected: &Arc<Mutex<Option<TelemetryCachedClient>>>,
     ) {
-        let key = (service.to_string(), env.to_string());
+        self.remove_client_with(
+            TelemetryCachedClientOwner::Application,
+            service,
+            env,
+            expected,
+        );
+    }
+
+    fn remove_client_with(
+        &self,
+        owner: TelemetryCachedClientOwner,
+        service: &str,
+        env: &str,
+        expected: &Arc<Mutex<Option<TelemetryCachedClient>>>,
+    ) {
+        let key = (owner, service.to_string(), env.to_string());
         let mut clients = self.inner.lock_or_panic();
         if clients
             .get(&key)
@@ -830,15 +869,28 @@ impl Clone for MetricsLogsClientSet {
     }
 }
 
-impl Deref for MetricsLogsClientSet {
-    type Target = TelemetryCachedClientSet;
-
-    fn deref(&self) -> &Self::Target {
-        &self.clients
-    }
-}
-
 impl MetricsLogsClientSet {
+    pub(crate) fn workers(&self) -> Vec<TelemetryWorkerHandle> {
+        self.clients.workers()
+    }
+
+    pub(crate) fn clients(&self) -> Vec<Arc<Mutex<Option<TelemetryCachedClient>>>> {
+        self.clients.clients()
+    }
+
+    fn get_existing_metrics_logs(
+        &self,
+        instance_id: &InstanceId,
+        service: &str,
+        env: &str,
+    ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
+        self.clients.get_existing_client_with(
+            TelemetryCachedClientOwner::Runtime(instance_id.clone()),
+            service,
+            env,
+        )
+    }
+
     pub(crate) fn get_or_create_metrics_logs<F>(
         &self,
         service: &str,
@@ -855,29 +907,55 @@ impl MetricsLogsClientSet {
             .registrations
             .lock_or_panic()
             .iter()
-            .filter(|((registered_service, registered_env, _), _)| {
-                registered_service == service && registered_env == env
-            })
+            .filter(
+                |((registered_instance, registered_service, registered_env, _), _)| {
+                    registered_instance == instance_id
+                        && registered_service == service
+                        && registered_env == env
+                },
+            )
             .map(|(_, (metric, _))| metric.clone())
             .collect::<Vec<_>>();
-        self.clients.get_or_create_with(service, env, || {
-            let mut client = TelemetryCachedClient::new_metrics_logs(
-                service,
-                env,
-                instance_id,
-                runtime_meta,
-                get_config,
-                process_tags,
-            );
-            for metric in registrations {
-                client.register_metric(metric);
-            }
-            client
-        })
+        self.clients.get_or_create_with(
+            TelemetryCachedClientOwner::Runtime(instance_id.clone()),
+            service,
+            env,
+            || {
+                let mut client = TelemetryCachedClient::new_metrics_logs(
+                    service,
+                    env,
+                    instance_id,
+                    runtime_meta,
+                    get_config,
+                    process_tags,
+                );
+                for metric in registrations {
+                    client.register_metric(metric);
+                }
+                client
+            },
+        )
+    }
+
+    #[cfg(test)]
+    fn remove_metrics_logs_client(
+        &self,
+        instance_id: &InstanceId,
+        service: &str,
+        env: &str,
+        expected: &Arc<Mutex<Option<TelemetryCachedClient>>>,
+    ) {
+        self.clients.remove_client_with(
+            TelemetryCachedClientOwner::Runtime(instance_id.clone()),
+            service,
+            env,
+            expected,
+        );
     }
 
     fn register_metric(
         &self,
+        instance_id: &InstanceId,
         service: &str,
         env: &str,
         client: &Arc<Mutex<Option<TelemetryCachedClient>>>,
@@ -886,7 +964,12 @@ impl MetricsLogsClientSet {
         const MAX_REGISTRATIONS: usize = libdd_telemetry::worker::MAX_ITEMS;
 
         let mut registrations = self.registrations.lock_or_panic();
-        let key = (service.to_string(), env.to_string(), metric.name.clone());
+        let key = (
+            instance_id.clone(),
+            service.to_string(),
+            env.to_string(),
+            metric.name.clone(),
+        );
         if !registrations.contains_key(&key) && registrations.len() >= MAX_REGISTRATIONS {
             if let Some(oldest) = registrations
                 .iter()
@@ -904,8 +987,13 @@ impl MetricsLogsClientSet {
         }
     }
 
-    fn touch_metric(&self, service: &str, env: &str, name: &str) {
-        let key = (service.to_string(), env.to_string(), name.to_string());
+    fn touch_metric(&self, instance_id: &InstanceId, service: &str, env: &str, name: &str) {
+        let key = (
+            instance_id.clone(),
+            service.to_string(),
+            env.to_string(),
+            name.to_string(),
+        );
         if let Some((_, last_used)) = self.registrations.lock_or_panic().get_mut(&key) {
             *last_used = Instant::now();
         }
@@ -951,9 +1039,10 @@ fn get_telemetry_client(
     service_name: &str,
     env_name: &str,
 ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
-    if let Some(existing) = sidecar
-        .metrics_logs_clients
-        .get_existing_client(service_name, env_name)
+    if let Some(existing) =
+        sidecar
+            .metrics_logs_clients
+            .get_existing_metrics_logs(instance_id, service_name, env_name)
     {
         return Some(existing);
     }
@@ -1027,6 +1116,45 @@ mod tests {
                 is_crash: false,
             },
         )))
+    }
+
+    #[tokio::test]
+    async fn deferred_batches_are_scoped_by_instance() {
+        let instance_a = InstanceId::new("session", "runtime-a");
+        let instance_b = InstanceId::new("session", "runtime-b");
+        let mut pending = vec![PerClientTelemetryBatch {
+            key: (
+                instance_a.clone(),
+                "shared-service".to_string(),
+                "test".to_string(),
+            ),
+            actions: VecDeque::from([InternalTelemetryActions {
+                instance_id: instance_a,
+                service_name: "shared-service".to_string(),
+                env_name: "test".to_string(),
+                actions: vec![internal_log("owner-a")],
+            }]),
+            attempts_left: 2,
+            next_attempt_at: TokioInstant::now() + Duration::from_secs(60),
+        }];
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.send(InternalTelemetryActions {
+            instance_id: instance_b.clone(),
+            service_name: "shared-service".to_string(),
+            env_name: "test".to_string(),
+            actions: vec![internal_log("owner-b")],
+        })
+        .await
+        .unwrap();
+
+        let batch = next_entry(&mut pending, &mut rx)
+            .await
+            .expect("second owner should remain a fresh batch");
+        let TelemetryBatch::Fresh(batch) = batch else {
+            panic!("different owners must not share a deferred batch");
+        };
+        assert_eq!(batch.instance_id, instance_b);
+        assert_eq!(pending[0].actions.len(), 1);
     }
 
     #[tokio::test]
@@ -1283,16 +1411,18 @@ mod tests {
 
         let http_server = MockServer::start_async().await;
         let clients = MetricsLogsClientSet::default();
+        let instance_id = InstanceId::new("session", "runtime");
 
         let client = clients.get_or_create_metrics_logs(
             SERVICE,
             ENV,
-            &InstanceId::new("session", "runtime"),
+            &instance_id,
             &RuntimeMetadata::new("php", "8.3", "test"),
             || test_config(&http_server),
             Vec::new(),
         );
         clients.register_metric(
+            &instance_id,
             SERVICE,
             ENV,
             &client,
@@ -1307,14 +1437,19 @@ mod tests {
         let stale_last_used = Instant::now();
         sleep(Duration::from_millis(1)).await;
         clients
+            .clients
             .inner
             .lock_or_panic()
-            .get_mut(&(SERVICE.to_string(), ENV.to_string()))
+            .get_mut(&(
+                TelemetryCachedClientOwner::Runtime(instance_id.clone()),
+                SERVICE.to_string(),
+                ENV.to_string(),
+            ))
             .expect("cached entry")
             .last_used = stale_last_used;
 
         let cached = clients
-            .get_existing_client(SERVICE, ENV)
+            .get_existing_metrics_logs(&instance_id, SERVICE, ENV)
             .expect("persistent cache entry");
         assert!(Arc::ptr_eq(&client, &cached));
         assert!(cached
@@ -1325,19 +1460,24 @@ mod tests {
             .contains_key(METRIC));
         assert!(
             clients
+                .clients
                 .inner
                 .lock_or_panic()
-                .get(&(SERVICE.to_string(), ENV.to_string()))
+                .get(&(
+                    TelemetryCachedClientOwner::Runtime(instance_id.clone()),
+                    SERVICE.to_string(),
+                    ENV.to_string(),
+                ))
                 .expect("cached entry")
                 .last_used
                 > stale_last_used
         );
 
-        clients.remove_telemetry_client(SERVICE, ENV, &client);
+        clients.remove_metrics_logs_client(&instance_id, SERVICE, ENV, &client);
         let replacement = clients.get_or_create_metrics_logs(
             SERVICE,
             ENV,
-            &InstanceId::new("session", "replacement-runtime"),
+            &instance_id,
             &RuntimeMetadata::new("php", "8.3", "test"),
             || test_config(&http_server),
             Vec::new(),
@@ -1358,7 +1498,12 @@ mod tests {
             for index in 0..MAX_REGISTRATIONS {
                 let name = format!("bounded.metric.{index}");
                 registrations.insert(
-                    (SERVICE.to_string(), ENV.to_string(), name.clone()),
+                    (
+                        instance_id.clone(),
+                        SERVICE.to_string(),
+                        ENV.to_string(),
+                        name.clone(),
+                    ),
                     (
                         MetricContext {
                             name,
@@ -1373,6 +1518,7 @@ mod tests {
             }
         }
         clients.register_metric(
+            &instance_id,
             SERVICE,
             ENV,
             &replacement,
@@ -1387,10 +1533,111 @@ mod tests {
         let registrations = clients.registrations.lock_or_panic();
         assert_eq!(registrations.len(), MAX_REGISTRATIONS);
         assert!(registrations.contains_key(&(
+            instance_id.clone(),
             SERVICE.to_string(),
             ENV.to_string(),
             "bounded.metric.new".to_string()
         )));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn metrics_logs_cache_is_scoped_by_instance() {
+        const SERVICE: &str = "shared-service";
+        const ENV: &str = "test";
+
+        let server_a = MockServer::start_async().await;
+        let server_b = MockServer::start_async().await;
+        let expected_a = server_a
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("owner-a");
+                then.status(202);
+            })
+            .await;
+        let unexpected_a = server_a
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("owner-b");
+                then.status(202);
+            })
+            .await;
+        let expected_b = server_b
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("owner-b");
+                then.status(202);
+            })
+            .await;
+        let unexpected_b = server_b
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(TELEMETRY_PATH)
+                    .body_includes("owner-a");
+                then.status(202);
+            })
+            .await;
+
+        let sidecar = SidecarServer::default();
+        let instance_a = InstanceId::new("session-a", "runtime-a");
+        let instance_b = InstanceId::new("session-b", "runtime-b");
+        *sidecar
+            .get_session(&instance_a.session_id)
+            .session_config
+            .lock_or_panic() = Some(test_config(&server_a));
+        *sidecar
+            .get_session(&instance_b.session_id)
+            .session_config
+            .lock_or_panic() = Some(test_config(&server_b));
+
+        let client_a =
+            get_telemetry_client(&sidecar, &instance_a, SERVICE, ENV).expect("first owner");
+        let client_b =
+            get_telemetry_client(&sidecar, &instance_b, SERVICE, ENV).expect("second owner");
+        assert!(!Arc::ptr_eq(&client_a, &client_b));
+
+        for (instance_id, client, message) in [
+            (&instance_a, &client_a, "owner-a"),
+            (&instance_b, &client_b, "owner-b"),
+        ] {
+            let worker = client
+                .lock_or_panic()
+                .as_ref()
+                .expect("metrics/logs client")
+                .worker
+                .clone();
+            TelemetryBatch::Fresh(InternalTelemetryActions {
+                instance_id: instance_id.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![internal_log(message)],
+            })
+            .deliver(&sidecar.metrics_logs_clients, client, &worker)
+            .await;
+            worker
+                .send_msg(TelemetryActions::Lifecycle(LifecycleAction::FlushData))
+                .await
+                .unwrap();
+            let (tx, rx) = futures::channel::oneshot::channel();
+            worker
+                .send_msg(TelemetryActions::CollectStats(tx))
+                .await
+                .unwrap();
+            rx.await.unwrap();
+        }
+
+        timeout(Duration::from_secs(5), async {
+            while expected_a.calls_async().await != 1 || expected_b.calls_async().await != 1 {
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("each owner should deliver to its own endpoint");
+        assert_eq!(unexpected_a.calls_async().await, 0);
+        assert_eq!(unexpected_b.calls_async().await, 0);
     }
 
     #[tokio::test]
@@ -1436,6 +1683,7 @@ mod tests {
         ] {
             for name in [SHARED_METRIC, unique_metric] {
                 clients.register_metric(
+                    &instance_id,
                     service,
                     ENV,
                     client,
@@ -1451,8 +1699,8 @@ mod tests {
         }
         assert_eq!(clients.registrations.lock_or_panic().len(), 4);
 
-        clients.remove_telemetry_client("service-a", ENV, &service_a);
-        clients.remove_telemetry_client("service-b", ENV, &service_b);
+        clients.remove_metrics_logs_client(&instance_id, "service-a", ENV, &service_a);
+        clients.remove_metrics_logs_client(&instance_id, "service-b", ENV, &service_b);
         let replacement_a = clients.get_or_create_metrics_logs(
             "service-a",
             ENV,

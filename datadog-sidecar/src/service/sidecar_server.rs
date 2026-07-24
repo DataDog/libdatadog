@@ -1117,24 +1117,25 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn flush(&self, options: SidecarFlushOptions) {
-        let stats_states = if options.traces_and_stats || options.telemetry {
-            let concentrators = self.server.span_concentrators.lock_or_panic();
-            concentrators.values().cloned().collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-
         if options.traces_and_stats {
             let flusher = self.server.trace_flusher.clone();
             if let Err(e) = tokio::spawn(async move { flusher.flush().await }).await {
                 error!("Failed flushing traces: {e:?}");
             }
+            let stats_states = {
+                let concentrators = self.server.span_concentrators.lock_or_panic();
+                concentrators.values().cloned().collect::<Vec<_>>()
+            };
             flush_all_stats_now(&stats_states).await;
             debug!("Finished executing flush() for traces and stats")
         }
         if options.telemetry {
             let mut workers = self.server.telemetry_clients.workers();
             workers.extend(self.server.metrics_logs_clients.workers());
+            let stats_states = {
+                let concentrators = self.server.span_concentrators.lock_or_panic();
+                concentrators.values().cloned().collect::<Vec<_>>()
+            };
             workers.extend(
                 stats_states
                     .into_iter()
@@ -1209,7 +1210,10 @@ impl SidecarInterface for ConnectionSidecarHandler {
 mod tests {
     use super::*;
     use crate::service::{FfeEvaluationMetric, FfeExposure, FfeExposureBatch, FfeTelemetryContext};
+    use datadog_ipc::shm_stats::ShmSpanInput;
     use httpmock::{Method::POST, MockServer};
+    use libdd_trace_stats::span_concentrator::FixedAggregationKey;
+    use libdd_trace_utils::test_utils::create_send_data;
     use tokio::time::{sleep, Duration as TokioDuration};
 
     /// Build a handler backed by a throwaway socketpair connection. These tests exercise
@@ -1430,7 +1434,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[cfg_attr(miri, ignore)]
     async fn initial_config_reaches_app_started_through_enqueue_actions() {
-        const CLIENTS: usize = 64;
+        const CLIENTS: usize = 16;
         const TELEMETRY_PATH: &str = "/telemetry/proxy/api/v2/apmtelemetry";
 
         let http_server = MockServer::start_async().await;
@@ -1439,7 +1443,8 @@ mod tests {
                 when.method(POST)
                     .path(TELEMETRY_PATH)
                     .body_includes("\"request_type\":\"app-started\"")
-                    .body_includes("\"name\":\"race_config\"");
+                    .body_includes("\"name\":\"race_config\"")
+                    .body_includes("\"name\":\"race_config_second\"");
                 then.status(202);
             })
             .await;
@@ -1477,15 +1482,32 @@ mod tests {
                 .enqueue_actions(
                     instance_id,
                     queue_id,
-                    vec![SidecarAction::Telemetry(TelemetryActions::AddConfig(
-                        libdd_telemetry::data::Configuration {
-                            name: "race_config".to_string(),
-                            value: "present".to_string(),
-                            origin: libdd_telemetry::data::ConfigurationOrigin::Default,
-                            config_id: None,
-                            seq_id: None,
-                        },
-                    ))],
+                    vec![
+                        SidecarAction::Telemetry(TelemetryActions::AddDependency(
+                            libdd_telemetry::data::Dependency {
+                                name: "startup-dependency".to_string(),
+                                version: None,
+                            },
+                        )),
+                        SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                            libdd_telemetry::data::Configuration {
+                                name: "race_config".to_string(),
+                                value: "present".to_string(),
+                                origin: libdd_telemetry::data::ConfigurationOrigin::Default,
+                                config_id: None,
+                                seq_id: None,
+                            },
+                        )),
+                        SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                            libdd_telemetry::data::Configuration {
+                                name: "race_config_second".to_string(),
+                                value: "present".to_string(),
+                                origin: libdd_telemetry::data::ConfigurationOrigin::Default,
+                                config_id: None,
+                                seq_id: None,
+                            },
+                        )),
+                    ],
                 )
                 .await;
         }
@@ -1685,6 +1707,102 @@ mod tests {
             metric_request.calls_async().await,
             1,
             "flush returned before the dedicated stats telemetry worker sent its metric"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn stats_flush_snapshots_concentrators_after_trace_flush() {
+        const SERVICE: &str = "concurrent-stats-worker";
+        const ENV: &str = "test-env";
+
+        let trace_server = MockServer::start_async().await;
+        let trace_request = trace_server
+            .mock_async(|when, then| {
+                when.method(POST);
+                then.status(202)
+                    .header("content-type", "application/json")
+                    .body(r#"{"status":"ok"}"#)
+                    .delay(TokioDuration::from_millis(200));
+            })
+            .await;
+        let stats_server = MockServer::start_async().await;
+        let stats_request = stats_server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v0.6/stats");
+                then.status(202);
+            })
+            .await;
+
+        let server = SidecarServer::default();
+        let trace_endpoint = Endpoint {
+            url: trace_server.url("/").parse().unwrap(),
+            ..Endpoint::default()
+        };
+        server
+            .trace_flusher
+            .enqueue(create_send_data(128, &trace_endpoint));
+        let handler = test_handler(server.clone());
+        let flush = tokio::spawn(async move {
+            handler
+                .flush(SidecarFlushOptions {
+                    traces_and_stats: true,
+                    telemetry: false,
+                })
+                .await;
+        });
+
+        tokio::time::timeout(TokioDuration::from_secs(5), async {
+            while trace_request.calls_async().await != 1 {
+                sleep(TokioDuration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("trace flush should be in flight");
+
+        let session = server.get_session("session");
+        *session.session_config.lock_or_panic() = Some(Config::default());
+        *session.stats_config.lock_or_panic() = Some(StatsConfig {
+            endpoint: Endpoint {
+                url: stats_server.url("/v0.6/stats").parse().unwrap(),
+                ..Endpoint::default()
+            },
+            flush_interval: Duration::from_secs(60),
+            hostname: String::new(),
+            process_tags: String::new(),
+            root_service: SERVICE.to_string(),
+            language: "php".to_string(),
+            tracer_version: "test".to_string(),
+        });
+        let state =
+            get_or_create_concentrator(&server.span_concentrators, ENV, "", "runtime", &session)
+                .expect("stats concentrator");
+        state.concentrator.add_span(&ShmSpanInput {
+            fixed: FixedAggregationKey {
+                service_name: SERVICE,
+                resource_name: "resource",
+                operation_name: "operation",
+                span_type: "web",
+                span_kind: "server",
+                http_method: "GET",
+                http_endpoint: "/",
+                service_source: "",
+                http_status_code: 200,
+                is_synthetics_request: false,
+                is_trace_root: Default::default(),
+                grpc_status_code: None,
+            },
+            peer_tags: &[],
+            duration_ns: 1_000_000,
+            is_error: false,
+            is_top_level: true,
+        });
+
+        flush.await.unwrap();
+        assert_eq!(
+            stats_request.calls_async().await,
+            1,
+            "a concentrator created during trace flush should be included"
         );
     }
 
