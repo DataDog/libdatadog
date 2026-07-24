@@ -15,7 +15,7 @@ pub struct ThreadContextRecord {
     pub(crate) trace_id: [u8; 16],
     pub(crate) span_id: [u8; 8],
     pub(crate) valid: AtomicU8,
-    pub(crate) reserved: u8,
+    pub(crate) trace_flags: u8,
     pub(crate) attrs_data_size: u16,
     pub(crate) attrs_data: [u8; MAX_ATTRS_DATA_SIZE],
 }
@@ -26,7 +26,7 @@ const _: () = {
     assert!(mem::offset_of!(ThreadContextRecord, trace_id) == 0);
     assert!(mem::offset_of!(ThreadContextRecord, span_id) == 16);
     assert!(mem::offset_of!(ThreadContextRecord, valid) == 24);
-    assert!(mem::offset_of!(ThreadContextRecord, reserved) == 25);
+    assert!(mem::offset_of!(ThreadContextRecord, trace_flags) == 25);
     assert!(mem::offset_of!(ThreadContextRecord, attrs_data_size) == 26);
     assert!(mem::offset_of!(ThreadContextRecord, attrs_data) == 28);
 };
@@ -36,6 +36,7 @@ impl ThreadContextRecord {
         &mut self,
         trace_id: [u8; 16],
         span_id: [u8; 8],
+        trace_flags: u8,
         local_root_span_id: [u8; 8],
         attributes: I,
     ) -> bool
@@ -43,13 +44,20 @@ impl ThreadContextRecord {
         I: IntoIterator<Item = (u8, S)>,
         S: AsRef<str>,
     {
-        self.update(trace_id, span_id, local_root_span_id, attributes)
+        self.update(
+            trace_id,
+            span_id,
+            trace_flags,
+            local_root_span_id,
+            attributes,
+        )
     }
 
     pub fn update<I, S>(
         &mut self,
         trace_id: [u8; 16],
         span_id: [u8; 8],
+        trace_flags: u8,
         local_root_span_id: [u8; 8],
         attributes: I,
     ) -> bool
@@ -61,6 +69,7 @@ impl ThreadContextRecord {
         compiler_fence(Ordering::SeqCst);
         self.trace_id = trace_id;
         self.span_id = span_id;
+        self.trace_flags = trace_flags;
         let complete = self.set_attrs(local_root_span_id, attributes);
         compiler_fence(Ordering::SeqCst);
         self.valid.store(1, Ordering::Relaxed);
@@ -120,7 +129,7 @@ impl Default for ThreadContextRecord {
             trace_id: [0; 16],
             span_id: [0; 8],
             valid: AtomicU8::new(1),
-            reserved: 0,
+            trace_flags: 0,
             attrs_data_size: 0,
             attrs_data: [0; MAX_ATTRS_DATA_SIZE],
         }
@@ -134,9 +143,10 @@ mod tests {
     #[test]
     fn explicit_record_lifecycle() {
         let mut record = ThreadContextRecord::default();
-        assert!(record.initialize([1; 16], [2; 8], [3; 8], [(1, "service")]));
+        assert!(record.initialize([1; 16], [2; 8], 0x03, [3; 8], [(1, "service")]));
         assert_eq!(record.valid.load(Ordering::Relaxed), 1);
         assert_eq!(record.span_id, [2; 8]);
+        assert_eq!(record.trace_flags, 0x03);
         assert_eq!(&record.attrs_data[20..27], b"service");
         record.update_span_id([4; 8]);
         assert_eq!(record.span_id, [4; 8]);
