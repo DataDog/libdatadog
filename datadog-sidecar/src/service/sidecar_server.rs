@@ -183,15 +183,7 @@ impl ConnectionSidecarHandler {
         }
 
         for instance_id in instances {
-            let maybe_session = self
-                .server
-                .sessions
-                .lock_or_panic()
-                .get(&instance_id.session_id)
-                .cloned();
-            if let Some(session) = maybe_session {
-                session.shutdown_runtime(&instance_id.runtime_id).await;
-            }
+            self.server.stop_runtime(&instance_id).await;
         }
     }
 }
@@ -247,10 +239,23 @@ impl SidecarServer {
         session.get_runtime(&instance_id.runtime_id)
     }
 
+    async fn stop_runtime(&self, instance_id: &InstanceId) {
+        self.metrics_logs_clients.remove_runtime(instance_id);
+        let maybe_session = self
+            .sessions
+            .lock_or_panic()
+            .get(&instance_id.session_id)
+            .cloned();
+        if let Some(session) = maybe_session {
+            session.shutdown_runtime(&instance_id.runtime_id).await;
+        }
+    }
+
     async fn stop_session(&self, session_id: &str) {
-        let session = match self.sessions.lock_or_panic().remove(session_id) {
-            Some(session) => session,
-            None => return,
+        let session = self.sessions.lock_or_panic().remove(session_id);
+        self.metrics_logs_clients.remove_session(session_id);
+        let Some(session) = session else {
+            return;
         };
 
         info!("Shutting down session: {}", session_id);
@@ -939,8 +944,8 @@ impl SidecarInterface for ConnectionSidecarHandler {
     }
 
     async fn shutdown_runtime(&self, instance_id: InstanceId) {
-        let session = self.server.get_session(&instance_id.session_id);
-        tokio::spawn(async move { session.shutdown_runtime(&instance_id.runtime_id).await });
+        let server = self.server.clone();
+        tokio::spawn(async move { server.stop_runtime(&instance_id).await });
     }
 
     async fn shutdown_session(&self) {
@@ -1267,6 +1272,68 @@ mod tests {
         drop(peer);
         let conn = OwnedServerConn::new(local).expect("OwnedServerConn");
         ConnectionSidecarHandler::new(server, conn)
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn shutdown_removes_runtime_owned_telemetry() {
+        const SERVICE: &str = "cleanup-service";
+        const ENV: &str = "test";
+        const METRIC: &str = "cleanup.metric";
+
+        let server = SidecarServer::default();
+        let handler = test_handler(server.clone());
+        handler
+            .session_id
+            .set("session".to_string())
+            .expect("test handler session should be unset");
+        let runtime_a = InstanceId::new("session", "runtime-a");
+        let runtime_b = InstanceId::new("session", "runtime-b");
+        let runtime_metadata = RuntimeMetadata::new("php", "8.3", "test");
+
+        for instance_id in [&runtime_a, &runtime_b] {
+            server.metrics_logs_clients.get_or_create_metrics_logs(
+                SERVICE,
+                ENV,
+                instance_id,
+                &runtime_metadata,
+                Config::default,
+                Vec::new(),
+            );
+        }
+        assert!(server.metrics_logs_clients.register_metric(
+            &runtime_a,
+            SERVICE,
+            ENV,
+            MetricContext {
+                name: METRIC.to_string(),
+                tags: Vec::new(),
+                metric_type: libdd_telemetry::data::metrics::MetricType::Count,
+                common: true,
+                namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+            },
+        ));
+        handler.shutdown_runtime(runtime_a.clone()).await;
+        tokio::task::yield_now().await;
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&runtime_a, SERVICE, ENV)
+            .is_none());
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
+            .is_some());
+
+        handler.shutdown_session().await;
+        tokio::task::yield_now().await;
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
+            .is_none());
+        assert!(server
+            .metrics_logs_clients
+            .registered_metrics(&runtime_b, SERVICE, ENV)
+            .is_empty());
     }
 
     fn ffe_context() -> FfeTelemetryContext {

@@ -1072,6 +1072,36 @@ impl TelemetryCachedClientSet {
         clients.values().map(|entry| entry.client.clone()).collect()
     }
 
+    fn remove_clients_matching(
+        &self,
+        predicate: impl Fn(&TelemetryCachedClientOwner) -> bool,
+    ) {
+        let removed = {
+            let mut clients = self.inner.lock_or_panic();
+            let keys = clients
+                .keys()
+                .filter(|(owner, _, _)| predicate(owner))
+                .cloned()
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|key| clients.remove(&key))
+                .collect::<Vec<_>>()
+        };
+        drop(removed);
+    }
+
+    pub(crate) fn remove_runtime(&self, instance_id: &InstanceId) {
+        self.remove_clients_matching(|owner| {
+            matches!(owner, TelemetryCachedClientOwner::Runtime(owner_instance) if owner_instance == instance_id)
+        });
+    }
+
+    pub(crate) fn remove_session(&self, session_id: &str) {
+        self.remove_clients_matching(|owner| {
+            matches!(owner, TelemetryCachedClientOwner::Runtime(owner_instance) if owner_instance.session_id == session_id)
+        });
+    }
+
     pub fn remove_telemetry_client(
         &self,
         service: &str,
@@ -1167,6 +1197,18 @@ impl MetricsLogsClientSet {
         self.clients.clients()
     }
 
+    pub(crate) fn remove_runtime(&self, instance_id: &InstanceId) {
+        self.clients.remove_runtime(instance_id);
+    }
+
+    pub(crate) fn remove_session(&self, session_id: &str) {
+        {
+            let mut registrations = self.registrations.lock_or_panic();
+            registrations.retain(|scope, _| scope.session_id != session_id);
+        }
+        self.clients.remove_session(session_id);
+    }
+
     #[cfg(test)]
     fn with_registration_limit(registration_limit: usize) -> Self {
         Self {
@@ -1183,7 +1225,7 @@ impl MetricsLogsClientSet {
         }
     }
 
-    fn get_existing_metrics_logs(
+    pub(crate) fn get_existing_metrics_logs(
         &self,
         instance_id: &InstanceId,
         service: &str,
@@ -1250,7 +1292,7 @@ impl MetricsLogsClientSet {
         );
     }
 
-    fn registered_metrics(
+    pub(crate) fn registered_metrics(
         &self,
         instance_id: &InstanceId,
         service: &str,
@@ -1278,7 +1320,7 @@ impl MetricsLogsClientSet {
             .collect()
     }
 
-    fn register_metric(
+    pub(crate) fn register_metric(
         &self,
         instance_id: &InstanceId,
         service: &str,
@@ -2155,6 +2197,68 @@ mod tests {
             .expect("runtime worker")
             .telemetry_metrics
             .contains_key(METRIC));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn runtime_and_session_cleanup_remove_owned_state() {
+        const SERVICE: &str = "cleanup-service";
+        const ENV: &str = "test";
+
+        let clients = MetricsLogsClientSet::default();
+        let runtime_metadata = RuntimeMetadata::new("php", "8.3", "test");
+        let session_a_runtime_a = InstanceId::new("session-a", "runtime-a");
+        let session_a_runtime_b = InstanceId::new("session-a", "runtime-b");
+        let session_b_runtime = InstanceId::new("session-b", "runtime");
+
+        for instance_id in [
+            &session_a_runtime_a,
+            &session_a_runtime_b,
+            &session_b_runtime,
+        ] {
+            clients.get_or_create_metrics_logs(
+                SERVICE,
+                ENV,
+                instance_id,
+                &runtime_metadata,
+                Config::default,
+                Vec::new(),
+            );
+        }
+        assert!(clients.register_metric(
+            &session_a_runtime_a,
+            SERVICE,
+            ENV,
+            metric("cleanup.metric"),
+        ));
+        assert!(clients.register_metric(
+            &session_b_runtime,
+            SERVICE,
+            ENV,
+            metric("cleanup.metric"),
+        ));
+
+        clients.remove_runtime(&session_a_runtime_a);
+        assert!(clients
+            .get_existing_metrics_logs(&session_a_runtime_a, SERVICE, ENV)
+            .is_none());
+        assert!(clients
+            .get_existing_metrics_logs(&session_a_runtime_b, SERVICE, ENV)
+            .is_some());
+
+        clients.remove_session("session-a");
+        assert!(clients
+            .get_existing_metrics_logs(&session_a_runtime_b, SERVICE, ENV)
+            .is_none());
+        assert!(clients
+            .get_existing_metrics_logs(&session_b_runtime, SERVICE, ENV)
+            .is_some());
+        assert!(clients
+            .registered_metrics(&session_a_runtime_b, SERVICE, ENV)
+            .is_empty());
+        assert!(!clients
+            .registered_metrics(&session_b_runtime, SERVICE, ENV)
+            .is_empty());
     }
 
     #[tokio::test]
