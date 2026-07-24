@@ -26,6 +26,7 @@ pub enum DynamicInstrumentationConfigState {
 #[derive(Debug, Default, Copy, Clone, Serialize, Deserialize)]
 pub struct SidecarFlushOptions {
     pub traces_and_stats: bool,
+    pub flag_evaluations: bool,
     pub telemetry: bool,
 }
 
@@ -220,7 +221,8 @@ pub trait SidecarInterface {
     /// * `actions` - The DogStatsD actions to send.
     async fn send_dogstatsd_actions(instance_id: InstanceId, actions: Vec<DogStatsDActionOwned>);
 
-    /// Flushes outstanding traces/stats and/or telemetry, as specified by options.
+    /// Flushes outstanding traces/stats, flag evaluations, and/or telemetry, as specified by
+    /// options.
     #[blocking]
     async fn flush(options: SidecarFlushOptions);
 

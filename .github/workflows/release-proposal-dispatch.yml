@@ -433,7 +433,7 @@ jobs:
         run: |
           # Get commits since release for each crate and save to file
           "${WORKFLOW_SCRIPTS_ROOT}/commits-since-release.sh" "$(cat /tmp/crates.json)" > /tmp/commits-by-crate.json
-          
+
           # Capture ephemeral release branch tip now. Use this in Release version bumps
           # so tag/merge-base resolution uses the same ref the script used.
           git rev-parse HEAD > /tmp/release_head_sha
@@ -1011,7 +1011,6 @@ jobs:
           if [ "${#PR_TITLE}" -gt 100 ]; then
             PR_TITLE="${PR_TITLE:0:97}..."
           fi
-          
           if gh pr create \
               --head "$BRANCH_NAME" \
               --title "$PR_TITLE" \

@@ -8,41 +8,27 @@
 //! dd-trace-dotnet: `POST /evp_proxy/v2/api/v2/exposures` with the header
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. No agent capability gate.
 
+use crate::service::ffe_evp_proxy;
 use crate::service::FfeExposureBatch;
 use datadog_ffe::telemetry::exposures::encode_exposure_batch;
 pub(crate) use datadog_ffe::telemetry::exposures::ExposureDeduplicator;
-use http::uri::PathAndQuery;
-use http::Method;
-use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
+#[cfg(test)]
+use ffe_evp_proxy::{EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE};
+use libdd_capabilities::{HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
-use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// EVP proxy path for FFE exposure intake.
 pub(crate) const EVP_EXPOSURES_PATH: &str = "/evp_proxy/v2/api/v2/exposures";
 
-/// EVP subdomain that routes requests to event-platform intake.
-pub(crate) const EVP_SUBDOMAIN_HEADER: &str = "X-Datadog-EVP-Subdomain";
-pub(crate) const EVP_SUBDOMAIN_VALUE: &str = "event-platform-intake";
-
-const USER_AGENT: &str = concat!("ddtrace-sidecar/", env!("CARGO_PKG_VERSION"));
+const LOG_PREFIX: &str = "ffe_exposures_flusher";
 
 /// Build the FFE exposure endpoint from a session's agent base endpoint.
 /// Overrides only the path (`/evp_proxy/v2/api/v2/exposures`), preserving
 /// scheme, authority, timeout, and test_token.
 /// Returns `None` for agentless mode because EVP proxy routing is agent-only.
 pub(crate) fn exposure_endpoint(base: &Endpoint) -> Option<Endpoint> {
-    if base.api_key.is_some() {
-        return None;
-    }
-
-    let mut parts = base.url.clone().into_parts();
-    parts.path_and_query = Some(PathAndQuery::from_static(EVP_EXPOSURES_PATH));
-    let url = http::Uri::from_parts(parts).ok()?;
-    Some(Endpoint {
-        url,
-        ..base.clone()
-    })
+    ffe_evp_proxy::endpoint(base, EVP_EXPOSURES_PATH)
 }
 
 /// POST a structured FFE exposure batch to the agent EVP proxy.
@@ -62,64 +48,7 @@ pub(crate) async fn send_batch<C: HttpClientCapability + SleepCapability>(
             return;
         }
     };
-    send_payload(client, endpoint, payload).await;
-}
-
-async fn send_payload<C: HttpClientCapability + SleepCapability>(
-    client: &C,
-    endpoint: &Endpoint,
-    payload: String,
-) {
-    let builder = match endpoint.to_request_builder(USER_AGENT) {
-        Ok(b) => b,
-        Err(e) => {
-            debug!("ffe_exposures_flusher: failed to build request: {e:?}");
-            return;
-        }
-    };
-
-    let req = match builder
-        .method(Method::POST)
-        .header("Content-Type", "application/json")
-        .header(EVP_SUBDOMAIN_HEADER, EVP_SUBDOMAIN_VALUE)
-        .body(Bytes::from(payload))
-    {
-        Ok(r) => r,
-        Err(e) => {
-            debug!("ffe_exposures_flusher: failed to construct request body: {e:?}");
-            return;
-        }
-    };
-
-    let timeout = Duration::from_millis(endpoint.timeout_ms);
-    let response = tokio::select! {
-        biased;
-        result = client.request(req) => result,
-        _ = client.sleep(timeout) => {
-            debug!("ffe_exposures_flusher: request timed out after {timeout:?}");
-            return;
-        }
-    };
-
-    match response {
-        Ok(resp) => {
-            let status = resp.status();
-            if !status.is_success() {
-                let body_preview = truncate(resp.body().as_ref(), 256);
-                warn!("ffe_exposures_flusher: non-2xx response {status}: {body_preview}");
-            } else {
-                debug!("ffe_exposures_flusher: sent exposure batch, status={status}");
-            }
-        }
-        Err(e) => {
-            debug!("ffe_exposures_flusher: request failed: {e:?}");
-        }
-    }
-}
-
-fn truncate(bytes: &[u8], cap: usize) -> String {
-    let take = bytes.len().min(cap);
-    String::from_utf8_lossy(&bytes[..take]).into_owned()
+    ffe_evp_proxy::send_payload(client, endpoint, payload, LOG_PREFIX, "exposure batch").await;
 }
 
 #[cfg(test)]
@@ -127,9 +56,10 @@ mod tests {
     use super::*;
     use crate::service::{FfeExposure, FfeTelemetryContext};
     use httpmock::MockServer;
-    use libdd_capabilities::{HttpError, MaybeSend};
+    use libdd_capabilities::{Bytes, HttpError, MaybeSend};
     use libdd_capabilities_impl::NativeCapabilities;
     use std::future;
+    use std::time::Duration;
 
     fn endpoint_for(server: &MockServer) -> Endpoint {
         Endpoint {
