@@ -19,7 +19,9 @@ use http::Response;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
 use libdd_common::{http_common, Endpoint};
-use libdd_trace_protobuf::remoteconfig::{ClientGetConfigsRequest, ClientGetConfigsResponse, File};
+use libdd_trace_protobuf::remoteconfig::{
+    ClientGetConfigsRequest, ClientGetConfigsResponse, ConfigStatus, File,
+};
 use serde_json::value::to_raw_value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -35,6 +37,10 @@ pub struct RemoteConfigServer {
     #[allow(clippy::type_complexity)]
     pub files: Mutex<HashMap<RemoteConfigPath, (Vec<Arc<Target>>, u64, String)>>,
     pub next_response: Mutex<Option<Response<http_common::Body>>>,
+    /// The `config_status` reported in the response; set to
+    /// [`ConfigStatus::Expired`] to simulate an agent serving from a stale
+    /// cache whose TUF signatures have expired.
+    pub config_status: Mutex<ConfigStatus>,
     pub endpoint: Endpoint,
     #[allow(dead_code)] // stops receiver on drop
     shutdown_complete_tx: Sender<()>,
@@ -81,7 +87,10 @@ impl RemoteConfigServer {
                 .as_ref()
                 .unwrap()
                 .config_states;
-            if applied_files.len() == states.len()
+            // A change of config_status is itself a change the client must observe, so it
+            // cannot be answered with the "nothing changed" empty reply.
+            if *self.config_status.lock().unwrap() == ConfigStatus::Ok
+                && applied_files.len() == states.len()
                 && states.iter().all(|s| {
                     for (p, (_, v, _)) in applied_files.iter() {
                         if p.product.to_string() == s.product
@@ -155,7 +164,7 @@ impl RemoteConfigServer {
                         })
                         .collect(),
                     client_configs: applied_files.keys().map(|k| k.to_string()).collect(),
-                    config_status: 0,
+                    config_status: *self.config_status.lock().unwrap() as i32,
                 };
                 Response::new(http_common::Body::from(
                     serde_json::to_vec(&response).unwrap(),
@@ -175,6 +184,7 @@ impl RemoteConfigServer {
             last_request: Mutex::new(None),
             files: Default::default(),
             next_response: Mutex::new(None),
+            config_status: Mutex::new(ConfigStatus::Ok),
             endpoint: Endpoint::from_slice(&format!("http://127.0.0.1:{port}/")),
             shutdown_complete_tx,
         });

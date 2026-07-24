@@ -11,7 +11,7 @@ use libdd_capabilities::HttpClientCapability;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
-    TargetFileHash, TargetFileMeta,
+    ConfigStatus, TargetFileHash, TargetFileMeta,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
@@ -393,6 +393,16 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
 
         let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes.as_ref())?;
 
+        if response.config_status == ConfigStatus::Expired as i32 {
+            debug!(
+                "Agent served remote config from an expired cache for target {target:?}, \
+                 dropping all stored configurations"
+            );
+            self.state.target_files_by_path.lock_or_panic().clear();
+            client_state.last_config_paths.clear();
+            return Ok(Some(vec![]));
+        }
+
         let decoded_targets =
             base64::engine::general_purpose::STANDARD.decode(response.targets.as_slice())?;
         let targets_list = TargetsList::try_parse(decoded_targets.as_slice()).map_err(|e| {
@@ -718,6 +728,108 @@ pub mod tests {
             .unwrap();
 
         assert!(fetched.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_expired_config_status_drops_all_configs() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage.clone(),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
+        );
+        let mut opaque_state = ConfigClientState::default();
+
+        let capabilities = server.dummy_product_capabilities();
+
+        // Each fetch is scoped so the returned handles are dropped, mirroring a consumer that
+        // releases the previous generation of configs.
+        {
+            // The config applies normally while the agent is healthy.
+            let fetched = fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "foo",
+                    &mut opaque_state,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(fetched.len(), 1);
+            assert_eq!(storage.files.lock().unwrap().len(), 1);
+        }
+
+        {
+            // The agent starts serving from an expired cache: everything must be reported gone.
+            *server.config_status.lock().unwrap() = ConfigStatus::Expired;
+            let fetched = fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "foo",
+                    &mut opaque_state,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                fetched.is_empty(),
+                "expired configuration must be treated as removed"
+            );
+            assert!(
+                storage.files.lock().unwrap().is_empty(),
+                "expired configuration must be dropped from storage"
+            );
+        }
+
+        {
+            // The agent recovers: the configuration must be fetched and applied anew. It is no
+            // longer advertised as cached or applied, so the agent re-sends its contents.
+            *server.config_status.lock().unwrap() = ConfigStatus::Ok;
+            let fetched = fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "foo",
+                    &mut opaque_state,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(fetched.len(), 1);
+            assert_eq!(fetched[0].data.lock().unwrap().contents, "v1");
+
+            let req = server.last_request.lock().unwrap();
+            let req = req.as_ref().unwrap();
+            assert!(
+                req.cached_target_files.is_empty(),
+                "dropped configs must not be advertised as cached"
+            );
+            assert!(
+                req.client
+                    .as_ref()
+                    .unwrap()
+                    .state
+                    .as_ref()
+                    .unwrap()
+                    .config_states
+                    .is_empty(),
+                "dropped configs must not be reported as applied"
+            );
+        }
     }
 
     #[tokio::test]
