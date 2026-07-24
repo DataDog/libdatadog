@@ -79,7 +79,6 @@ pub struct Configuration {
 #[strum(serialize_all = "snake_case")]
 pub enum ConfigurationOrigin {
     EnvVar,
-    OtelEnvVar,
     Code,
     DdConfig,
     RemoteConfig,
@@ -87,6 +86,7 @@ pub enum ConfigurationOrigin {
     LocalStableConfig,
     FleetStableConfig,
     Calculated,
+    OtelEnvVar,
     Unknown,
 }
 

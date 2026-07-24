@@ -86,6 +86,6 @@ pub enum MetricNamespace {
 pub enum MetricType {
     Gauge,
     Count,
-    Rate,
     Distribution,
+    Rate,
 }
