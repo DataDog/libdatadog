@@ -3,9 +3,160 @@
 
 //! FFI bindings for the OTel thread-level context publisher.
 //!
-//! All symbols are only available on Linux, since spec is currently Linux-specific.
+//! Record layout and explicit record operations are platform-neutral. Linux additionally exposes
+//! the libdatadog-owned TLS convenience API.
 
-#[cfg(target_os = "linux")]
+use libdd_otel_thread_ctx::ThreadContextRecord;
+
+#[repr(C)]
+pub struct OtelThreadContextAttribute<'a> {
+    pub key_index: u8,
+    pub value: libdd_common_ffi::slice::CharSlice<'a>,
+}
+
+unsafe fn attrs_from_raw<'a>(
+    attrs: *const OtelThreadContextAttribute<'a>,
+    attrs_len: usize,
+) -> &'a [OtelThreadContextAttribute<'a>] {
+    if attrs.is_null() || attrs_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(attrs, attrs_len) }
+    }
+}
+
+fn attrs_iter<'a>(
+    attrs: &'a [OtelThreadContextAttribute<'a>],
+) -> impl Iterator<Item = (u8, &'a str)> {
+    use libdd_common_ffi::slice::AsBytes;
+    attrs.iter().filter_map(|attr| {
+        attr.value
+            .try_to_utf8()
+            .ok()
+            .map(|value| (attr.key_index, value))
+    })
+}
+
+/// Initialize a caller-owned thread-context record.
+///
+/// # Safety
+///
+/// `ctx` must point to writable storage for a `ThreadContextRecord`. The identifier pointers and
+/// `attrs..attrs + attrs_len` must be valid for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_otel_thread_ctx_record_init(
+    ctx: *mut ThreadContextRecord,
+    trace_id: &[u8; 16],
+    span_id: &[u8; 8],
+    trace_flags: u8,
+    local_root_span_id: &[u8; 8],
+    attrs: *const OtelThreadContextAttribute<'_>,
+    attrs_len: usize,
+) -> bool {
+    if ctx.is_null() {
+        return false;
+    }
+    let attrs = unsafe { attrs_from_raw(attrs, attrs_len) };
+    unsafe { ctx.write(ThreadContextRecord::default()) };
+    unsafe { &mut *ctx }.initialize(
+        *trace_id,
+        *span_id,
+        trace_flags,
+        *local_root_span_id,
+        attrs_iter(attrs),
+    )
+}
+
+/// Replace all fields in a caller-owned thread-context record.
+///
+/// # Safety
+///
+/// `ctx` must point to a live, writable `ThreadContextRecord`. The identifier pointers and
+/// `attrs..attrs + attrs_len` must be valid for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_otel_thread_ctx_record_update(
+    ctx: *mut ThreadContextRecord,
+    trace_id: &[u8; 16],
+    span_id: &[u8; 8],
+    trace_flags: u8,
+    local_root_span_id: &[u8; 8],
+    attrs: *const OtelThreadContextAttribute<'_>,
+    attrs_len: usize,
+) -> bool {
+    let Some(ctx) = (unsafe { ctx.as_mut() }) else {
+        return false;
+    };
+    let attrs = unsafe { attrs_from_raw(attrs, attrs_len) };
+    ctx.update(
+        *trace_id,
+        *span_id,
+        trace_flags,
+        *local_root_span_id,
+        attrs_iter(attrs),
+    )
+}
+
+/// Replace the span identifier in a caller-owned thread-context record.
+///
+/// # Safety
+///
+/// `ctx` must point to a live, writable `ThreadContextRecord`, and `span_id` must be valid for the
+/// duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_otel_thread_ctx_record_update_span_id(
+    ctx: *mut ThreadContextRecord,
+    span_id: &[u8; 8],
+) -> bool {
+    let Some(ctx) = (unsafe { ctx.as_mut() }) else {
+        return false;
+    };
+    ctx.update_span_id(*span_id);
+    true
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+    use core::mem::{size_of, MaybeUninit};
+
+    #[test]
+    fn ffi_initializes_caller_owned_storage() {
+        let mut record = MaybeUninit::<ThreadContextRecord>::uninit();
+        let trace_id = [1; 16];
+        let span_id = [2; 8];
+        let local_root_span_id = [3; 8];
+        let attrs = [OtelThreadContextAttribute {
+            key_index: 1,
+            value: "service".into(),
+        }];
+
+        assert!(unsafe {
+            ddog_otel_thread_ctx_record_init(
+                record.as_mut_ptr(),
+                &trace_id,
+                &span_id,
+                0x03,
+                &local_root_span_id,
+                attrs.as_ptr(),
+                attrs.len(),
+            )
+        });
+        let record = unsafe { record.assume_init() };
+        let bytes = unsafe {
+            core::slice::from_raw_parts(
+                (&raw const record).cast::<u8>(),
+                size_of::<ThreadContextRecord>(),
+            )
+        };
+        assert_eq!(&bytes[..16], &trace_id);
+        assert_eq!(&bytes[16..24], &span_id);
+        assert_eq!(bytes[24], 1);
+        assert_eq!(bytes[25], 0x03);
+        assert_eq!(&bytes[48..55], b"service");
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "tls-storage"))]
 pub use linux::*;
 
 /// Verify that this binary was linked with the correct options such that the thread contexts are
@@ -22,7 +173,7 @@ pub extern "C" fn ddog_otel_thread_ctx_sanity_check() -> libdd_common_ffi::VoidR
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "tls-storage"))]
 mod linux {
     use libdd_otel_thread_ctx::linux::{ThreadContext, ThreadContextHandle};
     use std::ptr::NonNull;
@@ -48,9 +199,11 @@ mod linux {
     pub extern "C" fn ddog_otel_thread_ctx_new(
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
+        trace_flags: u8,
         local_root_span_id: &[u8; 8],
     ) -> NonNull<ThreadContextHandle> {
-        ThreadContext::new(*trace_id, *span_id, *local_root_span_id, &[]).into_opaque_ptr()
+        ThreadContext::new(*trace_id, *span_id, trace_flags, *local_root_span_id, &[])
+            .into_opaque_ptr()
     }
 
     /// Free an owned thread context.
@@ -101,8 +254,9 @@ mod linux {
     pub extern "C" fn ddog_otel_thread_ctx_update(
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
+        trace_flags: u8,
         local_root_span_id: &[u8; 8],
     ) {
-        ThreadContext::update(*trace_id, *span_id, *local_root_span_id, &[]);
+        ThreadContext::update(*trace_id, *span_id, trace_flags, *local_root_span_id, &[]);
     }
 }

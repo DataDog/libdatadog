@@ -15,13 +15,14 @@ crate-type = ["staticlib", "cdylib", "lib"]
 bench = false
 
 [dependencies]
-libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false, optional = true }
-libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx" }
+libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
+libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", default-features = false }
 
 [features]
-default = ["cbindgen"]
+default = ["cbindgen", "tls-storage"]
 cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
-sanity-check = ["dep:libdd-common-ffi", "libdd-otel-thread-ctx/sanity-check"]
+tls-storage = ["libdd-otel-thread-ctx/tls-storage"]
+sanity-check = ["libdd-otel-thread-ctx/sanity-check"]
 
 [dev-dependencies]
 libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", features = [
