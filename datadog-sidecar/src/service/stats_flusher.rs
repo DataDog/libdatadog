@@ -215,7 +215,6 @@ pub async fn run_stats_flush_loop(
 /// Returns `None` when stats config is not available (agentless or not yet configured).
 pub(crate) fn get_or_create_concentrator(
     concentrators: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
-    telemetry_clients: &crate::service::telemetry::TelemetryCachedClientSet,
     env: &str,
     version: &str,
     runtime_id: &str,
@@ -290,8 +289,8 @@ pub(crate) fn get_or_create_concentrator(
                     Config::default()
                 })
             };
-            let telemetry = {
-                let telemetry_mutex = telemetry_clients.get_or_create(
+            let telemetry =
+                crate::service::telemetry::TelemetryCachedClient::spawn_metrics_logs_worker(
                     &service_name,
                     env,
                     &instance_id,
@@ -299,18 +298,12 @@ pub(crate) fn get_or_create_concentrator(
                     session_config_closure,
                     process_tags,
                 );
-                let worker = telemetry_mutex
-                    .lock_or_panic()
-                    .as_ref()
-                    .map(|c| c.worker.clone());
-                worker
-            };
 
             let state = Arc::new(SpanConcentratorState {
                 concentrator,
                 endpoint: config.endpoint.clone(),
                 meta,
-                telemetry,
+                telemetry: Some(telemetry),
             });
             guard.insert(map_key.clone(), state.clone());
             let weak = Arc::downgrade(concentrators);
@@ -329,26 +322,21 @@ pub(crate) fn get_or_create_concentrator(
 }
 
 /// Immediately flush all active SHM span concentrators and send the results to the agent.
-pub async fn flush_all_stats_now(
-    state: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
-) {
-    let states: Vec<_> = {
-        let guard = state.lock_or_panic();
-        guard
-            .values()
-            .map(|s| {
-                (
-                    make_exporter(s, s.endpoint.clone(), Duration::from_secs(10)),
-                    s.endpoint.clone(),
-                )
-            })
-            .collect()
-    };
+pub async fn flush_all_stats_now(states: &[Arc<SpanConcentratorState>]) {
+    let exporters: Vec<_> = states
+        .iter()
+        .map(|state| {
+            (
+                make_exporter(state, state.endpoint.clone(), Duration::from_secs(10)),
+                state.endpoint.clone(),
+            )
+        })
+        .collect();
     debug!(
         "Flushing all stats now: {} different exporters",
-        states.len()
+        exporters.len()
     );
-    join_all(states.iter().map(|(exporter, endpoint)| {
+    join_all(exporters.iter().map(|(exporter, endpoint)| {
         exporter.send(false).inspect_err(move |e| {
             warn!(
                 "flush_all_stats_now: failed to send stats to {:?}: {}",
