@@ -50,6 +50,12 @@ fn build_otlp_header_map(headers: Vec<(String, String)>) -> http::HeaderMap {
     out
 }
 
+/// Externally-owned telemetry worker to consolidate through; Boxed to avoid depending on C.
+#[cfg(all(feature = "telemetry", not(target_arch = "wasm32")))]
+type BoxedTelemetryHandle = Box<dyn ::std::any::Any + Sync + Send>;
+#[cfg(all(feature = "telemetry", target_arch = "wasm32"))]
+type BoxedTelemetryHandle = Box<dyn ::std::any::Any>;
+
 #[allow(missing_docs)]
 #[derive(Debug)]
 pub struct TraceExporterBuilder<R: SharedRuntime> {
@@ -83,7 +89,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     #[cfg(feature = "telemetry")]
     telemetry: Option<TelemetryConfig>,
     #[cfg(feature = "telemetry")]
-    telemetry_handle: Option<TelemetryWorkerHandle>,
+    telemetry_handle: Option<BoxedTelemetryHandle>,
     telemetry_instrumentation_sessions: TelemetryInstrumentationSessions,
     shared_runtime: Option<Arc<R>>,
     health_metrics_enabled: bool,
@@ -369,8 +375,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     }
 
     #[cfg(feature = "telemetry")]
-    pub fn set_telemetry_handle(&mut self, handle: TelemetryWorkerHandle) -> &mut Self {
-        self.telemetry_handle = Some(handle);
+    pub fn set_telemetry_handle<
+        C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    >(
+        &mut self,
+        handle: TelemetryWorkerHandle<C>,
+    ) -> &mut Self {
+        self.telemetry_handle = Some(Box::new(handle));
         self
     }
 
@@ -654,10 +665,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
         #[cfg(feature = "telemetry")]
         let (telemetry_client, telemetry_handle) =
-            if let Some(shared_handle) = self.telemetry_handle {
-                // Consolidated path: report health metrics through the externally-owned worker.
-                // We do not own it (no spawn, no start, no shutdown handle).
-                (Some(TelemetryClient::with_handle(shared_handle)), None)
+            // Consolidated path: report health metrics through the externally-owned worker.
+            // We do not own it (no spawn, no start, no shutdown handle).
+            if let Some(shared_handle) = self
+                .telemetry_handle
+                .and_then(|h| h.downcast::<TelemetryWorkerHandle<C>>().ok())
+            {
+                (Some(TelemetryClient::with_handle(*shared_handle)), None)
             } else {
                 let sessions = self.telemetry_instrumentation_sessions;
                 // Telemetry talks to the agent; disable it in agentless and log-export modes.
