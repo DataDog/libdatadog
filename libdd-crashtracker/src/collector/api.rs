@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
 
-use super::{crash_handler::enable, receiver_manager::Receiver};
+use super::{
+    assert_interceptor::install_assert_hook, crash_handler::enable, receiver_manager::Receiver,
+};
 use crate::{
     clear_spans, clear_traces, collector::crash_handler::register_panic_hook,
     collector::signal_handler_manager::register_crash_handlers, crash_info::Metadata,
@@ -86,6 +88,7 @@ pub fn init(
     Receiver::update_stored_config(receiver_config)?;
     register_crash_handlers(&config)?;
     register_panic_hook()?;
+    install_assert_hook()?;
     enable();
     Ok(())
 }

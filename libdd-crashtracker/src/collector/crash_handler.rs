@@ -324,6 +324,15 @@ fn handle_posix_signal_impl(
     // Leak of the message pointer is ok here.
     let message_ptr = PANIC_MESSAGE.swap(ptr::null_mut(), SeqCst);
 
+    // If there is no panic message, check for a stored assert-failure message.
+    // C assert() calls __assert_fail which we intercept to capture the
+    // assertion expression before abort() raises SIGABRT.
+    let message_ptr: *mut String = if message_ptr.is_null() {
+        super::assert_interceptor::take_assert_message_ptr()
+    } else {
+        message_ptr
+    };
+
     let timeout_manager = TimeoutManager::new(config.timeout());
 
     let receiver = Receiver::from_crashtracker_config(config)?;
