@@ -5,7 +5,7 @@ use crate::service::{InstanceId, RuntimeMetadata, SidecarAction, SidecarServer};
 use anyhow::{anyhow, Result};
 use libdd_common::MutexExt;
 use std::sync::OnceLock;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info, warn};
 
 use crate::primary_sidecar_identifier;
@@ -60,6 +60,101 @@ pub enum InternalTelemetryAction {
     AddMetricPoint((f64, String, Vec<Tag>)),
 }
 
+#[derive(Clone, Copy)]
+struct DirectTelemetryLifecycleState {
+    generation: u64,
+    active: bool,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct DirectTelemetryLifecycleRegistry {
+    inner: Arc<Mutex<DirectTelemetryLifecycleRegistryInner>>,
+}
+
+#[derive(Default)]
+struct DirectTelemetryLifecycleRegistryInner {
+    states: HashMap<InstanceId, DirectTelemetryLifecycleState>,
+    retired_sessions: HashSet<String>,
+    next_generation: u64,
+}
+
+impl DirectTelemetryLifecycleRegistryInner {
+    fn allocate_generation(&mut self) -> u64 {
+        assert!(
+            self.next_generation < u64::MAX,
+            "direct telemetry lifecycle generation exhausted"
+        );
+        self.next_generation += 1;
+        self.next_generation
+    }
+}
+
+impl DirectTelemetryLifecycleRegistry {
+    pub(crate) fn activate(&self, instance_id: &InstanceId) {
+        let mut inner = self.inner.lock_or_panic();
+        inner.retired_sessions.remove(&instance_id.session_id);
+        if inner
+            .states
+            .get(instance_id)
+            .is_some_and(|state| state.active)
+        {
+            return;
+        }
+        let generation = inner.allocate_generation();
+        inner.states.insert(
+            instance_id.clone(),
+            DirectTelemetryLifecycleState {
+                generation,
+                active: true,
+            },
+        );
+    }
+
+    pub(crate) fn retire_runtimes(&self, instances: &HashSet<InstanceId>) {
+        let mut inner = self.inner.lock_or_panic();
+        for instance_id in instances {
+            inner
+                .states
+                .entry(instance_id.clone())
+                .and_modify(|state| state.active = false)
+                .or_insert(DirectTelemetryLifecycleState {
+                    generation: 0,
+                    active: false,
+                });
+        }
+    }
+
+    pub(crate) fn retire_session(&self, session_id: &str) {
+        let mut inner = self.inner.lock_or_panic();
+        inner
+            .states
+            .retain(|instance_id, _| instance_id.session_id != session_id);
+        inner.retired_sessions.insert(session_id.to_string());
+    }
+
+    fn state(&self, instance_id: &InstanceId) -> Option<DirectTelemetryLifecycleState> {
+        let inner = self.inner.lock_or_panic();
+        inner.states.get(instance_id).copied().or_else(|| {
+            inner
+                .retired_sessions
+                .contains(&instance_id.session_id)
+                .then_some(DirectTelemetryLifecycleState {
+                    generation: 0,
+                    active: false,
+                })
+        })
+    }
+
+    fn generation(&self, instance_id: &InstanceId) -> Option<u64> {
+        self.state(instance_id).map(|state| state.generation)
+    }
+}
+
+pub(crate) struct DirectTelemetryActions {
+    actions: InternalTelemetryActions,
+    generation: Option<u64>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum DirectTelemetryRetirement {
     Runtimes(HashSet<InstanceId>),
@@ -67,7 +162,7 @@ pub(crate) enum DirectTelemetryRetirement {
 }
 
 pub(crate) enum DirectTelemetryMessage {
-    Actions(InternalTelemetryActions),
+    Actions(DirectTelemetryActions),
     Retire {
         scope: DirectTelemetryRetirement,
         acknowledgement: oneshot::Sender<()>,
@@ -79,35 +174,30 @@ pub(crate) enum DirectTelemetryMessage {
 #[derive(Clone)]
 pub struct TelemetryActionSender {
     sender: mpsc::Sender<DirectTelemetryMessage>,
+    lifecycles: DirectTelemetryLifecycleRegistry,
 }
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum TelemetryActionSendError {
-    Full,
-    Closed,
-}
-
-impl std::fmt::Display for TelemetryActionSendError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Full => formatter.write_str("direct telemetry channel is full"),
-            Self::Closed => formatter.write_str("direct telemetry channel is closed"),
-        }
-    }
-}
-
-impl std::error::Error for TelemetryActionSendError {}
 
 impl TelemetryActionSender {
+    /// The error retains the complete unsent batch so callers can retry without data loss.
+    #[allow(clippy::result_large_err)]
     pub fn try_send(
         &self,
         actions: InternalTelemetryActions,
-    ) -> std::result::Result<(), TelemetryActionSendError> {
+    ) -> std::result::Result<(), mpsc::error::TrySendError<InternalTelemetryActions>> {
+        let generation = self.lifecycles.generation(&actions.instance_id);
         self.sender
-            .try_send(DirectTelemetryMessage::Actions(actions))
+            .try_send(DirectTelemetryMessage::Actions(DirectTelemetryActions {
+                actions,
+                generation,
+            }))
             .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => TelemetryActionSendError::Full,
-                mpsc::error::TrySendError::Closed(_) => TelemetryActionSendError::Closed,
+                mpsc::error::TrySendError::Full(DirectTelemetryMessage::Actions(actions)) => {
+                    mpsc::error::TrySendError::Full(actions.actions)
+                }
+                mpsc::error::TrySendError::Closed(DirectTelemetryMessage::Actions(actions)) => {
+                    mpsc::error::TrySendError::Closed(actions.actions)
+                }
+                _ => unreachable!("try_send only submits direct telemetry action messages"),
             })
     }
 
@@ -116,11 +206,15 @@ impl TelemetryActionSender {
         &self,
         actions: InternalTelemetryActions,
     ) -> std::result::Result<(), mpsc::error::SendError<InternalTelemetryActions>> {
+        let generation = self.lifecycles.generation(&actions.instance_id);
         self.sender
-            .send(DirectTelemetryMessage::Actions(actions))
+            .send(DirectTelemetryMessage::Actions(DirectTelemetryActions {
+                actions,
+                generation,
+            }))
             .await
             .map_err(|error| match error.0 {
-                DirectTelemetryMessage::Actions(actions) => mpsc::error::SendError(actions),
+                DirectTelemetryMessage::Actions(actions) => mpsc::error::SendError(actions.actions),
                 _ => unreachable!("send_actions only submits direct telemetry action messages"),
             })
     }
@@ -153,12 +247,20 @@ impl TelemetryActionSender {
 }
 
 #[cfg(test)]
-pub(crate) fn direct_telemetry_channel() -> (
+pub(crate) fn direct_telemetry_channel(
+    sidecar: &SidecarServer,
+) -> (
     TelemetryActionSender,
     mpsc::Receiver<DirectTelemetryMessage>,
 ) {
     let (sender, receiver) = mpsc::channel(1000);
-    (TelemetryActionSender { sender }, receiver)
+    (
+        TelemetryActionSender {
+            sender,
+            lifecycles: sidecar.direct_telemetry_lifecycles.clone(),
+        },
+        receiver,
+    )
 }
 
 pub(crate) async fn telemetry_action_receiver_task(
@@ -177,10 +279,16 @@ pub(crate) async fn telemetry_action_receiver_task(
                 } => {
                     match &scope {
                         DirectTelemetryRetirement::Runtimes(instances) => {
+                            sidecar
+                                .direct_telemetry_lifecycles
+                                .retire_runtimes(instances);
                             pending.retain(|batch| !instances.contains(&batch.key.0));
                             sidecar.metrics_logs_clients.remove_runtimes(instances);
                         }
                         DirectTelemetryRetirement::Session(session_id) => {
+                            sidecar
+                                .direct_telemetry_lifecycles
+                                .retire_session(session_id);
                             pending.retain(|batch| batch.key.0.session_id != *session_id);
                             sidecar.metrics_logs_clients.remove_session(session_id);
                         }
@@ -240,14 +348,16 @@ async fn next_entry(
             result = rx.recv() => match result {
                 Some(DirectTelemetryMessage::Actions(batch)) => {
                     let key = (
-                        &batch.instance_id,
-                        batch.service_name.as_str(),
-                        batch.env_name.as_str(),
+                        &batch.actions.instance_id,
+                        batch.actions.service_name.as_str(),
+                        batch.actions.env_name.as_str(),
+                        batch.generation,
                     );
                     if let Some(deferred) = pending.iter_mut().find(|batch| {
                         batch.key.0 == *key.0
                             && batch.key.1 == key.1
                             && batch.key.2 == key.2
+                            && batch.key.3 == key.3
                     }) {
                         deferred.actions.push_back(batch);
                     } else {
@@ -376,15 +486,6 @@ enum BatchDirectTelemetryClient {
 }
 
 impl BatchDirectTelemetryClient {
-    fn new(client: Arc<Mutex<Option<TelemetryCachedClient>>>) -> Option<Self> {
-        let worker = client
-            .lock_or_panic()
-            .as_ref()
-            .filter(|client| !client.is_stopping())
-            .map(|client| client.worker.clone())?;
-        Some(Self::Active(ActiveDirectTelemetryClient { client, worker }))
-    }
-
     fn invalidate(&mut self) {
         *self = Self::RefreshRequired;
     }
@@ -427,22 +528,57 @@ fn get_active_direct_worker(
 }
 
 enum TelemetryBatch {
-    Fresh(InternalTelemetryActions),
+    Fresh(DirectTelemetryActions),
     Deferred(PerClientTelemetryBatch),
 }
 
+enum DirectTelemetryLifecycle {
+    Ready,
+    Retryable,
+    Retired,
+}
+
 impl TelemetryBatch {
-    fn get_client(
-        &self,
-        sidecar: &SidecarServer,
-    ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
+    fn key(&self) -> (&InstanceId, &str, &str) {
         match self {
-            TelemetryBatch::Fresh(a) => {
-                get_telemetry_client(sidecar, &a.instance_id, &a.service_name, &a.env_name)
+            TelemetryBatch::Fresh(actions) => (
+                &actions.actions.instance_id,
+                &actions.actions.service_name,
+                &actions.actions.env_name,
+            ),
+            TelemetryBatch::Deferred(deferred) => {
+                (&deferred.key.0, &deferred.key.1, &deferred.key.2)
             }
-            TelemetryBatch::Deferred(d) => {
-                get_telemetry_client(sidecar, &d.key.0, &d.key.1, &d.key.2)
+        }
+    }
+
+    fn generation(&self) -> Option<u64> {
+        match self {
+            TelemetryBatch::Fresh(actions) => actions.generation,
+            TelemetryBatch::Deferred(deferred) => deferred.key.3,
+        }
+    }
+
+    fn lifecycle(&self, sidecar: &SidecarServer) -> DirectTelemetryLifecycle {
+        let (instance_id, _, _) = self.key();
+        let current = sidecar.direct_telemetry_lifecycles.state(instance_id);
+        if let Some(generation) = self.generation() {
+            if !current.is_some_and(|state| state.active && state.generation == generation) {
+                return DirectTelemetryLifecycle::Retired;
             }
+        } else if current.is_some_and(|state| !state.active) {
+            return DirectTelemetryLifecycle::Retired;
+        }
+        let Some(session) = sidecar.find_session(&instance_id.session_id) else {
+            return DirectTelemetryLifecycle::Retryable;
+        };
+        if session.find_runtime(&instance_id.runtime_id).is_none() {
+            return DirectTelemetryLifecycle::Retryable;
+        }
+        if session.session_config.lock_or_panic().is_none() {
+            DirectTelemetryLifecycle::Retryable
+        } else {
+            DirectTelemetryLifecycle::Ready
         }
     }
 
@@ -455,17 +591,18 @@ impl TelemetryBatch {
                 info!(
                     "Telemetry client not ready for {}/{}, \
                      retrying in {}ms ({} left)",
-                    actions.service_name,
-                    actions.env_name,
+                    actions.actions.service_name,
+                    actions.actions.env_name,
                     Self::RETRY_DELAY.as_millis(),
                     Self::MAX_ATTEMPTS - 1,
                 );
                 let next_at = TokioInstant::now() + Self::RETRY_DELAY;
                 pending.push(PerClientTelemetryBatch {
                     key: (
-                        actions.instance_id.clone(),
-                        actions.service_name.clone(),
-                        actions.env_name.clone(),
+                        actions.actions.instance_id.clone(),
+                        actions.actions.service_name.clone(),
+                        actions.actions.env_name.clone(),
+                        actions.generation,
                     ),
                     actions: VecDeque::from([actions]),
                     attempts_left: Self::MAX_ATTEMPTS - 1,
@@ -474,7 +611,7 @@ impl TelemetryBatch {
             }
             TelemetryBatch::Deferred(deferred) => {
                 debug_assert!(!deferred.actions.is_empty());
-                let (_, service_name, env_name) = &deferred.key;
+                let (_, service_name, env_name, _) = &deferred.key;
                 let remaining = deferred.attempts_left - 1;
                 if remaining > 0 {
                     info!(
@@ -489,7 +626,11 @@ impl TelemetryBatch {
                         next_attempt_at: TokioInstant::now() + Self::RETRY_DELAY,
                     });
                 } else {
-                    let count: usize = deferred.actions.iter().map(|b| b.actions.len()).sum();
+                    let count: usize = deferred
+                        .actions
+                        .iter()
+                        .map(|batch| batch.actions.actions.len())
+                        .sum();
                     warn!(
                         "Dropping {count} telemetry actions for {service_name}/{env_name}: \
                          telemetry client never became ready after {} attempts",
@@ -501,14 +642,22 @@ impl TelemetryBatch {
     }
 
     async fn deliver(self, sidecar: &SidecarServer) -> std::result::Result<(), Self> {
-        let Some(client) = self.get_client(sidecar) else {
-            return Err(self);
-        };
-        let Some(mut active_client) = BatchDirectTelemetryClient::new(client) else {
-            return Err(self);
-        };
+        match self.lifecycle(sidecar) {
+            DirectTelemetryLifecycle::Ready => {}
+            DirectTelemetryLifecycle::Retryable => return Err(self),
+            DirectTelemetryLifecycle::Retired => {
+                let (instance_id, service, env) = self.key();
+                debug!(
+                    "Dropping direct telemetry batch for retired lifecycle \
+                     {instance_id:?}/{service}/{env}"
+                );
+                return Ok(());
+            }
+        }
+        let mut active_client = BatchDirectTelemetryClient::RefreshRequired;
         match self {
             TelemetryBatch::Fresh(actions) => {
+                let actions = actions.actions;
                 deliver_batch(
                     actions.actions,
                     sidecar,
@@ -522,6 +671,7 @@ impl TelemetryBatch {
             TelemetryBatch::Deferred(deferred) => {
                 debug_assert!(!deferred.actions.is_empty());
                 for batch in deferred.actions {
+                    let batch = batch.actions;
                     deliver_batch(
                         batch.actions,
                         sidecar,
@@ -539,8 +689,8 @@ impl TelemetryBatch {
 }
 
 struct PerClientTelemetryBatch {
-    key: (InstanceId, ServiceString, EnvString),
-    actions: VecDeque<InternalTelemetryActions>, // invariant: non-empty
+    key: (InstanceId, ServiceString, EnvString, Option<u64>),
+    actions: VecDeque<DirectTelemetryActions>, // invariant: non-empty
     attempts_left: u8,
     next_attempt_at: TokioInstant,
 }
@@ -618,6 +768,8 @@ struct PendingTelemetryActions {
     actions: Vec<PendingApplicationAction>,
 }
 
+type PendingTelemetryKey = (String, ServiceString, EnvString);
+
 #[derive(Debug)]
 pub(crate) struct PendingApplicationAction {
     pub(crate) origin: InstanceId,
@@ -652,6 +804,10 @@ impl PendingApplicationAction {
 
 pub(crate) enum ApplicationTelemetryDispatch {
     Pending,
+    Handoff {
+        completion: watch::Receiver<bool>,
+        actions: Vec<PendingApplicationAction>,
+    },
     Ready {
         client: Arc<Mutex<Option<TelemetryCachedClient>>>,
         actions: Vec<PendingApplicationAction>,
@@ -668,6 +824,8 @@ enum ApplicationShmState {
 
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
+    pub(crate) worker_join: Option<JoinHandle<()>>,
+    pub(crate) terminal_handoff: Option<watch::Receiver<bool>>,
     shm_state: ApplicationShmState,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
@@ -766,7 +924,7 @@ impl TelemetryCachedClient {
         builder.dependencies.extend(initial.dependencies);
         builder.integrations.extend(initial.integrations);
 
-        let (handle, _join) = builder.spawn();
+        let (handle, worker_join) = builder.spawn();
         info!("spawned telemetry worker");
         handle.send_start()?;
 
@@ -784,6 +942,8 @@ impl TelemetryCachedClient {
 
         Ok(Self {
             worker: handle,
+            worker_join: Some(worker_join),
+            terminal_handoff: None,
             shm_state,
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
@@ -840,6 +1000,8 @@ impl TelemetryCachedClient {
                 get_config,
                 process_tags,
             ),
+            worker_join: None,
+            terminal_handoff: None,
             shm_state: ApplicationShmState::NotRequired,
             telemetry_metrics: HashMap::new(),
             handle: None,
@@ -1092,7 +1254,7 @@ fn metric_contexts_match(left: &MetricContext, right: &MetricContext) -> bool {
 
 pub struct TelemetryCachedClientSet {
     inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>>,
-    pending: Arc<Mutex<HashMap<(ServiceString, EnvString), PendingTelemetryActions>>>,
+    pending: Arc<Mutex<HashMap<PendingTelemetryKey, PendingTelemetryActions>>>,
     pending_action_limit: usize,
     /// Serializes cache replacement with the remove/retire phases of eviction.
     replacement_gate: Arc<Mutex<()>>,
@@ -1112,7 +1274,7 @@ impl TelemetryCachedClientSet {
         let inner: Arc<Mutex<HashMap<TelemetryCachedClientKey, TelemetryCachedEntry>>> =
             Arc::new(Default::default());
         let clients = inner.clone();
-        let pending: Arc<Mutex<HashMap<(ServiceString, EnvString), PendingTelemetryActions>>> =
+        let pending: Arc<Mutex<HashMap<PendingTelemetryKey, PendingTelemetryActions>>> =
             Arc::new(Default::default());
         let pending_actions = pending.clone();
         let replacement_gate = Arc::new(Mutex::new(()));
@@ -1186,6 +1348,12 @@ impl TelemetryCachedClientSet {
         clients.pending_action_limit = limit;
         clients
     }
+
+    pub(crate) fn remove_pending_session(&self, session_id: &str) {
+        self.pending
+            .lock_or_panic()
+            .retain(|(pending_session_id, _, _), _| pending_session_id != session_id);
+    }
 }
 
 impl Drop for TelemetryCachedClientSet {
@@ -1228,7 +1396,6 @@ impl TelemetryCachedClientSet {
     ) -> Option<Arc<Mutex<Option<TelemetryCachedClient>>>> {
         #[cfg(test)]
         self.cache_lookup_count.fetch_add(1, Ordering::Relaxed);
-        let _replacement_guard = self.replacement_gate.lock_or_panic();
         let key = (owner, service.to_string(), env.to_string());
 
         let mut map = self.inner.lock_or_panic();
@@ -1354,11 +1521,21 @@ impl TelemetryCachedClientSet {
         );
 
         if let Some(entry) = clients.get_mut(&key) {
-            let active = entry
+            let (active, handoff) = entry
                 .client
                 .lock_or_panic()
                 .as_ref()
-                .is_some_and(|client| !client.is_stopping());
+                .map(|client| {
+                    (
+                        !client.is_stopping(),
+                        client
+                            .terminal_handoff
+                            .as_ref()
+                            .filter(|completion| !*completion.borrow())
+                            .cloned(),
+                    )
+                })
+                .unwrap_or((false, None));
             if active {
                 entry.last_used = Instant::now();
                 return ApplicationTelemetryDispatch::Ready {
@@ -1368,10 +1545,20 @@ impl TelemetryCachedClientSet {
                     remove_client: false,
                 };
             }
+            if let Some(completion) = handoff {
+                return ApplicationTelemetryDispatch::Handoff {
+                    completion,
+                    actions,
+                };
+            }
         }
         clients.remove(&key);
 
-        let pending_key = (service.to_string(), env.to_string());
+        let pending_key = (
+            metadata.instance_id.session_id.clone(),
+            service.to_string(),
+            env.to_string(),
+        );
         let mut pending = self.pending.lock_or_panic();
         let pending_actions =
             pending
@@ -1892,7 +2079,10 @@ pub(crate) fn init_telemetry_sender(
     sidecar: &SidecarServer,
 ) -> Option<mpsc::Receiver<DirectTelemetryMessage>> {
     let (tx, rx) = mpsc::channel(1000);
-    let sender = TelemetryActionSender { sender: tx };
+    let sender = TelemetryActionSender {
+        sender: tx,
+        lifecycles: sidecar.direct_telemetry_lifecycles.clone(),
+    };
     if TELEMETRY_ACTION_SENDER.set(sender.clone()).is_err() {
         warn!("Telemetry action sender already initialized");
         return None;
@@ -2051,7 +2241,11 @@ mod tests {
 
         let pending = clients.pending.lock_or_panic();
         let stored = &pending
-            .get(&(SERVICE.to_string(), ENV.to_string()))
+            .get(&(
+                instance.session_id.clone(),
+                SERVICE.to_string(),
+                ENV.to_string(),
+            ))
             .expect("bounded pending lifecycle")
             .actions;
         assert_eq!(stored.len(), LIMIT);
@@ -2102,6 +2296,89 @@ mod tests {
                 LifecycleAction::Stop
             )))
         ));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn pending_application_startup_data_does_not_cross_sessions() {
+        const SERVICE: &str = "session-isolated-pending";
+        const ENV: &str = "test";
+
+        let clients = TelemetryCachedClientSet::default();
+        let instance_a = InstanceId::new("session-a", "runtime-a");
+        let instance_b = InstanceId::new("session-b", "runtime-b");
+        let runtime = RuntimeMetadata::new("php", "8.3", "test");
+        let dependency = |name: &str| {
+            SidecarAction::Telemetry(TelemetryActions::AddDependency(data::Dependency {
+                name: name.to_string(),
+                version: None,
+            }))
+        };
+
+        for (instance, name) in [(&instance_a, "from-a"), (&instance_b, "from-b")] {
+            let dispatch = clients.get_or_create_for_actions(
+                TelemetryWorkerMetadata::new(SERVICE, ENV, instance, &runtime, Vec::new()),
+                PendingApplicationAction::from_actions(
+                    instance,
+                    vec![dependency(name)],
+                    &HashMap::new(),
+                ),
+                Config::default,
+                |_, _| panic!("dependency-only startup data must remain pending"),
+            );
+            assert!(matches!(dispatch, ApplicationTelemetryDispatch::Pending));
+        }
+
+        let promoted = Arc::new(Mutex::new(Vec::new()));
+        let promoted_for_initializer = promoted.clone();
+        let dispatch = clients.get_or_create_for_actions(
+            TelemetryWorkerMetadata::new(SERVICE, ENV, &instance_a, &runtime, Vec::new()),
+            PendingApplicationAction::from_actions(
+                &instance_a,
+                vec![SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                    initial_configuration("session-a-config"),
+                ))],
+                &HashMap::new(),
+            ),
+            Config::default,
+            move |_, actions| {
+                promoted_for_initializer
+                    .lock_or_panic()
+                    .extend(actions.into_iter().map(|pending| pending.action));
+                false
+            },
+        );
+        assert!(matches!(
+            dispatch,
+            ApplicationTelemetryDispatch::Ready { created: true, .. }
+        ));
+
+        let promoted = promoted.lock_or_panic();
+        assert!(promoted.iter().any(|action| matches!(
+            action,
+            SidecarAction::Telemetry(TelemetryActions::AddDependency(dependency))
+                if dependency.name == "from-a"
+        )));
+        assert!(
+            !promoted.iter().any(|action| matches!(
+                action,
+                SidecarAction::Telemetry(TelemetryActions::AddDependency(dependency))
+                    if dependency.name == "from-b"
+            )),
+            "session A must not promote startup data submitted by session B"
+        );
+        drop(promoted);
+
+        assert!(clients.pending.lock_or_panic().contains_key(&(
+            instance_b.session_id.clone(),
+            SERVICE.to_string(),
+            ENV.to_string()
+        )));
+        clients.remove_pending_session(&instance_b.session_id);
+        assert!(
+            clients.pending.lock_or_panic().is_empty(),
+            "session retirement must discard its unpromoted startup data"
+        );
     }
 
     #[tokio::test]
@@ -2161,7 +2438,11 @@ mod tests {
         {
             let pending = clients.pending.lock_or_panic();
             let restored = &pending
-                .get(&(SERVICE.to_string(), ENV.to_string()))
+                .get(&(
+                    instance.session_id.clone(),
+                    SERVICE.to_string(),
+                    ENV.to_string(),
+                ))
                 .expect("failed construction should restore the pending lifecycle")
                 .actions;
             assert_eq!(
@@ -2319,22 +2600,29 @@ mod tests {
                 instance_a.clone(),
                 "shared-service".to_string(),
                 "test".to_string(),
+                None,
             ),
-            actions: VecDeque::from([InternalTelemetryActions {
-                instance_id: instance_a,
-                service_name: "shared-service".to_string(),
-                env_name: "test".to_string(),
-                actions: vec![internal_log("owner-a")],
+            actions: VecDeque::from([DirectTelemetryActions {
+                actions: InternalTelemetryActions {
+                    instance_id: instance_a,
+                    service_name: "shared-service".to_string(),
+                    env_name: "test".to_string(),
+                    actions: vec![internal_log("owner-a")],
+                },
+                generation: None,
             }]),
             attempts_left: 2,
             next_attempt_at: TokioInstant::now() + Duration::from_secs(60),
         }];
         let (tx, mut rx) = mpsc::channel(1);
-        tx.send(DirectTelemetryMessage::Actions(InternalTelemetryActions {
-            instance_id: instance_b.clone(),
-            service_name: "shared-service".to_string(),
-            env_name: "test".to_string(),
-            actions: vec![internal_log("owner-b")],
+        tx.send(DirectTelemetryMessage::Actions(DirectTelemetryActions {
+            actions: InternalTelemetryActions {
+                instance_id: instance_b.clone(),
+                service_name: "shared-service".to_string(),
+                env_name: "test".to_string(),
+                actions: vec![internal_log("owner-b")],
+            },
+            generation: None,
         }))
         .await
         .unwrap();
@@ -2345,8 +2633,261 @@ mod tests {
         let ReceiverEntry::Batch(TelemetryBatch::Fresh(batch)) = batch else {
             panic!("different owners must not share a deferred batch");
         };
-        assert_eq!(batch.instance_id, instance_b);
+        assert_eq!(batch.actions.instance_id, instance_b);
         assert_eq!(pending[0].actions.len(), 1);
+    }
+
+    #[test]
+    fn full_direct_channel_returns_the_unsent_batch() {
+        let (sender, _receiver) = mpsc::channel(1);
+        let sender = TelemetryActionSender {
+            sender,
+            lifecycles: DirectTelemetryLifecycleRegistry::default(),
+        };
+        sender
+            .try_send(InternalTelemetryActions {
+                instance_id: InstanceId::new("session", "first"),
+                service_name: "service".to_string(),
+                env_name: "test".to_string(),
+                actions: Vec::new(),
+            })
+            .expect("first batch should fill the channel");
+
+        let error = sender
+            .try_send(InternalTelemetryActions {
+                instance_id: InstanceId::new("session", "retry"),
+                service_name: "retry-service".to_string(),
+                env_name: "retry-env".to_string(),
+                actions: vec![internal_log("retry me")],
+            })
+            .expect_err("second batch should be returned when the channel is full");
+        let mpsc::error::TrySendError::Full(recovered) = error else {
+            panic!("the open channel should report full");
+        };
+        assert_eq!(recovered.instance_id.runtime_id, "retry");
+        assert_eq!(recovered.service_name, "retry-service");
+        assert_eq!(recovered.env_name, "retry-env");
+        assert_eq!(recovered.actions.len(), 1);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn direct_batch_before_first_runtime_creation_is_retried() {
+        const SERVICE: &str = "initial-direct-batch";
+        const ENV: &str = "test";
+
+        let sidecar = SidecarServer::default();
+        let instance = InstanceId::new("session", "runtime");
+        let (sender, receiver) = direct_telemetry_channel(&sidecar);
+        let receiver_task = tokio::spawn(telemetry_action_receiver_task(sidecar.clone(), receiver));
+
+        sender
+            .send_actions(InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![internal_log("arrives before first runtime")],
+            })
+            .await
+            .expect("initial direct action");
+        sender.barrier().await.expect("first delivery attempt");
+
+        let session = sidecar.get_session(&instance.session_id);
+        sidecar.get_runtime(&instance);
+        *session.session_config.lock_or_panic() = Some(Config::default());
+        sleep(TelemetryBatch::RETRY_DELAY + Duration::from_millis(50)).await;
+        sender.barrier().await.expect("retry deadline");
+
+        assert!(
+            sidecar
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&instance, SERVICE, ENV)
+                .is_some(),
+            "a batch submitted before initial runtime creation should be retried"
+        );
+        receiver_task.abort();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn retired_direct_batch_is_not_delivered_to_reused_instance_id() {
+        const SERVICE: &str = "retired-direct-batch";
+        const ENV: &str = "test";
+
+        let sidecar = SidecarServer::default();
+        let instance = InstanceId::new("session", "runtime");
+        let session = sidecar.get_session(&instance.session_id);
+        sidecar.get_runtime(&instance);
+        *session.session_config.lock_or_panic() = Some(Config::default());
+        let (sender, receiver) = direct_telemetry_channel(&sidecar);
+        let receiver_task = tokio::spawn(telemetry_action_receiver_task(sidecar.clone(), receiver));
+
+        session.take_runtime(&instance.runtime_id);
+        sender
+            .retire(DirectTelemetryRetirement::Runtimes(HashSet::from([
+                instance.clone(),
+            ])))
+            .await
+            .expect("retire original lifecycle");
+        sender
+            .send_actions(InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![internal_log("belongs to retired lifecycle")],
+            })
+            .await
+            .expect("late direct action");
+        sender.barrier().await.expect("late batch delivery attempt");
+
+        sidecar.get_runtime(&instance);
+        sleep(TelemetryBatch::RETRY_DELAY + Duration::from_millis(50)).await;
+        sender.barrier().await.expect("retry deadline");
+
+        assert!(
+            sidecar
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&instance, SERVICE, ENV)
+                .is_none(),
+            "a batch from the retired generation must not attach to a reused instance id"
+        );
+        receiver_task.abort();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn retired_session_generation_is_not_reused() {
+        const SERVICE: &str = "retired-session-batch";
+        const ENV: &str = "test";
+
+        let sidecar = SidecarServer::default();
+        let instance = InstanceId::new("session", "runtime");
+        let session = sidecar.get_session(&instance.session_id);
+        sidecar.get_runtime(&instance);
+        *session.session_config.lock_or_panic() = Some(Config::default());
+        let retired_generation = sidecar
+            .direct_telemetry_lifecycles
+            .generation(&instance)
+            .expect("initial runtime generation");
+
+        sidecar
+            .direct_telemetry_lifecycles
+            .retire_session(&instance.session_id);
+        sidecar.get_runtime(&instance);
+
+        let (sender, receiver) = direct_telemetry_channel(&sidecar);
+        let receiver_task = tokio::spawn(telemetry_action_receiver_task(sidecar.clone(), receiver));
+        sender
+            .sender
+            .send(DirectTelemetryMessage::Actions(DirectTelemetryActions {
+                actions: InternalTelemetryActions {
+                    instance_id: instance.clone(),
+                    service_name: SERVICE.to_string(),
+                    env_name: ENV.to_string(),
+                    actions: vec![internal_log("belongs to retired session")],
+                },
+                generation: Some(retired_generation),
+            }))
+            .await
+            .expect("delayed old-session batch");
+        sender
+            .barrier()
+            .await
+            .expect("old-session delivery attempt");
+
+        assert!(
+            sidecar
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&instance, SERVICE, ENV)
+                .is_none(),
+            "a reused session/runtime id must not reactivate an old generation"
+        );
+        receiver_task.abort();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn direct_batch_retries_while_existing_runtime_waits_for_session_config() {
+        const SERVICE: &str = "direct-before-config";
+        const ENV: &str = "test";
+
+        let sidecar = SidecarServer::default();
+        let instance = InstanceId::new("session", "runtime");
+        let session = sidecar.get_session(&instance.session_id);
+        sidecar.get_runtime(&instance);
+        let (sender, receiver) = direct_telemetry_channel(&sidecar);
+        let receiver_task = tokio::spawn(telemetry_action_receiver_task(sidecar.clone(), receiver));
+
+        sender
+            .send_actions(InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![internal_log("waits for configuration")],
+            })
+            .await
+            .expect("pre-config direct action");
+        sender.barrier().await.expect("first delivery attempt");
+        assert!(sidecar
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&instance, SERVICE, ENV)
+            .is_none());
+
+        *session.session_config.lock_or_panic() = Some(Config::default());
+        sleep(TelemetryBatch::RETRY_DELAY + Duration::from_millis(50)).await;
+        sender.barrier().await.expect("retry delivery");
+
+        assert!(
+            sidecar
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&instance, SERVICE, ENV)
+                .is_some(),
+            "an existing lifecycle should deliver once its session config becomes available"
+        );
+        receiver_task.abort();
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn metric_registration_only_batch_does_not_create_runtime_worker() {
+        const SERVICE: &str = "registration-only";
+        const ENV: &str = "test";
+        const METRIC: &str = "registration.only";
+
+        let sidecar = SidecarServer::default();
+        let instance = InstanceId::new("session", "runtime");
+        let session = sidecar.get_session(&instance.session_id);
+        sidecar.get_runtime(&instance);
+        *session.session_config.lock_or_panic() = Some(Config::default());
+
+        let delivery = TelemetryBatch::Fresh(DirectTelemetryActions {
+            generation: sidecar.direct_telemetry_lifecycles.generation(&instance),
+            actions: InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![InternalTelemetryAction::RegisterTelemetryMetric(metric(
+                    METRIC,
+                ))],
+            },
+        })
+        .deliver(&sidecar)
+        .await;
+
+        assert!(delivery.is_ok());
+        assert_eq!(
+            sidecar
+                .metrics_logs_clients
+                .registered_metric_names(&instance, SERVICE, ENV),
+            HashSet::from([METRIC.to_string()])
+        );
+        assert!(
+            sidecar
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&instance, SERVICE, ENV)
+                .is_none(),
+            "registration should update the session definition map without spawning a worker"
+        );
     }
 
     #[tokio::test]
@@ -2395,7 +2936,7 @@ mod tests {
         let sidecar = SidecarServer::default();
         let instance_id = InstanceId::new("session", "runtime");
         let session = sidecar.get_session(&instance_id.session_id);
-        session.get_runtime(&instance_id.runtime_id);
+        sidecar.get_runtime(&instance_id);
         *session.session_config.lock_or_panic() = Some(test_config(&http_server));
         let app_client = sidecar
             .telemetry_clients
@@ -2427,15 +2968,17 @@ mod tests {
             .telemetry_clients
             .remove_telemetry_client(SERVICE, ENV, &app_client);
 
-        let batch = TelemetryBatch::Fresh(InternalTelemetryActions {
-            instance_id: instance_id.clone(),
-            service_name: SERVICE.to_string(),
-            env_name: ENV.to_string(),
-            actions: vec![internal_log(LOG_MESSAGE)],
+        let batch = TelemetryBatch::Fresh(DirectTelemetryActions {
+            generation: sidecar.direct_telemetry_lifecycles.generation(&instance_id),
+            actions: InternalTelemetryActions {
+                instance_id: instance_id.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![internal_log(LOG_MESSAGE)],
+            },
         });
 
-        let metrics_logs_client = batch
-            .get_client(&sidecar)
+        let metrics_logs_client = get_telemetry_client(&sidecar, &instance_id, SERVICE, ENV)
             .expect("session config should allow a metrics/logs client");
         assert!(!Arc::ptr_eq(&app_client, &metrics_logs_client));
         let worker = metrics_logs_client
@@ -3218,7 +3761,7 @@ mod tests {
         let sidecar = SidecarServer::default();
         let instance = InstanceId::new("batch-local-session", "batch-local-runtime");
         let session = sidecar.get_session(&instance.session_id);
-        session.get_runtime(&instance.runtime_id);
+        sidecar.get_runtime(&instance);
         *session.session_config.lock_or_panic() = Some(test_config(&http_server));
         let runtime_metadata = RuntimeMetadata::new("php", "8.3", "test");
 
@@ -3244,23 +3787,26 @@ mod tests {
 
         let mut changed_metric = metric(METRIC);
         changed_metric.metric_type = libdd_telemetry::data::metrics::MetricType::Gauge;
-        let delivery = TelemetryBatch::Fresh(InternalTelemetryActions {
-            instance_id: instance.clone(),
-            service_name: SERVICE.to_string(),
-            env_name: ENV.to_string(),
-            actions: vec![
-                InternalTelemetryAction::AddMetricPoint((1.0, METRIC.to_string(), Vec::new())),
-                InternalTelemetryAction::AddMetricPoint((2.0, METRIC.to_string(), Vec::new())),
-                InternalTelemetryAction::RegisterTelemetryMetric(changed_metric),
-                InternalTelemetryAction::AddMetricPoint((3.0, METRIC.to_string(), Vec::new())),
-                InternalTelemetryAction::AddMetricPoint((4.0, METRIC.to_string(), Vec::new())),
-                InternalTelemetryAction::TelemetryAction(TelemetryActions::Lifecycle(
-                    LifecycleAction::FlushMetricAggr,
-                )),
-                InternalTelemetryAction::TelemetryAction(TelemetryActions::Lifecycle(
-                    LifecycleAction::FlushData,
-                )),
-            ],
+        let delivery = TelemetryBatch::Fresh(DirectTelemetryActions {
+            generation: sidecar.direct_telemetry_lifecycles.generation(&instance),
+            actions: InternalTelemetryActions {
+                instance_id: instance.clone(),
+                service_name: SERVICE.to_string(),
+                env_name: ENV.to_string(),
+                actions: vec![
+                    InternalTelemetryAction::AddMetricPoint((1.0, METRIC.to_string(), Vec::new())),
+                    InternalTelemetryAction::AddMetricPoint((2.0, METRIC.to_string(), Vec::new())),
+                    InternalTelemetryAction::RegisterTelemetryMetric(changed_metric),
+                    InternalTelemetryAction::AddMetricPoint((3.0, METRIC.to_string(), Vec::new())),
+                    InternalTelemetryAction::AddMetricPoint((4.0, METRIC.to_string(), Vec::new())),
+                    InternalTelemetryAction::TelemetryAction(TelemetryActions::Lifecycle(
+                        LifecycleAction::FlushMetricAggr,
+                    )),
+                    InternalTelemetryAction::TelemetryAction(TelemetryActions::Lifecycle(
+                        LifecycleAction::FlushData,
+                    )),
+                ],
+            },
         })
         .deliver(&sidecar)
         .await;
@@ -3501,12 +4047,8 @@ mod tests {
             .get_session(&instance_b.session_id)
             .session_config
             .lock_or_panic() = Some(test_config(&server_b));
-        sidecar
-            .get_session(&instance_a.session_id)
-            .get_runtime(&instance_a.runtime_id);
-        sidecar
-            .get_session(&instance_b.session_id)
-            .get_runtime(&instance_b.runtime_id);
+        sidecar.get_runtime(&instance_a);
+        sidecar.get_runtime(&instance_b);
 
         let client_a =
             get_telemetry_client(&sidecar, &instance_a, SERVICE, ENV).expect("first owner");
@@ -3524,11 +4066,14 @@ mod tests {
                 .expect("metrics/logs client")
                 .worker
                 .clone();
-            let delivery = TelemetryBatch::Fresh(InternalTelemetryActions {
-                instance_id: instance_id.clone(),
-                service_name: SERVICE.to_string(),
-                env_name: ENV.to_string(),
-                actions: vec![internal_log(message)],
+            let delivery = TelemetryBatch::Fresh(DirectTelemetryActions {
+                generation: sidecar.direct_telemetry_lifecycles.generation(instance_id),
+                actions: InternalTelemetryActions {
+                    instance_id: instance_id.clone(),
+                    service_name: SERVICE.to_string(),
+                    env_name: ENV.to_string(),
+                    actions: vec![internal_log(message)],
+                },
             })
             .deliver(&sidecar)
             .await;
