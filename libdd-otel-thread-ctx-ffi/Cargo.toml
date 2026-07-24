@@ -30,4 +30,4 @@ libdd-otel-thread-ctx = { path = "../libdd-otel-thread-ctx", features = [
 ] }
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true

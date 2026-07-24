@@ -17,7 +17,7 @@ expanded_builder_macros = []
 regex-lite = ["libdd-common-ffi/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dependencies]
 libdd-log = { path = "../libdd-log" }

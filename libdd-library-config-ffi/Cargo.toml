@@ -25,7 +25,7 @@ catch_panic = []
 regex-lite = ["libdd-common-ffi/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dev-dependencies]
 tempfile = { version = "3.3" }

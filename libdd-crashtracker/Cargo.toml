@@ -64,7 +64,7 @@ portable-atomic = { version = "1.6.0", features = ["serde"] }
 rand = "0.8.5"
 schemars = "0.8.21"
 serde = { workspace = true, features = ["derive"] }
-serde_json = {version = "1.0"}
+serde_json = { workspace = true, features = ["std"] }
 symbolic-demangle = { version = "12.8.0", default-features = false, features = ["rust", "cpp", "msvc"] }
 symbolic-common = { version = "12.8.0", default-features = false }
 tokio = { workspace = true, features = ["rt", "macros", "io-std", "io-util"] }

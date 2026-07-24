@@ -20,7 +20,7 @@ cbindgen = ["build_common/cbindgen"]
 regex-lite = ["libdd-shared-runtime/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dependencies]
 libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime" }

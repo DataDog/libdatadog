@@ -22,7 +22,7 @@ test-support = ["libdd-profiling-heap-gotter/test-support"]
 live-heap = ["libdd-profiling-heap-gotter/live-heap"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dependencies]
 anyhow = "1.0"
