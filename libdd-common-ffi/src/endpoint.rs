@@ -3,10 +3,10 @@
 
 use crate::slice::AsBytes;
 use crate::Error;
+use alloc::borrow::Cow;
+use core::str::FromStr;
 use hyper::http::uri::{Authority, Parts};
 use libdd_common::{parse_uri, Endpoint};
-use std::borrow::Cow;
-use std::str::FromStr;
 
 #[no_mangle]
 #[must_use]

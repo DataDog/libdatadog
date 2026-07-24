@@ -12,15 +12,42 @@ use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_stats::span_concentrator::{OtlpStatsBucket, SpanConcentrator};
-use libdd_trace_utils::otlp_encoder::json_types::status_code;
+use libdd_trace_utils::otlp_encoder::mapper::status_code;
 use libdd_trace_utils::otlp_encoder::OtlpResourceInfo;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tracing::error;
+use web_time::SystemTime;
 
 const METRIC_NAME: &str = "traces.span.sdk.metrics.duration";
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+
+// Canonical gRPC status names indexed by numeric code.
+// See <https://github.com/grpc/grpc/blob/master/doc/statuscodes.md>.
+const GRPC_STATUS_NAMES: [&str; 17] = [
+    "OK",
+    "CANCELLED",
+    "UNKNOWN",
+    "INVALID_ARGUMENT",
+    "DEADLINE_EXCEEDED",
+    "NOT_FOUND",
+    "ALREADY_EXISTS",
+    "PERMISSION_DENIED",
+    "RESOURCE_EXHAUSTED",
+    "FAILED_PRECONDITION",
+    "ABORTED",
+    "OUT_OF_RANGE",
+    "UNIMPLEMENTED",
+    "INTERNAL",
+    "UNAVAILABLE",
+    "DATA_LOSS",
+    "UNAUTHENTICATED",
+];
+
+fn grpc_status_code_to_name(code: &str) -> Option<&'static str> {
+    GRPC_STATUS_NAMES.get(code.parse::<usize>().ok()?).copied()
+}
 /// Fixed bucket boundaries (seconds) mirroring the OTel spanmetrics-connector defaults.
 const EXPLICIT_BOUNDS_SECONDS: [f64; 16] = [
     0.002, 0.004, 0.006, 0.008, 0.01, 0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.4, 2.0, 5.0, 10.0, 15.0,
@@ -58,7 +85,7 @@ pub fn map_stats_to_otlp_metrics(
                     continue;
                 };
                 data_points.push(json!({
-                    "attributes": build_attributes(group, &exact.grpc_method, is_error, resource_info, otel_trace_semantics_enabled),
+                    "attributes": build_attributes(group, is_error, resource_info, otel_trace_semantics_enabled),
                     "startTimeUnixNano": b.bucket.start.to_string(),
                     "timeUnixNano": end.to_string(),
                     "count": cell.count.to_string(),
@@ -120,7 +147,6 @@ fn sketch_bucket_counts(sketch: &DDSketch) -> Vec<String> {
 
 fn build_attributes(
     group: &pb::ClientGroupedStats,
-    grpc_method: &str,
     is_error: bool,
     resource_info: &OtlpResourceInfo,
     otel_trace_semantics_enabled: bool,
@@ -146,8 +172,10 @@ fn build_attributes(
     push("span.kind", &group.span_kind);
     push("http.request.method", &group.http_method);
     push("http.route", &group.http_endpoint);
-    push("rpc.method", grpc_method);
-    push("rpc.response.status_code", &group.grpc_status_code);
+    // group.grpc_status_code is the numeric code as a string; emit the canonical OTel status name.
+    if let Some(name) = grpc_status_code_to_name(&group.grpc_status_code) {
+        push("rpc.response.status_code", name);
+    }
     for tag in &group.peer_tags {
         if let Some((k, v)) = tag.split_once(':') {
             push(k, v);
@@ -249,6 +277,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
             &self.config.headers,
             self.config.timeout,
             self.test_token.as_deref(),
+            libdd_common::header::APPLICATION_JSON,
             serde_json::to_vec(&request)?,
             max_retries,
         )
@@ -346,20 +375,8 @@ mod tests {
             OtlpExactGroup {
                 ok: cell(ok_ns),
                 error: cell(err_ns),
-                grpc_method: String::new(),
             },
         )
-    }
-
-    fn group_pair_with_grpc(
-        ok_ns: &[u64],
-        err_ns: &[u64],
-        grpc_method: &str,
-        customize: impl FnOnce(&mut pb::ClientGroupedStats),
-    ) -> (pb::ClientGroupedStats, OtlpExactGroup) {
-        let (g, mut e) = group_with_exact(ok_ns, err_ns, customize);
-        e.grpc_method = grpc_method.into();
-        (g, e)
     }
 
     fn buckets(groups: Vec<(pb::ClientGroupedStats, OtlpExactGroup)>) -> Vec<OtlpStatsBucket> {
@@ -443,7 +460,7 @@ mod tests {
 
     #[test]
     fn data_point_attributes_and_otel_strip() {
-        let g_pair = group_pair_with_grpc(&[1_000_000_000], &[], "/pkg.Svc/Method", |g| {
+        let g_pair = group_with_exact(&[1_000_000_000], &[], |g| {
             g.http_status_code = 404;
             g.http_method = "POST".into();
             g.http_endpoint = "/users/:id".into();
@@ -466,7 +483,6 @@ mod tests {
         assert_eq!(str_at(a, "http.request.method"), Some("POST"));
         assert_eq!(str_at(a, "http.route"), Some("/users/:id"));
         assert!(a.iter().any(|kv| kv["key"] == "http.response.status_code"));
-        assert_eq!(str_at(a, "rpc.method"), Some("/pkg.Svc/Method"));
         assert_eq!(str_at(a, "datadog.operation.name"), Some("test.op"));
         assert_eq!(str_at(a, "datadog.span.type"), Some("web"));
         assert_eq!(str_at(a, "datadog.origin"), Some("synthetics"));
@@ -483,6 +499,26 @@ mod tests {
             k.starts_with("datadog.") || k.starts_with("_datadog.")
         }));
         assert_eq!(str_at(a, "http.request.method"), Some("POST"));
+    }
+
+    #[test]
+    fn emits_canonical_grpc_status_name_for_rpc_response_status_code() {
+        let g = group_with_exact(&[1_000_000_000], &[], |g| {
+            g.grpc_status_code = "5".into();
+        });
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let a = points(&req)[0]["attributes"].as_array().unwrap();
+        assert_eq!(str_at(a, "rpc.response.status_code"), Some("NOT_FOUND"));
+
+        // Empty/unmapped codes omit the attribute.
+        for code in ["", "99"] {
+            let g = group_with_exact(&[1_000_000_000], &[], |g| {
+                g.grpc_status_code = code.into();
+            });
+            let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+            let a = points(&req)[0]["attributes"].as_array().unwrap();
+            assert!(!a.iter().any(|kv| kv["key"] == "rpc.response.status_code"));
+        }
     }
 
     #[test]
@@ -542,5 +578,16 @@ mod tests {
         let ok_s = ok_pt["sum"].as_f64().unwrap();
         let err_s = err_pt["sum"].as_f64().unwrap();
         assert_eq!(ok_s + err_s, ns_to_s(combined_ns));
+    }
+
+    #[test]
+    fn test_grpc_status_code_to_name() {
+        assert_eq!(grpc_status_code_to_name("0"), Some("OK"));
+        assert_eq!(grpc_status_code_to_name("5"), Some("NOT_FOUND"));
+        assert_eq!(grpc_status_code_to_name("14"), Some("UNAVAILABLE"));
+        assert_eq!(grpc_status_code_to_name("16"), Some("UNAUTHENTICATED"));
+        assert_eq!(grpc_status_code_to_name("17"), None);
+        assert_eq!(grpc_status_code_to_name(""), None);
+        assert_eq!(grpc_status_code_to_name("OK"), None);
     }
 }

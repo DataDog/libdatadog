@@ -7,14 +7,11 @@
 //! including starting/stopping stats workers, managing the span concentrator,
 //! and processing traces for stats collection.
 
-#[cfg(not(target_arch = "wasm32"))]
 use super::add_path;
 use super::TracerMetadata;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::agent_info::schema::AgentInfo;
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-#[cfg(not(target_arch = "wasm32"))]
 use libdd_common::Endpoint;
 use libdd_common::MutexExt;
 use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
@@ -23,18 +20,16 @@ use libdd_trace_stats::span_concentrator::SpanConcentrator;
 use libdd_trace_stats::span_concentrator::{
     SharedStatsComputationObfuscationConfig, StatsComputationObfuscationConfig,
 };
-#[cfg(not(target_arch = "wasm32"))]
 use libdd_trace_stats::stats_exporter::{StatsExporter, StatsMetadata};
 use libdd_trace_utils::trace_filter::TraceFilterer;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-#[cfg(not(target_arch = "wasm32"))]
 use tracing::{debug, error};
+// std::time::SystemTime::now() panics on wasm32.
+use web_time::SystemTime;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const DEFAULT_STATS_ELIGIBLE_SPAN_KINDS: [&str; 4] =
     ["client", "server", "producer", "consumer"];
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) const STATS_ENDPOINT: &str = "/v0.6/stats";
 
 /// The maximum obfuscation version this tracer supports.
@@ -43,16 +38,26 @@ pub(crate) const SUPPORTED_OBFUSCATION_VERSION: u32 = 1;
 #[cfg(feature = "stats-obfuscation")]
 pub(crate) const SUPPORTED_OBFUSCATION_VERSION_STR: &str = "1";
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Context struct that groups immutable parameters used by stats functions
-pub(crate) struct StatsContext<'a> {
+pub(crate) struct StatsContext<
+    'a,
+    C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
+> {
     pub metadata: &'a TracerMetadata,
     pub endpoint_url: &'a http::Uri,
-    pub shared_runtime: &'a SharedRuntime,
+    pub shared_runtime: &'a R,
+    pub stats_cardinality_limit: Option<usize>,
+    /// Optional DogStatsD client forwarded to the [`StatsExporter`].
+    pub dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
+    /// Optional telemetry handle forwarded to the [`StatsExporter`].
+    #[cfg(feature = "telemetry")]
+    pub telemetry: Option<libdd_telemetry::worker::TelemetryWorkerHandle<C>>,
+    #[cfg(not(feature = "telemetry"))]
+    pub(crate) _phantom: std::marker::PhantomData<fn() -> C>,
 }
 
 #[derive(Debug)]
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) enum StatsComputationStatus {
     /// Client-side stats has been disabled by the tracer
     Disabled,
@@ -68,9 +73,9 @@ pub(crate) enum StatsComputationStatus {
 }
 
 #[derive(Debug)]
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub(crate) struct StatsComputationConfig {
     pub(crate) status: ArcSwap<StatsComputationStatus>,
+    pub(crate) stats_cardinality_limit: Option<usize>,
     #[cfg(feature = "stats-obfuscation")]
     pub(crate) obfuscation_config: SharedStatsComputationObfuscationConfig,
     /// Builder-level opt-in. When false, stats obfuscation stays off
@@ -84,7 +89,6 @@ pub(crate) struct StatsComputationConfig {
 /// This requires:
 /// - `client_drop_p0s` to be enabled on the agent,
 /// - the `/v0.6/stats` endpoint to be advertised by the agent.
-#[cfg(not(target_arch = "wasm32"))]
 fn is_stats_computation_supported(agent_info: &AgentInfo) -> bool {
     agent_info.info.client_drop_p0s.is_some_and(|v| v)
         && agent_info
@@ -100,10 +104,9 @@ fn is_obfuscation_active(agent_info: &AgentInfo) -> bool {
     agent_info
         .info
         .obfuscation_version
-        .is_some_and(|v| v >= 1 && v <= SUPPORTED_OBFUSCATION_VERSION)
+        .is_some_and(|v| v >= 1 && v == SUPPORTED_OBFUSCATION_VERSION)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Get span kinds for stats computation with default fallback
 fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
     agent_info
@@ -113,14 +116,14 @@ fn get_span_kinds_for_stats(agent_info: &Arc<AgentInfo>) -> Vec<String> {
         .unwrap_or_else(|| DEFAULT_STATS_ELIGIBLE_SPAN_KINDS.map(String::from).to_vec())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Start the stats exporter and enable stats computation
 ///
 /// Should only be used if the agent enabled stats computation
 pub(crate) fn start_stats_computation<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
 >(
-    ctx: &StatsContext,
+    ctx: &StatsContext<C, R>,
     span_kinds: Vec<String>,
     peer_tags: Vec<String>,
     capabilities: C,
@@ -131,9 +134,11 @@ pub(crate) fn start_stats_computation<
     {
         let stats_concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
             bucket_size,
-            std::time::SystemTime::now(),
+            SystemTime::now(),
             span_kinds,
             peer_tags,
+            ctx.stats_cardinality_limit,
+            vec![],
             #[cfg(feature = "stats-obfuscation")]
             Some(client_side_stats.obfuscation_config.clone()),
         )));
@@ -142,12 +147,12 @@ pub(crate) fn start_stats_computation<
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Create stats exporter and worker, start the worker, and update the state
 fn create_and_start_stats_worker<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
 >(
-    ctx: &StatsContext,
+    ctx: &StatsContext<C, R>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
@@ -160,9 +165,10 @@ fn create_and_start_stats_worker<
         Endpoint::from_url(add_path(ctx.endpoint_url, STATS_ENDPOINT)),
         capabilities.clone(),
         #[cfg(feature = "stats-obfuscation")]
-        client_side_stats.obfuscation_config.clone(),
-        #[cfg(feature = "stats-obfuscation")]
         SUPPORTED_OBFUSCATION_VERSION_STR,
+        #[cfg(feature = "telemetry")]
+        ctx.telemetry.clone(),
+        ctx.dogstatsd.clone(),
     );
     let worker_handle = ctx
         .shared_runtime
@@ -180,7 +186,6 @@ fn create_and_start_stats_worker<
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Transition from `Enabled` to `DisabledByAgent`, awaiting the stats worker shutdown.
 pub(crate) async fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComputationStatus>) {
     // load_full() avoids holding an ArcSwap Guard (!Send) across .await.
@@ -201,12 +206,12 @@ pub(crate) async fn stop_stats_computation(client_side_stats: &ArcSwap<StatsComp
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Handle stats computation when agent changes from disabled to enabled
 pub(crate) fn handle_stats_disabled_by_agent<
     C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static,
+    R: SharedRuntime,
 >(
-    ctx: &StatsContext,
+    ctx: &StatsContext<C, R>,
     agent_info: &Arc<AgentInfo>,
     capabilities: C,
     client_side_stats: &StatsComputationConfig,
@@ -233,7 +238,6 @@ pub(crate) fn handle_stats_disabled_by_agent<
 }
 
 #[cfg(feature = "stats-obfuscation")]
-#[cfg(not(target_arch = "wasm32"))]
 fn update_obfuscation_config(
     agent_info: &Arc<AgentInfo>,
     client_side_stats: &StatsComputationConfig,
@@ -244,6 +248,7 @@ fn update_obfuscation_config(
     ) {
         let obfuscation_active =
             client_side_stats.obfuscation_enabled && is_obfuscation_active(agent_info);
+        // FIXME(APMSP-3720): there is more than this to obfuscation config
         let sql_obfuscation_mode = (|| {
             agent_info
                 .info
@@ -263,7 +268,6 @@ fn update_obfuscation_config(
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn handle_stats_enabled(
     agent_info: &Arc<AgentInfo>,
     stats_concentrator: &Arc<Mutex<SpanConcentrator>>,
@@ -302,15 +306,20 @@ fn add_spans_to_stats<T: libdd_trace_utils::span::TraceData>(
 ///
 /// If a telemetry client is provided and stats are enabled, dropped P0 counts
 /// will be sent to telemetry.
-pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
+pub(crate) fn process_traces_for_stats<
+    T: libdd_trace_utils::span::TraceData,
+    #[cfg(feature = "telemetry")] C: libdd_capabilities::HttpClientCapability
+        + libdd_capabilities::SleepCapability
+        + libdd_capabilities::MaybeSend
+        + Sync
+        + 'static,
+>(
     traces: &mut Vec<Vec<libdd_trace_utils::span::v04::Span<T>>>,
     header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
     client_side_stats: &ArcSwap<StatsComputationStatus>,
     client_computed_top_level: bool,
     trace_filterer: &TraceFilterer,
-    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))] telemetry: Option<
-        &crate::telemetry::TelemetryClient,
-    >,
+    #[cfg(feature = "telemetry")] telemetry: Option<&crate::telemetry::TelemetryClient<C>>,
 ) {
     let status = client_side_stats.load();
     if let StatsComputationStatus::Enabled {
@@ -318,6 +327,8 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     } = &**status
     {
         let dropped_by_trace_filter = trace_filterer.filter_traces(traces);
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
+        let _ = dropped_by_trace_filter;
 
         if !client_computed_top_level {
             for chunk in traces.iter_mut() {
@@ -337,7 +348,7 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
         header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
 
         // Send dropped P0 stats directly to telemetry if available
-        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        #[cfg(feature = "telemetry")]
         if let Some(telemetry_client) = telemetry {
             if let Err(e) = telemetry_client.send_client_side_stats_drops(
                 dropped_p0_stats.dropped_p0_traces,

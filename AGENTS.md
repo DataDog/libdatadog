@@ -6,7 +6,7 @@
 
 ### Validating after changes
 
-Iterate fastest with `cargo check -p <crate>` while editing; the full validation steps below are what should be green before declaring work done.
+Iterate fastest with `cargo check -p <crate>` while editing; validate each affected crate before declaring work done. Run workspace-wide checks only for repo-wide changes.
 
 1. **Compile** — use `cargo check -p <crate>` for fast iteration on a single crate; run the full workspace build only when changes are repo-wide:
    ```bash
@@ -14,17 +14,22 @@ Iterate fastest with `cargo check -p <crate>` while editing; the full validation
    cargo build --workspace --exclude builder    # full build (repo-wide changes only)
    ```
 
-2. **Format and lint** — always run on every crate that was touched, before finishing:
+2. **Format and lint** — run for every crate that was touched, before finishing:
    ```bash
    cargo +nightly-2026-02-08 fmt --all -- --check
-   cargo +stable clippy --workspace --all-targets --all-features -- -D warnings
+   cargo +stable clippy -p <crate> --all-targets -- -D warnings
    ```
+   Add the feature flags affected by the change. Use `--all-features` only when the crate supports enabling all features together.
 
-3. **Run tests** with nextest plus doc tests:
+3. **Run tests** for every crate that was touched:
+   ```bash
+   cargo nextest run -p <crate>
+   ```
+   If documentation, examples, or a public API changed, run `cargo test -p <crate> --doc`.
+
+   For repo-wide changes, also run:
    ```bash
    cargo nextest run --workspace --no-fail-fast
-   cargo nextest run --workspace --all-features --exclude builder --exclude test_spawn_from_lib
-   cargo test --doc
    ```
    Run a single test by substring: `cargo nextest run -p <crate-name> <test-name>`.
 

@@ -111,16 +111,20 @@ mod tests {
     use crate::{builder::*, worker_handle::*};
     use ffi::tags::{ddog_Vec_Tag_new, ddog_Vec_Tag_push, PushTagResult};
     use ffi::MaybeError;
-    use libdd_common::Endpoint;
+    use libdd_capabilities_impl::NativeCapabilities;
     use libdd_common_ffi as ffi;
     use libdd_telemetry::{
         data::{
             metrics::{MetricNamespace, MetricType},
             LogLevel,
         },
-        worker::{TelemetryWorkerBuilder, TelemetryWorkerHandle},
+        worker::TelemetryWorkerBuilder,
     };
     use std::{mem::MaybeUninit, ptr::NonNull};
+
+    /// Test-side alias: matches the FFI surface, which pins `C` to
+    /// [`NativeCapabilities`].
+    type TelemetryWorkerHandle = libdd_telemetry::worker::TelemetryWorkerHandle<NativeCapabilities>;
 
     /// Spins up a worker backed by a file:// endpoint, returns (handle, temp_file).
     /// The caller is responsible for stopping the worker and reading the file.
@@ -137,9 +141,14 @@ mod tests {
         let mut builder = builder.assume_init();
 
         let f = tempfile::NamedTempFile::new().unwrap();
+        let url = format!("file://{}", f.path().to_str().unwrap());
         ddog_telemetry_builder_with_endpoint_config_endpoint(
             &mut builder,
-            &Endpoint::from_slice(&format!("file://{}", f.path().to_str().unwrap())),
+            ffi::CharSlice::from(url.as_str()),
+            ffi::CharSlice::from(""),
+            0,
+            ffi::CharSlice::from(""),
+            false,
         )
         .unwrap_none();
 
@@ -306,13 +315,15 @@ mod tests {
             let mut builder = builder.assume_init();
 
             let f = tempfile::NamedTempFile::new().unwrap();
+            let url = format!("file://{}", f.path().as_os_str().to_str().unwrap());
             assert_eq!(
                 ddog_telemetry_builder_with_endpoint_config_endpoint(
                     &mut builder,
-                    &Endpoint::from_slice(&format!(
-                        "file://{}",
-                        f.path().as_os_str().to_str().unwrap()
-                    )),
+                    ffi::CharSlice::from(url.as_str()),
+                    ffi::CharSlice::from(""),
+                    0,
+                    ffi::CharSlice::from(""),
+                    false,
                 ),
                 MaybeError::None
             );
@@ -351,13 +362,15 @@ mod tests {
             let mut builder = builder.assume_init();
 
             let f = tempfile::NamedTempFile::new().unwrap();
+            let url = format!("file://{}", f.path().as_os_str().to_str().unwrap());
             assert_eq!(
                 ddog_telemetry_builder_with_endpoint_config_endpoint(
                     &mut builder,
-                    &Endpoint::from_slice(&format!(
-                        "file://{}",
-                        f.path().as_os_str().to_str().unwrap()
-                    )),
+                    ffi::CharSlice::from(url.as_str()),
+                    ffi::CharSlice::from(""),
+                    0,
+                    ffi::CharSlice::from(""),
+                    false,
                 ),
                 MaybeError::None
             );

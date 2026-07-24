@@ -159,11 +159,11 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 /// ```no_run
 /// # use anyhow::Result;
 /// # use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
-/// # use libdd_shared_runtime::Worker;
+/// # use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime, Worker};
+/// # use libdd_data_pipeline::agent_info;
 /// # #[tokio::main]
 /// # async fn main() -> Result<()> {
 /// // Define the endpoint
-/// use libdd_data_pipeline::agent_info;
 /// let endpoint = libdd_common::Endpoint::from_url("http://localhost:8126/info".parse().unwrap());
 /// // Create the fetcher
 /// let (mut fetcher, _response_observer) = libdd_data_pipeline::agent_info::AgentInfoFetcher::<
@@ -172,7 +172,7 @@ async fn fetch_and_hash_response<C: HttpClientCapability + SleepCapability>(
 ///     endpoint, std::time::Duration::from_secs(5 * 60)
 /// );
 /// // Start the fetcher on a shared runtime
-/// let runtime = libdd_shared_runtime::SharedRuntime::new()?;
+/// let runtime = ForkSafeRuntime::new()?;
 /// runtime.spawn_worker(fetcher, true)?;
 ///
 /// // Get the Arc to access the info
@@ -356,7 +356,7 @@ mod single_threaded_tests {
     use crate::agent_info;
     use httpmock::prelude::*;
     use libdd_capabilities_impl::NativeCapabilities;
-    use libdd_shared_runtime::SharedRuntime;
+    use libdd_shared_runtime::{ForkSafeRuntime, SharedRuntime};
 
     const TEST_INFO: &str = r#"{
         "version": "0.0.0",
@@ -596,7 +596,7 @@ mod single_threaded_tests {
             Duration::from_millis(100),
         );
         assert!(agent_info::get_agent_info().is_none());
-        let shared_runtime = SharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Wait until the info is fetched
@@ -679,7 +679,7 @@ mod single_threaded_tests {
             // Interval is too long to fetch during the test
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600));
 
-        let shared_runtime = SharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the new agent state
@@ -760,7 +760,7 @@ mod single_threaded_tests {
         let (fetcher, response_observer) =
             AgentInfoFetcher::<NativeCapabilities>::new(endpoint, Duration::from_secs(3600)); // Very long interval
 
-        let shared_runtime = SharedRuntime::new().unwrap();
+        let shared_runtime = ForkSafeRuntime::new().unwrap();
         let _ = shared_runtime.spawn_worker(fetcher, true).unwrap();
 
         // Create a mock HTTP response with the same agent state

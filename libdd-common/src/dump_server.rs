@@ -35,11 +35,18 @@ const HTTP_200_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
 pub fn spawn_dump_server(output_path: PathBuf) -> anyhow::Result<PathBuf> {
     use tokio::net::UnixListener;
 
-    // Create a temporary socket path with randomness to avoid collisions
-    // Retry if the path already exists (highly unlikely with 64-bit random IDs)
+    // Create a short temporary socket path with randomness to avoid collisions.
+    // Unix socket paths have a small platform-dependent limit (notably on macOS),
+    // and std::env::temp_dir() can be too long.
+    let socket_dir = PathBuf::from("/tmp");
+    let socket_dir = if socket_dir.is_dir() {
+        socket_dir
+    } else {
+        std::env::temp_dir()
+    };
     let socket_path = loop {
         let random_id: u64 = rand::random();
-        let path = std::env::temp_dir().join(format!(
+        let path = socket_dir.join(format!(
             "libdatadog_dump_{}_{:x}.sock",
             std::process::id(),
             random_id
@@ -178,7 +185,7 @@ fn is_chunked_encoding(headers: &[httparse::Header]) -> bool {
     headers.iter().any(|h| {
         h.name
             .eq_ignore_ascii_case(http::header::TRANSFER_ENCODING.as_str())
-            && std::str::from_utf8(h.value).is_ok_and(|v| v.to_lowercase().contains("chunked"))
+            && core::str::from_utf8(h.value).is_ok_and(|v| v.to_lowercase().contains("chunked"))
     })
 }
 
@@ -190,7 +197,7 @@ fn get_content_length(headers: &[httparse::Header]) -> Option<usize> {
             h.name
                 .eq_ignore_ascii_case(http::header::CONTENT_LENGTH.as_str())
         })
-        .and_then(|h| std::str::from_utf8(h.value).ok())
+        .and_then(|h| core::str::from_utf8(h.value).ok())
         .and_then(|v| v.trim().parse().ok())
 }
 
@@ -294,7 +301,7 @@ fn decode_chunked_body(chunked_data: &[u8]) -> anyhow::Result<Vec<u8>> {
             .with_context(|| format!("Missing CRLF after chunk size at position {}", pos))?;
 
         // Parse the chunk size (hex)
-        let size_str = std::str::from_utf8(&chunked_data[pos..pos + line_end])
+        let size_str = core::str::from_utf8(&chunked_data[pos..pos + line_end])
             .context("Invalid UTF-8 in chunk size")?;
 
         let chunk_size = usize::from_str_radix(size_str.trim(), 16)

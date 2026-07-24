@@ -26,12 +26,12 @@ fips = ["dep:reqwest", "reqwest?/rustls-no-provider", "dep:rustls", "rustls?/aws
 bytes = "1.4"
 thiserror = "2"
 fastrand = "2"
-tokio = { version = "1.23", features = ["rt", "time"] }
+tokio = { workspace = true, features = ["rt", "time"] }
 reqwest = { version = "0.13", default-features = false, optional = true }
 rustls = { version = "0.23", default-features = false, optional = true }
-libdd-common = { version = "5.0.0", path = "../libdd-common", default-features = false, optional = true }
-hyper = { workspace = true, optional = true }
-hyper-util = { workspace = true, optional = true }
+libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false, optional = true }
+hyper = { workspace = true, optional = true, features = ["http1", "client"] }
+hyper-util = { workspace = true, optional = true, features = ["http1", "client", "client-legacy"] }
 http-body-util = { version = "0.1", optional = true }
 
 

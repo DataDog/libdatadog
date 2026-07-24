@@ -1,6 +1,6 @@
 [package]
 name = "libdd-trace-utils"
-version = "8.0.0"
+version = "9.0.0"
 description = "Trace utilities including span processing, MessagePack encoding/decoding, payload handling, and HTTP transport with retry logic for Datadog APM"
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-trace-utils"
@@ -24,29 +24,32 @@ path = "benches/vec_map_bench.rs"
 required-features = ["bench-internals"]
 
 [dependencies]
-anyhow = "1.0"
+anyhow.workspace = true
 base64 = "0.22"
-hyper = { workspace = true, optional = true, default-features = false }
+hex = "0.4"
+itoa = "1.0"
+hyper = { workspace = true, optional = true, features = ["http1", "client"] }
 "http" = "1"
 "http-body" = "1"
 http-body-util = "0.1"
-serde = { version = "1.0.145", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 prost = "0.14.1"
 rmp-serde = "1.3.0"
-tracing = { version = "0.1", default-features = false }
+tracing.workspace = true
 serde_json = "1.0"
+serde-transcode = "1.1"
 futures = { version = "0.3", default-features = false }
-tokio = { version = "1", features = ["macros"] }
+tokio = { workspace = true, features = ["macros"] }
 rand = "0.8.5"
 bytes = "1.11.1"
 rmpv = { version = "1.3.0", default-features = false }
 rmp = { version = "0.8.14", default-features = false }
 rustc-hash = "2.1.1"
 
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.0.0" }
-libdd-common = { version = "5.0.0", path = "../libdd-common", default-features = false }
-libdd-trace-normalization = { version = "2.0.0", path = "../libdd-trace-normalization" }
-libdd-trace-protobuf = { version = "3.0.2", path = "../libdd-trace-protobuf" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
+libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
+libdd-trace-normalization = { version = "3.0.0", path = "../libdd-trace-normalization" }
+libdd-trace-protobuf = { version = "4.0.0", path = "../libdd-trace-protobuf" }
 libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
     "bytes_string",
     "serialization",
@@ -67,13 +70,13 @@ urlencoding = { version = "2.1.3", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["time", "rt-multi-thread"] }
-libdd-capabilities-impl = { version = "2.0.0", path = "../libdd-capabilities-impl", default-features = false }
+libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
-libdd-capabilities-impl = { version = "2.0.0", path = "../libdd-capabilities-impl" }
+libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl" }
 libdd-common = { path = "../libdd-common", default-features = false, features = ["bench-utils"] }
 bolero = "0.13"
 criterion = "0.5.1"

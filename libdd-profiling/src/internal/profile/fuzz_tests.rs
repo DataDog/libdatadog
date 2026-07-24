@@ -290,6 +290,27 @@ impl<'a> From<&'a Sample> for api::Sample<'a> {
     }
 }
 
+fn configured_custom_value_type(sample_type: api::SampleType) -> Option<api::ValueType<'static>> {
+    match sample_type {
+        api::SampleType::Custom1 => Some(api::ValueType::new("custom-1-test", "count")),
+        api::SampleType::Custom2 => Some(api::ValueType::new("custom-2-test", "count")),
+        api::SampleType::Custom3 => Some(api::ValueType::new("custom-3-test", "count")),
+        api::SampleType::Custom4 => Some(api::ValueType::new("custom-4-test", "count")),
+        api::SampleType::Custom5 => Some(api::ValueType::new("custom-5-test", "count")),
+        _ => None,
+    }
+}
+
+fn configure_custom_sample_types(profile: &mut Profile, sample_types: &[api::SampleType]) {
+    for sample_type in sample_types.iter().copied() {
+        if let Some(value_type) = configured_custom_value_type(sample_type) {
+            // Ignore errors: duplicate custom slots are expected in fuzz input, and the first
+            // successful configuration covers every occurrence of the slot in the profile.
+            let _ = profile.set_custom_sample_type(sample_type, value_type);
+        }
+    }
+}
+
 #[track_caller]
 fn assert_sample_types_eq(profile: &pprof::Profile, expected_sample_types: &[api::SampleType]) {
     assert_eq!(
@@ -302,7 +323,8 @@ fn assert_sample_types_eq(profile: &pprof::Profile, expected_sample_types: &[api
         .iter()
         .zip(expected_sample_types.iter())
     {
-        let expected_vt: api::ValueType<'static> = (*expected_typ).into();
+        let expected_vt = configured_custom_value_type(*expected_typ)
+            .unwrap_or_else(|| api::ValueType::from(*expected_typ));
         assert_eq!(*string_table_fetch(profile, typ.r#type), expected_vt.r#type);
         assert_eq!(*string_table_fetch(profile, typ.unit), expected_vt.unit);
     }
@@ -515,6 +537,7 @@ fn test_fuzz_add_sample() {
                 .collect::<Vec<_>>();
 
             let mut expected_profile = Profile::new(expected_sample_types, None);
+            configure_custom_sample_types(&mut expected_profile, expected_sample_types);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
@@ -569,6 +592,7 @@ fn fuzz_add_sample_with_fixed_sample_length() {
         })
         .for_each(|(sample_types, samples)| {
             let mut profile = Profile::new(sample_types, None);
+            configure_custom_sample_types(&mut profile, sample_types);
             let mut samples_with_timestamps = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();
@@ -683,6 +707,7 @@ fn fuzz_api_function_calls() {
             let operations = operations.iter().map(Operation::from).collect::<Vec<_>>();
 
             let mut profile = Profile::new(sample_types, None);
+            configure_custom_sample_types(&mut profile, sample_types);
             let mut samples_with_timestamps: Vec<&Sample> = Vec::new();
             let mut samples_without_timestamps: HashMap<(&[Location], &[Label]), Vec<i64>> =
                 HashMap::new();

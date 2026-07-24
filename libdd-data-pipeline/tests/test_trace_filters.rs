@@ -11,6 +11,7 @@ use libdd_data_pipeline::{
     agent_info,
     trace_exporter::{TraceExporter, TraceExporterInputFormat, TraceExporterOutputFormat},
 };
+use libdd_shared_runtime::ForkSafeRuntime;
 use libdd_trace_utils::test_utils::datadog_test_agent::DatadogTestAgent;
 use rand::Rng;
 use serde_json::json;
@@ -38,7 +39,7 @@ mod tracing_integration_tests {
         let url = test_agent.get_base_uri().await;
         test_agent.start_session(snapshot_name, None).await;
 
-        let mut builder = TraceExporter::<NativeCapabilities>::builder();
+        let mut builder = TraceExporter::<NativeCapabilities, ForkSafeRuntime>::builder();
         builder
             .enable_stats(Duration::from_secs(10))
             .set_env("staging")
