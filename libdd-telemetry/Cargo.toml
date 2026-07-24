@@ -25,6 +25,8 @@ futures = { version = "0.3", default-features = false }
 http = "1"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { version = "1.0" }
+strum = { version = "0.26", default-features = false }
+strum_macros = "0.26"
 tokio = { workspace = true, features = ["sync", "io-util"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tracing.workspace = true

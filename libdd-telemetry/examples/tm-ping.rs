@@ -24,6 +24,9 @@ fn build_app_started_payload() -> AppStarted {
         configuration: Vec::new(),
         dependencies: Vec::new(),
         integrations: Vec::new(),
+        install_signature: None,
+        products: Default::default(),
+        error: None,
     }
 }
 

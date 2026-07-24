@@ -58,6 +58,15 @@ pub struct Config {
     pub parent_session_id: Option<String>,
     #[serde(default)]
     pub root_session_id: Option<String>,
+
+    /// Whether to emit the `app-started`/`app-closing` lifecycle payloads.
+    /// Forked processes may not be required to emit these.
+    #[serde(default = "default_true")]
+    pub emit_app_lifecycle: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn endpoint_with_telemetry_path(
@@ -195,6 +204,7 @@ impl Default for Config {
             session_id: None,
             parent_session_id: None,
             root_session_id: None,
+            emit_app_lifecycle: true,
         }
     }
 }
@@ -334,6 +344,7 @@ impl Config {
             session_id: None,
             parent_session_id: None,
             root_session_id: None,
+            emit_app_lifecycle: true,
         };
 
         _ = this.set_endpoint(TelemetryEndpoint {

@@ -18,6 +18,9 @@ pub mod info;
 pub mod metrics;
 pub mod worker;
 
+pub use libdd_common::tag::{parse_tags, Tag};
+pub use libdd_common::{parse_uri, Endpoint};
+
 pub fn build_host() -> data::Host {
     debug!("Building telemetry host information");
     let hostname = info::os::real_hostname().unwrap_or_else(|_| String::from("unknown_hostname"));

@@ -1,6 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::hash::Hasher;
 
 use crate::data::metrics;
@@ -11,6 +12,36 @@ use serde::{Deserialize, Serialize};
 pub struct Dependency {
     pub name: String,
     pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Vec<DependencyMetadata>>,
+}
+
+/// SCA metadata may be attached to a dependency after it was first reported; keying the store
+/// by this instead of the full struct means that update refreshes the existing entry instead of
+/// being stored (and re-sent) as a second entry for the same package/version.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DependencyKey {
+    name: String,
+    version: Option<String>,
+    hash: Option<String>,
+}
+
+impl crate::worker::store::Keyed<DependencyKey> for Dependency {
+    fn key(&self) -> DependencyKey {
+        DependencyKey {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            hash: self.hash.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
+pub struct DependencyMetadata {
+    pub r#type: String,
+    pub value: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone, Default)]
@@ -31,9 +62,21 @@ pub struct Configuration {
     pub seq_id: Option<u64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+)]
 #[repr(C)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ConfigurationOrigin {
     EnvVar,
     Code,
@@ -43,6 +86,14 @@ pub enum ConfigurationOrigin {
     LocalStableConfig,
     FleetStableConfig,
     Calculated,
+    OtelEnvVar,
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+pub struct Error {
+    pub code: Option<i64>,
+    pub message: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
@@ -50,11 +101,37 @@ pub struct AppStarted {
     pub configuration: Vec<Configuration>,
     pub dependencies: Vec<Dependency>,
     pub integrations: Vec<Integration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub install_signature: Option<InstallSignature>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub products: HashMap<String, ProductState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<Error>,
+}
+
+#[derive(Serialize, Debug, Clone)]
+pub struct InstallSignature {
+    pub install_id: Option<String>,
+    pub install_type: Option<String>,
+    pub install_time: Option<String>,
 }
 
 #[derive(Serialize, Debug)]
 pub struct AppDependenciesLoaded {
     pub dependencies: Vec<Dependency>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
+pub struct ProductState {
+    pub enabled: bool,
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<Error>,
+}
+
+#[derive(Serialize, Debug)]
+pub struct AppProductChange {
+    pub products: HashMap<String, ProductState>,
 }
 
 #[derive(Serialize, Debug)]
@@ -99,8 +176,20 @@ pub struct Log {
     pub is_crash: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Clone,
+    Copy,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+)]
 #[serde(rename_all = "UPPERCASE")]
+#[strum(serialize_all = "UPPERCASE")]
 #[repr(C)]
 pub enum LogLevel {
     Error,

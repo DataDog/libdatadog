@@ -36,8 +36,20 @@ pub enum SerializedSketch {
     B64 { sketch_b64: String },
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[repr(C)]
 pub enum MetricNamespace {
     Tracers,
@@ -51,13 +63,29 @@ pub enum MetricNamespace {
     Telemetry,
     Apm,
     Sidecar,
+    Civisibility,
+    Mlobs,
+    Ddtraceapi,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Serialize,
+    Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum_macros::Display,
+    strum_macros::EnumIter,
+)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 #[repr(C)]
 pub enum MetricType {
     Gauge,
     Count,
     Distribution,
+    Rate,
 }
