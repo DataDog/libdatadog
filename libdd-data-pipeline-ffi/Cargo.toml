@@ -22,7 +22,7 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 regex-lite = ["libdd-data-pipeline/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dev-dependencies]
 httpmock = "0.8.0-alpha.1"

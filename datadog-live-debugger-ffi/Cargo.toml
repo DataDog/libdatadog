@@ -17,7 +17,7 @@ libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 percent-encoding = "2.1"
 uuid = { version = "1.7.0", features = ["v4"] }
-serde_json = "1.0"
+serde_json.workspace = true
 tokio = "1.36.0"
 tokio-util = { version = "0.7", features = ["rt"] }
 log = "0.4.21"
@@ -28,4 +28,4 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 regex-lite = ["datadog-live-debugger/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true

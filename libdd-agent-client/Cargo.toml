@@ -26,7 +26,7 @@ hyper-backend = ["libdd-http-client/hyper-backend"]
 bytes = "1.4"
 flate2 = "1"
 serde = { workspace = true, features = ["derive"] }
-serde_json = "1.0"
+serde_json.workspace = true
 thiserror = "2"
 tokio = { workspace = true, features = ["rt"] }
 libdd-http-client = { path = "../libdd-http-client", default-features = false }

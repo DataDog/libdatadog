@@ -27,7 +27,7 @@ paste = "1"
 libc = "0.2"
 tracing.workspace = true
 rmp-serde = "1.1.1"
-serde_json = "1.0"
+serde_json.workspace = true
 
 
 [target.'cfg(unix)'.dependencies]

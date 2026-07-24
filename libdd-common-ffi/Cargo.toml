@@ -18,7 +18,7 @@ cbindgen = ["build_common/cbindgen"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dependencies]
 anyhow.workspace = true
