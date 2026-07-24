@@ -1814,6 +1814,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn closed_direct_receiver_falls_back_to_synchronous_cleanup() {
         const SERVICE: &str = "closed-receiver-cleanup";
         const ENV: &str = "test";
@@ -1886,6 +1887,8 @@ mod tests {
         handler
             .set_session_config(
                 "session".to_string(),
+                #[cfg(windows)]
+                crate::service::RemoteConfigNotifyFunction::default(),
                 test_session_config(
                     Endpoint {
                         url: old_server.url("/").parse().unwrap(),
@@ -1938,6 +1941,8 @@ mod tests {
         handler
             .set_session_config(
                 "session".to_string(),
+                #[cfg(windows)]
+                crate::service::RemoteConfigNotifyFunction::default(),
                 test_session_config(
                     Endpoint {
                         url: new_server.url("/").parse().unwrap(),
