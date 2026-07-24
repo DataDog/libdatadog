@@ -98,12 +98,9 @@ impl SessionInfo {
     }
 
     /// Shuts down all running instances in the session.
+    #[cfg(test)]
     pub(crate) async fn shutdown_running_instances(&self) {
-        let runtimes: Vec<RuntimeInfo> = self
-            .lock_runtimes()
-            .drain()
-            .map(|(_, instance)| instance)
-            .collect();
+        let runtimes = self.take_running_instances();
 
         let instances_shutting_down: Vec<_> = runtimes
             .into_iter()
@@ -113,11 +110,27 @@ impl SessionInfo {
         future::join_all(instances_shutting_down).await;
     }
 
+    pub(crate) fn take_running_instances(&self) -> Vec<RuntimeInfo> {
+        self.lock_runtimes()
+            .drain()
+            .map(|(_, instance)| instance)
+            .collect()
+    }
+
+    pub(crate) fn take_runtime(&self, runtime_id: &str) -> Option<RuntimeInfo> {
+        self.lock_runtimes().remove(runtime_id)
+    }
+
+    pub(crate) fn find_runtime(&self, runtime_id: &str) -> Option<RuntimeInfo> {
+        self.lock_runtimes().get(runtime_id).cloned()
+    }
+
     /// Shuts down a specific runtime in the session.
     ///
     /// # Arguments
     ///
     /// * `runtime_id` - The ID of the runtime.
+    #[cfg(test)]
     pub(crate) async fn shutdown_runtime(&self, runtime_id: &str) {
         let maybe_runtime = {
             let mut runtimes = self.lock_runtimes();
