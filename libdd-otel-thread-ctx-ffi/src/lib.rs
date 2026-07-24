@@ -48,6 +48,7 @@ pub unsafe extern "C" fn ddog_otel_thread_ctx_record_init(
     ctx: *mut ThreadContextRecord,
     trace_id: &[u8; 16],
     span_id: &[u8; 8],
+    trace_flags: u8,
     local_root_span_id: &[u8; 8],
     attrs: *const OtelThreadContextAttribute<'_>,
     attrs_len: usize,
@@ -57,7 +58,13 @@ pub unsafe extern "C" fn ddog_otel_thread_ctx_record_init(
     }
     let attrs = unsafe { attrs_from_raw(attrs, attrs_len) };
     unsafe { ctx.write(ThreadContextRecord::default()) };
-    unsafe { &mut *ctx }.initialize(*trace_id, *span_id, *local_root_span_id, attrs_iter(attrs))
+    unsafe { &mut *ctx }.initialize(
+        *trace_id,
+        *span_id,
+        trace_flags,
+        *local_root_span_id,
+        attrs_iter(attrs),
+    )
 }
 
 /// Replace all fields in a caller-owned thread-context record.
@@ -71,6 +78,7 @@ pub unsafe extern "C" fn ddog_otel_thread_ctx_record_update(
     ctx: *mut ThreadContextRecord,
     trace_id: &[u8; 16],
     span_id: &[u8; 8],
+    trace_flags: u8,
     local_root_span_id: &[u8; 8],
     attrs: *const OtelThreadContextAttribute<'_>,
     attrs_len: usize,
@@ -79,7 +87,13 @@ pub unsafe extern "C" fn ddog_otel_thread_ctx_record_update(
         return false;
     };
     let attrs = unsafe { attrs_from_raw(attrs, attrs_len) };
-    ctx.update(*trace_id, *span_id, *local_root_span_id, attrs_iter(attrs))
+    ctx.update(
+        *trace_id,
+        *span_id,
+        trace_flags,
+        *local_root_span_id,
+        attrs_iter(attrs),
+    )
 }
 
 /// Replace the span identifier in a caller-owned thread-context record.
@@ -121,6 +135,7 @@ mod record_tests {
                 record.as_mut_ptr(),
                 &trace_id,
                 &span_id,
+                0x03,
                 &local_root_span_id,
                 attrs.as_ptr(),
                 attrs.len(),
@@ -136,6 +151,7 @@ mod record_tests {
         assert_eq!(&bytes[..16], &trace_id);
         assert_eq!(&bytes[16..24], &span_id);
         assert_eq!(bytes[24], 1);
+        assert_eq!(bytes[25], 0x03);
         assert_eq!(&bytes[48..55], b"service");
     }
 }
@@ -183,9 +199,11 @@ mod linux {
     pub extern "C" fn ddog_otel_thread_ctx_new(
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
+        trace_flags: u8,
         local_root_span_id: &[u8; 8],
     ) -> NonNull<ThreadContextHandle> {
-        ThreadContext::new(*trace_id, *span_id, *local_root_span_id, &[]).into_opaque_ptr()
+        ThreadContext::new(*trace_id, *span_id, trace_flags, *local_root_span_id, &[])
+            .into_opaque_ptr()
     }
 
     /// Free an owned thread context.
@@ -236,8 +254,9 @@ mod linux {
     pub extern "C" fn ddog_otel_thread_ctx_update(
         trace_id: &[u8; 16],
         span_id: &[u8; 8],
+        trace_flags: u8,
         local_root_span_id: &[u8; 8],
     ) {
-        ThreadContext::update(*trace_id, *span_id, *local_root_span_id, &[]);
+        ThreadContext::update(*trace_id, *span_id, trace_flags, *local_root_span_id, &[]);
     }
 }
