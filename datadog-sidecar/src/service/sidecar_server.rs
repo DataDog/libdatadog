@@ -2488,6 +2488,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(miri, ignore)]
     async fn terminal_initialization_returns_suffix_to_the_next_lifecycle() {
         const SERVICE: &str = "initial-stop-suffix";
         const ENV: &str = "test";
