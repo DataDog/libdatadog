@@ -31,6 +31,25 @@ use std::time::Duration;
 
 const DEFAULT_AGENT_URL: &str = "http://127.0.0.1:8126";
 
+/// Resolves the `(trace, metrics)` OTLP request timeouts from the builder's timeout inputs.
+///
+/// The trace timeout prefers the dedicated `otlp_timeout`, falling back to `connection_timeout`
+/// then the default. The metrics timeout is driven only by `connection_timeout`, so a
+/// traces-scoped `otlp_timeout` never shortens OTLP metrics/stats requests.
+fn resolve_otlp_timeouts(
+    otlp_timeout: Option<u64>,
+    connection_timeout: Option<u64>,
+) -> (Duration, Duration) {
+    let trace_timeout = otlp_timeout
+        .or(connection_timeout)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_OTLP_TIMEOUT);
+    let metrics_timeout = connection_timeout
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_OTLP_TIMEOUT);
+    (trace_timeout, metrics_timeout)
+}
+
 /// Build an [`http::HeaderMap`] from key/value pairs, skipping malformed entries.
 fn build_otlp_header_map(headers: Vec<(String, String)>) -> http::HeaderMap {
     let mut out = http::HeaderMap::new();
@@ -86,6 +105,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     test_session_token: Option<String>,
     agent_rates_payload_version_enabled: bool,
     connection_timeout: Option<u64>,
+    otlp_timeout: Option<u64>,
     otlp_endpoint: Option<String>,
     otlp_headers: Vec<(String, String)>,
     agentless_endpoint: Option<String>,
@@ -155,6 +175,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             test_session_token: None,
             agent_rates_payload_version_enabled: false,
             connection_timeout: None,
+            otlp_timeout: None,
             otlp_endpoint: None,
             otlp_headers: Vec::new(),
             otlp_protocol: OtlpProtocol::default(),
@@ -392,8 +413,25 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     }
 
     /// Sets the agent's connection timeout.
+    ///
+    /// This governs the timeout for requests to the Datadog agent (agent info, stats, Remote
+    /// Config, telemetry, and agent-path trace sends). To set the OTLP trace-export request
+    /// timeout independently, use [`Self::set_otlp_timeout`]; when that is unset, the OTLP timeout
+    /// falls back to this value for backward compatibility.
     pub fn set_connection_timeout(&mut self, timeout_ms: Option<u64>) -> &mut Self {
         self.connection_timeout = timeout_ms;
+        self
+    }
+
+    /// Sets the OTLP trace-export request timeout, independent of the agent connection timeout.
+    ///
+    /// Applies only to OTLP trace export (see [`Self::set_otlp_endpoint`]); OTLP metrics export
+    /// stays on [`Self::set_connection_timeout`]. The host language resolves this from its
+    /// configuration (e.g. `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`). When left unset, the OTLP trace
+    /// timeout falls back to [`Self::set_connection_timeout`] and then the default; setting it here
+    /// leaves the agent connection timeout untouched.
+    pub fn set_otlp_timeout(&mut self, timeout_ms: Option<u64>) -> &mut Self {
+        self.otlp_timeout = timeout_ms;
         self
     }
 
@@ -710,17 +748,18 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             _ => None,
         };
 
-        let otlp_timeout = self
-            .connection_timeout
-            .map(Duration::from_millis)
-            .unwrap_or(DEFAULT_OTLP_TIMEOUT);
+        // OTLP timeouts are independent of the agent `Endpoint.timeout_ms` below, which stays
+        // driven solely by `connection_timeout` — so setting only `otlp_timeout` never shortens
+        // agent-path requests (info / stats / Remote Config / telemetry).
+        let (otlp_trace_timeout, otlp_metrics_timeout) =
+            resolve_otlp_timeouts(self.otlp_timeout, self.connection_timeout);
 
         // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
         // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
         let otlp_config = otlp_endpoint.map(|url| OtlpTraceConfig {
             endpoint_url: url,
             headers: build_otlp_header_map(self.otlp_headers),
-            timeout: otlp_timeout,
+            timeout: otlp_trace_timeout,
             protocol: self.otlp_protocol,
             instrumentation_scope_name: self.instrumentation_scope_name,
             instrumentation_scope_version: self.instrumentation_scope_version,
@@ -730,7 +769,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
             endpoint_url: url,
             headers: build_otlp_header_map(self.otlp_metrics_headers),
-            timeout: otlp_timeout,
+            timeout: otlp_metrics_timeout,
             protocol: OtlpProtocol::HttpJson,
             otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
@@ -1158,6 +1197,33 @@ mod tests {
         assert!(
             msg.contains("agent URL") && msg.contains("agentless"),
             "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_otlp_timeouts_scopes_trace_and_metrics_independently() {
+        let default = DEFAULT_OTLP_TIMEOUT;
+
+        // Neither set: both fall back to the default.
+        assert_eq!(resolve_otlp_timeouts(None, None), (default, default));
+
+        // Only the OTLP timeout set: traces use it, metrics keep the default (a traces-scoped
+        // timeout must never shorten OTLP metrics/stats requests).
+        assert_eq!(
+            resolve_otlp_timeouts(Some(250), None),
+            (Duration::from_millis(250), default)
+        );
+
+        // Only the connection timeout set: it drives both (the OTLP trace fallback and metrics).
+        assert_eq!(
+            resolve_otlp_timeouts(None, Some(1234)),
+            (Duration::from_millis(1234), Duration::from_millis(1234))
+        );
+
+        // Both set: traces use the OTLP timeout, metrics use the connection timeout.
+        assert_eq!(
+            resolve_otlp_timeouts(Some(250), Some(1234)),
+            (Duration::from_millis(250), Duration::from_millis(1234))
         );
     }
 

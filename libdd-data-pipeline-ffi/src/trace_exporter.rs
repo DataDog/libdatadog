@@ -85,6 +85,7 @@ pub struct TraceExporterConfig {
     process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
+    otlp_timeout: Option<u64>,
     shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
     otlp_protocol: Option<OtlpProtocol>,
@@ -438,6 +439,9 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_test_session_token(
 }
 
 /// Sets the timeout in ms for all agent's connections.
+///
+/// When `ddog_trace_exporter_config_set_otlp_timeout` is unset, this value is also used as the
+/// OTLP trace-export timeout.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
     config: Option<&mut TraceExporterConfig>,
@@ -446,6 +450,28 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
     catch_panic!(
         if let Option::Some(handle) = config {
             handle.connection_timeout = Some(timeout_ms);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the OTLP trace-export request timeout in ms, independent of the agent connection timeout.
+///
+/// Applies only to the OTLP export path (see
+/// `ddog_trace_exporter_config_set_otlp_endpoint`). When left unset, the OTLP timeout falls back
+/// to `ddog_trace_exporter_config_set_connection_timeout`; setting it here leaves the agent
+/// connection timeout untouched.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_timeout(
+    config: Option<&mut TraceExporterConfig>,
+    timeout_ms: u64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Option::Some(handle) = config {
+            handle.otlp_timeout = Some(timeout_ms);
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -712,6 +738,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 if let Some(protocol) = config.otlp_protocol {
                     builder.set_otlp_protocol(protocol);
                 }
+                builder.set_otlp_timeout(config.otlp_timeout);
                 builder.set_otlp_instrumentation_scope(
                     config
                         .otlp_instrumentation_scope_name
@@ -1170,6 +1197,19 @@ mod tests {
 
             ddog_trace_exporter_config_set_connection_timeout(Some(&mut cfg), 1000);
             assert_eq!(cfg.connection_timeout.unwrap(), 1000);
+        }
+    }
+
+    #[test]
+    fn config_otlp_timeout_test() {
+        unsafe {
+            let mut cfg = TraceExporterConfig::default();
+            assert!(cfg.otlp_timeout.is_none());
+
+            // Setting the OTLP timeout leaves the agent connection timeout untouched.
+            ddog_trace_exporter_config_set_otlp_timeout(Some(&mut cfg), 250);
+            assert_eq!(cfg.otlp_timeout.unwrap(), 250);
+            assert!(cfg.connection_timeout.is_none());
         }
     }
 
