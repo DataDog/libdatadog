@@ -1466,7 +1466,8 @@ mod tests {
     use libdd_trace_utils::test_utils::create_send_data;
     use std::path::PathBuf;
     use std::time::Instant;
-    use tokio::sync::Barrier;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::{oneshot, Barrier};
     use tokio::time::{sleep, timeout, Duration as TokioDuration};
 
     /// Build a handler backed by a throwaway socketpair connection. These tests exercise
@@ -3231,16 +3232,28 @@ mod tests {
         const SERVICE: &str = "concurrent-stats-worker";
         const ENV: &str = "test-env";
 
-        let trace_server = MockServer::start_async().await;
-        let trace_request = trace_server
-            .mock_async(|when, then| {
-                when.method(POST);
-                then.status(202)
-                    .header("content-type", "application/json")
-                    .body(r#"{"status":"ok"}"#)
-                    .delay(TokioDuration::from_millis(200));
-            })
-            .await;
+        let trace_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let trace_address = trace_listener.local_addr().unwrap();
+        let (trace_started_tx, trace_started_rx) = oneshot::channel();
+        let (release_trace_tx, release_trace_rx) = oneshot::channel();
+        let trace_server = tokio::spawn(async move {
+            let (mut stream, _) = trace_listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).await.unwrap() > 0);
+            trace_started_tx.send(()).unwrap();
+            release_trace_rx.await.unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 202 Accepted\r\n\
+                      Content-Type: application/json\r\n\
+                      Content-Length: 15\r\n\
+                      Connection: close\r\n\
+                      \r\n\
+                      {\"status\":\"ok\"}",
+                )
+                .await
+                .unwrap();
+        });
         let stats_server = MockServer::start_async().await;
         let stats_request = stats_server
             .mock_async(|when, then| {
@@ -3251,7 +3264,7 @@ mod tests {
 
         let server = SidecarServer::default();
         let trace_endpoint = Endpoint {
-            url: trace_server.url("/").parse().unwrap(),
+            url: format!("http://{trace_address}/").parse().unwrap(),
             ..Endpoint::default()
         };
         server
@@ -3267,13 +3280,10 @@ mod tests {
                 .await;
         });
 
-        tokio::time::timeout(TokioDuration::from_secs(5), async {
-            while trace_request.calls_async().await != 1 {
-                sleep(TokioDuration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("trace flush should be in flight");
+        tokio::time::timeout(TokioDuration::from_secs(5), trace_started_rx)
+            .await
+            .expect("trace flush should be in flight")
+            .expect("trace server should report the request");
 
         let session = server.get_session("session");
         *session.session_config.lock_or_panic() = Some(Config::default());
@@ -3312,7 +3322,11 @@ mod tests {
             is_top_level: true,
         });
 
+        release_trace_tx
+            .send(())
+            .expect("trace response should still be blocked");
         flush.await.unwrap();
+        trace_server.await.unwrap();
         assert_eq!(
             stats_request.calls_async().await,
             1,
