@@ -50,8 +50,15 @@ libdd-tinybytes = { version = "1.1.1", path = "../libdd-tinybytes", features = [
 web-time = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.23", features = ["time", "test-util"], default-features = false }
+tokio = { version = "1.23", features = ["time", "test-util", "net"], default-features = false }
 libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-impl", default-features = false }
+# OTLP gRPC transport: a custom GrpcService over hyper h2c. tonic's transport
+# (hyper/tokio/socket2) does not build for wasm32, so the whole gRPC path is gated off.
+tonic = { version = "0.14", default-features = false }
+prost = "0.14.1"
+hyper = { workspace = true, features = ["client", "http2"] }
+hyper-util = { workspace = true, features = ["tokio"] }
+tower-service = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -85,6 +92,7 @@ tokio = { version = "1.23", features = [
     "test-util",
 ], default-features = false }
 duplicate = "2.0.1"
+h2 = "0.4"
 
 [features]
 default = ["https", "telemetry"]
