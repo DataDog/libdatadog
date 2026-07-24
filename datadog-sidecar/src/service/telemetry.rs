@@ -2245,6 +2245,13 @@ mod tests {
         assert!(clients
             .get_existing_metrics_logs(&session_a_runtime_b, SERVICE, ENV)
             .is_some());
+        clients.remove_runtime(&session_a_runtime_a);
+        assert!(clients
+            .get_existing_metrics_logs(&session_a_runtime_a, SERVICE, ENV)
+            .is_none());
+        assert!(clients
+            .get_existing_metrics_logs(&session_a_runtime_b, SERVICE, ENV)
+            .is_some());
 
         clients.remove_session("session-a");
         assert!(clients
@@ -2256,6 +2263,16 @@ mod tests {
         assert!(clients
             .registered_metrics(&session_a_runtime_b, SERVICE, ENV)
             .is_empty());
+        clients.remove_session("session-a");
+        assert!(clients
+            .get_existing_metrics_logs(&session_a_runtime_b, SERVICE, ENV)
+            .is_none());
+        assert!(clients
+            .registered_metrics(&session_a_runtime_b, SERVICE, ENV)
+            .is_empty());
+        assert!(clients
+            .get_existing_metrics_logs(&session_b_runtime, SERVICE, ENV)
+            .is_some());
         assert!(!clients
             .registered_metrics(&session_b_runtime, SERVICE, ENV)
             .is_empty());

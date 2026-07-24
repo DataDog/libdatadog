@@ -1289,9 +1289,10 @@ mod tests {
             .expect("test handler session should be unset");
         let runtime_a = InstanceId::new("session", "runtime-a");
         let runtime_b = InstanceId::new("session", "runtime-b");
+        let other_runtime = InstanceId::new("other-session", "runtime");
         let runtime_metadata = RuntimeMetadata::new("php", "8.3", "test");
 
-        for instance_id in [&runtime_a, &runtime_b] {
+        for instance_id in [&runtime_a, &runtime_b, &other_runtime] {
             server.metrics_logs_clients.get_or_create_metrics_logs(
                 SERVICE,
                 ENV,
@@ -1313,8 +1314,30 @@ mod tests {
                 namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
             },
         ));
+        assert!(server.metrics_logs_clients.register_metric(
+            &other_runtime,
+            SERVICE,
+            ENV,
+            MetricContext {
+                name: "other.cleanup.metric".to_string(),
+                tags: Vec::new(),
+                metric_type: libdd_telemetry::data::metrics::MetricType::Count,
+                common: true,
+                namespace: libdd_telemetry::data::metrics::MetricNamespace::Tracers,
+            },
+        ));
         handler.shutdown_runtime(runtime_a.clone()).await;
-        tokio::task::yield_now().await;
+        timeout(TokioDuration::from_secs(1), async {
+            while server
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&runtime_a, SERVICE, ENV)
+                .is_some()
+            {
+                sleep(TokioDuration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("runtime telemetry cleanup should complete");
         assert!(server
             .metrics_logs_clients
             .get_existing_metrics_logs(&runtime_a, SERVICE, ENV)
@@ -1323,9 +1346,47 @@ mod tests {
             .metrics_logs_clients
             .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
             .is_some());
+        handler.shutdown_runtime(runtime_a.clone()).await;
+        timeout(TokioDuration::from_secs(1), async {
+            while server
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&runtime_a, SERVICE, ENV)
+                .is_some()
+            {
+                sleep(TokioDuration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("repeated runtime telemetry cleanup should complete");
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
+            .is_some());
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&other_runtime, SERVICE, ENV)
+            .is_some());
+        assert!(!server
+            .metrics_logs_clients
+            .registered_metrics(&other_runtime, SERVICE, ENV)
+            .is_empty());
 
         handler.shutdown_session().await;
-        tokio::task::yield_now().await;
+        timeout(TokioDuration::from_secs(1), async {
+            while server
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
+                .is_some()
+                || !server
+                    .metrics_logs_clients
+                    .registered_metrics(&runtime_b, SERVICE, ENV)
+                    .is_empty()
+            {
+                sleep(TokioDuration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("session telemetry cleanup should complete");
         assert!(server
             .metrics_logs_clients
             .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
@@ -1333,6 +1394,35 @@ mod tests {
         assert!(server
             .metrics_logs_clients
             .registered_metrics(&runtime_b, SERVICE, ENV)
+            .is_empty());
+        assert!(server
+            .sessions
+            .lock_or_panic()
+            .get("session")
+            .is_none());
+        handler.shutdown_session().await;
+        timeout(TokioDuration::from_secs(1), async {
+            while server
+                .metrics_logs_clients
+                .get_existing_metrics_logs(&runtime_b, SERVICE, ENV)
+                .is_some()
+                || !server
+                    .metrics_logs_clients
+                    .registered_metrics(&runtime_b, SERVICE, ENV)
+                    .is_empty()
+            {
+                sleep(TokioDuration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("repeated session telemetry cleanup should complete");
+        assert!(server
+            .metrics_logs_clients
+            .get_existing_metrics_logs(&other_runtime, SERVICE, ENV)
+            .is_some());
+        assert!(!server
+            .metrics_logs_clients
+            .registered_metrics(&other_runtime, SERVICE, ENV)
             .is_empty());
     }
 
