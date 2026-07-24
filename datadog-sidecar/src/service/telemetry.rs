@@ -448,9 +448,18 @@ pub(crate) enum ApplicationTelemetryDispatch {
     },
 }
 
+enum ApplicationShmState {
+    NotRequired,
+    Ready(OneWayShmWriter<NamedShmHandle>),
+    RetryAt {
+        path: CString,
+        deadline: Instant,
+    },
+}
+
 pub struct TelemetryCachedClient {
     pub worker: TelemetryWorkerHandle,
-    pub shm_writer: Option<OneWayShmWriter<NamedShmHandle>>,
+    shm_state: ApplicationShmState,
     pub telemetry_metrics: HashMap<String, ContextKey>,
     pub handle: Option<JoinHandle<()>>,
     pub shared: TelemetryCachedClientShmData,
@@ -513,6 +522,30 @@ impl TelemetryCachedClient {
         initial: InitialTelemetryData,
         process_tags: Vec<Tag>,
     ) -> Result<Self> {
+        Self::new_with_shm_factory_at(
+            service,
+            env,
+            instance_id,
+            runtime_meta,
+            get_config,
+            initial,
+            process_tags,
+            Instant::now(),
+            |path| OneWayShmWriter::<NamedShmHandle>::new(path.clone()),
+        )
+    }
+
+    fn new_with_shm_factory_at(
+        service: &str,
+        env: &str,
+        instance_id: &InstanceId,
+        runtime_meta: &RuntimeMetadata,
+        get_config: impl FnOnce() -> Config,
+        initial: InitialTelemetryData,
+        process_tags: Vec<Tag>,
+        now: Instant,
+        create: impl FnOnce(&CString) -> std::io::Result<OneWayShmWriter<NamedShmHandle>>,
+    ) -> Result<Self> {
         let mut builder =
             Self::worker_builder(service, env, instance_id, runtime_meta, process_tags);
         builder.config = get_config();
@@ -524,23 +557,51 @@ impl TelemetryCachedClient {
         info!("spawned telemetry worker");
         handle.send_start()?;
 
-        let shm_writer =
-            match OneWayShmWriter::<NamedShmHandle>::new(path_for_telemetry(service, env)) {
-                Ok(writer) => Some(writer),
-                Err(error) => {
-                    warn!("Failed to create telemetry shared-memory writer: {error:?}");
-                    None
+        let path = path_for_telemetry(service, env);
+        let shm_state = match create(&path) {
+            Ok(writer) => ApplicationShmState::Ready(writer),
+            Err(error) => {
+                warn!("Failed to create telemetry shared-memory writer: {error:?}");
+                ApplicationShmState::RetryAt {
+                    path,
+                    deadline: now + Duration::from_secs(60),
                 }
-            };
+            }
+        };
 
         Ok(Self {
             worker: handle,
-            shm_writer,
+            shm_state,
             shared: TelemetryCachedClientShmData::default(),
             telemetry_metrics: Default::default(),
             handle: None,
             stopping: false,
         })
+    }
+
+    #[cfg(test)]
+    fn new_with_shm_factory(
+        service: &str,
+        env: &str,
+        instance_id: &InstanceId,
+        runtime_meta: &RuntimeMetadata,
+        get_config: impl FnOnce() -> Config,
+        initial: InitialTelemetryData,
+        process_tags: Vec<Tag>,
+        now: Instant,
+        create: impl FnOnce(&CString) -> std::io::Result<OneWayShmWriter<NamedShmHandle>>,
+    ) -> Result<Self> {
+        Self::new_with_shm_factory_at(
+            service,
+            env,
+            instance_id,
+            runtime_meta,
+            get_config,
+            initial,
+            process_tags,
+            now,
+            create,
+        )
     }
 
     pub(crate) fn spawn_metrics_logs_worker(
@@ -579,7 +640,7 @@ impl TelemetryCachedClient {
                 get_config,
                 process_tags,
             ),
-            shm_writer: None,
+            shm_state: ApplicationShmState::NotRequired,
             telemetry_metrics: HashMap::new(),
             handle: None,
             shared: TelemetryCachedClientShmData::default(),
@@ -592,20 +653,56 @@ impl TelemetryCachedClient {
     }
 
     pub(crate) fn mark_stopping(&mut self) {
-        if let Some(shm_writer) = self.shm_writer.take() {
+        if let ApplicationShmState::Ready(shm_writer) =
+            std::mem::replace(&mut self.shm_state, ApplicationShmState::NotRequired)
+        {
             shm_writer.write(&[]);
-            drop(shm_writer);
         }
         self.stopping = true;
     }
 
-    pub fn write_shm_file(&self) {
-        if let Ok(buf) = bincode::serialize(&self.shared) {
-            if let Some(shm_writer) = &self.shm_writer {
-                shm_writer.write(&buf);
+    pub fn write_shm_file(&mut self) {
+        self.write_shm_file_at(Instant::now(), |path| {
+            OneWayShmWriter::<NamedShmHandle>::new(path.clone())
+        });
+    }
+
+    fn write_shm_file_at(
+        &mut self,
+        now: Instant,
+        create: impl FnOnce(&CString) -> std::io::Result<OneWayShmWriter<NamedShmHandle>>,
+    ) {
+        let serialized = match bincode::serialize(&self.shared) {
+            Ok(value) => value,
+            Err(error) => {
+                warn!("Failed to serialize telemetry data for shared memory: {error}");
+                return;
             }
-        } else {
-            warn!("Failed to serialize telemetry data for shared memory");
+        };
+
+        if matches!(
+            &self.shm_state,
+            ApplicationShmState::RetryAt { deadline, .. } if now >= *deadline
+        ) {
+            let ApplicationShmState::RetryAt { path, .. } =
+                std::mem::replace(&mut self.shm_state, ApplicationShmState::NotRequired)
+            else {
+                unreachable!();
+            };
+            self.shm_state = match create(&path) {
+                Ok(writer) => ApplicationShmState::Ready(writer),
+                Err(error) => {
+                    warn!("Failed to create telemetry shared-memory writer: {error:?}");
+                    ApplicationShmState::RetryAt {
+                        path,
+                        deadline: now + Duration::from_secs(60),
+                    }
+                }
+            };
+        }
+
+        if let ApplicationShmState::Ready(writer) = &self.shm_state {
+            writer.write(&serialized);
         }
     }
 
@@ -727,7 +824,9 @@ impl TelemetryCachedClient {
 
 impl Drop for TelemetryCachedClient {
     fn drop(&mut self) {
-        if let Some(shm_writer) = &self.shm_writer {
+        if let ApplicationShmState::Ready(shm_writer) =
+            std::mem::replace(&mut self.shm_state, ApplicationShmState::NotRequired)
+        {
             shm_writer.write(&[]);
         }
     }
@@ -1446,6 +1545,7 @@ mod tests {
     use httpmock::{Method::POST, MockServer};
     use libdd_telemetry::data::{Configuration, ConfigurationOrigin, Log, LogLevel};
     use libdd_telemetry::worker::{LifecycleAction, LogIdentifier};
+    use std::sync::atomic::AtomicUsize;
     use tokio::sync::Barrier;
     use tokio::time::{sleep, timeout};
 
@@ -1467,6 +1567,48 @@ mod tests {
             config_id: None,
             seq_id: None,
         }
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn application_shm_writer_retries_and_publishes_current_state() {
+        const SERVICE: &str = "shm-retry";
+        const ENV: &str = "test";
+
+        let retry_at = Instant::now();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let attempts_for_factory = attempts.clone();
+        let path = path_for_telemetry(SERVICE, ENV);
+        let mut client = TelemetryCachedClient::new_with_shm_factory(
+            SERVICE,
+            ENV,
+            &InstanceId::new("session", "runtime"),
+            &RuntimeMetadata::new("php", "8.3", "test"),
+            Config::default,
+            InitialTelemetryData::default(),
+            Vec::new(),
+            retry_at,
+            move |_| {
+                attempts_for_factory.fetch_add(1, Ordering::Relaxed);
+                Err(std::io::Error::other("injected failure"))
+            },
+        )
+        .unwrap();
+        client.shared.config_sent = true;
+
+        client.write_shm_file_at(retry_at + Duration::from_secs(59), |_| {
+            panic!("retry happened before the deadline")
+        });
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+
+        client.write_shm_file_at(retry_at + Duration::from_secs(60), |path| {
+            OneWayShmWriter::<NamedShmHandle>::new(path.clone())
+        });
+        assert_eq!(attempts.load(Ordering::Relaxed), 1);
+
+        let mut reader = OneWayShmReader::new(open_named_shm(&path).unwrap(), ());
+        let shared: TelemetryCachedClientShmData = bincode::deserialize(reader.read().1).unwrap();
+        assert!(shared.config_sent);
     }
 
     fn internal_log(message: &str) -> InternalTelemetryAction {
@@ -1894,14 +2036,17 @@ mod tests {
         );
         assert!(!Arc::ptr_eq(&old, &replacement));
         const REPLACEMENT_STATE: &[u8] = b"replacement state";
-        replacement
-            .lock_or_panic()
-            .as_ref()
-            .expect("replacement telemetry client")
-            .shm_writer
-            .as_ref()
-            .expect("replacement shared-memory writer")
-            .write(REPLACEMENT_STATE);
+        {
+            let replacement_client = replacement.lock_or_panic();
+            let ApplicationShmState::Ready(shm_writer) = &replacement_client
+                .as_ref()
+                .expect("replacement telemetry client")
+                .shm_state
+            else {
+                panic!("replacement shared-memory writer should be ready");
+            };
+            shm_writer.write(REPLACEMENT_STATE);
+        }
 
         old.lock_or_panic().take();
         let mut reader = OneWayShmReader::new(
