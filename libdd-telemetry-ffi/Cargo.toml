@@ -20,7 +20,7 @@ expanded_builder_macros = []
 regex-lite = ["libdd-common-ffi/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dependencies]
 libdd-capabilities-impl = { path = "../libdd-capabilities-impl" }
@@ -33,4 +33,4 @@ paste = "1"
 
 [dev-dependencies]
 tempfile = {version = "3.3"}
-serde_json = {version = "1.0"}
+serde_json.workspace = true

@@ -41,7 +41,7 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-build_common = { path = "../build-common", features = ["cbindgen"] }
+build_common = { workspace = true, features = ["cbindgen"] }
 cmake = "0.1.50"
 pico-args = "0.5.0"
 tar = "0.4.45"

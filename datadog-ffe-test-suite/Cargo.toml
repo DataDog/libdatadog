@@ -16,7 +16,7 @@ chrono = { version = "0.4.38", default-features = false, features = ["now", "ser
 criterion = { version = "0.5", features = ["html_reports"] }
 env_logger = "0.10"
 serde = { workspace = true, features = ["derive", "rc"] }
-serde_json = { version = "1.0", default-features = false, features = ["std", "raw_value"] }
+serde_json = { workspace = true, features = ["std", "raw_value"] }
 
 [[bench]]
 name = "ffe-eval"

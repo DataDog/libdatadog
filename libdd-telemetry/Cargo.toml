@@ -24,7 +24,7 @@ base64 = "0.22"
 futures = { version = "0.3", default-features = false }
 http = "1"
 serde = { workspace = true, features = ["derive"] }
-serde_json = { version = "1.0" }
+serde_json.workspace = true
 tokio = { workspace = true, features = ["sync", "io-util"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 tracing.workspace = true

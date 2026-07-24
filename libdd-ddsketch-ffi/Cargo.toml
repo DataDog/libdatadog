@@ -19,7 +19,7 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen"]
 regex-lite = ["libdd-common-ffi/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dependencies]
 libdd-ddsketch = { path = "../libdd-ddsketch" }

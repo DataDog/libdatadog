@@ -38,7 +38,7 @@ otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [build-dependencies]
-build_common = { path = "../build-common" }
+build_common.workspace = true
 
 [dependencies]
 allocator-api2 = { version = "0.2.21", default-features = false, features = ["alloc"]  }
@@ -57,7 +57,7 @@ futures = { version = "0.3", default-features = false }
 http-body-util = "0.1"
 hyper = { workspace = true, features = ["http1", "client"] }
 libc = "0.2"
-serde_json = { version = "1.0" }
+serde_json.workspace = true
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 thiserror = "2"
 tokio-util = "0.7.1"
