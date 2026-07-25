@@ -215,7 +215,7 @@ pub async fn run_stats_flush_loop(
 /// Returns `None` when stats config is not available (agentless or not yet configured).
 pub(crate) fn get_or_create_concentrator(
     concentrators: &Arc<Mutex<HashMap<ConcentratorKey, Arc<SpanConcentratorState>>>>,
-    telemetry_clients: &crate::service::telemetry::TelemetryCachedClientSet,
+    telemetry_clients: &crate::service::telemetry::MetricsLogsClientSet,
     env: &str,
     version: &str,
     runtime_id: &str,
@@ -299,11 +299,8 @@ pub(crate) fn get_or_create_concentrator(
                     session_config_closure,
                     process_tags,
                 );
-                let worker = telemetry_mutex
-                    .lock_or_panic()
-                    .as_ref()
-                    .map(|c| c.worker.clone());
-                worker
+                let worker = telemetry_mutex.lock_or_panic().worker.clone();
+                Some(worker)
             };
 
             let state = Arc::new(SpanConcentratorState {
