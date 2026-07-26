@@ -1,0 +1,40 @@
+bench-analysis:
+  tags:
+    - arch:amd64
+  needs: []
+  image:
+    name: registry.ddbuild.io/images/benchmarking-platform-tools-ubuntu:latest
+  timeout: 10m
+  script:
+    - |
+      if [ $(uname -m) = x86_64 ]; then AAA="amd64"; else AAA="arm64"; fi
+      curl -OL "https://binaries.ddbuild.io/dd-source/authanywhere/LATEST/authanywhere-linux-${AAA}"
+      mv "authanywhere-linux-${AAA}" ./authanywhere
+      chmod +x ./authanywhere
+    # GitHub token via dd-octo-sts (no static PAT, CI-03)
+    - GH_TOKEN=$(dd-octo-sts token --scope DataDog/libdatadog --policy bench-analysis.write-pr) || true
+    - export GH_TOKEN
+    # Install nvm, Node LTS, and Claude Code (D-04)
+    - |
+      curl --fail -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+      export NVM_DIR="$HOME/.nvm"
+      . "$NVM_DIR/nvm.sh"
+      nvm install --lts
+      npm install -g @anthropic-ai/claude-code
+    - |
+      raw_token=$(./authanywhere --audience rapid-ai-platform)
+      if [[ "$raw_token" != "Authorization: Bearer "* ]]; then
+        echo "ERROR: authanywhere output format unexpected: ${raw_token:0:40}" >&2
+        exit 1
+      fi
+      ANTHROPIC_AUTH_TOKEN="${raw_token#Authorization: Bearer }"
+      export ANTHROPIC_AUTH_TOKEN
+    - 'export ANTHROPIC_BASE_URL="https://ai-gateway.us1.ddbuild.io"'
+    - "export ANTHROPIC_CUSTOM_HEADERS=$'source: claude\\norg-id: 2\\nprovider: anthropic\\nx-dd-tag-ml_app: bench-analysis\\nx-dd-tag-dd.team: ecosystems-reliability'"
+    - bash .gitlab/bench-analysis/preprocess.sh
+    - bash .gitlab/bench-analysis/analyze.sh
+    - bash .gitlab/bench-analysis/report.sh
+  artifacts:
+    paths:
+      - artifacts/
+    expire_in: 1 month
