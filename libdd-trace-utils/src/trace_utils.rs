@@ -5,7 +5,7 @@ pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 use crate::span::v05::dict::SharedDict;
 use crate::span::{v05, TraceData};
-pub use crate::tracer_header_tags::TracerHeaderTags;
+pub use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
@@ -646,12 +646,12 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
 
         for span in chunk.spans.iter_mut() {
             // TODO: obfuscate & truncate spans
-            if tracer_header_tags.client_computed_top_level {
+            if tracer_header_tags.generic.client_computed_top_level {
                 update_tracer_top_level(span);
             }
         }
 
-        if !tracer_header_tags.client_computed_top_level {
+        if !tracer_header_tags.generic.client_computed_top_level {
             compute_top_level_span(&mut chunk.spans);
         }
 
