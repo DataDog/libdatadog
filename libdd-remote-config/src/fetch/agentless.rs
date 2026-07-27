@@ -407,7 +407,14 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         let mut buf = Vec::new();
         read.read_to_end(&mut buf).await?;
 
-        if buf.len() as u64 != target.length {
+        let actual_len = u64::try_from(buf.len()).map_err(|_| {
+            format_err!(
+                "target length overflows u64 for path: {} (got {} bytes)",
+                target.path,
+                buf.len()
+            )
+        })?;
+        if actual_len != target.length {
             bail!("bad length for file at path: {}", target.path)
         }
 
@@ -1153,7 +1160,12 @@ mod cache {
                 .filter_map(|(path, primary_hash, len)| {
                     let parsed = RemoteConfigPath::try_parse(path).ok()?;
                     let stored = files.get(&parsed)?;
-                    if stored.hash == primary_hash && stored.meta.length as u64 == len {
+                    // `stored.meta.length` is an `i64` coming from protobuf. A
+                    // negative value should never appear, but if it does treat the
+                    // entry as "not cached" so the caller re-fetches instead of
+                    // matching a wrapped u64.
+                    let stored_len = u64::try_from(stored.meta.length).ok()?;
+                    if stored.hash == primary_hash && stored_len == len {
                         Some(path)
                     } else {
                         None
@@ -1183,7 +1195,12 @@ mod cache {
                     }
                 };
                 let parsed_path: Arc<RemoteConfigPath> = Arc::new(parsed_path.into());
-                let length = content.len() as i64;
+                let length = i64::try_from(content.len()).map_err(|_| {
+                    anyhow::format_err!(
+                        "content length {} for path {path} does not fit in i64",
+                        content.len(),
+                    )
+                })?;
                 let new_handle = if let Some(existing) = files.get(&parsed_path) {
                     self.storage
                         .update(&existing.handle, version, content)
@@ -1247,8 +1264,14 @@ mod cache {
                         target.path
                     )
                 })?;
-                if stored.hash != target.primary_hash || stored.meta.length as u64 != target.length
-                {
+                let stored_len = u64::try_from(stored.meta.length).map_err(|_| {
+                    anyhow::format_err!(
+                        "collect_handles: cached length {} for {} is not a valid u64",
+                        stored.meta.length,
+                        target.path,
+                    )
+                })?;
+                if stored.hash != target.primary_hash || stored_len != target.length {
                     anyhow::bail!(
                     "collect_handles: cache mismatch for {}: stored hash={} len={}, expected hash={} len={}",
                     target.path, stored.hash, stored.meta.length,
