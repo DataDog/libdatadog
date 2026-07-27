@@ -243,16 +243,21 @@ impl TraceRootSamplingInfo {
         }
         let low64 = trace_id as u64;
         let rv = (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8;
-        // `th = round(2^56 * (1 - rate))`, round-half-away, per the RFC. Compute
-        // it as `2^56 - round(2^56 * rate)`: multiplying an f64 by the power of
-        // two `2^56` is exact (it only rescales the exponent), so this avoids
-        // the single-shot `(1.0 - rate) * 2^56` rounding the RFC's imprecision
-        // analysis explicitly warns against (it inflates the DD/OTel keep-set
-        // disagreement). The `.min` guards the degenerate `rate == 0` case,
-        // where `2^56` would overflow the 56-bit field.
+        // `th = round(2^56 * (1 - rate))`, round-half-away, per the RFC. The
+        // rate is taken as its canonical 6-decimal value (the same rounding
+        // `format_sampling_rate` / the `dd=` rate encoding use), and the whole
+        // thing is done in exact integer arithmetic. This reproduces the RFC's
+        // imprecision-appendix table (e.g. 0.2 -> cccccccccccccd,
+        // 0.99 -> 028f5c28f5c28f), which a single-shot `(1.0 - rate) * 2^56`
+        // float pipeline cannot: an f64 never holds decimals like 0.2 exactly,
+        // and float truncation additionally inflates the DD/OTel keep-set
+        // disagreement. `.min` guards the degenerate `rate == 0` case, where
+        // `2^56` would overflow the 56-bit field.
+        const SCALE: u128 = 1_000_000;
         const MAX_56_BIT: u64 = (1u64 << 56) - 1;
-        let kept = (self.rate * 2f64.powi(56)).round() as u128;
-        let th = (((1u128 << 56) - kept) as u64).min(MAX_56_BIT);
+        let rate_micros = (self.rate * SCALE as f64).round() as u128;
+        let reject_micros = SCALE - rate_micros.min(SCALE);
+        let th = ((((1u128 << 56) * reject_micros + SCALE / 2) / SCALE) as u64).min(MAX_56_BIT);
         Some(OtelConsistentSampling { rv, th })
     }
 
@@ -380,15 +385,16 @@ mod tests {
             let got = info.otel_consistent_sampling(tid).expect("probability");
             assert_eq!(got.rv, want_rv, "rv for {tid}");
         }
-        // th depends only on rate. Values are `round(2^56 * (1 - rate))` (the
-        // RFC-mandated exact form), NOT the single-shot-float truncation, which
-        // would give e6666666666668 for 0.1. See system-tests #7372.
+        // th depends only on rate. Values are the RFC imprecision-appendix's
+        // exact decimal table for `round(2^56 * (1 - rate))`, NOT a float
+        // pipeline (which gives e6666666666668 for 0.1, and cannot even
+        // represent the 0.2/0.99 decimals). See system-tests #7372.
         let th_cases = [
             (0.01f64, 0x0fd70a3d70a3d71u64),
             (0.1, 0x0e6666666666666),
-            (0.2, 0x0cccccccccccccc),
+            (0.2, 0x0cccccccccccccd),
             (0.5, 0x080000000000000),
-            (0.99, 0x0028f5c28f5c290),
+            (0.99, 0x0028f5c28f5c28f),
             (1.0, 0x0),
         ];
         for (rate, want_th) in th_cases {
