@@ -48,6 +48,8 @@ pub(crate) struct StatsContext<
     pub endpoint_url: &'a http::Uri,
     pub shared_runtime: &'a R,
     pub stats_cardinality_limit: Option<usize>,
+    /// Configuration option to pass to [SharedRuntime::spawn_worker]
+    pub restart_after_fork: bool,
     /// Optional DogStatsD client forwarded to the [`StatsExporter`].
     pub dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     /// Optional telemetry handle forwarded to the [`StatsExporter`].
@@ -172,7 +174,7 @@ fn create_and_start_stats_worker<
     );
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter, false)
+        .spawn_worker(stats_exporter, ctx.restart_after_fork)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
