@@ -557,6 +557,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn enumerate_discovers_spawned_thread() {
         let barrier = Arc::new(Barrier::new(2));
         let b = Arc::clone(&barrier);

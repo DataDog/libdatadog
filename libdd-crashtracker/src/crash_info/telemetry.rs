@@ -8,6 +8,8 @@ use crate::{ErrorKind, SigInfo};
 use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_telemetry::{
     build_host,
@@ -355,9 +357,9 @@ impl TelemetryCrashUploader {
         self.send_telemetry_payload(&payload).await
     }
 
-    /// Helper to perform actual HTTP (or file) submission via configured telemetry client
+    /// Helper to perform actual HTTP submission via the native HTTP capability.
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        let client = libdd_telemetry::worker::http_client::from_config(&self.cfg);
+        let client = NativeCapabilities::new_client();
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
             .header(
@@ -372,19 +374,20 @@ impl TelemetryCrashUploader {
                 libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
                 "logs",
             )
-            .body(serde_json::to_string(&payload)?.into())?;
+            .body(libdd_capabilities::Bytes::from(serde_json::to_vec(
+                &payload,
+            )?))?;
 
-        tokio::time::timeout(
-            core::time::Duration::from_millis({
-                if let Some(endp) = self.cfg.endpoint() {
-                    endp.timeout_ms
-                } else {
-                    Endpoint::DEFAULT_TIMEOUT
-                }
-            }),
-            client.request(req),
-        )
-        .await??;
+        let timeout = core::time::Duration::from_millis({
+            if let Some(endp) = self.cfg.endpoint() {
+                endp.timeout_ms
+            } else {
+                Endpoint::DEFAULT_TIMEOUT
+            }
+        });
+        tokio::time::timeout(timeout, client.request(req))
+            .await
+            .map_err(|_| anyhow::anyhow!("Telemetry crash report timed out"))??;
 
         Ok(())
     }

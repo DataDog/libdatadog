@@ -55,20 +55,15 @@ pub(super) trait ProcessMemoryCopy: Sized + Send {
     /// copy. Implementations must not dereference `addr` directly in Rust.
     ///
     /// If any part of the source range is inaccessible, the implementation must
-    /// return a [`PipeCopyError`] whose inner error has
-    /// [`io::ErrorKind::WouldBlock`], rather than causing undefined behavior or
-    /// terminating the process.
+    /// return an error with [`io::ErrorKind::WouldBlock`], rather than causing
+    /// undefined behavior or terminating the process.
     ///
     /// On success, the returned vector contains exactly `len` bytes. The copy is
     /// not an atomic snapshot: the source memory may change while it is copied.
-    fn copy(&self, addr: *const u8, len: usize) -> Result<Vec<u8>, PipeCopyError>;
-}
-
-#[derive(Debug)]
-pub(super) struct PipeCopyError {
-    pub(super) err: io::Error,
-    /// If true, the pipe may contain leftover bytes and must not be reused.
-    pub(super) pipe_dirty: bool,
+    ///
+    /// The returned copier is present when its internal state remains reusable,
+    /// regardless of whether the copy succeeded.
+    fn copy(self, addr: *const u8, len: usize) -> (io::Result<Vec<u8>>, Option<Self>);
 }
 
 /// Reader for the current process's OTel process context.
@@ -282,17 +277,8 @@ impl ProcessContextSelfReader {
             None => PlatformCopyPipe::new()?,
         };
 
-        match pipe.copy(addr, len) {
-            Ok(bytes) => {
-                self.pipe.set(Some(pipe));
-                Ok(bytes)
-            }
-            Err(PipeCopyError { err, pipe_dirty }) => {
-                if !pipe_dirty {
-                    self.pipe.set(Some(pipe));
-                }
-                Err(err)
-            }
-        }
+        let (result, pipe) = pipe.copy(addr, len);
+        self.pipe.set(pipe);
+        result
     }
 }
