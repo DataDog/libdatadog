@@ -3,8 +3,8 @@
 
 //! Sampling trait implementations for the v04 [`Span<T>`] type.
 //!
-//! This module implements all six sampling traits on the v04 span representation:
-//! [`TraceIdLike`] for `u128`, [`ValueLike`]/[`AttributeLike`] for attributes
+//! This module implements the sampling traits on the v04 span representation:
+//! [`ValueLike`]/[`AttributeLike`] for attributes
 //! borrowed from `span.meta` and `span.metrics`, [`SpanProperties`] via the
 //! [`V04SpanProperties`] wrapper, [`SamplingData`] via [`V04SamplingData`], and
 //! [`AttributeFactory`] via [`V04AttributeFactory`].
@@ -48,16 +48,7 @@ use std::borrow::{Borrow, Cow};
 
 use libdd_trace_utils::span::{v04::Span, TraceData};
 
-use crate::types::{
-    AttributeFactory, AttributeLike, SamplingData, SpanProperties, TraceIdLike, ValueLike,
-};
-
-/// `u128` is the native type for v04 trace IDs.
-impl TraceIdLike for u128 {
-    fn to_u128(&self) -> u128 {
-        *self
-    }
-}
+use crate::types::{AttributeFactory, AttributeLike, SamplingData, SpanProperties, ValueLike};
 
 /// A span attribute value sourced from either `span.meta` (string) or `span.metrics` (f64).
 pub enum SpanAttributeValue<'a> {
@@ -265,16 +256,6 @@ mod tests {
             resource,
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn test_trace_id_like_u128() {
-        let id: u128 = 42;
-        assert_eq!(id.to_u128(), 42);
-        let zero: u128 = 0;
-        assert_eq!(zero.to_u128(), 0);
-        let max = u128::MAX;
-        assert_eq!(max.to_u128(), u128::MAX);
     }
 
     #[test]

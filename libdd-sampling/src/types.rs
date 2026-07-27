@@ -33,6 +33,13 @@ pub trait TraceIdLike: Eq {
     fn to_u128(&self) -> u128;
 }
 
+/// `u128` is the canonical numeric trace-id representation.
+impl TraceIdLike for u128 {
+    fn to_u128(&self) -> u128 {
+        *self
+    }
+}
+
 /// A trait for accessing span attribute key-value pairs.
 ///
 /// Provides methods for retrieving the key and value of a span attribute.
@@ -166,4 +173,16 @@ pub trait SamplingData {
     fn with_span_properties<S, T, F>(&self, s: &S, f: F) -> T
     where
         F: Fn(&S, &Self::Properties<'_>) -> T;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_trace_id_like_u128() {
+        assert_eq!(42u128.to_u128(), 42);
+        assert_eq!(0u128.to_u128(), 0);
+        assert_eq!(u128::MAX.to_u128(), u128::MAX);
+    }
 }

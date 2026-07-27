@@ -13,7 +13,7 @@ use crate::sampling_rule_config::SamplingRuleConfig;
 /// Consolidated callback type used across crates for remote config sampling updates
 pub type SamplingRulesCallback = Box<dyn for<'a> Fn(&'a [SamplingRuleConfig]) + Send + Sync>;
 
-use crate::types::{SamplingData, SpanProperties};
+use crate::types::{SamplingData, SpanProperties, TraceIdLike};
 
 use super::agent_service_sampler::{AgentRates, ServicesSampler};
 use super::rate_limiter::RateLimiter;
@@ -233,26 +233,23 @@ impl TraceRootSamplingInfo {
     /// probability one and its `th` must be erased on the wire rather than
     /// derived, namely:
     /// * a non-probability mechanism (manual keep, ASM, single-span, ...), or
-    /// * a probability mechanism whose keep was overturned by the trace rate
-    ///   limiter (`rl_effective_rate.is_some()`): the limiter, not the rate, is
-    ///   what dropped the trace, so per the RFC the threshold is erased while an
-    ///   inherited `rv` is still forwarded by the caller.
-    pub fn otel_consistent_sampling(&self, trace_id: u128) -> Option<OtelConsistentSampling> {
+    /// * a probability mechanism whose keep was overturned by the trace rate limiter
+    ///   (`rl_effective_rate.is_some()`): the limiter, not the rate, is what dropped the trace, so
+    ///   per the RFC the threshold is erased while an inherited `rv` is still forwarded by the
+    ///   caller.
+    pub fn otel_consistent_sampling<T: TraceIdLike>(
+        &self,
+        trace_id: &T,
+    ) -> Option<OtelConsistentSampling> {
         if !self.mechanism.is_probability() || self.rl_effective_rate.is_some() {
             return None;
         }
-        let low64 = trace_id as u64;
+        let low64 = trace_id.to_u128() as u64;
         let rv = (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8;
-        // `th = round(2^56 * (1 - rate))`, round-half-away, per the RFC. The
-        // rate is taken as its canonical 6-decimal value (the same rounding
-        // `format_sampling_rate` / the `dd=` rate encoding use), and the whole
-        // thing is done in exact integer arithmetic. This reproduces the RFC's
-        // imprecision-appendix table (e.g. 0.2 -> cccccccccccccd,
-        // 0.99 -> 028f5c28f5c28f), which a single-shot `(1.0 - rate) * 2^56`
-        // float pipeline cannot: an f64 never holds decimals like 0.2 exactly,
-        // and float truncation additionally inflates the DD/OTel keep-set
-        // disagreement. `.min` guards the degenerate `rate == 0` case, where
-        // `2^56` would overflow the 56-bit field.
+        // `th = round(2^56 * (1 - rate))`, round-half-away, in exact integer
+        // arithmetic on the canonical 6-decimal rate. Reproduces the RFC
+        // imprecision table (0.2 -> cccccccccccccd, 0.99 -> 028f5c28f5c28f),
+        // which a float `(1.0 - rate) * 2^56` cannot. `.min` guards `rate == 0`.
         const SCALE: u128 = 1_000_000;
         const MAX_56_BIT: u64 = (1u64 << 56) - 1;
         let rate_micros = (self.rate * SCALE as f64).round() as u128;
@@ -382,7 +379,7 @@ mod tests {
                 rate: 0.1,
                 rl_effective_rate: None,
             };
-            let got = info.otel_consistent_sampling(tid).expect("probability");
+            let got = info.otel_consistent_sampling(&tid).expect("probability");
             assert_eq!(got.rv, want_rv, "rv for {tid}");
         }
         // th depends only on rate. Values are the RFC imprecision-appendix's
@@ -404,7 +401,7 @@ mod tests {
                 rl_effective_rate: None,
             };
             assert_eq!(
-                info.otel_consistent_sampling(1).unwrap().th,
+                info.otel_consistent_sampling(&1u128).unwrap().th,
                 want_th,
                 "th for rate {rate}"
             );
@@ -416,7 +413,7 @@ mod tests {
             rate: 1.0,
             rl_effective_rate: None,
         };
-        assert!(manual.otel_consistent_sampling(1).is_none());
+        assert!(manual.otel_consistent_sampling(&1u128).is_none());
 
         // probability mechanism, but the rate limiter overturned the keep ->
         // None (th erased per RFC; caller still forwards an inherited rv).
@@ -425,7 +422,7 @@ mod tests {
             rate: 0.5,
             rl_effective_rate: Some(0.25),
         };
-        assert!(rate_limited.otel_consistent_sampling(1).is_none());
+        assert!(rate_limited.otel_consistent_sampling(&1u128).is_none());
     }
 
     // Test-only semantic convention constants
