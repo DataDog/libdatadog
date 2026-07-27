@@ -404,17 +404,16 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
             .remote_repo()
             .fetch_target(target_path)
             .await?;
-        let mut buf = Vec::new();
-        buf.resize(
+        let mut buf = vec![
+            0;
             usize::try_from(target.length).map_err(|_| {
                 format_err!(
                     "target length overflows usize for path: {} (got {} bytes)",
                     target.path,
-                    buf.len()
+                    target.length
                 )
-            })?,
-            0,
-        );
+            })?
+        ];
         read.read_exact(&mut buf).await?;
 
         let actual_len = u64::try_from(buf.len()).map_err(|_| {
