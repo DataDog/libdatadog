@@ -102,7 +102,7 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     /// Optional override for the maximum size of a single emitted log line.
     log_max_line_size: Option<usize>,
     /// Whether background workers spawned should be
-    /// restarted after a `fork()`. Defaults to `true`.
+    /// restarted in the child after a `fork()`. Defaults to `true`.
     restart_after_fork: bool,
 }
 
@@ -348,11 +348,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
-    /// Sets whether background workers spawned by this exporter  are restarted after the process
-    /// `fork()`s. Defaults to `true`.
+    /// Sets whether background workers spawned by this exporter  are restarted in the child after
+    /// the process `fork()`s. Defaults to `true`.
     ///
     /// Set to `false` if the trace exporter is recreated after the fork to avoid restarting workers
     /// which are going to be discarded anyway.
+    ///
+    /// TODO(APMSP-3846): Remove once python no longer recreates the exporter on forks.
     pub fn set_restart_after_fork(&mut self, restart_after_fork: bool) -> &mut Self {
         self.restart_after_fork = restart_after_fork;
         self

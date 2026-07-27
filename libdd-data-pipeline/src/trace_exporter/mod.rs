@@ -279,8 +279,7 @@ pub struct TraceExporter<
     /// path) instead of being sent to an agent. Used in serverless environments
     /// where no agent is reachable.
     log_output: Option<usize>,
-    /// Whether background workers should be restarted
-    /// after a `fork()`.
+    /// Whether background workers should be restarted in the child after a `fork()`.
     restart_after_fork: bool,
 }
 
