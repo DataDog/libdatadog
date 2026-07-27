@@ -945,8 +945,8 @@ fn lookup_config_target<'a>(
     >,
 ) -> Option<&'a TargetDescription> {
     // Direct hit on the top-level targets (Datadog's are empty, but be safe).
-    if let Some(d) = top.targets().get(path) {
-        return Some(d);
+    if let direct @ Some(_) = top.targets().get(path) {
+        return direct;
     }
 
     // Spec-style preorder walk over the (ordered) delegation list.
@@ -1165,11 +1165,7 @@ mod cache {
                     // entry as "not cached" so the caller re-fetches instead of
                     // matching a wrapped u64.
                     let stored_len = u64::try_from(stored.meta.length).ok()?;
-                    if stored.hash == primary_hash && stored_len == len {
-                        Some(path)
-                    } else {
-                        None
-                    }
+                    (stored.hash == primary_hash && stored_len == len).then_some(path)
                 })
                 .collect()
         }
