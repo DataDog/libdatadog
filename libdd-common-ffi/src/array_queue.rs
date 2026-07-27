@@ -302,9 +302,8 @@ mod tests {
     use bolero::TypeGenerator;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    unsafe extern "C" fn drop_item(item: *mut c_void) -> c_void {
+    unsafe extern "C" fn drop_item(item: *mut c_void) {
         _ = Box::from_raw(item as *mut i32);
-        core::mem::zeroed()
     }
 
     #[test]
