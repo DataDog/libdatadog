@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt as _;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
-use libdd_common::Endpoint;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::send_with_retry::{send_with_retry, RetryBackoffType, RetryStrategy};
@@ -178,8 +178,7 @@ impl<
     /// Returns `Ok(true)` if stats were sent, `Ok(false)` if the concentrator had nothing to send.
     pub async fn send(&self, force_flush: bool) -> anyhow::Result<bool> {
         let flush = {
-            #[allow(clippy::unwrap_used)]
-            let mut concentrator = self.concentrator.lock().unwrap();
+            let mut concentrator = self.concentrator.lock_or_panic();
             concentrator.flush_buckets(force_flush)
         };
 
@@ -278,6 +277,11 @@ impl<
     /// Flush and send stats on every trigger.
     async fn run(&mut self) {
         let _ = self.send(false).await; // bool return ignored by Worker
+    }
+
+    fn reset(&mut self) {
+        let _ = self.concentrator.lock_or_panic().flush_buckets(true);
+        self.sequence_id.store(0, Ordering::Relaxed);
     }
 
     async fn shutdown(&mut self) {
