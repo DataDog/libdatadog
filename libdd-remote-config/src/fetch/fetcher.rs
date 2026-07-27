@@ -676,12 +676,15 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
                 }
                 client_state.last_error = None;
 
-                let mut config_paths: HashSet<RemoteConfigPath> = HashSet::new();
-                for target_ref in &res.targets {
-                    if let Ok(parsed) = RemoteConfigPath::try_parse(&target_ref.path) {
-                        config_paths.insert(parsed.into());
-                    }
-                }
+                let config_paths: HashSet<RemoteConfigPath> = res
+                    .targets
+                    .iter()
+                    .filter_map(|target_ref| {
+                        RemoteConfigPath::try_parse(&target_ref.path)
+                            .ok()
+                            .map(Into::into)
+                    })
+                    .collect();
 
                 let configs = cache.collect_handles(&res.targets)?;
 

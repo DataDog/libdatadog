@@ -470,10 +470,10 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         let current_director_root_version =
             self.director_client.database().trusted_root().version();
 
-        let all_products = c.products.iter().fold(HashSet::new(), |mut acc, p| {
-            acc.get_or_insert_with(p, String::clone);
-            acc
-        });
+        let mut all_products: HashSet<String> = HashSet::new();
+        for p in &c.products {
+            all_products.get_or_insert_with(p, String::clone);
+        }
         let new_products = all_products
             .difference(&self.products)
             .cloned()
