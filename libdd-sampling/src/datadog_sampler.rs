@@ -1,6 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::constants::numeric::KNUTH_FACTOR;
 use crate::dd_constants::{
     RL_EFFECTIVE_RATE, SAMPLING_AGENT_RATE_TAG_KEY, SAMPLING_DECISION_MAKER_TAG_KEY,
     SAMPLING_KNUTH_RATE_TAG_KEY, SAMPLING_PRIORITY_TAG_KEY, SAMPLING_RULE_RATE_TAG_KEY,
@@ -210,6 +211,16 @@ fn format_sampling_rate(rate: f64) -> Option<String> {
     Some(s.trim_end_matches('0').trim_end_matches('.').to_string())
 }
 
+/// OTel consistent-probability tracestate values (`ot.rv`, `ot.th`), each a
+/// 56-bit value. See system-tests #7372 / APMAPI-2170.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OtelConsistentSampling {
+    /// 56-bit random value derived from the trace id.
+    pub rv: u64,
+    /// 56-bit rejection threshold derived from the sample rate.
+    pub th: u64,
+}
+
 pub struct TraceRootSamplingInfo {
     mechanism: SamplingMechanism,
     rate: f64,
@@ -217,6 +228,19 @@ pub struct TraceRootSamplingInfo {
 }
 
 impl TraceRootSamplingInfo {
+    /// Derives the OTel consistent-probability `rv`/`th` pair for a
+    /// probability sampling decision. Returns `None` for non-probability
+    /// mechanisms (their `th` must be erased on the wire, not derived).
+    pub fn otel_consistent_sampling(&self, trace_id: u128) -> Option<OtelConsistentSampling> {
+        if !self.mechanism.is_probability() {
+            return None;
+        }
+        let low64 = trace_id as u64;
+        let rv = (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8;
+        let th = ((1.0 - self.rate) * 2f64.powi(56)) as u64;
+        Some(OtelConsistentSampling { rv, th })
+    }
+
     /// Returns the sampling mechanism used for this trace root
     pub fn mechanism(&self) -> SamplingMechanism {
         self.mechanism
@@ -318,6 +342,48 @@ mod tests {
     use crate::types::{AttributeLike, TraceIdLike, ValueLike};
     use std::borrow::Cow;
     use std::collections::HashMap;
+
+    #[test]
+    fn test_otel_consistent_sampling_golden() {
+        use crate::dd_sampling::mechanism;
+        // rv depends only on trace id
+        let cases = [
+            (1u128, 0xf0948a54d43b8eu64),
+            (10, 0x65cd67504a538e),
+            (100, 0xfa060922e7438e),
+            (1000, 0xc43c5b5d08a38e),
+            (18446744073709551615, 0x0f6b75ab2bc471),
+            (83, 0x0028d980cf4f1c),
+            (18444899399302180863, 0xef284ace7a91e1),
+        ];
+        for (tid, want_rv) in cases {
+            let info = TraceRootSamplingInfo {
+                mechanism: mechanism::DEFAULT,
+                rate: 0.1,
+                rl_effective_rate: None,
+            };
+            let got = info.otel_consistent_sampling(tid).expect("probability");
+            assert_eq!(got.rv, want_rv, "rv for {tid}");
+        }
+        // th depends only on rate
+        let info = TraceRootSamplingInfo {
+            mechanism: mechanism::DEFAULT,
+            rate: 0.1,
+            rl_effective_rate: None,
+        };
+        assert_eq!(
+            info.otel_consistent_sampling(1).unwrap().th,
+            0xe6666666666668
+        );
+
+        // non-probability mechanism -> None
+        let manual = TraceRootSamplingInfo {
+            mechanism: mechanism::MANUAL,
+            rate: 1.0,
+            rl_effective_rate: None,
+        };
+        assert!(manual.otel_consistent_sampling(1).is_none());
+    }
 
     // Test-only semantic convention constants
     const HTTP_REQUEST_METHOD: &str = "http.request.method";
