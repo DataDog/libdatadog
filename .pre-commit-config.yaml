@@ -5,7 +5,7 @@
 #   GIT_CONFIG_GLOBAL=/dev/null pre-commit install --hook-type pre-push
 #
 # Mirrors CI checks from .github/workflows/lint.yml:
-#   pre-commit: cargo +nightly-2026-02-08 fmt --all
+#   pre-commit: cargo +<nightly from nightly-toolchain.toml> fmt --all
 #   pre-push:   cargo clippy --workspace --all-targets --all-features -- -D warnings
 #   pre-commit: dd-rust-license-tool check (on dependency/license file changes)
 repos:
@@ -14,9 +14,9 @@ repos:
       - id: cargo-fmt
         name: cargo fmt
         language: system
-        # Nightly version must match `nightly-toolchain.toml` at the repo root,
-        # which is the source of truth that CI reads. Keep these two in sync.
-        entry: cargo +nightly-2026-02-08 fmt --all --
+        # Nightly version is read from `nightly-toolchain.toml` at the repo root,
+        # which is the single source of truth for CI and local tooling.
+        entry: bash -c 'NIGHTLY=$(awk -F"\"" "/^channel[[:space:]]*=/ {print \$2}" nightly-toolchain.toml) && cargo +$NIGHTLY fmt --all --'
         types: [rust]
         pass_filenames: false
 
