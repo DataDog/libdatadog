@@ -16,7 +16,7 @@ pub struct ArrayQueue {
     // it to the correct type in the FFI functions. Also, we use NonNull instead of Box to avoid
     // getting into trouble with the drop implementation.
     inner: NonNull<ArrayQueue>,
-    item_delete_fn: unsafe extern "C" fn(*mut c_void) -> c_void,
+    item_delete_fn: unsafe extern "C" fn(*mut c_void),
 }
 
 unsafe impl Sync for ArrayQueue {}
@@ -25,7 +25,7 @@ unsafe impl Send for ArrayQueue {}
 impl ArrayQueue {
     pub fn new(
         capacity: usize,
-        item_delete_fn: Option<unsafe extern "C" fn(*mut c_void) -> c_void>,
+        item_delete_fn: Option<unsafe extern "C" fn(*mut c_void)>,
     ) -> anyhow::Result<Self, anyhow::Error> {
         anyhow::ensure!(capacity > 0, "capacity must be greater than 0");
         let item_delete_fn = item_delete_fn.context("item_delete_fn must be non-null")?;
@@ -83,7 +83,7 @@ pub enum ArrayQueueNewResult {
 #[must_use]
 pub extern "C" fn ddog_ArrayQueue_new(
     capacity: usize,
-    item_delete_fn: Option<unsafe extern "C" fn(*mut c_void) -> c_void>,
+    item_delete_fn: Option<unsafe extern "C" fn(*mut c_void)>,
 ) -> ArrayQueueNewResult {
     match ArrayQueue::new(capacity, item_delete_fn) {
         Ok(queue) => ArrayQueueNewResult::Ok(
