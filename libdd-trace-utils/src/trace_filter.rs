@@ -8,7 +8,8 @@ use libdd_common::regex_engine::Regex;
 use libdd_trace_normalization::{normalize_utils, normalizer};
 use tracing::{debug, error};
 
-use crate::span::{self, trace_utils::get_root_span_index, TraceData};
+use crate::span::v1::{AttributeValue, TraceChunk};
+use crate::span::{self, trace_utils::get_root_span_index, trace_utils_v1, TraceData};
 
 trait TagFilter {
     /// Returns true if the given tag value matches the Filterer.
@@ -96,6 +97,30 @@ impl<'a, T: TraceData> Span<'a> for span::v04::Span<T> {
 
     fn get_meta(&'a self, key: &str) -> Option<&'a str> {
         self.meta.get(key).map(|v| v.borrow())
+    }
+}
+
+impl<'a, T: TraceData> Span<'a> for span::v1::Span<T> {
+    fn resource_normalized(&'a self) -> &'a str {
+        // Normalization
+        let span_resource = self.resource.borrow();
+        if span_resource.is_empty() {
+            let span_name = self.name.borrow();
+            debug!(
+                ?span_name,
+                "Trace filter: filtering on name because resource is empty"
+            );
+            span_name
+        } else {
+            span_resource
+        }
+    }
+
+    fn get_meta(&'a self, key: &str) -> Option<&'a str> {
+        match self.attributes.get(key) {
+            Some(AttributeValue::String(s)) => Some(s.borrow()),
+            _ => None,
+        }
     }
 }
 
@@ -229,6 +254,25 @@ impl TraceFilterer {
         traces_count_before - traces_count_after
     }
 
+    /// V1 counterpart of [`Self::filter_traces`]: removes chunks that fail filter checks
+    /// in-place. Returns the number of chunks dropped.
+    pub fn filter_traces_v1<T: TraceData>(&self, traces: &mut Vec<TraceChunk<T>>) -> usize {
+        let traces_count_before = traces.len();
+        traces.retain(|chunk| {
+            let Ok(root_span_index) = trace_utils_v1::get_root_span_index(&chunk.spans) else {
+                return true;
+            };
+            let should_drop = self.should_drop(&chunk.spans[root_span_index]);
+            if should_drop {
+                debug!("Trace rejected as it fails to meet tag requirements. root: %v");
+            }
+            !should_drop
+        });
+        let traces_count_after = traces.len();
+
+        traces_count_before - traces_count_after
+    }
+
     /// Checks if the trace with root span `root_span` should be dropped based on filter
     /// configuration.
     ///
@@ -317,6 +361,9 @@ impl TraceFilterer {
 mod tests {
     use super::TraceFilterer;
     use crate::span::v04::{SpanBytes, VecMap};
+    use crate::span::v1::{
+        AttributeValue as AttributeValueV1, SpanBytes as SpanBytesV1, TraceChunk,
+    };
     // ---- helpers ----
 
     fn span_with(resource: &'static str, meta: &[(&'static str, &'static str)]) -> SpanBytes {
@@ -337,6 +384,27 @@ mod tests {
 
     fn one_trace(s: SpanBytes) -> Vec<Vec<SpanBytes>> {
         vec![vec![s]]
+    }
+
+    fn v1_chunk_with(
+        resource: &'static str,
+        meta: &[(&'static str, &'static str)],
+    ) -> TraceChunk<crate::span::BytesData> {
+        TraceChunk {
+            spans: vec![SpanBytesV1 {
+                service: "svc".into(),
+                name: "op".into(),
+                resource: resource.into(),
+                span_id: 1,
+                parent_id: 0,
+                attributes: meta
+                    .iter()
+                    .map(|(k, v)| ((*k).into(), AttributeValueV1::String((*v).into())))
+                    .collect(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
     }
 
     fn map_to_owned(values: &[&str]) -> Vec<String> {
@@ -661,5 +729,28 @@ mod tests {
         let mut traces = one_trace(span_with("r", &[("env", "prod")]));
         reject_regex(&[":prod.*"]).filter_traces(&mut traces);
         assert_eq!(traces.len(), 1);
+    }
+
+    // ---- filter_traces_v1 ----
+
+    #[test]
+    fn v1_reject_string_exact_match_drops() {
+        let mut traces = vec![v1_chunk_with("r", &[("env", "prod")])];
+        reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
+        assert!(traces.is_empty());
+    }
+
+    #[test]
+    fn v1_reject_string_wrong_value_keeps() {
+        let mut traces = vec![v1_chunk_with("r", &[("env", "staging")])];
+        reject_str(&["env:prod"]).filter_traces_v1(&mut traces);
+        assert_eq!(traces.len(), 1);
+    }
+
+    #[test]
+    fn v1_ignore_resources_match_drops() {
+        let mut traces = vec![v1_chunk_with("GET /health", &[])];
+        ignore_resources(&["GET /health"]).filter_traces_v1(&mut traces);
+        assert!(traces.is_empty());
     }
 }

@@ -5,6 +5,8 @@
 //! support both trace-utils' Span and pb::Span.
 
 use libdd_trace_protobuf::pb;
+use libdd_trace_utils::span::trace_utils_v1 as v1_trace_utils;
+use libdd_trace_utils::span::v1::{AttributeValue, Span as SpanV1};
 use libdd_trace_utils::span::{trace_utils, v04::Span, TraceData};
 use libdd_trace_utils::trace_utils as pb_utils;
 use std::borrow::Borrow;
@@ -90,6 +92,67 @@ impl<'a, T: TraceData> StatSpan<'a> for Span<T> {
 
     fn get_metrics(&'a self, key: &str) -> Option<f64> {
         self.metrics.get(key).copied()
+    }
+}
+
+impl<'a, T: TraceData> StatSpan<'a> for SpanV1<T> {
+    fn service(&'a self) -> &'a str {
+        self.service.borrow()
+    }
+
+    fn resource(&'a self) -> &'a str {
+        self.resource.borrow()
+    }
+
+    fn name(&'a self) -> &'a str {
+        self.name.borrow()
+    }
+
+    fn r#type(&'a self) -> &'a str {
+        self.r#type.borrow()
+    }
+
+    fn start(&'a self) -> i64 {
+        self.start
+    }
+
+    fn duration(&'a self) -> i64 {
+        self.duration
+    }
+
+    fn is_error(&'a self) -> bool {
+        self.error
+    }
+
+    fn is_trace_root(&'a self) -> bool {
+        self.parent_id == 0
+    }
+
+    fn is_measured(&'a self) -> bool {
+        v1_trace_utils::is_measured(self)
+    }
+
+    fn is_partial_snapshot(&'a self) -> bool {
+        v1_trace_utils::is_partial_snapshot(self)
+    }
+
+    fn has_top_level(&'a self) -> bool {
+        v1_trace_utils::has_top_level(self)
+    }
+
+    fn get_meta(&'a self, key: &str) -> Option<&'a str> {
+        match self.attributes.get(key) {
+            Some(AttributeValue::String(s)) => Some(s.borrow()),
+            _ => None,
+        }
+    }
+
+    fn get_metrics(&'a self, key: &str) -> Option<f64> {
+        match self.attributes.get(key) {
+            Some(AttributeValue::Float(v)) => Some(*v),
+            Some(AttributeValue::Int(v)) => Some(*v as f64),
+            _ => None,
+        }
     }
 }
 

@@ -364,6 +364,80 @@ pub(crate) fn process_traces_for_stats<T: libdd_trace_utils::span::TraceData>(
     }
 }
 
+/// V1 counterpart of [`add_spans_to_stats`], operating on
+/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+///
+/// # Panic
+/// Will panic if another thread panicked while holding the lock on `stats_concentrator`
+// Not yet called from the live pipeline; will be wired in once the exporter's public API is
+// swapped to v1 native structs.
+#[allow(dead_code)]
+fn add_spans_to_stats_v1<T: libdd_trace_utils::span::TraceData>(
+    stats_concentrator: &Mutex<SpanConcentrator>,
+    traces: &[libdd_trace_utils::span::v1::TraceChunk<T>],
+) {
+    let mut stats_concentrator = stats_concentrator.lock_or_panic();
+
+    let spans = traces.iter().flat_map(|chunk| chunk.spans.iter());
+    for span in spans {
+        stats_concentrator.add_span(span);
+    }
+}
+
+/// V1 counterpart of [`process_traces_for_stats`], operating on
+/// [`libdd_trace_utils::span::v1::TraceChunk`] chunks instead of flat v0.4 span vectors.
+// Not yet called from the live pipeline; will be wired in once the exporter's public API is
+// swapped to v1 native structs.
+#[allow(dead_code)]
+pub(crate) fn process_traces_for_stats_v1<T: libdd_trace_utils::span::TraceData>(
+    traces: &mut Vec<libdd_trace_utils::span::v1::TraceChunk<T>>,
+    header_tags: &mut libdd_trace_utils::trace_utils::TracerHeaderTags,
+    client_side_stats: &ArcSwap<StatsComputationStatus>,
+    client_computed_top_level: bool,
+    trace_filterer: &TraceFilterer,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))] telemetry: Option<
+        &crate::telemetry::TelemetryClient,
+    >,
+) {
+    let status = client_side_stats.load();
+    if let StatsComputationStatus::Enabled {
+        stats_concentrator, ..
+    } = &**status
+    {
+        let dropped_by_trace_filter = trace_filterer.filter_traces_v1(traces);
+        #[cfg(not(all(not(target_arch = "wasm32"), feature = "telemetry")))]
+        let _ = dropped_by_trace_filter;
+
+        if !client_computed_top_level {
+            for chunk in traces.iter_mut() {
+                libdd_trace_utils::span::trace_utils_v1::compute_top_level_span(&mut chunk.spans);
+            }
+        }
+        add_spans_to_stats_v1(stats_concentrator, traces);
+        // Once stats have been computed we can drop all chunks that are not going to be
+        // sampled by the agent
+        let dropped_p0_stats = libdd_trace_utils::span::trace_utils_v1::drop_chunks(traces);
+
+        // Update the headers to indicate that stats have been computed and forward dropped
+        // traces counts
+        header_tags.client_computed_top_level = true;
+        header_tags.client_computed_stats = true;
+        header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
+        header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+
+        // Send dropped P0 stats directly to telemetry if available
+        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        if let Some(telemetry_client) = telemetry {
+            if let Err(e) = telemetry_client.send_client_side_stats_drops(
+                dropped_p0_stats.dropped_p0_traces,
+                dropped_by_trace_filter,
+            ) {
+                tracing::error!(?e, "Error sending dropped P0 stats to telemetry");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 /// Test only function to check if the stats computation is active and the worker is running
