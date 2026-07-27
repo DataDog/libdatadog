@@ -245,16 +245,16 @@ impl<S, C: HttpClientCapability> ConfigFetcherState<S, C> {
 }
 
 #[allow(clippy::large_enum_variant)]
-enum FetcherMode {
+enum FetcherMode<C: HttpClientCapability> {
     Agent,
     #[cfg(feature = "agentless")]
-    Agentless(agentless::NativeAgentlessFetcher),
+    Agentless(agentless::AgentlessFetcher<C>),
 }
 
 pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability> {
     pub file_storage: S,
     state: Arc<ConfigFetcherState<S::StoredFile, C>>,
-    mode: FetcherMode,
+    mode: FetcherMode<C>,
 }
 
 pub struct ConfigClientState {
@@ -303,11 +303,12 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
         state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "agentless")]
-        let mode: FetcherMode = match &state.invariants.agentless {
+        let mode: FetcherMode<C> = match &state.invariants.agentless {
             Some(agentless_cfg) => FetcherMode::Agentless(
-                agentless::NativeAgentlessFetcher::new(
+                agentless::AgentlessFetcher::new(
                     agentless_cfg.clone(),
                     state.endpoint.clone(),
+                    state.http_client.clone(),
                 )
                 .await?,
             ),
@@ -409,7 +410,7 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
         target: &Target,
         client_state: &mut ConfigClientState,
     ) -> anyhow::Result<Option<Vec<Arc<S::StoredFile>>>> {
-        trace!("Submitting remote config request: {config_req:?}");
+        trace!("Submitting remote config request");
         let req = self
             .state
             .endpoint

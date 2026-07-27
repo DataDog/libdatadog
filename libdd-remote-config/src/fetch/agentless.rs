@@ -242,12 +242,16 @@ impl<'a> TrustedTarget<'a> {
     }
 }
 
-impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
+impl<C: HttpClientCapability> AgentlessFetcher<C> {
     /// Create a new `AgentlessFetcher` client.
     ///
     /// # Errors
     /// Returns an error if TUF root initialization fails.
-    pub async fn new(cfg: AgentlessConfig, endpoint: Endpoint) -> anyhow::Result<Self> {
+    pub async fn new(
+        cfg: AgentlessConfig,
+        endpoint: Endpoint,
+        http_client: C,
+    ) -> anyhow::Result<Self> {
         // Pick the default trust roots based on the endpoint's host and overrides
         let site = endpoint
             .url
@@ -267,7 +271,7 @@ impl<C: HttpClientCapability + Send + Sync> AgentlessFetcher<C> {
 
         Ok(Self {
             endpoint,
-            http: C::new_client(),
+            http: http_client,
             director_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
                 &RawSignedMetadata::new(director_root_bytes.to_vec()),
@@ -1412,6 +1416,7 @@ mod tests {
                     agent_uuid: None,
                 },
                 Endpoint::agentless(site, "abc".to_string()).unwrap(),
+                libdd_capabilities_impl::NativeHttpClient::new_without_connection_pooling(),
             )
             .await
             .unwrap_or_else(|e| panic!("failed to instantiate fetcher for site {site}: {e}"));
