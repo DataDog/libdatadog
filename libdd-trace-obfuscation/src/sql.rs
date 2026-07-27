@@ -595,7 +595,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// Consume and emit the rest of a numeric literal starting at current pos.
-    fn consume_number(&mut self) {
+    const fn consume_number(&mut self) {
         self.consume_number_inner(false);
     }
 
