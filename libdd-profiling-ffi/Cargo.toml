@@ -38,7 +38,7 @@ otel-thread-ctx-ffi = ["dep:libdd-otel-thread-ctx-ffi"]
 regex-lite = ["libdd-common/regex-lite"]
 
 [build-dependencies]
-build_common.workspace = true
+build_common = { path = "../build-common" }
 
 [dependencies]
 allocator-api2 = { version = "0.2.21", default-features = false, features = ["alloc"]  }

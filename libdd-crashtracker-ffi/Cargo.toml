@@ -34,7 +34,7 @@ receiver = []
 default = ["collector_windows"]
 
 [build-dependencies]
-build_common.workspace = true
+build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow.workspace = true
