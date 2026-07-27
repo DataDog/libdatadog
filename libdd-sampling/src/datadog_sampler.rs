@@ -229,15 +229,30 @@ pub struct TraceRootSamplingInfo {
 
 impl TraceRootSamplingInfo {
     /// Derives the OTel consistent-probability `rv`/`th` pair for a
-    /// probability sampling decision. Returns `None` for non-probability
-    /// mechanisms (their `th` must be erased on the wire, not derived).
+    /// probability sampling decision. Returns `None` when the decision is not a
+    /// probability one and its `th` must be erased on the wire rather than
+    /// derived, namely:
+    /// * a non-probability mechanism (manual keep, ASM, single-span, ...), or
+    /// * a probability mechanism whose keep was overturned by the trace rate
+    ///   limiter (`rl_effective_rate.is_some()`): the limiter, not the rate, is
+    ///   what dropped the trace, so per the RFC the threshold is erased while an
+    ///   inherited `rv` is still forwarded by the caller.
     pub fn otel_consistent_sampling(&self, trace_id: u128) -> Option<OtelConsistentSampling> {
-        if !self.mechanism.is_probability() {
+        if !self.mechanism.is_probability() || self.rl_effective_rate.is_some() {
             return None;
         }
         let low64 = trace_id as u64;
         let rv = (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8;
-        let th = ((1.0 - self.rate) * 2f64.powi(56)) as u64;
+        // `th = round(2^56 * (1 - rate))`, round-half-away, per the RFC. Compute
+        // it as `2^56 - round(2^56 * rate)`: multiplying an f64 by the power of
+        // two `2^56` is exact (it only rescales the exponent), so this avoids
+        // the single-shot `(1.0 - rate) * 2^56` rounding the RFC's imprecision
+        // analysis explicitly warns against (it inflates the DD/OTel keep-set
+        // disagreement). The `.min` guards the degenerate `rate == 0` case,
+        // where `2^56` would overflow the 56-bit field.
+        const MAX_56_BIT: u64 = (1u64 << 56) - 1;
+        let kept = (self.rate * 2f64.powi(56)).round() as u128;
+        let th = (((1u128 << 56) - kept) as u64).min(MAX_56_BIT);
         Some(OtelConsistentSampling { rv, th })
     }
 
@@ -365,16 +380,29 @@ mod tests {
             let got = info.otel_consistent_sampling(tid).expect("probability");
             assert_eq!(got.rv, want_rv, "rv for {tid}");
         }
-        // th depends only on rate
-        let info = TraceRootSamplingInfo {
-            mechanism: mechanism::DEFAULT,
-            rate: 0.1,
-            rl_effective_rate: None,
-        };
-        assert_eq!(
-            info.otel_consistent_sampling(1).unwrap().th,
-            0xe6666666666668
-        );
+        // th depends only on rate. Values are `round(2^56 * (1 - rate))` (the
+        // RFC-mandated exact form), NOT the single-shot-float truncation, which
+        // would give e6666666666668 for 0.1. See system-tests #7372.
+        let th_cases = [
+            (0.01f64, 0x0fd70a3d70a3d71u64),
+            (0.1, 0x0e6666666666666),
+            (0.2, 0x0cccccccccccccc),
+            (0.5, 0x080000000000000),
+            (0.99, 0x0028f5c28f5c290),
+            (1.0, 0x0),
+        ];
+        for (rate, want_th) in th_cases {
+            let info = TraceRootSamplingInfo {
+                mechanism: mechanism::DEFAULT,
+                rate,
+                rl_effective_rate: None,
+            };
+            assert_eq!(
+                info.otel_consistent_sampling(1).unwrap().th,
+                want_th,
+                "th for rate {rate}"
+            );
+        }
 
         // non-probability mechanism -> None
         let manual = TraceRootSamplingInfo {
@@ -383,6 +411,15 @@ mod tests {
             rl_effective_rate: None,
         };
         assert!(manual.otel_consistent_sampling(1).is_none());
+
+        // probability mechanism, but the rate limiter overturned the keep ->
+        // None (th erased per RFC; caller still forwards an inherited rv).
+        let rate_limited = TraceRootSamplingInfo {
+            mechanism: mechanism::LOCAL_USER_TRACE_SAMPLING_RULE,
+            rate: 0.5,
+            rl_effective_rate: Some(0.25),
+        };
+        assert!(rate_limited.otel_consistent_sampling(1).is_none());
     }
 
     // Test-only semantic convention constants
