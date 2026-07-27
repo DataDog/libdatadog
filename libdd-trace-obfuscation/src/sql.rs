@@ -379,13 +379,13 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn skip_line_comment(&mut self) {
+    const fn skip_line_comment(&mut self) {
         while !self.at_end() && self.bytes[self.pos] != b'\n' {
             self.pos += 1;
         }
     }
 
-    fn skip_block_comment(&mut self) {
+    const fn skip_block_comment(&mut self) {
         // We've already consumed '/*', now find '*/'
         while self.pos + 1 < self.bytes.len() {
             if self.bytes[self.pos] == b'*' && self.bytes[self.pos + 1] == b'/' {
@@ -599,7 +599,7 @@ impl<'a> Tokenizer<'a> {
         self.consume_number_inner(false);
     }
 
-    fn consume_number_inner(&mut self, seen_dot: bool) {
+    const fn consume_number_inner(&mut self, seen_dot: bool) {
         // Consume digits, '.', 'e'/'E', optional sign after 'e', suffix letters.
         // `seen_dot`: true when caller already consumed the leading '.', so don't allow another.
         // This mirrors Go's scanNumber(seenDecimalPoint) which goes straight to `exponent`
