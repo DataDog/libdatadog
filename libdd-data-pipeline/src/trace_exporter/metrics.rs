@@ -4,19 +4,19 @@
 use crate::health_metrics::{HealthMetric, SendResult};
 use either::Either;
 use libdd_common::tag::Tag;
-use libdd_dogstatsd_client::{Client, DogStatsDAction};
+use libdd_dogstatsd_client::{DogStatsDAction, DogStatsDClient};
 use tracing::debug;
 
 /// Handles emission of health metrics to DogStatsD
 #[derive(Debug)]
 pub(crate) struct MetricsEmitter<'a> {
-    dogstatsd: Option<&'a Client>,
+    dogstatsd: Option<&'a DogStatsDClient>,
     common_tags: &'a [Tag],
 }
 
 impl<'a> MetricsEmitter<'a> {
     /// Create a new MetricsEmitter
-    pub(crate) fn new(dogstatsd: Option<&'a Client>, common_tags: &'a [Tag]) -> Self {
+    pub(crate) fn new(dogstatsd: Option<&'a DogStatsDClient>, common_tags: &'a [Tag]) -> Self {
         Self {
             dogstatsd,
             common_tags,

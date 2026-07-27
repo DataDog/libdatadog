@@ -206,7 +206,7 @@ mod tests {
     use super::*;
     use crate::exporter::config;
     use crate::internal::EncodedProfile;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     /// Test fixture that sets up a manager with a file-based exporter
     struct TestFixture {
@@ -262,6 +262,17 @@ mod tests {
         fn wait_for_processing(&self, ms: u64) {
             std::thread::sleep(Duration::from_millis(ms));
         }
+
+        fn wait_for_request(&self, timeout: Duration) -> bool {
+            let deadline = Instant::now() + timeout;
+            while Instant::now() < deadline {
+                if self.has_request() {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            self.has_request()
+        }
     }
 
     #[test]
@@ -307,10 +318,12 @@ mod tests {
         let mut fixture = TestFixture::new("test_sent");
 
         fixture.queue_profile().expect("Failed to queue profile");
-        fixture.wait_for_processing(200);
 
         // Verify the request was written
-        assert!(fixture.has_request(), "Expected request to be sent");
+        assert!(
+            fixture.wait_for_request(Duration::from_secs(5)),
+            "Expected request to be sent"
+        );
 
         fixture.manager.abort().expect("Failed to abort");
         // Worker thread should have processed it, so no inflight messages
@@ -332,11 +345,10 @@ mod tests {
         fixture
             .queue_profiles(3, 50)
             .expect("Failed to queue profiles");
-        fixture.wait_for_processing(400);
 
         // At least the last one should have been sent
         assert!(
-            fixture.has_request(),
+            fixture.wait_for_request(Duration::from_secs(5)),
             "Expected at least one request to be sent"
         );
 
@@ -369,10 +381,11 @@ mod tests {
             .queue_profiles(2, 0)
             .expect("Should queue 2 profiles");
 
-        fixture.wait_for_processing(400);
-
         // Verify at least one was processed
-        assert!(fixture.has_request(), "At least one request should be sent");
+        assert!(
+            fixture.wait_for_request(Duration::from_secs(5)),
+            "At least one request should be sent"
+        );
 
         fixture.manager.abort().expect("Failed to abort");
     }
@@ -384,7 +397,10 @@ mod tests {
         let file_path = fixture.file_path.clone();
 
         fixture.queue_profile().expect("Failed to queue profile");
-        fixture.wait_for_processing(200);
+        assert!(
+            fixture.wait_for_request(Duration::from_secs(5)),
+            "Request should be sent"
+        );
 
         // Prefork should work just like abort
         fixture.manager.prefork().expect("Failed to prefork");
@@ -419,10 +435,11 @@ mod tests {
             )
             .expect("Failed to queue profile with additional data");
 
-        fixture.wait_for_processing(200);
-
         // Verify the request was sent
-        assert!(fixture.has_request(), "Request should be sent");
+        assert!(
+            fixture.wait_for_request(Duration::from_secs(5)),
+            "Request should be sent"
+        );
 
         // Read and verify the request contains our custom data
         let content = std::fs::read(&fixture.file_path).expect("Failed to read file");

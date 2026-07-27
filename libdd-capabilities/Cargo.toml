@@ -20,3 +20,5 @@ http = "1"
 bytes = "1.11.1"
 anyhow = "1.0"
 thiserror = "1.0"
+futures-channel = { version = "0.3", default-features = false, features = ["std"] }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }

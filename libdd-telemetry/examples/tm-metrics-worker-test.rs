@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     builder.config.debug_enabled = true;
     builder.flavor = worker::TelemetryWorkerFlavor::MetricsLogs;
 
-    let handle = builder.run()?;
+    let handle = builder.run::<libdd_capabilities_impl::NativeCapabilities>()?;
 
     let ping_metric = handle.register_metric_context(
         "test_telemetry.ping".into(),

@@ -25,7 +25,7 @@ libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes", features = ["bytes_string"] }
 paste = "1"
 libc = "0.2"
-tracing = { version = "0.1", default-features = false }
+tracing.workspace = true
 rmp-serde = "1.1.1"
 serde_json = "1.0"
 

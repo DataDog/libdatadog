@@ -1127,7 +1127,10 @@ mod cache {
     }
 
     impl<'a, S: FileStorage> TargetCache<'a, S> {
-        pub(crate) fn new(state: &'a ConfigFetcherState<S::StoredFile>, storage: &'a S) -> Self {
+        pub(crate) fn new<C: libdd_capabilities::HttpClientCapability>(
+            state: &'a ConfigFetcherState<S::StoredFile, C>,
+            storage: &'a S,
+        ) -> Self {
             TargetCache {
                 files: &state.target_files_by_path,
                 storage,

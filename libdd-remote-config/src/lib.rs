@@ -51,6 +51,18 @@ impl Target {
             process_tags,
         }
     }
+
+    pub fn service(&self) -> &str {
+        self.service.as_str()
+    }
+
+    pub fn env(&self) -> &str {
+        self.env.as_str()
+    }
+
+    pub fn app_version(&self) -> &str {
+        self.app_version.as_str()
+    }
 }
 
 #[repr(C)]

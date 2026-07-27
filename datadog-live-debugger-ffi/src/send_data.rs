@@ -550,24 +550,24 @@ pub fn ddog_debugger_diagnostics_create_unboxed<'a>(
         } else {
             Cow::Owned(match probe.status {
                 ProbeStatus::Received => {
-                    format!("Received definition for probe {}", &diagnostics.probe_id)
+                    format!("Received definition for probe {}", diagnostics.probe_id)
                 }
                 ProbeStatus::Installed | ProbeStatus::Emitting => {
-                    format!("Instrumented probe {}", &diagnostics.probe_id)
+                    format!("Instrumented probe {}", diagnostics.probe_id)
                 }
                 ProbeStatus::Blocked => {
-                    format!("Instrumentation denied for probe {}", &diagnostics.probe_id)
+                    format!("Instrumentation denied for probe {}", diagnostics.probe_id)
                 }
                 #[allow(clippy::unwrap_used)]
                 ProbeStatus::Error => format!(
                     "Encountered error while instrumenting probe {}: {}",
-                    &diagnostics.probe_id,
+                    diagnostics.probe_id,
                     diagnostics.exception.as_ref().unwrap().message
                 ),
                 #[allow(clippy::unwrap_used)]
                 ProbeStatus::Warning => format!(
                     "Probe {} warning: {}",
-                    &diagnostics.probe_id,
+                    diagnostics.probe_id,
                     diagnostics.details.as_ref().unwrap()
                 ),
             })

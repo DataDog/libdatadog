@@ -1,0 +1,33 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-profiling-heap-gotter"
+version = "1.0.0"
+description = "GOT-table interposition that routes a running process's allocator through libdd-profiling-heap-sampler."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-gotter"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-gotter"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "cdylib"]
+bench = false
+
+[features]
+# Forward live-heap (retained-heap) tracking down to the sampler
+live-heap = ["libdd-profiling-heap-sampler/live-heap"]
+# Exposes a hook-hit counter so integration tests in other crates (e.g.
+# libdd-profiling-heap-gotter-ffi) can prove the patched GOT was actually
+# used, not just that nothing crashed. Not for production use.
+test-support = []
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libc = "0.2"
+libdd-profiling-heap-sampler = { version = "1.0.0", path = "../libdd-profiling-heap-sampler" }
+serial_test = "3.2"

@@ -1,0 +1,42 @@
+# Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-profiling-heap-sampler"
+version = "1.0.0"
+description = "Sampling primitives for USDT-based heap profiling."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-sampler"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-profiling-heap-sampler"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib"]
+bench = false
+
+[features]
+default = []
+# Live-heap tracking: flag each sampled allocation so frees can be balanced
+# against allocs for retained/live-heap profiling, and sample
+# frees to emit ddheap:free.
+live-heap = []
+# Runtime ELF self-inspection of the USDT notes (see src/usdt_check.rs). Opt-in
+# so the crate keeps zero runtime deps by default; only pulls in elf/anyhow.
+sanity-check = ["dep:elf", "dep:anyhow"]
+
+# Only used by the `sanity-check` feature; the crate has no runtime deps otherwise.
+[dependencies]
+anyhow = { version = "1.0", optional = true }
+elf = { version = "0.7", optional = true }
+
+[build-dependencies]
+cc = "1.1.31"
+# `bindgen` is only *invoked* when the env var LIBDD_PROFILING_HEAP_SAMPLER_REGEN
+# is set (see build.rs); it is otherwise pulled in as a build-dep so
+# that regen works without a cargo feature. Cargo features would be
+# problematic here because CI jobs frequently use `--all-features`,
+# which would silently trigger a bindgen regen on hosts that lack
+# libclang. An env var side-steps
+# that (see README's "Regenerating bindings" section).
+bindgen = "0.71"

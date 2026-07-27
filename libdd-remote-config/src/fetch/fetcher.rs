@@ -10,8 +10,8 @@ use base64::Engine;
 use hashbrown::HashMap;
 use http::uri::PathAndQuery;
 use http::StatusCode;
-use http_body_util::BodyExt;
-use libdd_common::{http_common, Endpoint, MutexExt};
+use libdd_capabilities::HttpClientCapability;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
     TargetFileHash, TargetFileMeta,
@@ -119,11 +119,12 @@ impl ConfigProductCapabilities {
     }
 }
 
-pub struct ConfigFetcherState<S> {
+pub struct ConfigFetcherState<S, C: HttpClientCapability> {
     pub(crate) target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
+    http_client: C,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -167,8 +168,8 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
     }
 }
 
-impl<S> ConfigFetcherState<S> {
-    pub fn new(invariants: ConfigInvariants) -> Self {
+impl<S, C: HttpClientCapability> ConfigFetcherState<S, C> {
+    pub fn with_client(invariants: ConfigInvariants, http_client: C) -> Self {
         let (endpoint, agentless) = match &invariants.agentless {
             Some(agentless_cfg) => {
                 #[cfg(feature = "agentless")]
@@ -200,6 +201,7 @@ impl<S> ConfigFetcherState<S> {
                 ..invariants
             },
             expire_unused_files: true,
+            http_client,
         }
     }
 
@@ -249,9 +251,9 @@ enum FetcherMode {
     Agentless(agentless::NativeAgentlessFetcher),
 }
 
-pub struct ConfigFetcher<S: FileStorage> {
+pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability> {
     pub file_storage: S,
-    state: Arc<ConfigFetcherState<S::StoredFile>>,
+    state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     mode: FetcherMode,
 }
 
@@ -292,13 +294,13 @@ impl ConfigClientState {
     }
 }
 
-impl<S: FileStorage> ConfigFetcher<S> {
+impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
     /// Create a new config fetcher
     /// This is guaranteed to be immediate (no await point) if `state.invariants.agentless_enabled`
     /// is false
     pub async fn new(
         file_storage: S,
-        state: Arc<ConfigFetcherState<S::StoredFile>>,
+        state: Arc<ConfigFetcherState<S::StoredFile, C>>,
     ) -> anyhow::Result<Self> {
         #[cfg(feature = "agentless")]
         let mode: FetcherMode = match &state.invariants.agentless {
@@ -417,16 +419,16 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 http::header::CONTENT_TYPE,
                 libdd_common::header::APPLICATION_JSON,
             )
-            .body(http_common::Body::from(serde_json::to_string(&config_req)?))?;
+            .body(bytes::Bytes::from(serde_json::to_string(&config_req)?))?;
         let response = tokio::time::timeout(
             Duration::from_millis(self.state.endpoint.timeout_ms),
-            http_common::new_default_client().request(req),
+            self.state.http_client.request(req),
         )
         .await
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?;
         let status = response.status();
-        let body_bytes = response.into_body().collect().await?.to_bytes();
+        let body_bytes = response.into_body();
         if status != StatusCode::OK {
             // Not active
             if status == StatusCode::NOT_FOUND {
@@ -708,6 +710,8 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::RemoteConfigSource;
     use http::Response;
+    use libdd_capabilities_impl::NativeHttpClient;
+    use libdd_common::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
 
@@ -820,7 +824,10 @@ pub mod tests {
         let storage = Arc::new(Storage::default());
         let mut fetcher = ConfigFetcher::new(
             storage.clone(),
-            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
         )
         .await
         .unwrap();
@@ -873,10 +880,14 @@ pub mod tests {
 
         let mut fetcher = ConfigFetcher::new(
             storage.clone(),
-            Arc::new(ConfigFetcherState::new(invariants)),
+            Arc::new(ConfigFetcherState::with_client(
+                invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
         )
         .await
         .unwrap();
+
         let mut opaque_state = ConfigClientState::default();
 
         {
@@ -1059,10 +1070,14 @@ pub mod tests {
         let storage = Arc::new(Storage::default());
         let mut fetcher = ConfigFetcher::new(
             storage,
-            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
         )
         .await
         .unwrap();
+
         let mut opaque_state = ConfigClientState::default();
 
         // Default: nothing set, agent receives an empty list.
@@ -1159,10 +1174,14 @@ pub mod tests {
         let storage = Arc::new(Storage::default());
         let mut fetcher = ConfigFetcher::new(
             storage,
-            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
         )
         .await
         .unwrap();
+
         let mut opaque_state = ConfigClientState::default();
 
         let fetched = fetcher

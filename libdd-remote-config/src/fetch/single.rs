@@ -7,14 +7,15 @@ use crate::fetch::{
 };
 use crate::file_change_tracker::{Change, ChangeTracker, FilePath, UpdatedFiles};
 use crate::{RemoteConfigCapabilities, RemoteConfigPath, RemoteConfigProduct, Target};
+use libdd_capabilities::HttpClientCapability;
 use std::sync::Arc;
 use std::time::Duration;
 
 const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Simple implementation
-pub struct SingleFetcher<S: FileStorage> {
-    fetcher: ConfigFetcher<S>,
+pub struct SingleFetcher<S: FileStorage, C: HttpClientCapability> {
+    fetcher: ConfigFetcher<S, C>,
     target: Arc<Target>,
     product_capabilities: ConfigProductCapabilities,
     runtime_id: String,
@@ -29,17 +30,21 @@ pub struct ConfigOptions {
     pub capabilities: Vec<RemoteConfigCapabilities>,
 }
 
-impl<S: FileStorage> SingleFetcher<S> {
+impl<S: FileStorage, C: HttpClientCapability> SingleFetcher<S, C> {
     pub async fn new(
         sink: S,
         target: Target,
         runtime_id: String,
         options: ConfigOptions,
+        http_client: C,
     ) -> anyhow::Result<Self> {
         Ok(SingleFetcher {
             fetcher: ConfigFetcher::new(
                 sink,
-                Arc::new(ConfigFetcherState::new(options.invariants)),
+                Arc::new(ConfigFetcherState::with_client(
+                    options.invariants,
+                    http_client,
+                )),
             )
             .await?,
             target: Arc::new(target),
@@ -58,11 +63,15 @@ impl<S: FileStorage> SingleFetcher<S> {
         target: Target,
         runtime_id: String,
         options: ConfigOptions,
+        http_client: C,
     ) -> anyhow::Result<Self> {
         Ok(SingleFetcher {
             fetcher: futures::executor::block_on(ConfigFetcher::new(
                 sink,
-                Arc::new(ConfigFetcherState::new(options.invariants)),
+                Arc::new(ConfigFetcherState::with_client(
+                    options.invariants,
+                    http_client,
+                )),
             ))?,
             target: Arc::new(target),
             product_capabilities: ConfigProductCapabilities::new(
@@ -136,15 +145,15 @@ impl<S: FileStorage> SingleFetcher<S> {
     }
 }
 
-pub struct SingleChangesFetcher<S: FileStorage>
+pub struct SingleChangesFetcher<S: FileStorage, C: HttpClientCapability>
 where
     S::StoredFile: FilePath,
 {
     changes: ChangeTracker<S::StoredFile>,
-    pub fetcher: SingleFetcher<S>,
+    pub fetcher: SingleFetcher<S, C>,
 }
 
-impl<S: FileStorage> SingleChangesFetcher<S>
+impl<S: FileStorage, C: HttpClientCapability> SingleChangesFetcher<S, C>
 where
     S::StoredFile: FilePath,
 {
@@ -153,10 +162,11 @@ where
         target: Target,
         runtime_id: String,
         options: ConfigOptions,
+        http_client: C,
     ) -> anyhow::Result<Self> {
         Ok(SingleChangesFetcher {
             changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new(sink, target, runtime_id, options).await?,
+            fetcher: SingleFetcher::new(sink, target, runtime_id, options, http_client).await?,
         })
     }
 
@@ -165,10 +175,17 @@ where
         target: Target,
         runtime_id: String,
         options: ConfigOptions,
+        http_client: C,
     ) -> anyhow::Result<Self> {
         Ok(SingleChangesFetcher {
             changes: ChangeTracker::default(),
-            fetcher: SingleFetcher::new_no_agentless(sink, target, runtime_id, options)?,
+            fetcher: SingleFetcher::new_no_agentless(
+                sink,
+                target,
+                runtime_id,
+                options,
+                http_client,
+            )?,
         })
     }
 

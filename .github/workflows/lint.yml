@@ -152,10 +152,10 @@ jobs:
             git config --global core.longpaths true
           fi
           if [[ -z "$CLIPPY_PACKAGES" ]]; then
-            cargo clippy --workspace --all-targets --all-features -- -D warnings
+            cargo clippy --workspace --all-targets --all-features --keep-going -- -D warnings
           else
             # shellcheck disable=SC2086
-            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features -- -D warnings
+            cargo clippy $CLIPPY_PACKAGES --all-targets --all-features --keep-going -- -D warnings
           fi
 
   licensecheck:

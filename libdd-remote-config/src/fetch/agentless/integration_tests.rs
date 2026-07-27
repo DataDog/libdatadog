@@ -142,13 +142,16 @@ impl FileStorage for NoopStorage {
     }
 }
 
-fn test_state() -> ConfigFetcherState<()> {
-    ConfigFetcherState::new(ConfigInvariants {
-        language: "test".to_string(),
-        tracer_version: "0.0.0".to_string(),
-        endpoint: Endpoint::from_slice("http://localhost/"),
-        agentless: None,
-    })
+fn test_state() -> ConfigFetcherState<(), libdd_capabilities_impl::NativeCapabilities> {
+    ConfigFetcherState::with_client(
+        ConfigInvariants {
+            language: "test".to_string(),
+            tracer_version: "0.0.0".to_string(),
+            endpoint: Endpoint::from_slice("http://localhost/"),
+            agentless: None,
+        },
+        libdd_capabilities_impl::NativeCapabilities::new_client(),
+    )
 }
 
 // ---- TUF repo generation (mirrors uptane client_test.go) -----------------

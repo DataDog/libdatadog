@@ -6,29 +6,28 @@
 //! test rather checks that the dynamic library is properly linked, which is why it lives within the
 //! FFI.
 //!
-//! Delegates to [`libdd_otel_thread_ctx::autocheck::check_tls_slot_in`] which
-//! checks that:
-//! - `otel_thread_ctx_v1` is exported in the dynamic symbol table as a TLS GLOBAL symbol.
-//! - `otel_thread_ctx_v1` follows the TLSDESC access model (if there's a relocation, it's a TLSDESC
-//!   one).
+//! This checks that, in the linked `cdylib`:
+//! - `otel_thread_ctx_v1` is exported in the dynamic symbol table as a TLS GLOBAL symbol;
+//! - it follows the TLSDESC access model: if there is a relocation for it, it is a TLSDESC
+//!   relocation.
 //!
-//! The cdylib path is derived at runtime from the test executable location.
-//! Both the test binary and the cdylib live in `target/<[triple/]profile>/deps/`.
+//! The complementary check that our inline assembly emits the exact TLSDESC instruction sequence a
+//! compiler would (so the linker relaxes it correctly) lives in `libdd-otel-thread-ctx`'s
+//! `tlsdesc_inline_sequence.rs` test.
+//!
+//! Library artifact paths are derived at runtime from the test executable location.
 
-#![cfg(target_os = "linux")]
+#![cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 
-use std::path::PathBuf;
-
-fn cdylib_path() -> PathBuf {
-    let exe = std::env::current_exe().expect("failed to read current executable path");
-    exe.parent()
-        .expect("unexpected test executable path structure")
-        .join("liblibdd_otel_thread_ctx_ffi.so")
-}
+use libdd_otel_thread_ctx::test_utils::artifacts::{artifact_path, check_readable};
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn otel_thread_ctx_v1_tls_properties() {
-    let path = cdylib_path();
+    let path = artifact_path("liblibdd_otel_thread_ctx_ffi.so");
+    check_readable(&path);
     libdd_otel_thread_ctx::sanity_check::check_tls_slot_in(&path).unwrap();
 }

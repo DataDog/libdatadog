@@ -148,6 +148,7 @@ async fn run_one_iteration(
         target,
         RUNTIME_ID.to_string(),
         options,
+        libdd_capabilities_impl::NativeHttpClient::new_without_connection_pooling(),
     ));
     let mut fetcher = Instrumented::new(fetcher_fut, &mut init_poll).await?;
     let init = Sample {

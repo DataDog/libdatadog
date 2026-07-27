@@ -473,11 +473,15 @@ mod tests {
         let mut buffer = Vec::new();
         let invocation_result = unsafe { invoke_runtime_callback_with_writer(&mut buffer) };
 
-        assert_eq!(
-            invocation_result.unwrap_err().kind(),
-            std::io::ErrorKind::Other,
-            "Expected Other error when no callback registered"
-        );
+        #[allow(clippy::std_instead_of_core)]
+        // Clippy tries to make us import from core::io which is nightly only
+        {
+            assert_eq!(
+                invocation_result.unwrap_err().kind(),
+                std::io::ErrorKind::Other,
+                "Expected Other error when no callback registered"
+            );
+        }
 
         assert!(
             buffer.is_empty(),

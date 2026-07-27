@@ -14,8 +14,8 @@ bench = false
 [dependencies]
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
-libdd-library-config = { path = "../libdd-library-config" }
-anyhow = "1.0"
+libdd-library-config = { path = "../libdd-library-config", default-features = false, features = ["process-context-writer"] }
+anyhow.workspace = true
 constcat = "0.4.1"
 
 [features]
