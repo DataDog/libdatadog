@@ -405,7 +405,17 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
             .fetch_target(target_path)
             .await?;
         let mut buf = Vec::new();
-        read.read_to_end(&mut buf).await?;
+        buf.resize(
+            usize::try_from(target.length).map_err(|_| {
+                format_err!(
+                    "target length overflows usize for path: {} (got {} bytes)",
+                    target.path,
+                    buf.len()
+                )
+            })?,
+            0,
+        );
+        read.read_exact(&mut buf).await?;
 
         let actual_len = u64::try_from(buf.len()).map_err(|_| {
             format_err!(
