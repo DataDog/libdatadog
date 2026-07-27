@@ -23,10 +23,9 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::net::TcpStream;
 use tonic::body::Body as TonicBody;
-use tonic::client::Grpc;
+use tonic::client::{Grpc, GrpcService};
 use tonic::metadata::{AsciiMetadataKey, AsciiMetadataValue};
 use tonic::{Code, Request, Status};
-use tower_service::Service;
 use tracing::warn;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -144,17 +143,20 @@ pub(crate) mod prost_codec {
     }
 }
 
-/// Custom gRPC transport: a `tower::Service` that dials a fresh h2c connection per request.
+/// Custom gRPC transport: a `tonic::client::GrpcService` that dials a fresh h2c connection per
+/// request.
 #[derive(Clone, Debug)]
 pub(crate) struct H2Service {
     /// `host:port` dialed per request (plaintext h2c, prior knowledge).
     authority: Arc<str>,
 }
 
-impl Service<http::Request<TonicBody>> for H2Service {
-    type Response = http::Response<Collected<Bytes>>;
+impl GrpcService<TonicBody> for H2Service {
+    type ResponseBody = Collected<Bytes>;
     type Error = BoxError;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+    type Future = Pin<
+        Box<dyn Future<Output = Result<http::Response<Self::ResponseBody>, Self::Error>> + Send>,
+    >;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
