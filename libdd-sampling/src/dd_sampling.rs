@@ -141,6 +141,22 @@ impl SamplingMechanism {
         }
     }
 
+    /// Returns whether this mechanism is a probability (rate-based) sampling
+    /// decision, for OTel consistent-probability tracestate (`ot.th`).
+    pub fn is_probability(&self) -> bool {
+        matches!(
+            *self,
+            mechanism::DEFAULT
+                | mechanism::AGENT_RATE_BY_SERVICE
+                | mechanism::REMOTE_RATE
+                | mechanism::REMOTE_RATE_USER
+                | mechanism::REMOTE_RATE_DATADOG
+                | mechanism::LOCAL_USER_TRACE_SAMPLING_RULE
+                | mechanism::REMOTE_USER_TRACE_SAMPLING_RULE
+                | mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE
+        )
+    }
+
     /// Returns the string representation of the sampling mechanism.
     ///
     /// The format is `"-N"` (e.g. `"-4"` for manual sampling). The leading `-` comes from the
@@ -397,6 +413,32 @@ mod tests {
             "-12".parse::<SamplingMechanism>().unwrap(),
             mechanism::REMOTE_DYNAMIC_TRACE_SAMPLING_RULE
         );
+    }
+
+    #[test]
+    fn test_mechanism_is_probability() {
+        use mechanism::*;
+        for m in [
+            DEFAULT,
+            AGENT_RATE_BY_SERVICE,
+            REMOTE_RATE,
+            REMOTE_RATE_USER,
+            REMOTE_RATE_DATADOG,
+            LOCAL_USER_TRACE_SAMPLING_RULE,
+            REMOTE_USER_TRACE_SAMPLING_RULE,
+            REMOTE_DYNAMIC_TRACE_SAMPLING_RULE,
+        ] {
+            assert!(m.is_probability(), "{m:?} should be probability");
+        }
+        for m in [
+            MANUAL,
+            APPSEC,
+            SPAN_SAMPLING_RULE,
+            DATA_JOBS_MONITORING,
+            OTLP_INGEST_PROBABILISTIC_SAMPLING,
+        ] {
+            assert!(!m.is_probability(), "{m:?} should not be probability");
+        }
     }
 
     #[test]
