@@ -54,6 +54,9 @@ use tracing::debug;
 
 const CONTINUE: ControlFlow<()> = ControlFlow::Continue(());
 const BREAK: ControlFlow<()> = ControlFlow::Break(());
+// Stay below the Agent's 60-second HTTP idle timeout so the client evicts pooled
+// connections before an Agent-side close can race the next telemetry request.
+const HTTP_CLIENT_POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
 
 fn time_now() -> f64 {
     time::SystemTime::UNIX_EPOCH
@@ -1281,7 +1284,8 @@ impl TelemetryWorkerBuilder {
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
-        let capabilities = C::new_client();
+        let capabilities =
+            C::new_client_with_connection_pool_idle_timeout(HTTP_CLIENT_POOL_IDLE_TIMEOUT);
 
         let metrics_flush_interval =
             telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
@@ -1372,6 +1376,9 @@ impl TelemetryWorkerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
     use crate::config::TelemetryEndpoint;
     use crate::data::Payload;
     use crate::worker::http_client::header::{
@@ -1381,11 +1388,64 @@ mod tests {
         LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
         TelemetryWorkerFlavor, TelemetryWorkerHandle,
     };
+    use bytes::Bytes;
+    use libdd_capabilities::{HttpClientCapability, HttpError, SleepCapability};
     use libdd_capabilities_impl::NativeCapabilities;
     use tokio::runtime::Runtime;
 
+    static CLIENT_POOL_IDLE_TIMEOUT_SECS: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Clone, Debug)]
+    struct CapturingCapabilities;
+
+    impl HttpClientCapability for CapturingCapabilities {
+        fn new_client() -> Self {
+            Self
+        }
+
+        fn new_client_with_connection_pool_idle_timeout(idle_timeout: Duration) -> Self {
+            CLIENT_POOL_IDLE_TIMEOUT_SECS.store(idle_timeout.as_secs(), Ordering::Relaxed);
+            Self
+        }
+
+        async fn request(
+            &self,
+            _req: http::Request<Bytes>,
+        ) -> Result<http::Response<Bytes>, HttpError> {
+            panic!("request should not be called while building a worker")
+        }
+    }
+
+    impl SleepCapability for CapturingCapabilities {
+        fn new() -> Self {
+            Self
+        }
+
+        async fn sleep(&self, _duration: Duration) {}
+    }
+
     fn is_send<T: Send>(_: T) {}
     fn is_sync<T: Sync>(_: T) {}
+
+    #[test]
+    fn telemetry_client_pool_idle_timeout_is_45_seconds() {
+        CLIENT_POOL_IDLE_TIMEOUT_SECS.store(0, Ordering::Relaxed);
+        let builder = TelemetryWorkerBuilder::new(
+            "h".into(),
+            "svc".into(),
+            "lang".into(),
+            "1".into(),
+            "tv".into(),
+        );
+        let runtime = Runtime::new().unwrap();
+
+        let _ = builder.build_worker::<CapturingCapabilities>(Some(runtime.handle().clone()));
+
+        assert_eq!(
+            CLIENT_POOL_IDLE_TIMEOUT_SECS.load(Ordering::Relaxed),
+            Duration::from_secs(45).as_secs()
+        );
+    }
 
     #[test]
     fn test_handle_sync_send() {

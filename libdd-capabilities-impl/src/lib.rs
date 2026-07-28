@@ -67,6 +67,15 @@ impl HttpClientCapability for NativeCapabilities {
         Self::new()
     }
 
+    fn new_client_with_connection_pool_idle_timeout(idle_timeout: Duration) -> Self {
+        Self {
+            http: NativeHttpClient::new_with_connection_pool_idle_timeout(idle_timeout),
+            sleep: NativeSleepCapability,
+            env: NativeEnvCapability,
+            file: NativeFileCapability,
+        }
+    }
+
     fn request(
         &self,
         req: ::http::Request<bytes::Bytes>,
