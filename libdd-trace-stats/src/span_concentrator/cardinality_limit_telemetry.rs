@@ -111,7 +111,8 @@ impl CollapsedFieldsMetrics {
                 CollapsedFieldSet::ADDITIONAL_TAGS => {
                     libdd_common::tag!("collapsed_spans", "additional_metric_tags")
                 }
-                // Unreachable: asserted just above that field is one of the 4 possible values
+                // Should be unreachable, but don't fail in prod if provided with an invalid field
+                // set
                 _ => continue,
             };
             tags.push(field_tag);
