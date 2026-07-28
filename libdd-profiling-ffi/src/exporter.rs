@@ -41,7 +41,7 @@ pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'
 
 #[derive(Debug)]
 #[repr(C)]
-/// cbindgen:field-names=\[code\]
+/// cbindgen:field-names=[code]
 pub struct HttpStatus(u16);
 
 fn try_clone_optional_tags(tags: Option<&libdd_common_ffi::Vec<Tag>>) -> anyhow::Result<Vec<Tag>> {
