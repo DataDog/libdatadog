@@ -41,13 +41,9 @@ async fn main() {
                 println!("DD_API_KEY and DD_SITE are set — enabling agentless mode (site: {site})");
                 let endpoint = Endpoint::agentless(&site, api_key)
                     .expect("Failed to build agentless endpoint from DD_SITE");
-                (
-                    endpoint,
-                    Some(AgentlessConfig {
-                        hostname,
-                        ..Default::default()
-                    }),
-                )
+                let agentless = AgentlessConfig::new(hostname, &endpoint)
+                    .expect("Failed to build AgentlessConfig from DD_SITE");
+                (endpoint, Some(agentless))
             }
             #[cfg(not(feature = "agentless"))]
             {

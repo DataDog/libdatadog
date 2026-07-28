@@ -127,18 +127,101 @@ pub fn make_agentless_configs_endpoint(e: &Endpoint) -> Option<Endpoint> {
     })
 }
 
-#[derive(Clone, Debug, Hash, Eq, PartialEq, Default)]
+/// Configuration for agentless remote-config fetching.
+///
+/// Construction is fallible: an `AgentlessConfig` value is proof that the
+/// hostname is non-empty and that the caller-supplied endpoint has been
+/// successfully rewritten to the agentless URL (`config.<site>/api/v0.1/
+/// configurations`).
+///
+/// Downstream code (`ConfigFetcherState::with_client`,
+/// `MultiTargetFetcher::new`, ...) can therefore consume this type
+/// infallibly.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct AgentlessConfig {
-    /// Hostname reported to the RC backend
-    /// Must be non empty in agentless mode; an empty value causes
-    /// `ConfigFetcherState::new` to downgrade to agent mode.
-    pub hostname: String,
-    /// Optional path to a TUF repo root JSON to use instead of the
-    /// embedded one
-    pub config_root_override_path: Option<PathBuf>,
-    pub director_root_override_path: Option<PathBuf>,
+    /// Hostname reported to the RC backend. Guaranteed non-empty by [`Self::new`].
+    hostname: String,
+    /// Pre-rewritten agentless endpoint (`config.<site>/api/v0.1/configurations`).
+    /// Guaranteed valid (https, authority present, API key present) by [`Self::new`].
+    agentless_endpoint: Endpoint,
+    /// Optional path to a TUF repo root JSON to use instead of the embedded one.
+    config_root_override_path: Option<PathBuf>,
+    director_root_override_path: Option<PathBuf>,
     /// Override the `agent_uuid` field sent to the RC backend.
-    pub agent_uuid: Option<String>,
+    agent_uuid: Option<String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AgentlessConfigError {
+    #[error("agentless enabled but hostname is empty")]
+    EmptyHostname,
+    #[error(
+        "agentless endpoint is invalid (missing https, authority or API key, \
+         or the URI cannot be rewritten)"
+    )]
+    InvalidEndpoint,
+}
+
+impl AgentlessConfig {
+    /// Returns [`AgentlessConfigError::EmptyHostname`] if `hostname` is empty
+    /// and [`AgentlessConfigError::InvalidEndpoint`] if `endpoint` does not
+    /// meet the agentless preconditions.
+    pub fn new(hostname: String, endpoint: &Endpoint) -> Result<Self, AgentlessConfigError> {
+        if hostname.is_empty() {
+            return Err(AgentlessConfigError::EmptyHostname);
+        }
+        let agentless_endpoint = make_agentless_configs_endpoint(endpoint)
+            .ok_or(AgentlessConfigError::InvalidEndpoint)?;
+        Ok(Self {
+            hostname,
+            agentless_endpoint,
+            config_root_override_path: None,
+            director_root_override_path: None,
+            agent_uuid: None,
+        })
+    }
+
+    /// Override the path to the TUF config repo root JSON.
+    #[must_use]
+    pub fn with_config_root_override(mut self, path: PathBuf) -> Self {
+        self.config_root_override_path = Some(path);
+        self
+    }
+
+    /// Override the path to the TUF director repo root JSON.
+    #[must_use]
+    pub fn with_director_root_override(mut self, path: PathBuf) -> Self {
+        self.director_root_override_path = Some(path);
+        self
+    }
+
+    /// Override the `agent_uuid` field sent to the RC backend.
+    #[must_use]
+    pub fn with_agent_uuid(mut self, agent_uuid: String) -> Self {
+        self.agent_uuid = Some(agent_uuid);
+        self
+    }
+
+    pub fn hostname(&self) -> &str {
+        &self.hostname
+    }
+
+    /// Pre-validated agentless endpoint.
+    pub fn agentless_endpoint(&self) -> &Endpoint {
+        &self.agentless_endpoint
+    }
+
+    pub fn config_root_override_path(&self) -> Option<&std::path::Path> {
+        self.config_root_override_path.as_deref()
+    }
+
+    pub fn director_root_override_path(&self) -> Option<&std::path::Path> {
+        self.director_root_override_path.as_deref()
+    }
+
+    pub fn agent_uuid(&self) -> Option<&str> {
+        self.agent_uuid.as_deref()
+    }
 }
 
 pub type NativeAgentlessFetcher = AgentlessFetcher<libdd_capabilities_impl::NativeHttpClient>;
@@ -259,15 +342,14 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
             .map(Site::from_host)
             .unwrap_or(Site::Prod);
 
-        let config_root_bytes: Cow<'static, [u8]> = match cfg.config_root_override_path.as_deref() {
+        let config_root_bytes: Cow<'static, [u8]> = match cfg.config_root_override_path() {
             Some(p) => Cow::Owned(load_root(p)?),
             None => Cow::Borrowed(site.embedded_config_root()),
         };
-        let director_root_bytes: Cow<'static, [u8]> =
-            match cfg.director_root_override_path.as_deref() {
-                Some(p) => Cow::Owned(load_root(p)?),
-                None => Cow::Borrowed(site.embedded_director_root()),
-            };
+        let director_root_bytes: Cow<'static, [u8]> = match cfg.director_root_override_path() {
+            Some(p) => Cow::Owned(load_root(p)?),
+            None => Cow::Borrowed(site.embedded_director_root()),
+        };
 
         Ok(Self {
             endpoint,
@@ -1429,14 +1511,11 @@ mod tests {
     #[tokio::test]
     async fn test_create_fetcher_for_site() {
         for site in ["datad0g.com", "datadoghq.com", "ddog-gov.com"] {
+            let endpoint = Endpoint::agentless(site, "abc".to_string()).unwrap();
+            let cfg = AgentlessConfig::new("hostname".to_string(), &endpoint).unwrap();
             NativeAgentlessFetcher::new(
-                AgentlessConfig {
-                    hostname: "hostname".to_string(),
-                    config_root_override_path: None,
-                    director_root_override_path: None,
-                    agent_uuid: None,
-                },
-                Endpoint::agentless(site, "abc".to_string()).unwrap(),
+                cfg,
+                endpoint,
                 libdd_capabilities_impl::NativeHttpClient::new_without_connection_pooling(),
             )
             .await
@@ -1476,6 +1555,70 @@ mod tests {
     #[test]
     fn trailing_slash_is_error() {
         assert!(trim_hash_target_path("datadog/2/foo/").is_err());
+    }
+
+    #[test]
+    fn agentless_config_new_rejects_empty_hostname() {
+        let endpoint = Endpoint::agentless("datadoghq.com", "abc".to_string()).unwrap();
+        assert!(matches!(
+            AgentlessConfig::new(String::new(), &endpoint),
+            Err(super::AgentlessConfigError::EmptyHostname)
+        ));
+    }
+
+    #[test]
+    fn agentless_config_new_rejects_endpoint_without_api_key() {
+        // Endpoint constructed via `from_slice` has no `api_key`, which is one
+        // of the required agentless preconditions.
+        let endpoint = Endpoint::from_slice("https://datadoghq.com/");
+        assert!(matches!(
+            AgentlessConfig::new("host".to_string(), &endpoint),
+            Err(super::AgentlessConfigError::InvalidEndpoint)
+        ));
+    }
+
+    #[test]
+    fn agentless_config_new_rejects_non_https_endpoint() {
+        let mut endpoint = Endpoint::from_slice("http://datadoghq.com/");
+        endpoint.api_key = Some("abc".to_string().into());
+        assert!(matches!(
+            AgentlessConfig::new("host".to_string(), &endpoint),
+            Err(super::AgentlessConfigError::InvalidEndpoint)
+        ));
+    }
+
+    #[test]
+    fn agentless_config_new_accepts_well_formed_config() {
+        let endpoint = Endpoint::agentless("datadoghq.com", "abc".to_string()).unwrap();
+        let cfg = AgentlessConfig::new("host".to_string(), &endpoint).expect("well-formed");
+        assert_eq!(cfg.hostname(), "host");
+        // Endpoint has been rewritten to `config.<site>` and kept the api key.
+        assert!(cfg
+            .agentless_endpoint()
+            .url
+            .host()
+            .is_some_and(|h| h.starts_with("config.")));
+        assert!(cfg.agentless_endpoint().api_key.is_some());
+    }
+
+    #[test]
+    fn agentless_config_builders() {
+        use std::path::PathBuf;
+        let endpoint = Endpoint::agentless("datadoghq.com", "abc".to_string()).unwrap();
+        let cfg = AgentlessConfig::new("host".to_string(), &endpoint)
+            .unwrap()
+            .with_agent_uuid("uuid-1".to_string())
+            .with_config_root_override(PathBuf::from("/tmp/config_root.json"))
+            .with_director_root_override(PathBuf::from("/tmp/director_root.json"));
+        assert_eq!(cfg.agent_uuid(), Some("uuid-1"));
+        assert_eq!(
+            cfg.config_root_override_path(),
+            Some(std::path::Path::new("/tmp/config_root.json"))
+        );
+        assert_eq!(
+            cfg.director_root_override_path(),
+            Some(std::path::Path::new("/tmp/director_root.json"))
+        );
     }
 
     #[test]

@@ -173,19 +173,11 @@ impl<S, C: HttpClientCapability> ConfigFetcherState<S, C> {
         let (endpoint, agentless) = match &invariants.agentless {
             Some(agentless_cfg) => {
                 #[cfg(feature = "agentless")]
-                match (
-                    agentless::make_agentless_configs_endpoint(&invariants.endpoint),
-                    agentless_cfg.hostname.is_empty(),
-                ) {
-                    (Some(e), false) => (e, Some(agentless_cfg.clone())),
-                    (Some(_), true) => {
-                        warn!("rc_config_fetcher: agentless enabled but the hostname is empty. Downgrading to agent endpoint");
-                        (make_agent_configs_endpoint(&invariants.endpoint), None)
-                    }
-                    (None, _) => {
-                        warn!("rc_config_fetcher: agentless enabled but the endpoint is invalid. Downgrading to agent endpoint");
-                        (make_agent_configs_endpoint(&invariants.endpoint), None)
-                    }
+                {
+                    (
+                        agentless_cfg.agentless_endpoint().clone(),
+                        Some(agentless_cfg.clone()),
+                    )
                 }
 
                 #[cfg(not(feature = "agentless"))]

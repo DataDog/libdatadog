@@ -204,13 +204,9 @@ async fn agentless_main() -> anyhow::Result<()> {
             println!("Agentless mode enabled (site: {site})");
             let endpoint = Endpoint::agentless(&site, api_key)
                 .expect("Failed to build agentless endpoint from DD_SITE");
-            (
-                endpoint,
-                Some(AgentlessConfig {
-                    hostname: hostname.clone(),
-                    ..Default::default()
-                }),
-            )
+            let agentless = AgentlessConfig::new(hostname.clone(), &endpoint)
+                .expect("Failed to build AgentlessConfig from DD_SITE");
+            (endpoint, Some(agentless))
         }
         #[cfg(not(feature = "agentless"))]
         (Some(_), Some(_)) => {
