@@ -79,23 +79,23 @@ impl RemoteConfigPath {
             source: match parts[0] {
                 "datadog" => {
                     if parts.len() != 5 {
-                        anyhow::bail!("{} is datadog and does not have exactly 5 parts", path);
+                        anyhow::bail!("{path} is datadog and does not have exactly 5 parts");
                     }
                     let org_id: u64 = parts[1].parse()?;
                     // The agent parses org_id as an int64; reject values it would
                     // reject (> i64::MAX) so both clients accept/reject the same paths.
                     if org_id > i64::MAX as u64 {
-                        anyhow::bail!("org_id {} exceeds i64::MAX in path {}", org_id, path);
+                        anyhow::bail!("org_id {org_id} exceeds i64::MAX in path {path}");
                     }
                     RemoteConfigSource::Datadog(org_id)
                 }
                 "employee" => {
                     if parts.len() != 4 {
-                        anyhow::bail!("{} is employee and does not have exactly 4 parts", path);
+                        anyhow::bail!("{path} is employee and does not have exactly 4 parts");
                     }
                     RemoteConfigSource::Employee
                 }
-                source => anyhow::bail!("Unknown source {}", source),
+                source => anyhow::bail!("Unknown source {source}"),
             },
             product: match parts[parts.len() - 3] {
                 "AGENT_CONFIG" => RemoteConfigProduct::AgentConfig,
@@ -108,19 +108,19 @@ impl RemoteConfigPath {
                 "FFE_FLAGS" => RemoteConfigProduct::FfeFlags,
                 "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
                 "LIVE_DEBUGGING_SYMBOL_DB" => RemoteConfigProduct::LiveDebuggerSymbolDb,
-                product => anyhow::bail!("Unknown product {}", product),
+                product => anyhow::bail!("Unknown product {product}"),
             },
             config_id: {
                 let config_id = parts[parts.len() - 2];
                 if config_id.is_empty() {
-                    anyhow::bail!("empty config_id in path {}", path);
+                    anyhow::bail!("empty config_id in path {path}");
                 }
                 config_id
             },
             name: {
                 let name = parts[parts.len() - 1];
                 if name.is_empty() {
-                    anyhow::bail!("empty name in path {}", path);
+                    anyhow::bail!("empty name in path {path}");
                 }
                 name
             },

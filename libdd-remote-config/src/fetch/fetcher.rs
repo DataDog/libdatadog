@@ -553,14 +553,14 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
                 continue;
             };
             let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw_file) else {
-                anyhow::bail!(
-                    "Failed base64 decoding config for path {path}: {}",
-                    String::from_utf8_lossy(raw_file)
-                )
+                anyhow::bail!("Failed base64 decoding config for path {path}")
             };
             let computed_hash = hasher(decoded.as_slice());
             if hash != computed_hash {
-                anyhow::bail!("Computed hash of file {computed_hash} did not match remote config targets file hash {hash} for path {path}: file: {}", String::from_utf8_lossy(decoded.as_slice()));
+                anyhow::bail!(
+                    "Computed hash of file {computed_hash} did not match remote config targets \
+                    file hash {hash} for path {path}"
+                );
             }
             let Some(version) = target_file.try_parse_version() else {
                 anyhow::bail!("Failed parsing version from remote config path {path}");

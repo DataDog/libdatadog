@@ -407,24 +407,20 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         let mut buf = vec![
             0;
             usize::try_from(target.length).map_err(|_| {
+                let length = target.length;
                 format_err!(
-                    "target length overflows usize for path: {} (got {} bytes)",
-                    target.path,
-                    target.length
+                    "target length overflows usize for path: {target_path} (got {length} bytes)"
                 )
             })?
         ];
         read.read_exact(&mut buf).await?;
 
         let actual_len = u64::try_from(buf.len()).map_err(|_| {
-            format_err!(
-                "target length overflows u64 for path: {} (got {} bytes)",
-                target.path,
-                buf.len()
-            )
+            let got = buf.len();
+            format_err!("target length overflows u64 for path: {target_path} (got {got} bytes)")
         })?;
         if actual_len != target.length {
-            bail!("bad length for file at path: {}", target.path)
+            bail!("bad length for file at path: {target_path}")
         }
 
         let hash_algs = target
@@ -444,7 +440,7 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
                 .iter()
                 .all(|(k, v)| expected.get(&k).is_some_and(|e| *e == v)))
         {
-            bail!("hash did not match: {}", target.path)
+            bail!("hash did not match: {target_path}")
         }
 
         Ok(buf)
@@ -850,11 +846,8 @@ fn parse_rc_response<T: prost::Message + Default>(
     let status = response.status().as_u16();
     let body = response.into_body();
     if !(200..300).contains(&status) {
-        bail!(
-            "Non 2XX status code: {}\n{}",
-            status,
-            String::from_utf8_lossy(&body)
-        )
+        let body_lossy = String::from_utf8_lossy(&body);
+        bail!("Non 2XX status code: {status}\n{body_lossy}")
     }
     Ok(T::decode(body)?)
 }
