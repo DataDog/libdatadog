@@ -123,6 +123,16 @@ pub struct MemcachedObfuscationConfig {
     pub keep_command: bool,
 }
 
+impl AgentInfo {
+    /// Return true if the agent advertises support for the extended (15 KB) resource length limit.
+    pub fn is_big_resource_enabled(&self) -> bool {
+        self.info
+            .feature_flags
+            .iter()
+            .any(|flag| flag == "big_resource")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AgentInfoStruct;
