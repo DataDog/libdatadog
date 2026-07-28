@@ -348,6 +348,8 @@ fn slice_up_to(s: &str, max_len: usize) -> &str {
     if max_len >= s.len() {
         return s;
     }
+    // TODO: use `floor_char_boundary` once our MSRV is 1.91 or higher
+    // (https://doc.rust-lang.org/std/primitive.str.html#method.floor_char_boundary)
     let mut idx = max_len;
     while !s.is_char_boundary(idx) {
         idx -= 1;
