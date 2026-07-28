@@ -9,12 +9,12 @@
 //! `X-Datadog-EVP-Subdomain: event-platform-intake`. No agent capability gate.
 
 use crate::service::FfeExposureBatch;
-use datadog_ffe::telemetry::exposures::encode_exposure_batch;
-pub(crate) use datadog_ffe::telemetry::exposures::ExposureDeduplicator;
 use http::uri::PathAndQuery;
 use http::Method;
 use libdd_capabilities::{Bytes, HttpClientCapability, SleepCapability};
 use libdd_common::Endpoint;
+use libdd_ffe::telemetry::exposures::encode_exposure_batch;
+pub(crate) use libdd_ffe::telemetry::exposures::ExposureDeduplicator;
 use std::time::Duration;
 use tracing::{debug, warn};
 
