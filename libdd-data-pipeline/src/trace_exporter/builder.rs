@@ -5,6 +5,9 @@ use crate::agent_info::AgentInfoFetcher;
 use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
+// gRPC OTLP export is native-only; tonic/hyper do not build for wasm32.
+#[cfg(not(target_arch = "wasm32"))]
+use crate::otlp::{build_grpc_transport, OtlpGrpcTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
@@ -14,9 +17,9 @@ use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
 use crate::trace_exporter::TelemetryConfig;
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
-    add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
-    TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat, TraceSerializer,
-    TracerMetadata, INFO_ENDPOINT,
+    add_path, OtlpExportMode, StatsComputationStatus, TelemetryInstrumentationSessions,
+    TraceExporter, TraceExporterError, TraceExporterInputFormat, TraceExporterOutputFormat,
+    TraceSerializer, TracerMetadata, INFO_ENDPOINT,
 };
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
@@ -416,10 +419,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
-    /// Selects the OTLP export protocol: [`OtlpProtocol::HttpJson`] (default) or
-    /// [`OtlpProtocol::HttpProtobuf`]. The host language resolves this from
-    /// `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; a `grpc` value is
-    /// unsupported and is rejected when parsed into [`OtlpProtocol`], so it never reaches here.
+    /// Selects the OTLP export protocol: [`OtlpProtocol::HttpJson`] (default),
+    /// [`OtlpProtocol::HttpProtobuf`], or [`OtlpProtocol::Grpc`]. The host language resolves this
+    /// from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` / `OTEL_EXPORTER_OTLP_PROTOCOL`; all three OTel
+    /// protocol strings (`http/json`, `http/protobuf`, `grpc`) parse into [`OtlpProtocol`]. gRPC
+    /// export requires a plaintext `http://` endpoint: an `https://` gRPC endpoint is rejected at
+    /// [`build`](Self::build) time, and gRPC is not supported on wasm32 targets (also rejected at
+    /// build time).
     pub fn set_otlp_protocol(&mut self, protocol: OtlpProtocol) -> &mut Self {
         self.otlp_protocol = protocol;
         self
@@ -715,17 +721,48 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             .map(Duration::from_millis)
             .unwrap_or(DEFAULT_OTLP_TIMEOUT);
 
-        // `self.otlp_protocol` is always an HTTP encoding here: gRPC is rejected at the parse
-        // boundary (`OtlpProtocol::from_str`) and so can never be constructed.
-        let otlp_config = otlp_endpoint.map(|url| OtlpTraceConfig {
-            endpoint_url: url,
-            headers: build_otlp_header_map(self.otlp_headers),
-            timeout: otlp_timeout,
-            protocol: self.otlp_protocol,
-            instrumentation_scope_name: self.instrumentation_scope_name,
-            instrumentation_scope_version: self.instrumentation_scope_version,
-            otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
-        });
+        // Capture the OTLP headers and instrumentation scope out of `self` before the transport
+        // match below moves/consumes them. The gRPC config carries no scope fields, so the scope
+        // is threaded through these locals into the shared `otlp_resource_info` rather than
+        // read back off the built transport.
+        let otlp_headers = self.otlp_headers;
+        let instrumentation_scope_name = self.instrumentation_scope_name;
+        let instrumentation_scope_version = self.instrumentation_scope_version;
+
+        // Transport selection by protocol. gRPC export is native-only; on wasm32 a gRPC endpoint is
+        // rejected here (tonic/hyper don't build for wasm), so the reject arm carries no gRPC deps.
+        let otlp = match otlp_endpoint {
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(url) if self.otlp_protocol == OtlpProtocol::Grpc => {
+                let transport = build_grpc_transport(
+                    &url,
+                    OtlpGrpcTraceConfig {
+                        headers: otlp_headers,
+                        timeout: otlp_timeout,
+                        otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+                    },
+                )?;
+                Some(OtlpExportMode::Grpc(transport))
+            }
+            #[cfg(target_arch = "wasm32")]
+            Some(_) if self.otlp_protocol == OtlpProtocol::Grpc => {
+                return Err(TraceExporterError::Builder(
+                    BuilderErrorKind::InvalidConfiguration(
+                        "OTLP gRPC export is not supported on wasm32 targets".to_string(),
+                    ),
+                ));
+            }
+            Some(url) => Some(OtlpExportMode::Http(OtlpTraceConfig {
+                endpoint_url: url,
+                headers: build_otlp_header_map(otlp_headers),
+                timeout: otlp_timeout,
+                protocol: self.otlp_protocol,
+                instrumentation_scope_name: instrumentation_scope_name.clone(),
+                instrumentation_scope_version: instrumentation_scope_version.clone(),
+                otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
+            })),
+            None => None,
+        };
 
         let otlp_metrics_config = self.otlp_metrics_endpoint.map(|url| OtlpMetricsConfig {
             endpoint_url: url,
@@ -738,6 +775,20 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         let runtime_id = self
             .runtime_id
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        // Fields shared by both OTLP resource-info sites (the metrics stats worker below and the
+        // trace `otlp_resource_info`); each site fills only its differing tail fields. Borrows
+        // `self` immutably — all field owners are still live here (moved into `metadata` later).
+        let base_otlp_resource = |rid: &str| {
+            let mut r = OtlpResourceInfo::default();
+            r.service = self.service.clone();
+            r.env = self.env.clone();
+            r.app_version = self.app_version.clone();
+            r.language = self.language.clone();
+            r.tracer_version = self.tracer_version.clone();
+            r.runtime_id = rid.to_string();
+            r
+        };
 
         // OTLP metrics + stats bucket size: start the concentrator unconditionally (bypass the
         // agent gate) so `check_agent_info` cannot later disable stats.
@@ -762,13 +813,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 #[cfg(feature = "stats-obfuscation")]
                 None,
             )));
-            let mut resource = OtlpResourceInfo::default();
-            resource.service = self.service.clone();
-            resource.env = self.env.clone();
-            resource.app_version = self.app_version.clone();
-            resource.language = self.language.clone();
-            resource.tracer_version = self.tracer_version.clone();
-            resource.runtime_id = runtime_id.clone();
+            let mut resource = base_otlp_resource(&runtime_id);
             resource.hostname = self.hostname.clone();
             resource.process_tags = self.process_tags.clone();
             let worker = OtlpStatsExporter {
@@ -788,6 +833,31 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             };
             otlp_stats_enabled = true;
         }
+
+        // Tracer metadata is immutable, so build the OTLP resource info once here rather than
+        // on every `send_otlp_traces_inner` call. `self.service`/etc. are still owned by `self`
+        // at this point (cloned, not moved) because they're moved into `metadata` below, after
+        // this. The instrumentation scope is read back from the HTTP config (which carries a copy)
+        // for that path; the gRPC config has no scope fields, so its scope is threaded in from the
+        // locals captured above. Either way both transports ship a populated scope.
+        let otlp_resource_info = if let Some(mode) = otlp.as_ref() {
+            let mut r = base_otlp_resource(&runtime_id);
+            r.client_computed_stats = otlp_stats_enabled;
+            match mode {
+                OtlpExportMode::Http(config) => {
+                    r.instrumentation_scope_name = config.instrumentation_scope_name.clone();
+                    r.instrumentation_scope_version = config.instrumentation_scope_version.clone();
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                OtlpExportMode::Grpc(_) => {
+                    r.instrumentation_scope_name = instrumentation_scope_name;
+                    r.instrumentation_scope_version = instrumentation_scope_version;
+                }
+            }
+            r
+        } else {
+            OtlpResourceInfo::default()
+        };
 
         let log_output = self
             .output_to_log
@@ -853,7 +923,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agent_payload_response_version: self
                 .agent_rates_payload_version_enabled
                 .then(AgentResponsePayloadVersion::new),
-            otlp_config,
+            otlp,
+            otlp_resource_info,
             agentless_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
@@ -1022,7 +1093,14 @@ mod tests {
         assert_eq!(exporter.metadata.language_interpreter_vendor, "node");
         assert_eq!(exporter.metadata.git_commit_sha, "797e9ea");
         assert!(exporter.metadata.client_computed_stats);
-        let otlp_config = exporter.otlp_config.as_ref().unwrap();
+        // On wasm the enum has a single (`Http`) variant, so this is an infallible destructuring
+        // match; on native the `Grpc` arm makes it a real match.
+        #[cfg_attr(target_arch = "wasm32", allow(clippy::infallible_destructuring_match))]
+        let otlp_config = match exporter.otlp.as_ref().unwrap() {
+            OtlpExportMode::Http(c) => c,
+            #[cfg(not(target_arch = "wasm32"))]
+            OtlpExportMode::Grpc(_) => panic!("expected HTTP OTLP mode"),
+        };
         assert_eq!(otlp_config.instrumentation_scope_name, "dd-trace-js");
         assert_eq!(otlp_config.instrumentation_scope_version, "7.0.0-pre");
         #[cfg(feature = "telemetry")]
@@ -1208,6 +1286,48 @@ mod tests {
             .set_url("http://localhost:8126")
             .set_otlp_endpoint("http://localhost:4318/v1/traces");
         assert!(builder.build::<NativeCapabilities>().is_ok());
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn build_with_grpc_protocol_and_endpoint_succeeds() {
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint("http://localhost:4317")
+            .set_otlp_protocol(OtlpProtocol::Grpc)
+            .set_otlp_instrumentation_scope("dd-trace-js", "7.0.0-pre");
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        assert!(matches!(exporter.otlp, Some(OtlpExportMode::Grpc(_))));
+        // gRPC scope is threaded through the shared resource info, not left empty.
+        assert_eq!(
+            exporter.otlp_resource_info.instrumentation_scope_name,
+            "dd-trace-js"
+        );
+        assert_eq!(
+            exporter.otlp_resource_info.instrumentation_scope_version,
+            "7.0.0-pre"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn build_with_grpc_protocol_no_endpoint_uses_agent_path() {
+        // Selecting the gRPC protocol without an OTLP endpoint must not enable OTLP export.
+        let mut builder = TraceExporterBuilder::default();
+        builder.set_otlp_protocol(OtlpProtocol::Grpc);
+        let exporter = builder.build::<NativeCapabilities>().unwrap();
+        assert!(exporter.otlp.is_none());
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn build_with_grpc_https_endpoint_rejected() {
+        // gRPC TLS (`https://`) is unsupported and must be rejected at build time.
+        let mut builder = TraceExporterBuilder::default();
+        builder
+            .set_otlp_endpoint("https://localhost:4317")
+            .set_otlp_protocol(OtlpProtocol::Grpc);
+        assert!(builder.build::<NativeCapabilities>().is_err());
     }
 
     #[cfg_attr(miri, ignore)]

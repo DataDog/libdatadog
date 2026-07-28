@@ -17,7 +17,7 @@ use std::time::Duration;
 pub(crate) const OTLP_MAX_RETRIES: u32 = 4;
 /// No retries on shutdown to avoid a long backoff in the shutdown window.
 pub(crate) const OTLP_SHUTDOWN_MAX_RETRIES: u32 = 0;
-const OTLP_RETRY_DELAY_MS: u64 = 100;
+pub(crate) const OTLP_RETRY_DELAY_MS: u64 = 100;
 
 /// POST an OTLP HTTP payload to `endpoint_url` with the given `content_type` (callers pass JSON or
 /// protobuf); `test_token` enables snapshot tests.
@@ -84,13 +84,18 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     test_token: Option<&str>,
     body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
+    let content_type = config.protocol.content_type().ok_or_else(|| {
+        TraceExporterError::Internal(InternalErrorKind::InvalidWorkerState(
+            "OTLP gRPC protocol cannot be sent over the HTTP export path".to_string(),
+        ))
+    })?;
     send_otlp_http(
         capabilities,
         &config.endpoint_url,
         &config.headers,
         config.timeout,
         test_token,
-        config.protocol.content_type(),
+        content_type,
         body,
         OTLP_MAX_RETRIES,
     )
