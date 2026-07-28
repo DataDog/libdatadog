@@ -246,16 +246,7 @@ impl TraceRootSamplingInfo {
         }
         let low64 = trace_id.to_u128() as u64;
         let rv = (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8;
-        // `th = round((1 - rate) * 2^56)`, matching the OTel RFC's worked example.
-        const MAX_56_BIT: u64 = (1u64 << 56) - 1;
-        let raw_th = ((1.0 - self.rate) * (1u64 << 56) as f64).round();
-        let th = if raw_th <= 0.0 {
-            0
-        } else if raw_th >= MAX_56_BIT as f64 {
-            MAX_56_BIT
-        } else {
-            raw_th as u64
-        };
+        let th = ((1.0 - self.rate) * (1u64 << 56) as f64).round() as u64;
         Some(OtelConsistentSampling { rv, th })
     }
 
