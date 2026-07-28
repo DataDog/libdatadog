@@ -1,5 +1,5 @@
 [package]
-name = "datadog-ffe-test-suite"
+name = "libdd-ffe-test-suite"
 version.workspace = true
 rust-version.workspace = true
 edition.workspace = true

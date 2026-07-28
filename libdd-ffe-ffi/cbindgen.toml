@@ -16,7 +16,7 @@ sys_includes = ["stdbool.h", "stddef.h", "stdint.h"]
 includes = ["common.h"]
 
 [export]
-include = ["datadog-ffe-ffi"]
+include = ["libdd-ffe-ffi"]
 prefix = "ddog_ffe_"
 renaming_overrides_prefixing = true
 

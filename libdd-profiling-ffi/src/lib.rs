@@ -47,7 +47,7 @@ pub use libdd_library_config_ffi::*;
 pub use libdd_log_ffi::*;
 
 // re-export ffe ffi
-#[cfg(feature = "datadog-ffe-ffi")]
+#[cfg(feature = "libdd-ffe-ffi")]
 pub use datadog_ffe_ffi;
 
 // re-export shared-runtime ffi (fork-lifecycle management)
