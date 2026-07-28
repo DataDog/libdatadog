@@ -1499,6 +1499,7 @@ pub fn debug_latest_configs_response(
 }
 
 #[cfg(test)]
+#[cfg_attr(miri, ignore)]
 mod tests {
     use libdd_common::Endpoint;
 
@@ -1700,4 +1701,5 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg_attr(miri, ignore)]
 mod integration_tests;
