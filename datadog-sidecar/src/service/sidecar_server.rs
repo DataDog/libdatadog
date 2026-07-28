@@ -1197,6 +1197,42 @@ mod tests {
         ConnectionSidecarHandler::new(server, conn)
     }
 
+    fn test_session_config() -> SessionConfig {
+        let endpoint = Endpoint {
+            url: "http://127.0.0.1:9".parse().expect("valid test endpoint"),
+            api_key: Some("test-api-key".into()),
+            ..Endpoint::default()
+        };
+
+        SessionConfig {
+            endpoint,
+            dogstatsd_endpoint: Endpoint::default(),
+            language: "php".to_owned(),
+            language_version: "8.3".to_owned(),
+            tracer_version: "1.22.0".to_owned(),
+            flush_interval: Duration::from_millis(100),
+            remote_config_poll_interval: Duration::from_secs(5),
+            telemetry_heartbeat_interval: Duration::from_secs(60),
+            telemetry_extended_heartbeat_interval: Duration::from_secs(60),
+            force_flush_size: 0,
+            force_drop_size: 0,
+            retry_interval: Duration::from_millis(100),
+            log_level: "off".to_owned(),
+            log_file: crate::config::LogMethod::Disabled,
+            remote_config_products: Vec::new(),
+            remote_config_capabilities: Vec::new(),
+            remote_config_enabled: false,
+            process_tags: Vec::new(),
+            peer_tag_keys: Vec::new(),
+            span_kinds_stats_computed: Vec::new(),
+            hostname: String::new(),
+            root_service: "service".to_owned(),
+            root_session_id: None,
+            parent_session_id: None,
+            otlp_metrics_endpoint: None,
+        }
+    }
+
     fn ffe_context() -> FfeTelemetryContext {
         FfeTelemetryContext {
             service: "svc".to_owned(),
@@ -1400,6 +1436,87 @@ mod tests {
 
         assert_eq!(exposures_mock.calls_async().await, 0);
         assert_eq!(metrics_mock.calls_async().await, 0);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn sibling_session_config_preserves_registered_applications() {
+        let server = SidecarServer::default();
+        let first_connection = test_handler(server.clone());
+        let second_connection = test_handler(server);
+        let session_id = "shared-session".to_owned();
+        let instance_id = InstanceId::new(session_id.clone(), "runtime".to_owned());
+        let queue_id = QueueId::from(42);
+        let config = test_session_config();
+
+        first_connection
+            .set_session_config(session_id.clone(), config.clone(), false)
+            .await;
+        first_connection
+            .set_universal_service_tags(
+                instance_id.clone(),
+                queue_id,
+                "service".to_owned(),
+                "prod".to_owned(),
+                "1.0.0".to_owned(),
+                Vec::new(),
+                DynamicInstrumentationConfigState::NotSet,
+                0,
+            )
+            .await;
+
+        assert!(first_connection
+            .server
+            .get_runtime(&instance_id)
+            .lock_applications()
+            .contains_key(&queue_id));
+
+        second_connection
+            .set_session_config(session_id, config, false)
+            .await;
+
+        assert!(
+            first_connection
+                .server
+                .get_runtime(&instance_id)
+                .lock_applications()
+                .contains_key(&queue_id),
+            "configuring a shared session from a sibling connection removed the registered application"
+        );
+
+        first_connection
+            .enqueue_actions(
+                instance_id,
+                queue_id,
+                vec![SidecarAction::Telemetry(TelemetryActions::AddConfig(
+                    libdd_telemetry::data::Configuration {
+                        name: "instrumentation_type".to_owned(),
+                        value: "trace".to_owned(),
+                        origin: libdd_telemetry::data::ConfigurationOrigin::Default,
+                        config_id: None,
+                        seq_id: None,
+                    },
+                ))],
+            )
+            .await;
+
+        let client = first_connection
+            .server
+            .telemetry_clients
+            .inner
+            .lock_or_panic()
+            .get(&("service".to_owned(), "prod".to_owned()))
+            .expect("the app-started config should create a telemetry client")
+            .client
+            .clone();
+        assert!(
+            client
+                .lock_or_panic()
+                .as_ref()
+                .expect("the telemetry client should still be active")
+                .shared
+                .config_sent
+        );
     }
 }
 
