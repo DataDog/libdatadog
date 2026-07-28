@@ -28,6 +28,8 @@
 //! **Never use `+ Send` directly in trait bounds for async functions in
 //! wasm-compatible code.** Always use `+ MaybeSend` instead.
 
+use std::future::Future;
+
 /// A trait that is `Send` on native targets, but auto-implemented on wasm.
 ///
 /// Use this instead of `Send` in all capability trait bounds.
@@ -43,3 +45,7 @@ pub trait MaybeSend {}
 
 #[cfg(target_arch = "wasm32")]
 impl<T> MaybeSend for T {}
+
+/// A `Future` that is additionally `MaybeSend`, avoiding the need for a `cfg` split.
+pub trait MaybeSendFuture<T>: Future<Output = T> + MaybeSend {}
+impl<T, F: Future<Output = T> + MaybeSend> MaybeSendFuture<T> for F {}

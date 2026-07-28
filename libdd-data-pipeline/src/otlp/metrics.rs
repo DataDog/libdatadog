@@ -8,6 +8,7 @@ use super::config::OtlpMetricsConfig;
 use super::exporter::{send_otlp_http, OTLP_MAX_RETRIES, OTLP_SHUTDOWN_MAX_RETRIES};
 use async_trait::async_trait;
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
+use libdd_common::MutexExt;
 use libdd_ddsketch::DDSketch;
 use libdd_shared_runtime::Worker;
 use libdd_trace_protobuf::pb;
@@ -181,6 +182,11 @@ fn build_attributes(
             push(k, v);
         }
     }
+    for tag in &group.additional_metric_tags {
+        if let Some((k, v)) = tag.split_once(':') {
+            push(k, v);
+        }
+    }
     if !otel_trace_semantics_enabled {
         push("datadog.operation.name", &group.name);
         push("datadog.span.type", &group.r#type);
@@ -257,8 +263,7 @@ impl<C: HttpClientCapability + SleepCapability> OtlpStatsExporter<C> {
     /// Flush the concentrator and export stats; returns `Ok(true)` if anything was sent.
     async fn send(&self, force_flush: bool, max_retries: u32) -> anyhow::Result<bool> {
         let buckets = {
-            #[allow(clippy::unwrap_used)]
-            let mut c = self.concentrator.lock().unwrap();
+            let mut c = self.concentrator.lock_or_panic();
             c.flush_with_otlp_exact(SystemTime::now(), force_flush)
         };
         if buckets.is_empty() {
@@ -299,6 +304,13 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Wor
         if let Err(e) = self.send(false, OTLP_MAX_RETRIES).await {
             error!(?e, "Error exporting OTLP trace metrics");
         }
+    }
+
+    fn reset(&mut self) {
+        let _ = self
+            .concentrator
+            .lock_or_panic()
+            .flush(SystemTime::now(), true);
     }
 
     async fn shutdown(&mut self) {
@@ -578,6 +590,38 @@ mod tests {
         let ok_s = ok_pt["sum"].as_f64().unwrap();
         let err_s = err_pt["sum"].as_f64().unwrap();
         assert_eq!(ok_s + err_s, ns_to_s(combined_ns));
+    }
+
+    #[test]
+    fn emits_additional_metric_tags_as_attributes() {
+        let g = group_with_exact(&[1_000_000_000], &[], |g| {
+            g.additional_metric_tags = vec![
+                "custom.primary:a".into(),
+                "region:us-east".into(),
+                // Only the first `:` is a delimiter; the value keeps any embedded `:`.
+                "endpoint:https://host:8080".into(),
+            ];
+        });
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g.clone()]), &resource(), false).unwrap();
+        let a = points(&req)[0]["attributes"].as_array().unwrap();
+        assert_eq!(str_at(a, "custom.primary"), Some("a"));
+        assert_eq!(str_at(a, "region"), Some("us-east"));
+        assert_eq!(str_at(a, "endpoint"), Some("https://host:8080"));
+
+        // Additional metric tags are user/tracer-defined (not Datadog-internal), so unlike
+        // `datadog.*` attributes they still pass through in OTel-semantics mode.
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), true).unwrap();
+        let a = points(&req)[0]["attributes"].as_array().unwrap();
+        assert_eq!(str_at(a, "custom.primary"), Some("a"));
+
+        // Malformed (no `:`) or empty-value entries are skipped rather than emitted verbatim.
+        let g = group_with_exact(&[1_000_000_000], &[], |g| {
+            g.additional_metric_tags = vec!["malformed".into(), "empty:".into()];
+        });
+        let req = map_stats_to_otlp_metrics(&buckets(vec![g]), &resource(), false).unwrap();
+        let a = points(&req)[0]["attributes"].as_array().unwrap();
+        assert!(!a.iter().any(|kv| kv["key"] == "malformed"));
+        assert!(!a.iter().any(|kv| kv["key"] == "empty"));
     }
 
     #[test]

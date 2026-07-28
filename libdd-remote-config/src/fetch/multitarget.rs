@@ -8,6 +8,7 @@ use crate::fetch::{
 use crate::{RemoteConfigCapabilities, RemoteConfigProduct, Target};
 use futures_util::future::Shared;
 use futures_util::FutureExt;
+use libdd_capabilities::HttpClientCapability;
 use libdd_common::MutexExt;
 use manual_future::ManualFuture;
 use serde::{Deserialize, Serialize};
@@ -33,10 +34,13 @@ use tracing::{debug, error, trace};
 /// This fetcher is designed for use cases with more than one Target tuple associated to a
 /// specific runtime id and/or handling hundreds to thousands of different runtime ids with a low
 /// amount of actual remote config clients.
-pub struct MultiTargetFetcher<N: NotifyTarget, S: FileStorage + Clone + Sync + Send>
-where
+pub struct MultiTargetFetcher<
+    N: NotifyTarget,
+    S: FileStorage + Clone + Sync + Send,
+    C: HttpClientCapability + Send + Sync,
+> where
     S::StoredFile: RefcountedFile + Sync + Send,
-    S: MultiTargetHandlers<N, S>,
+    S: MultiTargetHandlers<N, S, C>,
 {
     /// Keyed by runtime_id
     runtimes: Mutex<HashMap<String, RuntimeInfo<N>>>,
@@ -46,7 +50,7 @@ where
     /// WARNING: do NOT lock runtimes while holding a lock to services!
     services: Mutex<HashMap<Arc<Target>, KnownTarget>>,
     pending_async_insertions: AtomicU32,
-    pub storage: RefcountingStorage<S>,
+    pub storage: RefcountingStorage<S, C>,
     /// Limit on how many fetchers can be active at once.
     /// This functionality is mostly targeted at CLI programs which generally have their file name
     /// as the service name. E.g. a phpt testsuite will generate one service for every single file.
@@ -151,13 +155,14 @@ pub trait NotifyTarget: Sync + Send + Sized + Hash + Eq + Clone + Debug {
 
 pub trait MultiTargetHandlers<
     N: NotifyTarget,
-    S: FileStorage + Clone + Sync + Send + MultiTargetHandlers<N, S>,
+    S: FileStorage + Clone + Sync + Send + MultiTargetHandlers<N, S, C>,
+    C: HttpClientCapability + Send + Sync,
 > where
     S::StoredFile: RefcountedFile + Sync + Send,
 {
     fn fetched(
         &self,
-        fetcher: &Arc<MultiTargetFetcher<N, S>>,
+        fetcher: &Arc<MultiTargetFetcher<N, S, C>>,
         runtime_id: &Arc<String>,
         target: &Arc<Target>,
         files: &[Arc<S::StoredFile>],
@@ -178,17 +183,23 @@ struct RuntimeInfo<N: NotifyTarget> {
     targets: HashMap<Arc<Target>, u32>,
 }
 
-impl<N: NotifyTarget + 'static, S: FileStorage + Clone + Sync + Send + 'static>
-    MultiTargetFetcher<N, S>
+impl<
+        N: NotifyTarget + 'static,
+        S: FileStorage + Clone + Sync + Send + 'static,
+        C: HttpClientCapability + Send + Sync + 'static,
+    > MultiTargetFetcher<N, S, C>
 where
     S::StoredFile: RefcountedFile + Sync + Send,
-    S: MultiTargetHandlers<N, S>,
+    S: MultiTargetHandlers<N, S, C>,
 {
     pub const DEFAULT_CLIENTS_LIMIT: u32 = 100;
 
-    pub fn new(storage: S, invariants: ConfigInvariants) -> Arc<Self> {
+    pub fn new(storage: S, invariants: ConfigInvariants, http_client: C) -> Arc<Self> {
         Arc::new(MultiTargetFetcher {
-            storage: RefcountingStorage::new(storage, ConfigFetcherState::new(invariants)),
+            storage: RefcountingStorage::new(
+                storage,
+                ConfigFetcherState::with_client(invariants, http_client),
+            ),
             runtimes: Mutex::new(Default::default()),
             remote_config_interval: AtomicU64::new(5_000_000_000),
             services: Mutex::new(Default::default()),
@@ -774,6 +785,7 @@ mod tests {
     use crate::fetch::shared::tests::*;
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::{RemoteConfigPath, Target};
+    use libdd_capabilities_impl::NativeHttpClient;
     use manual_future::ManualFutureCompleter;
     use std::hash::Hasher;
     use std::sync::atomic::AtomicU8;
@@ -810,10 +822,10 @@ mod tests {
         }
     }
 
-    impl MultiTargetHandlers<Notifier, MultiFileStorage> for MultiFileStorage {
+    impl MultiTargetHandlers<Notifier, MultiFileStorage, NativeHttpClient> for MultiFileStorage {
         fn fetched(
             &self,
-            _fetcher: &Arc<MultiTargetFetcher<Notifier, MultiFileStorage>>,
+            _fetcher: &Arc<MultiTargetFetcher<Notifier, MultiFileStorage, NativeHttpClient>>,
             _runtime_id: &Arc<String>,
             target: &Arc<Target>,
             files: &[Arc<RcPathStore>],
@@ -955,9 +967,10 @@ mod tests {
 
         let fut = storage.await_fetches(1);
 
-        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage>::new(
+        let fetcher = MultiTargetFetcher::<Notifier, MultiFileStorage, NativeHttpClient>::new(
             storage.clone(),
             server.dummy_options().invariants,
+            NativeHttpClient::new_without_connection_pooling(),
         );
         fetcher.remote_config_interval.store(1000, Ordering::SeqCst);
 

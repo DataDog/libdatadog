@@ -6,6 +6,8 @@ use cadence::prelude::*;
 use cadence::{Metric, MetricBuilder, QueuingMetricSink, StatsdClient};
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
+#[cfg(feature = "shared-runtime")]
+use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
 use sink::create_udp_sink;
 #[cfg(unix)]
 use sink::create_unix_sink;
@@ -14,6 +16,10 @@ use tracing::error;
 
 /// Provides transport sink which can be wrapped in buffered sink
 mod sink;
+
+/// Provides a buffered sink running on a [libdd_shared_runtime::SharedRuntime]
+#[cfg(feature = "shared-runtime")]
+mod shared_runtime_sink;
 
 // Queue with a maximum capacity of 32K elements
 const QUEUE_SIZE: usize = 32 * 1024;
@@ -45,6 +51,31 @@ impl DogStatsDClient {
                 ..Default::default()
             }),
         })
+    }
+
+    /// Create a [`Client`] backed by a [`MetricSinkWorker`] running on the
+    /// provided [`SharedRuntime`].
+    ///
+    /// Returns the client and a [`WorkerHandle`] that can be used to stop the
+    /// worker independently of the runtime.
+    ///
+    /// # Errors
+    /// Returns an error if the endpoint is invalid or the worker cannot be spawned.
+    #[cfg(feature = "shared-runtime")]
+    pub fn new_with_shared_runtime(
+        endpoint: Endpoint,
+        runtime: &impl SharedRuntime,
+    ) -> anyhow::Result<(Self, WorkerHandle)> {
+        let (sink, handle) = shared_runtime_sink::create_shared_runtime_sink(&endpoint, runtime)?;
+
+        let client = Self {
+            inner: Arc::new(InnerClient {
+                client: OnceLock::from(StatsdClient::from_sink("", sink)),
+                endpoint,
+            }),
+        };
+
+        Ok((client, handle))
     }
 
     /// Send a vector of DogStatsDActionOwned, this is the same as `send` except it uses the
@@ -238,5 +269,52 @@ mod test {
         for task in tasks {
             task.await.unwrap();
         }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    #[cfg(feature = "shared-runtime")]
+    fn test_shared_runtime_flusher() {
+        use libdd_shared_runtime::{BasicRuntime, BlockingRuntime, SharedRuntime};
+
+        let socket = net::UdpSocket::bind("127.0.0.1:0").expect("failed to bind host socket");
+        let _ = socket.set_read_timeout(Some(Duration::from_millis(500)));
+
+        let runtime = BasicRuntime::new().unwrap();
+
+        let (flusher, _handle) = DogStatsDClient::new_with_shared_runtime(
+            Endpoint::from_slice(socket.local_addr().unwrap().to_string().as_str()),
+            &runtime,
+        )
+        .unwrap();
+
+        flusher.send(vec![
+            Count("test_count", 3, &vec![tag!("foo", "bar")]),
+            Count("test_neg_count", -2, &vec![]),
+            Distribution("test_distribution", 4.2, &vec![]),
+            Gauge("test_gauge", 7.6, &vec![]),
+            Histogram("test_histogram", 8.0, &vec![]),
+            Set("test_set", 9, &vec![tag!("the", "end")]),
+            Set("test_neg_set", -1, &vec![]),
+        ]);
+
+        runtime
+            .block_on(runtime.shutdown_async())
+            .expect("Failed to shutdown runtime");
+
+        fn read(socket: &net::UdpSocket) -> String {
+            let mut buf = [0; 100];
+            socket.recv(&mut buf).expect("No data");
+            let datagram = String::from_utf8_lossy(buf.strip_suffix(&[0]).unwrap());
+            datagram.trim_matches(char::from(0)).to_string()
+        }
+
+        assert_eq!("test_count:3|c|#foo:bar", read(&socket));
+        assert_eq!("test_neg_count:-2|c", read(&socket));
+        assert_eq!("test_distribution:4.2|d", read(&socket));
+        assert_eq!("test_gauge:7.6|g", read(&socket));
+        assert_eq!("test_histogram:8|h", read(&socket));
+        assert_eq!("test_set:9|s|#the:end", read(&socket));
+        assert_eq!("test_neg_set:-1|s", read(&socket));
     }
 }

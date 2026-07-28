@@ -188,6 +188,7 @@ pub use libdd_trace_utils::tracer_metadata::TracerMetadata;
 /// Handles for the background workers owned by a [`TraceExporter`].
 #[derive(Debug)]
 pub(crate) struct TraceExporterWorkers {
+    dogstatsd: Option<WorkerHandle>,
     /// `None` when no background `/info` fetcher is started (agentless trace
     /// export mode, log-export mode).
     info_fetcher: Option<WorkerHandle>,
@@ -279,6 +280,8 @@ pub struct TraceExporter<
     /// path) instead of being sent to an agent. Used in serverless environments
     /// where no agent is reachable.
     log_output: Option<usize>,
+    /// Whether background workers should be restarted in the child after a `fork()`.
+    restart_after_fork: bool,
 }
 
 impl<
@@ -342,6 +345,10 @@ impl<
 
         if let Some(info_fetcher) = self.workers.info_fetcher {
             handles.push(info_fetcher);
+        }
+
+        if let Some(dogstatsd) = self.workers.dogstatsd {
+            handles.push(dogstatsd)
         }
 
         #[cfg(feature = "telemetry")]
@@ -460,6 +467,7 @@ impl<
                     endpoint_url: &self.endpoint.url,
                     shared_runtime: &*self.shared_runtime,
                     stats_cardinality_limits: self.client_side_stats.stats_cardinality_limits,
+                    restart_after_fork: self.restart_after_fork,
                     dogstatsd: if self.health_metrics_enabled {
                         self.dogstatsd.clone()
                     } else {
@@ -1127,8 +1135,8 @@ mod tests {
         assert_eq!(tracer_header_tags.lang_version, "1.52.1");
         assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
         assert_eq!(tracer_header_tags.lang_vendor, "rust-lang");
-        assert!(tracer_header_tags.client_computed_stats);
-        assert!(tracer_header_tags.client_computed_top_level);
+        assert!(tracer_header_tags.generic.client_computed_stats);
+        assert!(tracer_header_tags.generic.client_computed_top_level);
     }
 
     #[test]

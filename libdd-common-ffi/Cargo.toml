@@ -21,12 +21,12 @@ regex-lite = ["libdd-common/regex-lite"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-anyhow = "1.0"
+anyhow.workspace = true
 chrono = { version = "0.4.38", features = ["std"] }
 crossbeam-queue = "0.3.11"
 libdd-common = { path = "../libdd-common" }
-hyper = { workspace = true}
-serde = "1.0"
+hyper = { workspace = true, features = ["http1", "client"] }
+serde.workspace = true
 
 [dev-dependencies]
 bolero = "0.13"

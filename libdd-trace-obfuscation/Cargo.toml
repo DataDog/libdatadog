@@ -12,9 +12,9 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-anyhow = "1.0"
-serde = { version = "1.0.145", features = ["derive"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
 percent-encoding = "2.1"
 log = "0.4"
 fluent-uri = "0.4.1"

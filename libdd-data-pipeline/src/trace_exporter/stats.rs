@@ -50,6 +50,8 @@ pub(crate) struct StatsContext<
     pub endpoint_url: &'a http::Uri,
     pub shared_runtime: &'a R,
     pub stats_cardinality_limits: Option<CardinalityLimitConfig>,
+    /// Configuration option to pass to [SharedRuntime::spawn_worker]
+    pub restart_after_fork: bool,
     /// Optional DogStatsD client forwarded to the [`StatsExporter`].
     pub dogstatsd: Option<libdd_dogstatsd_client::DogStatsDClient>,
     /// Optional telemetry handle forwarded to the [`StatsExporter`].
@@ -174,7 +176,7 @@ fn create_and_start_stats_worker<
     );
     let worker_handle = ctx
         .shared_runtime
-        .spawn_worker(stats_exporter, false)
+        .spawn_worker(stats_exporter, ctx.restart_after_fork)
         .map_err(|e| anyhow::anyhow!(e))?;
 
     // Update the stats computation state with the new worker components.
@@ -344,10 +346,10 @@ pub(crate) fn process_traces_for_stats<
 
         // Update the headers to indicate that stats have been computed and forward dropped
         // traces counts
-        header_tags.client_computed_top_level = true;
-        header_tags.client_computed_stats = true;
-        header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
-        header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+        header_tags.generic.client_computed_top_level = true;
+        header_tags.generic.client_computed_stats = true;
+        header_tags.generic.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
+        header_tags.generic.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(feature = "telemetry")]
