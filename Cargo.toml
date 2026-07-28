@@ -11,7 +11,7 @@ members = [
   "libdd-profiling-heap-gotter-ffi",
   "libdd-crashtracker",
   "libdd-crashtracker-ffi",
-  "datadog-ffe",
+  "libdd-ffe",
   "datadog-ffe-test-suite",
   "datadog-ffe-ffi",
   "datadog-ipc",
