@@ -12,5 +12,5 @@ bench = false
 [dependencies]
 proc-macro2 = "1"
 quote = "^1"
-syn = { version = "^2", features = ["full"] }
+syn = { workspace = true, features = ["full", "derive", "parsing", "printing", "clone-impls", "proc-macro"] }
 heck = "0.5"

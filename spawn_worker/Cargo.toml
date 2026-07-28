@@ -9,9 +9,9 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
-io-lifetimes = { version = "1.0" }
+io-lifetimes = { workspace = true, features = ["close"] }
 fastrand = "2.0.1"
-libc = "0.2"
+libc = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
