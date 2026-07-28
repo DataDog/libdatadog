@@ -100,7 +100,7 @@ fn load_root(override_path: &std::path::Path) -> anyhow::Result<Vec<u8>> {
 /// agent_version field is empty or lower than a certain version.
 ///
 /// This is currently set to the last agent version released
-const FAKE_AGENT_VERSION: &str = "7.78.4";
+const FAKE_AGENT_VERSION: &str = "7.1000.0-agentless";
 
 type TUFRepo = tuf::repository::EphemeralRepository<tuf::interchange::Json>;
 type TUFClient = tuf::client::Client<tuf::interchange::Json, TUFRepo, TUFRepo>;
@@ -937,13 +937,11 @@ fn parse_rc_response<T: prost::Message + Default>(
 /// Compute the backoff delay to wait before the next `fetch_config` attempt,
 /// given the number of consecutive failures observed so far.
 fn compute_backoff(consecutive_failures: u32) -> Option<Duration> {
-    match consecutive_failures {
-        0 => None,
-        1 => Some(jitter_secs(30, 60)),
-        2 => Some(jitter_secs(60, 120)),
-        3 => Some(jitter_secs(120, 240)),
-        _ => Some(Duration::from_secs(240)),
-    }
+    (consecutive_failures != 0).then(|| {
+        let consecutive_failures = std::cmp::min(4, consecutive_failures) as u64;
+        let base = 30 * consecutive_failures;
+        jitter_secs(base, base + 30)
+    })
 }
 
 /// Random duration in `[min_secs, max_secs]`
