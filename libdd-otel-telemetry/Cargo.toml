@@ -1,0 +1,32 @@
+# Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "libdd-otel-telemetry"
+version = "0.1.0"
+description = "Shared OpenTelemetry metrics/logs aggregation and OTLP export for Datadog tracers."
+homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-telemetry"
+repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-otel-telemetry"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+autobenches = false
+
+[dependencies]
+opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.31", features = ["metrics"] }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = [
+    "metrics",
+] }
+tracing.workspace = true
+libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime", default-features = false }
+
+[features]
+default = ["grpc"]
+grpc = ["opentelemetry-otlp/grpc-tonic"]
+http = ["opentelemetry-otlp/http-proto", "opentelemetry-otlp/reqwest-client"]
+test-utils = []
+
+[dev-dependencies]
+libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime" }
+tokio = { version = "1.23", features = ["rt-multi-thread", "macros"] }

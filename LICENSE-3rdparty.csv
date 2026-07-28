@@ -275,6 +275,11 @@ object,https://github.com/gimli-rs/object,Apache-2.0 OR MIT,The object Authors
 once_cell,https://github.com/matklad/once_cell,MIT OR Apache-2.0,Aleksey Kladov <aleksey.kladov@gmail.com>
 oorandom,https://hg.sr.ht/~icefox/oorandom,MIT,Simon Heath <icefox@dreamquest.io>
 openssl-probe,https://github.com/alexcrichton/openssl-probe,MIT OR Apache-2.0,Alex Crichton <alex@alexcrichton.com>
+opentelemetry,https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry,Apache-2.0,The opentelemetry Authors
+opentelemetry-http,https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-http,Apache-2.0,The opentelemetry-http Authors
+opentelemetry-otlp,https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-otlp,Apache-2.0,The opentelemetry-otlp Authors
+opentelemetry-proto,https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-proto,Apache-2.0,The opentelemetry-proto Authors
+opentelemetry_sdk,https://github.com/open-telemetry/opentelemetry-rust/tree/main/opentelemetry-sdk,Apache-2.0,The opentelemetry_sdk Authors
 os_info,https://github.com/stanislav-tkach/os_info,MIT,"Jan Schulte <hello@unexpected-co.de>, Stanislav Tkach <stanislav.tkach@gmail.com>"
 page_size,https://github.com/Elzair/page_size_rs,MIT OR Apache-2.0,Philip Woods <elzairthesorcerer@gmail.com>
 parking,https://github.com/smol-rs/parking,Apache-2.0 OR MIT,"Stjepan Glavina <stjepang@gmail.com>, The Rust Project Developers"
@@ -384,6 +389,7 @@ serde_fmt,https://github.com/KodrAus/serde_fmt,Apache-2.0 OR MIT,Ashley Mannix <
 serde_json,https://github.com/serde-rs/json,MIT OR Apache-2.0,"Erick Tryzelaar <erick.tryzelaar@gmail.com>, David Tolnay <dtolnay@gmail.com>"
 serde_regex,https://github.com/tailhook/serde-regex,MIT OR Apache-2.0,paul@colomiets.name
 serde_spanned,https://github.com/toml-rs/toml,MIT OR Apache-2.0,The serde_spanned Authors
+serde_urlencoded,https://github.com/nox/serde_urlencoded,MIT OR Apache-2.0,Anthony Ramine <n.oxyde@gmail.com>
 serde_with,https://github.com/jonasbb/serde_with,MIT OR Apache-2.0,"Jonas Bushart, Marcin Kaźmierczak"
 serde_with_macros,https://github.com/jonasbb/serde_with,MIT OR Apache-2.0,Jonas Bushart
 serde_yaml,https://github.com/dtolnay/serde-yaml,MIT OR Apache-2.0,David Tolnay <dtolnay@gmail.com>
