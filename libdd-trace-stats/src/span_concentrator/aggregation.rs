@@ -15,7 +15,7 @@ use std::{
 };
 use tracing::warn;
 
-use crate::span_concentrator::{cardinality_limit_telemetry::collapsed_field, StatSpan};
+use crate::span_concentrator::{cardinality_limit_telemetry::CollapsedFieldSet, StatSpan};
 
 use super::{
     cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
@@ -624,14 +624,14 @@ impl StatsBucket {
             hasher.finish()
         }
 
-        let mut collapsed_fields = 0;
+        let mut collapsed_fields = CollapsedFieldSet::empty();
 
         let resource_hash = hash(&key.fixed.resource_name);
         let resources_count = self.distinct_resources.len();
         if let Entry::Vacant(slot) = self.distinct_resources.entry(resource_hash) {
             if resources_count >= self.cardinality_limits.resource_limit {
                 key.fixed.resource_name = TRACER_BLOCKED_VALUE;
-                collapsed_fields |= collapsed_field::RESOURCE_NAME;
+                collapsed_fields.add(CollapsedFieldSet::RESOURCE_NAME);
             } else {
                 slot.insert();
             }
@@ -642,7 +642,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_http_endpoints.entry(http_endpoint_hash) {
             if http_endpoints_count >= self.cardinality_limits.http_endpoint_limit {
                 key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
-                collapsed_fields |= collapsed_field::HTTP_ENDPOINT;
+                collapsed_fields.add(CollapsedFieldSet::HTTP_ENDPOINT);
             } else {
                 slot.insert();
             }
@@ -653,7 +653,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_peer_tags.entry(peer_tags_hash) {
             if peer_tags_count >= self.cardinality_limits.peer_tags_limit {
                 key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
-                collapsed_fields |= collapsed_field::PEER_TAGS;
+                collapsed_fields.add(CollapsedFieldSet::PEER_TAGS);
             } else {
                 slot.insert();
             }
@@ -664,12 +664,12 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_additional_tags.entry(additional_tags_hash) {
             if additional_tags_count >= self.cardinality_limits.additional_tags_limit {
                 key.additional_metric_tags = vec![(TRACER_BLOCKED_VALUE, "")];
-                collapsed_fields |= collapsed_field::ADDITIONAL_TAGS;
+                collapsed_fields.add(CollapsedFieldSet::ADDITIONAL_TAGS);
             } else {
                 slot.insert();
             }
         }
-        self.collapsed_fields_metrics.0[collapsed_fields] += 1;
+        self.collapsed_fields_metrics.increment(collapsed_fields);
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.

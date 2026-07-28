@@ -9,21 +9,37 @@
 use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::const_assert;
 
-pub(super) mod collapsed_field {
-    pub const RESOURCE_NAME: usize = 1 << 1;
-    pub const HTTP_ENDPOINT: usize = 1 << 2;
-    pub const PEER_TAGS: usize = 1 << 3;
-    pub const ADDITIONAL_TAGS: usize = 1 << 4;
-    pub const COUNT: u8 = 5;
+pub struct CollapsedFieldSet(usize);
+impl CollapsedFieldSet {
+    pub const RESOURCE_NAME: usize = 1 << 0;
+    pub const HTTP_ENDPOINT: usize = 1 << 1;
+    pub const PEER_TAGS: usize = 1 << 2;
+    pub const ADDITIONAL_TAGS: usize = 1 << 3;
+    const FIELDS: [usize; 4] = [
+        Self::RESOURCE_NAME,
+        Self::HTTP_ENDPOINT,
+        Self::PEER_TAGS,
+        Self::ADDITIONAL_TAGS,
+    ];
+
+    pub fn empty() -> CollapsedFieldSet {
+        Self(0)
+    }
+
+    pub fn add(&mut self, field: usize) {
+        debug_assert!(Self::FIELDS.contains(&field));
+        self.0 |= field;
+    }
 }
 
-pub(super) const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << collapsed_field::COUNT;
+pub const COLLAPSED_FIELD_METRIC_SIZE: usize = 1 << CollapsedFieldSet::FIELDS.len();
 
-#[derive(Debug, Clone, Default, Copy)]
+// Verify the array is of a reasonable size
+const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 16);
+
 // Note: slot 0 is a counter for non_collapsed spans. It's not used for emitting telemetry
-pub struct CollapsedFieldsMetrics(pub(super) [usize; COLLAPSED_FIELD_METRIC_SIZE]);
-
-const_assert!(COLLAPSED_FIELD_METRIC_SIZE <= 32);
+#[derive(Debug, Clone, Default, Copy)]
+pub struct CollapsedFieldsMetrics([usize; COLLAPSED_FIELD_METRIC_SIZE]);
 
 impl CollapsedFieldsMetrics {
     pub fn zero() -> Self {
@@ -67,30 +83,27 @@ impl CollapsedFieldsMetrics {
     #[cfg(any(feature = "telemetry", feature = "dogstatsd"))]
     fn fields_mask_to_list(mask: usize) -> Vec<libdd_common::tag::Tag> {
         let mut tags = Vec::new();
-        for field_pow in 1..collapsed_field::COUNT {
+        for field_pow in 0..CollapsedFieldSet::FIELDS.len() {
             let field_value = 1 << field_pow;
-            debug_assert!([
-                collapsed_field::RESOURCE_NAME,
-                collapsed_field::HTTP_ENDPOINT,
-                collapsed_field::PEER_TAGS,
-                collapsed_field::ADDITIONAL_TAGS
-            ]
-            .contains(&field_value));
+            debug_assert!(
+                CollapsedFieldSet::FIELDS.contains(&field_value),
+                "{field_value} is an invalid value for a CollapsedFieldSet"
+            );
             let has_field = (mask & field_value) != 0;
             if !has_field {
                 continue;
             }
             let field_tag = match field_value {
-                collapsed_field::RESOURCE_NAME => {
+                CollapsedFieldSet::RESOURCE_NAME => {
                     libdd_common::tag!("collapsed_spans", "resource")
                 }
-                collapsed_field::HTTP_ENDPOINT => {
+                CollapsedFieldSet::HTTP_ENDPOINT => {
                     libdd_common::tag!("collapsed_spans", "http_endpoint")
                 }
-                collapsed_field::PEER_TAGS => {
+                CollapsedFieldSet::PEER_TAGS => {
                     libdd_common::tag!("collapsed_spans", "peer_tags")
                 }
-                collapsed_field::ADDITIONAL_TAGS => {
+                CollapsedFieldSet::ADDITIONAL_TAGS => {
                     libdd_common::tag!("collapsed_spans", "additional_metric_tags")
                 }
                 // Unreachable: asserted just above that field is one of the 4 possible values
@@ -100,6 +113,10 @@ impl CollapsedFieldsMetrics {
         }
         debug_assert!(!tags.is_empty());
         tags
+    }
+
+    pub fn increment(&mut self, field_set: CollapsedFieldSet) {
+        self.0[field_set.0] += 1;
     }
 }
 
