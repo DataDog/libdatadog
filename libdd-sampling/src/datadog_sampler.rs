@@ -246,19 +246,16 @@ impl TraceRootSamplingInfo {
         }
         let low64 = trace_id.to_u128() as u64;
         let rv = (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8;
-        // `th = round(2^56 * (1 - rate))`, round-half-away, in exact integer
-        // arithmetic on the canonical 6-decimal rate rather than a plain
-        // `(1.0 - rate) * 2^56` float chain, which minimizes DD/OTel
-        // keep-decision disagreement (see the RFC's "64<>56 bit imprecision"
-        // appendix) at the cost of differing from the RFC's own
-        // chained-f64 worked examples by a few ULPs (e.g. e6666666666666
-        // here vs. e6666666666668 there, at rate 0.1). `.min` guards `rate
-        // == 0`.
-        const SCALE: u128 = 1_000_000;
+        // `th = round((1 - rate) * 2^56)`, matching the OTel RFC's worked example.
         const MAX_56_BIT: u64 = (1u64 << 56) - 1;
-        let rate_micros = (self.rate * SCALE as f64).round() as u128;
-        let reject_micros = SCALE - rate_micros.min(SCALE);
-        let th = ((((1u128 << 56) * reject_micros + SCALE / 2) / SCALE) as u64).min(MAX_56_BIT);
+        let raw_th = ((1.0 - self.rate) * (1u64 << 56) as f64).round();
+        let th = if raw_th <= 0.0 {
+            0
+        } else if raw_th >= MAX_56_BIT as f64 {
+            MAX_56_BIT
+        } else {
+            raw_th as u64
+        };
         Some(OtelConsistentSampling { rv, th })
     }
 
@@ -386,16 +383,13 @@ mod tests {
             let got = info.otel_consistent_sampling(&tid).expect("probability");
             assert_eq!(got.rv, want_rv, "rv for {tid}");
         }
-        // th depends only on rate. Values are the RFC imprecision-appendix's
-        // exact decimal table for `round(2^56 * (1 - rate))`, NOT a float
-        // pipeline (which gives e6666666666668 for 0.1, and cannot even
-        // represent the 0.2/0.99 decimals). See system-tests #7372.
+        // th depends only on rate. See the RFC's worked example / system-tests #7372.
         let th_cases = [
-            (0.01f64, 0x0fd70a3d70a3d71u64),
-            (0.1, 0x0e6666666666666),
-            (0.2, 0x0cccccccccccccd),
-            (0.5, 0x080000000000000),
-            (0.99, 0x0028f5c28f5c28f),
+            (0.01f64, 0xfd70a3d70a3d70u64),
+            (0.1, 0xe6666666666668),
+            (0.2, 0xccccccccccccd0),
+            (0.5, 0x80000000000000),
+            (0.99, 0x28f5c28f5c290),
             (1.0, 0x0),
         ];
         for (rate, want_th) in th_cases {
