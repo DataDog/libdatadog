@@ -277,14 +277,14 @@ impl<T> Batch<T> {
 ///
 /// Unless in synchronous mode, when [`TraceBuffer::send_chunk`] is called, the trace chunk
 /// will be buffered until:
-/// * The number of spans in the buffer is greater than [`TraceBufferConfig::span_flush_threshold`]
+/// * The number of buffered bytes is greater than [`TraceBufferConfig::flush_threshold_bytes`]
 /// * The time since the last flush is greater than [`TraceBufferConfig::max_flush_interval`]
 /// * [`TraceBuffer::force_flush`] is called. This method triggers a flush, but do not wait for the
 ///   flush to be done before returning
 ///
 /// # Synchronous mode
 ///
-/// If [`TraceBufferConfig::synchronous_writes`] is true, this blocks until
+/// If [`TraceBufferConfig::synchronous_export`] is true, this blocks until
 /// * Either until the chunks have been flushed to the agent
 /// * Or if `synchronous_writes_timeout` is Some, until the timeout is reached. At which point the
 ///   flush might continue in the background

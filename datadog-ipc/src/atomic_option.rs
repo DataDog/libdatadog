@@ -100,7 +100,7 @@ impl<T> AtomicOption<T> {
     /// Borrow the current value without taking it.
     ///
     /// # Safety
-    /// Must not be called concurrently with [`take`], [`set`], or [`replace`].
+    /// Must not be called concurrently with [`Self::take`], [`Self::set`], or [`Self::replace`].
     pub unsafe fn as_option(&self) -> &Option<T> {
         &*self.0.get()
     }

@@ -41,7 +41,7 @@ pub extern "C" fn ddog_prof_Exporter_Slice_File_empty() -> Slice<'static, File<'
 
 #[derive(Debug)]
 #[repr(C)]
-/// cbindgen:field-names=[code]
+/// cbindgen:field-names=\[code\]
 pub struct HttpStatus(u16);
 
 fn try_clone_optional_tags(tags: Option<&libdd_common_ffi::Vec<Tag>>) -> anyhow::Result<Vec<Tag>> {
@@ -144,7 +144,7 @@ pub unsafe fn try_to_endpoint(
 /// # Arguments
 /// * `profiling_library_name` - Profiling library name, usually dd-trace-something, e.g.
 ///   "dd-trace-rb". See
-///   https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/1538884229/Client#Header-values
+///   <https://datadoghq.atlassian.net/wiki/spaces/PROF/pages/1538884229/Client#Header-values>
 ///   (Datadog internal link)
 ///   for a list of common values.
 /// * `profliling_library_version` - Version used when publishing the profiling library to a package

@@ -141,7 +141,7 @@ pub const DEFAULT_MAX_ENTRIES_PER_BUCKET: usize = 7_000;
 /// # Cardinality limiting
 /// Each time bucket holds at most `max_entries_per_bucket` distinct aggregation keys. Once that
 /// limit is reached, spans whose key is not already present are merged into a single overflow
-/// bucket keyed by [`aggregation::TRACER_BLOCKED_VALUE`].
+/// bucket keyed by `aggregation::TRACER_BLOCKED_VALUE`.
 #[derive(Debug, Clone)]
 pub struct SpanConcentrator {
     /// Size of the time buckets used for aggregation in nanos

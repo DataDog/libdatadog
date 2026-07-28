@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 pub const ANONYMOUS_IMPERSONATION_QOS: u32 = 0; // SECURITY_ANONYMOUS
 
 /// Windows Named Pipe
-/// https://docs.microsoft.com/en-us/windows/win32/ipc/named-pipes
+/// <https://docs.microsoft.com/en-us/windows/win32/ipc/named-pipes>
 ///
 /// The form a windows named pipe path is either local to the computer:
 /// \\.\pipe\pipename

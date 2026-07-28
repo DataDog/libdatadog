@@ -456,13 +456,13 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 
 /// Sets a shared runtime for the TraceExporter to use for background workers.
 ///
-/// `handle` must have been initialized with [`ddog_shared_runtime_new`].
+/// `handle` must have been initialized with `ddog_shared_runtime_new`.
 ///
 /// When set, the exporter will use the provided runtime instead of creating its own.
 /// This allows multiple exporters (or other components) to share a single runtime.
 /// The config holds a clone of the `Arc` (increments the strong count), so the
 /// original handle remains valid and must still be freed with
-/// [`ddog_shared_runtime_free`].
+/// `ddog_shared_runtime_free`.
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,

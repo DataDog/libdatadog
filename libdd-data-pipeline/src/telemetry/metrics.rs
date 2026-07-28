@@ -37,7 +37,7 @@ pub enum MetricKind {
 }
 
 /// Constants for metric names
-/// These must match https://github.com/DataDog/dd-go/blob/prod/trace/apps/tracer-telemetry-intake/telemetry-metrics/static/common_metrics.json
+/// These must match <https://github.com/DataDog/dd-go/blob/prod/trace/apps/tracer-telemetry-intake/telemetry-metrics/static/common_metrics.json>
 const API_REQUEST_STR: &str = "trace_api.requests";
 const API_ERRORS_STR: &str = "trace_api.errors";
 const API_BYTES_STR: &str = "trace_api.bytes";
