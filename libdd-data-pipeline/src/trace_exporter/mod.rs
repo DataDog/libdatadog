@@ -1135,8 +1135,8 @@ mod tests {
         assert_eq!(tracer_header_tags.lang_version, "1.52.1");
         assert_eq!(tracer_header_tags.lang_interpreter, "rustc");
         assert_eq!(tracer_header_tags.lang_vendor, "rust-lang");
-        assert!(tracer_header_tags.client_computed_stats);
-        assert!(tracer_header_tags.client_computed_top_level);
+        assert!(tracer_header_tags.generic.client_computed_stats);
+        assert!(tracer_header_tags.generic.client_computed_top_level);
     }
 
     #[test]

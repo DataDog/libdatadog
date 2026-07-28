@@ -344,10 +344,10 @@ pub(crate) fn process_traces_for_stats<
 
         // Update the headers to indicate that stats have been computed and forward dropped
         // traces counts
-        header_tags.client_computed_top_level = true;
-        header_tags.client_computed_stats = true;
-        header_tags.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
-        header_tags.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
+        header_tags.generic.client_computed_top_level = true;
+        header_tags.generic.client_computed_stats = true;
+        header_tags.generic.dropped_p0_traces = dropped_p0_stats.dropped_p0_traces;
+        header_tags.generic.dropped_p0_spans = dropped_p0_stats.dropped_p0_spans;
 
         // Send dropped P0 stats directly to telemetry if available
         #[cfg(feature = "telemetry")]

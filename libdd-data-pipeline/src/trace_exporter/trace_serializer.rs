@@ -171,7 +171,7 @@ mod tests {
     use libdd_common::header::APPLICATION_MSGPACK_STR;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::span::v04::SpanBytes;
-    use libdd_trace_utils::trace_utils::TracerHeaderTags;
+    use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
 
     fn create_test_span() -> SpanBytes {
         SpanBytes {
@@ -196,8 +196,11 @@ mod tests {
             tracer_version: "1.0.0",
             lang_interpreter: "rustc",
             lang_vendor: "rust-lang",
-            client_computed_stats: true,
-            client_computed_top_level: false,
+            generic: TracerGenericTags {
+                client_computed_stats: true,
+                client_computed_top_level: false,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -471,8 +474,11 @@ mod tests {
             tracer_version: "2.0.0",
             lang_interpreter: "cpython",
             lang_vendor: "python.org",
-            client_computed_stats: false,
-            client_computed_top_level: true,
+            generic: TracerGenericTags {
+                client_computed_stats: false,
+                client_computed_top_level: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
