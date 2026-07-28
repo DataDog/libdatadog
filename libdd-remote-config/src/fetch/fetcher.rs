@@ -396,9 +396,11 @@ impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
         if response.config_status == ConfigStatus::Expired as i32 {
             debug!(
                 "Agent served remote config from an expired cache for target {target:?}, \
-                 dropping all stored configurations"
+                 reporting all configurations as removed"
             );
-            self.state.target_files_by_path.lock_or_panic().clear();
+            if self.state.expire_unused_files {
+                self.state.target_files_by_path.lock_or_panic().clear();
+            }
             client_state.last_config_paths.clear();
             return Ok(Some(vec![]));
         }
