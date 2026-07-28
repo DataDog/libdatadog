@@ -823,7 +823,7 @@ impl ShmSpanConcentrator {
 }
 
 impl FlushableConcentrator for ShmSpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> FlushResult {
+    fn flush_buckets(&mut self, force: bool) -> FlushResult<pb::ClientStatsBucket> {
         // The SHM concentrator does not perform client-side obfuscation nor emits telemetry.
         FlushResult {
             obfuscated_buckets: vec![],
