@@ -4,7 +4,6 @@
 use crate::span_concentrator::aggregation::{OwnedAggregationKey, TRACER_BLOCKED_VALUE};
 
 use super::*;
-use duplicate::duplicate_item;
 use libdd_trace_utils::span::v04::VecMap;
 use libdd_trace_utils::span::{trace_utils::compute_top_level_span, v04::SpanSlice};
 use rand::{thread_rng, Rng};
@@ -2277,16 +2276,8 @@ fn test_normalize_additional_metric_tag_keys_limit() {
     assert_eq!(result.len(), 4);
 }
 
-/// Test that the SpanConcentrator truncates inserted span's fields after obfuscation is applied
-#[duplicate_item(
-    test_name                                            big_resource obfuscation;
-    [ test_concentrator_truncate_fields                ] [ false ]    [ true  ];
-    [ test_concentrator_truncate_fields_big_resource   ] [ true  ]    [ true  ];
-    [ test_concentrator_truncate_fields_no_obfuscation ] [ false ]    [ false ];
-)]
 #[cfg(feature = "stats-obfuscation")]
-#[test]
-fn test_name() {
+fn test_concentrator_truncate_fields_helper(big_resource: bool, obfuscation: bool) {
     use arc_swap::ArcSwap;
     use std::sync::Arc;
 
@@ -2378,4 +2369,22 @@ fn test_name() {
             "Stats bucket name (operation) did not get truncated because obfuscation is disabled"
         );
     }
+}
+
+#[test]
+#[cfg(feature = "stats-obfuscation")]
+fn test_concentrator_truncate_fields_default() {
+    test_concentrator_truncate_fields_helper(false, true);
+}
+
+#[test]
+#[cfg(feature = "stats-obfuscation")]
+fn test_concentrator_truncate_fields_with_big_resource() {
+    test_concentrator_truncate_fields_helper(true, true);
+}
+
+#[test]
+#[cfg(feature = "stats-obfuscation")]
+fn test_concentrator_truncate_fields_obfuscation_disabled() {
+    test_concentrator_truncate_fields_helper(false, false);
 }
