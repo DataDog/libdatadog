@@ -73,6 +73,7 @@ pub struct Configuration {
     Copy,
     strum_macros::Display,
     strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
 )]
 #[repr(C)]
 #[serde(rename_all = "snake_case")]
@@ -187,6 +188,8 @@ pub struct Log {
     Copy,
     strum_macros::Display,
     strum_macros::EnumIter,
+    // IntoStaticStr: required by the pre-9488 `ConvertToPyO3Enum` macro; see metrics.rs.
+    strum_macros::IntoStaticStr,
 )]
 #[serde(rename_all = "UPPERCASE")]
 #[strum(serialize_all = "UPPERCASE")]

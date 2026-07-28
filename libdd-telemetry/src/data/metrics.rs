@@ -47,6 +47,7 @@ pub enum SerializedSketch {
     Hash,
     strum_macros::Display,
     strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -79,6 +80,7 @@ pub enum MetricNamespace {
     Hash,
     strum_macros::Display,
     strum_macros::EnumIter,
+    strum_macros::IntoStaticStr,
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]

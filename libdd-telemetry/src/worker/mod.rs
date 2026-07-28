@@ -335,8 +335,14 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     async fn recv_next_action(&mut self) -> TelemetryActions {
         let action = if let Some((deadline, deadline_action)) = self.deadlines.next_deadline() {
             let deadline_action = *deadline_action;
-            // If deadline passed, directly return associated action
+            // If deadline passed, service any already-queued mailbox action first, then
+            // return the associated action.
+            // This avoids pathological cases with a very short heartbeat, which would hang a
+            // synchronous flush()/stop() (whose FlushData/CollectStats never get processed) then.
             let Some(remaining) = deadline.checked_duration_since(time::Instant::now()) else {
+                if let Ok(mailbox_action) = self.mailbox.try_recv() {
+                    return mailbox_action;
+                }
                 return TelemetryActions::Lifecycle(deadline_action);
             };
 
