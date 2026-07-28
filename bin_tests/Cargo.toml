@@ -18,7 +18,7 @@ libdd-profiling = { path = "../libdd-profiling" }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 tempfile = "3.3"
-serde_json = { version = "1.0" }
+serde_json.workspace = true
 strum = { version = "0.26.2", features = ["derive"] }
 libc = "0.2"
 errno = "0.3"

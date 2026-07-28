@@ -86,6 +86,7 @@ impl std::error::Error for SendWithRetryError {}
 /// send_with_retry(&capabilities, &target, payload, &headers, &retry_strategy).await
 /// # }
 /// ```
+#[allow(clippy::result_large_err)]
 pub async fn send_with_retry<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     target: &Endpoint,

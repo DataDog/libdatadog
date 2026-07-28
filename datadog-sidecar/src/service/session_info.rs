@@ -97,22 +97,6 @@ impl SessionInfo {
         future::join_all(runtimes_shutting_down).await;
     }
 
-    /// Shuts down all running instances in the session.
-    pub(crate) async fn shutdown_running_instances(&self) {
-        let runtimes: Vec<RuntimeInfo> = self
-            .lock_runtimes()
-            .drain()
-            .map(|(_, instance)| instance)
-            .collect();
-
-        let instances_shutting_down: Vec<_> = runtimes
-            .into_iter()
-            .map(|rt| tokio::spawn(async move { rt.shutdown().await }))
-            .collect();
-
-        future::join_all(instances_shutting_down).await;
-    }
-
     /// Shuts down a specific runtime in the session.
     ///
     /// # Arguments
@@ -371,17 +355,6 @@ mod tests {
 
         // Test that all runtimes are shut down
         session_info.shutdown().await;
-        assert!(session_info.runtimes.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_shutdown_running_instances() {
-        let session_info = SessionInfo::default();
-        session_info.get_runtime(&"runtime1".to_string());
-
-        // Test that all running instances are shut down
-        session_info.shutdown_running_instances().await;
         assert!(session_info.runtimes.lock().unwrap().is_empty());
     }
 

@@ -478,7 +478,7 @@ mod tests {
     use crate::send_with_retry::{RetryBackoffType, RetryStrategy};
     use crate::test_utils::create_test_no_alloc_span;
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, TracerPayloadTags};
-    use crate::tracer_header_tags::TracerHeaderTags;
+    use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
@@ -496,10 +496,12 @@ mod tests {
         lang_vendor: "vendor",
         tracer_version: "1.0",
         container_id: "id",
-        client_computed_top_level: false,
-        client_computed_stats: false,
-        dropped_p0_traces: 0,
-        dropped_p0_spans: 0,
+        generic: TracerGenericTags {
+            client_computed_top_level: false,
+            client_computed_stats: false,
+            dropped_p0_traces: 0,
+            dropped_p0_spans: 0,
+        },
     };
 
     fn setup_payload(header_tags: &TracerHeaderTags) -> TracerPayload {
