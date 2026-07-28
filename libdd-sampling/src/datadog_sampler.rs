@@ -247,9 +247,13 @@ impl TraceRootSamplingInfo {
         let low64 = trace_id.to_u128() as u64;
         let rv = (!low64.wrapping_mul(KNUTH_FACTOR)) >> 8;
         // `th = round(2^56 * (1 - rate))`, round-half-away, in exact integer
-        // arithmetic on the canonical 6-decimal rate. Reproduces the RFC
-        // imprecision table (0.2 -> cccccccccccccd, 0.99 -> 028f5c28f5c28f),
-        // which a float `(1.0 - rate) * 2^56` cannot. `.min` guards `rate == 0`.
+        // arithmetic on the canonical 6-decimal rate rather than a plain
+        // `(1.0 - rate) * 2^56` float chain, which minimizes DD/OTel
+        // keep-decision disagreement (see the RFC's "64<>56 bit imprecision"
+        // appendix) at the cost of differing from the RFC's own
+        // chained-f64 worked examples by a few ULPs (e.g. e6666666666666
+        // here vs. e6666666666668 there, at rate 0.1). `.min` guards `rate
+        // == 0`.
         const SCALE: u128 = 1_000_000;
         const MAX_56_BIT: u64 = (1u64 << 56) - 1;
         let rate_micros = (self.rate * SCALE as f64).round() as u128;
