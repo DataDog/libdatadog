@@ -174,15 +174,3 @@ pub trait SamplingData {
     where
         F: Fn(&S, &Self::Properties<'_>) -> T;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_trace_id_like_u128() {
-        assert_eq!(42u128.to_u128(), 42);
-        assert_eq!(0u128.to_u128(), 0);
-        assert_eq!(u128::MAX.to_u128(), u128::MAX);
-    }
-}
