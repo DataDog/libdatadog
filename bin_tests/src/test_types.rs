@@ -20,6 +20,11 @@ pub enum TestMode {
     RuntimeCallbackFrameInvalidUtf8,
     RuntimePreloadLogger,
     ErrnoPreservation,
+    MultiThreadCollection,
+    ThreadLimit,
+    SidecarDoNothing,
+    SidecarMultiThreadCollection,
+    UnhandledExceptionMultiThread,
 }
 
 impl TestMode {
@@ -41,6 +46,11 @@ impl TestMode {
             Self::RuntimeCallbackFrameInvalidUtf8 => "runtime_callback_frame_invalid_utf8",
             Self::RuntimePreloadLogger => "runtime_preload_logger",
             Self::ErrnoPreservation => "errno_preservation",
+            Self::MultiThreadCollection => "multi_thread_collection",
+            Self::ThreadLimit => "thread_limit",
+            Self::SidecarDoNothing => "sidecar_donothing",
+            Self::SidecarMultiThreadCollection => "sidecar_multi_thread_collection",
+            Self::UnhandledExceptionMultiThread => "unhandled_exception_multi_thread",
         }
     }
 
@@ -62,6 +72,11 @@ impl TestMode {
             Self::RuntimeCallbackFrameInvalidUtf8,
             Self::RuntimePreloadLogger,
             Self::ErrnoPreservation,
+            Self::MultiThreadCollection,
+            Self::ThreadLimit,
+            Self::SidecarDoNothing,
+            Self::SidecarMultiThreadCollection,
+            Self::UnhandledExceptionMultiThread,
         ]
     }
 }
@@ -92,6 +107,11 @@ impl std::str::FromStr for TestMode {
             "runtime_callback_frame_invalid_utf8" => Ok(Self::RuntimeCallbackFrameInvalidUtf8),
             "runtime_preload_logger" => Ok(Self::RuntimePreloadLogger),
             "errno_preservation" => Ok(Self::ErrnoPreservation),
+            "multi_thread_collection" => Ok(Self::MultiThreadCollection),
+            "thread_limit" => Ok(Self::ThreadLimit),
+            "sidecar_donothing" => Ok(Self::SidecarDoNothing),
+            "sidecar_multi_thread_collection" => Ok(Self::SidecarMultiThreadCollection),
+            "unhandled_exception_multi_thread" => Ok(Self::UnhandledExceptionMultiThread),
             _ => Err(format!("Unknown test mode: {}", s)),
         }
     }

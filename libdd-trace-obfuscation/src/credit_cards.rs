@@ -1,8 +1,10 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-/// is_card_number checks if b could be a credit card number by checking the digit count and IIN
-/// prefix. If validate_luhn is true, the Luhn checksum is also applied to potential candidates.
+/// `is_card_number` checks if b could be a credit card number by checking the digit count and IIN
+/// prefix.
+///
+/// If `validate_luhn` is true, the Luhn checksum is also applied to potential candidates.
 /// Note: This code is based on the code from datadog-agent/pkg/obfuscate/credit_cards.go
 pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     let s = s.as_ref();
@@ -15,15 +17,14 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     let mut len = 0;
     for c in s.chars() {
         // Only valid characters are 0-9, space (" ") and dash("-")
-        #[allow(clippy::unwrap_used)]
         match c {
             ' ' | '-' => continue,
             '0'..='9' => {
-                num_s[len] = c.to_digit(10).unwrap();
+                num_s[len] = u32::from(c) - u32::from('0');
                 len += 1;
             }
             _ => return false,
-        };
+        }
         if len > 16 {
             // too long for any known card number; stop looking
             return false;
@@ -38,13 +39,17 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
     let mut is_valid_iin = FuzzyBool::Maybe;
     let mut cs = num_s.iter();
 
-    #[allow(clippy::unwrap_used)]
-    let mut prefix: u32 = *cs.next().unwrap();
-    #[allow(clippy::unwrap_used)]
+    let Some(&first_digit) = cs.next() else {
+        return false;
+    };
+    let mut prefix = first_digit;
     while is_valid_iin == FuzzyBool::Maybe {
         is_valid_iin = valid_card_prefix(prefix);
 
-        prefix = 10 * prefix + cs.next().unwrap();
+        let Some(next_digit) = cs.next() else {
+            return false;
+        };
+        prefix = 10 * prefix + *next_digit;
     }
 
     if is_valid_iin == FuzzyBool::True && validate_luhn {
@@ -57,10 +62,11 @@ pub fn is_card_number<T: AsRef<str>>(s: T, validate_luhn: bool) -> bool {
 /// algorithm. nums must be non-empty
 ///
 /// See:
-/// https://en.wikipedia.org/wiki/Luhn_algorithm
+/// <https://en.wikipedia.org/wiki/Luhn_algorithm>
 fn luhn_valid(nums: &[u32]) -> bool {
-    #[allow(clippy::unwrap_used)]
-    let (given_digit, payload) = nums.split_last().unwrap();
+    let Some((given_digit, payload)) = nums.split_last() else {
+        return false;
+    };
     calculate_luhn(payload) == *given_digit
 }
 
@@ -102,7 +108,7 @@ enum FuzzyBool {
 /// TODO(x): this whole code could be code generated from a prettier data structure.
 /// Ultimately, it could even be user-configurable.
 /// Note: This code is ported from datadog-agent/pkg/obfuscate/credit_cards.go
-fn valid_card_prefix(n: u32) -> FuzzyBool {
+const fn valid_card_prefix(n: u32) -> FuzzyBool {
     // Validates IIN prefix possibilities
     // Source: https://www.regular-expressions.info/creditcard.html
     if n > 699999 {
@@ -261,7 +267,7 @@ mod tests {
             assert_eq!(
                 actual, expected,
                 "card prefix '{num}' was expected to be {expected:?} but got {actual:?}"
-            )
+            );
         }
     }
 
@@ -287,6 +293,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_valid_cards() {
         let valid_cards = vec![
             "378282246310005",

@@ -18,17 +18,19 @@ libdd-profiling = { path = "../libdd-profiling" }
 libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-common = { path = "../libdd-common" }
 tempfile = "3.3"
-serde_json = { version = "1.0" }
+serde_json.workspace = true
 strum = { version = "0.26.2", features = ["derive"] }
-libc = "0.2"
+libc.workspace = true
 errno = "0.3"
 nix = { version = "0.29", features = ["signal", "socket"] }
 hex = "0.4"
 os_info = "3.14.0"
-regex = "1.0"
 
 [dev-dependencies]
 serial_test = "3.2"
+
+[features]
+regex-lite = ["libdd-common/regex-lite"]
 
 [lib]
 bench = false
@@ -48,6 +50,10 @@ bench = false
 
 [[bin]]
 name = "crashing_test_app"
+bench = false
+
+[[bin]]
+name = "crashtracker_unix_socket_receiver"
 bench = false
 
 [[bin]]

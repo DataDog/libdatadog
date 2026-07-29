@@ -4,18 +4,22 @@
 use crate::debugger_defs::{DebuggerData, DebuggerPayload};
 use bytes::Bytes;
 use constcat::concat;
+use futures::future;
 use http::uri::PathAndQuery;
 use http::{Method, Uri};
-use http_body_util::BodyExt;
-use libdd_common::http_common;
+use libdd_capabilities::{BodySender, HttpClientCapability, ResponseFuture};
+use libdd_capabilities_impl::NativeHttpClient;
 use libdd_common::tag::Tag;
 use libdd_common::Endpoint;
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use percent_encoding::{percent_encode, CONTROLS};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::fmt::Display;
 use std::hash::Hash;
 use std::str::FromStr;
+use std::time::Duration;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -25,54 +29,181 @@ const DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH: &str = "/api/v2/debugger";
 const AGENT_DEBUGGER_SNAPSHOTS_URL_PATH: &str = "/debugger/v2/input";
 const AGENT_DEBUGGER_DIAGNOSTICS_URL_PATH: &str = "/debugger/v1/diagnostics";
 
+// The symbol database (SymDB) intake shares the debugger-intake host. For
+// agentless uploads SymDB intentionally reuses the same `/api/v2/debugger`
+// route as the diagnostics track (the intake demultiplexes by payload, not
+// path) - this equality is deliberate, not a copy-paste, so it is derived from
+// the diagnostics constant to keep the two in lockstep. The agent, by contrast,
+// exposes a distinct `/symdb/v1/input` proxy route.
+const DIRECT_SYMDB_URL_PATH: &str = DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH;
+const AGENT_SYMDB_URL_PATH: &str = "/symdb/v1/input";
+
+/// Creates an [`Endpoint`] for sending debugger and SymDB payloads directly to
+/// the Datadog intake without going through the agent (agentless mode).
+///
+/// This mirrors the agent's debugger proxy, which forwards to
+/// `https://debugger-intake.{site}`. The per-track path (diagnostics, snapshots
+/// or SymDB) is applied later by [`Config::set_endpoint`] /
+/// [`Config::set_symdb_endpoint`].
+///
+/// # Arguments
+/// * `site` - e.g. "datadoghq.com".
+/// * `api_key`
+pub fn debugger_intake_endpoint(
+    site: &str,
+    api_key: impl Into<Cow<'static, str>>,
+) -> anyhow::Result<Endpoint> {
+    Ok(Endpoint {
+        url: Uri::from_str(&format!(
+            "https://{PROD_DIAGNOSTICS_INTAKE_SUBDOMAIN}.{site}"
+        ))?,
+        api_key: Some(api_key.into()),
+        ..Default::default()
+    })
+}
+
+/// Derives the per-track intake path for an endpoint, returning a clone with
+/// the path applied. Endpoints with an API key are treated as agentless (direct
+/// intake) and use `direct_path`; otherwise the agent proxy `agent_path` is
+/// used. `file://` endpoints (used for tests) are left untouched.
+fn derive_endpoint_path(
+    endpoint: &Endpoint,
+    direct_path: &'static str,
+    agent_path: &'static str,
+) -> anyhow::Result<Endpoint> {
+    let mut endpoint = endpoint.clone();
+    let has_api_key = endpoint.api_key.is_some();
+    let mut parts = endpoint.url.into_parts();
+    let is_remote = parts
+        .scheme
+        .as_ref()
+        .map(|scheme| scheme.as_str() != "file")
+        .unwrap_or(false);
+    if is_remote {
+        let path = if has_api_key { direct_path } else { agent_path };
+        parts.path_and_query = Some(PathAndQuery::from_static(path));
+    }
+    endpoint.url = Uri::from_parts(parts)?;
+    Ok(endpoint)
+}
+
 #[derive(Clone, Default)]
 pub struct Config {
     pub logs_endpoint: Option<Endpoint>,
     pub snapshots_endpoint: Option<Endpoint>,
     pub diagnostics_endpoint: Option<Endpoint>,
+    pub symdb_endpoint: Option<Endpoint>,
+    /// Additional debugger-intake endpoints to dual-ship logs/snapshots/diagnostics
+    /// payloads to, mirroring the agent's `debugger_*_additional_endpoints`. Each
+    /// entry holds the per-track path already derived.
+    pub additional_logs_endpoints: Vec<Endpoint>,
+    pub additional_snapshots_endpoints: Vec<Endpoint>,
+    pub additional_diagnostics_endpoints: Vec<Endpoint>,
+    /// Additional SymDB intake endpoints, mirroring the agent's
+    /// `symdb_additional_endpoints`.
+    pub additional_symdb_endpoints: Vec<Endpoint>,
 }
 
 impl Config {
-    pub fn set_endpoint(&mut self, mut diagnostics_endpoint: Endpoint) -> anyhow::Result<()> {
-        let mut logs_endpoint = diagnostics_endpoint.clone();
-        let mut snapshots_endpoint = diagnostics_endpoint.clone();
+    pub fn set_endpoint(&mut self, diagnostics_endpoint: Endpoint) -> anyhow::Result<()> {
+        self.logs_endpoint = Some(derive_endpoint_path(
+            &diagnostics_endpoint,
+            DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH,
+            AGENT_DEBUGGER_SNAPSHOTS_URL_PATH,
+        )?);
+        self.snapshots_endpoint = Some(derive_endpoint_path(
+            &diagnostics_endpoint,
+            DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH,
+            AGENT_DEBUGGER_SNAPSHOTS_URL_PATH,
+        )?);
+        self.diagnostics_endpoint = Some(derive_endpoint_path(
+            &diagnostics_endpoint,
+            DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH,
+            AGENT_DEBUGGER_DIAGNOSTICS_URL_PATH,
+        )?);
+        Ok(())
+    }
 
-        let mut logs_uri_parts = logs_endpoint.url.into_parts();
-        let mut snapshots_uri_parts = snapshots_endpoint.url.into_parts();
-        let mut diagnostics_uri_parts = diagnostics_endpoint.url.into_parts();
+    /// Sets the SymDB (symbol database) intake endpoint, deriving the
+    /// `/api/v2/debugger` (agentless) or `/symdb/v1/input` (agent) path.
+    pub fn set_symdb_endpoint(&mut self, symdb_endpoint: Endpoint) -> anyhow::Result<()> {
+        self.symdb_endpoint = Some(derive_endpoint_path(
+            &symdb_endpoint,
+            DIRECT_SYMDB_URL_PATH,
+            AGENT_SYMDB_URL_PATH,
+        )?);
+        Ok(())
+    }
 
-        #[allow(clippy::unwrap_used)]
-        if diagnostics_uri_parts.scheme.is_some()
-            && diagnostics_uri_parts.scheme.as_ref().unwrap().as_str() != "file"
-        {
-            let v2_path = PathAndQuery::from_static(if diagnostics_endpoint.api_key.is_some() {
-                DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH
-            } else {
-                AGENT_DEBUGGER_SNAPSHOTS_URL_PATH
-            });
-            logs_uri_parts.path_and_query = Some(v2_path.clone());
-            snapshots_uri_parts.path_and_query = Some(v2_path);
-            diagnostics_uri_parts.path_and_query = Some(PathAndQuery::from_static(
-                if diagnostics_endpoint.api_key.is_some() {
-                    DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH
-                } else {
-                    AGENT_DEBUGGER_DIAGNOSTICS_URL_PATH
-                },
-            ));
-        }
+    /// Adds an additional debugger-intake endpoint to dual-ship every
+    /// logs/snapshots/diagnostics payload to, mirroring the agent's
+    /// `debugger_*_additional_endpoints`.
+    pub fn add_additional_debugger_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
+        self.additional_logs_endpoints.push(derive_endpoint_path(
+            &endpoint,
+            DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH,
+            AGENT_DEBUGGER_SNAPSHOTS_URL_PATH,
+        )?);
+        self.additional_snapshots_endpoints
+            .push(derive_endpoint_path(
+                &endpoint,
+                DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH,
+                AGENT_DEBUGGER_SNAPSHOTS_URL_PATH,
+            )?);
+        self.additional_diagnostics_endpoints
+            .push(derive_endpoint_path(
+                &endpoint,
+                DIRECT_DEBUGGER_DIAGNOSTICS_URL_PATH,
+                AGENT_DEBUGGER_DIAGNOSTICS_URL_PATH,
+            )?);
+        Ok(())
+    }
 
-        logs_endpoint.url = Uri::from_parts(logs_uri_parts)?;
-        snapshots_endpoint.url = Uri::from_parts(snapshots_uri_parts)?;
-        diagnostics_endpoint.url = Uri::from_parts(diagnostics_uri_parts)?;
-        self.logs_endpoint = Some(logs_endpoint);
-        self.snapshots_endpoint = Some(snapshots_endpoint);
-        self.diagnostics_endpoint = Some(diagnostics_endpoint);
+    /// Adds an additional SymDB intake endpoint, mirroring the agent's
+    /// `symdb_additional_endpoints`.
+    pub fn add_additional_symdb_endpoint(&mut self, endpoint: Endpoint) -> anyhow::Result<()> {
+        self.additional_symdb_endpoints.push(derive_endpoint_path(
+            &endpoint,
+            DIRECT_SYMDB_URL_PATH,
+            AGENT_SYMDB_URL_PATH,
+        )?);
         Ok(())
     }
 
     pub fn downgrade_to_diagnostics_endpoint(&mut self) {
         self.snapshots_endpoint = self.diagnostics_endpoint.clone();
         self.logs_endpoint = self.diagnostics_endpoint.clone();
+    }
+
+    /// Returns the endpoints for a debugger track: the primary endpoint first,
+    /// followed by any additional dual-ship endpoints. Inlined for the common
+    /// single-endpoint case so the hot send path does not allocate.
+    fn debugger_endpoints_for(&self, debugger_type: DebuggerType) -> SmallVec<[&Endpoint; 1]> {
+        let (primary, additional) = match debugger_type {
+            DebuggerType::Diagnostics => (
+                &self.diagnostics_endpoint,
+                &self.additional_diagnostics_endpoints,
+            ),
+            DebuggerType::Snapshots => (
+                &self.snapshots_endpoint,
+                &self.additional_snapshots_endpoints,
+            ),
+            DebuggerType::Logs => (&self.logs_endpoint, &self.additional_logs_endpoints),
+        };
+        let mut endpoints = SmallVec::new();
+        endpoints.extend(primary.as_ref());
+        endpoints.extend(additional.iter());
+        endpoints
+    }
+
+    /// Returns the SymDB endpoints: the primary endpoint first, followed by any
+    /// additional dual-ship endpoints. Inlined for the common single-endpoint
+    /// case so the hot send path does not allocate.
+    fn symdb_endpoints(&self) -> SmallVec<[&Endpoint; 1]> {
+        let mut endpoints = SmallVec::new();
+        endpoints.extend(self.symdb_endpoint.as_ref());
+        endpoints.extend(self.additional_symdb_endpoints.iter());
+        endpoints
     }
 }
 
@@ -140,15 +271,16 @@ pub fn generate_tags(
 enum SenderFuture {
     #[default]
     Error,
-    Outstanding(http_common::ResponseFuture),
-    Submitted(JoinHandle<anyhow::Result<http_common::HttpResponse>>),
+    Outstanding(ResponseFuture),
+    Submitted(JoinHandle<anyhow::Result<http::Response<Bytes>>>),
 }
 
 pub struct PayloadSender {
     future: SenderFuture,
-    sender: http_common::Sender,
+    sender: BodySender,
     needs_boundary: bool,
     payloads: u32,
+    timeout_ms: u64,
 }
 
 const BOUNDARY: &str = "------------------------44617461646f67";
@@ -160,15 +292,56 @@ impl PayloadSender {
         debugger_type: DebuggerType,
         percent_encoded_tags: &str,
     ) -> anyhow::Result<Self> {
-        #[allow(clippy::unwrap_used)]
+        Self::new_with_client(
+            config,
+            debugger_type,
+            percent_encoded_tags,
+            NativeHttpClient::new_client(),
+        )
+    }
+
+    pub fn new_with_client<C: HttpClientCapability + Send + 'static>(
+        config: &Config,
+        debugger_type: DebuggerType,
+        percent_encoded_tags: &str,
+        http_client: C,
+    ) -> anyhow::Result<Self> {
         let endpoint = match debugger_type {
             DebuggerType::Diagnostics => &config.diagnostics_endpoint,
             DebuggerType::Snapshots => &config.snapshots_endpoint,
             DebuggerType::Logs => &config.logs_endpoint,
         }
         .as_ref()
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("missing endpoint for {debugger_type:?}"))?;
+        Self::new_to_endpoint_with_client(
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            http_client,
+        )
+    }
 
+    /// Creates a sender targeting a specific endpoint. Used to fan a payload out
+    /// to the primary plus any additional dual-ship endpoints.
+    pub fn new_to_endpoint(
+        endpoint: &Endpoint,
+        debugger_type: DebuggerType,
+        percent_encoded_tags: &str,
+    ) -> anyhow::Result<Self> {
+        Self::new_to_endpoint_with_client(
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            NativeHttpClient::new_client(),
+        )
+    }
+
+    pub fn new_to_endpoint_with_client<C: HttpClientCapability + Send + 'static>(
+        endpoint: &Endpoint,
+        debugger_type: DebuggerType,
+        percent_encoded_tags: &str,
+        http_client: C,
+    ) -> anyhow::Result<Self> {
         let mut url = endpoint.url.clone();
         let mut parts = url.into_parts();
 
@@ -190,8 +363,6 @@ impl PayloadSender {
             req = req.header("DD-EVP-ORIGIN", "agent-debugger");
         }
 
-        let (sender, body) = http_common::Body::channel();
-
         let needs_boundary = debugger_type == DebuggerType::Diagnostics;
         let req = req.header(
             "Content-type",
@@ -202,12 +373,13 @@ impl PayloadSender {
             },
         );
 
-        let future = http_common::new_default_client().request(req.body(body)?);
+        let (sender, future) = http_client.request_streamed(req.body(())?);
         Ok(PayloadSender {
             future: SenderFuture::Outstanding(future),
             sender,
             needs_boundary,
             payloads: 0,
+            timeout_ms: endpoint.timeout_ms,
         })
     }
 
@@ -221,11 +393,11 @@ impl PayloadSender {
                         "Content-Type: application/json\r\n",
                         "\r\n",
                     );
-                    self.sender.send_data(header.into()).await?;
+                    self.sender.send_chunk(header.into()).await?;
                 }
 
-                self.future = SenderFuture::Submitted(tokio::spawn(async {
-                    let resp = http_common::into_response(future.await?);
+                self.future = SenderFuture::Submitted(tokio::spawn(async move {
+                    let resp = future.await?;
                     Ok(resp)
                 }));
                 true
@@ -242,39 +414,46 @@ impl PayloadSender {
         if !first {
             data[0] = b',';
         }
-        self.sender.send_data(Bytes::from(data)).await?;
+        self.sender.send_chunk(Bytes::from(data)).await?;
 
         self.payloads += 1;
         Ok(())
     }
 
-    pub async fn finish(self) -> anyhow::Result<u32> {
-        if let SenderFuture::Submitted(future) = self.future {
+    pub async fn finish(mut self) -> anyhow::Result<u32> {
+        if let SenderFuture::Submitted(mut future) = self.future {
             // insert a trailing ]
             if self.needs_boundary {
                 self.sender
-                    .send_data(concat!("]\r\n", BOUNDARY_LINE).into())
+                    .send_chunk(concat!("]\r\n", BOUNDARY_LINE).into())
                     .await?;
             } else {
-                self.sender.send_data(Bytes::from_static(b"]")).await?;
+                self.sender.send_chunk(Bytes::from_static(b"]")).await?;
             }
 
             drop(self.sender);
-            match future.await? {
-                Ok(response) => {
-                    let status = response.status().as_u16();
-                    if status >= 400 {
-                        let body_bytes = response.into_body().collect().await?.to_bytes();
-                        let response_body =
-                            String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
-                        anyhow::bail!(
-                            "Server did not accept debugger payload ({status}): {response_body}"
-                        );
+            // Once the body is fully sent, bound the wait for the response headers and (if
+            // needed) the response body under a single timeout - a slow/stalled server must
+            // not be able to hang this indefinitely. Abort the spawned task on timeout so the
+            // underlying request is actually cancelled instead of left running detached.
+            let response =
+                match tokio::time::timeout(Duration::from_millis(self.timeout_ms), &mut future)
+                    .await
+                {
+                    Ok(joined) => joined??,
+                    Err(_) => {
+                        future.abort();
+                        return Err(anyhow::anyhow!("debugger payload request timed out"));
                     }
-                    Ok(self.payloads)
-                }
-                Err(e) => anyhow::bail!("Failed to send traces: {e}"),
+                };
+
+            let status = response.status().as_u16();
+            if status >= 400 {
+                let response_body =
+                    String::from_utf8(response.into_body().to_vec()).unwrap_or_default();
+                anyhow::bail!("Server did not accept debugger payload ({status}): {response_body}");
             }
+            Ok(self.payloads)
         } else {
             Ok(0)
         }
@@ -287,9 +466,157 @@ pub async fn send(
     debugger_type: DebuggerType,
     percent_encoded_tags: &str,
 ) -> anyhow::Result<()> {
-    let mut batch = PayloadSender::new(config, debugger_type, percent_encoded_tags)?;
+    send_with_client(
+        payload,
+        config,
+        debugger_type,
+        percent_encoded_tags,
+        NativeHttpClient::new_client(),
+    )
+    .await
+}
+
+/// Like `send()`, but allows plugging in a non-default `HttpClientCapability`
+/// implementation (e.g. for testing/mocking).
+pub async fn send_with_client<C: HttpClientCapability + Send + 'static>(
+    payload: &[u8],
+    config: &Config,
+    debugger_type: DebuggerType,
+    percent_encoded_tags: &str,
+    http_client: C,
+) -> anyhow::Result<()> {
+    let endpoints = config.debugger_endpoints_for(debugger_type);
+    let (primary, additional) = endpoints
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("no endpoint configured for {debugger_type:?}"))?;
+
+    // Send the primary and any additional dual-ship endpoints concurrently,
+    // mirroring the agent's `*_additional_endpoints` fan-out. Additional
+    // responses are best-effort and discarded; only the primary endpoint's
+    // result is returned to the caller. Running concurrently keeps a slow or
+    // stalled additional endpoint from delaying the primary.
+    let primary_send = send_to_endpoint(
+        payload,
+        primary,
+        debugger_type,
+        percent_encoded_tags,
+        http_client.clone(),
+    );
+    let additional_sends = future::join_all(additional.iter().map(|&endpoint| {
+        send_to_endpoint(
+            payload,
+            endpoint,
+            debugger_type,
+            percent_encoded_tags,
+            http_client.clone(),
+        )
+    }));
+    let (result, _) = future::join(primary_send, additional_sends).await;
+    result
+}
+
+async fn send_to_endpoint<C: HttpClientCapability + Send + 'static>(
+    payload: &[u8],
+    endpoint: &Endpoint,
+    debugger_type: DebuggerType,
+    percent_encoded_tags: &str,
+    http_client: C,
+) -> anyhow::Result<()> {
+    let mut batch = PayloadSender::new_to_endpoint_with_client(
+        endpoint,
+        debugger_type,
+        percent_encoded_tags,
+        http_client,
+    )?;
     batch.append(payload).await?;
     batch.finish().await?;
+    Ok(())
+}
+
+/// Forwards a raw SymDB (symbol database) payload to the configured SymDB intake,
+/// mirroring the agent's `/symdb/v1/input` proxy. Unlike debugger payloads, the
+/// body is forwarded verbatim, the tags ride in the `X-Datadog-Additional-Tags`
+/// header (not the `ddtags` query string), and the origin is `agent-symdb`.
+pub async fn send_symdb(
+    payload: &[u8],
+    content_type: &str,
+    config: &Config,
+    tags: &str,
+) -> anyhow::Result<()> {
+    send_symdb_with_client(
+        payload,
+        content_type,
+        config,
+        tags,
+        NativeHttpClient::new_client(),
+    )
+    .await
+}
+
+/// Like `send_symdb()`, but allows plugging in a non-default
+/// `HttpClientCapability` implementation (e.g. for testing/mocking).
+pub async fn send_symdb_with_client<C: HttpClientCapability>(
+    payload: &[u8],
+    content_type: &str,
+    config: &Config,
+    tags: &str,
+    http_client: C,
+) -> anyhow::Result<()> {
+    let endpoints = config.symdb_endpoints();
+    let (primary, additional) = endpoints
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("no symdb endpoint configured"))?;
+
+    // Send the primary and any additional dual-ship endpoints concurrently;
+    // additional responses are best-effort and discarded.
+    let primary_send =
+        send_symdb_to_endpoint(payload, content_type, primary, tags, http_client.clone());
+    let additional_sends = future::join_all(additional.iter().map(|&endpoint| {
+        send_symdb_to_endpoint(payload, content_type, endpoint, tags, http_client.clone())
+    }));
+    let (result, _) = future::join(primary_send, additional_sends).await;
+    result
+}
+
+async fn send_symdb_to_endpoint<C: HttpClientCapability>(
+    payload: &[u8],
+    content_type: &str,
+    endpoint: &Endpoint,
+    tags: &str,
+    http_client: C,
+) -> anyhow::Result<()> {
+    let mut req = endpoint
+        .to_request_builder(concat!("Tracer/", env!("CARGO_PKG_VERSION")))?
+        .method(Method::POST)
+        .header("X-Datadog-Additional-Tags", tags)
+        .header("Content-type", content_type);
+
+    // The EVP origin only matters on the direct intake (agentless). In agent
+    // mode the agent sets it when proxying, so gate it on the API key to match
+    // the debugger tracks.
+    if endpoint.api_key.is_some() {
+        req = req.header("DD-EVP-ORIGIN", "agent-symdb");
+    }
+
+    let body = Bytes::from(payload.to_vec());
+    let (status, body_bytes) =
+        tokio::time::timeout(Duration::from_millis(endpoint.timeout_ms), async {
+            let response = http_client
+                .request(req.body(body)?)
+                .await
+                .map_err(anyhow::Error::new)?;
+
+            let status = response.status().as_u16();
+            let body_bytes = response.into_body();
+            Ok::<_, anyhow::Error>((status, body_bytes))
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("symdb payload request to {} timed out", endpoint.url))??;
+
+    if status >= 400 {
+        let response_body = String::from_utf8(body_bytes.to_vec()).unwrap_or_default();
+        anyhow::bail!("Server did not accept symdb payload ({status}): {response_body}");
+    }
     Ok(())
 }
 
@@ -374,6 +701,43 @@ mod tests {
             endpoint_path(&config.diagnostics_endpoint),
             "/debugger/v1/diagnostics"
         );
+    }
+
+    #[test]
+    fn test_debugger_intake_endpoint() {
+        let endpoint = debugger_intake_endpoint("datadoghq.com", "test-api-key").unwrap();
+        assert_eq!(endpoint.url.host(), Some("debugger-intake.datadoghq.com"));
+        assert_eq!(endpoint.url.scheme_str(), Some("https"));
+        assert_eq!(endpoint.api_key.as_deref(), Some("test-api-key"));
+    }
+
+    #[test]
+    fn test_set_symdb_endpoint_direct_mode() {
+        let mut config = Config::default();
+        config.set_symdb_endpoint(direct_endpoint()).unwrap();
+        assert_eq!(endpoint_path(&config.symdb_endpoint), "/api/v2/debugger");
+    }
+
+    #[test]
+    fn test_set_symdb_endpoint_agent_mode() {
+        let mut config = Config::default();
+        config.set_symdb_endpoint(agent_endpoint()).unwrap();
+        assert_eq!(endpoint_path(&config.symdb_endpoint), "/symdb/v1/input");
+    }
+
+    #[test]
+    fn test_additional_debugger_endpoints_derive_paths() {
+        let mut config = Config::default();
+        config.set_endpoint(direct_endpoint()).unwrap();
+        config
+            .add_additional_debugger_endpoint(direct_endpoint())
+            .unwrap();
+
+        let diagnostics = config.debugger_endpoints_for(DebuggerType::Diagnostics);
+        assert_eq!(diagnostics.len(), 2);
+        for endpoint in diagnostics {
+            assert_eq!(endpoint.url.path(), "/api/v2/debugger");
+        }
     }
 
     #[test]

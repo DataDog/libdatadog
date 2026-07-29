@@ -116,11 +116,14 @@ impl Builder {
         fs::create_dir_all(Path::new(self.target_include.as_ref()))
             .expect("Failed to create include directory");
         fs::create_dir_all(Path::new(self.target_lib.as_ref()))
-            .expect("Failed to create include directory");
-        fs::create_dir_all(Path::new(self.target_bin.as_ref()))
-            .expect("Failed to create include directory");
-        fs::create_dir_all(Path::new(self.target_pkconfig.as_ref()))
-            .expect("Failed to create include directory");
+            .expect("Failed to create lib directory");
+        #[cfg(not(target_os = "windows"))]
+        {
+            fs::create_dir_all(Path::new(self.target_bin.as_ref()))
+                .expect("Failed to create bin directory");
+            fs::create_dir_all(Path::new(self.target_pkconfig.as_ref()))
+                .expect("Failed to create pkgconfig directory");
+        }
     }
 
     pub fn add_cmake(&self) {

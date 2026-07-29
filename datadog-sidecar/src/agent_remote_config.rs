@@ -1,10 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::one_way_shared_memory::{
-    open_named_shm, OneWayShmReader, OneWayShmWriter, ReaderOpener,
-};
 use crate::primary_sidecar_identifier;
+use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use datadog_ipc::platform::{FileBackedHandle, MappedMem, NamedShmHandle, ShmHandle};
 use libdd_common::Endpoint;
 use std::ffi::CString;
@@ -38,7 +36,7 @@ fn path_for_endpoint(endpoint: &Endpoint) -> CString {
 }
 
 pub fn create_anon_pair() -> anyhow::Result<(AgentRemoteConfigWriter<ShmHandle>, ShmHandle)> {
-    let (writer, handle) = crate::one_way_shared_memory::create_anon_pair()?;
+    let (writer, handle) = datadog_ipc::one_way_shared_memory::create_anon_pair()?;
     Ok((AgentRemoteConfigWriter(writer), handle))
 }
 
@@ -61,15 +59,20 @@ fn try_open_shm(endpoint: &Endpoint) -> Option<MappedMem<NamedShmHandle>> {
 }
 
 pub fn new_reader(endpoint: &Endpoint) -> AgentRemoteConfigReader<NamedShmHandle> {
-    AgentRemoteConfigReader(OneWayShmReader::new(
+    AgentRemoteConfigReader(OneWayShmReader::new_with_opener(
         try_open_shm(endpoint),
         Some(AgentRemoteConfigEndpoint(endpoint.clone())),
+        |extra| {
+            extra
+                .as_ref()
+                .and_then(|endpoint| try_open_shm(&endpoint.0))
+        },
     ))
 }
 
 pub fn reader_from_shm(handle: ShmHandle) -> io::Result<AgentRemoteConfigReader<ShmHandle>> {
     Ok(AgentRemoteConfigReader(OneWayShmReader::new(
-        Some(handle.map()?),
+        handle.map()?,
         None,
     )))
 }
@@ -80,22 +83,7 @@ pub fn new_writer(endpoint: &Endpoint) -> io::Result<AgentRemoteConfigWriter<Nam
     ))
 }
 
-impl ReaderOpener<ShmHandle> for OneWayShmReader<ShmHandle, Option<AgentRemoteConfigEndpoint>> {}
-
-impl ReaderOpener<NamedShmHandle>
-    for OneWayShmReader<NamedShmHandle, Option<AgentRemoteConfigEndpoint>>
-{
-    fn open(&self) -> Option<MappedMem<NamedShmHandle>> {
-        self.extra
-            .as_ref()
-            .and_then(|endpoint| try_open_shm(&endpoint.0))
-    }
-}
-
-impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigReader<T>
-where
-    OneWayShmReader<T, Option<AgentRemoteConfigEndpoint>>: ReaderOpener<T>,
-{
+impl<T: FileBackedHandle + From<MappedMem<T>>> AgentRemoteConfigReader<T> {
     pub fn read(&mut self) -> (bool, &[u8]) {
         self.0.read()
     }

@@ -110,6 +110,30 @@ impl DDSketch {
     pub fn encode_to_vec(self) -> Vec<u8> {
         self.into_pb().encode_to_vec()
     }
+
+    /// Reconstruct a sketch from its protobuf. `None` if mapping missing/invalid.
+    pub fn from_pb(sketch: pb::DdSketch) -> Option<DDSketch> {
+        let mapping_pb = sketch.mapping?;
+        let mapping = LogMapping::new(mapping_pb.gamma, mapping_pb.index_offset)?;
+        let store = match sketch.positive_values {
+            Some(s) => LowCollapsingDenseStore {
+                bins: s.contiguous_bin_counts.into(),
+                offset: s.contiguous_bin_index_offset,
+                max_size: LowCollapsingDenseStore::default().max_size,
+            },
+            None => LowCollapsingDenseStore::default(),
+        };
+        Some(DDSketch {
+            store,
+            zero_count: sketch.zero_count,
+            mapping,
+        })
+    }
+
+    /// Decode a sketch from serialized protobuf bytes; `None` on decode/mapping failure.
+    pub fn from_encoded(bytes: &[u8]) -> Option<DDSketch> {
+        Self::from_pb(pb::DdSketch::decode(bytes).ok()?)
+    }
 }
 
 /// A store mapping the bin indexes to their respective weights
@@ -413,6 +437,19 @@ mod test {
             assert!(sketch.add(n as f64).is_ok());
         }
         assert_within!(sketch.count(), 108.0, f64::EPSILON);
+    }
+
+    #[test]
+    fn test_sketch_pb_roundtrip() {
+        let mut sketch = DDSketch::default();
+        for &p in &[0.0_f64, 0.1, 2.0, 10.0, 25.0, 10000.0] {
+            assert!(sketch.add(p).is_ok());
+        }
+        let expected_count = sketch.count();
+        let expected_bins = sketch.ordered_bins().len();
+        let decoded = DDSketch::from_pb(sketch.into_pb()).expect("decodes");
+        assert_within!(decoded.count(), expected_count, f64::EPSILON);
+        assert_eq!(decoded.ordered_bins().len(), expected_bins);
     }
 
     #[test]

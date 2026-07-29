@@ -6,6 +6,7 @@ pub mod error;
 pub mod metrics;
 use crate::telemetry::error::TelemetryError;
 use crate::telemetry::metrics::Metrics;
+use libdd_capabilities::{HttpClientCapability, MaybeSend, SleepCapability};
 use libdd_common::tag::Tag;
 use libdd_telemetry::worker::{
     LifecycleAction, TelemetryActions, TelemetryWorker, TelemetryWorkerBuilder,
@@ -74,7 +75,10 @@ impl TelemetryClientBuilder {
     pub fn set_url(mut self, url: &str) -> Self {
         let _ = self
             .config
-            .set_endpoint(libdd_common::Endpoint::from_slice(url));
+            .set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
+                url: Some(url.to_owned()),
+                ..Default::default()
+            });
         self
     }
 
@@ -92,6 +96,24 @@ impl TelemetryClientBuilder {
         self
     }
 
+    /// `dd-session-id` header (with non-empty session id).
+    pub fn set_session_id(mut self, id: &str) -> Self {
+        self.config.session_id = Some(id.to_string());
+        self
+    }
+
+    /// `dd-root-session-id` (omitted if equal to session id).
+    pub fn set_root_session_id(mut self, id: &str) -> Self {
+        self.config.root_session_id = Some(id.to_string());
+        self
+    }
+
+    /// `dd-parent-session-id` (omitted if equal to session id).
+    pub fn set_parent_session_id(mut self, id: &str) -> Self {
+        self.config.parent_session_id = Some(id.to_string());
+        self
+    }
+
     /// Sets the debug enabled flag for the telemetry client.
     pub fn set_debug_enabled(mut self, debug: bool) -> Self {
         self.config.debug_enabled = debug;
@@ -99,13 +121,28 @@ impl TelemetryClientBuilder {
     }
 
     /// Builds the telemetry client.
-    pub fn build(self) -> (TelemetryClient, TelemetryWorker) {
-        #[allow(clippy::unwrap_used)]
+    ///
+    /// `C` is the capability bundle (`NativeCapabilities` on native, `WasmCapabilities` on wasm).
+    pub fn build<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static>(
+        self,
+    ) -> Result<(TelemetryClient<C>, TelemetryWorker<C>), TelemetryError> {
+        let service_name = self
+            .service_name
+            .ok_or_else(|| TelemetryError::Builder("service_name is required".into()))?;
+        let language = self
+            .language
+            .ok_or_else(|| TelemetryError::Builder("language is required".into()))?;
+        let language_version = self
+            .language_version
+            .ok_or_else(|| TelemetryError::Builder("language_version is required".into()))?;
+        let tracer_version = self
+            .tracer_version
+            .ok_or_else(|| TelemetryError::Builder("tracer_version is required".into()))?;
         let mut builder = TelemetryWorkerBuilder::new_fetch_host(
-            self.service_name.unwrap(),
-            self.language.unwrap(),
-            self.language_version.unwrap(),
-            self.tracer_version.unwrap(),
+            service_name,
+            language,
+            language_version,
+            tracer_version,
         );
         builder.config = self.config;
         // Send only metrics and logs and drop lifecycle events
@@ -117,23 +154,40 @@ impl TelemetryClientBuilder {
             builder.runtime_id = Some(id);
         }
 
-        let (worker_handle, worker) = builder.build_worker(None);
+        // No cancellation runtime handle: telemetry workers driven by SharedRuntime
+        // handle shutdown via WorkerHandle::stop, not the per-handle deadline path.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (worker_handle, worker) = builder.build_worker::<C>(None);
+        #[cfg(target_arch = "wasm32")]
+        let (worker_handle, worker) = builder.build_worker::<C>();
 
-        (
+        Ok((
             TelemetryClient {
                 metrics: Metrics::new(&worker_handle),
                 worker: worker_handle,
             },
             worker,
-        )
+        ))
     }
 }
 
-/// Telemetry handle used to send metrics to the agent
-#[derive(Debug)]
-pub struct TelemetryClient {
+/// Telemetry handle used to send metrics to the agent.
+///
+/// `C` is the capability bundle (`NativeCapabilities` on native, `WasmCapabilities` on wasm).
+pub struct TelemetryClient<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> {
     metrics: Metrics,
-    worker: TelemetryWorkerHandle,
+    worker: TelemetryWorkerHandle<C>,
+}
+
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> std::fmt::Debug
+    for TelemetryClient<C>
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelemetryClient")
+            .field("metrics", &self.metrics)
+            .field("worker", &self.worker)
+            .finish()
+    }
 }
 
 /// Telemetry describing the sending of a trace payload
@@ -146,7 +200,6 @@ pub struct SendPayloadTelemetry {
     errors_status_code: u64,
     bytes_sent: u64,
     chunks_sent: u64,
-    chunks_dropped_p0: u64,
     chunks_dropped_serialization_error: u64,
     chunks_dropped_send_failure: u64,
     responses_count_per_code: HashMap<u16, u64>,
@@ -175,17 +228,8 @@ impl SendPayloadTelemetry {
     /// * `value` - The result of sending traces with retry
     /// * `bytes_sent` - The number of bytes in the payload
     /// * `chunks` - The number of trace chunks in the payload
-    /// * `chunks_dropped_p0` - The number of P0 trace chunks dropped due to sampling
-    pub fn from_retry_result(
-        value: &SendWithRetryResult,
-        bytes_sent: u64,
-        chunks: u64,
-        chunks_dropped_p0: u64,
-    ) -> Self {
-        let mut telemetry = Self {
-            chunks_dropped_p0,
-            ..Default::default()
-        };
+    pub fn from_retry_result(value: &SendWithRetryResult, bytes_sent: u64, chunks: u64) -> Self {
+        let mut telemetry = Self::default();
         match value {
             Ok((response, attempts)) => {
                 telemetry.chunks_sent = chunks;
@@ -229,7 +273,7 @@ impl SendPayloadTelemetry {
     }
 }
 
-impl TelemetryClient {
+impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> TelemetryClient<C> {
     /// Sends metrics to the agent using a telemetry worker handle.
     ///
     /// # Arguments:
@@ -265,11 +309,6 @@ impl TelemetryClient {
             self.worker
                 .add_point(data.chunks_sent as f64, key, vec![])?;
         }
-        if data.chunks_dropped_p0 > 0 {
-            let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
-            self.worker
-                .add_point(data.chunks_dropped_p0 as f64, key, vec![])?;
-        }
         if data.chunks_dropped_serialization_error > 0 {
             let key = self
                 .metrics
@@ -294,12 +333,42 @@ impl TelemetryClient {
         Ok(())
     }
 
-    /// Starts the client
-    pub async fn start(&self) {
-        _ = self
-            .worker
-            .send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))
-            .await;
+    /// Send dropped P0 trace counts to telemetry.
+    pub fn send_client_side_stats_drops(
+        &self,
+        dropped_p0_traces: usize,
+        dropped_by_trace_filter: usize,
+    ) -> Result<(), TelemetryError> {
+        if dropped_p0_traces > 0 {
+            let key = self.metrics.get(metrics::MetricKind::ChunksDroppedP0);
+            self.worker
+                .add_point(dropped_p0_traces as f64, key, vec![])?;
+        }
+        if dropped_by_trace_filter > 0 {
+            let key = self
+                .metrics
+                .get(metrics::MetricKind::ChunksDroppedByTraceFilter);
+            self.worker
+                .add_point(dropped_by_trace_filter as f64, key, vec![])?;
+        }
+        Ok(())
+    }
+
+    /// Starts the client.
+    ///
+    /// Sync-by-design: `Start` is dispatched via `try_send_msg` so the same
+    /// call site works from non-async constructors (e.g. wasm-bindgen's
+    /// `#[wasm_bindgen(constructor)]`, which cannot be async). The mailbox is
+    /// sized at `mpsc::channel(5000)` so a sync send is safe under normal load.
+    pub fn start(&self) -> Result<(), TelemetryError> {
+        self.worker
+            .try_send_msg(TelemetryActions::Lifecycle(LifecycleAction::Start))?;
+        Ok(())
+    }
+
+    /// Clone the telemetry handle
+    pub fn clone_handle(&self) -> TelemetryWorkerHandle<C> {
+        self.worker.clone()
     }
 }
 
@@ -310,12 +379,20 @@ mod tests {
     use httpmock::Method::POST;
     use httpmock::MockServer;
     use libdd_capabilities::HttpError;
-    use libdd_shared_runtime::{SharedRuntime, WorkerHandle};
+    use libdd_capabilities_impl::NativeCapabilities;
+
+    use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime, SharedRuntime, WorkerHandle};
     use libdd_trace_utils::test_utils::poll_for_mock_hits;
+    // Use `regex::Regex` directly here because `httpmock`'s `body_matches`
+    // requires `Into<HttpMockRegex>`, which is only implemented for
+    // `regex::Regex`, not `regex_lite::Regex`.
     use regex::Regex;
     use tokio::time::sleep;
 
-    fn get_test_client(url: &str, runtime: &SharedRuntime) -> (TelemetryClient, WorkerHandle) {
+    fn get_test_client(
+        url: &str,
+        runtime: &ForkSafeRuntime,
+    ) -> (TelemetryClient<NativeCapabilities>, WorkerHandle) {
         let (client, worker) = TelemetryClientBuilder::default()
             .set_service_name("test_service")
             .set_service_version("test_version")
@@ -327,7 +404,8 @@ mod tests {
             .set_url(url)
             .set_heartbeat(100)
             .set_debug_enabled(true)
-            .build();
+            .build::<NativeCapabilities>()
+            .expect("TelemetryClientBuilder::build failed");
         let handle = runtime
             .spawn_worker(worker, true)
             .expect("Failed to spawn worker");
@@ -367,7 +445,7 @@ mod tests {
     #[test]
     fn api_bytes_test() {
         let payload = Regex::new(r#""metric":"trace_api.bytes","tags":\["src_library:libdatadog"\],"sketch_b64":".+","common":true,"interval":\d+,"type":"distribution""#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -380,7 +458,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -398,7 +476,7 @@ mod tests {
     #[test]
     fn requests_test() {
         let payload = Regex::new(r#""metric":"trace_api.requests","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count""#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -411,7 +489,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -429,7 +507,7 @@ mod tests {
     #[test]
     fn responses_per_code_test() {
         let payload = Regex::new(r#""metric":"trace_api.responses","points":\[\[\d+,1\.0\]\],"tags":\["status_code:200","src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -442,7 +520,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -460,7 +538,7 @@ mod tests {
     #[test]
     fn errors_timeout_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:timeout"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -473,7 +551,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -491,7 +569,7 @@ mod tests {
     #[test]
     fn errors_network_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:network"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -504,7 +582,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -522,7 +600,7 @@ mod tests {
     #[test]
     fn errors_status_code_test() {
         let payload = Regex::new(r#""metric":"trace_api.errors","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","type:status_code"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -535,7 +613,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -553,7 +631,7 @@ mod tests {
     #[test]
     fn chunks_sent_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_sent","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -566,7 +644,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -584,7 +662,7 @@ mod tests {
     #[test]
     fn chunks_dropped_send_failure_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:send_failure"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -597,7 +675,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -613,23 +691,22 @@ mod tests {
 
     #[cfg_attr(miri, ignore)]
     #[test]
-    fn chunks_dropped_p0_test() {
-        let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:p0_drop"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+    fn send_client_side_stats_drops_test() {
+        let payload_p0 = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,3\.0\]\],"tags":\["src_library:libdatadog","reason:p0_drop"\],"common":true,"type":"count"#).unwrap();
+        let payload_trace_filter = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,5\.0\]\],"tags":\["src_library:libdatadog","reason:trace_filters"\],"common":true,"type":"count"#).unwrap();
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
-            when.method(POST).body_matches(payload);
+            when.method(POST)
+                .body_matches(payload_p0)
+                .body_matches(payload_trace_filter);
             then.status(200).body("");
         });
-        let data = SendPayloadTelemetry {
-            chunks_dropped_p0: 1,
-            ..Default::default()
-        };
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
-                let _ = client.send(&data);
+                let _ = client.start();
+                client.send_client_side_stats_drops(3, 5).unwrap();
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
 
@@ -646,7 +723,7 @@ mod tests {
     #[test]
     fn chunks_dropped_serialization_error_test() {
         let payload = Regex::new(r#""metric":"trace_chunks_dropped","points":\[\[\d+,1\.0\]\],"tags":\["src_library:libdatadog","reason:serialization_error"\],"common":true,"type":"count"#).unwrap();
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_matches(payload);
@@ -659,7 +736,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 let _ = client.send(&data);
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
@@ -682,36 +759,13 @@ mod tests {
                 .unwrap(),
             3,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
                 bytes_sent: 4,
                 chunks_sent: 5,
                 requests_count: 3,
-                responses_count_per_code: HashMap::from([(200, 1)]),
-                ..Default::default()
-            }
-        )
-    }
-
-    #[test]
-    fn telemetry_from_ok_response_with_p0_drops_test() {
-        let result = Ok((
-            http::Response::builder()
-                .status(http::StatusCode::OK)
-                .body(Bytes::new())
-                .unwrap(),
-            3,
-        ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 4, 5, 10);
-        assert_eq!(
-            telemetry,
-            SendPayloadTelemetry {
-                bytes_sent: 4,
-                chunks_sent: 5,
-                requests_count: 3,
-                chunks_dropped_p0: 10,
                 responses_count_per_code: HashMap::from([(200, 1)]),
                 ..Default::default()
             }
@@ -725,7 +779,7 @@ mod tests {
             .body(Bytes::new())
             .unwrap();
         let result = Err(SendWithRetryError::Http(error_response, 5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -744,7 +798,7 @@ mod tests {
             HttpError::Network(anyhow::anyhow!("connection refused")),
             5,
         ));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -759,7 +813,7 @@ mod tests {
     #[test]
     fn telemetry_from_timeout_error_test() {
         let result = Err(SendWithRetryError::Timeout(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -775,7 +829,7 @@ mod tests {
     #[test]
     fn telemetry_from_build_error_test() {
         let result = Err(SendWithRetryError::Build(5));
-        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2, 0);
+        let telemetry = SendPayloadTelemetry::from_retry_result(&result, 1, 2);
         assert_eq!(
             telemetry,
             SendPayloadTelemetry {
@@ -818,7 +872,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn runtime_id_test() {
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_includes(r#""runtime_id":"foo""#);
@@ -827,7 +881,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 client
                     .send(&SendPayloadTelemetry {
                         requests_count: 1,
@@ -849,7 +903,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     #[test]
     fn application_metadata_test() {
-        let shared_runtime = SharedRuntime::new().expect("Failed to create runtime");
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
         let server = MockServer::start();
         let mut telemetry_srv = server.mock(|when, then| {
             when.method(POST).body_includes(
@@ -860,7 +914,7 @@ mod tests {
         let (client, handle) = get_test_client(&server.url("/"), &shared_runtime);
         shared_runtime
             .block_on(async {
-                client.start().await;
+                let _ = client.start();
                 client
                     .send(&SendPayloadTelemetry {
                         requests_count: 1,
@@ -870,6 +924,61 @@ mod tests {
                 // Wait for send to be processed
                 sleep(Duration::from_millis(100)).await;
 
+                handle.stop().await.expect("Failed to stop worker");
+                assert!(
+                    poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,
+                    "telemetry server did not receive calls within timeout"
+                );
+            })
+            .expect("Failed to get runtime");
+    }
+
+    /// Instrumentation session headers on telemetry requests match trace exporter configuration.
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn session_headers_telemetry_test() {
+        let shared_runtime = ForkSafeRuntime::new().expect("Failed to create runtime");
+        let server = MockServer::start();
+        let mut telemetry_srv = server.mock(|when, then| {
+            when.method(POST)
+                .body_includes(r#""runtime_id":"foo""#)
+                .body_includes(
+                    r#""application":{"service_name":"test_service","service_version":"test_version","env":"test_env","language_name":"test_language","language_version":"test_language_version","tracer_version":"test_tracer_version"}"#,
+                )
+                .header("dd-session-id", "sess-e2e")
+                .header("dd-root-session-id", "root-e2e")
+                .header("dd-parent-session-id", "parent-e2e");
+            then.status(200).body("");
+        });
+        let (client, worker) = TelemetryClientBuilder::default()
+            .set_service_name("test_service")
+            .set_service_version("test_version")
+            .set_env("test_env")
+            .set_language("test_language")
+            .set_language_version("test_language_version")
+            .set_tracer_version("test_tracer_version")
+            .set_runtime_id("foo")
+            .set_url(&server.url("/"))
+            .set_heartbeat(100)
+            .set_debug_enabled(true)
+            .set_session_id("sess-e2e")
+            .set_root_session_id("root-e2e")
+            .set_parent_session_id("parent-e2e")
+            .build::<NativeCapabilities>()
+            .expect("TelemetryClientBuilder::build failed");
+        let handle = shared_runtime
+            .spawn_worker(worker, true)
+            .expect("Failed to spawn worker");
+        shared_runtime
+            .block_on(async {
+                let _ = client.start();
+                client
+                    .send(&SendPayloadTelemetry {
+                        requests_count: 1,
+                        ..Default::default()
+                    })
+                    .unwrap();
+                sleep(Duration::from_millis(100)).await;
                 handle.stop().await.expect("Failed to stop worker");
                 assert!(
                     poll_for_mock_hits(&mut telemetry_srv, 1000, 10, 1).await,

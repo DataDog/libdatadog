@@ -8,15 +8,15 @@
 //! It writes the raw agent response to shared memory at a fixed per-endpoint location, to be
 //! consumed be tracers.
 
-use crate::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use crate::primary_sidecar_identifier;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::Engine;
+use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWayShmWriter};
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::Shared;
 use futures::FutureExt;
 use http::uri::PathAndQuery;
-use libdd_capabilities_impl::DefaultHttpClient;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::{Endpoint, MutexExt};
 use libdd_data_pipeline::agent_info::schema::AgentInfoStruct;
 use libdd_data_pipeline::agent_info::{fetch_info_with_state, FetchInfoStatus};
@@ -103,7 +103,7 @@ impl AgentInfoFetcher {
             fetch_endpoint.url = http::Uri::from_parts(parts).unwrap();
             loop {
                 let fetched =
-                    fetch_info_with_state::<DefaultHttpClient>(&fetch_endpoint, state.as_deref())
+                    fetch_info_with_state::<NativeCapabilities>(&fetch_endpoint, state.as_deref())
                         .await;
                 let mut complete_fut = None;
                 {
@@ -188,7 +188,9 @@ impl AgentInfoReader {
     pub fn new(endpoint: &Endpoint) -> AgentInfoReader {
         let path = info_path(endpoint);
         AgentInfoReader {
-            reader: OneWayShmReader::new(open_named_shm(&path).ok(), path),
+            reader: OneWayShmReader::new_with_opener(open_named_shm(&path).ok(), path, |path| {
+                open_named_shm(path).ok()
+            }),
             info: None,
         }
     }

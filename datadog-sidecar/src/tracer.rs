@@ -32,6 +32,7 @@ pub struct Config {
     pub language: String,
     pub language_version: String,
     pub tracer_version: String,
+    pub retry_interval: u64,
 }
 
 impl Config {

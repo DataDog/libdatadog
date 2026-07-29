@@ -6,12 +6,16 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+extern crate alloc;
+
+use alloc::borrow::Cow;
 use anyhow::Context;
+use core::{ops::Deref, str::FromStr};
 use http::uri;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::sync::{Mutex, MutexGuard};
-use std::{borrow::Cow, ops::Deref, path::PathBuf, str::FromStr};
+use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod azure_app_services;
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,8 +25,12 @@ pub mod connector;
 #[cfg(feature = "reqwest")]
 pub mod dump_server;
 pub mod entity_id;
+pub mod machine_id;
+pub mod regex_engine;
 #[macro_use]
 pub mod cstr;
+#[cfg(feature = "bench-utils")]
+pub mod bench_utils;
 pub mod config;
 pub mod error;
 pub mod http_common;
@@ -85,6 +93,85 @@ impl<T> MutexExt<T> for Mutex<T> {
         #[allow(clippy::unwrap_used)]
         self.lock().unwrap()
     }
+}
+
+/// Extension trait for `RwLock` to provide methods that acquire read/write locks, panicking if
+/// the lock is poisoned.
+///
+/// Mirrors [`MutexExt`] for `RwLock` so callers avoid `#[allow(clippy::unwrap_used)]` at each
+/// lock site.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::RwLockExt;
+/// use std::sync::{Arc, RwLock};
+///
+/// let data = Arc::new(RwLock::new(5));
+/// let data_clone = Arc::clone(&data);
+///
+/// std::thread::spawn(move || {
+///     let mut num = data_clone.write_or_panic();
+///     *num += 1;
+/// })
+/// .join()
+/// .expect("Thread panicked");
+///
+/// assert_eq!(*data.read_or_panic(), 6);
+/// ```
+pub trait RwLockExt<T> {
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T>;
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T>;
+}
+
+impl<T> RwLockExt<T> for RwLock<T> {
+    #[inline(always)]
+    #[track_caller]
+    fn read_or_panic(&self) -> RwLockReadGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.read().unwrap()
+    }
+
+    #[inline(always)]
+    #[track_caller]
+    fn write_or_panic(&self) -> RwLockWriteGuard<'_, T> {
+        #[allow(clippy::unwrap_used)]
+        self.write().unwrap()
+    }
+}
+
+/// Extension trait that extracts the value from a `Result` whose error type is uninhabited.
+///
+/// The signature constrains callers at compile time: the method is only available when the
+/// error type is [`core::convert::Infallible`]. No panics — the compiler proves the `Err`
+/// arm unreachable from the type.
+///
+/// # Examples
+///
+/// ```
+/// use libdd_common::ResultInfallibleExt;
+/// use std::convert::Infallible;
+///
+/// let result: Result<i32, Infallible> = Ok(42);
+/// assert_eq!(result.unwrap_infallible(), 42);
+/// ```
+pub trait ResultInfallibleExt<T>: sealed::Sealed {
+    fn unwrap_infallible(self) -> T;
+}
+
+impl<T> ResultInfallibleExt<T> for Result<T, core::convert::Infallible> {
+    #[inline(always)]
+    fn unwrap_infallible(self) -> T {
+        match self {
+            Ok(value) => value,
+            Err(never) => match never {},
+        }
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl<T> Sealed for Result<T, core::convert::Infallible> {}
 }
 
 pub mod header {
@@ -199,6 +286,20 @@ where
     builder.build().map_err(Error::custom)
 }
 
+/// Converts a human-facing URL string into the internal [`http::Uri`]
+/// representation.
+///
+/// NOTE: the name is misleading. For `http`/`https` this is an ordinary parse,
+/// but for the `file`/`unix`/`windows` schemes it *encodes* the path into the
+/// URI authority (see `encode_uri_path_in_authority`), so it is a
+/// URL-string-to-`Uri` *constructor*, not a pure parser.
+///
+/// WARNING: this is NOT idempotent for those three schemes. The `Uri` it
+/// returns stringifies back to the encoded form (`file://<hex>/`), and feeding
+/// that string in again re-encodes it, double-encoding the path. Only ever call
+/// this on an original URL string — never on the `.to_string()` of a `Uri` that
+/// already came out of here.
+///
 /// TODO: we should properly handle malformed urls
 /// * For windows and unix schemes:
 ///     * For compatibility reasons with existing implementation this parser stores the encoded path
@@ -226,7 +327,7 @@ fn encode_uri_path_in_authority(scheme: &str, path: &str) -> anyhow::Result<http
     let path = hex::encode(path);
 
     parts.authority = uri::Authority::from_str(path.as_str()).ok();
-    parts.path_and_query = Some(uri::PathAndQuery::from_static(""));
+    parts.path_and_query = Some(uri::PathAndQuery::from_static("/"));
     Ok(http::Uri::from_parts(parts)?)
 }
 
@@ -378,7 +479,7 @@ impl Endpoint {
         // configuration will mutate the system environment (it doesn't pass
         // it as part of the SAPI env, it changes the actual system env).
         let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(self.timeout_ms))
+            .timeout(core::time::Duration::from_millis(self.timeout_ms))
             .hickory_dns(!self.use_system_resolver)
             .no_proxy();
 
@@ -429,5 +530,24 @@ impl Endpoint {
         };
 
         Ok((builder, request_url))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_uri;
+
+    /// A scheme prefix with an empty path produces an empty (and therefore
+    /// dropped) authority. parsing must reject these as malformed rather
+    /// than accept them.
+    #[test]
+    fn empty_authority_uris_are_rejected() {
+        for input in ["unix://", "windows:", "file://"] {
+            let result = parse_uri(input);
+            assert!(
+                result.is_err(),
+                "expected {input:?} to be rejected, got {result:?}"
+            );
+        }
     }
 }

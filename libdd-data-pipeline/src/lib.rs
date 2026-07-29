@@ -3,6 +3,7 @@
 #![cfg_attr(not(test), deny(clippy::panic))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::unreachable))]
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
@@ -11,9 +12,15 @@
 //! in different languages.
 
 pub mod agent_info;
+pub(crate) mod agentless;
 mod health_metrics;
 pub(crate) mod otlp;
+// `OtlpProtocol` (documented on the enum itself) is the only public symbol from the otherwise
+// crate-internal `otlp` module; re-exported here so the FFI crate can name it.
+pub use otlp::OtlpProtocol;
 #[cfg(feature = "telemetry")]
 pub(crate) mod telemetry;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod trace_buffer;
 #[allow(missing_docs)]
 pub mod trace_exporter;

@@ -66,6 +66,8 @@ mod tests {
                     seq_id: None,
                 },
             ],
+            dependencies: Vec::new(),
+            integrations: Vec::new(),
         });
 
         let serialized = serde_json::to_value(&payload).unwrap();
@@ -88,7 +90,9 @@ mod tests {
                         "config_id": null,
                         "seq_id": null
                     }
-                ]
+                ],
+                "dependencies": [],
+                "integrations": []
             }
         });
 
@@ -490,6 +494,8 @@ mod tests {
                 config_id: None,
                 seq_id: None,
             }],
+            dependencies: Vec::new(),
+            integrations: Vec::new(),
         });
 
         let serialized = serde_json::to_value(&payload).unwrap();
@@ -505,7 +511,9 @@ mod tests {
                         "config_id": null,
                         "seq_id": null
                     }
-                ]
+                ],
+                "dependencies": [],
+                "integrations": []
             }
         });
 

@@ -1,0 +1,29 @@
+name: 'Check crypto providers'
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - mq-working-branch-*
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+jobs:
+  check-crypto-providers:
+    name: "ring + aws-lc-rs are not both pulled into any workspace crate"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: Read Rust version from rust-toolchain.toml
+        id: rust-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' rust-toolchain.toml)" >> $GITHUB_OUTPUT
+      - name: Install ${{ steps.rust-version.outputs.version }} toolchain
+        run: rustup set profile minimal && rustup install ${{ steps.rust-version.outputs.version }} && rustup default ${{ steps.rust-version.outputs.version }}
+      - name: Cache [rust]
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # 2.8.1
+        with:
+          cache-targets: true # cache build artifacts
+          cache-bin: true # cache the ~/.cargo/bin directory
+      - name: Run crypto provider check
+        run: ./scripts/check_crypto_providers.sh

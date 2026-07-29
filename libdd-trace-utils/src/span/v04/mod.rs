@@ -9,6 +9,8 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::str::FromStr;
 
+pub use super::vec_map::VecMap;
+
 #[derive(Debug, PartialEq)]
 pub enum SpanKey {
     Service,
@@ -70,7 +72,8 @@ fn is_empty_str<T: Borrow<str>>(value: &T) -> bool {
 ///     let _ = span.meta.get("foo");
 /// }
 /// ```
-#[derive(Debug, Default, PartialEq, Serialize)]
+#[derive(Debug, Default, Serialize)]
+#[cfg_attr(any(test, feature = "test-utils"), derive(PartialEq))]
 pub struct Span<T: TraceData> {
     pub service: T::Text,
     pub name: T::Text,
@@ -86,12 +89,12 @@ pub struct Span<T: TraceData> {
     pub duration: i64,
     #[serde(skip_serializing_if = "is_default")]
     pub error: i32,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta: HashMap<T::Text, T::Text>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub metrics: HashMap<T::Text, f64>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    pub meta_struct: HashMap<T::Text, T::Bytes>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub meta: VecMap<T::Text, T::Text>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub metrics: VecMap<T::Text, f64>,
+    #[serde(skip_serializing_if = "VecMap::is_empty")]
+    pub meta_struct: VecMap<T::Text, T::Bytes>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub span_links: Vec<SpanLink<T>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -300,6 +303,15 @@ impl<T: TraceData> From<&AttributeArrayValue<T>> for u8 {
             AttributeArrayValue::Integer(_) => 2,
             AttributeArrayValue::Double(_) => 3,
         }
+    }
+}
+
+impl<T: TraceData> Span<T> {
+    /// Deduplicate the [VecMap] parts of this span. See [VecMap::dedup].
+    pub fn dedup(&mut self) {
+        self.meta.dedup();
+        self.metrics.dedup();
+        self.meta_struct.dedup();
     }
 }
 

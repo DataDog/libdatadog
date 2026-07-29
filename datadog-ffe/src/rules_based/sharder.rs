@@ -2,17 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Sharder implementation.
+use std::num::NonZeroU32;
+
 use md5;
 
 /// A sharder that has part of its hash pre-computed with the given salt.
 #[derive(Clone)]
 pub struct PreSaltedSharder {
     ctx: md5::Context,
-    total_shards: u32,
+    total_shards: NonZeroU32,
 }
 
 impl PreSaltedSharder {
-    pub fn new(salt: &[impl AsRef<[u8]>], total_shards: u32) -> PreSaltedSharder {
+    pub fn new(salt: &[impl AsRef<[u8]>], total_shards: NonZeroU32) -> PreSaltedSharder {
         let mut ctx = md5::Context::new();
         for s in salt {
             ctx.consume(s);

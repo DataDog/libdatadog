@@ -1,7 +1,6 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -12,10 +11,12 @@ use crate::rules_based::{ufc::VariationType, FlagType, Str};
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AssignmentReason {
-    /// Assignment was made based on targeting rules or time bounds.
+    /// Assignment was made based on targeting rules.
     TargetingMatch,
     /// Assignment was made based on traffic split allocation.
     Split,
+    /// Assignment was made from a platform/default allocation value.
+    Default,
     /// Assignment was made as a static/default value.
     Static,
 }
@@ -31,11 +32,10 @@ pub struct Assignment {
     pub allocation_key: Str,
     /// The reason for this assignment.
     pub reason: AssignmentReason,
-
+    /// Serial id for the selected split.
+    pub serial_id: Option<i32>,
     /// Whether this assignment is part of an experiment and should be logged.
     pub do_log: bool,
-    /// Extra logging information for this assignment.
-    pub extra_logging: Arc<HashMap<String, String>>,
 }
 
 /// Enum representing values assigned to a subject as a result of feature flag evaluation.

@@ -89,6 +89,8 @@ pub struct Config {
     /// Socket/pipe buffer size for IPC connections (bytes).
     /// 0 means use the platform default.
     pub pipe_buffer_size: usize,
+    #[cfg(target_os = "linux")]
+    pub spawn_without_trampoline: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -172,7 +174,7 @@ impl AppSecConfig {
 pub struct FromEnv {}
 
 impl FromEnv {
-    fn ipc_mode() -> IpcMode {
+    pub fn ipc_mode() -> IpcMode {
         let mode = std::env::var(ENV_SIDECAR_IPC_MODE).unwrap_or_default();
 
         match mode.as_str() {
@@ -259,6 +261,8 @@ impl FromEnv {
             appsec_config: Self::appsec_config(),
             max_memory: Self::max_memory(),
             pipe_buffer_size: Self::pipe_buffer_size(),
+            #[cfg(target_os = "linux")]
+            spawn_without_trampoline: false,
         }
     }
 

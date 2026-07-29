@@ -65,11 +65,17 @@ pub struct EndpointConfig<'a> {
 #[repr(C)]
 pub struct Config<'a> {
     pub additional_files: Slice<'a, CharSlice<'a>>,
+    /// If true, the receiver will collect stack traces for all threads in the crashing process
+    /// (not just the crashing thread) using ptrace-based remote unwinding.
+    pub collect_all_threads: bool,
     pub create_alt_stack: bool,
     pub demangle_names: bool,
     /// The endpoint to send the crash report to (can be a file://).
     /// If None, the crashtracker will infer the agent host from env variables.
     pub endpoint: EndpointConfig<'a>,
+    /// Maximum number of non-crashing threads to collect when `collect_all_threads` is true.
+    /// If 0, uses the default (`libdd_crashtracker::default_max_threads()`).
+    pub max_threads: usize,
     /// Optional filename for a unix domain socket if the receiver is used asynchonously
     pub optional_unix_socket_filename: CharSlice<'a>,
     pub resolve_frames: StacktraceCollection,
@@ -98,12 +104,16 @@ impl<'a> TryFrom<Config<'a>> for libdd_crashtracker::CrashtrackerConfiguration {
         };
         let mut builder = Self::builder()
             .additional_files(additional_files)
+            .collect_all_threads(value.collect_all_threads)
             .create_alt_stack(value.create_alt_stack)
             .demangle_names(value.demangle_names)
             .resolve_frames(value.resolve_frames)
             .signals(value.signals.iter().copied().collect())
             .use_alt_stack(value.use_alt_stack)
             .endpoint_use_system_resolver(value.endpoint.use_system_resolver);
+        if value.max_threads != 0 {
+            builder = builder.max_threads(value.max_threads);
+        }
         if let Some(api_key) = value.endpoint.api_key.try_to_string_option()? {
             builder = builder.endpoint_api_key(&api_key);
         }
@@ -150,6 +160,7 @@ mod tests {
     fn create_config_default<'a>() -> Config<'a> {
         Config {
             additional_files: Slice::empty(),
+            collect_all_threads: false,
             create_alt_stack: false,
             demangle_names: false,
             endpoint: EndpointConfig {
@@ -159,12 +170,47 @@ mod tests {
                 use_system_resolver: false,
                 timeout: 0,
             },
+            max_threads: 0,
             optional_unix_socket_filename: CharSlice::empty(),
             resolve_frames: StacktraceCollection::Disabled,
             signals: Slice::empty(),
             timeout_ms: 0,
             use_alt_stack: false,
         }
+    }
+
+    #[test]
+    fn test_config_try_from_collect_all_threads() -> anyhow::Result<()> {
+        let mut ffi_config = create_config_default();
+        ffi_config.collect_all_threads = true;
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .collect_all_threads(true)
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_max_threads_zero_uses_default() -> anyhow::Result<()> {
+        let mut ffi_config = create_config_default();
+        ffi_config.max_threads = 0;
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder().build()?;
+        assert_eq!(config.max_threads(), expected.max_threads());
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_try_from_max_threads_custom() -> anyhow::Result<()> {
+        let mut ffi_config = create_config_default();
+        ffi_config.max_threads = 512;
+        let config = CrashtrackerConfiguration::try_from(ffi_config)?;
+        let expected = CrashtrackerConfiguration::builder()
+            .max_threads(512)
+            .build()?;
+        assert_eq!(config, expected);
+        Ok(())
     }
 
     #[test]

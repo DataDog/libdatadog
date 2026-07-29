@@ -7,7 +7,7 @@
 /// would be overkill.
 #[cfg(test)]
 pub(crate) fn is_aligned_to<T: ?Sized>(p: *const T, align: usize) -> bool {
-    (p as *const u8 as usize) % align == 0
+    (p as *const u8 as usize).is_multiple_of(align)
 }
 
 #[cfg(test)]

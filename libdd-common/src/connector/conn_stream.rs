@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
+use core::{
     pin::Pin,
     task::{Context, Poll},
 };
@@ -35,7 +35,7 @@ pub enum ConnStream {
     },
 }
 
-pub type ConnStreamError = Box<dyn std::error::Error + Send + Sync>;
+pub type ConnStreamError = Box<dyn core::error::Error + Send + Sync>;
 
 use hyper_util::client::legacy::connect::{self, HttpConnector};
 use hyper_util::rt::TokioIo;
@@ -63,7 +63,9 @@ impl ConnStream {
             let path = super::named_pipe::named_pipe_path_from_uri(&uri)?;
             Ok(ConnStream::NamedPipe {
                 transport: TokioIo::new(
-                    tokio::net::windows::named_pipe::ClientOptions::new().open(path)?,
+                    tokio::net::windows::named_pipe::ClientOptions::new()
+                        .security_qos_flags(super::named_pipe::ANONYMOUS_IMPERSONATION_QOS)
+                        .open(path)?,
                 ),
             })
         }
@@ -188,5 +190,45 @@ impl hyper::rt::Write for ConnStream {
             #[cfg(windows)]
             ConnStreamProj::NamedPipe { transport } => transport.poll_flush(cx),
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_named_pipe_tests {
+    use super::ConnStream;
+    use crate::connector::named_pipe::named_pipe_path_to_uri;
+    use std::path::Path;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    /// Verifies that `from_named_pipe_uri` opens a client connection successfully
+    /// when impersonation is disabled (Anonymous QoS). The server accepting the
+    /// connection confirms the `SECURITY_SQOS_PRESENT | SECURITY_ANONYMOUS` flags
+    /// produce a usable transport.
+    #[tokio::test]
+    async fn from_named_pipe_uri_connects_with_anonymous_qos() {
+        let pipe_name = format!(
+            r"\\.\pipe\libdd_common_conn_stream_test_{}_{}",
+            std::process::id(),
+            rand::random::<u64>()
+        );
+
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe_name)
+            .expect("failed to create named pipe server");
+
+        let server_task = tokio::spawn(async move {
+            server.connect().await.expect("server failed to accept");
+        });
+
+        let uri = named_pipe_path_to_uri(Path::new(&pipe_name)).expect("failed to build uri");
+        let conn = ConnStream::from_named_pipe_uri(uri).await;
+        assert!(
+            conn.is_ok(),
+            "expected named pipe client to connect with Anonymous QoS: {:?}",
+            conn.err()
+        );
+
+        server_task.await.expect("server task panicked");
     }
 }

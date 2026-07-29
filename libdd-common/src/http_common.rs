@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use core::convert::Infallible;
 use core::fmt;
-use std::convert::Infallible;
 
 use thiserror::Error;
 
@@ -26,8 +26,8 @@ pub struct ClientError {
     kind: ErrorKind,
 }
 
-impl std::fmt::Display for ClientError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ClientError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.source.fmt(f)
     }
 }
@@ -46,7 +46,7 @@ pub enum Error {
 }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Error::Client(e) => write!(f, "client error: {e}"),
             Error::Infallible(e) => match *e {},
@@ -67,15 +67,15 @@ impl From<http::Error> for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 // --- Native-only code (hyper, Body, client builders, etc.) ---
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use std::error::Error as _;
-    use std::task::Poll;
+    use core::error::Error as _;
+    use core::task::Poll;
 
     use crate::connector::Connector;
     use http_body_util::BodyExt;
@@ -205,7 +205,7 @@ mod native {
         }
 
         pub fn boxed<
-            E: std::error::Error + Sync + Send + 'static,
+            E: core::error::Error + Sync + Send + 'static,
             T: hyper::body::Body<Data = hyper::body::Bytes, Error = E> + Sync + Send + 'static,
         >(
             body: T,
@@ -253,9 +253,9 @@ mod native {
         type Error = Error;
 
         fn poll_frame(
-            self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            self: core::pin::Pin<&mut Self>,
+            cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
             match self.project() {
                 BodyProj::Single(pin) => pin.poll_frame(cx).map_err(Error::Infallible),
                 BodyProj::Empty(pin) => pin.poll_frame(cx).map_err(Error::Infallible),

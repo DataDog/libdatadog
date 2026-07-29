@@ -80,11 +80,11 @@ fn test_meta_crud() {
         assert_eq!(count, 2);
         assert!(keys_slice.iter().any(|k| k == &key));
         assert!(keys_slice.iter().any(|k| k == &key2));
+        ddog_span_free_keys_ptr(keys, count);
 
         ddog_del_span_meta(span, key);
         assert!(!ddog_has_span_meta(span, key));
 
-        ddog_span_free_keys_ptr(keys, count);
         ddog_free_traces(traces);
     }
 }
@@ -125,11 +125,11 @@ fn test_metrics_crud() {
         assert_eq!(count, 2);
         assert!(keys_slice.iter().any(|k| k == &key));
         assert!(keys_slice.iter().any(|k| k == &key2));
+        ddog_span_free_keys_ptr(keys, count);
 
         ddog_del_span_metrics(span, key);
         assert!(!ddog_has_span_metrics(span, key));
 
-        ddog_span_free_keys_ptr(keys, count);
         ddog_free_traces(traces);
     }
 }
@@ -167,11 +167,11 @@ fn test_meta_struct_crud() {
         assert_eq!(count, 2);
         assert!(keys_slice.iter().any(|k| k == &key));
         assert!(keys_slice.iter().any(|k| k == &key2));
+        ddog_span_free_keys_ptr(keys, count);
 
         ddog_del_span_meta_struct(span, key);
         assert!(!ddog_has_span_meta_struct(span, key));
 
-        ddog_span_free_keys_ptr(keys, count);
         ddog_free_traces(traces);
     }
 }
@@ -186,11 +186,13 @@ fn test_span_debug_log_output() {
     ddog_set_span_name(span, CharSlice::from("debug-span"));
     let debug_output = ddog_span_debug_log(span);
 
-    let expected_output = CharSlice::from("Span { service: , name: debug-span, resource: , type: , trace_id: 0, span_id: 0, parent_id: 0, start: 0, duration: 0, error: 0, meta: {}, metrics: {}, meta_struct: {}, span_links: [], span_events: [] }");
+    let expected_output = CharSlice::from("Span { service: , name: debug-span, resource: , type: , trace_id: 0, span_id: 0, parent_id: 0, start: 0, duration: 0, error: 0, meta: VecMap { data: [], deduped: false }, metrics: VecMap { data: [], deduped: false }, meta_struct: VecMap { data: [], deduped: false }, span_links: [], span_events: [] }");
 
     assert_eq!(debug_output, expected_output);
 
-    ddog_free_charslice(debug_output);
+    unsafe {
+        ddog_free_charslice(debug_output);
+    }
     ddog_free_traces(traces);
 }
 
@@ -341,12 +343,13 @@ fn test_full_span() {
         start: 4,
         duration: 5,
         error: 6,
-        meta: HashMap::from([(get_bytes_str("meta_key"), get_bytes_str("meta_value"))]),
-        metrics: HashMap::from([(get_bytes_str("metric_key"), 1.0)]),
-        meta_struct: HashMap::from([(
+        meta: vec![(get_bytes_str("meta_key"), get_bytes_str("meta_value"))].into(),
+        metrics: vec![(get_bytes_str("metric_key"), 1.0)].into(),
+        meta_struct: vec![(
             get_bytes_str("meta_struct_key"),
             get_bytes("meta_struct_value"),
-        )]),
+        )]
+        .into(),
         span_links: vec![SpanLinkBytes {
             trace_id: 10,
             span_id: 20,

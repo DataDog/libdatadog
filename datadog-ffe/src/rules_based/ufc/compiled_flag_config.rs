@@ -1,7 +1,7 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use serde::Deserialize;
 
@@ -51,9 +51,10 @@ pub(crate) struct Allocation {
 #[derive(Debug)]
 pub(crate) struct Split {
     pub shards: Vec<Shard>,
+    pub has_shards: bool,
     pub variation_key: Str,
-    pub extra_logging: Arc<HashMap<String, String>>,
     pub value: AssignmentValue,
+    pub serial_id: Option<i32>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,8 +86,9 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
                 (
                     key,
                     Option::from(flag)
-                        .ok_or(EvaluationError::ConfigurationParseError)
-                        .and_then(compile_flag),
+                        .ok_or(EvaluationError::FlagConfigurationInvalid)
+                        .and_then(compile_flag)
+                        .map_err(per_flag_config_error),
                 )
             })
             .collect();
@@ -96,6 +98,13 @@ impl From<UniversalFlagConfigWire> for CompiledFlagsConfig {
             environment: config.environment,
             flags,
         }
+    }
+}
+
+fn per_flag_config_error(err: EvaluationError) -> EvaluationError {
+    match err {
+        EvaluationError::ConfigurationParseError => EvaluationError::FlagConfigurationInvalid,
+        err => err,
     }
 }
 
@@ -150,6 +159,7 @@ fn compile_split(
     split: SplitWire,
     variation_values: &HashMap<Str, AssignmentValue>,
 ) -> Result<Split, EvaluationError> {
+    let has_shards = !split.shards.is_empty();
     let shards = split
         .shards
         .into_iter()
@@ -160,8 +170,6 @@ fn compile_split(
         .filter_map(compile_shard)
         .collect();
 
-    let extra_logging = split.extra_logging.unwrap_or_default();
-
     let result = variation_values
         .get(&split.variation_key)
         .cloned()
@@ -169,16 +177,17 @@ fn compile_split(
 
     Ok(Split {
         shards,
+        has_shards,
         variation_key: split.variation_key,
-        extra_logging,
         value: result,
+        serial_id: split.serial_id,
     })
 }
 
 fn compile_shard(shard: ShardWire) -> Option<Shard> {
     if shard.ranges.contains(&ShardRange {
         start: 0,
-        end: shard.total_shards,
+        end: shard.total_shards.get(),
     }) {
         // The shard is "insignificant" because it always matches, so we don't need to waste time
         // checking it.

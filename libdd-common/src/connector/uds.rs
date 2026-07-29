@@ -12,7 +12,7 @@ pub fn socket_path_to_uri(path: &Path) -> Result<hyper::Uri, hyper::http::Error>
     hyper::Uri::builder()
         .scheme("unix")
         .authority(path)
-        .path_and_query("")
+        .path_and_query("/")
         .build()
 }
 

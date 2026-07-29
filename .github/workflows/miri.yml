@@ -1,27 +1,82 @@
 name: Miri test
 on:
+  pull_request:
+    branches-ignore:
+      - release
   push:
+    branches:
+      - main
+      - mq-working-branch-*
+  schedule:
+    - cron: '0 6 * * *'
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      crates: ${{ steps.set-crates.outputs.crates }}
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      with:
+        fetch-depth: 0
+    - name: Get crates report
+      id: changed-crates
+      uses: ./.github/actions/crates-reporter
+    - name: Set crates to run Miri on
+      id: set-crates
+      env:
+        CHANGED_CRATES_STATUS: ${{ steps.changed-crates.outputs.status }}
+        CHANGED_CRATES: ${{ steps.changed-crates.outputs.crates }}
+        AFFECTED_CRATES: ${{ steps.changed-crates.outputs.affected_crates }}
+      run: |
+        if [[ "$CHANGED_CRATES_STATUS" == "success" ]]; then
+          echo "This is a pull request event, running Miri on changed and affected crates"
+          echo "Changed crates: $CHANGED_CRATES"
+          echo "Affected crates: $AFFECTED_CRATES"
+
+          # create a list of crates from the affected crates
+          CRATES=$(echo "$AFFECTED_CRATES" | jq -r 'map("-p " + .) | join(" ")')
+          [[ -z "$CRATES" || "$CRATES" == '""' ]] && CRATES=""
+        else
+          echo "This is a push event, running Miri on all crates"
+          CRATES="--workspace"
+        fi
+        echo "Crates: $CRATES"
+        echo "crates=$CRATES" >> $GITHUB_OUTPUT
+
   run-miri:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         partition: [1, 2, 3, 4, 5]
+    needs: setup
+    if: ${{ needs.setup.outputs.crates != '' }}
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
       PROPTEST_CASES: 1
     steps:
+      - name: Free Disk Space (Ubuntu only)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # 1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: true
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           submodules: recursive
+      - name: Read nightly version from nightly-toolchain.toml
+        id: nightly-version
+        run: echo "version=$(grep -Po '^channel = "\K[^"]+' nightly-toolchain.toml)" >> $GITHUB_OUTPUT
       - name: Set up Rust
         run: |
           set -e
           rustup set profile minimal
-          rustup toolchain install nightly-2026-02-08 --component miri
-          rustup default nightly-2026-02-08
+          rustup toolchain install ${{ steps.nightly-version.outputs.version }} --component miri
       - uses: taiki-e/install-action@2c41309d51ede152b6f2ee6bf3b71e6dc9a8b7df # 2.49.27
         with:
           tool: nextest@0.9.96
@@ -30,6 +85,10 @@ jobs:
         with:
           cache-targets: true # cache build artifacts
           cache-bin: true # cache the ~/.cargo/bin directory
-      - run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run --partition count:${{ matrix.partition }}/5
+      - env:
+          # Override rust-toolchain.toml so miri runs on the dated nightly
+          # (miri is nightly-only) instead of the workspace MSRV.
+          RUSTUP_TOOLCHAIN: ${{ steps.nightly-version.outputs.version }}
+        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri nextest run ${{ needs.setup.outputs.crates }} --partition count:${{ matrix.partition }}/5 --no-tests=pass
       # We need to disable isolation because
       # "unsupported operation: `clock_gettime` with `REALTIME` clocks not available when isolation is enabled"

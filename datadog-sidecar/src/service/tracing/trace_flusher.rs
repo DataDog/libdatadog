@@ -5,13 +5,11 @@ use super::TraceSendData;
 use crate::agent_remote_config::AgentRemoteConfigWriter;
 use datadog_ipc::platform::NamedShmHandle;
 use futures::future::join_all;
-use libdd_capabilities::HttpClientTrait;
-use libdd_capabilities_impl::DefaultHttpClient;
+use libdd_capabilities_impl::{HttpClientCapability, NativeCapabilities};
 use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_utils::trace_utils;
 use libdd_trace_utils::trace_utils::SendData;
 use libdd_trace_utils::trace_utils::SendDataResult;
-use manual_future::{ManualFuture, ManualFutureCompleter};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
@@ -21,6 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::select;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::task::{JoinError, JoinHandle};
 use tracing::{debug, error, info};
 
@@ -96,7 +95,7 @@ pub(crate) struct TraceFlusher {
     pub(crate) min_force_drop_size_bytes: AtomicU32, // put a limit on memory usage
     remote_config: Mutex<AgentRemoteConfigs>,
     pub metrics: Mutex<TraceFlusherMetrics>,
-    client: DefaultHttpClient,
+    capabilities: NativeCapabilities,
 }
 impl Default for TraceFlusher {
     fn default() -> Self {
@@ -107,7 +106,7 @@ impl Default for TraceFlusher {
             min_force_drop_size_bytes: AtomicU32::new(trace_utils::MAX_PAYLOAD_SIZE as u32),
             remote_config: Mutex::new(Default::default()),
             metrics: Mutex::new(Default::default()),
-            client: DefaultHttpClient::new_client(),
+            capabilities: NativeCapabilities::new_client(),
         }
     }
 }
@@ -135,9 +134,9 @@ impl TraceFlusher {
         flush_data.traces.send_data.push(data);
 
         if flush_data.flusher.is_none() {
-            let (force_flush, completer) = ManualFuture::new();
-            flush_data.flusher = Some(self.clone().start_trace_flusher(force_flush));
-            flush_data.traces.force_flush = Some(completer);
+            let (force_flush_tx, force_flush_rx) = oneshot::channel();
+            flush_data.flusher = Some(self.clone().start_trace_flusher(force_flush_rx));
+            flush_data.traces.force_flush = Some(force_flush_tx);
         }
 
         if flush_data.traces.send_data_size
@@ -231,14 +230,14 @@ impl TraceFlusher {
 
     fn replace_trace_send_data(
         &self,
-        completer: ManualFutureCompleter<Option<mpsc::Sender<()>>>,
+        force_flush_tx: oneshot::Sender<Option<mpsc::Sender<()>>>,
     ) -> Vec<SendData> {
         let trace_buffer = std::mem::replace(
             &mut self.inner.lock_or_panic().traces,
             TraceSendData {
                 send_data: vec![],
                 send_data_size: 0,
-                force_flush: Some(completer),
+                force_flush: Some(force_flush_tx),
             },
         )
         .send_data;
@@ -249,7 +248,7 @@ impl TraceFlusher {
 
     async fn send_and_handle_trace(&self, send_data: SendData) {
         let endpoint = send_data.get_target().clone();
-        let response = send_data.send(&self.client).await;
+        let response = send_data.send(&self.capabilities).await;
         self.metrics.lock_or_panic().update(&response);
         match response.last_result {
             Ok(response) => {
@@ -267,7 +266,7 @@ impl TraceFlusher {
 
     fn start_trace_flusher(
         self: Arc<Self>,
-        mut force_flush: ManualFuture<Option<mpsc::Sender<()>>>,
+        mut force_flush_rx: oneshot::Receiver<Option<mpsc::Sender<()>>>,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
@@ -276,7 +275,11 @@ impl TraceFlusher {
                     _ = tokio::time::sleep(Duration::from_millis(
                         self.interval_ms.load(Ordering::Relaxed),
                     )) => {},
-                    sender = force_flush => { flush_done_sender = sender; },
+                    result = &mut force_flush_rx => {
+                        if let Ok(sender) = result {
+                            flush_done_sender = sender;
+                        }
+                    },
                 }
 
                 debug!(
@@ -284,10 +287,10 @@ impl TraceFlusher {
                     self.inner.lock_or_panic().traces.send_data_size
                 );
 
-                let (new_force_flush, completer) = ManualFuture::new();
-                force_flush = new_force_flush;
+                let (new_force_flush_tx, new_force_flush_rx) = oneshot::channel();
+                force_flush_rx = new_force_flush_rx;
 
-                let send_data = self.replace_trace_send_data(completer);
+                let send_data = self.replace_trace_send_data(new_force_flush_tx);
                 join_all(send_data.into_iter().map(|d| self.send_and_handle_trace(d))).await;
 
                 drop(flush_done_sender);

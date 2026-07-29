@@ -16,7 +16,7 @@ fn sql_obfuscation(c: &mut Criterion) {
                 }
             },
             criterion::BatchSize::LargeInput,
-        )
+        );
     });
 }
 

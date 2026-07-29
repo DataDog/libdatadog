@@ -14,35 +14,66 @@ use crate::{
     obfuscation_config::ObfuscationConfig,
     redis::{obfuscate_redis_string, quantize_redis_string, remove_all_redis_args},
     replacer::replace_span_tags,
-    sql::DbmsKind,
+    sql::{DbmsKind, SqlObfuscationMode},
 };
 
-/// TAG_REDIS_RAW_COMMAND represents a redis raw command tag
+/// `TAG_REDIS_RAW_COMMAND` represents a redis raw command tag
 const TAG_REDIS_RAW_COMMAND: &str = "redis.raw_command";
-/// TAG_VALKEY_RAW_COMMAND represents a valkey raw command tag
+/// `TAG_VALKEY_RAW_COMMAND` represents a valkey raw command tag
 const TAG_VALKEY_RAW_COMMAND: &str = "valkey.raw_command";
-/// TAG_MEMCACHED_COMMAND represents a memcached command tag
+/// `TAG_MEMCACHED_COMMAND` represents a memcached command tag
 const TAG_MEMCACHED_COMMAND: &str = "memcached.command";
-/// TAG_MONGO_DBQUERY represents a MongoDB query tag
+/// `TAG_MONGO_DBQUERY` represents a `MongoDB` query tag
 const TAG_MONGO_DBQUERY: &str = "mongodb.query";
-/// TAG_ELASTIC_BODY represents an Elasticsearch body tag
+/// `TAG_ELASTIC_BODY` represents an Elasticsearch body tag
 const TAG_ELASTIC_BODY: &str = "elasticsearch.body";
-/// TAG_OPEN_SEARCH_BODY represents an OpenSearch body tag
+/// `TAG_OPEN_SEARCH_BODY` represents an `OpenSearch` body tag
 const TAG_OPEN_SEARCH_BODY: &str = "opensearch.body";
-/// TAG_SQLQUERY represents a SQL query tag
+/// `TAG_SQLQUERY` represents a SQL query tag
 const TAG_SQLQUERY: &str = "sql.query";
-/// TAG_HTTPURL represents an HTTP URL tag
+/// `TAG_HTTPURL` represents an HTTP URL tag
 const TAG_HTTPURL: &str = "http.url";
-/// TAG_DBMS represents a DBMS tag
+/// `TAG_DBMS` represents a DBMS tag
 const TAG_DBMS: &str = "db.type";
-/// TAG_CARD_NUMBER represents a card number tag
+/// `TAG_CARD_NUMBER` represents a card number tag
 const TAG_CARD_NUMBER: &str = "card.number";
+
+/// Obfuscate a resource name for client-side stats (Version 1).
+///
+/// Applies the same resource transformations as `obfuscate_span`, but only for span types whose
+/// resource names are modified:
+/// - `"sql"`, `"cassandra"`: SQL obfuscation
+/// - `"redis"`, `"valkey"`: Redis quantization (command names only)
+///
+/// Returns `Some(obfuscated)` if the resource was modified, `None` if no obfuscation was needed.
+#[must_use]
+pub fn obfuscate_resource_for_stats(
+    span_type: &str,
+    resource: &str,
+    dbms_hint: Option<&str>,
+    sql_obfuscation_mode: SqlObfuscationMode,
+) -> Option<String> {
+    match span_type {
+        "sql" | "cassandra" if !resource.is_empty() => {
+            let dbms: DbmsKind = dbms_hint
+                .and_then(|d| d.try_into().ok())
+                .unwrap_or_default();
+            let config = &crate::sql::SqlObfuscateConfig {
+                obfuscation_mode: sql_obfuscation_mode,
+                ..Default::default()
+            };
+            Some(crate::sql::obfuscate_sql(resource, config, dbms))
+        }
+        "redis" | "valkey" => Some(quantize_redis_string(resource)),
+        _ => None,
+    }
+}
 
 /// `obfuscate_span` goes through `span` fields and applies obfuscation on it
 // TODO(APMSP-2764): return parsing errors in a vec to log them ?
 pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
-    for span_event in span.span_events.iter_mut() {
-        obfuscate_span_event(span_event, config)
+    for span_event in &mut span.span_events {
+        obfuscate_span_event(span_event, config);
     }
 
     if let Some(credit_card) = span.meta.get_mut(TAG_CARD_NUMBER) {
@@ -57,15 +88,15 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                     url,
                     config.http.remove_query_string,
                     config.http.remove_paths_with_digits,
-                )
+                );
             }
         }
         "memcached" if config.memcached.enabled => {
             if let Some(cmd) = span.meta.get_mut(TAG_MEMCACHED_COMMAND) {
                 if config.memcached.keep_command {
-                    *cmd = obfuscate_memcached_string(cmd)
+                    *cmd = obfuscate_memcached_string(cmd);
                 } else {
-                    *cmd = "".to_string()
+                    *cmd = String::new();
                 }
             }
         }
@@ -74,9 +105,9 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             if config.redis.enabled && !span.meta.is_empty() {
                 if let Some(redis_cmd) = span.meta.get_mut(TAG_REDIS_RAW_COMMAND) {
                     if config.redis.remove_all_args {
-                        *redis_cmd = remove_all_redis_args(redis_cmd)
+                        *redis_cmd = remove_all_redis_args(redis_cmd);
                     } else {
-                        *redis_cmd = obfuscate_redis_string(redis_cmd)
+                        *redis_cmd = obfuscate_redis_string(redis_cmd);
                     }
                 }
             }
@@ -86,9 +117,9 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
             if config.valkey.enabled && !span.meta.is_empty() {
                 if let Some(valkey_cmd) = span.meta.get_mut(TAG_VALKEY_RAW_COMMAND) {
                     if config.valkey.remove_all_args {
-                        *valkey_cmd = remove_all_redis_args(valkey_cmd)
+                        *valkey_cmd = remove_all_redis_args(valkey_cmd);
                     } else {
-                        *valkey_cmd = obfuscate_redis_string(valkey_cmd)
+                        *valkey_cmd = obfuscate_redis_string(valkey_cmd);
                     }
                 }
             }
@@ -101,7 +132,7 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
                 .and_then(|dbms| TryInto::try_into(dbms).ok())
                 .unwrap_or_default();
             let obfuscated_query = crate::sql::obfuscate_sql(&span.resource, &config.sql, dbms);
-            span.resource = obfuscated_query.clone();
+            span.resource.clone_from(&obfuscated_query);
             span.meta.insert(TAG_SQLQUERY.to_owned(), obfuscated_query);
         }
         "elasticsearch" if config.elasticsearch.enabled => {
@@ -145,13 +176,13 @@ pub fn obfuscate_span(span: &mut pb::Span, config: &ObfuscationConfig) {
 
 pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfig) {
     if config.credit_cards.enabled {
-        for (k, v) in event.attributes.iter_mut() {
+        for (k, v) in &mut event.attributes {
             if !should_obfuscate_cc_key(k, config) {
                 continue;
             }
             let str_value = match v.r#type() {
                 pb::attribute_any_value::AttributeAnyValueType::StringValue => {
-                    v.string_value.to_string()
+                    v.string_value.clone()
                 }
                 pb::attribute_any_value::AttributeAnyValueType::BoolValue => continue, /* Booleans can't be credit cards */
                 pb::attribute_any_value::AttributeAnyValueType::IntValue => v.int_value.to_string(),
@@ -174,7 +205,7 @@ pub fn obfuscate_span_event(event: &mut pb::SpanEvent, config: &ObfuscationConfi
 }
 
 fn obfuscate_attribute_array(v: &mut pb::AttributeArray, config: &ObfuscationConfig) {
-    for elt in v.values.iter_mut() {
+    for elt in &mut v.values {
         let string_value = match elt.r#type() {
             pb::attribute_array_value::AttributeArrayValueType::StringValue => {
                 elt.string_value.clone()
@@ -194,7 +225,7 @@ fn obfuscate_attribute_array(v: &mut pb::AttributeArray, config: &ObfuscationCon
     }
 }
 
-/// should_obfuscate_cc_key returns true if the value for the given key should be obfuscated
+/// `should_obfuscate_cc_key` returns true if the value for the given key should be obfuscated
 /// This is used to skip known safe attributes and specifically configured safe tags
 fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
     match key {
@@ -235,7 +266,7 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 		{return false;}
 		_=> {}
 	}
-    if key.starts_with("_") {
+    if key.starts_with('_') {
         return false;
     }
     if config.credit_cards.keep_values.contains(key) {
@@ -246,9 +277,57 @@ fn should_obfuscate_cc_key(key: &str, config: &ObfuscationConfig) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::obfuscate_span;
+    use super::{obfuscate_resource_for_stats, obfuscate_span};
     use crate::{obfuscation_config, replacer};
     use libdd_trace_utils::test_utils;
+
+    // test helper with default params
+    fn obfuscate_stats(span_type: &str, resource: &str) -> Option<String> {
+        obfuscate_resource_for_stats(
+            span_type,
+            resource,
+            None,
+            crate::sql::SqlObfuscationMode::default(),
+        )
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_sql() {
+        let result = obfuscate_stats("sql", "SELECT * FROM users WHERE id = 42");
+        assert_eq!(result.unwrap(), "SELECT * FROM users WHERE id = ?");
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_cassandra() {
+        let result = obfuscate_stats("cassandra", "SELECT * FROM table1 WHERE id = 42");
+        assert_eq!(result.unwrap(), "SELECT * FROM table1 WHERE id = ?");
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_redis() {
+        let result = obfuscate_stats("redis", "SET mykey myvalue\nGET mykey");
+        assert!(result.is_some());
+        // quantize_redis_string extracts command names
+        assert_eq!(result.unwrap(), "SET GET");
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_valkey() {
+        let result = obfuscate_stats("valkey", "SET mykey myvalue\nGET mykey");
+        assert_eq!(result.unwrap(), "SET GET");
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_no_match() {
+        assert!(obfuscate_stats("http", "/api/users").is_none());
+        assert!(obfuscate_stats("web", "/api/users").is_none());
+        assert!(obfuscate_stats("grpc", "MyService/MyMethod").is_none());
+    }
+
+    #[test]
+    fn test_obfuscate_resource_for_stats_empty_sql() {
+        assert!(obfuscate_stats("sql", "").is_none());
+    }
 
     #[test]
     fn test_obfuscates_span_url_strings() {
@@ -269,7 +348,7 @@ mod tests {
         assert_eq!(
             span.meta.get("http.url").unwrap(),
             "http://foo.com/id/?/page/q?"
-        )
+        );
     }
 
     #[test]
@@ -309,7 +388,7 @@ mod tests {
             ..Default::default()
         };
         obfuscate_span(&mut span, &obf_config);
-        assert_eq!(span.meta.get("redis.raw_command").unwrap(), "GEOADD ?")
+        assert_eq!(span.meta.get("redis.raw_command").unwrap(), "GEOADD ?");
     }
 
     #[test]
@@ -331,6 +410,6 @@ mod tests {
         assert_eq!(
             span.meta.get("redis.raw_command").unwrap(),
             "GEOADD key longitude latitude ?"
-        )
+        );
     }
 }

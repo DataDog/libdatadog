@@ -39,7 +39,7 @@ crate::c_setters!(
         runtime_id,
         config.session_id,
         config.parent_session_id,
-        config.root_session_id
+        config.root_session_id,
     }
 );
 

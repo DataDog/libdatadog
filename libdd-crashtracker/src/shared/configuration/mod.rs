@@ -3,9 +3,9 @@
 //
 mod builder;
 pub use builder::CrashtrackerConfigurationBuilder;
+use core::time::Duration;
 use libdd_common::Endpoint;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 /// Stacktrace collection occurs in the context of a crashing process.
 /// If the stack is sufficiently corruputed, it is possible (but unlikely),
@@ -26,19 +26,70 @@ pub enum StacktraceCollection {
     EnabledWithSymbolsInReceiver,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrashtrackerConfiguration {
     // Paths to any additional files to track, if any
     additional_files: Vec<String>,
+    #[serde(default)]
+    collect_all_threads: bool,
     create_alt_stack: bool,
     // Whether to demangle symbol names in stack traces
     demangle_names: bool,
     endpoint: Option<Endpoint>,
+    #[serde(default = "default_max_threads")]
+    max_threads: usize,
     resolve_frames: StacktraceCollection,
     signals: Vec<i32>,
     timeout: Duration,
     unix_socket_path: Option<String>,
+    #[serde(skip, default = "default_unix_socket_connector_value")]
+    unix_socket_connector: fn(&str) -> std::os::fd::RawFd,
     use_alt_stack: bool,
+}
+
+impl PartialEq for CrashtrackerConfiguration {
+    fn eq(&self, other: &Self) -> bool {
+        self.additional_files == other.additional_files
+            && self.collect_all_threads == other.collect_all_threads
+            && self.create_alt_stack == other.create_alt_stack
+            && self.demangle_names == other.demangle_names
+            && self.endpoint == other.endpoint
+            && self.max_threads == other.max_threads
+            && self.resolve_frames == other.resolve_frames
+            && self.signals == other.signals
+            && self.timeout == other.timeout
+            && self.unix_socket_path == other.unix_socket_path
+            && self.use_alt_stack == other.use_alt_stack
+    }
+}
+
+pub const fn default_max_threads() -> usize {
+    256
+}
+
+pub fn default_unix_socket_connector(unix_socket_path: &str) -> std::os::fd::RawFd {
+    use std::os::fd::IntoRawFd;
+    use std::os::unix::net::UnixStream;
+    #[cfg(target_os = "linux")]
+    let stream = if unix_socket_path.starts_with(['.', '/']) {
+        UnixStream::connect(unix_socket_path)
+    } else {
+        use std::os::linux::net::SocketAddrExt;
+        match std::os::unix::net::SocketAddr::from_abstract_name(unix_socket_path) {
+            Ok(addr) => UnixStream::connect_addr(&addr),
+            Err(e) => Err(e),
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let stream = UnixStream::connect(unix_socket_path);
+    match stream {
+        Ok(s) => s.into_raw_fd(),
+        Err(_) => -1,
+    }
+}
+
+fn default_unix_socket_connector_value() -> fn(&str) -> std::os::fd::RawFd {
+    default_unix_socket_connector
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -84,8 +135,16 @@ impl CrashtrackerConfiguration {
         &self.additional_files
     }
 
+    pub fn collect_all_threads(&self) -> bool {
+        self.collect_all_threads
+    }
+
     pub fn create_alt_stack(&self) -> bool {
         self.create_alt_stack
+    }
+
+    pub fn max_threads(&self) -> usize {
+        self.max_threads
     }
 
     pub fn use_alt_stack(&self) -> bool {
@@ -112,8 +171,20 @@ impl CrashtrackerConfiguration {
         &self.unix_socket_path
     }
 
+    pub fn unix_socket_connector(&self) -> fn(&str) -> std::os::fd::RawFd {
+        self.unix_socket_connector
+    }
+
     pub fn demangle_names(&self) -> bool {
         self.demangle_names
+    }
+
+    pub fn set_collect_all_threads(&mut self, collect: bool) {
+        self.collect_all_threads = collect;
+    }
+
+    pub fn set_max_threads(&mut self, max: usize) {
+        self.max_threads = max;
     }
 
     pub fn set_create_alt_stack(&mut self, create_alt_stack: bool) -> anyhow::Result<()> {
@@ -132,6 +203,14 @@ impl CrashtrackerConfiguration {
         );
         self.use_alt_stack = use_alt_stack;
         Ok(())
+    }
+
+    pub fn set_unix_socket_path(&mut self, path: String) {
+        self.unix_socket_path = Some(path);
+    }
+
+    pub fn set_unix_socket_connector(&mut self, connector: fn(&str) -> std::os::fd::RawFd) {
+        self.unix_socket_connector = connector;
     }
 }
 

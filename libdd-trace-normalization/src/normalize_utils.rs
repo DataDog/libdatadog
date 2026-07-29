@@ -83,6 +83,12 @@ pub fn normalize_parent_id(parent_id: &mut u64, trace_id: u64, span_id: u64) {
     }
 }
 
+pub fn normalize_tag_cloned(tag: &str) -> String {
+    let mut tag = tag.to_owned();
+    normalize_tag(&mut tag);
+    tag
+}
+
 pub fn normalize_tag(tag: &mut String) {
     // Since we know that we're only going to write valid utf8 we can work with the Vec directly
     let bytes = unsafe { tag.as_mut_vec() };

@@ -88,7 +88,11 @@ cargo +nightly fmt --all
 ```
 
 If you'd like CI to automatically format your code and commit the changes to your PR, add the `commit-rustfmt-changes`
-label to your pull request. This will trigger an automatic formatting commit if any changes are needed.
+label to your pull request. This will trigger a one-time formatting commit if any changes are needed. If you push
+additional commits after labeling, remove and re-add the label to re-run formatting.
+
+Optionally, you can install [pre-commit](https://pre-commit.com/) hooks to run formatting and clippy checks locally
+before they hit CI. See `.pre-commit-config.yaml` for setup instructions.
 
 ## Commit Message Guidelines
 

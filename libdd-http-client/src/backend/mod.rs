@@ -1,8 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{config, HttpClientError, HttpRequest, HttpResponse};
-use std::time::Duration;
+use crate::{config, HttpClientConfig, HttpClientError, HttpRequest, HttpResponse};
 
 #[cfg(all(feature = "hyper-backend", not(feature = "reqwest-backend")))]
 pub(crate) mod hyper_backend;
@@ -16,7 +15,10 @@ pub(crate) mod reqwest_backend;
 /// Backend`.
 pub(crate) trait Backend: Sized {
     /// Construct a new backend with the given timeout and transport.
-    fn new(timeout: Duration, transport: config::TransportConfig) -> Result<Self, HttpClientError>;
+    fn new(
+        client_config: &HttpClientConfig,
+        transport: config::TransportConfig,
+    ) -> Result<Self, HttpClientError>;
 
     /// Send an HTTP request and return the response.
     async fn send(

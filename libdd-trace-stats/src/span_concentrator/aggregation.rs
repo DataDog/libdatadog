@@ -6,13 +6,19 @@
 //! span.
 
 use hashbrown::HashMap;
+use libdd_trace_obfuscation::ip_address::quantize_peer_ip_addresses;
 use libdd_trace_protobuf::pb;
 use libdd_trace_utils::span::SpanText;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
+use tracing::warn;
 
 use crate::span_concentrator::StatSpan;
 
+/// Sentinel value used for cardinality limiting.
+pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
+
 const TAG_STATUS_CODE: &str = "http.status_code";
+const ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN: usize = 200;
 const TAG_SYNTHETICS: &str = "synthetics";
 const TAG_SPANKIND: &str = "span.kind";
 const TAG_ORIGIN: &str = "_dd.origin";
@@ -46,7 +52,7 @@ pub struct FixedAggregationKey<T> {
     pub http_status_code: u32,
     pub grpc_status_code: Option<u8>,
     pub is_synthetics_request: bool,
-    pub is_trace_root: bool,
+    pub is_trace_root: pb::Trilean,
 }
 
 impl<T> FixedAggregationKey<T> {
@@ -79,7 +85,8 @@ impl<T> FixedAggregationKey<T> {
 /// Represent a stats aggregation key borrowed from span data
 pub(super) struct BorrowedAggregationKey<'a> {
     fixed: FixedAggregationKey<&'a str>,
-    peer_tags: Vec<(&'a str, &'a str)>,
+    peer_tags: Vec<(&'a str, Cow<'a, str>)>,
+    additional_metric_tags: Vec<(&'a str, &'a str)>,
 }
 
 impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
@@ -91,6 +98,12 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
                 .peer_tags
                 .iter()
                 .zip(other.peer_tags.iter())
+                .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
+            && self.additional_metric_tags.len() == other.additional_metric_tags.len()
+            && self
+                .additional_metric_tags
+                .iter()
+                .zip(other.additional_metric_tags.iter())
                 .all(|((k1, v1), (k2, v2))| k1 == k2 && v1 == v2)
     }
 }
@@ -106,6 +119,7 @@ impl hashbrown::Equivalent<OwnedAggregationKey> for BorrowedAggregationKey<'_> {
 pub(super) struct OwnedAggregationKey {
     fixed: FixedAggregationKey<String>,
     peer_tags: Vec<(String, String)>,
+    additional_metric_tags: Vec<(String, String)>,
 }
 
 impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
@@ -114,6 +128,11 @@ impl From<&BorrowedAggregationKey<'_>> for OwnedAggregationKey {
             fixed: value.fixed.convert(str::to_owned),
             peer_tags: value
                 .peer_tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            additional_metric_tags: value
+                .additional_metric_tags
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
@@ -199,20 +218,48 @@ fn grpc_status_str_to_int_value(v: &str) -> Option<u8> {
 impl<'a> BorrowedAggregationKey<'a> {
     /// Return an AggregationKey matching the given span.
     ///
-    /// If `peer_tags_keys` is not empty then the peer tags of the span will be included in the
+    /// If `peer_tag_keys` is not empty then the peer tags of the span will be included in the
     /// key.
-    pub fn from_span<T: StatSpan<'a>>(span: &'a T, peer_tag_keys: &'a [String]) -> Self {
+    /// If `additional_metric_tags` is not empty then matching span tags keys are included in the
+    /// key.
+    pub(super) fn from_span<T: StatSpan<'a>>(
+        span: &'a T,
+        peer_tag_keys: &'a [String],
+        additional_metric_tag_keys: &'a [String],
+    ) -> Self {
+        Self::from_obfuscated_span(
+            span.resource(),
+            span,
+            peer_tag_keys,
+            additional_metric_tag_keys,
+        )
+    }
+
+    pub(crate) fn from_obfuscated_span<'b, T>(
+        resource_name: &'a str,
+        span: &'b T,
+        peer_tag_keys: &'b [String],
+        additional_metric_tag_keys: &'b [String],
+    ) -> BorrowedAggregationKey<'a>
+    where
+        T: StatSpan<'b>,
+        // resource_name is a temporary string on the stack the span will outlive it
+        'b: 'a,
+    {
         let span_kind = span.get_meta(TAG_SPANKIND).unwrap_or_default();
         let peer_tags = if should_track_peer_tags(span_kind) {
             // Parse the meta tags of the span and return a list of the peer tags based on the list
-            // of `peer_tag_keys`
+            // of `peer_tag_keys`. IP address values are quantized to reduce cardinality.
             peer_tag_keys
                 .iter()
-                .filter_map(|key| Some(((key.as_str()), (span.get_meta(key.as_str())?))))
+                .filter_map(|key| {
+                    let value = span.get_meta(key.as_str())?;
+                    Some((key.as_str(), quantize_peer_ip_addresses(value)))
+                })
                 .collect()
         } else if let Some(base_service) = span.get_meta("_dd.base_service") {
             // Internal spans with a base service override use only _dd.base_service as peer tag
-            vec![("_dd.base_service", base_service)]
+            vec![("_dd.base_service", Cow::Borrowed(base_service))]
         } else {
             vec![]
         };
@@ -233,12 +280,33 @@ impl<'a> BorrowedAggregationKey<'a> {
         };
 
         let grpc_status_code = get_grpc_status_code(span);
-
         let service_source = span.get_meta(TAG_SVC_SRC).unwrap_or_default();
+
+        let additional_metric_tags: Vec<(&'a str, &'a str)> = additional_metric_tag_keys
+            .iter()
+            .filter_map(|key| match span.get_meta(key.as_str()) {
+                Some(v) if !v.is_empty() => {
+                    // Byte length >= char count, so skip the char walk when byte length alone
+                    // is within the max character length, otherwise stop as soon as we pass the max character length.
+                    if v.len() > ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN
+                        && v.chars().nth(ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN).is_some()
+                    {
+                        warn!(
+                            "additional_metric_tags: value for key '{}' exceeds {} characters; substituting tracer_blocked_value",
+                            key, ADDITIONAL_METRIC_TAG_VALUE_MAX_LEN,
+                        );
+                        Some((key.as_str(), TRACER_BLOCKED_VALUE))
+                    } else {
+                        Some((key.as_str(), v))
+                    }
+                }
+                _ => None,
+            })
+            .collect();
 
         Self {
             fixed: FixedAggregationKey {
-                resource_name: span.resource(),
+                resource_name,
                 service_name: span.service(),
                 operation_name: span.name(),
                 span_type: span.r#type(),
@@ -251,9 +319,64 @@ impl<'a> BorrowedAggregationKey<'a> {
                 is_synthetics_request: span
                     .get_meta(TAG_ORIGIN)
                     .is_some_and(|origin| origin.starts_with(TAG_SYNTHETICS)),
-                is_trace_root: span.is_trace_root(),
+                is_trace_root: if span.is_trace_root() {
+                    pb::Trilean::True
+                } else {
+                    pb::Trilean::False
+                },
             },
             peer_tags,
+            additional_metric_tags,
+        }
+    }
+
+    /// Truncates string fields in accordance with the cardinality limit RFC
+    ///
+    /// This should be called only after obfuscation
+    #[cfg_attr(not(feature = "stats-obfuscation"), allow(unused))]
+    pub(crate) fn truncate(&mut self, big_resource: bool) {
+        let resource_length_limit = if big_resource { 15_000 } else { 5000 };
+        self.fixed.resource_name = slice_up_to(self.fixed.resource_name, resource_length_limit);
+        self.fixed.service_name = slice_up_to(self.fixed.service_name, 100);
+        self.fixed.operation_name = slice_up_to(self.fixed.operation_name, 100);
+        self.fixed.span_type = slice_up_to(self.fixed.span_type, 100);
+    }
+}
+
+/// Truncate `s` to at most `max_len` bytes
+fn slice_up_to(s: &str, max_len: usize) -> &str {
+    if max_len >= s.len() {
+        return s;
+    }
+    // TODO: use `floor_char_boundary` once our MSRV is 1.91 or higher
+    // (https://doc.rust-lang.org/std/primitive.str.html#method.floor_char_boundary)
+    let mut idx = max_len;
+    while !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    &s[..idx]
+}
+
+impl OwnedAggregationKey {
+    /// Return the overflow sentinel key.
+    pub(super) fn overflow_key() -> Self {
+        OwnedAggregationKey {
+            fixed: FixedAggregationKey {
+                resource_name: TRACER_BLOCKED_VALUE.to_owned(),
+                service_name: TRACER_BLOCKED_VALUE.to_owned(),
+                operation_name: TRACER_BLOCKED_VALUE.to_owned(),
+                span_type: TRACER_BLOCKED_VALUE.to_owned(),
+                span_kind: TRACER_BLOCKED_VALUE.to_owned(),
+                http_method: TRACER_BLOCKED_VALUE.to_owned(),
+                http_endpoint: TRACER_BLOCKED_VALUE.to_owned(),
+                service_source: TRACER_BLOCKED_VALUE.to_owned(),
+                http_status_code: 0,
+                grpc_status_code: None,
+                is_synthetics_request: false,
+                is_trace_root: pb::Trilean::NotSet,
+            },
+            peer_tags: vec![],
+            additional_metric_tags: vec![],
         }
     }
 }
@@ -273,10 +396,19 @@ impl From<pb::ClientGroupedStats> for OwnedAggregationKey {
                 http_status_code: value.http_status_code,
                 grpc_status_code: value.grpc_status_code.parse().ok(),
                 is_synthetics_request: value.synthetics,
-                is_trace_root: value.is_trace_root == 1,
+                is_trace_root: pb::Trilean::try_from(value.is_trace_root)
+                    .unwrap_or(pb::Trilean::NotSet),
             },
             peer_tags: value
                 .peer_tags
+                .into_iter()
+                .filter_map(|t| {
+                    let (key, value) = t.split_once(':')?;
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect(),
+            additional_metric_tags: value
+                .additional_metric_tags
                 .into_iter()
                 .filter_map(|t| {
                     let (key, value) = t.split_once(':')?;
@@ -307,6 +439,14 @@ pub(super) struct GroupedStats {
     top_level_hits: u64,
     ok_summary: libdd_ddsketch::DDSketch,
     error_summary: libdd_ddsketch::DDSketch,
+    // Exact per-cell (ok/error) scalars used by the OTLP trace-metrics path. These are tracked
+    // separately from `duration` so the /v0.6/stats agent payload is byte-for-byte unchanged.
+    ok_duration: u64,
+    ok_min: u64,
+    ok_max: u64,
+    error_duration: u64,
+    error_min: u64,
+    error_max: u64,
 }
 
 impl GroupedStats {
@@ -314,17 +454,55 @@ impl GroupedStats {
     fn insert(&mut self, duration: i64, is_error: bool, is_top_level: bool) {
         self.hits += 1;
         self.duration += duration as u64;
-
+        let d = duration as u64;
         if is_error {
             self.errors += 1;
             let _ = self.error_summary.add(duration as f64);
+            self.error_duration += d;
+            self.error_min = if self.errors == 1 {
+                d
+            } else {
+                self.error_min.min(d)
+            };
+            self.error_max = self.error_max.max(d);
         } else {
             let _ = self.ok_summary.add(duration as f64);
+            self.ok_duration += d;
+            let ok_count = self.hits - self.errors;
+            self.ok_min = if ok_count == 1 { d } else { self.ok_min.min(d) };
+            self.ok_max = self.ok_max.max(d);
         }
         if is_top_level {
             self.top_level_hits += 1;
         }
     }
+}
+
+/// Exact per-cell (ok or error) scalars for one aggregation group, surfaced to the OTLP
+/// trace-metrics path. `count` is exact; `duration_ns`/`min_ns`/`max_ns` are exact when
+/// `count > 0` and meaningless otherwise (the OTLP mapper suppresses empty cells).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OtlpExactCell {
+    pub count: u64,
+    pub duration_ns: u64,
+    pub min_ns: u64,
+    pub max_ns: u64,
+}
+
+/// Exact OK/ERROR cells for one aggregation group, in the same order as the `stats` vector
+/// of the accompanying [`pb::ClientStatsBucket`].
+#[derive(Debug, Clone, Default)]
+pub struct OtlpExactGroup {
+    pub ok: OtlpExactCell,
+    pub error: OtlpExactCell,
+}
+
+/// A bucket flushed for the OTLP trace-metrics path. `exact[i]` is the exact-scalar sidecar
+/// for `bucket.stats[i]`; the protobuf bucket itself is identical to what the agent path uses.
+#[derive(Debug, Clone)]
+pub struct OtlpStatsBucket {
+    pub bucket: pb::ClientStatsBucket,
+    pub exact: Vec<OtlpExactGroup>,
 }
 
 /// A time bucket used for stats aggregation. It stores a map of GroupedStats storing the stats of
@@ -333,19 +511,47 @@ impl GroupedStats {
 pub(super) struct StatsBucket {
     data: HashMap<OwnedAggregationKey, GroupedStats>,
     start: u64,
+    /// Maximum number of distinct aggregation keys this bucket will hold before collapsing new
+    /// ones into the overflow sentinel key.
+    max_entries: usize,
+    /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
+    collapsed_count: u64,
+    /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
+    /// constant per bucket
+    #[cfg(feature = "stats-obfuscation")]
+    pub(super) obfuscated: bool,
 }
 
 impl StatsBucket {
-    /// Return a new StatsBucket starting at the given timestamp
-    pub(super) fn new(start_timestamp: u64) -> Self {
+    /// Return a new StatsBucket starting at `start_timestamp`.
+    ///
+    /// `max_entries` is the maximum number of distinct aggregation keys the bucket will hold.
+    /// Once the limit is reached, new distinct keys are collapsed into the overflow sentinel key.
+    pub(super) fn new(
+        start_timestamp: u64,
+        max_entries: usize,
+        #[cfg(feature = "stats-obfuscation")] obfuscation_enabled: bool,
+    ) -> Self {
         Self {
             data: HashMap::new(),
             start: start_timestamp,
+            max_entries,
+            collapsed_count: 0,
+            #[cfg(feature = "stats-obfuscation")]
+            obfuscated: obfuscation_enabled,
         }
     }
 
-    /// Insert a value as stats in the group corresponding to the aggregation key, if it does
-    /// not exist it creates it.
+    /// Return the number of spans collapsed into the overflow bucket.
+    pub(super) fn collapsed_count(&self) -> u64 {
+        self.collapsed_count
+    }
+
+    /// Insert a value as stats in the group corresponding to the aggregation key, if it does not
+    /// exist it creates it.
+    ///
+    /// Keys that already exist in this bucket always merge normally. A new key is subject to the
+    /// `max_entries` limit, which collapses it into the overflow sentinel key.
     pub(super) fn insert(
         &mut self,
         key: BorrowedAggregationKey<'_>,
@@ -353,25 +559,69 @@ impl StatsBucket {
         is_error: bool,
         is_top_level: bool,
     ) {
-        self.data
-            .entry_ref(&key)
-            .or_default()
-            .insert(duration, is_error, is_top_level);
+        // The map can't change size before the entry below is resolved, so this single read
+        // covers the `max_entries` check in the vacant branch without a further lookup.
+        let len_before_insert = self.data.len();
+
+        match self.data.entry_ref(&key) {
+            // Existing key, merge
+            hashbrown::hash_map::EntryRef::Occupied(mut e) => {
+                e.get_mut().insert(duration, is_error, is_top_level);
+            }
+            hashbrown::hash_map::EntryRef::Vacant(e) => {
+                // New key over the max entry limit, collapse into the overflow
+                // sentinel.
+                if len_before_insert >= self.max_entries {
+                    self.collapsed_count += 1;
+                    self.data
+                        .entry(OwnedAggregationKey::overflow_key())
+                        .or_default()
+                        .insert(duration, is_error, is_top_level);
+                    return;
+                }
+                // Within the max entry limit, admit key as a new distinct entry.
+                e.insert(GroupedStats::default())
+                    .insert(duration, is_error, is_top_level);
+            }
+        }
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
     /// `bucket_duration` is the size of buckets for the concentrator containing the bucket.
     pub(super) fn flush(self, bucket_duration: u64) -> pb::ClientStatsBucket {
-        pb::ClientStatsBucket {
-            start: self.start,
-            duration: bucket_duration,
-            stats: self
-                .data
-                .into_iter()
-                .map(|(k, b)| encode_grouped_stats(k, b))
-                .collect(),
-            // Agent-only field
-            agent_time_shift: 0,
+        self.flush_with_otlp_exact(bucket_duration).bucket
+    }
+
+    /// Like [`Self::flush`], but additionally produces exact per-cell scalars for the OTLP
+    /// trace-metrics path. The `bucket` field is identical to what [`Self::flush`] returns.
+    pub(super) fn flush_with_otlp_exact(self, bucket_duration: u64) -> OtlpStatsBucket {
+        let mut stats = Vec::with_capacity(self.data.len());
+        let mut exact = Vec::with_capacity(self.data.len());
+        for (k, g) in self.data {
+            exact.push(OtlpExactGroup {
+                ok: OtlpExactCell {
+                    count: g.hits.saturating_sub(g.errors),
+                    duration_ns: g.ok_duration,
+                    min_ns: g.ok_min,
+                    max_ns: g.ok_max,
+                },
+                error: OtlpExactCell {
+                    count: g.errors,
+                    duration_ns: g.error_duration,
+                    min_ns: g.error_min,
+                    max_ns: g.error_max,
+                },
+            });
+            stats.push(encode_grouped_stats(k, g));
+        }
+        OtlpStatsBucket {
+            bucket: pb::ClientStatsBucket {
+                start: self.start,
+                duration: bucket_duration,
+                stats,
+                agent_time_shift: 0,
+            },
+            exact,
         }
     }
 }
@@ -402,11 +652,7 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .into_iter()
             .map(|(k, v)| format!("{k}:{v}"))
             .collect(),
-        is_trace_root: if f.is_trace_root {
-            pb::Trilean::True.into()
-        } else {
-            pb::Trilean::False.into()
-        },
+        is_trace_root: f.is_trace_root.into(),
         http_method: f.http_method,
         http_endpoint: f.http_endpoint,
         grpc_status_code: f
@@ -414,7 +660,12 @@ fn encode_grouped_stats(key: OwnedAggregationKey, group: GroupedStats) -> pb::Cl
             .map(|c| c.to_string())
             .unwrap_or_default(),
         service_source: f.service_source,
-        span_derived_primary_tags: vec![], // Todo
+        span_derived_primary_tags: vec![],
+        additional_metric_tags: key
+            .additional_metric_tags
+            .into_iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect(),
     }
 }
 
@@ -423,7 +674,8 @@ mod tests {
     use libdd_trace_utils::span::v04::{SpanBytes, SpanSlice};
 
     use super::*;
-    use std::{collections::HashMap, hash::Hash};
+    use libdd_trace_protobuf::pb;
+    use std::hash::Hash;
 
     fn get_hash(v: &impl Hash) -> u64 {
         use std::hash::Hasher;
@@ -437,12 +689,14 @@ mod tests {
             OwnedAggregationKey {
                 fixed: self,
                 peer_tags: vec![],
+                additional_metric_tags: vec![],
             }
         }
         fn into_key_with_peers(self, peer_tags: Vec<(String, String)>) -> OwnedAggregationKey {
             OwnedAggregationKey {
                 fixed: self,
                 peer_tags,
+                additional_metric_tags: vec![],
             }
         }
     }
@@ -464,7 +718,7 @@ mod tests {
                     service_name: "service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -477,7 +731,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind".into(), "client".into())]),
+                    meta: vec![("span.kind".into(), "client".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -485,7 +739,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -498,10 +752,11 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "client".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -509,7 +764,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -522,12 +777,13 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "producer".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
                         ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -535,7 +791,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -549,12 +805,13 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind".into(), "server".into()),
                         ("aws.s3.bucket".into(), "bucket-a".into()),
                         ("db.instance".into(), "dynamo.test.us1".into()),
                         ("db.system".into(), "dynamodb".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -562,7 +819,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -575,7 +832,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.origin".into(), "synthetics-browser".into())]),
+                    meta: vec![("_dd.origin".into(), "synthetics-browser".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -583,7 +840,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: true,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -596,7 +853,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "418".into())]),
+                    meta: vec![("http.status_code".into(), "418".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -604,7 +861,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     http_status_code: 418,
                     ..Default::default()
                 }
@@ -618,7 +875,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("http.status_code".into(), "x".into())]),
+                    meta: vec![("http.status_code".into(), "x".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -626,7 +883,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -639,7 +896,7 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    metrics: HashMap::from([("http.status_code".into(), 418.0)]),
+                    metrics: vec![("http.status_code".into(), 418.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -647,7 +904,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     http_status_code: 418,
                     ..Default::default()
                 }
@@ -661,10 +918,11 @@ mod tests {
                     resource: "GET /api/v1/users".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("http.method".into(), "GET".into()),
                         ("http.route".into(), "/api/v1/users".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -674,7 +932,7 @@ mod tests {
                     http_method: "GET".into(),
                     http_endpoint: "/api/v1/users".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -687,11 +945,12 @@ mod tests {
                     resource: "POST /users/create".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("http.method".into(), "POST".into()),
                         ("http.route".into(), "/users/create".into()),
                         ("http.endpoint".into(), "/users/create2".into()),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -701,7 +960,7 @@ mod tests {
                     http_method: "POST".into(),
                     http_endpoint: "/users/create2".into(),
                     is_synthetics_request: false,
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -709,12 +968,24 @@ mod tests {
             // Span with grpc status from meta as named string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "OK".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "OK".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(0),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
+                    ..Default::default()
+                }
+                .into_key(),
+            ),
+            // grpc.method.name is carried in GroupedStats (for OTLP), not in the aggregation key.
+            (
+                SpanBytes {
+                    meta: vec![("grpc.method.name".into(), "/pkg.Svc/Method".into())].into(),
+                    ..Default::default()
+                },
+                FixedAggregationKey {
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -722,12 +993,12 @@ mod tests {
             // Span with grpc status from meta as numeric string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "14".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "14".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(14),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -735,12 +1006,12 @@ mod tests {
             // Span with grpc status from meta with StatusCode. prefix
             (
                 SpanBytes {
-                    meta: HashMap::from([("grpc.code".into(), "StatusCode.UNAVAILABLE".into())]),
+                    meta: vec![("grpc.code".into(), "StatusCode.UNAVAILABLE".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(14),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -748,16 +1019,13 @@ mod tests {
             // Span with grpc status from metrics takes precedence over meta
             (
                 SpanBytes {
-                    meta: HashMap::from([(
-                        "rpc.grpc.status_code".into(),
-                        "PERMISSION_DENIED".into(),
-                    )]),
-                    metrics: HashMap::from([("rpc.grpc.status_code".into(), 2.0)]),
+                    meta: vec![("rpc.grpc.status_code".into(), "PERMISSION_DENIED".into())].into(),
+                    metrics: vec![("rpc.grpc.status_code".into(), 2.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(7),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -765,12 +1033,12 @@ mod tests {
             // Span with grpc status from metrics via secondary key
             (
                 SpanBytes {
-                    metrics: HashMap::from([("grpc.code".into(), 3.0)]),
+                    metrics: vec![("grpc.code".into(), 3.0)].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
                     grpc_status_code: Some(3),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -778,11 +1046,11 @@ mod tests {
             // Span with invalid grpc status string
             (
                 SpanBytes {
-                    meta: HashMap::from([("rpc.grpc.status_code".into(), "NOPE".into())]),
+                    meta: vec![("rpc.grpc.status_code".into(), "NOPE".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -795,14 +1063,14 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "redis".into())]),
+                    meta: vec![("_dd.svc_src".into(), "redis".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "redis".into(),
                     ..Default::default()
                 }
@@ -816,14 +1084,14 @@ mod tests {
                     resource: "res".into(),
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("_dd.svc_src".into(), "opt.split_by_tag".into())]),
+                    meta: vec![("_dd.svc_src".into(), "opt.split_by_tag".into())].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "opt.split_by_tag".into(),
                     ..Default::default()
                 }
@@ -843,7 +1111,7 @@ mod tests {
                     service_name: "my-service".into(),
                     operation_name: "op".into(),
                     resource_name: "res".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     service_source: "".into(),
                     ..Default::default()
                 }
@@ -866,7 +1134,7 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([("span.kind", "client"), ("aws.s3.bucket", "bucket-a")]),
+                    meta: vec![("span.kind", "client"), ("aws.s3.bucket", "bucket-a")].into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -874,7 +1142,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "client".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key_with_peers(vec![("aws.s3.bucket".into(), "bucket-a".into())]),
@@ -887,12 +1155,13 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind", "producer"),
                         ("aws.s3.bucket", "bucket-a"),
                         ("db.instance", "dynamo.test.us1"),
                         ("db.system", "dynamodb"),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -900,7 +1169,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "producer".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key_with_peers(vec![
@@ -918,12 +1187,13 @@ mod tests {
                     resource: "res",
                     span_id: 1,
                     parent_id: 0,
-                    meta: HashMap::from([
+                    meta: vec![
                         ("span.kind", "server"),
                         ("aws.s3.bucket", "bucket-a"),
                         ("db.instance", "dynamo.test.us1"),
                         ("db.system", "dynamodb"),
-                    ]),
+                    ]
+                    .into(),
                     ..Default::default()
                 },
                 FixedAggregationKey {
@@ -931,7 +1201,7 @@ mod tests {
                     operation_name: "op".into(),
                     resource_name: "res".into(),
                     span_kind: "server".into(),
-                    is_trace_root: true,
+                    is_trace_root: pb::Trilean::True,
                     ..Default::default()
                 }
                 .into_key(),
@@ -939,7 +1209,7 @@ mod tests {
         ];
 
         for (span, expected_key) in test_cases {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[]);
+            let borrowed_key = BorrowedAggregationKey::from_span(&span, &[], &[]);
             assert_eq!(
                 OwnedAggregationKey::from(&borrowed_key),
                 expected_key,
@@ -952,13 +1222,90 @@ mod tests {
         }
 
         for (span, expected_key) in test_cases_with_peer_tags {
-            let borrowed_key = BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice());
+            let borrowed_key =
+                BorrowedAggregationKey::from_span(&span, test_peer_tags.as_slice(), &[]);
             assert_eq!(OwnedAggregationKey::from(&borrowed_key), expected_key);
             assert_eq!(
                 get_hash(&borrowed_key),
                 get_hash(&OwnedAggregationKey::from(&borrowed_key))
             );
         }
+    }
+
+    #[test]
+    fn test_peer_tag_ip_quantization_in_aggregation_key() {
+        let peer_tag_keys = vec!["peer.hostname".to_string(), "db.instance".to_string()];
+
+        // IPv4 address peer tag gets replaced with blocked-ip-address
+        let span_ipv4 = SpanSlice {
+            service: "service",
+            name: "op",
+            resource: "res",
+            span_id: 1,
+            parent_id: 0,
+            meta: vec![
+                ("span.kind", "client"),
+                ("peer.hostname", "10.1.2.3"),
+                ("db.instance", "my-db"),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let key = BorrowedAggregationKey::from_span(&span_ipv4, &peer_tag_keys, &[]);
+        let owned = OwnedAggregationKey::from(&key);
+        assert_eq!(
+            owned.peer_tags,
+            vec![
+                (
+                    "peer.hostname".to_string(),
+                    "blocked-ip-address".to_string()
+                ),
+                ("db.instance".to_string(), "my-db".to_string()),
+            ]
+        );
+
+        // IPv6 address peer tag gets replaced with blocked-ip-address
+        let span_ipv6 = SpanSlice {
+            service: "service",
+            name: "op",
+            resource: "res",
+            span_id: 1,
+            parent_id: 0,
+            meta: vec![
+                ("span.kind", "client"),
+                ("peer.hostname", "2001:db8:3333:4444:CCCC:DDDD:EEEE:FFFF"),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let ipv6_keys = vec!["peer.hostname".to_string()];
+        let key = BorrowedAggregationKey::from_span(&span_ipv6, &ipv6_keys, &[]);
+        let owned = OwnedAggregationKey::from(&key);
+        assert_eq!(
+            owned.peer_tags,
+            vec![(
+                "peer.hostname".to_string(),
+                "blocked-ip-address".to_string()
+            )]
+        );
+
+        // Non-IP peer tags pass through unchanged
+        let span_non_ip = SpanSlice {
+            service: "service",
+            name: "op",
+            resource: "res",
+            span_id: 1,
+            parent_id: 0,
+            meta: vec![("span.kind", "client"), ("db.instance", "dynamo.test.us1")].into(),
+            ..Default::default()
+        };
+        let non_ip_keys = vec!["db.instance".to_string()];
+        let key = BorrowedAggregationKey::from_span(&span_non_ip, &non_ip_keys, &[]);
+        let owned = OwnedAggregationKey::from(&key);
+        assert_eq!(
+            owned.peer_tags,
+            vec![("db.instance".to_string(), "dynamo.test.us1".to_string())]
+        );
     }
 
     #[test]

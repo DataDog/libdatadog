@@ -2,8 +2,11 @@
 # Rules are evaluated in order. Later matches override earlier ones.
 # More specific patterns at the bottom override general patterns above.
 
+.claude/                             @DataDog/apm-common-components-core
+AGENTS.md                            @DataDog/apm-common-components-core
+CLAUDE.md                            @DataDog/apm-common-components-core
 .clang-format                        @DataDog/libdatadog
-.codecov.yml                         @DataDog/apm-common-components-core
+.pre-commit-config.yaml              @DataDog/libdatadog-core
 .cargo/*                             @DataDog/libdatadog-core
 .config/nextest.toml                 @DataDog/apm-common-components-core
 .config/commitlint.config.js         @DataDog/apm-common-components-core
@@ -11,28 +14,31 @@
 .dockerignore                        @DataDog/libdatadog-core
 .github/                             @DataDog/apm-common-components-core
 .gitignore                           @DataDog/libdatadog
+.gitmodules                          @DataDog/libdatadog
 .gitlab-ci.yml                       @DataDog/apm-common-components-core
 .gitlab/benchmarks.yml               @DataDog/apm-common-components-core
 .gitlab/fuzz.yml                     @DataDog/chaos-platform
+.gitlab/impacted-crates.yml          @DataDog/apm-common-components-core
 benchmark/                           @DataDog/apm-common-components-core
 bin_tests/                           @DataDog/libdatadog-profiling
 build-common/                        @DataDog/apm-common-components-core
 builder                              @DataDog/apm-common-components-core
 Cargo.*                              @DataDog/libdatadog
 cliff.toml                           @DataDog/libdatadog-core
+clippy.toml                          @DataDog/libdatadog
 cmake/                               @DataDog/apm-common-components-core
 CONTRIBUTING.md                      @DataDog/libdatadog-core
 Cross.toml                           @DataDog/apm-common-components-core
 datadog-ffe                          @DataDog/feature-flagging-and-experimentation-sdk
+datadog-ffe-test-suite               @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ffe-ffi                      @DataDog/feature-flagging-and-experimentation-sdk
 datadog-ipc*/                        @DataDog/libdatadog-php
 datadog-live-debugger*/              @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-profiling-replayer           @DataDog/libdatadog-profiling
-datadog-remote-config                @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config
+libdd-remote-config                  @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/remote-config
 datadog-sidecar                      @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-ffi                  @DataDog/libdatadog-php @DataDog/libdatadog-apm
 datadog-sidecar-macros               @DataDog/libdatadog-php
-datadog-tracer-flare                 @DataDog/libdatadog-apm
 deny.toml                            @DataDog/libdatadog
 docker-bake.hcl                      @DataDog/apm-common-components-core
 docs                                 @DataDog/libdatadog
@@ -44,11 +50,15 @@ libdd-crashtracker*/                 @DataDog/libdatadog-profiling
 libdd-data-pipeline*/                @DataDog/libdatadog-apm
 libdd-ddsketch*/                     @DataDog/libdatadog-apm @DataDog/apm-common-components-core
 libdd-dogstatsd-client               @DataDog/apm-common-components-core
+libdd-profiling-heap-*/                        @DataDog/libdatadog-profiling
 libdd-http-client                    @DataDog/apm-common-components-core
+libdd-agent-client                   @DataDog/apm-common-components-core
 libdd-library-config*/               @DataDog/apm-sdk-capabilities-rust
 libdd-log*/                          @DataDog/apm-common-components-core
 libdd-otel-thread-ctx/               @DataDog/apm-common-components-core
+libdd-otel-thread-ctx-ffi/           @DataDog/apm-common-components-core
 libdd-profiling*/                    @DataDog/libdatadog-profiling
+libdd-sampling/                      @DataDog/apm-common-components-core
 libdd-shared-runtime*/               @DataDog/apm-common-components-core
 libdd-telemetry*/                    @DataDog/apm-common-components-core
 libdd-tinybytes                      @DataDog/apm-common-components-core
@@ -57,16 +67,22 @@ libdd-trace-obfuscation              @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-protobuf                 @DataDog/serverless @DataDog/libdatadog-apm
 libdd-trace-stats                    @DataDog/apm-common-components-core
 libdd-trace-utils                    @DataDog/serverless @DataDog/libdatadog-apm
+libdd-tracer-flare                   @DataDog/libdatadog-apm
 LICENSE*                             @DataDog/libdatadog
 license-tool.toml                    @DataDog/libdatadog
 local-linux.Dockerfile               @DataDog/libdatadog
 NOTICE                               @DataDog/libdatadog
+nightly-toolchain.toml               @DataDog/libdatadog
 README.md                            @DataDog/libdatadog
 repository.datadog.yml               @DataDog/apm-common-components-core
+rust-toolchain.toml                  @DataDog/libdatadog
 rustfmt.toml                         @DataDog/libdatadog-core
 scripts/check_cargo_metadata.sh      @DataDog/libdatadog-core
+scripts/check_crypto_providers.sh    @DataDog/libdatadog-core
 scripts/commits-since-release.sh     @DataDog/libdatadog-core
+scripts/create-release.sh            @DataDog/apm-common-components-core
 scripts/crates-to-package.sh         @DataDog/libdatadog-core
+scripts/exclude-from-green-ci.sh     @DataDog/libdatadog-core
 scripts/major-bumps-level.sh         @DataDog/libdatadog-core
 scripts/publication-order.sh         @DataDog/libdatadog-core
 scripts/reformat_copyright.sh        @DataDog/libdatadog-core
@@ -82,6 +98,10 @@ tools/                               @DataDog/apm-common-components-core
 windows/                             @DataDog/libdatadog-core
 fuzz/                                @DataDog/chaos-platform
 
+# Nix
+*.nix                                @DataDog/nix-guild @DataDog/apm-common-components-core
+flake.*                              @DataDog/nix-guild @DataDog/apm-common-components-core
+
 # Specific overrides (must come after their general patterns above)
 bin_tests/tests/test_the_tests.rs    @DataDog/libdatadog-core
 bin_tests/src/bin/test_the_tests.rs  @DataDog/libdatadog-core
@@ -90,3 +110,6 @@ tools/sidecar_mockgen/               @DataDog/libdatadog-php
 libdd-data-pipeline/src/otlp/                           @DataDog/apm-sdk-capabilities-rust
 libdd-data-pipeline/tests/test_trace_exporter_otlp_export.rs @DataDog/apm-sdk-capabilities-rust
 libdd-trace-utils/src/otlp_encoder/                     @DataDog/apm-sdk-capabilities-rust
+datadog-sidecar/src/service/ffe_exposures_flusher.rs    @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
+datadog-sidecar/src/service/ffe_metrics_flusher.rs      @DataDog/libdatadog-php @DataDog/libdatadog-apm @DataDog/feature-flagging-and-experimentation-sdk
+.github/workflows/nix.yml                               @DataDog/nix-guild @DataDog/apm-common-components-core

@@ -10,6 +10,8 @@ use crate::internal::Timestamp;
 use std::collections::HashMap;
 use std::io;
 
+type Hasher = core::hash::BuildHasherDefault<rustc_hash::FxHasher>;
+
 struct NonEmptyObservations {
     // Samples with no timestamps are aggregated in-place as each observation is added
     aggregated_data: AggregatedObservations,
@@ -131,7 +133,7 @@ impl Observations {
 #[derive(Default)]
 struct AggregatedObservations {
     obs_len: ObservationLength,
-    data: HashMap<Sample, TrimmedObservation>,
+    data: HashMap<Sample, TrimmedObservation, Hasher>,
 }
 
 impl AggregatedObservations {

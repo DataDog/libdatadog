@@ -62,3 +62,9 @@ crashtracker:
     'libdd-crashtracker/**/*',
     'libdd-crashtracker-ffi/**/*',
   ]
+
+sampling:
+- changed-files:
+  - any-glob-to-any-file: [
+      'libdd-sampling/**/*',
+    ]

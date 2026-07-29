@@ -8,7 +8,7 @@ pub use mini_agent::*;
 mod mini_agent {
     use bytes::{Buf, Bytes};
     use http_body_util::BodyExt;
-    use libdd_capabilities::HttpClientTrait;
+    use libdd_capabilities::HttpClientCapability;
     use libdd_common::http_common;
     use libdd_common::Endpoint;
     use libdd_trace_protobuf::pb;
@@ -63,7 +63,7 @@ mod mini_agent {
         }
     }
 
-    pub async fn send_stats_payload<H: HttpClientTrait>(
+    pub async fn send_stats_payload<H: HttpClientCapability>(
         data: Vec<u8>,
         target: &Endpoint,
         api_key: &str,
@@ -136,6 +136,7 @@ mod mini_agent_tests {
                                 0
                             ],
                             "GRPCStatusCode": "0",
+                            "AdditionalMetricTags": [],
                             "HTTPMethod": "GET",
                             "HTTPEndpoint": "/test"
                         }
@@ -191,6 +192,7 @@ mod mini_agent_tests {
                     http_method: "GET".to_string(),
                     service_source: "".to_string(),
                     span_derived_primary_tags: vec![],
+                    additional_metric_tags: vec![],
                 }],
                 agent_time_shift: 0,
             }],

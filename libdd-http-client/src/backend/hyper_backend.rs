@@ -145,11 +145,19 @@ fn map_hyper_error(e: hyper_util::client::legacy::Error) -> HttpClientError {
 
 impl super::Backend for HyperBackend {
     fn new(
-        _timeout: std::time::Duration,
+        client_config: &HttpClientConfig,
         transport: TransportConfig,
     ) -> Result<Self, HttpClientError> {
-        let client = http_common::client_builder().build(Connector::default());
-        Ok(Self { client, transport })
+        let mut builder = http_common::client_builder();
+
+        if !client_config.allow_connection_pooling() {
+            builder.pool_max_idle_per_host(0);
+        }
+
+        Ok(Self {
+            client: builder.build(Connector::default()),
+            transport,
+        })
     }
 
     async fn send(
@@ -175,20 +183,27 @@ impl super::Backend for HyperBackend {
             .map_err(|e| HttpClientError::InvalidConfig(e.to_string()))?;
 
         let timeout = request.timeout.unwrap_or(config.timeout());
-        let response = tokio::time::timeout(timeout, self.client.request(hyper_request))
-            .await
-            .map_err(|_| HttpClientError::TimedOut)?
-            .map_err(map_hyper_error)?;
+        let (status, headers, body_bytes) = tokio::time::timeout(timeout, async {
+            let response = self
+                .client
+                .request(hyper_request)
+                .await
+                .map_err(map_hyper_error)?;
 
-        let status = response.status().as_u16();
-        let headers = collect_response_headers(&response)?;
+            let status = response.status().as_u16();
+            let headers = collect_response_headers(&response)?;
 
-        let body_bytes = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| HttpClientError::IoError(e.to_string()))?
-            .to_bytes();
+            let body_bytes = response
+                .into_body()
+                .collect()
+                .await
+                .map_err(|e| HttpClientError::IoError(e.to_string()))?
+                .to_bytes();
+
+            Ok::<_, HttpClientError>((status, headers, body_bytes))
+        })
+        .await
+        .map_err(|_| HttpClientError::TimedOut)??;
 
         if config.treat_http_errors_as_errors() && status >= 400 {
             return Err(HttpClientError::RequestFailed {

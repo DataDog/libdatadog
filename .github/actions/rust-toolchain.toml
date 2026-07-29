@@ -1,0 +1,13 @@
+# The helper crates under .github/actions/ are CI build tools, not shipping
+# artifacts. They don't ship to consumers and aren't subject to the workspace
+# MSRV pinned in the libdatadog repo root's rust-toolchain.toml. Build them
+# on stable so transitive dependencies that have moved past the workspace
+# MSRV (e.g. cargo-platform, time-family) can resolve normally.
+#
+# rustup respects the nearest rust-toolchain.toml walking upward from the
+# working directory, so this file shadows the repo-root pin only for cargo
+# invocations rooted inside .github/actions/.
+
+[toolchain]
+channel = "stable"
+profile = "minimal"

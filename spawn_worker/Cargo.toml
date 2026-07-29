@@ -8,15 +8,15 @@ publish = false
 bench = false
 
 [dependencies]
-anyhow = { version = "1.0" }
-io-lifetimes = { version = "1.0" }
+anyhow.workspace = true
+io-lifetimes = { workspace = true, features = ["close"] }
 fastrand = "2.0.1"
-libc = "0.2"
+libc.workspace = true
 
 [build-dependencies]
 cc_utils = { path = "../tools/cc_utils" }
 
-[dependencies.windows]
+[target.'cfg(windows)'.dependencies.windows]
 features = [
   "Win32_Foundation",
   "Win32_Security",

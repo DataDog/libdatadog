@@ -1,10 +1,19 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::float_cmp,
+    clippy::unreachable,
+    clippy::too_many_lines,
+    clippy::format_push_string
+)]
 
-use std::{
-    collections::{BTreeSet, HashSet},
-    fmt::{self, Display},
-};
+extern crate alloc;
+
+use alloc::{collections::BTreeSet, fmt};
+use core::fmt::Display;
+use std::collections::HashSet;
 
 use libdd_trace_obfuscation::{obfuscate::obfuscate_span, obfuscation_config::ObfuscationConfig};
 use libdd_trace_protobuf::pb::{
@@ -22,6 +31,7 @@ struct Testcase {
     expected: libdd_trace_protobuf::pb::Span,
 }
 
+#[cfg_attr(miri, ignore)] // large fixture suite, prohibitively slow under Miri
 #[test]
 fn test_obfuscate_span() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -139,12 +149,12 @@ struct SpanComparison<'a> {
 }
 
 impl<'a> SpanComparison<'a> {
-    fn new(left: &'a Span, right: &'a Span) -> Self {
+    const fn new(left: &'a Span, right: &'a Span) -> Self {
         Self { left, right }
     }
 }
 impl Display for SpanComparison<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         fn cmp_field<T: PartialEq + fmt::Debug>(left: &T, right: &T) -> String {
             if left == right {
                 format!("{left:?}")

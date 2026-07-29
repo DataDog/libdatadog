@@ -3,9 +3,9 @@
 
 use crate::msgpack_decoder::decode::buffer::Buffer;
 use crate::msgpack_decoder::decode::error::DecodeError;
+use crate::span::vec_map::VecMap;
 use crate::span::DeserializableTraceData;
 use rmp::decode;
-use std::collections::HashMap;
 
 // https://docs.rs/rmp/latest/rmp/enum.Marker.html#variant.Null (0xc0 == 192)
 const NULL_MARKER: &u8 = &0xc0;
@@ -25,21 +25,21 @@ pub fn read_nullable_string<T: DeserializableTraceData>(
     }
 }
 
-/// Read a hashmap of (string, string) from the slices `buf`.
+/// Read a [VecMap] of `(String, String)` pairs from the slices `buf`.
 ///
 /// # Errors
-/// Fails if the buffer does not contain a valid map length prefix,
-/// or if any key or value is not a valid utf8 msgpack string.
-/// Null values are skipped (key not inserted into map).
+///
+/// Fails if the buffer does not contain a valid map length prefix, or if any key or value is not a
+/// valid utf8 msgpack string.
+/// Null values are skipped.
 #[inline]
-pub fn read_str_map_to_strings<T: DeserializableTraceData>(
+pub fn read_str_map_to_vecmap<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
-) -> Result<HashMap<T::Text, T::Text>, DecodeError> {
+) -> Result<VecMap<T::Text, T::Text>, DecodeError> {
     let len = decode::read_map_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
 
-    #[allow(clippy::expect_used)]
-    let mut map = HashMap::with_capacity(len.try_into().expect("Unable to cast map len to usize"));
+    let mut map = VecMap::with_capacity(len.try_into().unwrap_or_default());
     for _ in 0..len {
         let key = buf.read_string()?;
         // Only insert if value is not null
@@ -51,21 +51,44 @@ pub fn read_str_map_to_strings<T: DeserializableTraceData>(
     Ok(map)
 }
 
-/// Read a nullable hashmap of (string, string) from the slices `buf`.
+/// Read a nullable vec of (string, string) pairs from the slices `buf`.
 ///
 /// # Errors
 /// Fails if the buffer does not contain a valid map length prefix,
 /// or if any key or value is not a valid utf8 msgpack string.
-/// Null values are skipped (key not inserted into map).
+/// Null values are skipped (key not inserted into vec).
 #[inline]
 pub fn read_nullable_str_map_to_strings<T: DeserializableTraceData>(
     buf: &mut Buffer<T>,
-) -> Result<HashMap<T::Text, T::Text>, DecodeError> {
+) -> Result<VecMap<T::Text, T::Text>, DecodeError> {
     if handle_null_marker(buf) {
-        return Ok(HashMap::default());
+        return Ok(VecMap::new());
     }
 
-    read_str_map_to_strings(buf)
+    read_str_map_to_vecmap(buf)
+}
+
+/// Read a hashmap of (string, string) from the slices `buf`.
+/// Used for SpanLink/SpanEvent attributes which remain as HashMap.
+#[inline]
+pub fn read_str_map_to_hashmap<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<std::collections::HashMap<T::Text, T::Text>, DecodeError>
+where
+    T::Text: std::hash::Hash + Eq,
+{
+    let len = decode::read_map_len(buf.as_mut_slice())
+        .map_err(|_| DecodeError::InvalidFormat("Unable to get map len for str map".to_owned()))?;
+
+    let mut map = std::collections::HashMap::with_capacity(len.try_into().unwrap_or_default());
+    for _ in 0..len {
+        let key = buf.read_string()?;
+        if !handle_null_marker(buf) {
+            let value = buf.read_string()?;
+            map.insert(key, value);
+        }
+    }
+    Ok(map)
 }
 
 /// Handle the null value by peeking if the next value is a null marker, and will only advance the

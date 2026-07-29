@@ -13,7 +13,8 @@
 
 use crate::service::{
     sidecar_interface::{
-        DynamicInstrumentationConfigState, SidecarInterfaceChannel, SidecarInterfaceRequest,
+        DynamicInstrumentationConfigState, SidecarFlushOptions, SidecarInterfaceChannel,
+        SidecarInterfaceRequest,
     },
     InstanceId, QueueId, SerializedTracerHeaderTags, SessionConfig, SidecarAction,
 };
@@ -34,6 +35,8 @@ use tracing::trace;
 struct SidecarOutbox {
     set_session_config: Option<SidecarInterfaceRequest>,
     set_session_process_tags: Option<SidecarInterfaceRequest>,
+    set_session_default_service_name: Option<SidecarInterfaceRequest>,
+    set_session_user_service_defined: Option<SidecarInterfaceRequest>,
     set_universal_service_tags: Option<SidecarInterfaceRequest>,
     set_request_config: Option<SidecarInterfaceRequest>,
     clear_queue_id: Option<SidecarInterfaceRequest>,
@@ -42,10 +45,12 @@ struct SidecarOutbox {
 }
 
 impl SidecarOutbox {
-    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 7] {
+    fn slots_mut(&mut self) -> [&mut Option<SidecarInterfaceRequest>; 9] {
         [
             &mut self.set_session_config,
             &mut self.set_session_process_tags,
+            &mut self.set_session_default_service_name,
+            &mut self.set_session_user_service_defined,
             &mut self.set_universal_service_tags,
             &mut self.set_request_config,
             &mut self.clear_queue_id,
@@ -120,6 +125,12 @@ fn coalesce(outbox: &mut SidecarOutbox, incoming: SidecarInterfaceRequest) {
         }
         SidecarInterfaceRequest::SetSessionProcessTags { .. } => {
             outbox.set_session_process_tags = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetSessionDefaultServiceName { .. } => {
+            outbox.set_session_default_service_name = Some(incoming);
+        }
+        SidecarInterfaceRequest::SetSessionUserServiceDefined { .. } => {
+            outbox.set_session_user_service_defined = Some(incoming);
         }
         SidecarInterfaceRequest::SetUniversalServiceTags { .. } => {
             outbox.set_universal_service_tags = Some(incoming);
@@ -235,6 +246,22 @@ impl SidecarSender {
         self.try_drain_outbox();
     }
 
+    pub fn set_session_default_service_name(&mut self, name: Option<String>) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionDefaultServiceName { name },
+        );
+        self.try_drain_outbox();
+    }
+
+    pub fn set_session_user_service_defined(&mut self, is_defined: bool) {
+        coalesce(
+            &mut self.outbox,
+            SidecarInterfaceRequest::SetSessionUserServiceDefined { is_defined },
+        );
+        self.try_drain_outbox();
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn set_universal_service_tags(
         &mut self,
@@ -245,6 +272,7 @@ impl SidecarSender {
         app_version: String,
         global_tags: Vec<Tag>,
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
+        remote_config_generation: u64,
     ) {
         coalesce(
             &mut self.outbox,
@@ -256,6 +284,7 @@ impl SidecarSender {
                 app_version,
                 global_tags,
                 dynamic_instrumentation_state,
+                remote_config_generation,
             },
         );
         self.try_drain_outbox();
@@ -456,9 +485,9 @@ impl SidecarSender {
         self.channel.0.set_write_timeout(d)
     }
 
-    pub fn flush_traces(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self, options: SidecarFlushOptions) -> io::Result<()> {
         self.drain_outbox_blocking();
-        self.channel.call_flush_traces()
+        self.channel.call_flush(options)
     }
 
     pub fn ping(&mut self) -> io::Result<()> {

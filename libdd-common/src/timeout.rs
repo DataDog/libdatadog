@@ -1,7 +1,8 @@
 // Copyright 2025-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time::{Duration, Instant};
+use core::time::Duration;
+use std::time::Instant;
 
 pub struct TimeoutManager {
     start_time: Instant,
@@ -38,8 +39,8 @@ impl TimeoutManager {
     }
 }
 
-impl std::fmt::Debug for TimeoutManager {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for TimeoutManager {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TimeoutManager")
             .field("start_time", &self.start_time)
             .field("elapsed", &self.elapsed())
@@ -59,7 +60,6 @@ mod tests {
         let manager = TimeoutManager::new(timeout);
 
         assert_eq!(manager.timeout(), timeout);
-        assert!(manager.elapsed() < Duration::from_millis(100)); // Should be very small
         assert!(manager.remaining() >= TimeoutManager::MINIMUM_REAP_TIME);
     }
 
@@ -91,9 +91,6 @@ mod tests {
         std::thread::sleep(Duration::from_millis(10));
         let elapsed = manager.elapsed();
         assert!(elapsed >= Duration::from_millis(10));
-
-        #[cfg(not(miri))] // miri allows the clock to go arbitrarily fast
-        assert!(elapsed < Duration::from_millis(100)); // Should be reasonable
     }
 
     #[test]

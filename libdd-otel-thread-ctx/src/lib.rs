@@ -5,8 +5,8 @@
 //!
 //! This crate implements the publisher side of the Thread Context OTEP (PR #4947).
 //!
-//! Since `rustc` doesn't currently support the TLSDESC dialect, we use a C shim to set and get
-//! the thread-local storage used for the context.
+//! Since `rustc` doesn't currently support the TLSDESC dialect, we define the thread-local
+//! storage symbol and its accessor using inline assembly (`global_asm!` / `asm!`).
 //!
 //! ## Usage
 //!
@@ -17,16 +17,22 @@
 //! The simplest pattern, when applicable, is to attach one record and then mutate it in place.
 //! This avoids allocation in the hot path.
 //!
-//! ```ignore
+//! ```rust
+//! # #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+//! # fn main() {
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
-//! let span_id  = [1u8; 8];
+//! let span_id = [1u8; 8];
+//! let local_root_span_id = [2u8; 8];
 //!
 //! // First call allocates a record and attaches it.
-//! ThreadContext::new(trace_id, span_id, &[(0, "first")]).attach();
-//! ThreadContext::update(trace_id, span_id, &[(0, "second")]);
+//! ThreadContext::new(trace_id, span_id, local_root_span_id, &[(0, "first")]).attach();
+//! ThreadContext::update(trace_id, span_id, local_root_span_id, &[(0, "second")]);
 //! ThreadContext::detach();
+//! # }
+//! # #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+//! # fn main() {}
 //! ```
 //!
 //! ### Swapping
@@ -35,15 +41,18 @@
 //! to be saved and restored repeatedly. Could be the case with async-runtimes where several tasks
 //! might run on the same thread, or even move from one thread to another, for example.
 //!
-//! ```ignore
+//! ```rust
+//! # #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+//! # fn main() {
 //! use libdd_otel_thread_ctx::linux::ThreadContext;
 //!
 //! let trace_id = [0u8; 16];
-//! let span_id  = [1u8; 8];
+//! let span_id = [1u8; 8];
+//! let local_root_span_id = [2u8; 8];
 //! let attrs: &[(u8, &str)] = &[(0, "GET"), (1, "/api/v1")];
 //!
 //! // Publish a new context and save the previously attached one (if any).
-//! let ctx = ThreadContext::new(trace_id, span_id, attrs);
+//! let ctx = ThreadContext::new(trace_id, span_id, local_root_span_id, attrs);
 //! let previous = ctx.attach();
 //!
 //! // ... do work inside the span ...
@@ -53,6 +62,9 @@
 //!     // here we drop `ctx`, but we could store for later usage
 //!     let _ = prev.attach();
 //! }
+//! # }
+//! # #[cfg(not(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+//! # fn main() {}
 //! ```
 //!
 //! ## Synchronization
@@ -64,32 +76,122 @@
 //! `atomic_signal_fence`) to keep field writes boxed between the `valid = 0` and `valid = 1`
 //! stores during in-place updates.
 
-#[cfg(target_os = "linux")]
+// The `linux` module below resolves the TLS slot with TLSDESC inline assembly that is only written
+// for x86_64 and aarch64. Reject any other architecture on Linux at compile time. On non-Linux
+// targets the `linux` module is not compiled, so there's no such constraint.
+#[cfg(all(
+    target_os = "linux",
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
+compile_error!(
+    "Unsupported architecture for otel-thread-ctx on Linux. Only x86_64 and aarch64 are currently \
+     supported."
+);
+
+#[cfg(all(target_os = "linux", feature = "sanity-check"))]
+pub mod sanity_check;
+
+#[cfg(feature = "test-utils")]
+pub mod test_utils;
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 pub mod linux {
     use std::{
-        ffi::c_void,
         mem,
         ptr::{self, NonNull},
         sync::atomic::{compiler_fence, AtomicPtr, AtomicU8, Ordering},
     };
 
-    extern "C" {
-        /// Return the address of the current thread's `otel_thread_ctx_v1` local.
-        ///
-        /// **CAUTION**: do not use this directly, always go through [get_tls_slot] to read and
-        /// write it atomically.
-        fn libdd_get_otel_thread_ctx_v1() -> *mut *mut c_void;
+    // Define the thread-local pointer that external readers (e.g. the eBPF profiler) discover via
+    // the dynamic symbol table. It must be an exported ELF `STT_TLS` object accessed via the
+    // TLSDESC dialect, as mandated by the OTel thread-level context sharing spec.
+    //
+    // Stable `rustc` cannot select the TLS dialect for a `#[thread_local]` static, so we declare
+    // the symbol directly in assembly (an 8-byte, zero-initialised slot in `.tbss`) and resolve
+    // its per-thread address through TLSDESC in [`tls_slot`].
+    core::arch::global_asm!(
+        ".section .tbss,\"awT\",@nobits",
+        ".globl otel_thread_ctx_v1",
+        ".type  otel_thread_ctx_v1, @tls_object",
+        ".size  otel_thread_ctx_v1, 8",
+        ".balign 8",
+        "otel_thread_ctx_v1:",
+        ".zero  8",
+        ".previous",
+    );
+
+    /// Return the address of the current thread's `otel_thread_ctx_v1` TLS slot, resolved through
+    /// the TLSDESC dialect.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(always)]
+    unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
+        let ptr: usize;
+        // WARNING: keep the assembly below in the canonical compiler-emitted TLSDESC form. Linkers
+        // rely on these exact relocation-bearing instruction patterns for TLS relaxation,
+        // especially when this crate is linked statically. Harmless-looking rewrites can hide part
+        // of the sequence from the linker and produce a partially relaxed access that computes an
+        // invalid TLS address.
+        //
+        // This code match byte-per-byte what clang generates, and this is verified during tests.
+        core::arch::asm!(
+            "leaq otel_thread_ctx_v1@tlsdesc(%rip), %rax",
+            "call *otel_thread_ctx_v1@TLSCALL(%rax)",
+            "addq %fs:0, %rax",
+            // There is a call instruction, but the whole point of TLSDESC is to use a fast calling
+            // convention. GCC's x86-64 port assumes that FLAGS_REG and RAX are changed while all
+            // other registers are preserved[^1]. LLVM similarly only clobbers RAX[^2] (and flags).
+            // So we don't need to clobber additional registers or to use `clobber_abi` here (which
+            // would negate most of the advantage of TLSDESC).
+            //
+            // [^1]: https://maskray.me/blog/2021-02-14-all-about-thread-local-storage
+            // [^2]: https://raw.githubusercontent.com/llvm/llvm-project/main/llvm/lib/Target/X86/X86InstrCompiler.td
+            out("rax") ptr,
+            options(att_syntax),
+        );
+        ptr as *mut *mut ThreadContextRecord
     }
 
-    /// Return an atomic view of the TLS slot. The address calculation requires a call to a C shim
-    /// in order to use the TLSDESC dialect from Rust. The returned address is stable (per thread),
-    /// so the resulting atomic should be reused whenever possible, to reduce the number of calls
-    /// to this function.
+    /// Return the address of the current thread's `otel_thread_ctx_v1` TLS slot, resolved through
+    /// the TLSDESC dialect.
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    unsafe fn tls_slot() -> *mut *mut ThreadContextRecord {
+        let ptr: usize;
+        // WARNING: do not change the assembly below. See the warning above for amd64, and
+        // https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst#general-dynamic.
+        // This code match byte-per-byte what clang generates, and this is verified during tests.
+        core::arch::asm!(
+            "adrp  x0, :tlsdesc:otel_thread_ctx_v1",
+            "ldr   x1, [x0, :tlsdesc_lo12:otel_thread_ctx_v1]",
+            "add   x0, x0, :tlsdesc_lo12:otel_thread_ctx_v1",
+            ".tlsdesccall otel_thread_ctx_v1",
+            "blr   x1",
+            "mrs   x8, tpidr_el0",
+            "add   x0, x8, x0",
+            out("x0") ptr,
+            out("x1") _,
+            out("x8") _,
+            out("x30") _,
+        );
+        ptr as *mut *mut ThreadContextRecord
+    }
+
+    /// Run `f` with an atomic view of the current thread's TLS slot.
+    ///
+    /// The address calculation goes through the TLSDESC dialect via [`tls_slot`]. The returned
+    /// address is stable (per thread), so callers should try to do as much work as possible
+    /// inside a single call.
     ///
     /// The slot is read by an async signal handler. Atomic operations should in general use
     /// [Ordering::Relaxed], but modifications to the record might need additional compiler-only
     /// fences (see [ThreadContext::update] for an example).
-    fn get_tls_slot<'a>() -> &'a AtomicPtr<ThreadContextRecord> {
+    fn with_tls_slot<F, R>(f: F) -> R
+    where
+        F: FnOnce(&AtomicPtr<ThreadContextRecord>) -> R,
+    {
         const {
             assert!(
                 mem::align_of::<AtomicPtr<ThreadContextRecord>>()
@@ -98,13 +200,10 @@ pub mod linux {
         }
 
         // Safety: the const assertion above ensures the alignment is correct. The TLS slot is
-        // valid for writes during the lifetime of the program.
-        //
-        // We forbid direct usage of `libdd_get_otel_thread_ctx_v1`, which guarantees
-        // that there's never conflicting non-atomic accesses to the TLS slot.
-        unsafe {
-            AtomicPtr::from_ptr(libdd_get_otel_thread_ctx_v1().cast::<*mut ThreadContextRecord>())
-        }
+        // valid for the lifetime of the current thread, and all accesses go through the
+        // `AtomicPtr` wrapper.
+        let slot = unsafe { AtomicPtr::from_ptr(tls_slot()) };
+        f(slot)
     }
 
     // We maintain the convention in libdatadog that the `local_root_span_id` attribute key is
@@ -137,8 +236,7 @@ pub mod linux {
     // Note: we don't need to make this struct packed, because it's already designed to avoid
     // padding. Moreover, doing so would make it 1-aligned, potentially making access to
     // `attrs_data_size` unaligned and thus slower, and prevent us from using `AtomicU8` for
-    // `valid`. We just use a const assertion in `new()` to avoid surprises and make sure this
-    // struct has the right total size.
+    // `valid`. We use const assertions below to verify size and offsets at compile time.
     #[repr(C)]
     struct ThreadContextRecord {
         /// Trace identifier; all-zeroes means "no trace".
@@ -168,6 +266,16 @@ pub mod linux {
         attrs_data: [u8; MAX_ATTRS_DATA_SIZE],
     }
 
+    const _: () = {
+        assert!(size_of::<ThreadContextRecord>() == 640);
+        assert!(mem::offset_of!(ThreadContextRecord, trace_id) == 0);
+        assert!(mem::offset_of!(ThreadContextRecord, span_id) == 16);
+        assert!(mem::offset_of!(ThreadContextRecord, valid) == 24);
+        assert!(mem::offset_of!(ThreadContextRecord, _reserved) == 25);
+        assert!(mem::offset_of!(ThreadContextRecord, attrs_data_size) == 26);
+        assert!(mem::offset_of!(ThreadContextRecord, attrs_data) == 28);
+    };
+
     impl ThreadContextRecord {
         /// Build a record with the given trace id, span id and attributes. The
         /// `local_root_span_id` is a distinguished attribute with special handling for
@@ -178,8 +286,6 @@ pub mod linux {
             local_root_span_id: [u8; 8],
             attrs: &[(u8, &str)],
         ) -> Self {
-            const { assert!(size_of::<ThreadContextRecord>() == 640) }
-
             let mut record = Self {
                 trace_id,
                 span_id,
@@ -189,7 +295,7 @@ pub mod linux {
             record
         }
 
-        /// Encode `attributes` into `record.attrs_data` as packed key-value records. Existing data
+        /// Encode `attributes` into `self.attrs_data` as packed key-value records. Existing data
         /// are overridden (and if there were more entries than `attributes.len()`, they aren't
         /// zeroed, but they will be ignored by readers).
         ///
@@ -232,14 +338,11 @@ pub mod linux {
 
             for &(key_index, val) in attributes {
                 let val_bytes = val.as_bytes();
-                let val_len = val_bytes.len();
-                let val_len = if val_len > 255 {
+                let val_len = u8::try_from(val_bytes.len()).unwrap_or_else(|_| {
                     fully_encoded = false;
-                    255
-                } else {
-                    val_len
-                };
-                let entry_size = 2 + val_len;
+                    u8::MAX
+                });
+                let entry_size = 2 + val_len as usize;
 
                 if offset + entry_size > MAX_ATTRS_DATA_SIZE {
                     fully_encoded = false;
@@ -247,10 +350,9 @@ pub mod linux {
                 }
 
                 self.attrs_data[offset] = key_index;
-                // `val_len <= 255` thanks to the `min()`
-                self.attrs_data[offset + 1] = val_len as u8;
-                self.attrs_data[offset + 2..offset + 2 + val_len]
-                    .copy_from_slice(&val_bytes[..val_len]);
+                self.attrs_data[offset + 1] = val_len;
+                self.attrs_data[offset + 2..offset + 2 + val_len as usize]
+                    .copy_from_slice(&val_bytes[..val_len as usize]);
                 offset += entry_size;
             }
 
@@ -286,6 +388,13 @@ pub mod linux {
     /// not thread-safe.
     pub struct ThreadContext(NonNull<ThreadContextRecord>);
 
+    /// Opaque handle to a thread context record. Used to allow the FFI to convert [ThreadContext]
+    /// to and from raw pointers without exposing [ThreadContextRecord], as the latter needs extra
+    /// care to be manipulated (async-signal-safety, seq-lock-like modification protocol through
+    /// [ThreadContextRecord::valid], etc.)
+    #[repr(C)]
+    pub struct ThreadContextHandle {}
+
     impl ThreadContext {
         /// Create a new thread context with the given trace/span IDs and encoded attributes.
         pub fn new(
@@ -302,26 +411,48 @@ pub mod linux {
             ))
         }
 
-        /// Turn this thread context into a raw pointer to the underlying [ThreadContextRecord].
-        /// The pointer must be reconstructed through [`Self::from_raw`] in order to be properly
+        /// Turn this thread context into a pointer to the underlying [ThreadContextRecord].
+        /// The pointer must be reconstructed through [`Self::from_ptr`] in order to be properly
         /// dropped, or the record will leak.
-        fn into_raw(self) -> *mut ThreadContextRecord {
+        fn into_ptr(self) -> NonNull<ThreadContextRecord> {
             let mdrop = mem::ManuallyDrop::new(self);
-            mdrop.0.as_ptr()
+            mdrop.0
         }
 
-        /// Reconstruct a [ThreadContextRecord] from a raw pointer that is either `null` or comes
-        /// from [`Self::into_raw`]. Return `None` if `ptr` is null.
+        /// Turn this thread context into an opaque pointer to the underlying [ThreadContextRecord].
+        /// The pointer must be reconstructed through [`Self::from_opaque_ptr`] in order to be
+        /// properly dropped, or the record will leak.
+        pub fn into_opaque_ptr(self) -> NonNull<ThreadContextHandle> {
+            let mdrop = mem::ManuallyDrop::new(self);
+            mdrop.0.cast()
+        }
+
+        /// Reconstruct a [ThreadContextRecord] from a pointer that comes
+        /// from [`Self::into_ptr`].
         ///
         /// # Safety
         ///
-        /// - `ptr` must be `null` or come from a prior call to [`Self::into_raw`].
+        /// - `ptr` must come from a prior call to [`Self::into_ptr`].
         /// - if `ptr` is aliased, accesses through aliases must not be interleaved with method
         ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
         ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
         ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
-        unsafe fn from_raw(ptr: *mut ThreadContextRecord) -> Option<Self> {
-            NonNull::new(ptr).map(Self)
+        unsafe fn from_ptr(ptr: NonNull<ThreadContextRecord>) -> Self {
+            Self(ptr)
+        }
+
+        /// Reconstruct an [OpaqueThreadContextRecord] from a pointer that comes from
+        /// [`Self::into_opaque_ptr`].
+        ///
+        /// # Safety
+        ///
+        /// - `ptr` must come from a prior call to [`Self::into_opaque_ptr`].
+        /// - if `ptr` is aliased, accesses through aliases must not be interleaved with method
+        ///   calls on the returned [ThreadContextRecord]. More precisely, mutable references might
+        ///   be reconstructed during those calls, so any constraint from either Stacked Borrows,
+        ///   Tree Borrows or whatever is the current aliasing model implemented in Miri applies.
+        pub unsafe fn from_opaque_ptr(ptr: NonNull<ThreadContextHandle>) -> Self {
+            Self(ptr.cast())
         }
     }
 
@@ -345,8 +476,9 @@ pub mod linux {
             slot: &AtomicPtr<ThreadContextRecord>,
             tgt: *mut ThreadContextRecord,
         ) -> Option<ThreadContext> {
-            // Safety: a non-null value in the slot came from a prior `into_raw` call.
-            unsafe { ThreadContext::from_raw(slot.swap(tgt, Ordering::Relaxed)) }
+            // Safety: a non-null value in the slot came from a prior `into_ptr` call.
+            NonNull::new(slot.swap(tgt, Ordering::Relaxed))
+                .map(|ptr| unsafe { ThreadContext::from_ptr(ptr) })
         }
 
         /// Publish a new (or previously detached) thread context record by writing its pointer
@@ -365,7 +497,7 @@ pub mod linux {
             //
             // We still need a release fence to avoid exposing uninitialized memory to the handler.
             compiler_fence(Ordering::Release);
-            Self::swap(get_tls_slot(), self.into_raw())
+            with_tls_slot(|slot| Self::swap(slot, self.into_ptr().as_ptr()))
         }
 
         /// Update the currently attached record in-place. Sets `valid = 0` before the update and
@@ -381,34 +513,37 @@ pub mod linux {
             local_root_span_id: [u8; 8],
             attrs: &[(u8, &str)],
         ) {
-            let slot = get_tls_slot();
+            with_tls_slot(|slot| {
+                // Safety: a non-null value in the slot came from `into_ptr` (i.e. `Box::into_raw`),
+                // and only this thread ever writes to the slot, so the pointer is valid and not
+                // accessed for the duration of this closure.
+                if let Some(current) = unsafe { slot.load(Ordering::Relaxed).as_mut() } {
+                    current.valid.store(0, Ordering::Relaxed);
+                    compiler_fence(Ordering::SeqCst);
 
-            if let Some(current) = unsafe { slot.load(Ordering::Relaxed).as_mut() } {
-                current.valid.store(0, Ordering::Relaxed);
-                compiler_fence(Ordering::SeqCst);
+                    current.trace_id = trace_id;
+                    current.span_id = span_id;
+                    current.set_attrs(local_root_span_id, attrs);
 
-                current.trace_id = trace_id;
-                current.span_id = span_id;
-                current.set_attrs(local_root_span_id, attrs);
-
-                compiler_fence(Ordering::SeqCst);
-                current.valid.store(1, Ordering::Relaxed);
-            } else {
-                // No need for `AcqRel`, see [^tls-slot-ordering].
-                compiler_fence(Ordering::Release);
-                // `ThreadContext::new` already initialises `valid = 1`.
-                let _ = Self::swap(
-                    slot,
-                    ThreadContext::new(trace_id, span_id, local_root_span_id, attrs).into_raw(),
-                );
-            }
+                    compiler_fence(Ordering::SeqCst);
+                    current.valid.store(1, Ordering::Relaxed);
+                } else {
+                    let ctxt = ThreadContext::new(trace_id, span_id, local_root_span_id, attrs)
+                        .into_ptr()
+                        .as_ptr();
+                    // No need for `AcqRel`, see [^tls-slot-ordering].
+                    compiler_fence(Ordering::Release);
+                    // `ThreadContext::new` already initialises `valid = 1`.
+                    let _ = Self::swap(slot, ctxt);
+                }
+            })
         }
 
         /// Detach the current record from the TLS slot. Writes null to the slot and returns the
         /// detached record.
         pub fn detach() -> Option<ThreadContext> {
             // We don't need any fence here, see [^tls-slot-ordering].
-            Self::swap(get_tls_slot(), ptr::null_mut())
+            with_tls_slot(|slot| Self::swap(slot, ptr::null_mut()))
         }
     }
 
@@ -423,7 +558,7 @@ pub mod linux {
     }
 
     #[cfg(test)]
-    // The tests are set to be ignored by Miri, since accessing the TLS through C isn't supported.
+    // The tests are set to be ignored by Miri, since the inline-asm TLSDESC access isn't supported.
     mod tests {
         use super::{ThreadContext, ThreadContextRecord};
         use std::sync::atomic::Ordering;
@@ -431,7 +566,7 @@ pub mod linux {
         /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the
         /// address of the slot itself).
         fn read_tls_context_ptr() -> *const ThreadContextRecord {
-            super::get_tls_slot().load(Ordering::Relaxed)
+            super::with_tls_slot(|slot| slot.load(Ordering::Relaxed))
         }
 
         #[test]
@@ -633,7 +768,7 @@ pub mod linux {
             let _ = ThreadContext::detach();
         }
 
-        // Make sure the C shim is indeed providing a thread-local address.
+        // Make sure the TLSDESC accessor is indeed providing a thread-local address.
         #[test]
         #[cfg_attr(miri, ignore)]
         fn tls_slots_are_per_thread() {

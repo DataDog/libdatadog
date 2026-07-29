@@ -2,6 +2,91 @@
 
 
 
+## [5.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v5.0.0..libdd-common-v5.1.0) - 2026-07-07
+
+### Added
+
+- Add helpers in ddcommon to fetch the machine UUID l… ([#2163](https://github.com/datadog/libdatadog/issues/2163)) - ([e646931](https://github.com/datadog/libdatadog/commit/e6469314304c3eaae9a0b76ad48ff859e8bb8657))
+
+### Fixed
+
+- Update rustls-webpki to 0.103.13 ([#2187](https://github.com/datadog/libdatadog/issues/2187)) - ([3ba5431](https://github.com/datadog/libdatadog/commit/3ba543127039a0b785ede64d8eec2d367e49cb1a))
+- Update anyhow for unsoundness ([#2186](https://github.com/datadog/libdatadog/issues/2186)) - ([f8b9cc1](https://github.com/datadog/libdatadog/commit/f8b9cc1d8db5cf69a070588fa6b728a75842653a))
+
+
+
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.2.0..libdd-common-v5.0.0) - 2026-06-19
+
+### Added
+
+- CSS Trace Filters ([#1985](https://github.com/datadog/libdatadog/issues/1985)) - ([2842d90](https://github.com/datadog/libdatadog/commit/2842d906c6f6596fd589d85767038cec3f646d37))
+
+### Changed
+
+- Replace native-certs with platform-verifier ([#2078](https://github.com/datadog/libdatadog/issues/2078)) - ([59db709](https://github.com/datadog/libdatadog/commit/59db7092373d33acc833c4ccfc13bbb486554e98))
+- Use SECURITY_ANONYMOUS when connecting to named pipe server ([#2134](https://github.com/datadog/libdatadog/issues/2134)) - ([b10b1d4](https://github.com/datadog/libdatadog/commit/b10b1d46577e95e057bd2b310641f965e6167d58))
+- Fix timeouts on heavily contended scenarios ([#2093](https://github.com/datadog/libdatadog/issues/2093)) - ([e780619](https://github.com/datadog/libdatadog/commit/e780619d5e0626a8cc161c4cb848057fbbe13533))
+
+### Fixed
+
+- Add fallback logic for resolving Azure Functions instance name [SVLS-8931] ([#2077](https://github.com/datadog/libdatadog/issues/2077)) - ([a820699](https://github.com/datadog/libdatadog/commit/a820699426f28cbabb3a74d87c7309d030b52e7c))
+- Fix http PathAndQuery Uri Parsing ([#2122](https://github.com/datadog/libdatadog/issues/2122)) - ([e746d26](https://github.com/datadog/libdatadog/commit/e746d26c489c518db9dc61e112dd8e2db97d0656))
+
+
+
+## [4.2.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.1.0..libdd-common-v4.2.0) - 2026-05-29
+
+### Added
+
+- Recognize PCF Garden container IDs ([#2025](https://github.com/datadog/libdatadog/issues/2025)) - ([be94f69](https://github.com/datadog/libdatadog/commit/be94f6964a286bcc2bec9b0a9b80422c77e06d20))
+
+### Changed
+
+- Replace use_v05_format bool and remove infallible expect ([#1946](https://github.com/datadog/libdatadog/issues/1946)) - ([54afa6f](https://github.com/datadog/libdatadog/commit/54afa6f73cb46a864a58100bbbc4027acd0b9a0b))
+
+
+
+## [4.1.0](https://github.com/datadog/libdatadog/compare/libdd-common-v4.0.0..libdd-common-v4.1.0) - 2026-05-15
+
+### Added
+
+- Added regex-lite feature ([#1939](https://github.com/datadog/libdatadog/issues/1939)) - ([58b86d5](https://github.com/datadog/libdatadog/commit/58b86d5a1b2dc43be98eb9568ec734c259a430a7))
+
+### Changed
+
+- Move the sampling logic from dd-trace-rs [APMSP-2946] ([#1927](https://github.com/datadog/libdatadog/issues/1927)) - ([040260c](https://github.com/datadog/libdatadog/commit/040260c5d72ec011a36934cb77d203688990609e))
+
+### Fixed
+
+- Crashes caused by `getenv` while retrieving AAS env vars ([#1930](https://github.com/datadog/libdatadog/issues/1930)) - ([43c0973](https://github.com/datadog/libdatadog/commit/43c0973da14911168b7283283be901e4ed41ab31))
+
+
+
+## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.2..libdd-common-v4.0.0) - 2026-04-27
+
+### Added
+
+- Trait architecture http ([#1555](https://github.com/datadog/libdatadog/issues/1555)) - ([b863364](https://github.com/datadog/libdatadog/commit/b863364bbb9cb4567b10c80cd11bc4a22b49fcf4))
+- Add shared runtime ([#1602](https://github.com/datadog/libdatadog/issues/1602)) - ([33896de](https://github.com/datadog/libdatadog/commit/33896def2418a9c0fc5bf74b05011210d333759f))
+- Implement HTTP common component ([#1624](https://github.com/datadog/libdatadog/issues/1624)) - ([29678bd](https://github.com/datadog/libdatadog/commit/29678bd0434bbe61dda64b90e99fbb36037f79d2))
+
+### Changed
+
+- Add allocation size tracking allocator ([#1905](https://github.com/datadog/libdatadog/issues/1905)) - ([d29b8d2](https://github.com/datadog/libdatadog/commit/d29b8d22f33ee0bd2ca9baf40f1afee801550c73))
+- Mock now function for rate limiter in tests to make them deterministic ([#1842](https://github.com/datadog/libdatadog/issues/1842)) - ([eb3c39b](https://github.com/datadog/libdatadog/commit/eb3c39b03521962ddedb2fd2c5990fdacea0a135))
+- Remove transitive dependency ([#1895](https://github.com/datadog/libdatadog/issues/1895)) - ([bdb0ad5](https://github.com/datadog/libdatadog/commit/bdb0ad556a6abeb17d2f31a037e149ec05cb5e8b))
+- Skip reqwest test that takes 10mn ([#1784](https://github.com/datadog/libdatadog/issues/1784)) - ([c929cdb](https://github.com/datadog/libdatadog/commit/c929cdb78d84f753f19ccacbee045e77dd5c5688))
+
+### Fixed
+
+- Skip thread counting test ([#1841](https://github.com/datadog/libdatadog/issues/1841)) - ([4360dbb](https://github.com/datadog/libdatadog/commit/4360dbb14e39d00d8a4fc40b6e66d1301f79acff))
+- Don't use reqwest http proxies ([#1810](https://github.com/datadog/libdatadog/issues/1810)) - ([3fc2961](https://github.com/datadog/libdatadog/commit/3fc29617a905dea8cda45300656896f482d7278c))
+- Use `ring` for non-fips builds ([#1816](https://github.com/datadog/libdatadog/issues/1816)) - ([5b6dffc](https://github.com/datadog/libdatadog/commit/5b6dffc5101a48706fe9c06f91e6c5afaf5e0ab5))
+- Handle Podman cgroupns=host cgroup path ([#1828](https://github.com/datadog/libdatadog/issues/1828)) - ([e5de518](https://github.com/datadog/libdatadog/commit/e5de518b54dfdc649a87dcf57a09680ca3859a53))
+- Fix condition so testing with --all-features works ([#1919](https://github.com/datadog/libdatadog/issues/1919)) - ([243aec1](https://github.com/datadog/libdatadog/commit/243aec1b5450b7edb546b5a59e5f80ab79abed08))
+
+
+
 ## [3.0.2](https://github.com/datadog/libdatadog/compare/libdd-common-v3.0.1..libdd-common-v3.0.2) - 2026-03-25
 
 ### Changed

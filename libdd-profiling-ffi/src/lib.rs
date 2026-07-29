@@ -50,6 +50,16 @@ pub use libdd_log_ffi::*;
 #[cfg(feature = "datadog-ffe-ffi")]
 pub use datadog_ffe_ffi;
 
+// re-export shared-runtime ffi (fork-lifecycle management)
+#[cfg(feature = "shared-runtime")]
+#[allow(unused_imports)]
+pub use libdd_shared_runtime_ffi::*;
+
 // re-export tracer metadata functions
 #[cfg(feature = "ddcommon-ffi")]
 pub use libdd_common_ffi::*;
+
+// re-export otel-thread-ctx ffi
+#[cfg(feature = "otel-thread-ctx-ffi")]
+#[allow(unused_imports)]
+pub use libdd_otel_thread_ctx_ffi::*;
