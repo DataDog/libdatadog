@@ -85,6 +85,19 @@ pub struct OtlpTraceConfig {
     pub otel_trace_semantics_enabled: bool,
 }
 
+/// Per-request OTLP gRPC trace exporter configuration.
+// Not yet wired to the trace exporter's send loop; exercised by tests only.
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct OtlpGrpcTraceConfig {
+    /// Custom key-value pairs forwarded as gRPC request metadata.
+    pub headers: Vec<(String, String)>,
+    /// Per-request timeout.
+    pub timeout: Duration,
+    /// When `true`, omit DD-specific per-span attributes from the payload.
+    pub otel_trace_semantics_enabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +132,19 @@ mod tests {
             OtlpProtocol::HttpProtobuf.content_type(),
             libdd_common::header::APPLICATION_PROTOBUF
         );
+    }
+
+    #[test]
+    fn grpc_config_constructs_and_clones() {
+        let cfg = OtlpGrpcTraceConfig {
+            headers: vec![("k".to_string(), "v".to_string())],
+            timeout: Duration::from_secs(3),
+            otel_trace_semantics_enabled: true,
+        };
+        let clone = cfg.clone();
+        assert_eq!(clone.headers, cfg.headers);
+        assert_eq!(clone.timeout, Duration::from_secs(3));
+        assert!(clone.otel_trace_semantics_enabled);
     }
 }
 
