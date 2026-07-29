@@ -194,6 +194,24 @@ fn encode_one(
     Ok(())
 }
 
+pub(crate) unsafe fn encode_value(
+    tokens: Slice<TracerValueToken<'_>>,
+) -> Result<Vec<u8>, Box<ExporterError>> {
+    let tokens = tokens
+        .try_as_slice()
+        .map_err(|_| invalid_input("structured value token slice is invalid"))?;
+    if tokens.is_empty() {
+        return Err(invalid_input("structured value token slice is empty"));
+    }
+    let mut output = Vec::new();
+    let mut index = 0;
+    encode_one(tokens, &mut index, 0, &mut output)?;
+    if index != tokens.len() {
+        return Err(invalid_input("structured value has trailing tokens"));
+    }
+    Ok(output)
+}
+
 /// Encode one flat preorder structured value as an owned MessagePack blob.
 ///
 /// On success, `out_handle` receives an owned blob that must be freed with
@@ -214,18 +232,7 @@ pub unsafe extern "C" fn ddog_tracer_encode_value(
     catch_panic!(
         {
             let inner = || -> Result<(), Box<ExporterError>> {
-                let tokens = tokens
-                    .try_as_slice()
-                    .map_err(|_| invalid_input("structured value token slice is invalid"))?;
-                if tokens.is_empty() {
-                    return Err(invalid_input("structured value token slice is empty"));
-                }
-                let mut output = Vec::new();
-                let mut index = 0;
-                encode_one(tokens, &mut index, 0, &mut output)?;
-                if index != tokens.len() {
-                    return Err(invalid_input("structured value has trailing tokens"));
-                }
+                let output = encode_value(tokens)?;
                 out_handle
                     .as_ptr()
                     .write(Box::new(TracerEncodedValue(output)));
