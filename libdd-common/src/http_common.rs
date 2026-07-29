@@ -135,16 +135,6 @@ mod native {
             .build(Connector::default())
     }
 
-    /// Create a pooling hyper client that evicts connections after `idle_timeout`.
-    pub fn new_client_with_connection_pool_idle_timeout(
-        idle_timeout: core::time::Duration,
-    ) -> GenericHttpClient<Connector> {
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::default())
-            .pool_idle_timeout(idle_timeout)
-            .pool_timer(hyper_util::rt::TokioTimer::new())
-            .build(Connector::default())
-    }
-
     pub fn into_response(response: hyper::Response<Incoming>) -> HttpResponse {
         response.map(Body::Incoming)
     }

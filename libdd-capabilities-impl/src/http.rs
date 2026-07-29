@@ -8,7 +8,6 @@ mod native {
     use std::future::Future;
     use std::io::Write;
     use std::sync::{Arc, OnceLock};
-    use std::time::Duration;
 
     use libdd_capabilities::http::{
         BodySender, ChunkFuture, HttpClientCapability, HttpError, ResponseFuture,
@@ -17,23 +16,15 @@ mod native {
     use libdd_capabilities::maybe_send::MaybeSend;
     use libdd_common::connector::Connector;
     use libdd_common::http_common::{
-        new_client_periodic, new_client_with_connection_pool_idle_timeout, new_default_client,
-        Body, GenericHttpClient,
+        new_client_periodic, new_default_client, Body, GenericHttpClient,
     };
 
     use http_body_util::BodyExt;
 
-    #[derive(Clone, Copy, Debug)]
-    enum ConnectionPooling {
-        Disabled,
-        Default,
-        IdleTimeout(Duration),
-    }
-
     #[derive(Clone)]
     pub struct NativeHttpClient {
         client: Arc<OnceLock<GenericHttpClient<Connector>>>,
-        connection_pooling: ConnectionPooling,
+        connection_pooling: bool,
     }
 
     pub struct NativeBodySender(libdd_common::http_common::Sender);
@@ -63,24 +54,7 @@ mod native {
         pub fn new_without_connection_pooling() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
-                connection_pooling: ConnectionPooling::Disabled,
-            }
-        }
-
-        pub fn new_with_connection_pool_idle_timeout(idle_timeout: Duration) -> Self {
-            Self {
-                client: Arc::new(OnceLock::new()),
-                connection_pooling: ConnectionPooling::IdleTimeout(idle_timeout),
-            }
-        }
-    }
-
-    fn build_client(connection_pooling: ConnectionPooling) -> GenericHttpClient<Connector> {
-        match connection_pooling {
-            ConnectionPooling::Disabled => new_client_periodic(),
-            ConnectionPooling::Default => new_default_client(),
-            ConnectionPooling::IdleTimeout(idle_timeout) => {
-                new_client_with_connection_pool_idle_timeout(idle_timeout)
+                connection_pooling: false,
             }
         }
     }
@@ -113,12 +87,8 @@ mod native {
         fn new_client() -> Self {
             Self {
                 client: Arc::new(OnceLock::new()),
-                connection_pooling: ConnectionPooling::Default,
+                connection_pooling: true,
             }
-        }
-
-        fn new_client_with_connection_pool_idle_timeout(idle_timeout: Duration) -> Self {
-            Self::new_with_connection_pool_idle_timeout(idle_timeout)
         }
 
         #[allow(clippy::manual_async_fn)]
@@ -137,7 +107,13 @@ mod native {
                 }
 
                 let client = client_lock
-                    .get_or_init(|| build_client(connection_pooling))
+                    .get_or_init(|| {
+                        if connection_pooling {
+                            new_default_client()
+                        } else {
+                            new_client_periodic()
+                        }
+                    })
                     .clone();
                 let hyper_req = req.map(Body::from_bytes);
 
@@ -158,10 +134,7 @@ mod native {
         }
 
         fn request_streamed(&self, req: http::Request<()>) -> (BodySender, ResponseFuture) {
-            let client = self
-                .client
-                .get_or_init(|| build_client(self.connection_pooling))
-                .clone();
+            let client = self.client.get_or_init(new_default_client).clone();
             let (sender, body) = Body::channel();
             let hyper_req = req.map(|()| body);
             let fut = async move {

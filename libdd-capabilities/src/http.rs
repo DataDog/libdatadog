@@ -10,7 +10,6 @@
 use crate::maybe_send::{MaybeSend, MaybeSendFuture};
 use core::future::Future;
 use core::pin::Pin;
-use core::time::Duration;
 use futures_util::StreamExt;
 
 #[derive(Debug, thiserror::Error)]
@@ -56,13 +55,6 @@ pub type BodySender = Box<dyn StreamingBodySender>;
 
 pub trait HttpClientCapability: Clone + std::fmt::Debug {
     fn new_client() -> Self;
-
-    /// Construct a client that evicts pooled connections after `idle_timeout`.
-    ///
-    /// Implementations without connection pooling may use [`Self::new_client`].
-    fn new_client_with_connection_pool_idle_timeout(_idle_timeout: Duration) -> Self {
-        Self::new_client()
-    }
 
     fn request(
         &self,
