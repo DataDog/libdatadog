@@ -50,6 +50,18 @@ unsafe extern "C" {
     #[link_name = "dd_tl_state_get_or_init__extern"]
     pub fn dd_tl_state_get_or_init() -> *mut dd_tl_state_t;
 }
+unsafe extern "C" {
+    pub fn dd_probe_alloc(user: *mut ::std::os::raw::c_void, size: u64, weight: u64);
+}
+unsafe extern "C" {
+    pub fn dd_probe_free(ptr: *mut ::std::os::raw::c_void);
+}
+unsafe extern "C" {
+    pub fn dd_heap_profiler_attached() -> bool;
+}
+unsafe extern "C" {
+    pub fn dd_test_set_profiler_active(active: bool);
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct dd_alloc_req_t {
@@ -194,16 +206,4 @@ unsafe extern "C" {
         new_raw: *mut ::std::os::raw::c_void,
         prep: dd_realloc_prep_t,
     ) -> *mut ::std::os::raw::c_void;
-}
-unsafe extern "C" {
-    pub fn dd_probe_alloc(user: *mut ::std::os::raw::c_void, size: u64, weight: u64);
-}
-unsafe extern "C" {
-    pub fn dd_probe_free(ptr: *mut ::std::os::raw::c_void);
-}
-unsafe extern "C" {
-    pub fn dd_heap_profiler_attached() -> bool;
-}
-unsafe extern "C" {
-    pub fn dd_test_set_profiler_active(active: bool);
 }

@@ -33,12 +33,7 @@
 #include <stdint.h>
 
 #include <datadog/heap/tl_state.h>
-
-#ifdef __linux__
-#  include <usdt.h>
-#else
-#  define USDT_IS_ACTIVE(group, name) (1)
-#endif
+#include <datadog/heap/probes.h>
 
 /*
  * Return type for dd_allocation_requested, paired with the `req`
@@ -113,8 +108,8 @@ static inline __attribute__((always_inline, warn_unused_result))
 dd_alloc_req_t dd_allocation_requested(size_t size, size_t alignment) {
     dd_alloc_req_t out = { size, size, alignment, 0 };
 
-    // If no tracer is attached to ddheap:alloc, skip all sampling logic.
-    if (__builtin_expect(!USDT_IS_ACTIVE(ddheap, alloc), 1)) return out;
+    // If no tracer is attached to ddheap, skip all sampling logic.
+    if (__builtin_expect(!USDT_SEMA_IS_ACTIVE(ddheap_alloc), 1)) return out;
 
     // If we don't have TLS yet (this is defensive and should never happen), or
     // the reentry guard is set (meaning a sampled allocation is already in

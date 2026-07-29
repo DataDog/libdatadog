@@ -23,17 +23,23 @@
 #include <errno.h>
 #include <stdbool.h>
 
+/* Single definition of the shared ddheap USDT semaphore. Both the alloc and
+ * free probes reference this semaphore, so attaching to either one activates
+ * sampling for the whole provider. Other TUs access it via
+ * USDT_DECLARE_SEMA(ddheap_alloc) in probes.h. */
+USDT_DEFINE_SEMA(ddheap_alloc);
+
 /* Save / restore errno: an attached USDT consumer may perturb it. */
 void dd_probe_alloc(void *user, uint64_t size, uint64_t weight) {
     int saved_errno = errno;
-    USDT_WITH_SEMA(ddheap, alloc, user, size, weight);
+    USDT_WITH_EXPLICIT_SEMA(ddheap_alloc, ddheap, alloc, user, size, weight);
     errno = saved_errno;
 }
 
 void dd_probe_free(void *ptr) {
 #if DD_HEAP_LIVE_TRACKING
     int saved_errno = errno;
-    USDT(ddheap, free, ptr);
+    USDT_WITH_EXPLICIT_SEMA(ddheap_alloc, ddheap, free, ptr);
     errno = saved_errno;
 #else
     (void)ptr;
@@ -41,15 +47,9 @@ void dd_probe_free(void *ptr) {
 }
 
 bool dd_heap_profiler_attached(void) {
-    return USDT_IS_ACTIVE(ddheap, alloc);
+    return USDT_SEMA_IS_ACTIVE(ddheap_alloc);
 }
 
 void dd_test_set_profiler_active(bool active) {
-    /* The implicit semaphore symbol emitted by USDT_WITH_SEMA(ddheap, alloc, ...)
-     * is __usdt_sema_ddheap__alloc (see __usdt_sema_name macro in usdt.h).
-     * Declare it extern and poke its .active field directly - this is exactly
-     * what the kernel does when an eBPF program attaches to the probe. */
-    extern struct usdt_sema __usdt_sema_ddheap__alloc
-        __asm__("__usdt_sema_ddheap__alloc");
-    __usdt_sema_ddheap__alloc.active = active ? 1 : 0;
+    USDT_SEMA(ddheap_alloc).active = active ? 1 : 0;
 }

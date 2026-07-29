@@ -20,8 +20,14 @@
     * the variadic USDT() macro that emits the same v3 ELF-note format
     * that bpftrace, systemtap, and BPF tracers all consume. */
 #  include <usdt.h>
+   /* Shared explicit semaphore for the ddheap provider. Defined in probes.c;
+    * declared here so that other TUs (e.g. allocation_requested.h) can check
+    * USDT_SEMA_IS_ACTIVE(ddheap_alloc) without emitting their own implicit
+    * semaphore definitions. */
+   USDT_DECLARE_SEMA(ddheap_alloc);
 #else
 #  define USDT(provider, name, ...) ((void)0)
+#  define USDT_SEMA_IS_ACTIVE(sema) (1)
 #endif
 
 /*

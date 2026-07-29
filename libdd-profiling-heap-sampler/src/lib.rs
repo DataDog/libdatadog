@@ -52,12 +52,6 @@ pub fn set_default_sampling_distance(distance_bytes: u64) {
     unsafe { sys::dd_set_default_sampling_interval(distance_bytes) }
 }
 
-#[cfg(target_os = "linux")]
-extern "C" {
-    #[link_name = "dd_heap_profiler_attached"]
-    fn dd_heap_profiler_attached_ffi() -> bool;
-}
-
 /// Returns true when an external profiler is currently attached to the
 /// `ddheap:alloc` USDT in this object file.
 ///
@@ -69,7 +63,7 @@ extern "C" {
 pub fn is_profiler_attached() -> bool {
     // SAFETY: dd_heap_profiler_attached performs a single semaphore read and
     // has no preconditions.
-    unsafe { dd_heap_profiler_attached_ffi() }
+    unsafe { sys::dd_heap_profiler_attached() }
 }
 
 /// Non-Linux builds do not expose USDT heap probes.
