@@ -5,8 +5,7 @@
 //!
 //! Scope:
 //! * 64-bit Linux ELF only (`Elf64_*`).
-//! * GNU hash tables only (`DT_GNU_HASH`). `DT_HASH` is not parsed; objects without a GNU hash
-//!   table are skipped.
+//! * Supports `DT_GNU_HASH` and falls back to `DT_HASH` (sysv) for determining dynsym entry count.
 //! * REL / RELA / JMPREL relocation arrays.
 
 use core::ffi::{c_char, c_int, c_void, CStr};
@@ -27,6 +26,7 @@ struct Elf64_Dyn {
     d_un: u64, // d_val / d_ptr union; we only ever read it as u64
 }
 const DT_NULL: i64 = 0;
+const DT_HASH: i64 = 4;
 const DT_STRTAB: i64 = 5;
 const DT_SYMTAB: i64 = 6;
 const DT_RELA: i64 = 7;
@@ -47,6 +47,8 @@ pub struct DynamicInfo {
     strtab_size: usize,
     symtab: *const Elf64_Sym,
     sym_count: u32,
+    /// Pointer and word-count for the `.gnu.hash` table, if present.
+    /// Used by [`gnu_hash_lookup`] for symbol resolution.
     gnu_hash: *const u32,
     gnu_hash_words: usize,
     rels: *const Elf64_Rel,
@@ -64,6 +66,10 @@ impl DynamicInfo {
     /// Handles the glibc-vs-musl quirk where glibc stores absolute
     /// addresses in DT entries while musl stores load-relative offsets;
     /// we use the `addr > base ? addr : base + addr` heuristic.
+    ///
+    /// Supports both `DT_GNU_HASH` and `DT_HASH` (sysv) for determining
+    /// the dynsym entry count. Objects with neither hash table fall back
+    /// to a symtab/strtab distance heuristic.
     ///
     /// # Safety
     /// `info` must point to a valid `dl_phdr_info` from `dl_iterate_phdr`.
@@ -98,6 +104,7 @@ impl DynamicInfo {
         let mut jmprels: *const Elf64_Rela = core::ptr::null();
         let mut jmprels_size: usize = 0;
         let mut gnu_hash: *const u32 = core::ptr::null();
+        let mut sysv_hash: *const u32 = core::ptr::null();
         let mut pltrel_type: i64 = 0;
 
         let mut it = dyn_begin;
@@ -112,6 +119,7 @@ impl DynamicInfo {
                 DT_STRSZ => strtab_size = v as usize,
                 DT_SYMTAB => symtab = correct(v) as *const Elf64_Sym,
                 DT_GNU_HASH => gnu_hash = correct(v) as *const u32,
+                DT_HASH => sysv_hash = correct(v) as *const u32,
                 DT_REL => rels = correct(v) as *const Elf64_Rel,
                 DT_RELA => relas = correct(v) as *const Elf64_Rela,
                 DT_JMPREL => jmprels = correct(v) as *const Elf64_Rela,
@@ -130,32 +138,28 @@ impl DynamicInfo {
             jmprels_size = 0;
         }
 
-        if strtab.is_null() || symtab.is_null() || gnu_hash.is_null() {
+        // Need at minimum strtab + symtab to resolve relocation symbol names.
+        if strtab.is_null() || symtab.is_null() {
             return None;
         }
 
-        let gnu_hash_addr = gnu_hash as usize;
-        let end = containing_load_segment_end(gnu_hash_addr)?;
-        let bytes = end.checked_sub(gnu_hash_addr)?;
-        let gnu_hash_words = bytes / core::mem::size_of::<u32>();
-        let sym_count = gnu_hash_symbol_count(gnu_hash, gnu_hash_words).unwrap_or_else(|| {
-            // Fallback for degenerate .gnu.hash (e.g. executables with only
-            // undefined imports): estimate dynsym entry count from the common
-            // .dynsym-before-.dynstr layout. This is a heuristic, not an ELF
-            // guarantee. If it underestimates we may skip patching some
-            // relocations; valid relocation indexes should still keep an
-            // overestimate from faulting on normal loaded objects.
-            let symtab_addr = symtab as usize;
-            let strtab_addr = strtab as usize;
-            if strtab_addr > symtab_addr {
-                let bytes = strtab_addr - symtab_addr;
-                (bytes / core::mem::size_of::<Elf64_Sym>()) as u32
+        // Determine sym_count and gnu_hash metadata.
+        let (sym_count, gnu_hash_words) = if !gnu_hash.is_null() {
+            let gnu_hash_addr = gnu_hash as usize;
+            if let Some(end) = containing_load_segment_end(gnu_hash_addr) {
+                let bytes = end.saturating_sub(gnu_hash_addr);
+                let words = bytes / core::mem::size_of::<u32>();
+                if let Some(count) = gnu_hash_symbol_count(gnu_hash, words) {
+                    (count, words)
+                } else {
+                    (sym_count_fallback(symtab, strtab, sysv_hash), words)
+                }
             } else {
-                // Can't estimate; allow any index and rely on strtab
-                // bounds checking in sym_name to catch bad accesses.
-                u32::MAX
+                (sym_count_fallback(symtab, strtab, sysv_hash), 0)
             }
-        });
+        } else {
+            (sym_count_fallback(symtab, strtab, sysv_hash), 0)
+        };
 
         Some(Self {
             strtab,
@@ -233,6 +237,63 @@ impl DynamicInfo {
             // from DT_JMPREL/DT_PLTRELSZ of a mapped ELF object.
             unsafe { core::slice::from_raw_parts(self.jmprels, self.jmprels_count) }
         }
+    }
+
+    /// Linear scan of the dynsym table for a symbol by name.
+    ///
+    /// This is the fallback for objects that have `DT_HASH` but no
+    /// `DT_GNU_HASH`. The scan is bounded by `sym_count` (this is calc from
+    /// `DT_HASH` nchain or the symtab/strtab distance heuristic).
+    ///
+    /// # Safety
+    /// The `DynamicInfo` must have been produced by [`DynamicInfo::from_phdr`]
+    /// for a currently-loaded ELF object.
+    pub unsafe fn linear_sym_lookup(&self, name: &[u8]) -> Option<Elf64_Sym> {
+        for idx in 0..self.sym_count {
+            let sym = &*self.symtab.add(idx as usize);
+            let off = sym.st_name as usize;
+            if off >= self.strtab_size {
+                continue;
+            }
+            let sname = CStr::from_ptr(self.strtab.add(off));
+            if sname.to_bytes() == name && check_sym(sym) {
+                return Some(*sym);
+            }
+        }
+        None
+    }
+
+    /// Whether this object has a usable GNU hash table.
+    pub fn has_gnu_hash(&self) -> bool {
+        !self.gnu_hash.is_null() && self.gnu_hash_words >= 4
+    }
+}
+
+/// Fallback sym_count determination: try sysv DT_HASH, then
+/// symtab/strtab distance heuristic.
+unsafe fn sym_count_fallback(
+    symtab: *const Elf64_Sym,
+    strtab: *const c_char,
+    sysv_hash: *const u32,
+) -> u32 {
+    // DT_HASH (sysv): header is [nbucket, nchain]. nchain == dynsym count.
+    if !sysv_hash.is_null() {
+        let nchain = *sysv_hash.add(1);
+        if nchain > 0 {
+            return nchain;
+        }
+    }
+
+    // Last resort: estimate from the common .dynsym-before-.dynstr layout.
+    let symtab_addr = symtab as usize;
+    let strtab_addr = strtab as usize;
+    if strtab_addr > symtab_addr {
+        let bytes = strtab_addr - symtab_addr;
+        (bytes / core::mem::size_of::<Elf64_Sym>()) as u32
+    } else {
+        // Can't estimate; allow any index and rely on strtab bounds
+        // checking in sym_name to catch bad accesses.
+        u32::MAX
     }
 }
 
@@ -480,7 +541,6 @@ pub fn read_proc_maps() -> Vec<MapEntry> {
 pub struct PageProtGuard {
     page_size: usize,
     maps: Vec<MapEntry>,
-    // Aligned page base -> original prot flags read from /proc/self/maps.
     touched: HashMap<usize, i32>,
 }
 
@@ -513,10 +573,6 @@ impl PageProtGuard {
     pub unsafe fn override_entry(&mut self, addr: usize, new_value: usize) -> bool {
         let aligned = addr & !(self.page_size - 1);
         if !self.touched.contains_key(&aligned) {
-            // If /proc/self/maps isn't available (or the page isn't in
-            // it, which shouldn't happen for a mapped GOT page) fall
-            // back to PROT_READ - the RELRO'd default. That's tighter
-            // than the previous behavior of leaving pages RW.
             let orig = self.original_prot(aligned).unwrap_or(PROT_READ);
             if mprotect(
                 aligned as *mut c_void,
@@ -557,15 +613,48 @@ pub fn elf64_r_sym(info: u64) -> u64 {
     info >> 32
 }
 
-/// Result of a symbol lookup.
-#[derive(Clone, Copy)]
-pub struct LookupResult {
-    pub address: usize,
+/// Extract the relocation type from an ELF64 relocation's `r_info` field.
+pub fn elf64_r_type(info: u64) -> u32 {
+    (info & 0xffff_ffff) as u32
+}
+
+/// Return whether the relocation type represents a pointer-width slot
+/// that is safe to overwrite with a function pointer.
+///
+/// Accepted types:
+/// - `GLOB_DAT` / `JUMP_SLOT` -- GOT entries filled by the dynamic linker.
+/// - `R_X86_64_64` / `R_AARCH64_ABS64` -- absolute pointer-width relocations used for data-section
+///   function pointers (`void *(*fn)(size_t) = malloc;`).
+///
+/// Narrow or PC-relative types (`R_X86_64_PC32`, `R_AARCH64_TLSDESC`, etc.)
+/// are excluded since they have different widths and addend semantics
+pub fn is_got_pointer_reloc(r_type: u32) -> bool {
+    // x86_64
+    const R_X86_64_64: u32 = 1;
+    const R_X86_64_GLOB_DAT: u32 = 6;
+    const R_X86_64_JUMP_SLOT: u32 = 7;
+    // aarch64
+    const R_AARCH64_ABS64: u32 = 257;
+    const R_AARCH64_GLOB_DAT: u32 = 1025;
+    const R_AARCH64_JUMP_SLOT: u32 = 1026;
+
+    matches!(
+        r_type,
+        R_X86_64_64
+            | R_X86_64_GLOB_DAT
+            | R_X86_64_JUMP_SLOT
+            | R_AARCH64_ABS64
+            | R_AARCH64_GLOB_DAT
+            | R_AARCH64_JUMP_SLOT
+    )
 }
 
 /// Look up a symbol across loaded objects, returning the first
 /// non-zero-sized definition whose address is not `not_this_symbol`.
-/// Null-sized symbols are ignored so hooks resolve to callable definitions.
+///
+/// Uses `gnu_hash_lookup` for objects with `DT_GNU_HASH`, and falls
+/// back to a bounded linear dynsym scan for objects that only have
+/// `DT_HASH` (sysv).
 pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult> {
     let needle = name.as_bytes();
     let mut found: Option<LookupResult> = None;
@@ -581,7 +670,14 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
         let Some(dyn_info) = DynamicInfo::from_phdr(info) else {
             return false;
         };
-        if let Some(sym) = gnu_hash_lookup(&dyn_info, needle) {
+        // Try GNU hash first (O(1) average), fall back to linear scan
+        // for sysv-hash-only objects.
+        let sym = if dyn_info.has_gnu_hash() {
+            gnu_hash_lookup(&dyn_info, needle)
+        } else {
+            dyn_info.linear_sym_lookup(needle)
+        };
+        if let Some(sym) = sym {
             if sym.st_size > 0 {
                 let addr = sym.st_value as usize + dyn_info.base_address();
                 if addr != not_this_symbol {
@@ -593,6 +689,126 @@ pub fn lookup_symbol(name: &str, not_this_symbol: usize) -> Option<LookupResult>
         false
     });
     found
+}
+
+/// Result of a symbol lookup.
+#[derive(Clone, Copy)]
+pub struct LookupResult {
+    pub address: usize,
+}
+
+/// Hook a single symbol across all loaded ELF objects by patching their
+/// GOT entries.
+///
+/// - `symbol_name`: the symbol to hook (`c"__assert_fail"`)
+/// - `hook_fn`: address of the replacement function
+/// - `orig_out`: on success, receives the address of the original symbol
+///
+/// Returns `true` if at least one GOT entry was patched.
+///
+/// # Safety
+///
+/// `hook_fn` must point to a function with the same calling convention
+/// and signature as the symbol being hooked. The patching is permanent.
+pub unsafe fn hook_symbol(symbol_name: &CStr, hook_fn: usize, orig_out: &mut usize) -> bool {
+    let symbol_name_bytes = symbol_name.to_bytes();
+    let name_str = match symbol_name.to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let Some(result) = lookup_symbol(name_str, hook_fn) else {
+        return false;
+    };
+    *orig_out = result.address;
+
+    let mut patched_any = false;
+    let mut guard = PageProtGuard::new();
+
+    let guard_ptr = &mut guard as *mut PageProtGuard;
+    let patched_ptr = &mut patched_any as *mut bool;
+
+    iterate_libraries(|info, _is_exe| {
+        let lib_name = if info.dlpi_name.is_null() {
+            ""
+        } else {
+            unsafe { CStr::from_ptr(info.dlpi_name) }
+                .to_str()
+                .unwrap_or("")
+        };
+        if lib_name.contains("linux-vdso") || lib_name.contains("/ld-linux") {
+            return false;
+        }
+        let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
+            return false;
+        };
+        unsafe {
+            patch_got_entries(
+                &dyn_info,
+                symbol_name_bytes,
+                hook_fn,
+                &mut *guard_ptr,
+                &mut *patched_ptr,
+            );
+        }
+        false
+    });
+
+    patched_any
+}
+
+/// Patch GOT entries in one library for the target symbol.
+///
+/// Only patches relocations of type `GLOB_DAT` or `JUMP_SLOT` — the
+/// pointer-sized GOT slots that the dynamic linker fills with resolved
+/// symbol addresses. Other relocation types (e.g. `R_X86_64_PC32`) have
+/// different widths or addend semantics and are skipped.
+unsafe fn patch_got_entries(
+    dyn_info: &DynamicInfo,
+    symbol_name: &[u8],
+    hook_fn: usize,
+    guard: &mut PageProtGuard,
+    patched: &mut bool,
+) {
+    let (rels_ptr, rels_count) = dyn_info.rels();
+    if !rels_ptr.is_null() {
+        let relocs = core::slice::from_raw_parts(rels_ptr, rels_count);
+        for reloc in relocs {
+            if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+                continue;
+            }
+            let sym_idx = elf64_r_sym(reloc.r_info) as u32;
+            if let Some(cstr) = dyn_info.sym_name(sym_idx) {
+                if cstr.to_bytes() == symbol_name {
+                    let addr = reloc.r_offset as usize + dyn_info.base_address();
+                    if guard.override_entry(addr, hook_fn) {
+                        *patched = true;
+                    }
+                }
+            }
+        }
+    }
+
+    for (ptr, count) in [dyn_info.relas(), dyn_info.jmprels()] {
+        if ptr.is_null() {
+            continue;
+        }
+        let relocs = core::slice::from_raw_parts(ptr, count);
+        for reloc in relocs {
+            if !is_got_pointer_reloc(elf64_r_type(reloc.r_info)) {
+                continue;
+            }
+            let sym_idx = elf64_r_sym(reloc.r_info) as u32;
+            if let Some(cstr) = dyn_info.sym_name(sym_idx) {
+                if cstr.to_bytes() == symbol_name {
+                    let addr = reloc.r_offset as usize + dyn_info.base_address();
+                    if guard.override_entry(addr, hook_fn) {
+                        *patched = true;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -622,6 +838,83 @@ mod tests {
         assert_eq!(guard.original_prot(0x1fff), Some(PROT_READ));
         assert_eq!(guard.original_prot(0x2000), Some(PROT_READ | PROT_EXEC));
         assert_eq!(guard.original_prot(0x3000), None);
+    }
+
+    #[test]
+    fn test_gnu_hash_symbol_count_too_small() {
+        let data: [u32; 3] = [0; 3];
+        assert_eq!(
+            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
+            None
+        );
+    }
+
+    #[test]
+    fn test_gnu_hash_symbol_count_zero_buckets() {
+        let data: [u32; 6] = [0, 0, 1, 0, 0, 0];
+        assert_eq!(
+            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
+            None,
+        );
+    }
+
+    #[test]
+    fn test_gnu_hash_symbol_count_valid_single_chain() {
+        // nbuckets=1, symbias=1, bloom_size=1 (2 u32 words), bloom_shift=0
+        // bloom: [0, 0], bucket: [1], chain: [1 (LSB set = end)]
+        // → sym_count = 1 + 1 = 2
+        let data: [u32; 8] = [1, 1, 1, 0, 0, 0, 1, 1];
+        assert_eq!(
+            unsafe { gnu_hash_symbol_count(data.as_ptr(), data.len()) },
+            Some(2),
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_iterate_libraries_finds_loaded_objects() {
+        let mut count = 0usize;
+        iterate_libraries(|_info, _is_exe| {
+            count += 1;
+            false
+        });
+        assert!(count > 0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_dynamic_info_parses_loaded_library() {
+        let mut found = false;
+        iterate_libraries(|info, _| {
+            if let Some(_dyn_info) = unsafe { DynamicInfo::from_phdr(info) } {
+                found = true;
+                return true;
+            }
+            false
+        });
+        assert!(found, "should parse at least one loaded library");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_all_loaded_libraries_have_valid_sym_count() {
+        iterate_libraries(|info, _| {
+            let Some(dyn_info) = (unsafe { DynamicInfo::from_phdr(info) }) else {
+                return false;
+            };
+            assert!(
+                dyn_info.sym_count > 0,
+                "sym_count should be > 0 (base=0x{:x})",
+                dyn_info.base_address
+            );
+            let name = unsafe { dyn_info.sym_name(0) };
+            assert!(
+                name.is_some(),
+                "sym_name(0) should succeed (base=0x{:x})",
+                dyn_info.base_address
+            );
+            false
+        });
     }
 
     #[test]
@@ -670,5 +963,119 @@ mod tests {
             maps.iter().any(|e| e.prot & PROT_READ != 0),
             "expected at least one readable mapping"
         );
+    }
+
+    /// Compile a tiny shared library with `--hash-style=sysv` (no
+    /// DT_GNU_HASH), dlopen it, and verify that `DynamicInfo::from_phdr`
+    /// parses it with a valid sym_count calculated from DT_HASH nchain.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_sysv_hash_library_parsed_correctly() {
+        use std::io::Write;
+        use std::process::Command;
+
+        let dir = std::env::temp_dir().join("libdd_got_hook_test_sysv");
+        let _ = std::fs::create_dir_all(&dir);
+        let c_path = dir.join("sysv_test.c");
+        let so_path = dir.join("libsysv_test.so");
+
+        {
+            let mut f = std::fs::File::create(&c_path).expect("create .c");
+            f.write_all(b"int sysv_test_symbol(void) { return 42; }\n")
+                .expect("write .c");
+        }
+
+        // Compile with --hash-style=sysv so the .so has DT_HASH but no
+        // DT_GNU_HASH.
+        let status = Command::new("cc")
+            .args(["-shared", "-fPIC", "-Wl,--hash-style=sysv", "-o"])
+            .arg(&so_path)
+            .arg(&c_path)
+            .status();
+
+        let status = match status {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("note: cc not available ({e}), skipping sysv hash test");
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+        };
+        if !status.success() {
+            eprintln!("note: cc --hash-style=sysv failed, skipping");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+
+        // dlopen the library.
+        let so_cstr =
+            std::ffi::CString::new(so_path.to_str().expect("path is utf8")).expect("CString");
+        let handle = unsafe { libc::dlopen(so_cstr.as_ptr(), libc::RTLD_NOW) };
+        assert!(!handle.is_null(), "dlopen failed: {:?}", unsafe {
+            CStr::from_ptr(libc::dlerror())
+        },);
+
+        // Walk loaded libraries and find our .so.
+        let mut found = false;
+        iterate_libraries(|info, _| {
+            let lib_name = if info.dlpi_name.is_null() {
+                return false;
+            } else {
+                unsafe { CStr::from_ptr(info.dlpi_name) }
+                    .to_str()
+                    .unwrap_or("")
+            };
+            if !lib_name.contains("libsysv_test") {
+                return false;
+            }
+
+            let dyn_info = unsafe { DynamicInfo::from_phdr(info) };
+            assert!(
+                dyn_info.is_some(),
+                "from_phdr should succeed for sysv-hash library at {lib_name}"
+            );
+            let dyn_info = dyn_info.unwrap();
+            assert!(
+                dyn_info.sym_count > 0,
+                "sym_count should be > 0 for sysv-hash library"
+            );
+
+            // Verify we can look up our exported symbol by walking
+            // relocations isn't needed
+            let mut found_sym = false;
+            for idx in 0..dyn_info.sym_count {
+                if let Some(name) = unsafe { dyn_info.sym_name(idx) } {
+                    if name.to_bytes() == b"sysv_test_symbol" {
+                        found_sym = true;
+                        break;
+                    }
+                }
+            }
+            assert!(
+                found_sym,
+                "should find sysv_test_symbol in dynsym (sym_count={})",
+                dyn_info.sym_count
+            );
+
+            found = true;
+            true
+        });
+
+        assert!(
+            found,
+            "should have found libsysv_test.so in loaded libraries"
+        );
+
+        // Verify that lookup_symbol (which uses the linear fallback for
+        // sysv-hash-only objects) can resolve the exported symbol.
+        let result = lookup_symbol("sysv_test_symbol", 0);
+        assert!(
+            result.is_some(),
+            "lookup_symbol should find sysv_test_symbol via linear dynsym scan"
+        );
+        assert!(result.unwrap().address != 0);
+
+        unsafe { libc::dlclose(handle) };
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
