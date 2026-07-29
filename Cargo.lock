@@ -3099,7 +3099,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ffe-test-suite"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "chrono",
  "criterion",
