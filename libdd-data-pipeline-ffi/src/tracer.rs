@@ -13,10 +13,12 @@ use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::slice::{AsBytes, Slice};
 use libdd_common_ffi::CharSlice;
 use libdd_tinybytes::BytesString;
-use libdd_trace_utils::span::v04::SpanBytes;
+use libdd_trace_utils::span::v04::{
+    AttributeAnyValueBytes, AttributeArrayValueBytes, SpanBytes, SpanEventBytes,
+};
 use std::ptr::NonNull;
 
 type TokioCancellationToken = tokio_util::sync::CancellationToken;
@@ -44,6 +46,9 @@ fn charslice_to_bytesstring(s: CharSlice) -> Result<BytesString, Box<ExporterErr
 
 /// Opaque handle wrapping a single `Span<BytesData>`.
 pub struct TracerSpan(SpanBytes);
+
+/// Opaque, owned span event under construction.
+pub struct TracerSpanEvent(SpanEventBytes);
 
 /// FFI-safe bundle of scalar fields for creating a [`TracerSpan`].
 ///
@@ -187,6 +192,254 @@ pub unsafe extern "C" fn ddog_tracer_span_set_metric(
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+// ---------------------------------------------------------------------------
+// TracerSpanEvent
+// ---------------------------------------------------------------------------
+
+/// Create an owned span event.
+///
+/// The name is copied before this function returns. The event remains detached
+/// until consumed by [`ddog_tracer_span_add_event`].
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_new(
+    out_handle: NonNull<Box<TracerSpanEvent>>,
+    name: CharSlice,
+    time_unix_nano: u64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        match charslice_to_bytesstring(name) {
+            Ok(name) => {
+                out_handle
+                    .as_ptr()
+                    .write(Box::new(TracerSpanEvent(SpanEventBytes {
+                        time_unix_nano,
+                        name,
+                        ..Default::default()
+                    })));
+                None
+            }
+            Err(e) => Some(e),
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Free a detached span event.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_free(handle: Option<Box<TracerSpanEvent>>) {
+    drop(handle);
+}
+
+fn set_event_attribute(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    value: AttributeAnyValueBytes,
+) -> Option<Box<ExporterError>> {
+    let Some(event) = event else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+    let key = match charslice_to_bytesstring(key) {
+        Ok(key) => key,
+        Err(e) => return Some(e),
+    };
+    event.0.attributes.insert(key, value);
+    None
+}
+
+/// Add or overwrite a string event attribute. The key and value are copied.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_set_string(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    value: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        match charslice_to_bytesstring(value) {
+            Ok(value) => set_event_attribute(
+                event,
+                key,
+                AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::String(value)),
+            ),
+            Err(e) => Some(e),
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a boolean event attribute.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_set_bool(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    value: bool,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        set_event_attribute(
+            event,
+            key,
+            AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Boolean(value)),
+        ),
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a signed integer event attribute.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_set_int(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    value: i64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        set_event_attribute(
+            event,
+            key,
+            AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Integer(value)),
+        ),
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a double event attribute.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_set_double(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    value: f64,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        set_event_attribute(
+            event,
+            key,
+            AttributeAnyValueBytes::SingleValue(AttributeArrayValueBytes::Double(value)),
+        ),
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a homogeneous string array event attribute.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_set_string_array(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    values: Slice<CharSlice>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        {
+            let values = values
+                .iter()
+                .map(|value| charslice_to_bytesstring(*value))
+                .collect::<Result<Vec<_>, _>>();
+            match values {
+                Ok(values) => set_event_attribute(
+                    event,
+                    key,
+                    AttributeAnyValueBytes::Array(
+                        values
+                            .into_iter()
+                            .map(AttributeArrayValueBytes::String)
+                            .collect(),
+                    ),
+                ),
+                Err(e) => Some(e),
+            }
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a homogeneous boolean array event attribute.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_set_bool_array(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    values: Slice<bool>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        set_event_attribute(
+            event,
+            key,
+            AttributeAnyValueBytes::Array(
+                values
+                    .iter()
+                    .copied()
+                    .map(AttributeArrayValueBytes::Boolean)
+                    .collect(),
+            ),
+        ),
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a homogeneous signed integer array event attribute.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_set_int_array(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    values: Slice<i64>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        set_event_attribute(
+            event,
+            key,
+            AttributeAnyValueBytes::Array(
+                values
+                    .iter()
+                    .copied()
+                    .map(AttributeArrayValueBytes::Integer)
+                    .collect(),
+            ),
+        ),
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a homogeneous double array event attribute.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_event_set_double_array(
+    event: Option<&mut TracerSpanEvent>,
+    key: CharSlice,
+    values: Slice<f64>,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        set_event_attribute(
+            event,
+            key,
+            AttributeAnyValueBytes::Array(
+                values
+                    .iter()
+                    .copied()
+                    .map(AttributeArrayValueBytes::Double)
+                    .collect(),
+            ),
+        ),
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Atomically attach a completed event to a span, consuming the event.
+///
+/// If either handle is null, the event is dropped and the span is unchanged.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_add_event(
+    span: Option<&mut TracerSpan>,
+    event: Option<Box<TracerSpanEvent>>,
+) -> Option<Box<ExporterError>> {
+    let Some(span) = span else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+    let Some(event) = event else {
+        return gen_error!(ErrorCode::InvalidArgument);
+    };
+    catch_panic!(
+        {
+            span.0.span_events.push(event.0);
+            None
         },
         gen_error!(ErrorCode::Panic)
     )
@@ -430,6 +683,16 @@ mod tests {
         }
     }
 
+    fn make_event(name: &str, time_unix_nano: u64) -> Box<TracerSpanEvent> {
+        unsafe {
+            let mut handle = MaybeUninit::<Box<TracerSpanEvent>>::uninit();
+            let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+            let err = ddog_tracer_span_event_new(out, cs(name), time_unix_nano);
+            assert!(err.is_none());
+            handle.assume_init()
+        }
+    }
+
     #[test]
     fn new_sets_all_scalar_fields() {
         unsafe {
@@ -542,6 +805,133 @@ mod tests {
             let err = ddog_tracer_span_set_metric(None, cs("k"), 1.0);
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn event_attributes_preserve_types_and_arrays() {
+        unsafe {
+            let mut event = make_event("exception", 123);
+            assert!(
+                ddog_tracer_span_event_set_string(Some(&mut event), cs("string"), cs("value"))
+                    .is_none()
+            );
+            assert!(ddog_tracer_span_event_set_bool(Some(&mut event), cs("bool"), true).is_none());
+            assert!(ddog_tracer_span_event_set_int(Some(&mut event), cs("int"), -42).is_none());
+            assert!(
+                ddog_tracer_span_event_set_double(Some(&mut event), cs("double"), 1.5).is_none()
+            );
+
+            let strings = [cs("one"), cs("two")];
+            let bools = [true, false];
+            let ints = [-1, 2];
+            let doubles = [1.25, 2.5];
+            assert!(ddog_tracer_span_event_set_string_array(
+                Some(&mut event),
+                cs("strings"),
+                Slice::from(&strings[..])
+            )
+            .is_none());
+            assert!(ddog_tracer_span_event_set_bool_array(
+                Some(&mut event),
+                cs("bools"),
+                Slice::from(&bools[..])
+            )
+            .is_none());
+            assert!(ddog_tracer_span_event_set_int_array(
+                Some(&mut event),
+                cs("ints"),
+                Slice::from(&ints[..])
+            )
+            .is_none());
+            assert!(ddog_tracer_span_event_set_double_array(
+                Some(&mut event),
+                cs("doubles"),
+                Slice::from(&doubles[..])
+            )
+            .is_none());
+
+            assert_eq!(event.0.name.as_ref(), "exception");
+            assert_eq!(event.0.time_unix_nano, 123);
+            assert_eq!(
+                event.0.attributes.get("string"),
+                Some(&AttributeAnyValueBytes::SingleValue(
+                    AttributeArrayValueBytes::String(BytesString::from("value"))
+                ))
+            );
+            assert_eq!(
+                event.0.attributes.get("bool"),
+                Some(&AttributeAnyValueBytes::SingleValue(
+                    AttributeArrayValueBytes::Boolean(true)
+                ))
+            );
+            assert_eq!(
+                event.0.attributes.get("int"),
+                Some(&AttributeAnyValueBytes::SingleValue(
+                    AttributeArrayValueBytes::Integer(-42)
+                ))
+            );
+            assert_eq!(
+                event.0.attributes.get("double"),
+                Some(&AttributeAnyValueBytes::SingleValue(
+                    AttributeArrayValueBytes::Double(1.5)
+                ))
+            );
+            assert_eq!(
+                event.0.attributes.get("strings"),
+                Some(&AttributeAnyValueBytes::Array(vec![
+                    AttributeArrayValueBytes::String(BytesString::from("one")),
+                    AttributeArrayValueBytes::String(BytesString::from("two")),
+                ]))
+            );
+            assert_eq!(
+                event.0.attributes.get("bools"),
+                Some(&AttributeAnyValueBytes::Array(vec![
+                    AttributeArrayValueBytes::Boolean(true),
+                    AttributeArrayValueBytes::Boolean(false),
+                ]))
+            );
+            assert_eq!(
+                event.0.attributes.get("ints"),
+                Some(&AttributeAnyValueBytes::Array(vec![
+                    AttributeArrayValueBytes::Integer(-1),
+                    AttributeArrayValueBytes::Integer(2),
+                ]))
+            );
+            assert_eq!(
+                event.0.attributes.get("doubles"),
+                Some(&AttributeAnyValueBytes::Array(vec![
+                    AttributeArrayValueBytes::Double(1.25),
+                    AttributeArrayValueBytes::Double(2.5),
+                ]))
+            );
+
+            ddog_tracer_span_event_free(Some(event));
+        }
+    }
+
+    #[test]
+    fn attaching_events_is_atomic_and_preserves_order() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let first = make_event("first", 10);
+            let second = make_event("second", 20);
+
+            assert!(ddog_tracer_span_add_event(Some(&mut span), Some(first)).is_none());
+            assert!(ddog_tracer_span_add_event(Some(&mut span), Some(second)).is_none());
+            assert_eq!(span.0.span_events.len(), 2);
+            assert_eq!(span.0.span_events[0].name.as_ref(), "first");
+            assert_eq!(span.0.span_events[0].time_unix_nano, 10);
+            assert_eq!(span.0.span_events[1].name.as_ref(), "second");
+            assert_eq!(span.0.span_events[1].time_unix_nano, 20);
+
+            let detached = make_event("detached", 30);
+            let err = ddog_tracer_span_add_event(None, Some(detached));
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
+            assert_eq!(span.0.span_events.len(), 2);
+
+            ddog_tracer_span_free(span);
         }
     }
 
