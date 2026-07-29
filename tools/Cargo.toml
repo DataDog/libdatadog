@@ -15,7 +15,7 @@ publish = false
 bench = false
 
 [dependencies]
-anyhow = "1.0"
+anyhow.workspace = true
 cargo_metadata = "0.18"
 clap = { version = "4.0", features = ["derive"] }
 colored = "2"

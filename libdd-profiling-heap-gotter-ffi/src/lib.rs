@@ -55,10 +55,31 @@ pub extern "C" fn ddog_heap_gotter_update() -> VoidResult {
     })
 }
 
+/// Set the default mean sample distance (bytes between samples).
+///
+/// Pass `0` to revert to the compiled-in default (512 KiB). Values below
+/// 64 KiB are clamped to 64 KiB. Call this early in process startup,
+/// before significant allocation activity begins.
+#[no_mangle]
+pub extern "C" fn ddog_heap_gotter_set_default_sampling_distance(distance_bytes: u64) {
+    libdd_profiling_heap_gotter::set_default_sampling_distance(distance_bytes);
+}
+
 /// Return whether heap GOT overrides are currently installed in this process. Always `false` on
 /// non-Linux targets.
 #[no_mangle]
 #[must_use]
 pub extern "C" fn ddog_heap_gotter_is_installed() -> bool {
     libdd_profiling_heap_gotter::heap_overrides_are_installed()
+}
+
+/// Test-only: number of times a patched hook (`malloc`/`free`) has run in
+/// this process. Lets integration tests prove the patched GOT was actually
+/// exercised, not just that nothing crashed. Not part of the production API
+/// surface; only compiled in with the `test-support` feature.
+#[cfg(feature = "test-support")]
+#[no_mangle]
+#[must_use]
+pub extern "C" fn ddog_heap_gotter_test_hook_hits() -> u64 {
+    libdd_profiling_heap_gotter::test_hook_hits()
 }

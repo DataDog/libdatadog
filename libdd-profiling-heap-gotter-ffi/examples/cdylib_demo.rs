@@ -17,6 +17,13 @@
 //! The gotter-ffi crate is Linux-only; on other targets the example
 //! compiles to a no-op `main` so clippy/test on non-Linux don't fail
 //! with "configured out".
+//!
+//! This demo deliberately loads the library via `dlopen`/`dlsym` even
+//! though a real Rust binary would just link the crate directly. That's
+//! contrived for Rust specifically, but it's the pattern every other
+//! language's SDK actually has to use to consume this FFI surface, so
+//! exercising it here catches issues (symbol visibility, ABI mismatches)
+//! that a direct `extern crate` link would hide.
 
 #[cfg(not(target_os = "linux"))]
 fn main() -> Result<(), String> {
@@ -54,6 +61,11 @@ mod linux {
             Ok(Self(handle))
         }
 
+        /// # Safety
+        ///
+        /// `T` must be exactly the function pointer type of the symbol named
+        /// `name` in the loaded library; a mismatch is transmuted silently
+        /// and will call into the wrong signature.
         unsafe fn symbol<T>(&self, name: &CStr) -> Result<T, String>
         where
             T: Copy,
@@ -85,6 +97,11 @@ mod linux {
         }
     }
 
+    /// Infers the built cdylib's path from `cargo run --example`'s layout:
+    /// the example binary lands at `target/<profile>/examples/<name>`, and
+    /// the cdylib is a sibling of `examples/` at `target/<profile>/<lib>`.
+    /// `DDOG_HEAP_GOTTER_FFI_CDYLIB` overrides this for anyone driving the
+    /// build differently.
     fn cdylib_path() -> Result<PathBuf, String> {
         if let Some(path) = std::env::var_os("DDOG_HEAP_GOTTER_FFI_CDYLIB") {
             return Ok(PathBuf::from(path));

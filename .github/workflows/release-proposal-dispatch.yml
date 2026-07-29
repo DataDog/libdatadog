@@ -46,6 +46,13 @@ jobs:
       count: ${{ steps.normalize.outputs.count }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+
+      - name: Exclude from Green CI
+        env:
+          DATADOG_SITE: datadoghq.com
+          DATADOG_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: ./scripts/exclude-from-green-ci.sh
+
       - name: Normalize and validate crate list
         id: normalize
         env:

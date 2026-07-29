@@ -32,8 +32,25 @@ mod sys {
 #[cfg(target_os = "linux")]
 pub use sys::*;
 
+/// Runtime ELF self-inspection asserting one USDT note per probe. Opt-in via
+/// the `sanity-check` feature (pulls in the `elf`/`anyhow` deps).
+#[cfg(all(target_os = "linux", feature = "sanity-check"))]
+pub mod usdt_check;
+
 /// Name of the environment variable that toggles heap sampling.
 pub const DD_HEAP_SAMPLING_ENABLED: &str = "DD_HEAP_SAMPLING_ENABLED";
+
+/// Set the default mean sample distance (bytes between samples).
+///
+/// Pass `0` to revert to the compiled-in default (`DD_SAMPLING_INTERVAL_DEFAULT`,
+/// 512 KiB). Values below 64 KiB are clamped to 64 KiB to avoid
+/// excessive overhead.
+#[cfg(target_os = "linux")]
+pub fn set_default_sampling_distance(distance_bytes: u64) {
+    // SAFETY: dd_set_default_sampling_interval performs a single relaxed atomic
+    // store.
+    unsafe { sys::dd_set_default_sampling_interval(distance_bytes) }
+}
 
 /// Whether heap sampling is enabled for this process. Users of this
 /// library can use this to check if they should setup allocation tracking
@@ -49,6 +66,7 @@ pub const DD_HEAP_SAMPLING_ENABLED: &str = "DD_HEAP_SAMPLING_ENABLED";
 /// The lookup uses `getenv` rather than [`std::env::var`] specifically so it
 /// performs no heap allocation so that our consumers don't have to worry about
 /// re-entrancy.
+#[inline]
 pub fn heap_sampling_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -210,6 +228,38 @@ mod tests {
         }
     }
 
+    // With live-heap tracking compiled out, dd_allocation_freed is a
+    // straight passthrough: it never inspects the sample-flag header and
+    // never fires ddheap:free. Verify this even when the underlying
+    // memory happens to contain the magic pattern that *would* trigger
+    // the slow path if live-heap were enabled.
+    #[cfg(not(feature = "live-heap"))]
+    #[test]
+    fn freed_is_passthrough_when_live_heap_disabled() {
+        const MAGIC: u64 = 0xfab1eddec0dedca7;
+        const HEADER_BYTES: usize = 16;
+
+        // Set up a buffer with the magic header so that, if the flag-check
+        // were compiled in, it would consider this allocation sampled.
+        let mut buf = vec![0u8; 128];
+        let base = buf.as_mut_ptr() as usize;
+        let user_addr = base + HEADER_BYTES;
+
+        // Stamp magic at ptr - HEADER_BYTES
+        buf[0..8].copy_from_slice(&MAGIC.to_ne_bytes());
+        // Stamp a plausible offset
+        buf[8..16].copy_from_slice(&(HEADER_BYTES as u64).to_ne_bytes());
+
+        let ptr = user_addr as *mut c_void;
+        unsafe {
+            let freed = dd_allocation_freed(ptr, 64, 8);
+            // Without live-heap the pointer is returned unchanged (no
+            // flag-check, no raw-pointer recovery).
+            assert_eq!(freed.ptr, ptr);
+            assert_eq!(freed.size, 64);
+        }
+    }
+
     #[test]
     fn zero_sampling_interval_disables_sampling() {
         let mut tl = dd_tl_state_t {
@@ -263,7 +313,7 @@ mod tests {
         buf[header_idx + 8..header_idx + 16].copy_from_slice(&8u64.to_ne_bytes());
 
         let mut raw = core::ptr::null_mut();
-        let sampled = unsafe { dd_sample_flag_check(user_addr as *mut c_void, &mut raw) };
+        let sampled = unsafe { dd_sample_flag_check_and_clear(user_addr as *mut c_void, &mut raw) };
 
         assert!(!sampled);
         assert!(raw.is_null());

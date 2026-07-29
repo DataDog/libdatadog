@@ -88,6 +88,8 @@ pub struct TraceExporterConfig {
     shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
     otlp_protocol: Option<OtlpProtocol>,
+    otlp_instrumentation_scope_name: Option<String>,
+    otlp_instrumentation_scope_version: Option<String>,
     output_to_log: bool,
     log_max_line_size: Option<usize>,
     stats_cardinality_limit: Option<usize>,
@@ -544,6 +546,37 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
     )
 }
 
+/// Sets OTLP trace instrumentation scope metadata.
+///
+/// Has no effect unless an OTLP endpoint is also configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
+/// Datadog agent and this scope metadata is ignored.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+    config: Option<&mut TraceExporterConfig>,
+    name: CharSlice,
+    version: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let name = match sanitize_string(name) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            let version = match sanitize_string(version) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            handle.otlp_instrumentation_scope_name = Some(name);
+            handle.otlp_instrumentation_scope_version = Some(version);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Sets the cardinality limit for client-side stats computation.
 ///
 /// When the number of distinct stats groups exceeds `limit`, additional groups are
@@ -679,6 +712,16 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 if let Some(protocol) = config.otlp_protocol {
                     builder.set_otlp_protocol(protocol);
                 }
+                builder.set_otlp_instrumentation_scope(
+                    config
+                        .otlp_instrumentation_scope_name
+                        .as_deref()
+                        .unwrap_or(""),
+                    config
+                        .otlp_instrumentation_scope_version
+                        .as_deref()
+                        .unwrap_or(""),
+                );
             }
 
             if config.output_to_log {
@@ -783,6 +826,8 @@ mod tests {
             assert!(!cfg.output_to_log);
             assert_eq!(cfg.log_max_line_size, None);
             assert_eq!(cfg.stats_cardinality_limit, None);
+            assert!(cfg.otlp_instrumentation_scope_name.is_none());
+            assert!(cfg.otlp_instrumentation_scope_version.is_none());
 
             ddog_trace_exporter_config_free(cfg);
         }
@@ -1459,6 +1504,49 @@ mod tests {
             );
             assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
             ddog_trace_exporter_error_free(error);
+        }
+    }
+
+    #[test]
+    fn config_otlp_instrumentation_scope_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                None,
+                CharSlice::from("dd-trace-js"),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                config.as_mut(),
+                CharSlice::from("dd-trace-js"),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error, None);
+            let cfg = config.as_ref().unwrap();
+            assert_eq!(
+                cfg.otlp_instrumentation_scope_name.as_deref(),
+                Some("dd-trace-js")
+            );
+            assert_eq!(
+                cfg.otlp_instrumentation_scope_version.as_deref(),
+                Some("7.0.0-pre")
+            );
+
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            let cfg = config.as_ref().unwrap();
+            assert!(cfg.otlp_instrumentation_scope_name.is_none());
+            assert!(cfg.otlp_instrumentation_scope_version.is_none());
         }
     }
 

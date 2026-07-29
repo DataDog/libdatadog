@@ -1153,9 +1153,9 @@ fn test_crash_tracking_bin_segfault() {
 fn test_crash_tracking_app(crash_type: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
-    // Set up custom artifacts: receiver + crashing_test_app with panic_abort
+    // Set up custom artifacts: receiver + crashing_test_app with panic=abort
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
-    let crashing_app = artifacts::crashing_app(BuildProfile::Debug, true);
+    let crashing_app = artifacts::crashing_app(BuildProfile::PanicAbort);
 
     let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -1229,7 +1229,7 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 
     // Set up custom artifacts: receiver + crashtracker_bin_test
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
-    let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::Debug, true);
+    let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::PanicAbort);
 
     let artifacts_map =
         fetch_built_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
@@ -1303,7 +1303,7 @@ fn test_crash_tracking_callstack() {
     // Set up custom artifacts: receiver + crashing_test_app (in Debug mode)
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
     // compile in debug so we avoid inlining and can check the callchain
-    let crashing_app = artifacts::crashing_app(BuildProfile::Debug, false);
+    let crashing_app = artifacts::crashing_app(BuildProfile::Debug);
 
     let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -2508,7 +2508,7 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
 fn setup_crashtracking_crates(
     crash_tracking_receiver_profile: BuildProfile,
 ) -> (ArtifactsBuild, ArtifactsBuild) {
-    let crashtracker_bin = artifacts::crashtracker_bin_test(crash_tracking_receiver_profile, false);
+    let crashtracker_bin = artifacts::crashtracker_bin_test(crash_tracking_receiver_profile);
     let crashtracker_receiver = artifacts::crashtracker_receiver(crash_tracking_receiver_profile);
     (crashtracker_bin, crashtracker_receiver)
 }

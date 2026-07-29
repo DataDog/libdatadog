@@ -44,7 +44,7 @@ void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req)
  */
 static inline __attribute__((always_inline, warn_unused_result))
 void *dd_allocation_created(void *raw, dd_alloc_req_t req) {
-    if (__builtin_expect(req.weight == 0, 1)) return raw;
+    if (__builtin_expect(!dd_alloc_req_is_sampled(req), 1)) return raw;
     return dd_allocation_created_slow(raw, req);
 }
 

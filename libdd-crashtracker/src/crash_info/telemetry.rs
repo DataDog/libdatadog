@@ -8,6 +8,8 @@ use crate::{ErrorKind, SigInfo};
 use super::{CrashInfo, Metadata, TARGET_TRIPLE};
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use libdd_capabilities::HttpClientCapability;
+use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::Endpoint;
 use libdd_telemetry::{
     build_host,
@@ -198,23 +200,25 @@ impl TelemetryCrashUploader {
             // But do we want to support direct submission to the intake?
 
             // ignore result because what are we going to do?
-            let telemetry_endpoint = if endpoint.url.scheme_str() == Some("file") {
+            if endpoint.url.scheme_str() == Some("file") {
+                // Write telemetry alongside the crash file. Rebuild from the
+                // decoded path so the file path is re-encoded exactly once.
                 let path = libdd_common::decode_uri_path_in_authority(&endpoint.url)
                     .context("file path is not valid")?;
-                libdd_telemetry::config::TelemetryEndpoint {
+                let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
                     url: Some(format!("file://{}.telemetry", path.display())),
                     ..Default::default()
-                }
+                });
             } else {
-                libdd_telemetry::config::TelemetryEndpoint {
-                    url: Some(endpoint.url.to_string()),
+                let _ = cfg.set_endpoint(libdd_telemetry::config::TelemetryEndpoint {
                     api_key: endpoint.api_key.as_deref().map(str::to_owned),
                     test_token: endpoint.test_token.as_deref().map(str::to_owned),
                     timeout_ms: endpoint.timeout_ms,
                     use_system_resolver: endpoint.use_system_resolver,
-                }
-            };
-            let _ = cfg.set_endpoint(telemetry_endpoint);
+                    ..Default::default()
+                });
+                let _ = cfg.set_endpoint_uri(endpoint.url.clone());
+            }
         }
 
         parse_tags!(
@@ -353,9 +357,9 @@ impl TelemetryCrashUploader {
         self.send_telemetry_payload(&payload).await
     }
 
-    /// Helper to perform actual HTTP (or file) submission via configured telemetry client
+    /// Helper to perform actual HTTP submission via the native HTTP capability.
     async fn send_telemetry_payload(&self, payload: &data::Telemetry<'_>) -> anyhow::Result<()> {
-        let client = libdd_telemetry::worker::http_client::from_config(&self.cfg);
+        let client = NativeCapabilities::new_client();
         let req = request_builder(&self.cfg)?
             .method(http::Method::POST)
             .header(
@@ -370,19 +374,20 @@ impl TelemetryCrashUploader {
                 libdd_telemetry::worker::http_client::header::REQUEST_TYPE,
                 "logs",
             )
-            .body(serde_json::to_string(&payload)?.into())?;
+            .body(libdd_capabilities::Bytes::from(serde_json::to_vec(
+                &payload,
+            )?))?;
 
-        tokio::time::timeout(
-            core::time::Duration::from_millis({
-                if let Some(endp) = self.cfg.endpoint() {
-                    endp.timeout_ms
-                } else {
-                    Endpoint::DEFAULT_TIMEOUT
-                }
-            }),
-            client.request(req),
-        )
-        .await??;
+        let timeout = core::time::Duration::from_millis({
+            if let Some(endp) = self.cfg.endpoint() {
+                endp.timeout_ms
+            } else {
+                Endpoint::DEFAULT_TIMEOUT
+            }
+        });
+        tokio::time::timeout(timeout, client.request(req))
+            .await
+            .map_err(|_| anyhow::anyhow!("Telemetry crash report timed out"))??;
 
         Ok(())
     }

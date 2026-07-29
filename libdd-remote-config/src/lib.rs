@@ -51,6 +51,18 @@ impl Target {
             process_tags,
         }
     }
+
+    pub fn service(&self) -> &str {
+        self.service.as_str()
+    }
+
+    pub fn env(&self) -> &str {
+        self.env.as_str()
+    }
+
+    pub fn app_version(&self) -> &str {
+        self.app_version.as_str()
+    }
 }
 
 #[repr(C)]
@@ -67,6 +79,7 @@ impl Target {
     strum_macros::IntoStaticStr,
     strum_macros::Display,
 )]
+#[non_exhaustive]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RemoteConfigCapabilities {
     AsmActivation = 1,
@@ -117,4 +130,5 @@ pub enum RemoteConfigCapabilities {
     FfeFlagConfigurationRules = 46,
     DdDataStreamsTransactionExtractors = 47,
     LlmObsActivation = 48,
+    AsmRawResponseBody = 49,
 }

@@ -12,13 +12,16 @@ use crate::analyzer::annotation::{
 };
 use crate::analyzer::git::{get_changed_files, GitOperations};
 use anyhow::Result;
-use log::{debug, info, warn};
+use log::{debug, info};
 use octocrab::Octocrab;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 mod annotation;
 mod git;
+
+/// Map of a rule or crate name to the number of annotations counted for it.
+type AnnotationCounts = HashMap<Rc<String>, usize>;
 
 /// Represents a clippy annotation in code
 #[derive(Debug, Clone)]
@@ -38,6 +41,14 @@ pub struct AnalysisResult {
     pub head_crate_counts: HashMap<Rc<String>, usize>,
 }
 
+impl AnalysisResult {
+    /// Whether the number of tracked annotations differs between the base and
+    /// PR branches. When this is false there is nothing to report.
+    pub fn has_changes(&self) -> bool {
+        self.base_counts != self.head_counts
+    }
+}
+
 pub async fn run_analysis(
     octocrab: &Octocrab,
     owner: &str,
@@ -46,11 +57,13 @@ pub async fn run_analysis(
     base_branch: &str,
     head_branch: &str,
     rules: &[String],
-) -> Result<AnalysisResult> {
+) -> Result<Option<AnalysisResult>> {
     let changed_files = get_changed_files(octocrab, owner, repo, pr_number).await?;
 
+    // No Rust files changed is a valid outcome, not an error: there is simply
+    // nothing to analyze.
     if changed_files.is_empty() {
-        return Err(anyhow::anyhow!("No Rust files changed in this PR"));
+        return Ok(None);
     }
     let git_ops = GitOperations::default();
 
@@ -59,7 +72,7 @@ pub async fn run_analysis(
     let (repo_base_crate_counts, repo_head_crate_counts) =
         analyze_all_files_for_crates(&all_files, base_branch, head_branch, rules)?;
 
-    Ok(AnalysisResult {
+    Ok(Some(AnalysisResult {
         base_annotations: pr_analysis.base_annotations,
         head_annotations: pr_analysis.head_annotations,
         base_counts: pr_analysis.base_counts,
@@ -67,7 +80,7 @@ pub async fn run_analysis(
         changed_files: pr_analysis.changed_files,
         base_crate_counts: repo_base_crate_counts,
         head_crate_counts: repo_head_crate_counts,
-    })
+    }))
 }
 /// Analyze clippy annotations in base and head branches
 fn analyze_annotations(
@@ -91,23 +104,14 @@ fn analyze_annotations(
     for file in files {
         changed_files.insert(file.clone());
 
-        // most likely reason for errors is the files don't exist in the respective branch.
-
-        let base_content = match git_ops.get_file_content(file, base_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                warn!("Failed to get {} content from {}: {}", file, base_branch, e);
-                String::new()
-            }
-        };
-
-        let head_content = match git_ops.get_file_content(file, head_branch) {
-            Ok(content) => content,
-            Err(e) => {
-                warn!("Failed to get {} content from {}: {}", file, head_branch, e);
-                String::new()
-            }
-        };
+        // A file added or removed in the PR won't exist in one of the branches;
+        // `get_file_content` returns `None` for that, which we treat as empty.
+        let base_content = git_ops
+            .get_file_content(file, base_branch)?
+            .unwrap_or_default();
+        let head_content = git_ops
+            .get_file_content(file, head_branch)?
+            .unwrap_or_default();
 
         // Find annotations in base branch
         find_annotations(
@@ -159,7 +163,7 @@ fn analyze_all_files_for_crates(
     base_branch: &str,
     head_branch: &str,
     rules: &[String],
-) -> Result<(HashMap<Rc<String>, usize>, HashMap<Rc<String>, usize>)> {
+) -> Result<(AnnotationCounts, AnnotationCounts)> {
     info!(
         "Analyzing all {} Rust files for crate-level statistics...",
         files.len()
@@ -173,8 +177,12 @@ fn analyze_all_files_for_crates(
 
     let git_ops = GitOperations::default();
     for file in files {
-        let base_content = git_ops.get_branch_content(file, base_branch);
-        let head_content = git_ops.get_branch_content(file, head_branch);
+        let base_content = git_ops
+            .get_file_content(file, base_branch)?
+            .unwrap_or_default();
+        let head_content = git_ops
+            .get_file_content(file, head_branch)?
+            .unwrap_or_default();
 
         // Find annotations in base branch
         find_annotations(

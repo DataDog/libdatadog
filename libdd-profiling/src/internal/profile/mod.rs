@@ -47,6 +47,7 @@ pub struct Profile {
     observations: Observations,
     period: Option<api::Period>,
     sample_types: Box<[api::SampleType]>,
+    sample_type_overrides: HashMap<api::SampleType, OwnedValueType>,
     stack_traces: FxIndexSet<StackTrace>,
     start_time: SystemTime,
     strings: StringTable,
@@ -54,6 +55,21 @@ pub struct Profile {
     string_storage_cached_profile_id: Option<CachedProfileId>,
     timestamp_key: StringId,
     upscaling_rules: UpscalingRules,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OwnedValueType {
+    r#type: Box<str>,
+    unit: Box<str>,
+}
+
+impl From<api::ValueType<'_>> for OwnedValueType {
+    fn from(value_type: api::ValueType<'_>) -> Self {
+        Self {
+            r#type: value_type.r#type.into(),
+            unit: value_type.unit.into(),
+        }
+    }
 }
 
 pub struct EncodedProfile {
@@ -397,7 +413,13 @@ impl Profile {
         sample_types: &[api::SampleType],
         period: Option<api::Period>,
     ) -> io::Result<Self> {
-        Self::try_new_internal(period, sample_types.to_vec().into_boxed_slice(), None, None)
+        Self::try_new_internal(
+            period,
+            sample_types.to_vec().into_boxed_slice(),
+            HashMap::new(),
+            None,
+            None,
+        )
     }
 
     /// Tries to create a profile with the given period and sample types.
@@ -411,6 +433,7 @@ impl Profile {
         Self::try_new_internal(
             period,
             sample_types.to_vec().into_boxed_slice(),
+            HashMap::new(),
             None,
             Some(ProfilesDictionaryTranslator::new(profiles_dictionary)),
         )
@@ -425,9 +448,43 @@ impl Profile {
         Self::try_new_internal(
             period,
             sample_types.to_vec().into_boxed_slice(),
+            HashMap::new(),
             Some(string_storage),
             None,
         )
+    }
+
+    /// Configure one of the custom sample type slots with its concrete `(type, unit)` pair.
+    ///
+    /// Custom slots are placeholders (`Custom1` through `Custom5`) that can be used to
+    /// prototype new profile types without a libdatadog release. A profile that uses a
+    /// custom slot must configure it before serialization. Once a type is stable, add a
+    /// dedicated [`SampleType`][api::SampleType] variant and migrate callers back to the
+    /// type-safe path.
+    pub fn set_custom_sample_type(
+        &mut self,
+        slot: api::SampleType,
+        value_type: api::ValueType<'_>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            slot.is_custom(),
+            "{slot:?} is not a custom sample type slot"
+        );
+
+        let mut found = self.sample_types.iter().copied().any(|st| st == slot);
+        if let Some(period) = self.period {
+            if period.sample_type == slot {
+                found = true;
+            }
+        }
+
+        anyhow::ensure!(
+            found,
+            "{slot:?} is not used by this profile's sample types or period"
+        );
+
+        self.sample_type_overrides.insert(slot, value_type.into());
+        Ok(())
     }
 
     /// Resets all data except the sample types and period.
@@ -452,6 +509,7 @@ impl Profile {
         let mut profile = Profile::try_new_internal(
             self.period,
             self.sample_types.clone(),
+            self.sample_type_overrides.clone(),
             self.string_storage.clone(),
             profiles_dictionary_translator,
         )
@@ -597,6 +655,13 @@ impl Profile {
             };
 
             Record::<_, 2, NO_OPT_ZERO>::from(item).encode(writer)?;
+        }
+
+        for sample_type in self.sample_types.iter().copied() {
+            self.ensure_custom_sample_type_resolved(sample_type, "sample")?;
+        }
+        if let Some(period) = self.period {
+            self.ensure_custom_sample_type_resolved(period.sample_type, "period")?;
         }
 
         // `Sample`s must be emitted before `SampleTypes` since we consume
@@ -842,12 +907,30 @@ impl Profile {
         self.stack_traces.try_dedup(StackTrace { locations })
     }
 
+    fn ensure_custom_sample_type_resolved(
+        &self,
+        sample_type: api::SampleType,
+        kind: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !sample_type.is_custom() || self.sample_type_overrides.contains_key(&sample_type),
+            "custom {kind} type slot {sample_type:?} was not configured before serialization"
+        );
+        Ok(())
+    }
+
     #[inline(always)]
     fn intern_sample_type(&mut self, sample_type: api::SampleType) -> ValueType {
-        let vt: api::ValueType<'static> = sample_type.into();
+        let (type_, unit) = if let Some(value_type) = self.sample_type_overrides.get(&sample_type) {
+            (value_type.r#type.as_ref(), value_type.unit.as_ref())
+        } else {
+            let value_type = api::ValueType::from(sample_type);
+            (value_type.r#type, value_type.unit)
+        };
+
         ValueType {
-            r#type: Record::from(self.intern(vt.r#type)),
-            unit: Record::from(self.intern(vt.unit)),
+            r#type: Record::from(self.strings.intern(type_)),
+            unit: Record::from(self.strings.intern(unit)),
         }
     }
 
@@ -925,6 +1008,7 @@ impl Profile {
 
     /// Interns the `str` as a string, returning the id in the string table.
     /// The empty string is guaranteed to have an id of [StringId::ZERO].
+    #[cfg(test)]
     #[inline]
     fn intern(&mut self, item: &str) -> StringId {
         self.strings.intern(item)
@@ -942,6 +1026,7 @@ impl Profile {
     fn try_new_internal(
         period: Option<api::Period>,
         sample_types: Box<[api::SampleType]>,
+        sample_type_overrides: HashMap<api::SampleType, OwnedValueType>,
         string_storage: Option<Arc<Mutex<ManagedStringStorage>>>,
         profiles_dictionary_translator: Option<ProfilesDictionaryTranslator>,
     ) -> io::Result<Self> {
@@ -961,6 +1046,7 @@ impl Profile {
             observations: Default::default(),
             period,
             sample_types,
+            sample_type_overrides,
             stack_traces: Default::default(),
             start_time,
             strings: Default::default(),
@@ -3103,5 +3189,142 @@ mod api_tests {
             .downcast_ref::<io::Error>()
             .expect("Expected serialization error to be an io::Error");
         assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    // -----------------------------------------------------------------------
+    // Custom sample type slot tests
+    // -----------------------------------------------------------------------
+
+    /// Basic smoke test: a profile created with a custom slot serializes without
+    /// error after the slot is configured, and round-trips the configured
+    /// type/unit strings through pprof.
+    #[test]
+    fn custom_sample_type_slot_round_trip() -> anyhow::Result<()> {
+        let period = api::Period {
+            sample_type: api::SampleType::Custom1,
+            value: 4096_i64,
+        };
+        let mut profile = Profile::new(&[api::SampleType::Custom1], Some(period));
+        profile.set_custom_sample_type(
+            api::SampleType::Custom1,
+            api::ValueType::new("memory-breakdown", "bytes"),
+        )?;
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: &[4096],
+            labels: vec![],
+        };
+        profile.try_add_sample(sample, None)?;
+
+        let pprof = roundtrip_to_pprof(profile)?;
+
+        let st_strings: Vec<(&str, &str)> = pprof
+            .sample_types
+            .iter()
+            .map(|st| {
+                (
+                    string_table_fetch(&pprof, st.r#type).as_str(),
+                    string_table_fetch(&pprof, st.unit).as_str(),
+                )
+            })
+            .collect();
+
+        assert_eq!(st_strings, vec![("memory-breakdown", "bytes")]);
+
+        let period_type = pprof.period_type.expect("period type should be present");
+        assert_eq!(
+            string_table_fetch(&pprof, period_type.r#type).as_str(),
+            "memory-breakdown"
+        );
+        assert_eq!(
+            string_table_fetch(&pprof, period_type.unit).as_str(),
+            "bytes"
+        );
+
+        Ok(())
+    }
+
+    /// Custom slot configuration survives a profile reset: the new profile keeps
+    /// the configured (type, unit) strings.
+    #[test]
+    fn custom_sample_type_slot_survives_reset() -> anyhow::Result<()> {
+        let mut profile = Profile::new(&[api::SampleType::Custom1], None);
+        profile.set_custom_sample_type(
+            api::SampleType::Custom1,
+            api::ValueType::new("memory-breakdown", "bytes"),
+        )?;
+
+        let sample = api::Sample {
+            locations: vec![],
+            values: &[1024],
+            labels: vec![],
+        };
+        profile.try_add_sample(sample, None)?;
+        profile.reset_and_return_previous()?; // discards old, keeps type config
+
+        let sample2 = api::Sample {
+            locations: vec![],
+            values: &[2048],
+            labels: vec![],
+        };
+        profile.try_add_sample(sample2, None)?;
+
+        let pprof = roundtrip_to_pprof(profile)?;
+        let st_strings: Vec<&str> = pprof
+            .sample_types
+            .iter()
+            .map(|st| string_table_fetch(&pprof, st.r#type).as_str())
+            .collect();
+        assert_eq!(st_strings, vec!["memory-breakdown"]);
+
+        Ok(())
+    }
+
+    /// A profile created with custom slots rejects samples that have the wrong
+    /// number of values (same guard as for stable SampleType-based profiles).
+    #[test]
+    fn custom_sample_type_slot_wrong_value_count_is_rejected() {
+        let mut profile = Profile::new(&[api::SampleType::Custom1], None);
+        profile
+            .set_custom_sample_type(
+                api::SampleType::Custom1,
+                api::ValueType::new("my-custom-type", "count"),
+            )
+            .unwrap();
+
+        let bad_sample = api::Sample {
+            locations: vec![],
+            values: &[1, 2], // two values, but only one type declared
+            labels: vec![],
+        };
+        assert!(
+            profile.try_add_sample(bad_sample, None).is_err(),
+            "expected error for mismatched value count"
+        );
+    }
+
+    #[test]
+    fn unresolved_custom_sample_type_slot_is_rejected_on_serialize() {
+        let profile = Profile::new(&[api::SampleType::Custom1], None);
+        let result = profile.serialize_into_compressed_pprof(None, None);
+        assert!(
+            result.is_err(),
+            "expected serialization to fail for unresolved custom sample type slot"
+        );
+    }
+
+    #[test]
+    fn custom_sample_type_setter_rejects_non_custom_slot() {
+        let mut profile = Profile::new(&[api::SampleType::WallTime], None);
+        assert!(
+            profile
+                .set_custom_sample_type(
+                    api::SampleType::WallTime,
+                    api::ValueType::new("memory-breakdown", "bytes"),
+                )
+                .is_err(),
+            "expected setter to reject non-custom sample type slots"
+        );
     }
 }

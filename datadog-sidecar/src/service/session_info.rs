@@ -30,7 +30,7 @@ pub(crate) struct SessionInfo {
     pub(crate) session_config: Arc<Mutex<Option<libdd_telemetry::config::Config>>>,
     debugger_config: Arc<Mutex<datadog_live_debugger::sender::Config>>,
     tracer_config: Arc<Mutex<tracer::Config>>,
-    dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::Client>>>,
+    dogstatsd: Arc<Mutex<Option<libdd_dogstatsd_client::DogStatsDClient>>>,
     remote_config_options: Arc<Mutex<Option<ConfigOptions>>>,
     pub(crate) agent_infos: Arc<Mutex<Option<AgentInfoGuard>>>,
     pub(crate) remote_config_interval: Arc<Mutex<Duration>>,
@@ -95,22 +95,6 @@ impl SessionInfo {
             .collect();
 
         future::join_all(runtimes_shutting_down).await;
-    }
-
-    /// Shuts down all running instances in the session.
-    pub(crate) async fn shutdown_running_instances(&self) {
-        let runtimes: Vec<RuntimeInfo> = self
-            .lock_runtimes()
-            .drain()
-            .map(|(_, instance)| instance)
-            .collect();
-
-        let instances_shutting_down: Vec<_> = runtimes
-            .into_iter()
-            .map(|rt| tokio::spawn(async move { rt.shutdown().await }))
-            .collect();
-
-        future::join_all(instances_shutting_down).await;
     }
 
     /// Shuts down a specific runtime in the session.
@@ -210,13 +194,15 @@ impl SessionInfo {
         f(&mut self.get_trace_config());
     }
 
-    pub(crate) fn get_dogstatsd(&self) -> MutexGuard<'_, Option<libdd_dogstatsd_client::Client>> {
+    pub(crate) fn get_dogstatsd(
+        &self,
+    ) -> MutexGuard<'_, Option<libdd_dogstatsd_client::DogStatsDClient>> {
         self.dogstatsd.lock_or_panic()
     }
 
     pub(crate) fn configure_dogstatsd<F>(&self, f: F)
     where
-        F: FnOnce(&mut Option<libdd_dogstatsd_client::Client>),
+        F: FnOnce(&mut Option<libdd_dogstatsd_client::DogStatsDClient>),
     {
         f(&mut self.get_dogstatsd());
     }
@@ -369,17 +355,6 @@ mod tests {
 
         // Test that all runtimes are shut down
         session_info.shutdown().await;
-        assert!(session_info.runtimes.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    #[cfg_attr(miri, ignore)]
-    async fn test_shutdown_running_instances() {
-        let session_info = SessionInfo::default();
-        session_info.get_runtime(&"runtime1".to_string());
-
-        // Test that all running instances are shut down
-        session_info.shutdown_running_instances().await;
         assert!(session_info.runtimes.lock().unwrap().is_empty());
     }
 

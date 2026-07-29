@@ -71,6 +71,13 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for SampledAllocator<A> {
             return self.inner.dealloc(ptr, layout);
         }
         let freed = dd_allocation_freed(ptr.cast(), layout.size(), layout.align());
+        // `layout.align()` is reused here rather than anything derived from
+        // `freed`: alignment never changes between the original `alloc` and
+        // this `dealloc`, so pairing `freed.size` with the caller's own
+        // alignment is exactly what `GlobalAlloc::dealloc`'s safety contract
+        // already requires (the layout passed here must match the one used
+        // for the original allocation). This isn't a guarantee `SampledAllocator`
+        // adds — it's just satisfying the contract our caller is on the hook for.
         let inner_layout = Layout::from_size_align_unchecked(freed.size, layout.align());
         self.inner.dealloc(freed.ptr.cast(), inner_layout);
     }

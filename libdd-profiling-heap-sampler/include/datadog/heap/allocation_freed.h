@@ -54,15 +54,21 @@ dd_alloc_freed_t dd_allocation_freed_slow(void *ptr, void *raw, size_t size,
  * verbatim.
  *
  * Args cover the superset of inputs any free-like call carries:
- *   ptr       - allocation being freed (user pointer returned by alloc)
+ *   ptr       - allocation being freed (user pointer returned by alloc),
+ *               or NULL (free(NULL) is a no-op; returned unchanged)
  *   size      - size the caller knows about, or 0 if unknown (plain free)
- *   alignment - alignment used at allocation time, or 0
+ *   alignment - alignment used at allocation time. Pass 0 if unknown (e.g.
+ *               plain free): the returned size then falls back to a best-
+ *               effort value, which is fine because plain free ignores it.
+ *               Sized-free callers (Rust GlobalAlloc::dealloc, sdallocx,
+ *               sized operator delete) must pass the real alignment so the
+ *               returned size exactly matches the bumped allocation.
  */
 static inline __attribute__((always_inline))
 dd_alloc_freed_t dd_allocation_freed(void *ptr, size_t size, size_t alignment) {
 #if DD_HEAP_LIVE_TRACKING
     void *raw;
-    if (__builtin_expect(dd_sample_flag_check(ptr, &raw), 0)) {
+    if (__builtin_expect(dd_sample_flag_check_and_clear(ptr, &raw), 0)) {
         return dd_allocation_freed_slow(ptr, raw, size, alignment);
     }
 #else

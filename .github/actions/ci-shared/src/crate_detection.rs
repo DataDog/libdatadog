@@ -74,10 +74,7 @@ pub fn parse_crate_info(manifest: &Path) -> Result<CrateInfo> {
         .to_string();
 
     // publish = false means not publishable; anything else (missing, true, list) means publishable
-    let publish = match package.get("publish") {
-        Some(Value::Boolean(false)) => false,
-        _ => true,
-    };
+    let publish = !matches!(package.get("publish"), Some(Value::Boolean(false)));
 
     let path = manifest
         .parent()

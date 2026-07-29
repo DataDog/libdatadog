@@ -34,7 +34,7 @@ impl<A: Allocator> LinearAllocator<A> {
         // SAFETY: this is the size/align of the actual allocation, so it must
         // be valid since the object exists.
         let allocation_layout =
-            unsafe { Layout::from_size_align(allocation.len(), layout.align()).unwrap_unchecked() };
+            unsafe { Layout::from_size_align_unchecked(allocation.len(), layout.align()) };
         Ok(Self {
             allocation_ptr: allocation.cast(),
             allocation_layout,

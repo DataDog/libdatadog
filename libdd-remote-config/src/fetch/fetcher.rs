@@ -7,11 +7,11 @@ use base64::Engine;
 use hashbrown::HashMap;
 use http::uri::PathAndQuery;
 use http::StatusCode;
-use http_body_util::BodyExt;
-use libdd_common::{http_common, Endpoint, MutexExt};
+use libdd_capabilities::HttpClientCapability;
+use libdd_common::{Endpoint, MutexExt};
 use libdd_trace_protobuf::remoteconfig::{
     ClientGetConfigsRequest, ClientGetConfigsResponse, ClientState, ClientTracer, ConfigState,
-    TargetFileHash, TargetFileMeta,
+    ConfigStatus, TargetFileHash, TargetFileMeta,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
@@ -104,11 +104,12 @@ impl ConfigProductCapabilities {
     }
 }
 
-pub struct ConfigFetcherState<S> {
+pub struct ConfigFetcherState<S, C: HttpClientCapability> {
     target_files_by_path: Mutex<HashMap<Arc<RemoteConfigPath>, StoredTargetFile<S>>>,
     pub invariants: ConfigInvariants,
     endpoint: Endpoint,
     pub expire_unused_files: bool,
+    http_client: C,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -152,13 +153,14 @@ impl<S> ConfigFetcherFilesLock<'_, S> {
     }
 }
 
-impl<S> ConfigFetcherState<S> {
-    pub fn new(invariants: ConfigInvariants) -> Self {
+impl<S, C: HttpClientCapability> ConfigFetcherState<S, C> {
+    pub fn with_client(invariants: ConfigInvariants, http_client: C) -> Self {
         ConfigFetcherState {
             target_files_by_path: Default::default(),
             endpoint: get_agent_configs_endpoint(&invariants.endpoint),
             invariants,
             expire_unused_files: true,
+            http_client,
         }
     }
 
@@ -201,9 +203,9 @@ impl<S> ConfigFetcherState<S> {
     }
 }
 
-pub struct ConfigFetcher<S: FileStorage> {
+pub struct ConfigFetcher<S: FileStorage, C: HttpClientCapability> {
     pub file_storage: S,
-    state: Arc<ConfigFetcherState<S::StoredFile>>,
+    state: Arc<ConfigFetcherState<S::StoredFile, C>>,
 }
 
 pub struct ConfigClientState {
@@ -236,8 +238,8 @@ impl ConfigClientState {
     }
 }
 
-impl<S: FileStorage> ConfigFetcher<S> {
-    pub fn new(file_storage: S, state: Arc<ConfigFetcherState<S::StoredFile>>) -> Self {
+impl<S: FileStorage, C: HttpClientCapability> ConfigFetcher<S, C> {
+    pub fn new(file_storage: S, state: Arc<ConfigFetcherState<S::StoredFile, C>>) -> Self {
         ConfigFetcher {
             file_storage,
             state,
@@ -361,16 +363,16 @@ impl<S: FileStorage> ConfigFetcher<S> {
                 http::header::CONTENT_TYPE,
                 libdd_common::header::APPLICATION_JSON,
             )
-            .body(http_common::Body::from(serde_json::to_string(&config_req)?))?;
+            .body(bytes::Bytes::from(serde_json::to_string(&config_req)?))?;
         let response = tokio::time::timeout(
             Duration::from_millis(self.state.endpoint.timeout_ms),
-            http_common::new_default_client().request(req),
+            self.state.http_client.request(req),
         )
         .await
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?
         .map_err(|e| anyhow::Error::msg(e).context(format!("Url: {:?}", self.state.endpoint)))?;
         let status = response.status();
-        let body_bytes = response.into_body().collect().await?.to_bytes();
+        let body_bytes = response.into_body();
         if status != StatusCode::OK {
             // Not active
             if status == StatusCode::NOT_FOUND {
@@ -390,6 +392,18 @@ impl<S: FileStorage> ConfigFetcher<S> {
         }
 
         let response: ClientGetConfigsResponse = serde_json::from_slice(body_bytes.as_ref())?;
+
+        if response.config_status == ConfigStatus::Expired as i32 {
+            debug!(
+                "Agent served remote config from an expired cache for target {target:?}, \
+                 reporting all configurations as removed"
+            );
+            if self.state.expire_unused_files {
+                self.state.target_files_by_path.lock_or_panic().clear();
+            }
+            client_state.last_config_paths.clear();
+            return Ok(Some(vec![]));
+        }
 
         let decoded_targets =
             base64::engine::general_purpose::STANDARD.decode(response.targets.as_slice())?;
@@ -578,6 +592,8 @@ pub mod tests {
     use crate::fetch::test_server::RemoteConfigServer;
     use crate::RemoteConfigSource;
     use http::Response;
+    use libdd_capabilities_impl::NativeHttpClient;
+    use libdd_common::http_common;
     use std::mem::transmute;
     use std::sync::LazyLock;
 
@@ -690,7 +706,10 @@ pub mod tests {
         let storage = Arc::new(Storage::default());
         let mut fetcher = ConfigFetcher::new(
             storage.clone(),
-            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
         );
         let mut opaque_state = ConfigClientState::default();
 
@@ -711,6 +730,108 @@ pub mod tests {
             .unwrap();
 
         assert!(fetched.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore)]
+    async fn test_expired_config_status_drops_all_configs() {
+        let server = RemoteConfigServer::spawn();
+        server.files.lock().unwrap().insert(
+            PATH_FIRST.clone(),
+            (vec![DUMMY_TARGET.clone()], 1, "v1".to_string()),
+        );
+
+        let storage = Arc::new(Storage::default());
+        let mut fetcher = ConfigFetcher::new(
+            storage.clone(),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
+        );
+        let mut opaque_state = ConfigClientState::default();
+
+        let capabilities = server.dummy_product_capabilities();
+
+        // Each fetch is scoped so the returned handles are dropped, mirroring a consumer that
+        // releases the previous generation of configs.
+        {
+            // The config applies normally while the agent is healthy.
+            let fetched = fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "foo",
+                    &mut opaque_state,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(fetched.len(), 1);
+            assert_eq!(storage.files.lock().unwrap().len(), 1);
+        }
+
+        {
+            // The agent starts serving from an expired cache: everything must be reported gone.
+            *server.config_status.lock().unwrap() = ConfigStatus::Expired;
+            let fetched = fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "foo",
+                    &mut opaque_state,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                fetched.is_empty(),
+                "expired configuration must be treated as removed"
+            );
+            assert!(
+                storage.files.lock().unwrap().is_empty(),
+                "expired configuration must be dropped from storage"
+            );
+        }
+
+        {
+            // The agent recovers: the configuration must be fetched and applied anew. It is no
+            // longer advertised as cached or applied, so the agent re-sends its contents.
+            *server.config_status.lock().unwrap() = ConfigStatus::Ok;
+            let fetched = fetcher
+                .fetch_once(
+                    DUMMY_RUNTIME_ID,
+                    &DUMMY_TARGET,
+                    &capabilities,
+                    "foo",
+                    &mut opaque_state,
+                )
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(fetched.len(), 1);
+            assert_eq!(fetched[0].data.lock().unwrap().contents, "v1");
+
+            let req = server.last_request.lock().unwrap();
+            let req = req.as_ref().unwrap();
+            assert!(
+                req.cached_target_files.is_empty(),
+                "dropped configs must not be advertised as cached"
+            );
+            assert!(
+                req.client
+                    .as_ref()
+                    .unwrap()
+                    .state
+                    .as_ref()
+                    .unwrap()
+                    .config_states
+                    .is_empty(),
+                "dropped configs must not be reported as applied"
+            );
+        }
     }
 
     #[tokio::test]
@@ -740,7 +861,10 @@ pub mod tests {
 
         let mut fetcher = ConfigFetcher::new(
             storage.clone(),
-            Arc::new(ConfigFetcherState::new(invariants)),
+            Arc::new(ConfigFetcherState::with_client(
+                invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
         );
         let mut opaque_state = ConfigClientState::default();
 
@@ -924,7 +1048,10 @@ pub mod tests {
         let storage = Arc::new(Storage::default());
         let mut fetcher = ConfigFetcher::new(
             storage,
-            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
         );
         let mut opaque_state = ConfigClientState::default();
 
@@ -1022,7 +1149,10 @@ pub mod tests {
         let storage = Arc::new(Storage::default());
         let mut fetcher = ConfigFetcher::new(
             storage,
-            Arc::new(ConfigFetcherState::new(server.dummy_options().invariants)),
+            Arc::new(ConfigFetcherState::with_client(
+                server.dummy_options().invariants,
+                NativeHttpClient::new_without_connection_pooling(),
+            )),
         );
         let mut opaque_state = ConfigClientState::default();
 

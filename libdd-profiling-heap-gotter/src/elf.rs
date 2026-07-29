@@ -22,8 +22,8 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use libc::{
-    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym, PROT_EXEC,
-    PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD, _SC_PAGESIZE,
+    dl_iterate_phdr, dl_phdr_info, mprotect, sysconf, Elf64_Rel, Elf64_Rela, Elf64_Sym,
+    _SC_PAGESIZE, PROT_EXEC, PROT_READ, PROT_WRITE, PT_DYNAMIC, PT_LOAD,
 };
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -531,6 +531,13 @@ struct PatchedLibrary {
     /// Identifies the library at this base address, so we can detect
     /// base-address reuse after a `dlclose` + `dlopen` places a
     /// different library at the same load address.
+    ///
+    /// Known limitation: detection keys on this name, not on library
+    /// contents. A different version of the same library reloaded at the
+    /// same base (identical path, changed contents, same base despite
+    /// ASLR) would slip through and we would restore stale GOT values.
+    /// This is judged unlikely enough in practice to document rather than
+    /// guard against with additional fingerprinting.
     library_name: String,
     /// Set each pass in which this library was seen; used to drop entries
     /// for libraries that have since been unloaded.

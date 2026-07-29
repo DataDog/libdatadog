@@ -38,6 +38,8 @@ pub struct OtlpResourceInfo {
     pub runtime_id: String,
     pub hostname: String,
     pub process_tags: String,
+    pub instrumentation_scope_name: String,
+    pub instrumentation_scope_version: String,
     /// When true, emits `_dd.stats_computed: "true"` on the OTLP resource to prevent
     /// double-counted APM metrics in Datadog Agent OTLP receivers (backwards compatible).
     pub client_computed_stats: bool,

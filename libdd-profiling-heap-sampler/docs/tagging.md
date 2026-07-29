@@ -29,7 +29,7 @@ this case.
 Although x86-64 typically supports pointer tagging and it was (briefly) enabled
 in the kernel, it was pulled back out around Spectre due to security concerns. 
 
-Instead we steal, bytes from the allocation itself - when we decide to sample, we ask the
+Instead we steal bytes from the allocation itself - when we decide to sample, we ask the
 underlying allocator for more memory than the caller requested, then place
 the user-visible pointer some way into that block, leaving room for a
 16-byte header just before it.
@@ -69,15 +69,16 @@ an unsampled allocation, and if that allocation's contents happen to look
 like our magic at the right offset, we'd wrongly treat it as sampled. Zeroing
 prevents that.
 
-**Keeping the three sites in sync**
+**Keeping the sizing in one place**
 
-The formula for the bumped allocation size has to be computed identically in
-three places: when we decide how much extra to ask for (`bumped_alloc_size`
-in `allocation_requested.c`), when we place the header and user pointer
-(`x86_apply` in `sample_flag.h`), and when we work out how big the original
-allocation was so we can free the right amount (`dd_allocation_freed_slow`
-in `allocation_freed.c`). If any of these disagree we corrupt memory. Touch
-one, check the other two.
+The bumped allocation size is computed by a single shared inline,
+`x86_bumped_size` in `sample_flag.h`. Both the alloc side (`bumped_alloc_size`
+in `allocation_requested.c`, deciding how much extra to ask for) and the free
+side (`dd_allocation_freed_slow` in `allocation_freed.c`, recovering the size
+for sized-free) call it, so the formula can't drift between them. The header
+placement (`x86_apply`, also in `sample_flag.h`) shares the same
+`x86_base_offset` helper for the reserve. All the inlines are
+`always_inline`, so this centralisation adds no call overhead.
 
 **Alignment cap**
 

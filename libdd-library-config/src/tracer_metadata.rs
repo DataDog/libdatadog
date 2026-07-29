@@ -220,7 +220,8 @@ mod linux {
     pub fn store_tracer_metadata(
         data: &super::TracerMetadata,
     ) -> anyhow::Result<super::AnonymousFileHandle> {
-        let _ = crate::otel_process_ctx::linux::publish(&data.to_otel_process_ctx());
+        #[cfg(feature = "process-context-writer")]
+        let _ = crate::otel_process_ctx::publish(&data.to_otel_process_ctx());
 
         let uid: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)

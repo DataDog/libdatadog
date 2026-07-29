@@ -47,7 +47,7 @@ use datadog_ipc::ipc_server::OwnedServerConn;
 use datadog_live_debugger::sender::{agent_info_supports_debugger_v2_endpoint, DebuggerType};
 use libdd_capabilities_impl::NativeCapabilities;
 use libdd_common::tag::Tag;
-use libdd_dogstatsd_client::{new, DogStatsDActionOwned};
+use libdd_dogstatsd_client::{DogStatsDActionOwned, DogStatsDClient};
 use libdd_remote_config::fetch::{ConfigInvariants, ConfigOptions, MultiTargetStats};
 use libdd_telemetry::config::{Config, TelemetryEndpoint};
 use libdd_tinybytes as tinybytes;
@@ -679,7 +679,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session_id: String,
         #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
-        is_fork: bool,
+        _is_fork: bool,
     ) {
         if self.session_id.set(session_id.clone()).is_ok() {
             let mut counter = self.server.session_counter.lock_or_panic();
@@ -724,13 +724,14 @@ impl SidecarInterface for ConnectionSidecarHandler {
                 &config.endpoint,
             );
             cfg.set_endpoint(TelemetryEndpoint {
-                url: Some(endpoint.url.to_string()),
                 api_key: endpoint.api_key.as_deref().map(str::to_owned),
                 test_token: endpoint.test_token.as_deref().map(str::to_owned),
                 timeout_ms: endpoint.timeout_ms,
                 use_system_resolver: endpoint.use_system_resolver,
+                ..Default::default()
             })
             .ok();
+            cfg.set_endpoint_uri(endpoint.url).ok();
             cfg.telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
             cfg.telemetry_extended_heartbeat_interval =
                 config.telemetry_extended_heartbeat_interval;
@@ -753,7 +754,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
             *endpoint = config.otlp_metrics_endpoint.clone();
         });
         session.configure_dogstatsd(|dogstatsd| {
-            let d = new(config.dogstatsd_endpoint.clone()).ok();
+            let d = DogStatsDClient::new(config.dogstatsd_endpoint.clone()).ok();
             *dogstatsd = d;
         });
         session.modify_debugger_config(|cfg| {
@@ -834,10 +835,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
             tokio::spawn(async move {
                 completer.complete(config).await;
             });
-        }
-
-        if !is_fork {
-            session.shutdown_running_instances().await;
         }
     }
 
@@ -1083,6 +1080,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         // Lazily create the concentrator on first IPC span for this (env, version, service).
         if let Some(state) = get_or_create_concentrator(
             &self.server.span_concentrators,
+            &self.server.telemetry_clients,
             &env,
             &version,
             session_id,

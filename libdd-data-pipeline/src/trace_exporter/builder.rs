@@ -5,14 +5,13 @@ use crate::agent_info::AgentInfoFetcher;
 use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
-#[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+#[cfg(feature = "telemetry")]
 use crate::telemetry::TelemetryClientBuilder;
 use crate::trace_exporter::agent_response::AgentResponsePayloadVersion;
 use crate::trace_exporter::error::BuilderErrorKind;
 use crate::trace_exporter::log_writer::DEFAULT_LOG_MAX_LINE_SIZE;
-#[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+#[cfg(feature = "telemetry")]
 use crate::trace_exporter::TelemetryConfig;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::trace_exporter::TraceExporterWorkers;
 use crate::trace_exporter::{
     add_path, StatsComputationStatus, TelemetryInstrumentationSessions, TraceExporter,
@@ -22,7 +21,7 @@ use crate::trace_exporter::{
 use arc_swap::ArcSwap;
 use libdd_capabilities::{HttpClientCapability, LogWriterCapability, MaybeSend, SleepCapability};
 use libdd_common::{parse_uri, tag, Endpoint};
-use libdd_dogstatsd_client::new;
+use libdd_dogstatsd_client::DogStatsDClient;
 use libdd_shared_runtime::SharedRuntime;
 #[cfg(not(target_arch = "wasm32"))]
 use libdd_shared_runtime::{BlockingRuntime, ForkSafeRuntime};
@@ -62,8 +61,11 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     language_version: String,
     language_interpreter: String,
     language_interpreter_vendor: String,
+    instrumentation_scope_name: String,
+    instrumentation_scope_version: String,
     git_commit_sha: String,
     process_tags: String,
+    container_id: String,
     input_format: TraceExporterInputFormat,
     output_format: TraceExporterOutputFormat,
     dogstatsd_url: Option<String>,
@@ -72,8 +74,6 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     // Stats specific fields
     /// A Some value enables stats-computation, None if it is disabled
     stats_bucket_size: Option<Duration>,
-    peer_tags_aggregation: bool,
-    compute_stats_by_span_kind: bool,
     peer_tags: Vec<String>,
     stats_cardinality_limit: Option<usize>,
     #[cfg(feature = "stats-obfuscation")]
@@ -101,6 +101,9 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     output_to_log: bool,
     /// Optional override for the maximum size of a single emitted log line.
     log_max_line_size: Option<usize>,
+    /// Whether background workers spawned should be
+    /// restarted in the child after a `fork()`. Defaults to `true`.
+    restart_after_fork: bool,
 }
 
 /// Default is impl'd for `R = ForkSafeRuntime` only so that bare
@@ -132,16 +135,17 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             language_version: String::new(),
             language_interpreter: String::new(),
             language_interpreter_vendor: String::new(),
+            instrumentation_scope_name: String::new(),
+            instrumentation_scope_version: String::new(),
             git_commit_sha: String::new(),
             process_tags: String::new(),
+            container_id: String::new(),
             input_format: TraceExporterInputFormat::default(),
             output_format: TraceExporterOutputFormat::default(),
             dogstatsd_url: None,
             client_computed_stats: false,
             client_computed_top_level: false,
             stats_bucket_size: None,
-            peer_tags_aggregation: false,
-            compute_stats_by_span_kind: false,
             peer_tags: Vec::new(),
             stats_cardinality_limit: None,
             #[cfg(feature = "stats-obfuscation")]
@@ -166,6 +170,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agentless_timeout: None,
             output_to_log: false,
             log_max_line_size: None,
+            restart_after_fork: true,
         }
     }
 }
@@ -231,6 +236,19 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
     pub fn set_process_tags(&mut self, process_tags: &str) -> &mut Self {
         process_tags.clone_into(&mut self.process_tags);
+        self
+    }
+
+    /// Set the `Datadog-Container-Id` header
+    pub fn set_container_id(&mut self, container_id: &str) -> &mut Self {
+        container_id.clone_into(&mut self.container_id);
+        self
+    }
+
+    /// Set OTLP trace instrumentation scope metadata.
+    pub fn set_otlp_instrumentation_scope(&mut self, name: &str, version: &str) -> &mut Self {
+        name.clone_into(&mut self.instrumentation_scope_name);
+        version.clone_into(&mut self.instrumentation_scope_version);
         self
     }
 
@@ -311,18 +329,10 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         self
     }
 
-    /// Enable peer tags aggregation for stats computation (requires stats computation to be
-    /// enabled)
-    pub fn enable_stats_peer_tags_aggregation(&mut self, peer_tags: Vec<String>) -> &mut Self {
-        self.peer_tags_aggregation = true;
+    /// Seed the peer tags used for peer tags aggregation in stats computation (requires stats
+    /// computation to be enabled).
+    pub fn set_peer_tags(&mut self, peer_tags: Vec<String>) -> &mut Self {
         self.peer_tags = peer_tags;
-        self
-    }
-
-    /// Enable stats eligibility by span kind (requires stats computation to be
-    /// enabled)
-    pub fn enable_compute_stats_by_span_kind(&mut self) -> &mut Self {
-        self.compute_stats_by_span_kind = true;
         self
     }
 
@@ -335,6 +345,18 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// Has no effect unless stats computation is enabled.
     pub fn set_stats_cardinality_limit(&mut self, cardinality_limit: usize) -> &mut Self {
         self.stats_cardinality_limit = Some(cardinality_limit);
+        self
+    }
+
+    /// Sets whether background workers spawned by this exporter  are restarted in the child after
+    /// the process `fork()`s. Defaults to `true`.
+    ///
+    /// Set to `false` if the trace exporter is recreated after the fork to avoid restarting workers
+    /// which are going to be discarded anyway.
+    ///
+    /// TODO(APMSP-3846): Remove once python no longer recreates the exporter on forks.
+    pub fn set_restart_after_fork(&mut self, restart_after_fork: bool) -> &mut Self {
+        self.restart_after_fork = restart_after_fork;
         self
     }
 
@@ -575,9 +597,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             })?),
         };
 
-        let dogstatsd = self
+        let (dogstatsd, dogstatsd_handle) = self
             .dogstatsd_url
-            .and_then(|u| new(Endpoint::from_slice(&u)).ok().map(Arc::new));
+            .and_then(|u| {
+                DogStatsDClient::new_with_shared_runtime(Endpoint::from_slice(&u), &*shared_runtime)
+                    .ok()
+            })
+            .unzip();
 
         let base_url = self.url.as_deref().unwrap_or(DEFAULT_AGENT_URL);
 
@@ -614,7 +640,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         } else {
             Some(
                 shared_runtime
-                    .spawn_worker(info_fetcher, false)
+                    .spawn_worker(info_fetcher, self.restart_after_fork)
                     .map_err(|e| {
                         TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                             e.to_string(),
@@ -622,31 +648,23 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                     })?,
             )
         };
-        // The handle is currently only tracked for shutdown on native; on wasm
-        // it is dropped here (the worker keeps running on the JS event loop
-        // until the page/module is torn down).
-        #[cfg(target_arch = "wasm32")]
-        drop(info_fetcher_handle);
+        // The handle is stored in TraceExporterWorkers on both native and wasm so
+        // that shutdown_async can stop the worker symmetrically on both targets.
 
-        #[allow(unused_mut)]
         let mut stats = StatsComputationStatus::Disabled;
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(bucket_size) = self.stats_bucket_size {
             stats = StatsComputationStatus::DisabledByAgent { bucket_size };
         }
 
-        #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+        #[cfg(feature = "telemetry")]
         let (telemetry_client, telemetry_handle) = {
             let sessions = self.telemetry_instrumentation_sessions;
+            // Telemetry talks to the agent; disable it in agentless and log-export modes.
             let telemetry = self
                 .telemetry
-                .filter(|_| {
-                    // no agent endpoint to talk to, so we skip the
-                    // telemetry worker
-                    !(agentless_enabled || self.output_to_log)
-                })
-                .map(|telemetry_config| {
-                    let mut builder = TelemetryClientBuilder::default()
+                .filter(|_| !(agentless_enabled || self.output_to_log))
+                .map(|telemetry_config| -> Result<_, TraceExporterError> {
+                    let mut tb = TelemetryClientBuilder::default()
                         .set_language(&self.language)
                         .set_language_version(&self.language_version)
                         .set_service_name(&self.service)
@@ -657,30 +675,38 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                         .set_url(base_url)
                         .set_debug_enabled(telemetry_config.debug_enabled);
                     if let Some(id) = telemetry_config.runtime_id {
-                        builder = builder.set_runtime_id(&id);
+                        tb = tb.set_runtime_id(&id);
                     }
                     if let Some(ref id) = sessions.session_id {
-                        builder = builder.set_session_id(id);
+                        tb = tb.set_session_id(id);
                     }
                     if let Some(ref id) = sessions.root_session_id {
-                        builder = builder.set_root_session_id(id);
+                        tb = tb.set_root_session_id(id);
                     }
                     if let Some(ref id) = sessions.parent_session_id {
-                        builder = builder.set_parent_session_id(id);
+                        tb = tb.set_parent_session_id(id);
                     }
-                    Ok(builder.build())
-                });
-            match telemetry {
-                Some(Ok((client_tel, worker))) => {
-                    let handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
+                    tb.build::<C>().map_err(|e| {
                         TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
                             e.to_string(),
                         ))
-                    })?;
-                    client_tel.start().await;
+                    })
+                })
+                .transpose()?;
+            match telemetry {
+                Some((client_tel, worker)) => {
+                    let handle = shared_runtime
+                        .spawn_worker(worker, self.restart_after_fork)
+                        .map_err(|e| {
+                            TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                                e.to_string(),
+                            ))
+                        })?;
+                    if let Err(e) = client_tel.start() {
+                        tracing::warn!("Failed to start telemetry: {e}");
+                    }
                     (Some(client_tel), Some(handle))
                 }
-                Some(Err(e)) => return Err(e),
                 None => (None, None),
             }
         };
@@ -714,6 +740,8 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             headers: build_otlp_header_map(self.otlp_headers),
             timeout: otlp_timeout,
             protocol: self.otlp_protocol,
+            instrumentation_scope_name: self.instrumentation_scope_name,
+            instrumentation_scope_version: self.instrumentation_scope_version,
             otel_trace_semantics_enabled: self.otel_trace_semantics_enabled,
         });
 
@@ -731,9 +759,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
 
         // OTLP metrics + stats bucket size: start the concentrator unconditionally (bypass the
         // agent gate) so `check_agent_info` cannot later disable stats.
-        #[allow(unused_mut)]
         let mut otlp_stats_enabled = false;
-        #[cfg(not(target_arch = "wasm32"))]
         if let (Some(metrics_config), Some(bucket_size)) =
             (otlp_metrics_config.clone(), self.stats_bucket_size)
         {
@@ -746,10 +772,11 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .collect();
             let concentrator = Arc::new(Mutex::new(SpanConcentrator::new(
                 bucket_size,
-                std::time::SystemTime::now(),
+                web_time::SystemTime::now(),
                 span_kinds,
                 self.peer_tags.clone(),
                 None,
+                vec![],
                 #[cfg(feature = "stats-obfuscation")]
                 None,
             )));
@@ -770,9 +797,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 test_token: self.test_session_token.clone(),
                 capabilities: capabilities.clone(),
             };
-            let worker_handle = shared_runtime.spawn_worker(worker, false).map_err(|e| {
-                TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(e.to_string()))
-            })?;
+            let worker_handle = shared_runtime
+                .spawn_worker(worker, self.restart_after_fork)
+                .map_err(|e| {
+                    TraceExporterError::Builder(BuilderErrorKind::InvalidConfiguration(
+                        e.to_string(),
+                    ))
+                })?;
             stats = StatsComputationStatus::Enabled {
                 stats_concentrator: concentrator,
                 worker_handle,
@@ -808,6 +839,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 app_version: self.app_version,
                 runtime_id,
                 service: self.service,
+                container_id: self.container_id,
             },
             input_format: self.input_format,
             output_format: self.output_format,
@@ -830,12 +862,12 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             },
             previous_info_state: arc_swap::ArcSwapOption::new(None),
             info_response_observer,
-            #[cfg(all(not(target_arch = "wasm32"), feature = "telemetry"))]
+            #[cfg(feature = "telemetry")]
             telemetry: telemetry_client,
             health_metrics_enabled: self.health_metrics_enabled,
             capabilities,
-            #[cfg(not(target_arch = "wasm32"))]
             workers: TraceExporterWorkers {
+                dogstatsd: dogstatsd_handle,
                 info_fetcher: info_fetcher_handle,
                 #[cfg(feature = "telemetry")]
                 telemetry: telemetry_handle,
@@ -848,6 +880,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
             log_output,
+            restart_after_fork: self.restart_after_fork,
         })
     }
 
@@ -984,9 +1017,12 @@ mod tests {
             .set_language_interpreter("v8")
             .set_language_interpreter_vendor("node")
             .set_git_commit_sha("797e9ea")
+            .set_otlp_endpoint("http://localhost:4318/v1/traces")
+            .set_otlp_instrumentation_scope("dd-trace-js", "7.0.0-pre")
             .set_input_format(TraceExporterInputFormat::V04)
             .set_output_format(TraceExporterOutputFormat::V04)
-            .set_client_computed_stats();
+            .set_client_computed_stats()
+            .set_restart_after_fork(false);
         #[cfg(feature = "telemetry")]
         builder.enable_telemetry(TelemetryConfig {
             heartbeat: 1000,
@@ -1010,6 +1046,10 @@ mod tests {
         assert_eq!(exporter.metadata.language_interpreter_vendor, "node");
         assert_eq!(exporter.metadata.git_commit_sha, "797e9ea");
         assert!(exporter.metadata.client_computed_stats);
+        let otlp_config = exporter.otlp_config.as_ref().unwrap();
+        assert_eq!(otlp_config.instrumentation_scope_name, "dd-trace-js");
+        assert_eq!(otlp_config.instrumentation_scope_version, "7.0.0-pre");
+        assert!(!exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.is_some());
     }
@@ -1033,6 +1073,7 @@ mod tests {
         assert_eq!(exporter.metadata.language_version, "");
         assert_eq!(exporter.metadata.language_interpreter, "");
         assert!(!exporter.metadata.client_computed_stats);
+        assert!(exporter.restart_after_fork);
         #[cfg(feature = "telemetry")]
         assert!(exporter.telemetry.is_none());
     }

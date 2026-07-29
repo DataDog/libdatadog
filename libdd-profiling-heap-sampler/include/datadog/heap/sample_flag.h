@@ -54,7 +54,7 @@ bool dd_sample_flag_thread_init(void);
 void *dd_sample_flag_apply(void *raw, size_t alignment);
 
 /*
- * Non-destructive variant of dd_sample_flag_check. Useful for realloc:
+ * Non-destructive variant of dd_sample_flag_check_and_clear. Useful for realloc:
  * callers can resolve the raw pointer before calling the underlying
  * realloc, while leaving the old allocation's flag intact in case
  * realloc fails and the old allocation remains live.
@@ -112,6 +112,78 @@ bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out);
 #define DD_MAGIC 0xfab1eddec0dedca7ULL
 
 /*
+ * Bytes reserved before the user pointer for the header + alignment slack:
+ * max(alignment, DD_HEADER_BYTES). x86_apply may add one more of these as a
+ * page-boundary bump (see x86_apply).
+ */
+static inline __attribute__((always_inline))
+size_t x86_base_offset(size_t alignment) {
+    return alignment > DD_HEADER_BYTES ? alignment : DD_HEADER_BYTES;
+}
+
+/*
+ * Single source of truth for the bumped allocation size of a sampled
+ * `user_size`-byte request at `alignment`. Reserves 2 * base_offset (header
+ * plus room for the page-boundary bump) and rounds up to a multiple of
+ * alignment so aligned_alloc's size constraint holds. Returns false (leaving
+ * *out_size untouched) if alignment exceeds the cap or the arithmetic would
+ * overflow SIZE_MAX. bumped_alloc_size (allocation_requested.c) and
+ * dd_allocation_freed_slow (allocation_freed.c) both call this so the formula
+ * can never drift between the alloc and free sides.
+ */
+static inline __attribute__((always_inline))
+bool x86_bumped_size(size_t user_size, size_t alignment, size_t *out_size) {
+    if (alignment > DD_SAMPLE_ALIGNMENT_CAP) return false;
+    size_t base = x86_base_offset(alignment);
+    if (base > SIZE_MAX / 2) return false;
+    size_t reserve = base * 2;
+    if (reserve > SIZE_MAX - user_size) return false;
+    size_t bumped = user_size + reserve;
+    if (alignment > 1) {
+        size_t mask = alignment - 1;
+        if (bumped > SIZE_MAX - mask) return false;
+        bumped = (bumped + mask) & ~mask;
+    }
+    *out_size = bumped;
+    return true;
+}
+
+/*
+ * The 16-byte header stamped immediately before a sampled user pointer:
+ * an 8-byte magic followed by the 8-byte offset from `user` back to `raw`.
+ * Read/written as one struct so the layout lives in a single place instead
+ * of being open-coded as two memcpys at every site.
+ */
+typedef struct {
+    uint64_t magic;
+    uint64_t offset;
+} x86_header_t;
+
+_Static_assert(sizeof(x86_header_t) == DD_HEADER_BYTES,
+               "x86_header_t must exactly fill the reserved header");
+
+/* Stamp the header in front of `user` (offset = user - raw). */
+static inline __attribute__((always_inline))
+void x86_header_stamp(void *user, uint64_t offset) {
+    x86_header_t hdr = { DD_MAGIC, offset };
+    memcpy((char *)user - DD_HEADER_BYTES, &hdr, sizeof(hdr));
+}
+
+/* Read the header in front of `user`. */
+static inline __attribute__((always_inline))
+x86_header_t x86_header_read(const void *user) {
+    x86_header_t hdr;
+    memcpy(&hdr, (const char *)user - DD_HEADER_BYTES, sizeof(hdr));
+    return hdr;
+}
+
+/* Zero the header so a later reuse of this block isn't misdetected as sampled. */
+static inline __attribute__((always_inline))
+void x86_header_clear(void *user) {
+    memset((char *)user - DD_HEADER_BYTES, 0, sizeof(x86_header_t));
+}
+
+/*
  * Layout helpers. x86_apply and x86_raw_from_user MUST be each other's
  * inverse: the offset stamped at apply time is what lets
  * x86_raw_from_user recover the same raw at check time.
@@ -137,17 +209,13 @@ bool dd_sample_flag_peek(void *user, void **raw_out, size_t *offset_out);
 static inline __attribute__((always_inline))
 void *x86_apply(void *raw, size_t alignment) {
     uintptr_t r = (uintptr_t)raw;
-    size_t n = alignment > DD_HEADER_BYTES ? alignment : DD_HEADER_BYTES;
+    size_t n = x86_base_offset(alignment);
     uintptr_t u = r + n;
     if ((u & (DD_PAGE_SIZE - 1)) < DD_HEADER_BYTES) {
-        n += (alignment > DD_HEADER_BYTES ? alignment : DD_HEADER_BYTES);
+        n += x86_base_offset(alignment);
         u = r + n;
     }
-    uint64_t magic  = DD_MAGIC;
-    uint64_t offset = (uint64_t)n;
-    memcpy((void *)(u - DD_HEADER_BYTES), &magic, sizeof(magic));
-    memcpy((void *)(u - DD_HEADER_BYTES + sizeof(magic)), &offset,
-           sizeof(offset));
+    x86_header_stamp((void *)u, (uint64_t)n);
     return (void *)u;
 }
 
@@ -166,21 +234,16 @@ void *x86_raw_from_user(void *user, uint64_t offset) {
  * true. Otherwise leave *raw_out untouched and return false.
  */
 static inline __attribute__((always_inline))
-bool dd_sample_flag_check(void *user, void **raw_out) {
+bool dd_sample_flag_check_and_clear(void *user, void **raw_out) {
     if (((uintptr_t)user & (DD_PAGE_SIZE - 1)) < DD_HEADER_BYTES) {
         return false;
     }
 
-    void *header = (char *)user - DD_HEADER_BYTES;
-    uint64_t magic;
-    memcpy(&magic, header, sizeof(magic));
-    if (magic != DD_MAGIC) {
+    x86_header_t hdr = x86_header_read(user);
+    if (hdr.magic != DD_MAGIC) {
         return false;
     }
-
-    uint64_t offset;
-    memcpy(&offset, (char *)header + sizeof(magic), sizeof(offset));
-    if (offset < DD_HEADER_BYTES || offset > 2 * DD_SAMPLE_ALIGNMENT_CAP) {
+    if (hdr.offset < DD_HEADER_BYTES || hdr.offset > 2 * DD_SAMPLE_ALIGNMENT_CAP) {
         return false;
     }
 
@@ -188,10 +251,9 @@ bool dd_sample_flag_check(void *user, void **raw_out) {
      * (e.g. allocator returns the same block to a later, unsampled
      * allocation whose user data happens to encode the magic) doesn't
      * masquerade as a stale sampled allocation. */
-    const uint64_t zeros[2] = { 0, 0 };
-    memcpy(header, zeros, sizeof(zeros));
+    x86_header_clear(user);
 
-    *raw_out = x86_raw_from_user(user, offset);
+    *raw_out = x86_raw_from_user(user, hdr.offset);
     return true;
 }
 
@@ -207,7 +269,7 @@ bool dd_sample_flag_check(void *user, void **raw_out) {
  * true. Otherwise leave *raw_out untouched and return false.
  */
 static inline __attribute__((always_inline))
-bool dd_sample_flag_check(void *user, void **raw_out) {
+bool dd_sample_flag_check_and_clear(void *user, void **raw_out) {
     uintptr_t addr = (uintptr_t)user;
     if ((addr & DD_TBI_TAG_MASK) != DD_TBI_TAGGED) {
         return false;

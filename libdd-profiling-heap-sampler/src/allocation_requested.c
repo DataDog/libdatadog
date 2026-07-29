@@ -4,6 +4,7 @@
 #include <datadog/heap/allocation_requested.h>
 #include <datadog/heap/sample_flag.h>
 
+#include <errno.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -111,31 +112,9 @@ static uint64_t sample(dd_tl_state_t *tl) {
 static bool bumped_alloc_size(size_t user_size, size_t alignment,
                               size_t *out_size) {
 #if defined(__x86_64__) && DD_HEAP_LIVE_TRACKING
-    if (alignment > DD_SAMPLE_ALIGNMENT_CAP) return false;
-
-    /* Reserve twice the base offset so x86_apply's page-boundary bump
-     * (which may push the user pointer another `base` bytes forward)
-     * always fits inside the allocation. Base is max(alignment, 16):
-     * the minimum offset needed to seat the 16-byte header before the
-     * user pointer while staying alignment-aligned. */
-    size_t base = alignment > DD_HEADER_BYTES ? alignment : DD_HEADER_BYTES;
-    if (base > SIZE_MAX / 2) return false;
-    size_t reserve = base * 2;
-
-    if (reserve > SIZE_MAX - user_size) return false;
-    size_t bumped = user_size + reserve;
-
-    /* Round up to a multiple of alignment so aligned_alloc callers
-     * (which require size %% alignment == 0) are satisfied. For
-     * alignment <= DD_HEADER_BYTES this is already a multiple of
-     * alignment (reserve = 32, a multiple of 1/2/4/8/16). */
-    if (alignment > 1) {
-        size_t mask = alignment - 1;
-        if (bumped > SIZE_MAX - mask) return false;
-        bumped = (bumped + mask) & ~mask;
-    }
-    *out_size = bumped;
-    return true;
+    /* Shared with dd_allocation_freed_slow via x86_bumped_size so the
+     * alloc and free sides can never disagree on the formula. */
+    return x86_bumped_size(user_size, alignment, out_size);
 #else
     (void)alignment;
     *out_size = user_size;
@@ -150,7 +129,10 @@ dd_alloc_req_t dd_allocation_requested_slow(dd_tl_state_t *tl, size_t size,
      * or the USDT machinery) will see the guard set and pass through unsampled. */
     tl->reentry_guard = true;
 
+    /* Save / restore errno: sample() reaches log(), which may set it. */
+    int saved_errno = errno;
     uint64_t weight = sample(tl);
+    errno = saved_errno;
     if (weight == 0) {
         /* First-interval miss: no sample this time. Close the guard now since
          * dd_allocation_created_slow won't be called on the sampled path. */

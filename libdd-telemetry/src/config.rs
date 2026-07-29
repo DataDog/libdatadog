@@ -268,8 +268,9 @@ impl Config {
 
     /// Applies a [`TelemetryEndpoint`] patch to the endpoint, then rewrites the
     /// path to the telemetry path appropriate for the resulting scheme and API
-    /// key. This is the single entry point for endpoint configuration so the URL
-    /// path invariant always holds.
+    /// key. This accepts original, human-facing URL strings; callers that
+    /// already hold a parsed [`Uri`] must use [`Config::set_endpoint_uri`] to
+    /// avoid re-parsing encoded `file`, `unix`, or `windows` URIs.
     pub fn set_endpoint(&mut self, endpoint: TelemetryEndpoint) -> anyhow::Result<()> {
         // Parse the URL before touching `self.endpoint` so a parse error leaves
         // the existing endpoint untouched.
@@ -280,8 +281,6 @@ impl Config {
             inner.url = url;
         }
 
-        // Move the owned Strings into the `Cow<'static, str>` fields — `Cow::from(String)`
-        // yields `Cow::Owned`, so no copy happens.
         if let Some(api_key) = endpoint.api_key {
             inner.api_key = Some(Cow::from(api_key));
         }
@@ -296,6 +295,17 @@ impl Config {
 
         inner.use_system_resolver = endpoint.use_system_resolver;
 
+        self.apply_telemetry_path()
+    }
+
+    /// Sets the endpoint URL from an already-parsed [`Uri`].
+    ///
+    /// This is the non-stringifying counterpart to the `url` field in
+    /// [`TelemetryEndpoint`]. It is intended for integrations that already hold
+    /// a parsed URI and therefore must not pass its string representation back
+    /// through [`parse_uri`]. Other endpoint properties remain unchanged.
+    pub fn set_endpoint_uri(&mut self, uri: Uri) -> anyhow::Result<()> {
+        self.endpoint.get_or_insert_with(Endpoint::default).url = uri;
         self.apply_telemetry_path()
     }
 
@@ -499,6 +509,20 @@ mod tests {
                 libdd_common::decode_uri_path_in_authority(&cfg.endpoint.unwrap().url).unwrap(),
             );
         }
+    }
+
+    #[test]
+    fn test_config_set_parsed_file_uri_does_not_reencode_path() {
+        let mut cfg = Config::default();
+        let uri = libdd_common::parse_uri("file:///absolute/path").unwrap();
+
+        cfg.set_endpoint_uri(uri).unwrap();
+
+        let endpoint = cfg.endpoint().unwrap();
+        assert_eq!(
+            Path::new("/absolute/path"),
+            libdd_common::decode_uri_path_in_authority(&endpoint.url).unwrap()
+        );
     }
 
     #[test]

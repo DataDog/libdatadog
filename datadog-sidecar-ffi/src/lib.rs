@@ -810,9 +810,11 @@ impl<'a> TryInto<SerializedTracerHeaderTags> for &'a TracerHeaderTags<'a> {
             lang_vendor: &self.lang_vendor.to_utf8_lossy(),
             tracer_version: &self.tracer_version.to_utf8_lossy(),
             container_id: &self.container_id.to_utf8_lossy(),
-            client_computed_top_level: self.client_computed_top_level,
-            client_computed_stats: self.client_computed_stats,
-            ..Default::default()
+            generic: libdd_trace_utils::trace_utils::TracerGenericTags {
+                client_computed_top_level: self.client_computed_top_level,
+                client_computed_stats: self.client_computed_stats,
+                ..Default::default()
+            },
         };
 
         tags.try_into().map_err(|_| {
@@ -1715,7 +1717,7 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
     // Write traces to the shared memory
     let mut shm_slice = mapped_shm.as_slice_mut();
     let shm_slice_len = shm_slice.len();
-    let written = match msgpack_encoder::v04::write_to_slice(&mut shm_slice, traces) {
+    let written = match msgpack_encoder::v04::write_to_slice_from_v04(&mut shm_slice, traces) {
         Ok(()) => shm_slice_len - shm_slice.len(),
         Err(_) => {
             tracing::error!("Failed serializing the traces");
@@ -1745,7 +1747,7 @@ pub unsafe extern "C" fn ddog_send_traces_to_sidecar(
         match blocking::send_trace_v04_bytes(
             &mut parameters.transport,
             &parameters.instance_id,
-            msgpack_encoder::v04::to_vec_with_capacity(traces, written as u32),
+            msgpack_encoder::v04::to_vec_with_capacity_from_v04(traces, written as u32),
             check!(
                 (&parameters.tracer_headers_tags).try_into(),
                 "Failed to convert tracer headers tags"

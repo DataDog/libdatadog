@@ -6,6 +6,8 @@
 #include <datadog/heap/sample_flag.h>
 #include <datadog/heap/tl_state.h>
 
+#include <assert.h>
+
 /*
  * Slow path for dd_allocation_created. We only arrive here when the paired
  * dd_allocation_requested_slow decided to sample (req.weight > 0).
@@ -47,8 +49,15 @@ void *dd_allocation_created_slow(void *raw, dd_alloc_req_t req) {
     }
 
     /* Always close the reentry guard, even on allocation failure (raw == NULL),
-     * so the thread isn't permanently locked out of sampling. */
+     * so the thread isn't permanently locked out of sampling.
+     *
+     * In the real gotter/allocator flow, created is always paired with a
+     * preceding requested that initialised this thread's TLS and opened the
+     * guard, so if this thread has sampler state the guard must be open. A
+     * NULL tl means the caller never went through requested (e.g. an isolated
+     * unit-test call), which is allowed and simply has nothing to close. */
     dd_tl_state_t *tl = dd_tl_state_get();
+    assert(!tl || tl->reentry_guard);
     if (tl) tl->reentry_guard = false;
 
     return user;
