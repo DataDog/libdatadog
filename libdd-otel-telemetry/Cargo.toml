@@ -18,8 +18,8 @@ opentelemetry_sdk = { version = "0.31", features = ["metrics"] }
 opentelemetry-otlp = { version = "0.31", default-features = false, features = [
     "metrics",
 ] }
-tracing.workspace = true
-libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime", default-features = false }
+tracing = { version = "0.1", default-features = false }
+libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime", default-features = false }
 
 [features]
 default = ["grpc"]
@@ -28,5 +28,5 @@ http = ["opentelemetry-otlp/http-proto", "opentelemetry-otlp/reqwest-client"]
 test-utils = []
 
 [dev-dependencies]
-libdd-shared-runtime = { version = "2.0.0", path = "../libdd-shared-runtime" }
+libdd-shared-runtime = { version = "1.0.0", path = "../libdd-shared-runtime" }
 tokio = { version = "1.23", features = ["rt-multi-thread", "macros"] }
