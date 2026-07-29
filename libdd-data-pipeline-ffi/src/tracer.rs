@@ -13,9 +13,9 @@ use crate::error::{ExporterError, ExporterErrorCode as ErrorCode};
 use crate::response::ExporterResponse;
 use crate::trace_exporter::TraceExporter;
 use crate::{catch_panic, gen_error};
-use libdd_common_ffi::slice::AsBytes;
+use libdd_common_ffi::slice::{AsBytes, ByteSlice};
 use libdd_common_ffi::CharSlice;
-use libdd_tinybytes::BytesString;
+use libdd_tinybytes::{Bytes, BytesString};
 use libdd_trace_utils::span::v04::SpanBytes;
 use std::ptr::NonNull;
 
@@ -184,6 +184,38 @@ pub unsafe extern "C" fn ddog_tracer_span_set_metric(
                 Err(e) => return Some(e),
             };
             span.0.metrics.insert(key, value);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Add or overwrite a structured metadata entry (`meta_struct`) on the span.
+///
+/// The `key` and opaque binary `value` are copied into the span. The value is
+/// not interpreted or validated as MessagePack.
+///
+/// # Safety
+///
+/// `handle` must be a valid pointer to a `TracerSpan`. `key` must point to
+/// valid UTF-8 memory, and `value` must point to valid memory for its length.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_tracer_span_set_meta_struct_blob(
+    handle: Option<&mut TracerSpan>,
+    key: CharSlice,
+    value: ByteSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(span) = handle {
+            let key = match charslice_to_bytesstring(key) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            span.0
+                .meta_struct
+                .insert(key, Bytes::copy_from_slice(value.as_bytes()));
             None
         } else {
             gen_error!(ErrorCode::InvalidArgument)
@@ -407,6 +439,10 @@ mod tests {
         CharSlice::from_bytes(s.as_bytes())
     }
 
+    fn bs(bytes: &[u8]) -> ByteSlice<'_> {
+        ByteSlice::from(bytes)
+    }
+
     fn make_minimal_span() -> Box<TracerSpan> {
         unsafe {
             let mut handle = MaybeUninit::<Box<TracerSpan>>::uninit();
@@ -465,6 +501,7 @@ mod tests {
             assert_eq!(span.0.error, 0);
             assert!(span.0.meta.is_empty());
             assert!(span.0.metrics.is_empty());
+            assert!(span.0.meta_struct.is_empty());
             assert!(span.0.span_links.is_empty());
             assert!(span.0.span_events.is_empty());
 
@@ -528,6 +565,36 @@ mod tests {
     }
 
     #[test]
+    fn set_meta_struct_blob_inserts_binary_entries() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let value = b"\x82\xa6nested\x92\xc3\xc0\xa3raw\xc4\x03\x00\xff\x80";
+
+            let err =
+                ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("_dd.stack"), bs(value));
+            assert!(err.is_none());
+
+            assert_eq!(span.0.meta_struct.get("_dd.stack").unwrap().as_ref(), value);
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_overwrites_existing_key() {
+        unsafe {
+            let mut span = make_minimal_span();
+
+            ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("k"), bs(b"first"));
+            ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), cs("k"), bs(b"second"));
+
+            assert_eq!(span.0.meta_struct.get("k").unwrap().as_ref(), b"second");
+
+            ddog_tracer_span_free(span);
+        }
+    }
+
+    #[test]
     fn set_meta_null_handle_returns_error() {
         unsafe {
             let err = ddog_tracer_span_set_meta(None, cs("k"), cs("v"));
@@ -542,6 +609,30 @@ mod tests {
             let err = ddog_tracer_span_set_metric(None, cs("k"), 1.0);
             assert!(err.is_some());
             ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_null_handle_returns_error() {
+        unsafe {
+            let err = ddog_tracer_span_set_meta_struct_blob(None, cs("k"), bs(b"value"));
+            assert!(err.is_some());
+            ddog_trace_exporter_error_free(err);
+        }
+    }
+
+    #[test]
+    fn set_meta_struct_blob_invalid_key_returns_error() {
+        unsafe {
+            let mut span = make_minimal_span();
+            let key = CharSlice::from_bytes(&[0xff]);
+
+            let err = ddog_tracer_span_set_meta_struct_blob(Some(&mut *span), key, bs(b"value"));
+            assert!(err.is_some());
+            assert!(span.0.meta_struct.is_empty());
+            ddog_trace_exporter_error_free(err);
+
+            ddog_tracer_span_free(span);
         }
     }
 
