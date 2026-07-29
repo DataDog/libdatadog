@@ -3,13 +3,7 @@
 
 use crate::fetch::FileStorage;
 
-use std::{
-    borrow::Cow,
-    fmt,
-    ops::RangeInclusive,
-    path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{borrow::Cow, fmt, ops::RangeInclusive, path::PathBuf, time::Duration};
 
 use anyhow::{bail, format_err};
 use base64::Engine;
@@ -278,7 +272,20 @@ pub struct ClientResponse {
     pub refresh_interval: Duration,
 }
 
-/// A trusted, unexpired TUF target. Produced by [`trusted_targets`].
+/// A single TUF target that has passed metadata verification: it comes from the
+/// director's trusted `targets` database (so its signature, snapshot binding and
+/// version have already been checked by rust-tuf's `update()`), it is not
+/// expired, and it declares at least one hash algorithm we can verify.
+///
+/// This is a lightweight, already-validated *view* over a
+/// [`tuf::metadata::TargetDescription`] — it borrows the target `path` and copies
+/// out only the fields we need downstream. It is produced by [`trusted_targets`]
+/// via [`TrustedTarget::try_create`]; construction fails (dropping the target)
+/// if the target is expired or has no supported hash.
+///
+/// Note: holding a `TrustedTarget` means the *metadata* is trusted, not that the
+/// *content* has been fetched or checked — [`AgentlessFetcher::fetch_target`]
+/// still re-verifies the downloaded bytes against `length` and `all_hashes`.
 struct TrustedTarget<'a> {
     path: &'a tuf::metadata::TargetPath,
     length: u64,
@@ -950,14 +957,11 @@ fn jitter_secs(min_secs: u64, max_secs: u64) -> Duration {
     Duration::from_secs(rand::thread_rng().gen_range(min_secs..=max_secs))
 }
 
+/// unix timestamp in milliseconds. Clamp to zero if the timestamp would
+/// have been negative (prior to 1970)
 fn now_unix_milli_ts() -> u64 {
-    u64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_millis(),
-    )
-    .unwrap_or(u64::MAX)
+    let now = chrono::Utc::now().timestamp_millis();
+    u64::try_from(now).unwrap_or(0)
 }
 
 /// Cross-verify the director's announced targets against the config repo's
