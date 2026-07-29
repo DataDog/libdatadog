@@ -43,7 +43,7 @@ pub struct Span {
 ///   low 64 bits).
 /// - `span_id` is the 64-bit id hex-encoded as 16 lowercase chars.
 /// - `tracestate` and `attributes` are only emitted when non-empty.
-/// - `flags` is only emitted when not zero.
+/// - `dropped_attributes_count` and `flags` are only emitted when not zero.
 struct SpanLinksSerializerV05<'a, T: TraceData>(&'a [SpanLink<T>]);
 struct SpanLinkSerializerV05<'a, T: TraceData>(&'a SpanLink<T>);
 
@@ -63,8 +63,13 @@ impl<'a, T: TraceData> Serialize for SpanLinkSerializerV05<'a, T> {
         let tracestate: &str = link.tracestate.borrow();
         let has_tracestate = !tracestate.is_empty();
         let has_attributes = !link.attributes.is_empty();
+        let has_dropped_attributes = link.dropped_attributes_count != 0;
         let has_flags = link.flags != 0;
-        let len = 2 + has_tracestate as usize + has_attributes as usize + has_flags as usize;
+        let len = 2
+            + has_tracestate as usize
+            + has_attributes as usize
+            + has_dropped_attributes as usize
+            + has_flags as usize;
         let mut map = serializer.serialize_map(Some(len))?;
         map.serialize_entry(
             "trace_id",
@@ -79,6 +84,9 @@ impl<'a, T: TraceData> Serialize for SpanLinkSerializerV05<'a, T> {
                 "attributes",
                 &SortedStrMapSerializerV05::<T>(&link.attributes),
             )?;
+        }
+        if has_dropped_attributes {
+            map.serialize_entry("dropped_attributes_count", &link.dropped_attributes_count)?;
         }
         if has_flags {
             map.serialize_entry("flags", &link.flags)?;
@@ -405,6 +413,7 @@ mod tests {
             trace_id_high: 67890,
             span_id: 54321,
             attributes: HashMap::from([(BytesString::from("key"), BytesString::from("val"))]),
+            dropped_attributes_count: 7,
             tracestate: BytesString::from("tracestate_value"),
             flags: 1,
         }];
@@ -425,7 +434,7 @@ mod tests {
         let links_json = meta_json(&dict, &v05_span, "_dd.span_links").unwrap();
         assert_eq!(
             links_json,
-            "[{\"trace_id\":\"00000000000109320000000000003039\",\"span_id\":\"000000000000d431\",\"tracestate\":\"tracestate_value\",\"attributes\":{\"key\":\"val\"},\"flags\":1}]"
+            "[{\"trace_id\":\"00000000000109320000000000003039\",\"span_id\":\"000000000000d431\",\"tracestate\":\"tracestate_value\",\"attributes\":{\"key\":\"val\"},\"dropped_attributes_count\":7,\"flags\":1}]"
         );
         let events_json = meta_json(&dict, &v05_span, "events").unwrap();
         assert_eq!(
@@ -474,6 +483,7 @@ mod tests {
             trace_id_high: 0,
             span_id: 0xfeed,
             attributes: HashMap::new(),
+            dropped_attributes_count: 0,
             tracestate: BytesString::from(""),
             flags: 7,
         }];

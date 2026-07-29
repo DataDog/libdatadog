@@ -463,6 +463,7 @@ mod tracing_integration_tests {
         let span_link = SpanLinkBytes {
             trace_id: tid_bytes(0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210),
             span_id: 0xa0a0_a0a0_a0a0_a0a0,
+            dropped_attributes_count: 0,
             tracestate: bs_v1("dd=t.tid:abc"),
             flags: 1,
             attributes: VecMap::new(),
@@ -658,6 +659,7 @@ mod tracing_integration_tests {
         let span_link = SpanLinkBytes {
             trace_id: tid_bytes(0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210),
             span_id: 0xa0a0_a0a0_a0a0_a0a0,
+            dropped_attributes_count: 0,
             tracestate: bs_v1("dd=t.tid:abc"),
             flags: 1,
             attributes: link_attrs,

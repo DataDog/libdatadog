@@ -467,7 +467,7 @@ fn map_span_link<T: TraceData>(link: &SpanLink<T>) -> ProtoLink {
                 )
             })
             .collect(),
-        dropped_attributes_count: 0,
+        dropped_attributes_count: link.dropped_attributes_count,
         // W3C trace flags of the linked context (sampled bit, etc.); carry them through so OTLP
         // consumers see the same link metadata the tracer recorded.
         flags: link.flags,
@@ -994,6 +994,7 @@ mod tests {
         span.span_links.push(SpanLink {
             trace_id: 0x11,
             span_id: 0x22,
+            dropped_attributes_count: 7,
             flags: 1,
             ..Default::default()
         });
@@ -1003,6 +1004,7 @@ mod tests {
             link.flags, 1,
             "OTLP Link.flags must carry the span link's flags"
         );
+        assert_eq!(link.dropped_attributes_count, 7);
     }
 
     #[test]

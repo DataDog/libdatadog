@@ -50,6 +50,7 @@ enum SpanLinkKey {
     TraceIdHigh,
     SpanId,
     Attributes,
+    DroppedAttributesCount,
     Tracestate,
     Flags,
 }
@@ -63,6 +64,7 @@ impl FromStr for SpanLinkKey {
             "trace_id_high" => Ok(SpanLinkKey::TraceIdHigh),
             "span_id" => Ok(SpanLinkKey::SpanId),
             "attributes" => Ok(SpanLinkKey::Attributes),
+            "dropped_attributes_count" => Ok(SpanLinkKey::DroppedAttributesCount),
             "tracestate" => Ok(SpanLinkKey::Tracestate),
             "flags" => Ok(SpanLinkKey::Flags),
             _ => Err(DecodeError::InvalidFormat(
@@ -85,6 +87,9 @@ fn decode_span_link<T: DeserializableTraceData>(
             SpanLinkKey::TraceIdHigh => span.trace_id_high = read_number(buf)?,
             SpanLinkKey::SpanId => span.span_id = read_number(buf)?,
             SpanLinkKey::Attributes => span.attributes = read_str_map_to_hashmap(buf)?,
+            SpanLinkKey::DroppedAttributesCount => {
+                span.dropped_attributes_count = read_number(buf)?
+            }
             SpanLinkKey::Tracestate => span.tracestate = buf.read_string()?,
             SpanLinkKey::Flags => span.flags = read_number(buf)?,
         }
@@ -117,6 +122,10 @@ mod tests {
         assert_eq!(
             SpanLinkKey::from_str("attributes").unwrap(),
             SpanLinkKey::Attributes
+        );
+        assert_eq!(
+            SpanLinkKey::from_str("dropped_attributes_count").unwrap(),
+            SpanLinkKey::DroppedAttributesCount
         );
         assert_eq!(
             SpanLinkKey::from_str("tracestate").unwrap(),

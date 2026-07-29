@@ -37,6 +37,7 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
     for link in span_links.iter() {
         let link_len = 3 /* minimal span link: trace_id, trace_id_high, span_id */
             + (!link.attributes.is_empty()) as u32
+            + (link.dropped_attributes_count != 0) as u32
             + (!link.tracestate.borrow().is_empty()) as u32
             + (link.flags != 0) as u32;
 
@@ -58,6 +59,11 @@ pub fn encode_span_links<W: RmpWrite, T: TraceData>(
                 write_str(writer, k.borrow())?;
                 write_str(writer, (*v).borrow())?;
             }
+        }
+
+        if link.dropped_attributes_count != 0 {
+            write_const_msgpack_str!(writer, "dropped_attributes_count")?;
+            write_u32(writer, link.dropped_attributes_count)?;
         }
 
         if !link.tracestate.borrow().is_empty() {
@@ -280,4 +286,38 @@ pub fn encode_span<W: RmpWrite, T: TraceData>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_span;
+    use crate::span::v04::{SpanBytes, SpanLinkBytes};
+    use rmpv::Value;
+    use std::io::Cursor;
+
+    #[test]
+    fn span_link_encodes_dropped_attributes_count() {
+        let span = SpanBytes {
+            span_links: vec![SpanLinkBytes {
+                dropped_attributes_count: 7,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut encoded = Vec::new();
+        encode_span(&mut encoded, &span).unwrap();
+        let decoded = rmpv::decode::read_value(&mut Cursor::new(encoded)).unwrap();
+        let links = decoded
+            .as_map()
+            .unwrap()
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("span_links"))
+            .unwrap()
+            .1
+            .as_array()
+            .unwrap();
+        let link = links[0].as_map().unwrap();
+
+        assert!(link.contains(&(Value::from("dropped_attributes_count"), Value::from(7),)));
+    }
 }

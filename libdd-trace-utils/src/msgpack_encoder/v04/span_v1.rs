@@ -466,6 +466,7 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
 
         let link_len = 3 // trace_id, trace_id_high, span_id (always)
             + (attr_count > 0) as u32
+            + (link.dropped_attributes_count != 0) as u32
             + (!link.tracestate.borrow().is_empty()) as u32
             + (link.flags != 0) as u32;
 
@@ -496,6 +497,11 @@ fn encode_span_links<W: RmpWrite, T: TraceData>(
                     _ => {}
                 }
             }
+        }
+
+        if link.dropped_attributes_count != 0 {
+            write_const_msgpack_str!(writer, "dropped_attributes_count")?;
+            write_u32(writer, link.dropped_attributes_count)?;
         }
 
         if !link.tracestate.borrow().is_empty() {
@@ -1308,6 +1314,7 @@ mod tests {
                     trace_id: link_tid,
                     span_id: 7,
                     attributes: link_attrs,
+                    dropped_attributes_count: 9,
                     tracestate: bs("dd=t.dm:-1"),
                     flags: 3,
                 }]),
@@ -1335,6 +1342,10 @@ mod tests {
             Some("dd=t.dm:-1")
         );
         assert_eq!(map_get(link, "flags").unwrap().as_u64(), Some(3));
+        assert_eq!(
+            map_get(link, "dropped_attributes_count").unwrap().as_u64(),
+            Some(9)
+        );
 
         let attrs = map_get(link, "attributes").expect("string attrs preserved");
         assert_eq!(

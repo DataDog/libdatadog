@@ -82,12 +82,14 @@ impl<T: TraceData> Serialize for LogSpanLink<'_, T> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let link = self.0;
         let has_attributes = !link.attributes.is_empty();
+        let has_dropped_attributes = link.dropped_attributes_count != 0;
         let has_tracestate = !Borrow::<str>::borrow(&link.tracestate).is_empty();
         let has_flags = link.flags != 0;
 
         // Always: trace_id, trace_id_high, span_id.
         let mut len = 3;
         len += has_attributes as usize;
+        len += has_dropped_attributes as usize;
         len += has_tracestate as usize;
         len += has_flags as usize;
 
@@ -97,6 +99,9 @@ impl<T: TraceData> Serialize for LogSpanLink<'_, T> {
         state.serialize_field("span_id", &link.span_id)?;
         if has_attributes {
             state.serialize_field("attributes", &link.attributes)?;
+        }
+        if has_dropped_attributes {
+            state.serialize_field("dropped_attributes_count", &link.dropped_attributes_count)?;
         }
         if has_tracestate {
             state.serialize_field("tracestate", &link.tracestate)?;

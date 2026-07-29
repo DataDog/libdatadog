@@ -61,6 +61,7 @@ pub(super) mod span_link_key {
     pub const ATTRIBUTES: u8 = 3;
     pub const TRACE_STATE: u8 = 4;
     pub const FLAGS: u8 = 5;
+    pub const DROPPED_ATTRIBUTES_COUNT: u8 = 6;
 }
 
 pub(super) mod span_event_key {
