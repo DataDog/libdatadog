@@ -1,6 +1,10 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 //! This module implements the SpanConcentrator used to aggregate spans into stats
+mod aggregation;
+pub mod cardinality_limit_telemetry;
+pub mod stat_span;
+
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, warn};
@@ -11,11 +15,10 @@ use libdd_trace_protobuf::pb;
 
 use aggregation::StatsBucket;
 
-mod aggregation;
 use aggregation::BorrowedAggregationKey;
 pub use aggregation::{FixedAggregationKey, OtlpExactCell, OtlpExactGroup, OtlpStatsBucket};
+use cardinality_limit_telemetry::CollapsedFieldsMetrics;
 
-pub mod stat_span;
 pub use stat_span::StatSpan;
 
 const ADDITIONAL_METRIC_TAGS_MAX_KEYS: usize = 4;
@@ -41,20 +44,20 @@ fn normalize_additional_metric_tag_keys(mut keys: Vec<String>) -> Vec<String> {
 ///
 /// Obfuscated and un-obfuscated buckets are kept separate because they must be sent in distinct
 /// stats payloads: only the obfuscated payload carries the `datadog-obfuscation-version` header.
-pub struct FlushResult {
+pub struct FlushResult<T> {
     /// Buckets whose resource names were obfuscated client-side.
-    pub obfuscated_buckets: Vec<pb::ClientStatsBucket>,
+    pub obfuscated_buckets: Vec<T>,
     /// Buckets whose resource names were left as-is.
-    pub unobfuscated_buckets: Vec<pb::ClientStatsBucket>,
+    pub unobfuscated_buckets: Vec<T>,
     /// Total number of spans that were collapsed into the overflow sentinel bucket due to
     /// cardinality limiting across all flushed time buckets.
     pub collapsed_spans: u64,
+    pub collapsed_fields_metrics: CollapsedFieldsMetrics,
 }
 
-impl FlushResult {
+impl<T> FlushResult<T> {
     /// All flushed buckets regardless of obfuscation.
-    #[cfg(test)]
-    pub fn all_buckets(self) -> Vec<pb::ClientStatsBucket> {
+    pub fn all_buckets(self) -> Vec<T> {
         let mut buckets = self.obfuscated_buckets;
         buckets.extend(self.unobfuscated_buckets);
         buckets
@@ -68,11 +71,11 @@ impl FlushResult {
 pub trait FlushableConcentrator {
     /// Flush time buckets and return them together with flush metadata. If `force` is true, flush
     /// all buckets. See [`FlushResult`] for the returned data.
-    fn flush_buckets(&mut self, force: bool) -> FlushResult;
+    fn flush_buckets(&mut self, force: bool) -> FlushResult<pb::ClientStatsBucket>;
 }
 
 impl FlushableConcentrator for SpanConcentrator {
-    fn flush_buckets(&mut self, force: bool) -> FlushResult {
+    fn flush_buckets(&mut self, force: bool) -> FlushResult<pb::ClientStatsBucket> {
         self.flush(SystemTime::now(), force)
     }
 }
@@ -376,30 +379,16 @@ impl SpanConcentrator {
     /// all buckets.
     ///
     /// Obfuscated and un-obfuscated buckets are returned separately, see [`FlushResult`].
-    pub fn flush(&mut self, now: SystemTime, force: bool) -> FlushResult {
-        let (buckets, collapsed_spans) = self.drain_due_buckets(now, force, StatsBucket::flush);
-        let mut obfuscated_buckets = Vec::new();
-        let mut unobfuscated_buckets = Vec::new();
-        for (obfuscated, bucket) in buckets {
-            if obfuscated {
-                obfuscated_buckets.push(bucket);
-            } else {
-                unobfuscated_buckets.push(bucket);
-            }
-        }
-        FlushResult {
-            obfuscated_buckets,
-            unobfuscated_buckets,
-            collapsed_spans,
-        }
+    pub fn flush(&mut self, now: SystemTime, force: bool) -> FlushResult<pb::ClientStatsBucket> {
+        self.drain_due_buckets(now, force, StatsBucket::flush)
     }
 
     /// Like [`Self::flush`], but also emits exact per-cell scalars alongside each bucket for the
     /// OTLP trace-metrics path. The protobuf bucket inside each [`OtlpStatsBucket`] is identical
     /// to what [`Self::flush`] would produce, so the /v0.6/stats agent path is unaffected.
     pub fn flush_with_otlp_exact(&mut self, now: SystemTime, force: bool) -> Vec<OtlpStatsBucket> {
-        let (buckets, _) = self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact);
-        buckets.into_iter().map(|(_, bucket)| bucket).collect()
+        self.drain_due_buckets(now, force, StatsBucket::flush_with_otlp_exact)
+            .all_buckets()
     }
 
     /// Drain the buckets that are due for flushing, encoding each with `encode`.
@@ -413,7 +402,7 @@ impl SpanConcentrator {
         now: SystemTime,
         force: bool,
         encode: impl Fn(StatsBucket, u64) -> T,
-    ) -> (Vec<(bool, T)>, u64) {
+    ) -> FlushResult<T> {
         // TODO: Wait for HashMap::extract_if to be stabilized to avoid a full drain
         let now_timestamp = system_time_to_unix_duration(now).as_nanos() as u64;
         let buckets: Vec<(u64, StatsBucket)> = self.buckets.drain().collect();
@@ -423,8 +412,9 @@ impl SpanConcentrator {
             align_timestamp(now_timestamp, self.bucket_size)
                 - (self.buffer_len as u64 - 1) * self.bucket_size
         };
-        let mut total_collapsed = 0;
-        let buckets_pb = buckets
+        let mut collapsed_spans = 0;
+        let mut collapsed_fields_metrics = CollapsedFieldsMetrics::zero();
+        let buckets_pb: Vec<(bool, T)> = buckets
             .into_iter()
             .filter_map(|(timestamp, bucket)| {
                 // Always keep `bufferLen` buckets (default is 2: current + previous one).
@@ -440,7 +430,8 @@ impl SpanConcentrator {
                     self.buckets.insert(timestamp, bucket);
                     return None;
                 }
-                total_collapsed += bucket.collapsed_count();
+                collapsed_spans += bucket.collapsed_count();
+                collapsed_fields_metrics += bucket.collapsed_fields_metrics();
                 #[cfg(feature = "stats-obfuscation")]
                 let obfuscated = bucket.obfuscated;
                 #[cfg(not(feature = "stats-obfuscation"))]
@@ -448,14 +439,30 @@ impl SpanConcentrator {
                 Some((obfuscated, encode(bucket, self.bucket_size)))
             })
             .collect();
-        if total_collapsed > 0 {
+        if collapsed_spans > 0 {
             debug!(
                 max_entries_per_bucket = self.cardinality_limits.whole_key_limit,
-                total_collapsed,
+                collapsed_spans,
                 "Client-side stats values have been collapsed to 'tracer_blocked_value'. This is due to the cardinality exceeding DD_TRACE_STATS_CARDINALITY_LIMIT"
             );
         }
-        (buckets_pb, total_collapsed)
+
+        let mut obfuscated_buckets = Vec::new();
+        let mut unobfuscated_buckets = Vec::new();
+        for (obfuscated, bucket) in buckets_pb {
+            if obfuscated {
+                obfuscated_buckets.push(bucket);
+            } else {
+                unobfuscated_buckets.push(bucket);
+            }
+        }
+
+        FlushResult {
+            obfuscated_buckets,
+            unobfuscated_buckets,
+            collapsed_spans,
+            collapsed_fields_metrics,
+        }
     }
 }
 

@@ -15,9 +15,12 @@ use std::{
 };
 use tracing::warn;
 
-use crate::span_concentrator::StatSpan;
+use crate::span_concentrator::{cardinality_limit_telemetry::CollapsedFieldSet, StatSpan};
 
-use super::CardinalityLimitConfig;
+use super::{
+    cardinality_limit_telemetry::{self, CollapsedFieldsMetrics},
+    CardinalityLimitConfig,
+};
 
 /// Sentinel value used for cardinality limiting.
 pub const TRACER_BLOCKED_VALUE: &str = "tracer_blocked_value";
@@ -527,8 +530,9 @@ pub(super) struct StatsBucket {
     distinct_http_endpoints: HashSet<u64>,
     distinct_peer_tags: HashSet<u64>,
     distinct_additional_tags: HashSet<u64>,
-    /// Number of spans collapsed into the overflow bucket due to cardinality limiting.
+    /// Number of spans collapsed into the overflow bucket due to whole-key cardinality limiting.
     collapsed_count: u64,
+    collapsed_fields_metrics: CollapsedFieldsMetrics,
     /// Indicates if stats obfuscated in this bucket. This is set once at creation and stays
     /// constant per bucket
     #[cfg(feature = "stats-obfuscation")]
@@ -555,7 +559,13 @@ impl StatsBucket {
             distinct_http_endpoints: HashSet::new(),
             distinct_peer_tags: HashSet::new(),
             distinct_additional_tags: HashSet::new(),
+            collapsed_fields_metrics: cardinality_limit_telemetry::CollapsedFieldsMetrics::zero(),
         }
+    }
+
+    /// Returns metrics on spans field collapse with reasons.
+    pub fn collapsed_fields_metrics(&self) -> cardinality_limit_telemetry::CollapsedFieldsMetrics {
+        self.collapsed_fields_metrics
     }
 
     /// Return the number of spans collapsed into the overflow bucket.
@@ -614,11 +624,14 @@ impl StatsBucket {
             hasher.finish()
         }
 
+        let mut collapsed_fields = CollapsedFieldSet::empty();
+
         let resource_hash = hash(&key.fixed.resource_name);
         let resources_count = self.distinct_resources.len();
         if let Entry::Vacant(slot) = self.distinct_resources.entry(resource_hash) {
             if resources_count >= self.cardinality_limits.resource_limit {
                 key.fixed.resource_name = TRACER_BLOCKED_VALUE;
+                collapsed_fields.add(CollapsedFieldSet::RESOURCE_NAME);
             } else {
                 slot.insert();
             }
@@ -629,6 +642,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_http_endpoints.entry(http_endpoint_hash) {
             if http_endpoints_count >= self.cardinality_limits.http_endpoint_limit {
                 key.fixed.http_endpoint = TRACER_BLOCKED_VALUE;
+                collapsed_fields.add(CollapsedFieldSet::HTTP_ENDPOINT);
             } else {
                 slot.insert();
             }
@@ -639,6 +653,7 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_peer_tags.entry(peer_tags_hash) {
             if peer_tags_count >= self.cardinality_limits.peer_tags_limit {
                 key.peer_tags = vec![(TRACER_BLOCKED_VALUE, Cow::Borrowed(""))];
+                collapsed_fields.add(CollapsedFieldSet::PEER_TAGS);
             } else {
                 slot.insert();
             }
@@ -649,10 +664,12 @@ impl StatsBucket {
         if let Entry::Vacant(slot) = self.distinct_additional_tags.entry(additional_tags_hash) {
             if additional_tags_count >= self.cardinality_limits.additional_tags_limit {
                 key.additional_metric_tags = vec![(TRACER_BLOCKED_VALUE, "")];
+                collapsed_fields.add(CollapsedFieldSet::ADDITIONAL_TAGS);
             } else {
                 slot.insert();
             }
         }
+        self.collapsed_fields_metrics.increment(collapsed_fields);
     }
 
     /// Consume the bucket and return a ClientStatsBucket containing the bucket stats.
