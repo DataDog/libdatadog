@@ -32,6 +32,8 @@ exclude = ["TraceExporter", "TracerSpan", "TracerTraceChunks", "TokioCancellatio
 "ExporterError" = "ddog_TraceExporterError"
 "TracerSpan" = "ddog_TracerSpan"
 "TracerSpanFields" = "ddog_TracerSpanFields"
+"TracerSpanLink" = "ddog_TracerSpanLink"
+"TracerSpanLinkAttribute" = "ddog_TracerSpanLinkAttribute"
 "TracerTraceChunks" = "ddog_TracerTraceChunks"
 "TokioCancellationToken" = "ddog_TraceExporterCancelToken"
 
