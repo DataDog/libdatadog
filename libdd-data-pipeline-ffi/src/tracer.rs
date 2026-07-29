@@ -911,6 +911,75 @@ mod tests {
     }
 
     #[test]
+    fn event_attributes_accept_empty_typed_arrays() {
+        unsafe {
+            let mut event = make_event("empty-arrays", 123);
+            let strings: [CharSlice<'_>; 0] = [];
+            let bools: [bool; 0] = [];
+            let ints: [i64; 0] = [];
+            let doubles: [f64; 0] = [];
+
+            assert!(ddog_tracer_span_event_set_string_array(
+                Some(&mut event),
+                cs("strings"),
+                Slice::from(&strings[..])
+            )
+            .is_none());
+            assert!(ddog_tracer_span_event_set_bool_array(
+                Some(&mut event),
+                cs("bools"),
+                Slice::from(&bools[..])
+            )
+            .is_none());
+            assert!(ddog_tracer_span_event_set_int_array(
+                Some(&mut event),
+                cs("ints"),
+                Slice::from(&ints[..])
+            )
+            .is_none());
+            assert!(ddog_tracer_span_event_set_double_array(
+                Some(&mut event),
+                cs("doubles"),
+                Slice::from(&doubles[..])
+            )
+            .is_none());
+
+            for key in ["strings", "bools", "ints", "doubles"] {
+                assert_eq!(
+                    event.0.attributes.get(key),
+                    Some(&AttributeAnyValueBytes::Array(Vec::new()))
+                );
+            }
+
+            ddog_tracer_span_event_free(Some(event));
+        }
+    }
+
+    #[test]
+    fn invalid_event_strings_do_not_partially_update_the_event() {
+        unsafe {
+            let mut event = make_event("invalid", 123);
+            let invalid = CharSlice::from_bytes(&[0xff]);
+            let err = ddog_tracer_span_event_set_string(Some(&mut event), cs("scalar"), invalid);
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(err);
+            assert!(event.0.attributes.is_empty());
+
+            let values = [cs("valid"), invalid];
+            let err = ddog_tracer_span_event_set_string_array(
+                Some(&mut event),
+                cs("array"),
+                Slice::from(&values[..]),
+            );
+            assert_eq!(err.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(err);
+            assert!(event.0.attributes.is_empty());
+
+            ddog_tracer_span_event_free(Some(event));
+        }
+    }
+
+    #[test]
     fn attaching_events_is_atomic_and_preserves_order() {
         unsafe {
             let mut span = make_minimal_span();
