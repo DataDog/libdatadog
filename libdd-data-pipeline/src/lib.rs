@@ -14,6 +14,7 @@
 pub mod agent_info;
 pub(crate) mod agentless;
 mod health_metrics;
+mod llmobs;
 pub(crate) mod otlp;
 // `OtlpProtocol` (documented on the enum itself) is the only public symbol from the otherwise
 // crate-internal `otlp` module; re-exported here so the FFI crate can name it.

@@ -19,6 +19,7 @@ use self::stats::StatsComputationStatus;
 use self::trace_serializer::TraceSerializer;
 use crate::agent_info::ResponseObserver;
 use crate::agentless::{send_agentless_traces_http, AgentlessTraceConfig};
+use crate::llmobs::{route_events, send_events, LlmObsConfig};
 use crate::otlp::{map_traces_to_otlp, send_otlp_traces_http, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
 use crate::telemetry::{SendPayloadTelemetry, TelemetryClient};
@@ -270,6 +271,8 @@ pub struct TraceExporter<
     /// When set, APM trace spans are exported directly to the Datadog HTTP intake (agentless)
     /// instead of via the Datadog Agent
     agentless_config: Option<AgentlessTraceConfig>,
+    /// LLMObs routing layered on top of the APM Agent transport.
+    llmobs_config: Option<LlmObsConfig>,
     trace_filterer: ArcSwap<TraceFilterer>,
     /// When true, span stats are computed and exported as OTLP metrics. The concentrator is
     /// started at build time, so agent-driven stats (de)activation in `check_agent_info` is
@@ -794,6 +797,30 @@ impl<
             return self.send_agentless_traces_inner(traces, config).await;
         }
 
+        let routed_llmobs = if let Some(config) = &self.llmobs_config {
+            let routed = route_events(&mut traces);
+            if let Err(error) = send_events(
+                &self.capabilities,
+                &self.endpoint.url,
+                config,
+                &self.metadata.tracer_version,
+                routed.standalone,
+            )
+            .await
+            {
+                error!(
+                    ?error,
+                    "Failed to send LLMObs events from rejected APM traces"
+                );
+            }
+            routed.rescue
+        } else {
+            Vec::new()
+        };
+        if traces.is_empty() {
+            return Ok(AgentResponse::Unchanged);
+        }
+
         // Process stats computation and drop non-sampled (p0) chunks.
         // This must run before the OTLP path so that unsampled spans are not exported.
         stats::process_traces_for_stats(
@@ -858,6 +885,25 @@ impl<
                 prepared.chunk_count,
             )
             .await;
+
+        if result.is_err() && !routed_llmobs.is_empty() {
+            if let Some(config) = &self.llmobs_config {
+                if let Err(error) = send_events(
+                    &self.capabilities,
+                    &self.endpoint.url,
+                    config,
+                    &self.metadata.tracer_version,
+                    routed_llmobs,
+                )
+                .await
+                {
+                    error!(
+                        ?error,
+                        "Failed to rescue LLMObs events after APM Agent failure"
+                    );
+                }
+            }
+        }
 
         // State-hash trap mitigation: the agent does not return a `Datadog-Agent-State`
         // header on 404, so without this hook we'd stay pinned to V1 until the next `/info`

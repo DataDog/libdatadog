@@ -3,6 +3,7 @@
 
 use crate::agent_info::AgentInfoFetcher;
 use crate::agentless::config::{AgentlessTraceConfig, DEFAULT_AGENTLESS_TIMEOUT};
+use crate::llmobs::LlmObsConfig;
 use crate::otlp::config::{OtlpProtocol, DEFAULT_OTLP_TIMEOUT};
 use crate::otlp::{OtlpMetricsConfig, OtlpResourceInfo, OtlpTraceConfig};
 #[cfg(feature = "telemetry")]
@@ -91,6 +92,9 @@ pub struct TraceExporterBuilder<R: SharedRuntime> {
     agentless_endpoint: Option<String>,
     agentless_api_key: Option<String>,
     agentless_timeout: Option<Duration>,
+    llmobs_agentless_endpoint: Option<String>,
+    llmobs_api_key: Option<String>,
+    llmobs_timeout: Option<Duration>,
     otlp_protocol: OtlpProtocol,
     otlp_metrics_endpoint: Option<String>,
     otlp_metrics_headers: Vec<(String, String)>,
@@ -168,6 +172,9 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
             agentless_endpoint: None,
             agentless_api_key: None,
             agentless_timeout: None,
+            llmobs_agentless_endpoint: None,
+            llmobs_api_key: None,
+            llmobs_timeout: None,
             output_to_log: false,
             log_max_line_size: None,
             restart_after_fork: true,
@@ -480,6 +487,22 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
     /// return [`BuilderErrorKind::InvalidConfiguration`].
     pub fn set_agentless_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.agentless_timeout = Some(timeout);
+        self
+    }
+
+    /// Enables routing of `_llmobs` span structures through the APM exporter.
+    ///
+    /// LLMObs events use the local Agent EVP proxy first. `agentless_endpoint` and
+    /// `api_key` configure the direct-intake fallback used when EVP delivery fails.
+    pub fn set_llmobs(
+        &mut self,
+        agentless_endpoint: &str,
+        api_key: &str,
+        timeout: Duration,
+    ) -> &mut Self {
+        self.llmobs_agentless_endpoint = Some(agentless_endpoint.to_owned());
+        self.llmobs_api_key = Some(api_key.to_owned());
+        self.llmobs_timeout = Some(timeout);
         self
     }
 
@@ -814,6 +837,13 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
         let log_output = self
             .output_to_log
             .then(|| self.log_max_line_size.unwrap_or(DEFAULT_LOG_MAX_LINE_SIZE));
+        let llmobs_config = self
+            .llmobs_agentless_endpoint
+            .map(|agentless_endpoint| LlmObsConfig {
+                agentless_endpoint,
+                api_key: self.llmobs_api_key.unwrap_or_default(),
+                timeout: self.llmobs_timeout.unwrap_or(Duration::from_secs(5)),
+            });
 
         Ok(TraceExporter {
             endpoint: Endpoint {
@@ -877,6 +907,7 @@ impl<R: SharedRuntime> TraceExporterBuilder<R> {
                 .then(AgentResponsePayloadVersion::new),
             otlp_config,
             agentless_config,
+            llmobs_config,
             trace_filterer: ArcSwap::from_pointee(TraceFilterer::with_empty_conf()),
             otlp_stats_enabled,
             log_output,
