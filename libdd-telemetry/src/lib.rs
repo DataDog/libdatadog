@@ -32,6 +32,7 @@ pub fn build_host() -> data::Host {
         host.container_id = ?container_id,
         host.os = info::os::os_name(),
         host.os_version = ?os_version,
+        host.architecture = info::os::architecture(),
         "Built telemetry host information"
     );
 
@@ -40,6 +41,7 @@ pub fn build_host() -> data::Host {
         container_id,
         os: Some(String::from(info::os::os_name())),
         os_version,
+        architecture: Some(String::from(info::os::architecture())),
         kernel_name: info::os::os_type(),
         kernel_release: info::os::os_release(),
         #[cfg(unix)]

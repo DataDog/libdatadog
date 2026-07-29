@@ -128,11 +128,15 @@ mod tests {
                 "dependencies": [
                     {
                         "name": "tokio",
-                        "version": "1.32.0"
+                        "version": "1.32.0",
+                        "hash": null,
+                        "metadata": null
                     },
                     {
                         "name": "serde",
-                        "version": null
+                        "version": null,
+                        "hash": null,
+                        "metadata": null
                     }
                 ]
             }
@@ -246,7 +250,7 @@ mod tests {
         let expected = json!({
             "request_type": "app-endpoints",
             "payload": {
-                "is_first": true,
+                "is-first": true,
                 "endpoints": [
                     {
                         "method": "GET",
@@ -511,7 +515,8 @@ mod tests {
                 "products": {
                     "appsec": {
                         "enabled": true,
-                        "version": "1.2.3"
+                        "version": "1.2.3",
+                        "error": null
                     }
                 }
             }
@@ -522,7 +527,6 @@ mod tests {
 
     #[test]
     fn test_dependency_metadata_serialization() {
-        // A plain dependency (no metadata) omits both `hash` and `metadata`.
         let plain = Payload::AppDependenciesLoaded(AppDependenciesLoaded {
             dependencies: vec![Dependency {
                 name: "requests".to_string(),
@@ -534,7 +538,9 @@ mod tests {
             serde_json::to_value(&plain).unwrap(),
             json!({
                 "request_type": "app-dependencies-loaded",
-                "payload": { "dependencies": [{ "name": "requests", "version": "2.0" }] }
+                "payload": { "dependencies": [{
+                    "name": "requests", "version": "2.0", "hash": null, "metadata": null
+                }] }
             })
         );
 
@@ -558,6 +564,7 @@ mod tests {
                 "payload": { "dependencies": [{
                     "name": "requests",
                     "version": "2.0",
+                    "hash": null,
                     "metadata": [{
                         "type": "reachability",
                         "value": "{\"id\":\"CVE-2024-1\",\"reached\":true}"
@@ -579,7 +586,9 @@ mod tests {
             serde_json::to_value(&empty_meta).unwrap(),
             json!({
                 "request_type": "app-dependencies-loaded",
-                "payload": { "dependencies": [{ "name": "requests", "version": "2.0", "metadata": [] }] }
+                "payload": { "dependencies": [{
+                    "name": "requests", "version": "2.0", "hash": null, "metadata": []
+                }] }
             })
         );
     }

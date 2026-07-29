@@ -67,6 +67,7 @@ pub enum MetricNamespace {
     Civisibility,
     Mlobs,
     Ddtraceapi,
+    AiGuard,
 }
 
 #[derive(

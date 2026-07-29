@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 pub struct Dependency {
     pub name: String,
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Vec<DependencyMetadata>>,
 }
 
@@ -88,6 +86,7 @@ pub enum ConfigurationOrigin {
     FleetStableConfig,
     Calculated,
     OtelEnvVar,
+    Ini,
     Unknown,
 }
 
@@ -126,7 +125,6 @@ pub struct AppDependenciesLoaded {
 pub struct ProductState {
     pub enabled: bool,
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<Error>,
 }
 
@@ -147,6 +145,7 @@ pub struct AppClientConfigurationChange {
 
 #[derive(Debug, Serialize)]
 pub struct AppEndpoints {
+    #[serde(rename = "is-first")]
     pub is_first: bool,
     pub endpoints: Vec<serde_json::Value>,
 }

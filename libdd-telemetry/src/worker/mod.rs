@@ -555,7 +555,8 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
                 self.data.integrations.unflush_stored();
                 self.data.configurations.unflush_stored();
 
-                let extended_hb = data::Payload::AppExtendedHeartbeat(self.build_app_started());
+                let extended_hb =
+                    data::Payload::AppExtendedHeartbeat(self.build_extended_heartbeat());
                 match self.send_payload(&extended_hb).await {
                     Ok(()) => self.payload_sent_success(&extended_hb),
                     Err(err) => self.log_err(&err),
@@ -765,6 +766,19 @@ impl<C: HttpClientCapability + SleepCapability + MaybeSend + Sync + 'static> Tel
     }
 
     fn build_app_started(&mut self) -> data::AppStarted {
+        // This needs to be distinct from heartbeat:
+        // the backend fully rejects AppStarted payloads with contained integrations or dependencies
+        data::AppStarted {
+            configuration: self.data.configurations.unflushed().cloned().collect(),
+            dependencies: Vec::new(),
+            integrations: Vec::new(),
+            install_signature: self.data.install_signature.clone(),
+            products: self.data.products.clone(),
+            error: None,
+        }
+    }
+
+    fn build_extended_heartbeat(&mut self) -> data::AppStarted {
         data::AppStarted {
             configuration: self.data.configurations.unflushed().cloned().collect(),
             dependencies: self.data.dependencies.unflushed().cloned().collect(),
@@ -1744,6 +1758,88 @@ mod tests {
             flush_data_before, flush_data_after,
             "ExtendedHeartbeat must not reset FlushData's deadline",
         );
+    }
+
+    /// On api v2 the intake rejects an entire `app-started` payload whose `dependencies` or
+    /// `integrations` is non-empty ("v2 no longer accepts this field in app-started"), while
+    /// `app-extended-heartbeat` is validated with the v1 rules and is expected to carry both.
+    /// Both events are built from the same `data::AppStarted` shape, so it is easy to regress one
+    /// into the other.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn app_started_omits_dependencies_and_integrations() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::AddDependency(crate::data::Dependency {
+                name: "monolog/monolog".into(),
+                version: Some("3.5.0".into()),
+                ..Default::default()
+            }))
+            .await;
+        let _ = worker
+            .dispatch_action(TelemetryActions::AddIntegration(crate::data::Integration {
+                name: "curl".into(),
+                enabled: true,
+                ..Default::default()
+            }))
+            .await;
+
+        let app_started = worker.build_app_started();
+        assert!(
+            app_started.dependencies.is_empty(),
+            "app-started must not carry dependencies; the intake rejects the whole payload",
+        );
+        assert!(
+            app_started.integrations.is_empty(),
+            "app-started must not carry integrations; the intake rejects the whole payload",
+        );
+
+        // The data is not lost: it stays unflushed and goes out as its own events.
+        let batch = worker.build_app_events_batch();
+        assert!(
+            batch.iter().any(|p| matches!(
+                p,
+                crate::data::Payload::AppDependenciesLoaded(d) if !d.dependencies.is_empty()
+            )),
+            "dependencies registered before Start must still be reported via \
+             app-dependencies-loaded, got {batch:?}",
+        );
+        assert!(
+            batch.iter().any(|p| matches!(
+                p,
+                crate::data::Payload::AppIntegrationsChange(i) if !i.integrations.is_empty()
+            )),
+            "integrations registered before Start must still be reported via \
+             app-integrations-change, got {batch:?}",
+        );
+    }
+
+    /// The counterpart to the above: the extended heartbeat re-states the full accumulated
+    /// application state, dependencies and integrations included.
+    #[cfg_attr(miri, ignore)]
+    #[tokio::test]
+    async fn extended_heartbeat_carries_dependencies_and_integrations() {
+        let mut worker = build_test_worker_with_flavor(TelemetryWorkerFlavor::Full);
+
+        let _ = worker
+            .dispatch_action(TelemetryActions::AddDependency(crate::data::Dependency {
+                name: "monolog/monolog".into(),
+                version: Some("3.5.0".into()),
+                ..Default::default()
+            }))
+            .await;
+        let _ = worker
+            .dispatch_action(TelemetryActions::AddIntegration(crate::data::Integration {
+                name: "curl".into(),
+                enabled: true,
+                ..Default::default()
+            }))
+            .await;
+
+        let hb = worker.build_extended_heartbeat();
+        assert_eq!(1, hb.dependencies.len(), "{hb:?}");
+        assert_eq!(1, hb.integrations.len(), "{hb:?}");
     }
 
     mod reset {
