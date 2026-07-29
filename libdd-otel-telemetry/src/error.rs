@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-/// A non-fatal problem encountered while building a [`crate::TelemetryAggregator`].
+/// A non-fatal problem encountered while building a [`crate::OtelMetricsAggregator`].
 ///
 /// The aggregator is always usable after `build()` — on any of these conditions it falls back to
 /// a no-op internal state (recorded values are dropped) rather than failing construction, so a
@@ -31,14 +31,14 @@ impl fmt::Display for BuildWarning {
 }
 
 /// Error returned from lifecycle operations (`force_flush`/`shutdown`) on a
-/// [`crate::TelemetryAggregator`].
+/// [`crate::OtelMetricsAggregator`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TelemetryAggregatorError(pub(crate) String);
+pub struct OtelMetricsError(pub(crate) String);
 
-impl fmt::Display for TelemetryAggregatorError {
+impl fmt::Display for OtelMetricsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl std::error::Error for TelemetryAggregatorError {}
+impl std::error::Error for OtelMetricsError {}

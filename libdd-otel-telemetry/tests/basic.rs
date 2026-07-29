@@ -1,14 +1,14 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use libdd_otel_telemetry::{InstrumentDescriptor, InstrumentKind, TelemetryAggregatorBuilder};
+use libdd_otel_telemetry::{InstrumentDescriptor, InstrumentKind, OtelMetricsAggregatorBuilder};
 use libdd_shared_runtime::BasicRuntime;
 use libdd_shared_runtime::SharedRuntime;
 
 #[test]
 fn register_and_record_without_an_exporter_never_panics() {
     let runtime = BasicRuntime::new().expect("runtime");
-    let (aggregator, warnings) = TelemetryAggregatorBuilder::new().build(&runtime);
+    let (aggregator, warnings) = OtelMetricsAggregatorBuilder::new().build(&runtime);
     assert!(
         warnings.is_empty(),
         "no exporter configured, expect no warnings"
@@ -41,7 +41,7 @@ fn unsupported_protocol_falls_back_to_a_warning_not_a_panic() {
     use libdd_otel_telemetry::{OtlpExporterConfig, OtlpProtocol};
 
     let runtime = BasicRuntime::new().expect("runtime");
-    let (_, _warnings) = TelemetryAggregatorBuilder::new()
+    let (_, _warnings) = OtelMetricsAggregatorBuilder::new()
         .with_metrics_exporter(OtlpExporterConfig::new(
             "http://localhost:4318",
             OtlpProtocol::HttpProtobuf,

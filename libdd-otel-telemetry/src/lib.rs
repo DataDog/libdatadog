@@ -11,7 +11,7 @@
 //!
 //! # Design principle: primitives only
 //!
-//! [`TelemetryAggregator`]'s public API never accepts or returns an OTel SDK object, and never
+//! [`OtelMetricsAggregator`]'s public API never accepts or returns an OTel SDK object, and never
 //! accepts a callback/closure. Consumers register an instrument once (getting back an opaque
 //! [`InstrumentId`]) and then push primitive values (`f64` + string key/value attributes) for it.
 //! This holds even for observable/async instruments (`ObservableGauge`, `ObservableCounter`):
@@ -40,8 +40,8 @@ mod error;
 mod instrument;
 mod resource;
 
-pub use aggregator::{ExportCounters, TelemetryAggregator, TelemetryAggregatorBuilder};
+pub use aggregator::{ExportCounters, OtelMetricsAggregator, OtelMetricsAggregatorBuilder};
 pub use config::{OtlpExporterConfig, OtlpProtocol, Temporality};
-pub use error::{BuildWarning, TelemetryAggregatorError};
+pub use error::{BuildWarning, OtelMetricsError};
 pub use instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind};
 pub use resource::ResourceBuilder;

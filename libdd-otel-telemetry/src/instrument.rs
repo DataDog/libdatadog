@@ -1,7 +1,7 @@
 // Copyright 2026-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-/// Opaque handle to an instrument registered on a [`crate::TelemetryAggregator`].
+/// Opaque handle to an instrument registered on a [`crate::OtelMetricsAggregator`].
 ///
 /// This is the only thing consumers hold onto for an instrument — never the underlying SDK
 /// object — so the handle is a plain primitive and can cross an FFI boundary unchanged.
