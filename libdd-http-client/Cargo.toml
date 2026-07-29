@@ -38,4 +38,4 @@ http-body-util = { version = "0.1", optional = true }
 httpmock = "0.8.0-alpha.1"
 rustls = { workspace = true, features = ["ring"] }
 tokio = { version = "1.23", features = ["rt", "macros", "io-util", "net"] }
-tempfile = "3"
+tempfile.workspace = true
