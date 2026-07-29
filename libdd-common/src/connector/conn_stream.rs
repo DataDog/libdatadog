@@ -1,7 +1,7 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
+use core::{
     pin::Pin,
     task::{Context, Poll},
 };
@@ -35,7 +35,7 @@ pub enum ConnStream {
     },
 }
 
-pub type ConnStreamError = Box<dyn std::error::Error + Send + Sync>;
+pub type ConnStreamError = Box<dyn core::error::Error + Send + Sync>;
 
 use hyper_util::client::legacy::connect::{self, HttpConnector};
 use hyper_util::rt::TokioIo;

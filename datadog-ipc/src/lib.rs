@@ -18,6 +18,8 @@ pub mod shm_stats;
 mod atomic_option;
 pub mod client;
 pub mod codec;
+pub mod ipc_server;
+
 pub use atomic_option::AtomicOption;
 
 pub use client::IpcClientConn;

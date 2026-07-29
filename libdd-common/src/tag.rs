@@ -1,9 +1,9 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::borrow::Cow;
+use core::fmt::{Debug, Display, Formatter};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
-use std::fmt::{Debug, Display, Formatter};
 
 pub use static_assertions::{const_assert, const_assert_ne};
 
@@ -71,7 +71,7 @@ macro_rules! tag {
 }
 
 impl Debug for Tag {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Tag").field("value", &self.value).finish()
     }
 }
@@ -84,7 +84,7 @@ impl AsRef<str> for Tag {
 
 // Any type which implements Display automatically has to_string.
 impl Display for Tag {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.value)
     }
 }

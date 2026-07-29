@@ -2,6 +2,26 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v5.0.0..libdd-trace-stats-v6.0.0) - 2026-07-07
+
+### Added
+
+- Export client-computed span stats as OTLP trace metrics ([#2067](https://github.com/datadog/libdatadog/issues/2067)) - ([cc2d696](https://github.com/datadog/libdatadog/commit/cc2d6963073a6f5f37c31c4429b805760e836906))
+- SharedRuntime Borrowed & Owned mode ([#2061](https://github.com/datadog/libdatadog/issues/2061)) - ([4b79b7e](https://github.com/datadog/libdatadog/commit/4b79b7ed87113bea01db583d54e13fb0c2a19e74))
+- Send telemetry for cardinality limits ([#2159](https://github.com/datadog/libdatadog/issues/2159)) - ([a4d4417](https://github.com/datadog/libdatadog/commit/a4d4417004bb0c2af4010575d56c729185d29000))
+- Add whole key cardinality limit ([#2158](https://github.com/datadog/libdatadog/issues/2158)) - ([a38b630](https://github.com/datadog/libdatadog/commit/a38b6304dcd63c91a52a752f2baa04e7d21e374d))
+
+### Changed
+
+- Use VecMap for `meta`, `metrics` and `meta_struct` for v04 spans ([#2043](https://github.com/datadog/libdatadog/issues/2043)) - ([74284ca](https://github.com/datadog/libdatadog/commit/74284cac76e9e6f8e4085b0029c851ec8d47b2f4))
+- Update protobufs to be in sync with datadog-agent ([#2180](https://github.com/datadog/libdatadog/issues/2180)) - ([b02d454](https://github.com/datadog/libdatadog/commit/b02d454576034ea56becbd61411ff2f831a89562))
+
+### Fixed
+
+- Add grpc_method to aggregation key ([#2151](https://github.com/datadog/libdatadog/issues/2151)) - ([53e20b5](https://github.com/datadog/libdatadog/commit/53e20b54ed79e04e3bf5636ce97519732bcdbfad))
+
+
+
 ## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-stats-v4.0.0..libdd-trace-stats-v5.0.0) - 2026-06-08
 
 ### Changed

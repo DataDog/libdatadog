@@ -5,7 +5,7 @@ pub use crate::send_data::send_data_result::SendDataResult;
 pub use crate::send_data::SendData;
 use crate::span::v05::dict::SharedDict;
 use crate::span::{v05, TraceData};
-pub use crate::tracer_header_tags::TracerHeaderTags;
+pub use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
 use crate::tracer_payload::TracerPayloadCollection;
 use crate::tracer_payload::{self, TraceChunks};
 use anyhow::anyhow;
@@ -318,6 +318,7 @@ pub(crate) fn construct_tracer_payload(
         language_version: tracer_tags.lang_version.to_string(),
         tags: HashMap::new(),
         tracer_version: tracer_tags.tracer_version.to_string(),
+        container_debug: None,
     }
 }
 
@@ -331,6 +332,7 @@ pub(crate) fn cmp_send_data_payloads(a: &pb::TracerPayload, b: &pb::TracerPayloa
         .then(a.runtime_id.cmp(&b.runtime_id))
         .then(a.env.cmp(&b.env))
         .then(a.app_version.cmp(&b.app_version))
+        .then(a.container_debug.cmp(&b.container_debug))
 }
 
 pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
@@ -352,10 +354,13 @@ pub fn coalesce_send_data(mut data: Vec<SendData>) -> Vec<SendData> {
             // has similar results. The primary goal here is avoiding many small requests.
             // TODO: maybe make the MAX_PAYLOAD_SIZE configurable?
             if a.size + b.size < MAX_PAYLOAD_SIZE / 2 {
-                // Note: dedup_by drops a, and retains b.
-                b.tracer_payloads.append(&mut a.tracer_payloads);
-                b.size += a.size;
-                return true;
+                // Note: dedup_by drops a, and retains b. Only drop a if the append actually
+                // merged its data into b; otherwise keep both entries (e.g. diverging V1
+                // tracer metadata) so a's traces aren't silently lost.
+                if b.tracer_payloads.append(&mut a.tracer_payloads) {
+                    b.size += a.size;
+                    return true;
+                }
             }
         }
         false
@@ -641,12 +646,12 @@ pub fn collect_pb_trace_chunks<T: tracer_payload::TraceChunkProcessor>(
 
         for span in chunk.spans.iter_mut() {
             // TODO: obfuscate & truncate spans
-            if tracer_header_tags.client_computed_top_level {
+            if tracer_header_tags.generic.client_computed_top_level {
                 update_tracer_top_level(span);
             }
         }
 
-        if !tracer_header_tags.client_computed_top_level {
+        if !tracer_header_tags.generic.client_computed_top_level {
             compute_top_level_span(&mut chunk.spans);
         }
 
@@ -745,6 +750,7 @@ mod tests {
                     env: "".to_string(),
                     hostname: "".to_string(),
                     app_version: "".to_string(),
+                    container_debug: None,
                 }]),
                 TracerHeaderTags::default(),
                 &Endpoint::default(),

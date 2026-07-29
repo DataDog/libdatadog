@@ -34,6 +34,12 @@ pub async fn async_receiver_entry_point_unix_listener(
     receiver_entry_point(receiver_timeout(), stream).await
 }
 
+pub async fn async_receiver_entry_point_stream(
+    stream: impl AsyncBufReadExt + std::marker::Unpin,
+) -> anyhow::Result<()> {
+    receiver_entry_point(receiver_timeout(), stream).await
+}
+
 pub async fn async_receiver_entry_point_unix_socket(
     socket_path: impl AsRef<str>,
     one_shot: bool,

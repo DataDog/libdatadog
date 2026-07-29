@@ -5,9 +5,9 @@
 // restrictive on the accepted forms of urls so that this module can be greatly simplified.
 // One idea for now is to match the url to a regex on both side to validate it
 
+use core::fmt::Write;
 use fluent_uri::UriRef;
 use percent_encoding::percent_decode_str;
-use std::fmt::Write;
 
 /// Returns true for Go net/url's "category 1" characters:
 /// ASCII bytes that always trigger escaping in URLs (plus space and quote).

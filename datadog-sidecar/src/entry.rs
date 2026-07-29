@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use anyhow::Context;
-#[cfg(unix)]
-use libdd_crashtracker;
 #[cfg(target_os = "linux")]
 use spawn_worker::read_pt_interp_self;
 use spawn_worker::{entrypoint, Stdio};
@@ -19,8 +17,6 @@ use std::{
 };
 use tokio::sync::{mpsc, oneshot};
 
-#[cfg(unix)]
-use crate::crashtracker::crashtracker_unix_socket_path;
 use crate::service::blocking::SidecarTransport;
 use crate::service::SidecarServer;
 
@@ -36,7 +32,6 @@ use crate::{ddog_daemon_entry_point, setup_daemon_process};
 /// Configuration for main_loop behavior
 pub struct MainLoopConfig {
     pub enable_ctrl_c_handler: bool,
-    pub enable_crashtracker: bool,
     pub external_shutdown_rx: Option<oneshot::Receiver<()>>,
     /// Set to false in thread mode so the worker's UID can be obtained on the
     /// first connection and used to fchown the SHM.
@@ -47,7 +42,6 @@ impl Default for MainLoopConfig {
     fn default() -> Self {
         Self {
             enable_ctrl_c_handler: true,
-            enable_crashtracker: true,
             external_shutdown_rx: None,
             init_shm_eagerly: true,
         }
@@ -107,26 +101,6 @@ where
             }
             tracing::info!("Received Ctrl-C Signal, shutting down");
             cancel();
-        });
-    }
-
-    #[cfg(unix)]
-    if loop_config.enable_crashtracker {
-        tokio::spawn(async move {
-            let socket_path = crashtracker_unix_socket_path();
-            match libdd_crashtracker::get_receiver_unix_socket(
-                socket_path.to_str().unwrap_or_default(),
-            ) {
-                Ok(listener) => loop {
-                    if let Err(e) =
-                        libdd_crashtracker::async_receiver_entry_point_unix_listener(&listener)
-                            .await
-                    {
-                        tracing::warn!("Got error while receiving crash report: {e}");
-                    }
-                },
-                Err(e) => tracing::error!("Failed setting up the crashtracker listener: {e}"),
-            }
         });
     }
 
@@ -311,10 +285,7 @@ pub fn start_or_connect_to_sidecar(cfg: Config) -> anyhow::Result<SidecarTranspo
         datadog_ipc::platform::set_pipe_buffer_size(cfg.pipe_buffer_size);
     }
 
-    let liaison = match cfg.ipc_mode {
-        config::IpcMode::Shared => setup::DefaultLiason::ipc_shared(),
-        config::IpcMode::InstancePerProcess => setup::DefaultLiason::ipc_per_process(),
-    };
+    let liaison = setup::liaison_for_ipc_mode(cfg.ipc_mode);
 
     let err = match liaison.attempt_listen() {
         Ok(Some(listener)) => {

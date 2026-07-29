@@ -2,6 +2,19 @@
 
 
 
+## [6.0.0](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v5.0.1..libdd-telemetry-v6.0.0) - 2026-07-07
+
+### Added
+
+- SharedRuntime Borrowed & Owned mode ([#2061](https://github.com/datadog/libdatadog/issues/2061)) - ([4b79b7e](https://github.com/datadog/libdatadog/commit/4b79b7ed87113bea01db583d54e13fb0c2a19e74))
+
+### Changed
+
+- Avoid leaking libdd-common types in the public API ([#2152](https://github.com/datadog/libdatadog/issues/2152)) - ([b3144c6](https://github.com/datadog/libdatadog/commit/b3144c676b73e157f9d563903c01df016882e8c4))
+- Skip slow miri tests ([#2188](https://github.com/datadog/libdatadog/issues/2188)) - ([4b66bd6](https://github.com/datadog/libdatadog/commit/4b66bd62c4d39184c68a58d576d7955f1fb51aaa))
+
+
+
 ## [5.0.1](https://github.com/datadog/libdatadog/compare/libdd-telemetry-v5.0.0..libdd-telemetry-v5.0.1) - 2026-06-08
 
 ### Fixed

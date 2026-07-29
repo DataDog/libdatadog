@@ -21,7 +21,8 @@ use bin_tests::{
     ArtifactsBuild, BuildProfile,
 };
 use libdd_crashtracker::{
-    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StacktraceCollection,
+    CrashtrackerConfiguration, Metadata, SiCodes, SigInfo, SignalNames, StackFrame,
+    StacktraceCollection,
 };
 use serde_json::Value;
 
@@ -159,6 +160,115 @@ fn test_crash_tracking_bin_unhandled_exception() {
     run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
 }
 
+/// Tests that when `collect_all_threads` is enabled and the crash is reported via
+/// `report_unhandled_exception`, the crash report contains entries in `error.threads`
+/// for background threads with valid stack traces.
+///
+/// This verifies that `PR_SET_PTRACER` is correctly called in the unhandled exception
+/// path so the receiver can ptrace the still-alive parent process.
+#[test]
+#[cfg(target_os = "linux")]
+#[cfg_attr(miri, ignore)]
+fn test_crash_tracking_bin_unhandled_exception_multi_thread() {
+    let config = CrashTestConfig::new(
+        BuildProfile::Release,
+        TestMode::UnhandledExceptionMultiThread,
+        CrashType::UnhandledException,
+    );
+    let artifacts = StandardArtifacts::new(config.profile);
+    let artifacts_map = fetch_built_artifacts(&artifacts.as_slice()).unwrap();
+
+    let validator: ValidatorFn = Box::new(|payload, _fixtures| {
+        PayloadValidator::new(payload)
+            .validate_error_kind("UnhandledException")?
+            .validate_error_message_contains(
+                "Process was terminated due to an unhandled exception of type 'RuntimeException'",
+            )?;
+
+        let all_threads = payload["error"]["threads"]
+            .as_array()
+            .expect("error.threads should be a JSON array of thread objects");
+
+        assert!(
+            all_threads.len() >= 3,
+            "error.threads should contain at least 3 threads (1 crashed + 2 workers); got {} in payload: {}",
+            all_threads.len(),
+            serde_json::to_string_pretty(payload).unwrap_or_default()
+        );
+
+        let thread_names: Vec<&str> = all_threads
+            .iter()
+            .map(|t| t["name"].as_str().unwrap_or("<none>"))
+            .collect();
+
+        let crashed_threads: Vec<_> = all_threads
+            .iter()
+            .filter(|t| t["crashed"].as_bool() == Some(true))
+            .collect();
+        assert_eq!(
+            crashed_threads.len(),
+            1,
+            "exactly one thread should have crashed=true; got: {crashed_threads:?}"
+        );
+
+        for thread in all_threads {
+            assert!(
+                thread["name"].is_string(),
+                "thread entry missing 'name': {thread:?}"
+            );
+            assert!(
+                thread["crashed"].is_boolean(),
+                "thread entry missing 'crashed': {thread:?}"
+            );
+            assert!(
+                thread["stack"].is_object(),
+                "thread entry missing 'stack': {thread:?}"
+            );
+        }
+
+        for expected in ["ct_worker_0", "ct_worker_1"] {
+            assert!(
+                thread_names.contains(&expected),
+                "Expected worker thread '{expected}' in error.threads; got: {thread_names:?}"
+            );
+
+            let worker = all_threads
+                .iter()
+                .find(|t| t["name"].as_str() == Some(expected))
+                .unwrap_or_else(|| panic!("{expected} should be in threads"));
+
+            let frames = worker["stack"]["frames"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{expected} stack.frames should be an array"));
+
+            assert!(
+                !frames.is_empty(),
+                "{expected} should have non-empty stack frames (ptrace should succeed with PR_SET_PTRACER)"
+            );
+
+            let worker_fn = if expected == "ct_worker_0" {
+                "worker_fn_0"
+            } else {
+                "worker_fn_1"
+            };
+            let has_worker_frame = frames.iter().any(|f| {
+                f["function"]
+                    .as_str()
+                    .map(|name| name.contains(worker_fn))
+                    .unwrap_or(false)
+            });
+            assert!(
+                has_worker_frame,
+                "{expected} stack should contain a frame for '{worker_fn}' but got: {frames:?}"
+            );
+        }
+
+        Ok(())
+    });
+
+    run_crash_test_with_artifacts(&config, &artifacts_map, &artifacts, validator).unwrap();
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_crash_tracking_bin_runtime_callback_frame() {
@@ -189,7 +299,7 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 }
 
 /// Tests that when `collect_all_threads` is enabled, the crash report contains
-/// entries in `error.threads` for background threads beyond the crashing thread.
+/// entries in `error.threads` for all threads including the crashing thread.
 ///
 /// The behavior (test_017_multi_thread_collection.rs) enables `collect_all_threads`,
 /// spawns two named sleeping worker threads in `post()`, and then crashes the main thread.
@@ -200,8 +310,8 @@ fn test_crash_tracking_bin_runtime_callback_frame() {
 ///
 /// We verify:
 ///   - `error.threads` is a non-empty array of thread objects.
-///   - Each thread entry is well-formed: `crashed=false`, `name`, and `stack` present.
-///   - The crashing thread stack is in `error.stack`, not `error.threads`.
+///   - Each thread entry is well-formed: `crashed`, `name`, and `stack` present.
+///   - Exactly one thread has `crashed=true` (the crashing thread).
 ///   - Both worker threads are present by name (ct_worker_0, ct_worker_1).
 ///   - Each worker has their work frame in the stack trace.
 #[test]
@@ -220,10 +330,9 @@ fn test_crash_tracking_multi_thread_collection() {
         let all_threads = payload["error"]["threads"]
             .as_array()
             .expect("error.threads should be a JSON array of thread objects");
-
         assert!(
-            all_threads.len() >= 2,
-            "error.threads should be non-empty when collect_all_threads is enabled; got payload: {}",
+            all_threads.len() >= 3,
+            "error.threads should contain at least 3 threads (1 crashed + 2 workers); got payload: {}",
             serde_json::to_string_pretty(payload).unwrap_or_default()
         );
 
@@ -231,6 +340,16 @@ fn test_crash_tracking_multi_thread_collection() {
             .iter()
             .map(|t| t["name"].as_str().unwrap_or("<none>"))
             .collect();
+
+        let crashed_threads: Vec<_> = all_threads
+            .iter()
+            .filter(|t| t["crashed"].as_bool() == Some(true))
+            .collect();
+        assert_eq!(
+            crashed_threads.len(),
+            1,
+            "exactly one thread should have crashed=true; got: {crashed_threads:?}"
+        );
 
         for thread in all_threads {
             assert!(
@@ -244,10 +363,6 @@ fn test_crash_tracking_multi_thread_collection() {
             assert!(
                 thread["stack"].is_object(),
                 "thread entry missing 'stack': {thread:?}"
-            );
-            assert!(
-                !thread["crashed"].as_bool().unwrap_or(true),
-                "threads in error.threads must have crashed=false: {thread:?}"
             );
         }
 
@@ -312,9 +427,20 @@ fn test_crash_tracking_thread_limit() {
             .expect("error.threads should be a JSON array of thread objects");
 
         assert!(
-            thread_array.len() >= THREAD_COUNT,
-            "expected at least {THREAD_COUNT} thread entries, got {}",
+            thread_array.len() == THREAD_COUNT,
+            "expected {} thread entries ({THREAD_COUNT} workers), got {}",
+            THREAD_COUNT,
             thread_array.len(),
+        );
+
+        let crashed_threads: Vec<_> = thread_array
+            .iter()
+            .filter(|t| t["crashed"].as_bool() == Some(true))
+            .collect();
+        assert_eq!(
+            crashed_threads.len(),
+            1,
+            "exactly one thread should have crashed=true; got: {crashed_threads:?}"
         );
 
         for thread in thread_array {
@@ -329,10 +455,6 @@ fn test_crash_tracking_thread_limit() {
             assert!(
                 thread["stack"].is_object(),
                 "thread entry missing 'stack': {thread:?}"
-            );
-            assert!(
-                !thread["crashed"].as_bool().unwrap_or(true),
-                "threads in error.threads must have crashed=false: {thread:?}"
             );
         }
 
@@ -529,8 +651,8 @@ fn test_crash_tracking_sidecar_multi_thread_collection() {
     let all_threads = all_threads.unwrap();
 
     assert!(
-        all_threads.len() >= 2,
-        "error.threads should have at least 2 entries (sidecar multi-thread); got {}: {}",
+        all_threads.len() >= 3,
+        "error.threads should have at least 3 entries (1 crashed + 2 workers, sidecar multi-thread); got {}: {}",
         all_threads.len(),
         serde_json::to_string_pretty(&crash_payload).unwrap_or_default()
     );
@@ -1031,9 +1153,9 @@ fn test_crash_tracking_bin_segfault() {
 fn test_crash_tracking_app(crash_type: &str) {
     use bin_tests::test_runner::run_custom_crash_test;
 
-    // Set up custom artifacts: receiver + crashing_test_app with panic_abort
+    // Set up custom artifacts: receiver + crashing_test_app with panic=abort
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
-    let crashing_app = artifacts::crashing_app(BuildProfile::Debug, true);
+    let crashing_app = artifacts::crashing_app(BuildProfile::PanicAbort);
 
     let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -1107,7 +1229,7 @@ fn test_panic_hook_mode(mode: &str, expected_category: &str, expected_panic_mess
 
     // Set up custom artifacts: receiver + crashtracker_bin_test
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
-    let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::Debug, true);
+    let crashtracker_bin_test = artifacts::crashtracker_bin_test(BuildProfile::PanicAbort);
 
     let artifacts_map =
         fetch_built_artifacts(&[&crashtracker_receiver, &crashtracker_bin_test]).unwrap();
@@ -1181,7 +1303,7 @@ fn test_crash_tracking_callstack() {
     // Set up custom artifacts: receiver + crashing_test_app (in Debug mode)
     let crashtracker_receiver = artifacts::crashtracker_receiver(BuildProfile::Release);
     // compile in debug so we avoid inlining and can check the callchain
-    let crashing_app = artifacts::crashing_app(BuildProfile::Debug, false);
+    let crashing_app = artifacts::crashing_app(BuildProfile::Debug);
 
     let artifacts_map = fetch_built_artifacts(&[&crashtracker_receiver, &crashing_app]).unwrap();
 
@@ -1923,6 +2045,169 @@ fn crash_tracking_empty_endpoint() {
     let _ = child.wait();
 }
 
+/// Verifies graceful degradation: when the receiver's timeout fires before the collector
+/// sends all data, the receiver still uploads a partial crash report (incomplete=true)
+/// rather than silently discarding everything collected up to that point.
+#[test]
+#[cfg_attr(miri, ignore)]
+#[cfg(unix)]
+fn test_receiver_uploads_partial_report_on_timeout() -> anyhow::Result<()> {
+    use libdd_crashtracker::ErrorKind;
+    use std::time::{Duration, Instant};
+
+    let receiver = artifacts::crashtracker_receiver(BuildProfile::Debug);
+    let artifacts = fetch_built_artifacts(&[&receiver])?;
+    let fixtures = bin_tests::test_runner::TestFixtures::new()?;
+
+    let config = CrashtrackerConfiguration::builder()
+        .create_alt_stack(true)
+        .demangle_names(false)
+        .resolve_frames(StacktraceCollection::WithoutSymbols)
+        .signals(libdd_crashtracker::default_signals())
+        .timeout(Duration::from_millis(500))
+        .use_alt_stack(true)
+        .build()?;
+
+    let metadata = Metadata {
+        library_name: "libdatadog".to_owned(),
+        library_version: "1.0.0".to_owned(),
+        family: "native".to_owned(),
+        tags: vec![
+            "service:foo".into(),
+            "service_version:bar".into(),
+            "runtime-id:xyz".into(),
+            "language:native".into(),
+        ],
+    };
+
+    let siginfo = SigInfo {
+        si_addr: None,
+        si_code: 1,
+        si_code_human_readable: SiCodes::SEGV_MAPERR,
+        si_signo: libc::SIGSEGV,
+        si_signo_human_readable: SignalNames::SIGSEGV,
+    };
+
+    let socket_path = fixtures.output_dir.join("trace_agent.socket");
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+        .context("binding mock agent socket")?;
+    listener
+        .set_nonblocking(true)
+        .context("setting socket nonblocking")?;
+
+    let mut child = process::Command::new(&artifacts[&receiver])
+        .stdin(process::Stdio::piped())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .env(
+            "DD_TRACE_AGENT_URL",
+            format!("unix://{}", socket_path.display()),
+        )
+        .env("DD_CRASHTRACKER_RECEIVER_TIMEOUT_MS", "500")
+        .spawn()
+        .context("spawning receiver")?;
+
+    let mut stdin = std::io::BufWriter::new(child.stdin.take().context("child stdin missing")?);
+
+    // Two stack frames to include in the partial trace.
+    let frame0 = StackFrame {
+        ip: Some("0x00007f1234560000".to_owned()),
+        function: Some("crash_site".to_owned()),
+        file: Some("src/lib.rs".to_owned()),
+        line: Some(42),
+        ..StackFrame::default()
+    };
+    let frame1 = StackFrame {
+        ip: Some("0x00007f1234561000".to_owned()),
+        function: Some("caller_fn".to_owned()),
+        file: Some("src/main.rs".to_owned()),
+        line: Some(10),
+        ..StackFrame::default()
+    };
+
+    // Send config, kind, metadata, siginfo, then begin a stacktrace with two frames
+    // but deliberately omit DD_CRASHTRACK_END_STACKTRACE and DD_CRASHTRACK_DONE.
+    // The receiver blocks mid-stacktrace and times out after ~500ms.
+    for line in [
+        "DD_CRASHTRACK_BEGIN_CONFIG".to_string(),
+        serde_json::to_string(&config)?,
+        "DD_CRASHTRACK_END_CONFIG".to_string(),
+        "DD_CRASHTRACK_BEGIN_KIND".to_string(),
+        serde_json::to_string(&ErrorKind::UnixSignal)?,
+        "DD_CRASHTRACK_END_KIND".to_string(),
+        "DD_CRASHTRACK_BEGIN_METADATA".to_string(),
+        serde_json::to_string(&metadata)?,
+        "DD_CRASHTRACK_END_METADATA".to_string(),
+        "DD_CRASHTRACK_BEGIN_SIGINFO".to_string(),
+        serde_json::to_string(&siginfo)?,
+        "DD_CRASHTRACK_END_SIGINFO".to_string(),
+        "DD_CRASHTRACK_BEGIN_STACKTRACE".to_string(),
+        serde_json::to_string(&frame0)?,
+        serde_json::to_string(&frame1)?,
+        // no DD_CRASHTRACK_END_STACKTRACE so the receiver times out mid-stacktrace
+    ] {
+        writeln!(stdin, "{line}")?;
+    }
+    stdin.flush()?;
+    // stdin stays open so the receiver keeps blocking on the next read.
+    // The accept loop below runs while the receiver is waiting.
+
+    // The receiver times out ~500ms after the first line arrives, then uploads what it has.
+    let mut found_incomplete_report = false;
+    let mut found_timeout_log = false;
+    let mut found_crash_frame = false;
+    let deadline = Instant::now() + Duration::from_secs(3);
+
+    while Instant::now() < deadline {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let body = read_http_request_body(&mut stream);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                if body.contains("receiver_issue:timeout") {
+                    found_timeout_log = true;
+                }
+                if body.contains("crash_site") {
+                    found_crash_frame = true;
+                }
+                // The crash report telemetry carries is_crash:true; incomplete:true
+                // indicates the report was cut short by the timeout.
+                if body.contains("is_crash:true") && body.contains("incomplete:true") {
+                    found_incomplete_report = true;
+                }
+                if found_incomplete_report && found_timeout_log && found_crash_frame {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    drop(stdin);
+    let status = child.wait()?;
+    assert!(
+        status.success(),
+        "receiver should exit cleanly after timeout; got: {status:?}"
+    );
+    assert!(
+        found_incomplete_report,
+        "receiver should upload a partial crash report (incomplete=true) on timeout, \
+         not silently drop everything it has collected"
+    );
+    assert!(
+        found_crash_frame,
+        "receiver should contain the crash frame function name `crash_site` in the body on timeout"
+    );
+    assert!(
+        found_timeout_log,
+        "receiver should emit a receiver_issue:timeout debug telemetry log when read times out"
+    );
+
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 #[cfg(unix)]
@@ -2223,7 +2508,7 @@ fn setup_test_fixtures<'a>(crates: &[&'a ArtifactsBuild]) -> TestFixtures<'a> {
 fn setup_crashtracking_crates(
     crash_tracking_receiver_profile: BuildProfile,
 ) -> (ArtifactsBuild, ArtifactsBuild) {
-    let crashtracker_bin = artifacts::crashtracker_bin_test(crash_tracking_receiver_profile, false);
+    let crashtracker_bin = artifacts::crashtracker_bin_test(crash_tracking_receiver_profile);
     let crashtracker_receiver = artifacts::crashtracker_receiver(crash_tracking_receiver_profile);
     (crashtracker_bin, crashtracker_receiver)
 }

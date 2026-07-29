@@ -9,6 +9,7 @@
 
 pub mod agent_remote_config;
 pub mod config;
+#[cfg(unix)]
 pub mod crashtracker;
 mod dump;
 pub mod entry;

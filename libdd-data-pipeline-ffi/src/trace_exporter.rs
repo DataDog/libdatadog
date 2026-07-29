@@ -13,10 +13,14 @@ use libdd_data_pipeline::trace_exporter::{
     TelemetryConfig, TelemetryInstrumentationSessions, TraceExporter as GenericTraceExporter,
     TraceExporterInputFormat, TraceExporterOutputFormat,
 };
+use libdd_data_pipeline::OtlpProtocol;
 
-pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities>;
+// FFI pins the runtime parameter to `ForkSafeRuntime` for ABI stability. Rust callers that
+// don't need the fork protocol can use `TraceExporter<NativeCapabilities, BasicRuntime>`
+// directly.
+pub(crate) type TraceExporter = GenericTraceExporter<NativeCapabilities, ForkSafeRuntime>;
 
-use libdd_shared_runtime::SharedRuntime;
+use libdd_shared_runtime::ForkSafeRuntime;
 use std::{ptr::NonNull, sync::Arc, time::Duration};
 use tracing::debug;
 
@@ -81,8 +85,14 @@ pub struct TraceExporterConfig {
     process_tags: Option<String>,
     test_session_token: Option<String>,
     connection_timeout: Option<u64>,
-    shared_runtime: Option<Arc<SharedRuntime>>,
+    shared_runtime: Option<Arc<ForkSafeRuntime>>,
     otlp_endpoint: Option<String>,
+    otlp_protocol: Option<OtlpProtocol>,
+    otlp_instrumentation_scope_name: Option<String>,
+    otlp_instrumentation_scope_version: Option<String>,
+    output_to_log: bool,
+    log_max_line_size: Option<usize>,
+    stats_cardinality_limit: Option<usize>,
 }
 
 #[no_mangle]
@@ -456,7 +466,7 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_connection_timeout(
 #[no_mangle]
 pub unsafe extern "C" fn ddog_trace_exporter_config_set_shared_runtime(
     config: Option<&mut TraceExporterConfig>,
-    handle: Option<NonNull<SharedRuntime>>,
+    handle: Option<NonNull<ForkSafeRuntime>>,
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         match (config, handle) {
@@ -498,12 +508,136 @@ pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_endpoint(
     )
 }
 
+/// Sets the OTLP export protocol. Accepts the OTel-standard values `http/json` (default) or
+/// `http/protobuf`; `grpc` is rejected as not yet supported. The host language resolves the value
+/// (e.g. from `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`).
+///
+/// Has no effect unless an OTLP endpoint is also configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
+/// Datadog agent and this protocol selection is ignored.
+///
+/// Returns `None` on success, `ErrorCode::InvalidArgument` for a null config or an unaccepted
+/// value, and `ErrorCode::InvalidInput` for a non-UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_protocol(
+    config: Option<&mut TraceExporterConfig>,
+    protocol: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let value = match sanitize_string(protocol) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            // `FromStr` is the single source of truth for string -> OtlpProtocol. It accepts only
+            // the supported HTTP encodings (`http/json`, `http/protobuf`); `grpc` and any unknown
+            // value are rejected with an error, so an unsupported protocol can never be stored.
+            match value.parse::<OtlpProtocol>() {
+                Ok(p) => {
+                    handle.otlp_protocol = Some(p);
+                    None
+                }
+                Err(_) => gen_error!(ErrorCode::InvalidArgument),
+            }
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets OTLP trace instrumentation scope metadata.
+///
+/// Has no effect unless an OTLP endpoint is also configured via
+/// `ddog_trace_exporter_config_set_otlp_endpoint`; without one, traces are sent to the
+/// Datadog agent and this scope metadata is ignored.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+    config: Option<&mut TraceExporterConfig>,
+    name: CharSlice,
+    version: CharSlice,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            let name = match sanitize_string(name) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            let version = match sanitize_string(version) {
+                Ok(s) => s,
+                Err(e) => return Some(e),
+            };
+            handle.otlp_instrumentation_scope_name = Some(name);
+            handle.otlp_instrumentation_scope_version = Some(version);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Sets the cardinality limit for client-side stats computation.
+///
+/// When the number of distinct stats groups exceeds `limit`, additional groups are
+/// aggregated into a sentinel key instead of being tracked individually.
+/// This bounds memory usage when the trace population has very high cardinality.
+///
+/// Has no effect unless stats computation is enabled via
+/// `ddog_trace_exporter_config_set_compute_stats`.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_stats_cardinality_limit(
+    config: Option<&mut TraceExporterConfig>,
+    limit: usize,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.stats_cardinality_limit = Some(limit);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
+/// Configure the exporter to write traces as newline-delimited JSON to stdout (the Datadog
+/// Forwarder "log exporter" path) instead of sending them to a Datadog agent. Used in serverless
+/// environments (e.g. AWS Lambda) when no agent is reachable.
+///
+/// `max_line_size` overrides the per-line byte cap; pass `0` to use the default (256 KiB, the AWS
+/// CloudWatch Logs limit). When enabled, agent-specific behavior (agent-info polling, client-side
+/// stats, V1 negotiation) is bypassed.
+///
+/// In this mode each span's `meta` is serialized to process stdout (and thus captured by CloudWatch
+/// Logs in Lambda); `meta_struct` is excluded because it holds raw msgpack the log intake cannot
+/// interpret.
+///
+/// Writes are synchronous/blocking on stdout, so this mode targets single-threaded / current-thread
+/// serverless runtimes (e.g. AWS Lambda) where a blocking write won't stall a shared async reactor.
+#[no_mangle]
+pub unsafe extern "C" fn ddog_trace_exporter_config_set_output_to_log(
+    config: Option<&mut TraceExporterConfig>,
+    max_line_size: usize,
+) -> Option<Box<ExporterError>> {
+    catch_panic!(
+        if let Some(handle) = config {
+            handle.output_to_log = true;
+            handle.log_max_line_size = (max_line_size != 0).then_some(max_line_size);
+            None
+        } else {
+            gen_error!(ErrorCode::InvalidArgument)
+        },
+        gen_error!(ErrorCode::Panic)
+    )
+}
+
 /// Create a new TraceExporter instance.
 ///
-/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces in
-/// OTLP HTTP/JSON to that endpoint instead of the Datadog agent. The same payload (e.g.
-/// MessagePack) is passed to `ddog_trace_exporter_send`; the library decodes and converts to
-/// OTLP when OTLP is enabled.
+/// When an OTLP endpoint is configured via `TraceExporterConfig`, the exporter sends traces to
+/// that endpoint in OTLP over HTTP — JSON or protobuf per the configured protocol — instead of
+/// to the Datadog agent. The same payload (e.g. MessagePack) is passed to
+/// `ddog_trace_exporter_send`; the library decodes and converts it to OTLP when OTLP is enabled.
 ///
 /// # Arguments
 ///
@@ -516,10 +650,16 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 ) -> Option<Box<ExporterError>> {
     catch_panic!(
         if let Some(config) = config {
-            // let config = &*ptr;
             let mut builder = TraceExporter::builder();
+            // Only forward the agent URL when one was explicitly provided. Calling
+            // `set_url("")` would mark the agent URL as configured and conflict with
+            // agentless trace export, which rejects any caller-supplied agent URL at build
+            // time. Leaving `url` unset lets the builder fall back to its default agent URL
+            // when no transport override is configured.
+            if let Some(url) = config.url.as_ref() {
+                builder.set_url(url);
+            }
             builder
-                .set_url(config.url.as_ref().unwrap_or(&"".to_string()))
                 .set_tracer_version(config.tracer_version.as_ref().unwrap_or(&"".to_string()))
                 .set_language(config.language.as_ref().unwrap_or(&"".to_string()))
                 .set_language_version(config.language_version.as_ref().unwrap_or(&"".to_string()))
@@ -537,6 +677,10 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
                 .set_input_format(config.input_format)
                 .set_output_format(config.output_format)
                 .set_connection_timeout(config.connection_timeout);
+
+            if let Some(limit) = config.stats_cardinality_limit {
+                builder.set_stats_cardinality_limit(limit);
+            }
 
             if config.compute_stats {
                 builder.enable_stats(Duration::from_secs(10));
@@ -565,6 +709,23 @@ pub unsafe extern "C" fn ddog_trace_exporter_new(
 
             if let Some(ref url) = config.otlp_endpoint {
                 builder.set_otlp_endpoint(url);
+                if let Some(protocol) = config.otlp_protocol {
+                    builder.set_otlp_protocol(protocol);
+                }
+                builder.set_otlp_instrumentation_scope(
+                    config
+                        .otlp_instrumentation_scope_name
+                        .as_deref()
+                        .unwrap_or(""),
+                    config
+                        .otlp_instrumentation_scope_version
+                        .as_deref()
+                        .unwrap_or(""),
+                );
+            }
+
+            if config.output_to_log {
+                builder.set_output_to_log(config.log_max_line_size);
             }
 
             match builder.build() {
@@ -662,8 +823,37 @@ mod tests {
             assert!(cfg.process_tags.is_none());
             assert!(cfg.test_session_token.is_none());
             assert!(cfg.connection_timeout.is_none());
+            assert!(!cfg.output_to_log);
+            assert_eq!(cfg.log_max_line_size, None);
+            assert_eq!(cfg.stats_cardinality_limit, None);
+            assert!(cfg.otlp_instrumentation_scope_name.is_none());
+            assert!(cfg.otlp_instrumentation_scope_version.is_none());
 
             ddog_trace_exporter_config_free(cfg);
+        }
+    }
+
+    #[test]
+    fn config_output_to_log_test() {
+        unsafe {
+            // Null config handle -> InvalidArgument.
+            let error = ddog_trace_exporter_config_set_output_to_log(None, 0);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // 0 is a sentinel for "use the default cap" -> None.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_output_to_log(config.as_mut(), 0);
+            assert_eq!(error, None);
+            let cfg = config.unwrap();
+            assert!(cfg.output_to_log);
+            assert_eq!(cfg.log_max_line_size, None);
+
+            // Non-zero cap is stored as-is.
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_output_to_log(config.as_mut(), 4096);
+            assert_eq!(error, None);
+            assert_eq!(config.unwrap().log_max_line_size, Some(4096));
         }
     }
 
@@ -1012,35 +1202,6 @@ mod tests {
         }
     }
 
-    #[cfg_attr(miri, ignore)]
-    #[test]
-    fn exporter_constructor_error_test() {
-        unsafe {
-            let mut config: MaybeUninit<Box<TraceExporterConfig>> = MaybeUninit::uninit();
-            ddog_trace_exporter_config_new(NonNull::new_unchecked(&mut config).cast());
-
-            let mut cfg = config.assume_init();
-            let error = ddog_trace_exporter_config_set_service(
-                Some(cfg.as_mut()),
-                CharSlice::from("service"),
-            );
-            assert_eq!(error, None);
-
-            ddog_trace_exporter_error_free(error);
-
-            let mut ptr: MaybeUninit<Box<TraceExporter>> = MaybeUninit::uninit();
-
-            let ret = ddog_trace_exporter_new(NonNull::new_unchecked(&mut ptr).cast(), Some(&cfg));
-
-            let error = ret.as_ref().unwrap();
-            assert_eq!(error.code, ErrorCode::InvalidUrl);
-
-            ddog_trace_exporter_error_free(ret);
-
-            ddog_trace_exporter_config_free(cfg);
-        }
-    }
-
     #[test]
     fn exporter_send_test_arguments_test() {
         unsafe {
@@ -1283,6 +1444,138 @@ mod tests {
         }
     }
 
+    #[test]
+    fn config_otlp_protocol_test() {
+        unsafe {
+            // Null config → InvalidArgument
+            let error =
+                ddog_trace_exporter_config_set_otlp_protocol(None, CharSlice::from("http/json"));
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // "http/json" → success, stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("http/json"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::HttpJson)
+            );
+
+            // "http/protobuf" → success, stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("http/protobuf"),
+            );
+            assert_eq!(error, None);
+            assert_eq!(
+                config.as_ref().unwrap().otlp_protocol,
+                Some(OtlpProtocol::HttpProtobuf)
+            );
+
+            // "grpc" → InvalidArgument
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("grpc"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Garbage value → InvalidArgument
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from("nonsense"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Non-UTF-8 input → InvalidInput
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_otlp_protocol(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+        }
+    }
+
+    #[test]
+    fn config_otlp_instrumentation_scope_test() {
+        unsafe {
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                None,
+                CharSlice::from("dd-trace-js"),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            let mut config = Some(TraceExporterConfig::default());
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                config.as_mut(),
+                CharSlice::from("dd-trace-js"),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error, None);
+            let cfg = config.as_ref().unwrap();
+            assert_eq!(
+                cfg.otlp_instrumentation_scope_name.as_deref(),
+                Some("dd-trace-js")
+            );
+            assert_eq!(
+                cfg.otlp_instrumentation_scope_version.as_deref(),
+                Some("7.0.0-pre")
+            );
+
+            let mut config = Some(TraceExporterConfig::default());
+            let invalid: [u8; 2] = [0x80u8, 0xFFu8];
+            let error = ddog_trace_exporter_config_set_otlp_instrumentation_scope(
+                config.as_mut(),
+                CharSlice::from_bytes(&invalid),
+                CharSlice::from("7.0.0-pre"),
+            );
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidInput);
+            ddog_trace_exporter_error_free(error);
+            let cfg = config.as_ref().unwrap();
+            assert!(cfg.otlp_instrumentation_scope_name.is_none());
+            assert!(cfg.otlp_instrumentation_scope_version.is_none());
+        }
+    }
+
+    #[test]
+    fn set_otlp_protocol_stores_parsed_enum() {
+        use libdd_data_pipeline::OtlpProtocol;
+        let mut cfg = TraceExporterConfig::default();
+        let err = unsafe {
+            ddog_trace_exporter_config_set_otlp_protocol(
+                Some(&mut cfg),
+                CharSlice::from("http/protobuf"),
+            )
+        };
+        assert!(err.is_none());
+        assert_eq!(cfg.otlp_protocol, Some(OtlpProtocol::HttpProtobuf));
+    }
+
+    #[test]
+    fn set_otlp_protocol_rejects_grpc_and_unknown() {
+        let mut cfg = TraceExporterConfig::default();
+        for bad in ["grpc", "nonsense"] {
+            let err = unsafe {
+                ddog_trace_exporter_config_set_otlp_protocol(Some(&mut cfg), CharSlice::from(bad))
+            };
+            assert!(err.is_some(), "expected error for {bad}");
+            assert_eq!(cfg.otlp_protocol, None, "{bad} must not be stored");
+        }
+    }
+
     #[cfg(all(feature = "catch_panic", panic = "unwind"))]
     #[test]
     fn catch_panic_test() {
@@ -1290,6 +1583,23 @@ mod tests {
 
         assert!(ret.is_some());
         assert_eq!(ret.unwrap().code, ErrorCode::Panic);
+    }
+
+    #[test]
+    fn config_stats_cardinality_limit_test() {
+        unsafe {
+            // Null config → InvalidArgument
+            let error = ddog_trace_exporter_config_set_stats_cardinality_limit(None, 100);
+            assert_eq!(error.as_ref().unwrap().code, ErrorCode::InvalidArgument);
+            ddog_trace_exporter_error_free(error);
+
+            // Valid config → value stored
+            let mut config = Some(TraceExporterConfig::default());
+            let error =
+                ddog_trace_exporter_config_set_stats_cardinality_limit(config.as_mut(), 500);
+            assert_eq!(error, None);
+            assert_eq!(config.unwrap().stats_cardinality_limit, Some(500));
+        }
     }
 
     #[test]

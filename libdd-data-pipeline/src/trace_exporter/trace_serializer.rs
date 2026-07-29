@@ -128,12 +128,12 @@ impl TraceSerializer {
             .max(MIN_BUFFER_CAPACITY);
         let buff = match (payload, output_format) {
             (tracer_payload::TraceChunks::V04(p), TraceExporterOutputFormat::V04) => {
-                msgpack_encoder::v04::to_vec_with_capacity(p, capacity as u32)
+                msgpack_encoder::v04::to_vec_with_capacity_from_v04(p, capacity as u32)
             }
-            // v0.4 spans cross-encoded as V1 on the wire — used when the agent advertises
-            // /v1.0/traces. Same in-memory shape as the v0.4 native path, different encoder.
+            // v0.4 spans cross-encoded as V1 on the wire (used when the agent advertises
+            // /v1.0/traces).
             (tracer_payload::TraceChunks::V04(p), TraceExporterOutputFormat::V1) => {
-                msgpack_encoder::v1::to_vec_with_capacity(p, capacity as u32, metadata)
+                msgpack_encoder::v1::to_vec_with_capacity_from_v04(p, capacity as u32, metadata)
             }
             (tracer_payload::TraceChunks::V05(p), TraceExporterOutputFormat::V05) => {
                 let mut buff = Vec::with_capacity(capacity);
@@ -141,11 +141,10 @@ impl TraceSerializer {
                     .map_err(TraceExporterError::Serialization)?;
                 buff
             }
-            // APMSP-2812 - TODO: native V1 input — call `msgpack_encoder::v1::to_vec_from_payload_v1`
-            // on the carried `v1::TracerPayload`. Not yet reachable: `collect_and_process_traces`
-            // never produces `TraceChunks::V1` in the current data-pipeline path.
-            (tracer_payload::TraceChunks::V1(_), TraceExporterOutputFormat::V1) => {
-                todo!("Native V1 input serialization not yet implemented (APMSP-2812)")
+            // Native V1 input model, serialized directly — the payload carries its own
+            // tracer-level metadata, so no `TracerMetadata` is needed here.
+            (tracer_payload::TraceChunks::V1(p), TraceExporterOutputFormat::V1) => {
+                msgpack_encoder::v1::to_vec_with_capacity_from_v1(p, capacity as u32)
             }
             // `collect_and_process_traces` only produces (V04, V04|V1), (V05, V05),
             // or (V1, V1) — any other combination here is a programming error.
@@ -172,7 +171,7 @@ mod tests {
     use libdd_common::header::APPLICATION_MSGPACK_STR;
     use libdd_tinybytes::BytesString;
     use libdd_trace_utils::span::v04::SpanBytes;
-    use libdd_trace_utils::trace_utils::TracerHeaderTags;
+    use libdd_trace_utils::trace_utils::{TracerGenericTags, TracerHeaderTags};
 
     fn create_test_span() -> SpanBytes {
         SpanBytes {
@@ -197,8 +196,11 @@ mod tests {
             tracer_version: "1.0.0",
             lang_interpreter: "rustc",
             lang_vendor: "rust-lang",
-            client_computed_stats: true,
-            client_computed_top_level: false,
+            generic: TracerGenericTags {
+                client_computed_stats: true,
+                client_computed_top_level: false,
+                ..Default::default()
+            },
             ..Default::default()
         }
     }
@@ -472,8 +474,11 @@ mod tests {
             tracer_version: "2.0.0",
             lang_interpreter: "cpython",
             lang_vendor: "python.org",
-            client_computed_stats: false,
-            client_computed_top_level: true,
+            generic: TracerGenericTags {
+                client_computed_stats: false,
+                client_computed_top_level: true,
+                ..Default::default()
+            },
             ..Default::default()
         };
 

@@ -2,6 +2,13 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v4.0.0..libdd-sampling-v5.0.0) - 2026-07-07
+
+### Changed
+
+- Bump `libdd-common` to a new major version (`^4.2.0` → `^5.1.0`)
+- Bump `libdd-trace-utils` to a new major version (`^8.0.0` → `^9.0.0`)
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-sampling-v3.0.0..libdd-sampling-v4.0.0) - 2026-06-08
 
 ### Changed

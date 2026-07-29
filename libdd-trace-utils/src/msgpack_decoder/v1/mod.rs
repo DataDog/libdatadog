@@ -14,6 +14,7 @@ use std::borrow::Borrow;
 // (`msgpack_encoder::v1::{trace_key, chunk_key, SpanKey, SpanLinkKey, SpanEventKey, AnyValueKey}`).
 
 pub(super) mod trace_key {
+    pub const CONTAINER_ID: u8 = 2;
     pub const LANGUAGE_NAME: u8 = 3;
     pub const LANGUAGE_VERSION: u8 = 4;
     pub const TRACER_VERSION: u8 = 5;
@@ -82,6 +83,9 @@ pub(super) const TYPED_VALUE_STRIDE: u32 = 2;
 /// Number of msgpack items consumed per `[key, type, value]` triplet in a typed attributes map.
 pub(super) const FLAT_ATTR_STRIDE: u32 = 3;
 
+/// Length in bytes of a V1 chunk's `trace_id` field (128-bit trace ID).
+pub(super) const TRACE_ID_LEN: u32 = 16;
+
 /// Streaming string intern table built up as the payload is decoded.
 ///
 /// V1 strings are encoded inline the first time they appear (as msgpack `str`), and as a
@@ -117,10 +121,9 @@ where
             })
     }
 
-    /// Records a freshly-read inline string and returns it (cloned for reuse).
-    fn record(&mut self, s: T::Text) -> T::Text {
+    /// Records a freshly-read inline string in the table.
+    fn record(&mut self, s: &T::Text) {
         self.seen.push(s.clone());
-        s
     }
 }
 
@@ -136,7 +139,7 @@ pub(super) fn read_interned_string<T: DeserializableTraceData>(
 where
     T::Text: Clone,
 {
-    let slice: &[u8] = buf.as_mut_slice();
+    let slice: &[u8] = buf.as_slice();
     let marker_byte = *slice.first().ok_or_else(|| {
         DecodeError::InvalidFormat(
             "Unexpected end of V1 buffer when reading interned string".to_owned(),
@@ -148,21 +151,23 @@ where
     //   str8/str16/str32 : 0xd9, 0xda, 0xdb
     //   fixint (positive): 0x00..=0x7f
     //   uint8/16/32/64   : 0xcc, 0xcd, 0xce, 0xcf
-    let is_string = matches!(marker_byte, 0xa0..=0xbf | 0xd9 | 0xda | 0xdb);
-    let is_uint = matches!(marker_byte, 0x00..=0x7f | 0xcc | 0xcd | 0xce | 0xcf);
-
-    if is_string {
-        let s = buf.read_string()?;
-        Ok(table.record(s))
-    } else if is_uint {
-        let id: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
-            DecodeError::InvalidFormat("V1 interned string reference uint read failure".to_owned())
-        })?;
-        table.resolve(id)
-    } else {
-        Err(DecodeError::InvalidFormat(format!(
+    match marker_byte {
+        0xa0..=0xbf | 0xd9 | 0xda | 0xdb => {
+            let s = buf.read_string()?;
+            table.record(&s);
+            Ok(s)
+        }
+        0x00..=0x7f | 0xcc | 0xcd | 0xce | 0xcf => {
+            let id: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
+                DecodeError::InvalidFormat(
+                    "V1 interned string reference uint read failure".to_owned(),
+                )
+            })?;
+            table.resolve(id)
+        }
+        _ => Err(DecodeError::InvalidFormat(format!(
             "Unexpected msgpack marker 0x{marker_byte:02x} for V1 interned string"
-        )))
+        ))),
     }
 }
 
@@ -191,7 +196,6 @@ pub fn from_slice(data: &[u8]) -> Result<(TracerPayloadSlice<'_>, usize), Decode
 }
 
 /// Generic over the deserialization mode (owned `BytesData` or borrowed `SliceData`).
-#[allow(clippy::type_complexity)]
 pub fn from_buffer<T: DeserializableTraceData>(
     data: &mut Buffer<T>,
 ) -> Result<(TracerPayload<T>, usize), DecodeError>
@@ -203,6 +207,17 @@ where
     let payload = decode_payload(data, &mut table)?;
     let consumed = start_len - data.len();
     Ok((payload, consumed))
+}
+
+/// Consumes and discards the msgpack value at the current buffer position, regardless of its
+/// type. Used to skip unknown keys for forward compatibility: if the V1 format gains new fields,
+/// older decoders shouldn't reject the whole payload just because they don't recognize a key.
+pub(super) fn skip_unknown_value<T: DeserializableTraceData>(
+    buf: &mut Buffer<T>,
+) -> Result<(), DecodeError> {
+    rmpv::decode::read_value(buf.as_mut_slice())
+        .map_err(|_| DecodeError::InvalidFormat("Failed to skip unknown V1 value".to_owned()))?;
+    Ok(())
 }
 
 /// Decodes the top-level V1 payload map: tracer metadata fields + chunks array.
@@ -228,6 +243,7 @@ where
                 payload.chunks = decode_chunks(buf, table)?;
                 saw_chunks = true;
             }
+            trace_key::CONTAINER_ID => payload.container_id = read_interned_string(buf, table)?,
             trace_key::LANGUAGE_NAME => payload.language_name = read_interned_string(buf, table)?,
             trace_key::LANGUAGE_VERSION => {
                 payload.language_version = read_interned_string(buf, table)?
@@ -240,11 +256,7 @@ where
             trace_key::ATTRIBUTES => {
                 payload.attributes = span::read_attributes_map(buf, table)?;
             }
-            unknown => {
-                return Err(DecodeError::InvalidFormat(format!(
-                    "Unknown V1 payload key: {unknown}"
-                )));
-            }
+            _unknown => skip_unknown_value(buf)?,
         }
     }
 
@@ -266,7 +278,7 @@ where
 {
     let count = decode::read_array_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("V1 chunks array len read failure".to_owned()))?;
-    let mut chunks = Vec::with_capacity(count as usize);
+    let mut chunks = Vec::with_capacity(buf.capped_capacity(count as usize));
     for _ in 0..count {
         chunks.push(decode_chunk(buf, table)?);
     }
@@ -294,14 +306,16 @@ where
                 let len = decode::read_bin_len(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 chunk trace_id bin len read failure".to_owned())
                 })?;
-                if len != 16 {
+                if len != TRACE_ID_LEN {
                     return Err(DecodeError::InvalidFormat(format!(
-                        "V1 chunk trace_id must be 16 bytes, got {len}"
+                        "V1 chunk trace_id must be {TRACE_ID_LEN} bytes, got {len}"
                     )));
                 }
-                let bytes = buf.try_slice_and_advance(16).ok_or_else(|| {
-                    DecodeError::InvalidFormat("V1 chunk trace_id payload truncated".to_owned())
-                })?;
+                let bytes = buf
+                    .try_slice_and_advance(TRACE_ID_LEN as usize)
+                    .ok_or_else(|| {
+                        DecodeError::InvalidFormat("V1 chunk trace_id payload truncated".to_owned())
+                    })?;
                 let slice: &[u8] = bytes.borrow();
                 chunk.trace_id.copy_from_slice(slice);
                 saw_trace_id = true;
@@ -310,7 +324,7 @@ where
                 let count = decode::read_array_len(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 chunk spans array len read failure".to_owned())
                 })?;
-                let mut spans = Vec::with_capacity(count as usize);
+                let mut spans = Vec::with_capacity(buf.capped_capacity(count as usize));
                 for _ in 0..count {
                     spans.push(span::decode_span(buf, table)?);
                 }
@@ -322,7 +336,9 @@ where
                 let v: i64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 chunk priority read failure".to_owned())
                 })?;
-                chunk.priority = Some(v as i32);
+                chunk.priority = Some(i32::try_from(v).map_err(|_| {
+                    DecodeError::InvalidFormat(format!("V1 chunk priority {v} exceeds i32 range"))
+                })?);
             }
             chunk_key::SAMPLING_MECHANISM => {
                 let v: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
@@ -330,7 +346,11 @@ where
                         "V1 chunk sampling_mechanism read failure".to_owned(),
                     )
                 })?;
-                chunk.sampling_mechanism = Some(v as u32);
+                chunk.sampling_mechanism = Some(u32::try_from(v).map_err(|_| {
+                    DecodeError::InvalidFormat(format!(
+                        "V1 chunk sampling_mechanism {v} exceeds u32::MAX"
+                    ))
+                })?);
             }
             chunk_key::ATTRIBUTES => {
                 chunk.attributes = span::read_attributes_map(buf, table)?;
@@ -342,11 +362,7 @@ where
                     )
                 })?;
             }
-            unknown => {
-                return Err(DecodeError::InvalidFormat(format!(
-                    "Unknown V1 chunk key: {unknown}"
-                )));
-            }
+            _unknown => skip_unknown_value(buf)?,
         }
     }
 
@@ -367,7 +383,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::msgpack_encoder::v1::to_vec_from_payload_v1;
+    use crate::msgpack_encoder::v1::to_vec_from_v1;
     use crate::span::v1::{
         AttributeValue, Span as V1Span, SpanBytes as V1SpanBytes, SpanKind, TraceChunkBytes,
         TracerPayloadBytes,
@@ -438,7 +454,7 @@ mod tests {
     #[test]
     fn roundtrip_full_payload() {
         let original = sample_payload();
-        let bytes = to_vec_from_payload_v1(&original);
+        let bytes = to_vec_from_v1(&original);
         let payload_len = bytes.len();
         let (decoded, consumed) =
             from_bytes(Bytes::from(bytes)).expect("decoder should succeed on encoder output");
@@ -485,7 +501,7 @@ mod tests {
     #[test]
     fn empty_payload_roundtrip() {
         let original = TracerPayloadBytes::default();
-        let bytes = to_vec_from_payload_v1(&original);
+        let bytes = to_vec_from_v1(&original);
         let (decoded, _) =
             from_bytes(Bytes::from(bytes)).expect("decoder should succeed on empty payload");
         assert!(decoded.chunks.is_empty());
@@ -498,6 +514,28 @@ mod tests {
         // `0x81` = fixmap len 1, key 0x07 (ENV_REF), value = inline str "x" (`0xa1 0x78`).
         let bytes = vec![0x81, 0x07, 0xa1, 0x78];
         let err = from_bytes(Bytes::from(bytes)).expect_err("missing chunks must error");
+        assert!(matches!(err, DecodeError::InvalidFormat(_)));
+    }
+
+    #[test]
+    fn truncated_trace_id_is_rejected_not_panicking() {
+        // Payload map with 1 entry: chunks -> [ chunk map with 1 entry: trace_id -> bin(16) ].
+        // The bin declares 16 bytes but only 4 are actually present, so the owned decoder's
+        // `try_slice_and_advance` must reject this instead of indexing out of bounds.
+        let bytes = vec![
+            0x81,
+            trace_key::CHUNKS,
+            0x91, // array len 1
+            0x81, // chunk fixmap len 1
+            chunk_key::TRACE_ID,
+            0xc4, // bin8 marker
+            0x10, // declared length: 16 bytes
+            0x01,
+            0x02,
+            0x03,
+            0x04, // only 4 bytes actually present
+        ];
+        let err = from_bytes(Bytes::from(bytes)).expect_err("truncated trace_id must error");
         assert!(matches!(err, DecodeError::InvalidFormat(_)));
     }
 
@@ -534,7 +572,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let bytes = to_vec_from_payload_v1(&payload);
+        let bytes = to_vec_from_v1(&payload);
         let (decoded, _) =
             from_bytes(Bytes::from(bytes)).expect("decoder should resolve interned strings");
         assert_eq!(decoded.chunks[0].spans[0].service.as_str(), "shared");
@@ -564,7 +602,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let bytes = to_vec_from_payload_v1(&payload);
+        let bytes = to_vec_from_v1(&payload);
         let (decoded, _) = from_bytes(Bytes::from(bytes)).expect("nested KeyValue roundtrip");
 
         let decoded_attrs = &decoded.chunks[0].spans[0].attributes;
@@ -646,7 +684,7 @@ mod tests {
                         ..Default::default()
                     };
 
-                    let encoded = to_vec_from_payload_v1(&payload);
+                    let encoded = to_vec_from_v1(&payload);
                     let result = from_bytes(Bytes::from(encoded));
                     assert!(
                         result.is_ok(),

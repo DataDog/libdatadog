@@ -20,13 +20,13 @@ arc-swap = { workspace = true, optional = true }
 arrayref = "0.3.7"
 priority-queue = "2.1.1"
 libdd-common = { path = "../libdd-common" }
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.0.0" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
 datadog-sidecar-macros = { path = "../datadog-sidecar-macros" }
 
 libdd-telemetry = { path = "../libdd-telemetry", features = ["tracing"] }
 libdd-data-pipeline = { path = "../libdd-data-pipeline" }
 libdd-trace-utils = { path = "../libdd-trace-utils" }
-libdd-trace-stats = { path = "../libdd-trace-stats", default-features=false, features = ["https"] }
+libdd-trace-stats = { path = "../libdd-trace-stats", features = ["telemetry", "dogstatsd"] }
 libdd-remote-config = { path = "../libdd-remote-config" }
 datadog-live-debugger = { path = "../datadog-live-debugger" }
 datadog-ffe = { path = "../datadog-ffe", features = ["exposure-events", "evaluation-metrics"] }
@@ -34,7 +34,7 @@ libdd-crashtracker = { path = "../libdd-crashtracker" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes" }
 
-futures = { version = "0.3", default-features = false }
+futures.workspace = true
 manual_future = "0.1.1"
 http = "1.1"
 http-body-util = "0.1"
@@ -47,7 +47,7 @@ rmp-serde = "1.3.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_with = "3.6.0"
 bincode = { version = "1.3.3" }
-serde_json = "1.0"
+serde_json.workspace = true
 base64 = "0.22.1"
 spawn_worker = { path = "../spawn_worker" }
 zwohash = "0.1.2"
@@ -72,7 +72,7 @@ tracing-subscriber = { version = "0.3.22", default-features = false, features = 
 ], optional = true }
 chrono = "0.4.31"
 console-subscriber = { version = "0.5", optional = true }
-libc = { version = "0.2" }
+libc.workspace = true
 
 # watchdog and self telemetry
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
@@ -112,7 +112,7 @@ windows-sys = { version = "0.52.0", features = ["Win32_System_SystemInformation"
 microseh = "0.1.1"
 
 [dev-dependencies]
-libc = { version = "0.2" }
+libc.workspace = true
 tempfile = { version = "3.3" }
 httpmock = "0.8.0-alpha.1"
 libdd-remote-config = { path = "../libdd-remote-config", features = ["test"] }

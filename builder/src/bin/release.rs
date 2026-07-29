@@ -76,6 +76,8 @@ pub fn main() {
         f.push("datadog-ffe-ffi".to_string());
         #[cfg(feature = "shared-runtime")]
         f.push("shared-runtime".to_string());
+        #[cfg(feature = "otel-thread-ctx")]
+        f.push("otel-thread-ctx-ffi".to_string());
         f
     };
 

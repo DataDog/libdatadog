@@ -498,6 +498,7 @@ pub fn create_send_data(size: usize, target_endpoint: &Endpoint) -> SendData {
         env: "test".to_owned(),
         hostname: "test_host".to_owned(),
         app_version: "2.0".to_owned(),
+        container_debug: None,
     };
 
     SendData::new(

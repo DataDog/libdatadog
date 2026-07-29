@@ -10,6 +10,7 @@ use datadog_ipc::one_way_shared_memory::{open_named_shm, OneWayShmReader, OneWay
 use datadog_ipc::platform::{FileBackedHandle, NamedShmHandle};
 use datadog_ipc::rate_limiter::ShmLimiter;
 use datadog_live_debugger::LiveDebuggingData;
+use libdd_capabilities_impl::NativeHttpClient;
 use libdd_common::{tag::Tag, MutexExt};
 use libdd_remote_config::config::dynamic::{parse_json, Configs};
 use libdd_remote_config::fetch::{
@@ -245,10 +246,12 @@ fn dynamic_instrumentation_is_enabled(apm_config: Option<bool>, info: &TargetInf
     }
 }
 
-impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self> for ConfigFileStorage<N> {
+impl<N: NotifyTarget + 'static> MultiTargetHandlers<N, Self, NativeHttpClient>
+    for ConfigFileStorage<N>
+{
     fn fetched(
         &self,
-        fetcher: &Arc<MultiTargetFetcher<N, Self>>,
+        fetcher: &Arc<MultiTargetFetcher<N, Self, NativeHttpClient>>,
         runtime_id: &Arc<String>,
         target: &Arc<Target>,
         files: &[Arc<StoredShmFile>],
@@ -422,7 +425,7 @@ impl<N: NotifyTarget + 'static> Drop for ShmRemoteConfigsGuard<N> {
 
 #[derive(Clone)]
 pub struct ShmRemoteConfigs<N: NotifyTarget + 'static>(
-    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>>>,
+    Arc<MultiTargetFetcher<N, ConfigFileStorage<N>, NativeHttpClient>>,
 );
 
 // we collect services per env, so that we always query, for each runtime + env, all the services
@@ -448,7 +451,11 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
             on_dead: Arc::new(Mutex::new(Some(on_dead))),
             _phantom: Default::default(),
         };
-        let fetcher = MultiTargetFetcher::new(storage, invariants);
+        let fetcher = MultiTargetFetcher::new(
+            storage,
+            invariants,
+            NativeHttpClient::new_without_connection_pooling(),
+        );
         fetcher
             .remote_config_interval
             .store(interval.as_nanos() as u64, Ordering::Relaxed);
@@ -473,13 +480,13 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         dynamic_instrumentation_state: DynamicInstrumentationConfigState,
         process_tags: Vec<Tag>,
     ) -> ShmRemoteConfigsGuard<N> {
-        let target = Arc::new(Target {
+        let target = Arc::new(Target::new(
             service,
             env,
             app_version,
-            tags,
-            process_tags,
-        });
+            tags.iter().map(|t| t.to_string()).collect(),
+            process_tags.iter().map(|t| t.to_string()).collect(),
+        ));
         self.0.add_runtime(
             instance_id.session_id.clone(),
             instance_id.runtime_id.clone(),
@@ -491,6 +498,10 @@ impl<N: NotifyTarget + 'static> ShmRemoteConfigs<N> {
         let writers = self.0.storage.storage.writers.lock_or_panic();
         if let Some(writer) = writers.get(&target) {
             if writer.current_generation() > remote_config_generation {
+                debug!(
+                    "Notify {:?} about newer remote config changes existing",
+                    notify_target
+                );
                 notify_target.notify();
             }
         }
@@ -821,13 +832,13 @@ mod tests {
     });
 
     static DUMMY_TARGET: LazyLock<Arc<Target>> = LazyLock::new(|| {
-        Arc::new(Target {
-            service: "service".to_string(),
-            env: "env".to_string(),
-            app_version: "1.3.5".to_string(),
-            tags: vec![],
-            process_tags: vec![],
-        })
+        Arc::new(Target::new(
+            "service".to_string(),
+            "env".to_string(),
+            "1.3.5".to_string(),
+            vec![],
+            vec![],
+        ))
     });
 
     #[derive(Debug, Clone)]
@@ -898,16 +909,16 @@ mod tests {
             },
             0,
             NotifyDummy(Arc::new(sender)),
-            DUMMY_TARGET.env.to_string(),
-            DUMMY_TARGET.service.to_string(),
-            DUMMY_TARGET.app_version.to_string(),
-            DUMMY_TARGET.tags.clone(),
+            "env".to_string(),
+            "service".to_string(),
+            "1.3.5".to_string(),
+            vec![],
             ProductCapabilities {
                 products: server.dummy_options().products,
                 capabilities: server.dummy_options().capabilities,
             },
             DynamicInstrumentationConfigState::Disabled,
-            DUMMY_TARGET.process_tags.clone(),
+            vec![],
         );
 
         receiver.recv().await;
@@ -1087,16 +1098,16 @@ mod tests {
             },
             0,
             NotifyDummy(Arc::new(sender)),
-            DUMMY_TARGET.env.to_string(),
-            DUMMY_TARGET.service.to_string(),
-            DUMMY_TARGET.app_version.to_string(),
-            DUMMY_TARGET.tags.clone(),
+            "env".to_string(),
+            "service".to_string(),
+            "1.3.5".to_string(),
+            vec![],
             ProductCapabilities {
                 products: server.dummy_options().products,
                 capabilities: server.dummy_options().capabilities,
             },
             DynamicInstrumentationConfigState::Enabled,
-            DUMMY_TARGET.process_tags.clone(),
+            vec![],
         );
 
         receiver.recv().await;

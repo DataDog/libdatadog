@@ -50,6 +50,8 @@
 #![cfg_attr(not(test), deny(clippy::todo))]
 #![cfg_attr(not(test), deny(clippy::unimplemented))]
 
+extern crate alloc;
+
 #[cfg(all(unix, feature = "collector"))]
 mod collector;
 #[cfg(all(windows, feature = "collector_windows"))]
@@ -88,8 +90,9 @@ pub use runtime_callback::*;
 
 #[cfg(all(unix, feature = "receiver"))]
 pub use receiver::{
-    async_receiver_entry_point_unix_listener, async_receiver_entry_point_unix_socket,
-    get_receiver_unix_socket, receiver_entry_point_stdin, receiver_entry_point_unix_socket,
+    async_receiver_entry_point_stream, async_receiver_entry_point_unix_listener,
+    async_receiver_entry_point_unix_socket, get_receiver_unix_socket, receiver_entry_point_stdin,
+    receiver_entry_point_unix_socket,
 };
 
 #[cfg(all(unix, any(feature = "collector", feature = "receiver")))]

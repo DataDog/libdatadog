@@ -1,7 +1,7 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-//! OTLP HTTP/JSON trace exporter.
+//! OTLP HTTP trace exporter (JSON or protobuf) and the shared low-level sender.
 
 use super::config::OtlpTraceConfig;
 use crate::trace_exporter::error::{InternalErrorKind, RequestError, TraceExporterError};
@@ -19,14 +19,21 @@ pub(crate) const OTLP_MAX_RETRIES: u32 = 4;
 pub(crate) const OTLP_SHUTDOWN_MAX_RETRIES: u32 = 0;
 const OTLP_RETRY_DELAY_MS: u64 = 100;
 
-/// POST an OTLP HTTP/JSON payload to `endpoint_url`; `test_token` enables snapshot tests.
+/// POST an OTLP HTTP payload to `endpoint_url` with the given `content_type` (callers pass JSON or
+/// protobuf); `test_token` enables snapshot tests.
+///
+/// Uses [`send_with_retry`] for consistent retry behaviour and observability across exporters.
+// Low-level sender shared by the trace and metrics exporters; each parameter is an independent
+// request input, so a builder/struct wrapper would add indirection without removing any.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     endpoint_url: &str,
     config_headers: &HeaderMap,
     timeout: Duration,
     test_token: Option<&str>,
-    json_body: Vec<u8>,
+    content_type: http::HeaderValue,
+    body: Vec<u8>,
     max_retries: u32,
 ) -> Result<(), TraceExporterError> {
     let url = libdd_common::parse_uri(endpoint_url).map_err(|e| {
@@ -43,10 +50,7 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
     };
 
     let mut headers = config_headers.clone();
-    headers.insert(
-        http::header::CONTENT_TYPE,
-        libdd_common::header::APPLICATION_JSON,
-    );
+    headers.insert(http::header::CONTENT_TYPE, content_type);
     if let Some(token) = test_token {
         if let Ok(val) = http::HeaderValue::from_str(token) {
             headers.insert(
@@ -63,15 +67,14 @@ pub(crate) async fn send_otlp_http<C: HttpClientCapability + SleepCapability>(
         None,
     );
 
-    match send_with_retry(capabilities, &target, json_body, &headers, &retry_strategy).await {
+    match send_with_retry(capabilities, &target, body, &headers, &retry_strategy).await {
         Ok(_) => Ok(()),
         Err(e) => Err(map_send_error(e).await),
     }
 }
 
-/// Send OTLP trace payload (JSON bytes) to the configured endpoint with retries.
-///
-/// Uses [`send_with_retry`] for consistent retry behaviour and observability across exporters.
+/// Send an OTLP trace payload to the configured endpoint with retries. The `Content-Type` is
+/// derived from `config.protocol`, which also selected the body encoding (JSON or protobuf).
 ///
 /// `test_token` is forwarded as `X-Datadog-Test-Session-Token` when set, enabling snapshot tests
 /// against the Datadog test agent's OTLP endpoint.
@@ -79,7 +82,7 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
     capabilities: &C,
     config: &OtlpTraceConfig,
     test_token: Option<&str>,
-    json_body: Vec<u8>,
+    body: Vec<u8>,
 ) -> Result<(), TraceExporterError> {
     send_otlp_http(
         capabilities,
@@ -87,7 +90,8 @@ pub async fn send_otlp_traces_http<C: HttpClientCapability + SleepCapability>(
         &config.headers,
         config.timeout,
         test_token,
-        json_body,
+        config.protocol.content_type(),
+        body,
         OTLP_MAX_RETRIES,
     )
     .await

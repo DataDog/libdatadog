@@ -2,6 +2,18 @@
 
 
 
+## [5.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v4.0.0..libdd-trace-obfuscation-v5.0.0) - 2026-07-07
+
+### Changed
+
+- Skip slow miri tests ([#2188](https://github.com/datadog/libdatadog/issues/2188)) - ([4b66bd6](https://github.com/datadog/libdatadog/commit/4b66bd62c4d39184c68a58d576d7955f1fb51aaa))
+
+### Fixed
+
+- Update anyhow for unsoundness ([#2186](https://github.com/datadog/libdatadog/issues/2186)) - ([f8b9cc1](https://github.com/datadog/libdatadog/commit/f8b9cc1d8db5cf69a070588fa6b728a75842653a))
+
+
+
 ## [4.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-obfuscation-v3.1.0..libdd-trace-obfuscation-v4.0.0) - 2026-06-08
 
 ### Changed

@@ -9,10 +9,11 @@
     clippy::format_push_string
 )]
 
-use std::{
-    collections::{BTreeSet, HashSet},
-    fmt::{self, Display},
-};
+extern crate alloc;
+
+use alloc::{collections::BTreeSet, fmt};
+use core::fmt::Display;
+use std::collections::HashSet;
 
 use libdd_trace_obfuscation::{obfuscate::obfuscate_span, obfuscation_config::ObfuscationConfig};
 use libdd_trace_protobuf::pb::{
@@ -30,6 +31,7 @@ struct Testcase {
     expected: libdd_trace_protobuf::pb::Span,
 }
 
+#[cfg_attr(miri, ignore)] // large fixture suite, prohibitively slow under Miri
 #[test]
 fn test_obfuscate_span() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -152,7 +154,7 @@ impl<'a> SpanComparison<'a> {
     }
 }
 impl Display for SpanComparison<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         fn cmp_field<T: PartialEq + fmt::Debug>(left: &T, right: &T) -> String {
             if left == right {
                 format!("{left:?}")

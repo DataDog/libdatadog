@@ -174,7 +174,7 @@ impl AppSecConfig {
 pub struct FromEnv {}
 
 impl FromEnv {
-    fn ipc_mode() -> IpcMode {
+    pub fn ipc_mode() -> IpcMode {
         let mode = std::env::var(ENV_SIDECAR_IPC_MODE).unwrap_or_default();
 
         match mode.as_str() {

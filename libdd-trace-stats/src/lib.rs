@@ -10,5 +10,4 @@
 //! This crate provides utilities to compute stats from traces.
 
 pub mod span_concentrator;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod stats_exporter;

@@ -1,8 +1,8 @@
 // Copyright 2021-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::fmt;
 use std::error;
-use std::fmt;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -66,7 +66,7 @@ fn get_cgroup_path() -> &'static str {
     #[cfg(feature = "cgroup_testing")]
     return TESTING_CGROUP_PATH
         .get()
-        .map(std::ops::Deref::deref)
+        .map(core::ops::Deref::deref)
         .unwrap_or(DEFAULT_CGROUP_PATH);
     #[cfg(not(feature = "cgroup_testing"))]
     return DEFAULT_CGROUP_PATH;

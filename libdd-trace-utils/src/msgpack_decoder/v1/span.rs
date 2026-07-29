@@ -5,7 +5,7 @@
 // a V1 msgpack span into a [`crate::span::v1::Span`].
 
 use super::{
-    read_interned_string, span_event_key, span_key, span_link_key, StringTable,
+    read_interned_string, skip_unknown_value, span_event_key, span_key, span_link_key, StringTable,
     ANY_VALUE_KEY_ARRAY, ANY_VALUE_KEY_BOOL, ANY_VALUE_KEY_BYTES, ANY_VALUE_KEY_DOUBLE,
     ANY_VALUE_KEY_INT64, ANY_VALUE_KEY_KEY_VALUE_LIST, ANY_VALUE_KEY_STRING, FLAT_ATTR_STRIDE,
     TYPED_VALUE_STRIDE,
@@ -33,6 +33,8 @@ where
         .map_err(|_| DecodeError::InvalidFormat("Unable to read V1 span map len".to_owned()))?;
 
     let mut span = Span::<T>::default();
+    let mut has_span_id = false;
+    let mut has_start = false;
 
     for _ in 0..map_len {
         let key = decode::read_int::<u8, _>(buf.as_mut_slice())
@@ -45,7 +47,8 @@ where
             span_key::SPAN_ID => {
                 span.span_id = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 span_id u64 read failure".to_owned())
-                })?
+                })?;
+                has_span_id = true;
             }
             span_key::PARENT_ID => {
                 span.parent_id = decode::read_int(buf.as_mut_slice()).map_err(|_| {
@@ -53,14 +56,23 @@ where
                 })?
             }
             span_key::START => {
-                span.start = decode::read_int::<u64, _>(buf.as_mut_slice()).map_err(|_| {
+                let start: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 span start u64 read failure".to_owned())
-                })? as i64;
+                })?;
+                span.start = i64::try_from(start).map_err(|_| {
+                    DecodeError::InvalidFormat(format!("V1 span start {start} exceeds i64::MAX"))
+                })?;
+                has_start = true;
             }
             span_key::DURATION => {
-                span.duration = decode::read_int::<u64, _>(buf.as_mut_slice()).map_err(|_| {
+                let duration: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 span duration u64 read failure".to_owned())
-                })? as i64;
+                })?;
+                span.duration = i64::try_from(duration).map_err(|_| {
+                    DecodeError::InvalidFormat(format!(
+                        "V1 span duration {duration} exceeds i64::MAX"
+                    ))
+                })?;
             }
             span_key::ERROR => {
                 span.error = decode::read_bool(buf.as_mut_slice()).map_err(|_| {
@@ -78,24 +90,22 @@ where
                 let kind: u32 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 span_kind u32 read failure".to_owned())
                 })?;
-                // OTEL spec: unset / unknown → Internal.
-                span.span_kind = match kind {
-                    2 => SpanKind::Server,
-                    3 => SpanKind::Client,
-                    4 => SpanKind::Producer,
-                    5 => SpanKind::Consumer,
-                    _ => SpanKind::Internal,
-                };
+                span.span_kind = SpanKind::from(kind);
             }
-            unknown => {
-                return Err(DecodeError::InvalidFormat(format!(
-                    "Unknown V1 span key: {unknown}"
-                )));
-            }
+            _unknown => skip_unknown_value(buf)?,
         }
     }
 
-    span.attributes.mark_deduped();
+    if !has_span_id {
+        return Err(DecodeError::InvalidFormat(
+            "V1 span is missing span_id".to_owned(),
+        ));
+    }
+    if !has_start {
+        return Err(DecodeError::InvalidFormat(
+            "V1 span is missing start".to_owned(),
+        ));
+    }
 
     Ok(span)
 }
@@ -119,7 +129,7 @@ where
     }
 
     let entries = (flat_len / FLAT_ATTR_STRIDE) as usize;
-    let mut map = VecMap::with_capacity(entries);
+    let mut map = VecMap::with_capacity(buf.capped_capacity(entries));
 
     for _ in 0..entries {
         let key = read_interned_string(buf, table)?;
@@ -127,8 +137,8 @@ where
         map.insert(key, value);
     }
 
-    map.mark_deduped();
-
+    // V1 attributes are a flat array of triplets, not a real msgpack map, so duplicate keys are
+    // possible; leave `deduped` false so re-encoding applies the defensive last-write-wins dedup.
     Ok(map)
 }
 
@@ -180,7 +190,7 @@ where
                 )));
             }
             let n = (array_len_with_stride / TYPED_VALUE_STRIDE) as usize;
-            let mut items = Vec::with_capacity(n);
+            let mut items = Vec::with_capacity(buf.capped_capacity(n));
             for _ in 0..n {
                 items.push(read_typed_attribute_value(buf, table)?);
             }
@@ -213,7 +223,7 @@ where
 {
     let count = decode::read_array_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("V1 span_links len read failure".to_owned()))?;
-    let mut links = ThinVec::with_capacity(count as usize);
+    let mut links = ThinVec::with_capacity(buf.capped_capacity(count as usize));
     for _ in 0..count {
         links.push(decode_span_link(buf, table)?);
     }
@@ -245,9 +255,7 @@ where
                         slice.len()
                     )));
                 }
-                let mut arr = [0u8; 16];
-                arr.copy_from_slice(slice);
-                link.trace_id = arr;
+                link.trace_id.copy_from_slice(slice);
             }
             span_link_key::SPAN_ID => {
                 link.span_id = decode::read_int(buf.as_mut_slice()).map_err(|_| {
@@ -264,13 +272,11 @@ where
                 let v: u64 = decode::read_int(buf.as_mut_slice()).map_err(|_| {
                     DecodeError::InvalidFormat("V1 span_link flags read failure".to_owned())
                 })?;
-                link.flags = v as u32;
+                link.flags = u32::try_from(v).map_err(|_| {
+                    DecodeError::InvalidFormat(format!("V1 span_link flags {v} exceeds u32::MAX"))
+                })?;
             }
-            unknown => {
-                return Err(DecodeError::InvalidFormat(format!(
-                    "Unknown V1 span_link key: {unknown}"
-                )));
-            }
+            _unknown => skip_unknown_value(buf)?,
         }
     }
     Ok(link)
@@ -285,7 +291,7 @@ where
 {
     let count = decode::read_array_len(buf.as_mut_slice())
         .map_err(|_| DecodeError::InvalidFormat("V1 span_events len read failure".to_owned()))?;
-    let mut events = ThinVec::with_capacity(count as usize);
+    let mut events = ThinVec::with_capacity(buf.capped_capacity(count as usize));
     for _ in 0..count {
         events.push(decode_span_event(buf, table)?);
     }
@@ -319,11 +325,7 @@ where
             span_event_key::ATTRIBUTES => {
                 event.attributes = read_attributes_map(buf, table)?;
             }
-            unknown => {
-                return Err(DecodeError::InvalidFormat(format!(
-                    "Unknown V1 span_event key: {unknown}"
-                )));
-            }
+            _unknown => skip_unknown_value(buf)?,
         }
     }
     Ok(event)

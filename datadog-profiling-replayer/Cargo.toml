@@ -9,7 +9,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-anyhow = "1.0"
+anyhow.workspace = true
 clap = { version = "4.3.21", features = ["cargo", "color", "derive"] }
 libdd-profiling = { path = "../libdd-profiling" }
 libdd-profiling-protobuf = { path = "../libdd-profiling-protobuf", features = ["prost_impls"] }

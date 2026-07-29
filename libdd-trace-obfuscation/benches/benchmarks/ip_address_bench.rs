@@ -1,9 +1,9 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
+use alloc::borrow::Cow;
 use criterion::{black_box, criterion_group, Criterion};
 use libdd_trace_obfuscation::ip_address;
-use std::borrow::Cow;
 
 fn quantize_peer_ip_address_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("ip_address");

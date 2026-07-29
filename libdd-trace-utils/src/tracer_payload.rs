@@ -1,7 +1,6 @@
 // Copyright 2024-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::span::v05::dict::SharedDict;
 use crate::span::{v04, v05, v1, BytesData, SharedDictBytes, TraceData};
 use crate::trace_utils::convert_trace_chunks_v04_to_v05;
 use crate::{msgpack_decoder, trace_utils::cmp_send_data_payloads};
@@ -30,9 +29,13 @@ pub enum TraceChunks<T: TraceData> {
     /// Collection of TraceChunkSpan.
     V04(Vec<Vec<v04::Span<T>>>),
     /// Collection of TraceChunkSpan with de-duplicated strings.
-    V05((SharedDict<T::Text>, Vec<Vec<v05::Span>>)),
+    ///
+    /// The dictionary always owns its strings ([`SharedDictBytes`]) because the v0.5
+    /// conversion interns dynamically-built JSON (span links / events) alongside the
+    /// (possibly borrowed) span text.
+    V05((SharedDictBytes, Vec<Vec<v05::Span>>)),
     /// Collection of v0.4 spans to be serialized as a V1 msgpack payload.
-    V1(v1::TracerPayload<BytesData>),
+    V1(Box<v1::TracerPayload<BytesData>>),
 }
 
 impl TraceChunks<BytesData> {
@@ -66,7 +69,7 @@ pub enum TracerPayloadCollection {
     /// Collection of TraceChunkSpan with de-duplicated strings.
     V05((SharedDictBytes, Vec<Vec<v05::Span>>)),
     // /// V0.4-shaped spans that must be serialized as a V1 msgpack payload on send.
-    V1(v1::TracerPayload<BytesData>),
+    V1(Box<v1::TracerPayload<BytesData>>),
 }
 
 impl TracerPayloadCollection {
@@ -85,33 +88,41 @@ impl TracerPayloadCollection {
     /// let mut col2 = TracerPayloadCollection::V07(vec![TracerPayload::default()]);
     /// col1.append(&mut col2);
     /// ```
-    pub fn append(&mut self, other: &mut Self) {
-        match self {
-            TracerPayloadCollection::V07(dest) => {
-                if let TracerPayloadCollection::V07(src) = other {
-                    dest.append(src)
-                }
+    ///
+    /// # Returns
+    ///
+    /// `true` if `other`'s data was merged into `self`, `false` if the append was skipped (e.g.
+    /// diverging V1 tracer metadata). Callers that rely on `other` being fully drained must check
+    /// this return value rather than assuming success.
+    pub fn append(&mut self, other: &mut Self) -> bool {
+        match (self, other) {
+            (TracerPayloadCollection::V07(dest), TracerPayloadCollection::V07(src)) => {
+                dest.append(src);
+                true
             }
-            TracerPayloadCollection::V04(dest) => {
-                if let TracerPayloadCollection::V04(src) = other {
-                    dest.append(src)
-                }
+            (TracerPayloadCollection::V04(dest), TracerPayloadCollection::V04(src)) => {
+                dest.append(src);
+                true
             }
-            TracerPayloadCollection::V1(dest) => {
-                if let TracerPayloadCollection::V1(src) = other {
-                    // Same-target SendData entries are coalesced by
-                    // trace_utils::coalesce_send_data, so both V1 payloads
-                    // typically share tracer-level metadata. If all metadata
-                    // fields match we append `src`'s chunks into `dest`; if any diverge we no-op
-                    // (logging a warning) rather than silently dropping `src`'s metadata.
-                    if metadata_matches_v1(dest, src) {
-                        dest.chunks.append(&mut src.chunks);
-                    }
+            (TracerPayloadCollection::V1(dest), TracerPayloadCollection::V1(src)) => {
+                // Same-target SendData entries are coalesced by
+                // trace_utils::coalesce_send_data, so both V1 payloads
+                // typically share tracer-level metadata. If all metadata
+                // fields match we append `src`'s chunks into `dest`; if any diverge we no-op
+                // (logging a warning) rather than silently dropping `src`'s metadata.
+                if metadata_matches_v1(dest, src) {
+                    dest.chunks.append(&mut src.chunks);
+                    true
+                } else {
+                    false
                 }
             }
             // TODO: Properly handle non-OK states to prevent possible panics (APMSP-18190).
             #[allow(clippy::unimplemented)]
-            TracerPayloadCollection::V05(_) => unimplemented!("Append for V05 not implemented"),
+            (TracerPayloadCollection::V05(_), _) => {
+                unimplemented!("Append for V05 not implemented")
+            }
+            _ => false,
         }
     }
 
@@ -263,12 +274,13 @@ pub fn decode_to_trace_chunks(
             let (data, size) = msgpack_decoder::v1::from_bytes(data).map_err(|e| {
                 anyhow::format_err!("Error deserializing trace from request body: {e}")
             })?;
-            Ok((TraceChunks::V1(data), size))
+            Ok((TraceChunks::V1(Box::new(data)), size))
         }
     }
 }
 
-/// Returns `true` iff every tracer-level metadata string field of `src` matches `dest`.
+/// Returns `true` if and only if every tracer-level metadata field (string fields and attributes)
+/// of `src` matches `dest`.
 ///
 /// V1 payloads carry tracer metadata (env, hostname, language, …) inside the payload itself, so
 /// merging two payloads whose metadata diverges would silently drop one set of values. Callers
@@ -279,7 +291,8 @@ fn metadata_matches_v1(
     dest: &v1::TracerPayload<BytesData>,
     src: &v1::TracerPayload<BytesData>,
 ) -> bool {
-    let differing: Vec<&'static str> = [
+    let fields = [
+        ("container_id", dest.container_id == src.container_id),
         ("language_name", dest.language_name == src.language_name),
         (
             "language_version",
@@ -290,15 +303,16 @@ fn metadata_matches_v1(
         ("env", dest.env == src.env),
         ("hostname", dest.hostname == src.hostname),
         ("app_version", dest.app_version == src.app_version),
-    ]
-    .into_iter()
-    .filter_map(|(label, eq)| (!eq).then_some(label))
-    .collect();
+        ("attributes", dest.attributes.slow_compare(&src.attributes)),
+    ];
 
-    if !differing.is_empty() {
+    if fields.iter().any(|(_, eq)| !eq) {
         warn!(
             "Skipping V1 TracerPayload append: diverging metadata fields {:?}",
-            differing
+            fields
+                .iter()
+                .filter_map(|(label, eq)| (!eq).then_some(*label))
+                .collect::<Vec<_>>()
         );
         return false;
     }
@@ -332,6 +346,7 @@ mod tests {
             env: "".to_string(),
             hostname: "".to_string(),
             app_version: "".to_string(),
+            container_debug: None,
         }])
     }
 

@@ -134,7 +134,7 @@ impl JsonObfuscator {
 
 /// Updates `key` and `wiped` based on the current closure stack.
 /// `key` is true at top level or when inside an object (not an array).
-fn set_key(closures: &[ClosureKind], key: &mut bool, wiped: &mut bool) {
+const fn set_key(closures: &[ClosureKind], key: &mut bool, wiped: &mut bool) {
     let n = closures.len();
     *key = n == 0 || matches!(closures[n - 1], ClosureKind::Object);
     *wiped = false;
@@ -181,7 +181,7 @@ mod tests {
             enabled: true,
             keep_keys: keep_keys
                 .iter()
-                .map(std::string::ToString::to_string)
+                .map(alloc::string::ToString::to_string)
                 .collect(),
             ..Default::default()
         })
@@ -192,11 +192,11 @@ mod tests {
             enabled: true,
             keep_keys: keep_keys
                 .iter()
-                .map(std::string::ToString::to_string)
+                .map(alloc::string::ToString::to_string)
                 .collect(),
             transform_keys: transform_keys
                 .iter()
-                .map(std::string::ToString::to_string)
+                .map(alloc::string::ToString::to_string)
                 .collect(),
             transformer: Some(obfuscate_sql_string),
         })

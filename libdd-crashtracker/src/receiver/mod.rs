@@ -1,11 +1,13 @@
 // Copyright 2023-Present Datadog, Inc. https://www.datadoghq.com/
 // SPDX-License-Identifier: Apache-2.0
 #![cfg(unix)]
+#![allow(clippy::std_instead_of_alloc, clippy::std_instead_of_core)]
 
 mod entry_points;
 pub use entry_points::{
-    async_receiver_entry_point_unix_listener, async_receiver_entry_point_unix_socket,
-    get_receiver_unix_socket, receiver_entry_point_stdin, receiver_entry_point_unix_socket,
+    async_receiver_entry_point_stream, async_receiver_entry_point_unix_listener,
+    async_receiver_entry_point_unix_socket, get_receiver_unix_socket, receiver_entry_point_stdin,
+    receiver_entry_point_unix_socket,
 };
 #[cfg(target_os = "linux")]
 mod ptrace_collector;

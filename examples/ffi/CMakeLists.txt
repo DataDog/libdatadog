@@ -56,6 +56,10 @@ add_executable(profiles profiles.c)
 target_link_libraries(profiles PRIVATE Datadog::Profiling)
 set_vcruntime_link_type(profiles ${VCRUNTIME_LINK_TYPE})
 
+add_executable(custom_profile_types custom_profile_types.c)
+target_link_libraries(custom_profile_types PRIVATE Datadog::Profiling)
+set_vcruntime_link_type(custom_profile_types ${VCRUNTIME_LINK_TYPE})
+
 if(BUILD_SYMBOLIZER)
   add_executable(symbolizer symbolizer.cpp)
   target_link_libraries(symbolizer PRIVATE Datadog::Profiling)

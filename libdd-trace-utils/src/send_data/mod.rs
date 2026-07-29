@@ -384,7 +384,7 @@ impl SendData {
                 headers.insert(DATADOG_TRACE_COUNT, chunks.into());
                 headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
-                let payload = msgpack_encoder::v04::to_vec(payload);
+                let payload = msgpack_encoder::v04::to_vec_from_v04(payload);
 
                 futures.push(self.send_payload(
                     capabilities,
@@ -423,7 +423,7 @@ impl SendData {
                 headers.insert(DATADOG_TRACE_COUNT, chunks.into());
                 headers.insert(CONTENT_TYPE, APPLICATION_MSGPACK);
 
-                let payload = msgpack_encoder::v1::to_vec_from_payload_v1(payload);
+                let payload = msgpack_encoder::v1::to_vec_from_v1(payload);
 
                 futures.push(self.send_payload(
                     capabilities,
@@ -478,7 +478,7 @@ mod tests {
     use crate::send_with_retry::{RetryBackoffType, RetryStrategy};
     use crate::test_utils::create_test_no_alloc_span;
     use crate::trace_utils::{construct_trace_chunk, construct_tracer_payload, TracerPayloadTags};
-    use crate::tracer_header_tags::TracerHeaderTags;
+    use crate::tracer_header_tags::{TracerGenericTags, TracerHeaderTags};
     use httpmock::prelude::*;
     use httpmock::MockServer;
     use libdd_capabilities::HttpClientCapability;
@@ -496,10 +496,12 @@ mod tests {
         lang_vendor: "vendor",
         tracer_version: "1.0",
         container_id: "id",
-        client_computed_top_level: false,
-        client_computed_stats: false,
-        dropped_p0_traces: 0,
-        dropped_p0_spans: 0,
+        generic: TracerGenericTags {
+            client_computed_top_level: false,
+            client_computed_stats: false,
+            dropped_p0_traces: 0,
+            dropped_p0_spans: 0,
+        },
     };
 
     fn setup_payload(header_tags: &TracerHeaderTags) -> TracerPayload {
@@ -552,11 +554,11 @@ mod tests {
                 total
             }
             TracerPayloadCollection::V04(payloads) => {
-                msgpack_encoder::v04::to_encoded_byte_len(payloads) as usize
+                msgpack_encoder::v04::to_encoded_byte_len_from_v04(payloads) as usize
             }
             TracerPayloadCollection::V05(payloads) => rmp_serde::to_vec(payloads).unwrap().len(),
             TracerPayloadCollection::V1(payload) => {
-                msgpack_encoder::v1::to_encoded_byte_len_from_payload_v1(payload) as usize
+                msgpack_encoder::v1::to_encoded_byte_len_from_v1(payload) as usize
             }
         }
     }
