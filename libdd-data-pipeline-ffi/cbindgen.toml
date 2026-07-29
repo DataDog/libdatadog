@@ -14,6 +14,17 @@ typedef struct ddog_TraceExporter ddog_TraceExporter;
 typedef struct ddog_TracerSpan ddog_TracerSpan;
 typedef struct ddog_TracerTraceChunks ddog_TracerTraceChunks;
 typedef struct ddog_TraceExporterCancelToken ddog_TraceExporterCancelToken;
+typedef enum ddog_TracerValueKind {
+  DDOG_TRACER_VALUE_NIL = 0,
+  DDOG_TRACER_VALUE_BOOL = 1,
+  DDOG_TRACER_VALUE_I64 = 2,
+  DDOG_TRACER_VALUE_U64 = 3,
+  DDOG_TRACER_VALUE_F64 = 4,
+  DDOG_TRACER_VALUE_STRING = 5,
+  DDOG_TRACER_VALUE_BINARY = 6,
+  DDOG_TRACER_VALUE_ARRAY = 7,
+  DDOG_TRACER_VALUE_MAP = 8,
+} ddog_TracerValueKind;
 """
 
 [export]
