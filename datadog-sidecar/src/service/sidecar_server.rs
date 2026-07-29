@@ -1450,7 +1450,13 @@ mod tests {
         let config = test_session_config();
 
         first_connection
-            .set_session_config(session_id.clone(), config.clone(), false)
+            .set_session_config(
+                session_id.clone(),
+                #[cfg(windows)]
+                Default::default(),
+                config.clone(),
+                false,
+            )
             .await;
         first_connection
             .set_universal_service_tags(
@@ -1472,7 +1478,13 @@ mod tests {
             .contains_key(&queue_id));
 
         second_connection
-            .set_session_config(session_id, config, false)
+            .set_session_config(
+                session_id,
+                #[cfg(windows)]
+                Default::default(),
+                config,
+                false,
+            )
             .await;
 
         assert!(
