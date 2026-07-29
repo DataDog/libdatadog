@@ -963,7 +963,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn send_trace_v1_shm(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         handle: ShmHandle,
         _len: usize,
@@ -994,7 +993,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
 
     async fn send_trace_v1_bytes(
         &self,
-        _peer: PeerCredentials,
         instance_id: InstanceId,
         data: Vec<u8>,
         headers: SerializedTracerHeaderTags,
