@@ -28,7 +28,7 @@ libdd-telemetry = { path = "../libdd-telemetry" }
 libdd-common = { path = "../libdd-common" }
 libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 function_name = "0.3"
-libc = { workspace = true, features = ["std"] }
+libc.workspace = true
 paste = "1"
 
 [dev-dependencies]

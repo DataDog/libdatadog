@@ -45,7 +45,7 @@ getrandom = { version = "0.2", features = ["js"] }
 uuid = { workspace = true, features = ["js", "std"] }
 
 [target."cfg(unix)".dependencies]
-libc = "0.2.176"
+libc.workspace = true
 
 [target."cfg(windows)".dependencies]
 winver = "1.0.0"

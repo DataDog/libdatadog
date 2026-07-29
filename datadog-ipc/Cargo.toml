@@ -15,7 +15,7 @@ io-lifetimes = { workspace = true, features = ["close"] }
 page_size = "0.6.0"
 memfd = { version = "0.6" }
 serde = { workspace = true, features = ["derive"] }
-libc = { workspace = true, features = ["std"] }
+libc.workspace = true
 libdd-tinybytes = { path = "../libdd-tinybytes", optional = true }
 
 

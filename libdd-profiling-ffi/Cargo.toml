@@ -56,7 +56,7 @@ function_name = "0.3.0"
 futures.workspace = true
 http-body-util = "0.1"
 hyper = { workspace = true, features = ["http1", "client"] }
-libc = { workspace = true, features = ["std"] }
+libc.workspace = true
 serde_json.workspace = true
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 thiserror = "2"

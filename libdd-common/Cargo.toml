@@ -62,7 +62,7 @@ http-body-util = "0.1"
 tower-service = "0.3"
 cc = "1.1.31"
 pin-project = "1"
-libc = { workspace = true, features = ["std"] }
+libc.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "fs", "time"] }
 
 [target.'cfg(windows)'.dependencies.windows-sys]

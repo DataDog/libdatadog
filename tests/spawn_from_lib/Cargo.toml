@@ -15,7 +15,7 @@ bench = false
 prefer-dynamic = []
 
 [dependencies]
-libc = { workspace = true, features = ["std"] }
+libc.workspace = true
 anyhow = { version = "1.0" }
 spawn_worker = { path = "../../spawn_worker" }
 tempfile = { version = "3.3" }

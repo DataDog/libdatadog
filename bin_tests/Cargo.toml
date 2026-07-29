@@ -20,7 +20,7 @@ libdd-common = { path = "../libdd-common" }
 tempfile = "3.3"
 serde_json.workspace = true
 strum = { version = "0.26.2", features = ["derive"] }
-libc = { workspace = true, features = ["std"] }
+libc.workspace = true
 errno = "0.3"
 nix = { version = "0.29", features = ["signal", "socket"] }
 hex = "0.4"

@@ -34,7 +34,7 @@ libdd-common-ffi = { path = "../libdd-common-ffi", default-features = false }
 libdd-profiling-heap-gotter = { path = "../libdd-profiling-heap-gotter" }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-libc = { workspace = true, features = ["std"] }
+libc.workspace = true
 # For the USDT-note ELF inspection test (tests/usdt_notes.rs); mirrors how
 # libdd-otel-thread-ctx-ffi pulls in its dep's `sanity-check` feature.
 libdd-profiling-heap-sampler = { path = "../libdd-profiling-heap-sampler", features = ["sanity-check"] }
