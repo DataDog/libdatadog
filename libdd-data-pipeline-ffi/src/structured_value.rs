@@ -198,7 +198,8 @@ fn encode_one(
 ///
 /// On success, `out_handle` receives an owned blob that must be freed with
 /// [`ddog_tracer_encoded_value_free`]. The input is fully validated and must
-/// contain exactly one value.
+/// contain exactly one value. Token byte slices are borrowed only for this
+/// synchronous call; the returned blob does not retain them.
 ///
 /// # Safety
 ///
@@ -271,17 +272,23 @@ mod tests {
     }
 
     unsafe fn encode(tokens: &[TracerValueToken<'_>]) -> Result<Vec<u8>, Box<ExporterError>> {
-        let mut handle = MaybeUninit::<Box<TracerEncodedValue>>::uninit();
-        let out = NonNull::new(handle.as_mut_ptr()).unwrap();
-        if let Some(error) = ddog_tracer_encode_value(Slice::from(tokens), out) {
-            return Err(error);
-        }
-        let blob = handle.assume_init();
+        let blob = encode_blob(tokens)?;
         let bytes = ddog_tracer_encoded_value_as_slice(Some(&blob))
             .as_bytes()
             .to_vec();
         ddog_tracer_encoded_value_free(Some(blob));
         Ok(bytes)
+    }
+
+    unsafe fn encode_blob(
+        tokens: &[TracerValueToken<'_>],
+    ) -> Result<Box<TracerEncodedValue>, Box<ExporterError>> {
+        let mut handle = MaybeUninit::<Box<TracerEncodedValue>>::uninit();
+        let out = NonNull::new(handle.as_mut_ptr()).unwrap();
+        if let Some(error) = ddog_tracer_encode_value(Slice::from(tokens), out) {
+            return Err(error);
+        }
+        Ok(handle.assume_init())
     }
 
     #[test]
@@ -447,5 +454,22 @@ mod tests {
     fn null_blob_access_is_empty_and_free_is_safe() {
         assert!(ddog_tracer_encoded_value_as_slice(None).is_empty());
         ddog_tracer_encoded_value_free(None);
+    }
+
+    #[test]
+    fn returned_blob_does_not_borrow_token_bytes() {
+        let mut backing = b"stable".to_vec();
+        let blob = {
+            let mut string = token(DDOG_TRACER_VALUE_STRING);
+            string.bytes = ByteSlice::from(backing.as_slice());
+            unsafe { encode_blob(&[string]).unwrap() }
+        };
+
+        backing.fill(b'x');
+        assert_eq!(
+            ddog_tracer_encoded_value_as_slice(Some(&blob)).as_bytes(),
+            b"\xa6stable"
+        );
+        ddog_tracer_encoded_value_free(Some(blob));
     }
 }
