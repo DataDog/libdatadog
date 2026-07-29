@@ -22,7 +22,7 @@ cbindgen = ["build_common/cbindgen", "libdd-common-ffi/cbindgen", "libdd-shared-
 ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
-data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
+data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi", "libdd-data-pipeline-ffi/catch_panic"]
 # Enable zstd compression for the agentless trace intake sender.
 data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compression"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
