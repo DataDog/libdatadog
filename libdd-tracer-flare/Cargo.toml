@@ -6,7 +6,6 @@ rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
 autobenches = false
-publish = false
 authors.workspace = true
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-tracer-flare"
