@@ -270,6 +270,10 @@ mod tests {
             Self
         }
 
+        fn new_without_connection_pooling() -> Self {
+            Self
+        }
+
         fn request(
             &self,
             _req: http::Request<Bytes>,

@@ -1369,6 +1369,12 @@ mod tests {
             LOG_CAPTURE.with(|c| c.borrow_mut().clear());
             Self(NativeCapabilities::new_client())
         }
+
+        fn new_without_connection_pooling() -> Self {
+            LOG_CAPTURE.with(|c| c.borrow_mut().clear());
+            Self(NativeCapabilities::new_without_connection_pooling())
+        }
+
         fn request(
             &self,
             req: http::Request<bytes::Bytes>,
