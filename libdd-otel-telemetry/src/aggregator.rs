@@ -13,7 +13,7 @@ use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::Resource;
 
 use crate::config::{OtlpExporterConfig, OtlpProtocol, Temporality};
-use crate::error::{BuildWarning, TelemetryAggregatorError};
+use crate::error::{BuildWarning, OtelMetricsError};
 use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind};
 
 /// Snapshot of export attempt counters, polled by the host tracer to feed its own telemetry
@@ -44,20 +44,20 @@ enum InstrumentHandle {
     Gauge(Gauge<f64>),
 }
 
-/// Builds a [`TelemetryAggregator`].
+/// Builds a [`OtelMetricsAggregator`].
 ///
 /// Never fails outright: any misconfiguration (bad endpoint, unsupported protocol, exporter init
 /// failure) is captured as a [`BuildWarning`] and the resulting aggregator silently drops
 /// everything it's given instead — a misconfigured OTel pipeline must never prevent the host
 /// tracer from starting.
-pub struct TelemetryAggregatorBuilder {
+pub struct OtelMetricsAggregatorBuilder {
     resource: Resource,
     metrics_exporter: Option<OtlpExporterConfig>,
     temporality: Temporality,
     export_interval: Duration,
 }
 
-impl Default for TelemetryAggregatorBuilder {
+impl Default for OtelMetricsAggregatorBuilder {
     fn default() -> Self {
         Self {
             resource: Resource::builder().build(),
@@ -68,7 +68,7 @@ impl Default for TelemetryAggregatorBuilder {
     }
 }
 
-impl TelemetryAggregatorBuilder {
+impl OtelMetricsAggregatorBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -98,7 +98,7 @@ impl TelemetryAggregatorBuilder {
     pub fn build<R: BlockingRuntime>(
         self,
         runtime: &R,
-    ) -> (TelemetryAggregator, Vec<BuildWarning>) {
+    ) -> (OtelMetricsAggregator, Vec<BuildWarning>) {
         let mut warnings = Vec::new();
 
         let reader = match &self.metrics_exporter {
@@ -129,7 +129,7 @@ impl TelemetryAggregatorBuilder {
         let provider = provider_builder.build();
         let meter = provider.meter("libdd-otel-telemetry");
 
-        let aggregator = TelemetryAggregator {
+        let aggregator = OtelMetricsAggregator {
             provider,
             meter,
             instruments: Mutex::new(HashMap::new()),
@@ -184,7 +184,7 @@ async fn build_metric_exporter(
 /// push resolved primitive values for it. The aggregator does not know or care whether a value
 /// came from a synchronous instrument call or from a host-language-scheduled observable-instrument
 /// callback — both are just "a value for this instrument id."
-pub struct TelemetryAggregator {
+pub struct OtelMetricsAggregator {
     provider: SdkMeterProvider,
     meter: opentelemetry::metrics::Meter,
     instruments: Mutex<HashMap<InstrumentId, InstrumentHandle>>,
@@ -192,7 +192,7 @@ pub struct TelemetryAggregator {
     counters: Arc<Counters>,
 }
 
-impl TelemetryAggregator {
+impl OtelMetricsAggregator {
     pub fn register_instrument(&self, descriptor: InstrumentDescriptor) -> InstrumentId {
         let id = InstrumentId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let handle = self.create_instrument(&descriptor);
@@ -317,15 +317,15 @@ impl TelemetryAggregator {
         }
     }
 
-    pub fn force_flush(&self) -> Result<(), TelemetryAggregatorError> {
+    pub fn force_flush(&self) -> Result<(), OtelMetricsError> {
         self.provider
             .force_flush()
-            .map_err(|e| TelemetryAggregatorError(e.to_string()))
+            .map_err(|e| OtelMetricsError(e.to_string()))
     }
 
-    pub fn shutdown(self) -> Result<(), TelemetryAggregatorError> {
+    pub fn shutdown(self) -> Result<(), OtelMetricsError> {
         self.provider
             .shutdown()
-            .map_err(|e| TelemetryAggregatorError(e.to_string()))
+            .map_err(|e| OtelMetricsError(e.to_string()))
     }
 }
