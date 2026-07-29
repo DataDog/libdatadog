@@ -24,7 +24,7 @@ datadog-live-debugger = { path = "../datadog-live-debugger" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes", features = ["bytes_string"] }
 paste = "1"
-libc = "0.2"
+libc.workspace = true
 tracing.workspace = true
 rmp-serde = "1.1.1"
 serde_json.workspace = true
