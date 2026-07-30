@@ -19,7 +19,7 @@ use libdd_common::Endpoint;
 use libdd_trace_protobuf::remoteconfig;
 use prost::Message;
 use serde_json::Value;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 use tuf::repository::RepositoryStorage;
 use tuf::{
     metadata::{
@@ -234,10 +234,6 @@ pub struct AgentlessFetcher<C: HttpClientCapability> {
     opaque_backend_state: Vec<u8>,
     director_client: TUFClient,
     config_client: TUFClient,
-    /// Raw signed TUF root bytes used to (re)build the clients. Usually a static
-    /// slice for embedded roots, owned only when loaded from an override path.
-    config_root_bytes: Cow<'static, [u8]>,
-    director_root_bytes: Cow<'static, [u8]>,
     /// Last non-empty config top-targets metadata received from the backend. The
     /// backend only re-sends config top-targets when their version changes; on a
     /// config root rotation rust-tuf purges its trusted top-targets and must
@@ -384,8 +380,6 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
                 TUFRepo::new(),
             )
             .await?,
-            config_root_bytes,
-            director_root_bytes,
             last_config_top_targets: None,
             org_uuid: None,
             org_data_prefetched: false,
@@ -411,39 +405,28 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         compute_backoff(self.consecutive_failures)
     }
 
-    /// Rebuild both TUF clients from the embedded/override roots and discard all
-    /// derived state, restarting the fetcher as if freshly constructed. Called on
-    /// `apply()` failure so a partially-advanced trusted database cannot block
-    /// subsequent polls
+    /// Drop all trusted non-root TUF metadata and per-fetch caches so a partially
+    /// advanced state from a mid-`apply()` failure cannot block subsequent polls.
     ///
-    /// TODO(rust-tuf): rebuilding from the embedded root discards any newer root
-    /// versions we had already verified, so recovery re-reports the embedded root
-    /// version and the backend re-sends the rotated roots to be re-verified.
-    /// rust-tuf has a private `Database::purge_metadata()` that
-    /// clears snapshot/targets/timestamp/delegations while keeping the trusted
-    /// root. If that were exposed we could reset non-root state in place and
-    /// preserve the advanced root instead of restarting from the embedded one.
-    async fn reset(&mut self) -> anyhow::Result<()> {
-        self.director_client = TUFClient::with_trusted_root(
-            tuf::client::Config::default(),
-            &RawSignedMetadata::new(self.director_root_bytes.to_vec()),
-            TUFRepo::new(),
-            TUFRepo::new(),
-        )
-        .await?;
-        self.config_client = TUFClient::with_trusted_root(
-            tuf::client::Config::default(),
-            &RawSignedMetadata::new(self.config_root_bytes.to_vec()),
-            TUFRepo::new(),
-            TUFRepo::new(),
-        )
-        .await?;
+    /// The trusted root of each client is preserved — including any version
+    /// reached via `Database::update_root` chaining past the embedded/override
+    /// root — so recovery does not force the backend to re-send the full root
+    /// rotation chain on the next poll. See `tuf::database::Database::purge_metadata`
+    /// (TUF-1.0.5 §5.1.9 fast-forward-attack recovery). The local and remote
+    /// TUF repositories are also swapped for fresh empty ones so no stale
+    /// pre-failure metadata can be picked up by the next `update()`.
+    fn reset(&mut self) {
+        self.director_client.purge_metadata();
+        *self.director_client.local_repo_mut() = TUFRepo::new();
+        *self.director_client.remote_repo_mut() = TUFRepo::new();
+        self.config_client.purge_metadata();
+        *self.config_client.local_repo_mut() = TUFRepo::new();
+        *self.config_client.remote_repo_mut() = TUFRepo::new();
         self.products.clear();
         self.opaque_backend_state.clear();
         self.last_config_top_targets = None;
         self.org_uuid = None;
         self.org_data_prefetched = false;
-        Ok(())
     }
 
     /// Check the config snapshot's `custom.org_uuid` against the UUID served
@@ -651,9 +634,7 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
                 // in place and incrementally, leaving them inconsistent with the
                 // versions we would report next poll.
                 // Reset both clients so the next poll restarts from a clean state
-                if let Err(reset_err) = self.reset().await {
-                    error!("failed to reset TUF clients after apply error: {reset_err}");
-                }
+                self.reset();
                 return Err(e);
             }
         };

@@ -76,7 +76,7 @@ rand = { version = "0.8.5", optional = true }
 thiserror = "2"
 hashbrown = "0.15"
 # branch = "opw-develop"
-tuf = { git = "https://github.com/DataDog/rust-tuf/", rev = "42fc5b6ac1fe13a997b0e4d0235f0964c18da3fa", default-features = false, optional = true }
+tuf = { git = "https://github.com/DataDog/rust-tuf/", rev = "ad6ad37d1aadbebfa5f2329a7e21f1bda77991ba", default-features = false, optional = true }
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
 ], optional = true }

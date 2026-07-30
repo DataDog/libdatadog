@@ -268,8 +268,6 @@ async fn fetcher(
         )
         .await
         .unwrap(),
-        config_root_bytes: Cow::Owned(config_root),
-        director_root_bytes: Cow::Owned(director_root),
         last_config_top_targets: None,
         org_uuid: None,
         org_data_prefetched: false,
@@ -441,8 +439,10 @@ async fn test_apply_error_resets_and_recovers() {
 
     // Poll 2 fails (after the config root advanced to v2) and resets.
     assert!(f.fetch_config(dummy_client(), &cache).await.is_err());
-    // Reset rebuilt the config client from the pinned root: back to v1, no snapshot.
-    assert_eq!(config_root_version(&f), 1);
+    // Reset purges snapshot/targets/timestamp/delegations but preserves the
+    // trusted root that `update()` already advanced to v2 — recovery does not
+    // roll back the trust chain to the embedded root v1.
+    assert_eq!(config_root_version(&f), 2);
     assert_eq!(config_snapshot_version(&f), None);
     assert!(f.opaque_backend_state.is_empty());
     assert!(f.products.is_empty());
@@ -452,19 +452,23 @@ async fn test_apply_error_resets_and_recovers() {
     // verification failures instead of hot-looping.
     assert_eq!(f.consecutive_failures(), 1);
 
-    // Poll 3 recovers.
+    // Poll 3 recovers. The response's `cfg1.root` (v1) is older than the
+    // preserved trusted root v2 and is ignored by `update_root`; snapshot,
+    // timestamp and targets are re-signed by the same key that root v2 trusts,
+    // so they verify and repopulate the purged non-root state.
     f.fetch_config(dummy_client(), &cache).await.unwrap();
-    assert_eq!(config_root_version(&f), 1);
+    assert_eq!(config_root_version(&f), 2);
     assert_eq!(config_snapshot_version(&f), Some(1));
     // A fully successful poll clears the counter again.
     assert_eq!(f.consecutive_failures(), 0);
     assert_eq!(f.next_backoff(), None);
 
-    // The post-reset poll reported the clean embedded versions, matching the
-    // live trusted DB (snapshot 0, root v1) — not the advanced v2.
+    // The post-reset poll reported the *preserved* trusted root version (v2)
+    // and the cleared snapshot version (0), so the backend does not have to
+    // re-send the root rotation chain.
     let req3 = http.request_at(2);
     assert_eq!(req3.current_config_snapshot_version, 0);
-    assert_eq!(req3.current_config_root_version, 1);
+    assert_eq!(req3.current_config_root_version, 2);
     assert_eq!(req3.current_director_root_version, 1);
 }
 
