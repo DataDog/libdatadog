@@ -2,6 +2,15 @@
 
 
 
+## [1.1.2](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.1..libdd-tinybytes-v1.1.2) - 2026-07-30
+
+### Changed
+
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+
+
 ## [1.1.1](https://github.com/datadog/libdatadog/compare/libdd-tinybytes-v1.1.0..libdd-tinybytes-v1.1.1) - 2026-05-18
 
 ### Changed
