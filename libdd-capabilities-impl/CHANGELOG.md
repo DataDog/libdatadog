@@ -2,6 +2,25 @@
 
 
 
+## [3.1.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v3.0.0..libdd-capabilities-impl-v3.1.0) - 2026-07-30
+
+### Added
+
+- Add streaming to http capabilities ([#2251](https://github.com/datadog/libdatadog/issues/2251)) - ([ef95bde](https://github.com/datadog/libdatadog/commit/ef95bdef216807c2e493c2fc2f9dd27a56fc255c))
+- Make telemetry worker wasm-compatible for the TraceExporter ([#2172](https://github.com/datadog/libdatadog/issues/2172)) - ([73f23a2](https://github.com/datadog/libdatadog/commit/73f23a2c03be39971c966e444785d63b6fd52e81))
+- Added file capability [APMSP-3780] ([#2240](https://github.com/datadog/libdatadog/issues/2240)) - ([3081603](https://github.com/datadog/libdatadog/commit/3081603d3c74f209be4e3be951f78a1a7469397f))
+- Added environment capability [APMSP-3780] ([#2239](https://github.com/datadog/libdatadog/issues/2239)) - ([0c6e2a5](https://github.com/datadog/libdatadog/commit/0c6e2a5df2a163d34c4f385353ffc5d7257c72f4))
+
+### Changed
+
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Expose HttpClientCapability in remote config ([#2252](https://github.com/datadog/libdatadog/issues/2252)) - ([43156bb](https://github.com/datadog/libdatadog/commit/43156bbe53c026fdeeaeb3777cb9d4054507a250))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-capabilities-impl-v2.0.0..libdd-capabilities-impl-v3.0.0) - 2026-07-07
 
 ### Added
