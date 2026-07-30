@@ -1281,7 +1281,7 @@ impl TelemetryWorkerBuilder {
         let config = self.config;
         let telemetry_heartbeat_interval = config.telemetry_heartbeat_interval;
         let telemetry_extended_heartbeat_interval = config.telemetry_extended_heartbeat_interval;
-        let capabilities = C::new_client();
+        let capabilities = C::new_without_connection_pooling();
 
         let metrics_flush_interval =
             telemetry_heartbeat_interval.min(MetricBuckets::METRICS_FLUSH_INTERVAL);
