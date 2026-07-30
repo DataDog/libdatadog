@@ -3,7 +3,7 @@
 
 use crate::fetch::FileStorage;
 
-use std::{borrow::Cow, fmt, ops::RangeInclusive, path::PathBuf, time::Duration};
+use std::{fmt, ops::RangeInclusive, time::Duration};
 
 use anyhow::{bail, format_err};
 use base64::Engine;
@@ -92,13 +92,6 @@ impl Site {
     }
 }
 
-/// Read a TUF root override from disk, returning the bytes
-fn load_root(override_path: &std::path::Path) -> anyhow::Result<Vec<u8>> {
-    let bytes = std::fs::read(override_path)
-        .map_err(|e| format_err!("failed to read TUF root override at {override_path:?}: {e}"))?;
-    Ok(bytes)
-}
-
 /// Fake version sent to RC. We have to do this as the RC backend will not answer if the
 /// agent_version field is empty or lower than a certain version.
 ///
@@ -147,9 +140,6 @@ pub struct AgentlessConfig {
     /// Pre-rewritten agentless endpoint (`config.<site>/api/v0.1/configurations`).
     /// Guaranteed valid (https, authority present, API key present) by [`Self::new`].
     agentless_endpoint: Endpoint,
-    /// Optional path to a TUF repo root JSON to use instead of the embedded one.
-    config_root_override_path: Option<PathBuf>,
-    director_root_override_path: Option<PathBuf>,
     /// Override the `agent_uuid` field sent to the RC backend.
     agent_uuid: Option<String>,
 }
@@ -178,24 +168,8 @@ impl AgentlessConfig {
         Ok(Self {
             hostname,
             agentless_endpoint,
-            config_root_override_path: None,
-            director_root_override_path: None,
             agent_uuid: None,
         })
-    }
-
-    /// Override the path to the TUF config repo root JSON.
-    #[must_use]
-    pub fn with_config_root_override(mut self, path: PathBuf) -> Self {
-        self.config_root_override_path = Some(path);
-        self
-    }
-
-    /// Override the path to the TUF director repo root JSON.
-    #[must_use]
-    pub fn with_director_root_override(mut self, path: PathBuf) -> Self {
-        self.director_root_override_path = Some(path);
-        self
     }
 
     /// Override the `agent_uuid` field sent to the RC backend.
@@ -212,14 +186,6 @@ impl AgentlessConfig {
     /// Pre-validated agentless endpoint.
     pub fn agentless_endpoint(&self) -> &Endpoint {
         &self.agentless_endpoint
-    }
-
-    pub fn config_root_override_path(&self) -> Option<&std::path::Path> {
-        self.config_root_override_path.as_deref()
-    }
-
-    pub fn director_root_override_path(&self) -> Option<&std::path::Path> {
-        self.director_root_override_path.as_deref()
     }
 
     pub fn agent_uuid(&self) -> Option<&str> {
@@ -347,35 +313,26 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
         endpoint: Endpoint,
         http_client: C,
     ) -> anyhow::Result<Self> {
-        // Pick the default trust roots based on the endpoint's host and overrides
+        // Pick the embedded trust roots based on the endpoint's host.
         let site = endpoint
             .url
             .host()
             .map(Site::from_host)
             .unwrap_or(Site::Prod);
 
-        let config_root_bytes: Cow<'static, [u8]> = match cfg.config_root_override_path() {
-            Some(p) => Cow::Owned(load_root(p)?),
-            None => Cow::Borrowed(site.embedded_config_root()),
-        };
-        let director_root_bytes: Cow<'static, [u8]> = match cfg.director_root_override_path() {
-            Some(p) => Cow::Owned(load_root(p)?),
-            None => Cow::Borrowed(site.embedded_director_root()),
-        };
-
         Ok(Self {
             endpoint,
             http: http_client,
             director_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(director_root_bytes.to_vec()),
+                &RawSignedMetadata::new(site.embedded_director_root().to_vec()),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
             .await?,
             config_client: TUFClient::with_trusted_root(
                 tuf::client::Config::default(),
-                &RawSignedMetadata::new(config_root_bytes.to_vec()),
+                &RawSignedMetadata::new(site.embedded_config_root().to_vec()),
                 TUFRepo::new(),
                 TUFRepo::new(),
             )
@@ -1596,22 +1553,11 @@ mod tests {
 
     #[test]
     fn agentless_config_builders() {
-        use std::path::PathBuf;
         let endpoint = Endpoint::agentless("datadoghq.com", "abc".to_string()).unwrap();
         let cfg = AgentlessConfig::new("host".to_string(), &endpoint)
             .unwrap()
-            .with_agent_uuid("uuid-1".to_string())
-            .with_config_root_override(PathBuf::from("/tmp/config_root.json"))
-            .with_director_root_override(PathBuf::from("/tmp/director_root.json"));
+            .with_agent_uuid("uuid-1".to_string());
         assert_eq!(cfg.agent_uuid(), Some("uuid-1"));
-        assert_eq!(
-            cfg.config_root_override_path(),
-            Some(std::path::Path::new("/tmp/config_root.json"))
-        );
-        assert_eq!(
-            cfg.director_root_override_path(),
-            Some(std::path::Path::new("/tmp/director_root.json"))
-        );
     }
 
     #[test]
