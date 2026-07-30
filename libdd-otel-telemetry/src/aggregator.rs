@@ -20,9 +20,10 @@ use crate::instrument::{InstrumentDescriptor, InstrumentId, InstrumentKind};
 /// system. Deliberately a plain data struct rather than a callback: nothing that isn't a
 /// primitive crosses the aggregator's public boundary in either direction.
 ///
-/// NOTE: the counting exporter wrapper (`PushMetricExporter` decorator incrementing these on
-/// every export attempt, mirroring dd-trace-rs's `TelemetryTrackingExporter`) is not implemented
-/// yet — `export_counters()` currently always returns zeros. Follow-up before Phase 3.
+/// The counting is performed by [`crate::DatadogMetricExporter`], which increments these on every
+/// export attempt (mirroring dd-trace-rs's old `TelemetryTrackingExporter`). The in-process
+/// [`OtelMetricsAggregator`] builds its own reader directly and does not yet route through that
+/// exporter, so its [`OtelMetricsAggregator::export_counters`] still returns zeros for now.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportCounters {
     pub metrics_export_attempts: u64,
@@ -31,10 +32,21 @@ pub struct ExportCounters {
 }
 
 #[derive(Debug, Default)]
-struct Counters {
-    attempts: AtomicU64,
-    successes: AtomicU64,
-    failures: AtomicU64,
+pub(crate) struct Counters {
+    pub(crate) attempts: AtomicU64,
+    pub(crate) successes: AtomicU64,
+    pub(crate) failures: AtomicU64,
+}
+
+impl Counters {
+    /// Reads the current counter values into a public [`ExportCounters`] snapshot.
+    pub(crate) fn snapshot(&self) -> ExportCounters {
+        ExportCounters {
+            metrics_export_attempts: self.attempts.load(Ordering::Relaxed),
+            metrics_export_successes: self.successes.load(Ordering::Relaxed),
+            metrics_export_failures: self.failures.load(Ordering::Relaxed),
+        }
+    }
 }
 
 enum InstrumentHandle {
@@ -140,7 +152,7 @@ impl OtelMetricsAggregatorBuilder {
     }
 }
 
-async fn build_metric_exporter(
+pub(crate) async fn build_metric_exporter(
     config: &OtlpExporterConfig,
     temporality: Temporality,
 ) -> Result<opentelemetry_otlp::MetricExporter, BuildWarning> {
@@ -310,11 +322,7 @@ impl OtelMetricsAggregator {
     /// Snapshot of export telemetry counters accumulated so far. Poll this after `force_flush`
     /// or on your own interval to report into your own telemetry system.
     pub fn export_counters(&self) -> ExportCounters {
-        ExportCounters {
-            metrics_export_attempts: self.counters.attempts.load(Ordering::Relaxed),
-            metrics_export_successes: self.counters.successes.load(Ordering::Relaxed),
-            metrics_export_failures: self.counters.failures.load(Ordering::Relaxed),
-        }
+        self.counters.snapshot()
     }
 
     pub fn force_flush(&self) -> Result<(), OtelMetricsError> {
