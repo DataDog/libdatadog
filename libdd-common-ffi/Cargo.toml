@@ -22,14 +22,14 @@ build_common = { path = "../build-common" }
 
 [dependencies]
 anyhow.workspace = true
-chrono = { version = "0.4.38", features = ["std"] }
+chrono = { workspace = true, features = ["clock", "std"] }
 crossbeam-queue = "0.3.11"
 libdd-common = { path = "../libdd-common" }
 hyper = { workspace = true, features = ["http1", "client"] }
 serde.workspace = true
 
 [dev-dependencies]
-bolero = "0.13"
+bolero = { workspace = true, features = ["std"] }
 assert_no_alloc = "1.1.2"
 function_name = "0.3.0"
 

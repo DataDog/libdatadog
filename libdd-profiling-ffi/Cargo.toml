@@ -43,7 +43,7 @@ regex-lite = ["libdd-common/regex-lite"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-allocator-api2 = { version = "0.2.21", default-features = false, features = ["alloc"]  }
+allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
 libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
