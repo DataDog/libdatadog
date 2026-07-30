@@ -40,6 +40,7 @@ pub enum RemoteConfigProduct {
     FfeFlags,
     LiveDebugging,
     LiveDebuggingSymbolDb,
+    Debug,
 }
 
 #[derive(Clone)]
