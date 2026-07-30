@@ -19,7 +19,7 @@ bench = false
 anyhow.workspace = true
 bytes = "1"
 http = "1"
-libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
+libdd-capabilities = { path = "../libdd-capabilities", version = "2.2.0" }
 libdd-common = { path = "../libdd-common", version = "5.1.0", default-features = false }
 tokio = { workspace = true, features = ["fs", "time"] }
 
