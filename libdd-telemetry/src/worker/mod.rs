@@ -1901,7 +1901,7 @@ mod tests {
             });
             worker.data.configurations.insert(Configuration {
                 name: "cfg".to_string(),
-                value: "true".to_string(),
+                value: Some("true".to_string()),
                 origin: ConfigurationOrigin::Code,
                 config_id: None,
                 seq_id: None,

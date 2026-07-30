@@ -55,14 +55,14 @@ mod tests {
             configuration: vec![
                 Configuration {
                     name: "sampling_rate".to_string(),
-                    value: "0.5".to_string(),
+                    value: Some("0.5".to_string()),
                     origin: ConfigurationOrigin::EnvVar,
                     config_id: Some("config-123".to_string()),
                     seq_id: Some(42),
                 },
                 Configuration {
                     name: "log_level".to_string(),
-                    value: "debug".to_string(),
+                    value: Some("debug".to_string()),
                     origin: ConfigurationOrigin::Code,
                     config_id: None,
                     seq_id: None,
@@ -198,7 +198,7 @@ mod tests {
         let payload = Payload::AppClientConfigurationChange(AppClientConfigurationChange {
             configuration: vec![Configuration {
                 name: "timeout".to_string(),
-                value: "30s".to_string(),
+                value: Some("30s".to_string()),
                 origin: ConfigurationOrigin::RemoteConfig,
                 config_id: Some("remote-1".to_string()),
                 seq_id: Some(10),
@@ -598,7 +598,7 @@ mod tests {
         let payload = Payload::AppExtendedHeartbeat(AppStarted {
             configuration: vec![Configuration {
                 name: "feature_flag".to_string(),
-                value: "enabled".to_string(),
+                value: Some("enabled".to_string()),
                 origin: ConfigurationOrigin::Default,
                 config_id: None,
                 seq_id: None,

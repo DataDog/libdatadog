@@ -54,7 +54,7 @@ pub struct Integration {
 #[derive(Serialize, Deserialize, Debug, Hash, PartialEq, Eq, Clone)]
 pub struct Configuration {
     pub name: String,
-    pub value: String,
+    pub value: Option<String>,  // distinguish `null` from ""
     pub origin: ConfigurationOrigin,
     pub config_id: Option<String>,
     pub seq_id: Option<u64>,
