@@ -369,8 +369,7 @@ impl<C: HttpClientCapability> AgentlessFetcher<C> {
     /// reached via `Database::update_root` chaining past the embedded/override
     /// root — so recovery does not force the backend to re-send the full root
     /// rotation chain on the next poll. See `tuf::database::Database::purge_metadata`
-    /// (TUF-1.0.5 §5.1.9 fast-forward-attack recovery). The local and remote
-    /// TUF repositories are also swapped for fresh empty ones so no stale
+    /// The local and remote TUF repositories are also swapped for fresh empty ones so no stale
     /// pre-failure metadata can be picked up by the next `update()`.
     fn reset(&mut self) {
         self.director_client.purge_metadata();
