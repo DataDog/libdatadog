@@ -28,18 +28,27 @@ use tuf::{
     repository::RepositoryProvider as _,
 };
 
-// Embedded TUF trust roots, per site
-const PROD_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/prod/config_root.json");
+/// Embedded TUF trust roots, per site
+///
+/// These roots don't have to be unexpired to be used. On the first request made to the RC backend
+/// we will fetch the trust chain starting from the embedded root.
+///
+/// The trust chain will then be checked (root N signs root (N + 1)). The embedded root is used to
+/// bootstrap the chain and only the latest, highest version root in the chain
+/// needs to be unexpired.
+mod roots {
+    pub const PROD_CONFIG: &[u8] = include_bytes!("../../roots/prod/config_root.json");
 
-const PROD_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/prod/director_root.json");
+    pub const PROD_DIRECTOR: &[u8] = include_bytes!("../../roots/prod/director_root.json");
 
-const STAGING_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/staging/config_root.json");
+    pub const STAGING_CONFIG: &[u8] = include_bytes!("../../roots/staging/config_root.json");
 
-const STAGING_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/staging/director_root.json");
+    pub const STAGING_DIRECTOR: &[u8] = include_bytes!("../../roots/staging/director_root.json");
 
-const GOV_CONFIG_ROOT: &[u8] = include_bytes!("../../roots/gov/config_root.json");
+    pub const GOV_CONFIG: &[u8] = include_bytes!("../../roots/gov/config_root.json");
 
-const GOV_DIRECTOR_ROOT: &[u8] = include_bytes!("../../roots/gov/director_root.json");
+    pub const GOV_DIRECTOR: &[u8] = include_bytes!("../../roots/gov/director_root.json");
+}
 
 /// Datadog site selection used to pick a default TUF trust-root pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,17 +77,17 @@ impl Site {
 
     fn embedded_config_root(self) -> &'static [u8] {
         match self {
-            Site::Prod => PROD_CONFIG_ROOT,
-            Site::Staging => STAGING_CONFIG_ROOT,
-            Site::Gov => GOV_CONFIG_ROOT,
+            Site::Prod => roots::PROD_CONFIG,
+            Site::Staging => roots::STAGING_CONFIG,
+            Site::Gov => roots::GOV_CONFIG,
         }
     }
 
     fn embedded_director_root(self) -> &'static [u8] {
         match self {
-            Site::Prod => PROD_DIRECTOR_ROOT,
-            Site::Staging => STAGING_DIRECTOR_ROOT,
-            Site::Gov => GOV_DIRECTOR_ROOT,
+            Site::Prod => roots::PROD_DIRECTOR,
+            Site::Staging => roots::STAGING_DIRECTOR,
+            Site::Gov => roots::GOV_DIRECTOR,
         }
     }
 }
