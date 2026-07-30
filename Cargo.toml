@@ -86,22 +86,19 @@ authors = ["Datadog Inc. <info@datadoghq.com>"]
 [workspace.dependencies]
 # Workspace dependencies are declared version-only with default features
 # disabled. Feature selection (including default features) is left to each leaf
-# crate so that present and future crates opt into exactly what they use.
+# crate so that present and future crates opt into exactly what they use,
+# reducing unintentional bloat. Exceptions must be justified.
 allocator-api2 = { version = "0.2.21", default-features = false }
 arc-swap = { version = "1.7.1", default-features = false }
 anyhow = { version = "1.0", default-features = false }
 bolero = { version = "0.13.4", default-features = false }
 chrono = { version = "0.4.38", default-features = false }
 clap = { version = "4.3.21", default-features = false }
-# Same reasoning for criterion's defaults: without `cargo_bench_support` the
+# Some default features are necessary: without `cargo_bench_support` the
 # harness refuses to run under a plain `cargo bench`, and `plotters`/`rayon`
-# produce the report plots. All benches want them.
-criterion = { version = "0.5.1", default-features = false, features = [
-    "rayon",
-    "plotters",
-    "cargo_bench_support",
-] }
-# cxx-build has no default features; `parallel` stays opt-in per crate.
+# are required for report plots. All benches want them, and criterion is a
+# dev-dependency anyway, which doesn't impact release binary size.
+criterion = { version = "0.5.1", default-features = true }
 cxx-build = { version = "1.0", default-features = false }
 elf = { version = "0.7", default-features = false }
 futures = { version = "0.3", default-features = false }
@@ -123,8 +120,8 @@ serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 syn = { version = "^2", default-features = false }
 # Without `getrandom`, tempfile seeds its temp-name RNG weakly and its own docs
-# flag that an attacker may then be able to predict the file names. Nobody wants
-# that trade-off, so the feature is enabled for every consumer here.
+# flag that an attacker may then be able to predict the file names. We enable
+# it by default for security reasons.
 tempfile = { version = "3.13", default-features = false, features = [
     "getrandom",
 ] }
