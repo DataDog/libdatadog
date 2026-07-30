@@ -36,6 +36,7 @@ pub enum RemoteConfigProduct {
     FfeFlags,
     LiveDebugger,
     LiveDebuggerSymbolDb,
+    Debug,
 }
 
 impl Display for RemoteConfigProduct {
@@ -51,6 +52,7 @@ impl Display for RemoteConfigProduct {
             RemoteConfigProduct::FfeFlags => "FFE_FLAGS",
             RemoteConfigProduct::LiveDebugger => "LIVE_DEBUGGING",
             RemoteConfigProduct::LiveDebuggerSymbolDb => "LIVE_DEBUGGING_SYMBOL_DB",
+            RemoteConfigProduct::Debug => "DEBUG",
         };
         write!(f, "{str}")
     }
@@ -102,6 +104,7 @@ impl RemoteConfigPath {
                 "FFE_FLAGS" => RemoteConfigProduct::FfeFlags,
                 "LIVE_DEBUGGING" => RemoteConfigProduct::LiveDebugger,
                 "LIVE_DEBUGGING_SYMBOL_DB" => RemoteConfigProduct::LiveDebuggerSymbolDb,
+                "DEBUG" => RemoteConfigProduct::Debug,
                 product => anyhow::bail!("Unknown product {}", product),
             },
             config_id: parts[parts.len() - 2],
