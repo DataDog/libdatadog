@@ -94,7 +94,12 @@ impl ForkSafeRuntime {
         let mut workers_lock = self.workers.lock_or_panic();
 
         for worker_entry in workers_lock.iter_mut() {
-            worker_entry.worker.start(tokio_spawn_fn(&handle))?;
+            if let Err(e) = worker_entry.worker.start(tokio_spawn_fn(&handle)) {
+                error!(
+                    worker_id = worker_entry.id,
+                    "Worker failed to restart after fork in parent: {:?}", e
+                )
+            }
         }
 
         Ok(())
@@ -121,7 +126,12 @@ impl ForkSafeRuntime {
 
         for worker_entry in workers_lock.iter_mut() {
             worker_entry.worker.reset();
-            worker_entry.worker.start(tokio_spawn_fn(&handle))?;
+            if let Err(e) = worker_entry.worker.start(tokio_spawn_fn(&handle)) {
+                error!(
+                    worker_id = worker_entry.id,
+                    "Worker failed to restart after fork in parent: {:?}", e
+                )
+            }
         }
 
         Ok(())
@@ -419,6 +429,46 @@ mod tests {
         assert!(
             receiver.recv_timeout(Duration::from_millis(200)).is_err(),
             "worker should not run or shut down after fork in child when restart_on_fork is false"
+        );
+    }
+
+    /// A single `PausableWorker` in `InvalidState` must
+    /// not abort the whole restart loop in `after_fork_parent`
+    #[test]
+    fn after_fork_parent_skips_invalid_state_workers() {
+        let runtime = ForkSafeRuntime::new().unwrap();
+
+        let (good, good_rx) = make_test_worker();
+        let _ = runtime.spawn_worker(good, true).unwrap();
+
+        // Second worker — we'll corrupt its entry into InvalidState below,
+        // simulating a previously-aborted task.
+        let (bad, _bad_rx) = make_test_worker();
+        let _ = runtime.spawn_worker(bad, true).unwrap();
+
+        good_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("good worker did not run before fork");
+
+        {
+            let mut workers = runtime.workers.lock_or_panic();
+            workers[1].worker = PausableWorker::InvalidState;
+        }
+
+        runtime.before_fork();
+
+        // Drain good worker queue
+        while good_rx.try_recv().is_ok() {}
+
+        let result = runtime.after_fork_parent();
+
+        assert!(
+            result.is_ok(),
+            "after_fork_parent should not bail on a single InvalidState worker"
+        );
+        assert!(
+            good_rx.recv_timeout(Duration::from_secs(1)).is_ok(),
+            "good worker should resume after fork even if a peer is InvalidState"
         );
     }
 }

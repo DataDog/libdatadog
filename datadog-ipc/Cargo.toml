@@ -10,12 +10,12 @@ publish = false
 anyhow.workspace = true
 zwohash = "0.1.2"
 bincode = { version = "1" }
-futures = { version = "0.3", default-features = false }
-io-lifetimes = { version = "1.0" }
+futures.workspace = true
+io-lifetimes = { workspace = true, features = ["close"] }
 page_size = "0.6.0"
 memfd = { version = "0.6" }
 serde = { workspace = true, features = ["derive"] }
-libc = { version = "0.2" }
+libc.workspace = true
 libdd-tinybytes = { path = "../libdd-tinybytes", optional = true }
 
 

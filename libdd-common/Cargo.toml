@@ -17,7 +17,7 @@ bench = false
 
 [dependencies]
 anyhow.workspace = true
-futures = "0.3"
+futures = { workspace = true, features = ["alloc", "executor"] }
 futures-core = { version = "0.3.0", default-features = false }
 futures-util = { version = "0.3.0", default-features = false }
 hex = "0.4"
@@ -46,7 +46,7 @@ static_assertions = "1.1.0"
 const_format = "0.2.34"
 # Declare rustls and hyper-rustls without a crypto provider. The provider is
 # selected via features: `https` enables ring, `fips` enables aws-lc-rs.
-rustls = { version = "0.23.37", default-features = false, optional = true }
+rustls = { workspace = true, optional = true }
 hyper-rustls = { version = "0.27.7", default-features = false, features = [
     "http1",
     "tls12",
@@ -62,7 +62,7 @@ http-body-util = "0.1"
 tower-service = "0.3"
 cc = "1.1.31"
 pin-project = "1"
-libc = "0.2"
+libc.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "fs", "time"] }
 
 [target.'cfg(windows)'.dependencies.windows-sys]

@@ -24,13 +24,13 @@ serde_json.workspace = true
 bytes = "1.11.1"
 sha2 = "0.10"
 either = "1.13.0"
-futures = { version = "0.3", default-features = false, features = ["alloc"] }
+futures = { workspace = true, features = ["alloc"] }
 tokio = { workspace = true, features = [
     "rt",
     "sync",
     "time",
 ], default-features = false }
-uuid = { version = "1.10.0", features = ["v4"] }
+uuid = { workspace = true, features = ["v4", "std"] }
 tokio-util = "0.7.11"
 libdd-capabilities = { path = "../libdd-capabilities", version = "2.1.0" }
 libdd-common = { version = "5.1.0", path = "../libdd-common", default-features = false }
@@ -55,7 +55,7 @@ libdd-capabilities-impl = { version = "3.0.0", path = "../libdd-capabilities-imp
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
-uuid = { version = "1", features = ["js"] }
+uuid = { workspace = true, features = ["js", "std"] }
 
 [lib]
 bench = false
@@ -85,6 +85,7 @@ tokio = { version = "1.23", features = [
     "test-util",
 ], default-features = false }
 duplicate = "2.0.1"
+zstd = { version = "0.13", default-features = false }
 
 [features]
 default = ["https", "telemetry"]
@@ -113,3 +114,5 @@ fips = [
 ]
 test-utils = []
 regex-lite = ["libdd-common/regex-lite"]
+# Enable zstd compression for the agentless trace intake sender.
+compression = ["libdd-trace-utils/compression"]
