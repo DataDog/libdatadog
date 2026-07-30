@@ -2,6 +2,27 @@
 
 
 
+## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v2.0.0..libdd-remote-config-v3.0.0) - 2026-07-30
+
+### Added
+
+- Handle expired config status ([#2274](https://github.com/datadog/libdatadog/issues/2274)) - ([4a0e5bc](https://github.com/datadog/libdatadog/commit/4a0e5bc70cb6c011936eb46648839a2f469f1c66))
+- Add AsmRawResponseBody capability ([#2278](https://github.com/datadog/libdatadog/issues/2278)) - ([95610de](https://github.com/datadog/libdatadog/commit/95610de06a776b8d645fe77ad8b8e1848ecd53b7))
+
+### Changed
+
+- Migrate to workspace dependencies, phase 3 ([#2283](https://github.com/datadog/libdatadog/issues/2283)) - ([f73e8ae](https://github.com/datadog/libdatadog/commit/f73e8ae5997d54860984ad8e155fa9fa257d9263))
+- Moving to workspace-level dependencies, phase 2 ([#2270](https://github.com/datadog/libdatadog/issues/2270)) - ([caa732f](https://github.com/datadog/libdatadog/commit/caa732f3fe7c82a347813ba36686e039d29981a3))
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+### Fixed
+
+- Make Target fields available again after eaf5ad06 ([#2232](https://github.com/datadog/libdatadog/issues/2232)) - ([85ce322](https://github.com/datadog/libdatadog/commit/85ce322a1dcb1eda7df9bcc021223b2d1a236783))
+- Expose HttpClientCapability in remote config ([#2252](https://github.com/datadog/libdatadog/issues/2252)) - ([43156bb](https://github.com/datadog/libdatadog/commit/43156bbe53c026fdeeaeb3777cb9d4054507a250))
+- New clippy lints ([#2219](https://github.com/datadog/libdatadog/issues/2219)) - ([e026a3c](https://github.com/datadog/libdatadog/commit/e026a3c76cfdd1959e4e1e30b7d234eeffe830c6))
+
+
+
 ## [2.0.0](https://github.com/datadog/libdatadog/compare/libdd-remote-config-v1.0.0..libdd-remote-config-v2.0.0) - 2026-07-07
 
 ### Added
