@@ -7,7 +7,7 @@ license.workspace = true
 autobenches = false
 homepage = "https://github.com/DataDog/libdatadog/tree/main/libdd-ffe"
 repository = "https://github.com/DataDog/libdatadog/tree/main/libdd-ffe"
-description = "Library that implements Feature Flag Evaluation"
+description = "Feature Flagging and Experimentation"
 
 [lib]
 bench = false
