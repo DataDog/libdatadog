@@ -579,6 +579,8 @@ pub mod linux {
         use super::{ThreadContext, ThreadContextRecord};
         use std::sync::atomic::Ordering;
 
+        const NO_TRACE_FLAGS: u8 = 0;
+
         /// Read the TLS pointer for the current thread (the value stored in the TLS slot, not the
         /// address of the slot itself).
         fn read_tls_context_ptr() -> *const ThreadContextRecord {
@@ -596,7 +598,7 @@ pub mod linux {
                 read_tls_context_ptr().is_null(),
                 "TLS must be null initially"
             );
-            ThreadContext::new(trace_id, span_id, 0, root_span_id, &[]).attach();
+            ThreadContext::new(trace_id, span_id, NO_TRACE_FLAGS, root_span_id, &[]).attach();
             assert!(
                 !read_tls_context_ptr().is_null(),
                 "TLS must not be null after attach"
@@ -628,7 +630,7 @@ pub mod linux {
             let span_id = [2u8; 8];
             let root_span_id = [3u8; 8];
 
-            ThreadContext::new(trace_id, span_id, 0, root_span_id, &[]).attach();
+            ThreadContext::new(trace_id, span_id, NO_TRACE_FLAGS, root_span_id, &[]).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null(), "TLS must be non-null after attach");
@@ -648,7 +650,7 @@ pub mod linux {
         #[cfg_attr(miri, ignore)]
         fn attribute_encoding_basic() {
             let attrs: &[(u8, &str)] = &[(1, "GET"), (2, "/api/v1")];
-            ThreadContext::new([0u8; 16], [0u8; 8], 0, [0u8; 8], attrs).attach();
+            ThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
@@ -688,7 +690,7 @@ pub mod linux {
                 (3, val_c.as_str()),
             ];
 
-            ThreadContext::new([0u8; 16], [0u8; 8], 0, [0u8; 8], attrs).attach();
+            ThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], attrs).attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
@@ -757,7 +759,7 @@ pub mod linux {
         #[test]
         #[cfg_attr(miri, ignore)]
         fn explicit_detach_nulls_tls() {
-            ThreadContext::new([0u8; 16], [0u8; 8], 0, [0u8; 8], &[]).attach();
+            ThreadContext::new([0u8; 16], [0u8; 8], NO_TRACE_FLAGS, [0u8; 8], &[]).attach();
             assert!(!read_tls_context_ptr().is_null());
 
             let _ = ThreadContext::detach();
@@ -772,8 +774,14 @@ pub mod linux {
         #[cfg_attr(miri, ignore)]
         fn long_value_capped_at_255_bytes() {
             let long_val = "a".repeat(300);
-            ThreadContext::new([0u8; 16], [0u8; 8], 0, [0u8; 8], &[(0, long_val.as_str())])
-                .attach();
+            ThreadContext::new(
+                [0u8; 16],
+                [0u8; 8],
+                NO_TRACE_FLAGS,
+                [0u8; 8],
+                &[(0, long_val.as_str())],
+            )
+            .attach();
 
             let ptr = read_tls_context_ptr();
             assert!(!ptr.is_null());
