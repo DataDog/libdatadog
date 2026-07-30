@@ -2,6 +2,14 @@
 
 
 
+## [3.0.1](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v3.0.0..libdd-trace-normalization-v3.0.1) - 2026-07-30
+
+### Changed
+
+- Consolidate core dependencies at workspace level (phase 1) ([#2253](https://github.com/datadog/libdatadog/issues/2253)) - ([15899df](https://github.com/datadog/libdatadog/commit/15899dfe754d12186ce7db72f0ff41c1920d52ec))
+
+
+
 ## [3.0.0](https://github.com/datadog/libdatadog/compare/libdd-trace-normalization-v2.0.0..libdd-trace-normalization-v3.0.0) - 2026-07-07
 
 ### Added
