@@ -715,7 +715,7 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "build_common"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "cbindgen",
  "serde",
@@ -724,7 +724,7 @@ dependencies = [
 
 [[package]]
 name = "builder"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-ffe-test-suite"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -1477,6 +1477,8 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "strum",
+ "strum_macros",
  "sys-info",
  "tokio",
  "uuid",
@@ -1500,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "datadog-profiling-replayer"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1964,9 +1966,9 @@ checksum = "673464e1e314dd67a0fd9544abc99e8eb28d0c7e3b69b033bcff9b2d00b87333"
 
 [[package]]
 name = "futures"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d"
+checksum = "65bc07b1a8bc7c85c5f2e110c476c7389b4554ba72af57d8445ea63a576b0876"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -1979,9 +1981,9 @@ dependencies = [
 
 [[package]]
 name = "futures-channel"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
+checksum = "2dff15bf788c671c1934e366d07e30c1814a8ef514e1af724a602e8a2fbe1b10"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -1989,15 +1991,15 @@ dependencies = [
 
 [[package]]
 name = "futures-core"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
+checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
 
 [[package]]
 name = "futures-executor"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baf29c38818342a3b26b5b923639e7b1f4a61fc5e76102d4b1981c6dc7a7579d"
+checksum = "1e28d1d997f585e54aebc3f97d39e72338912123a67330d723fdbb564d646c9f"
 dependencies = [
  "futures-core",
  "futures-task",
@@ -2006,9 +2008,9 @@ dependencies = [
 
 [[package]]
 name = "futures-io"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cecba35d7ad927e23624b22ad55235f2239cfa44fd10428eecbeba6d6a717718"
+checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
 
 [[package]]
 name = "futures-lite"
@@ -2025,9 +2027,9 @@ dependencies = [
 
 [[package]]
 name = "futures-macro"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
+checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2036,15 +2038,15 @@ dependencies = [
 
 [[package]]
 name = "futures-sink"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c39754e157331b013978ec91992bde1ac089843443c49cbc7f46150b0fad0893"
+checksum = "e575fab7d1e0dcb8d0c7bcf9a63ee213816ab51902e6d244a95819acacf1d4f7"
 
 [[package]]
 name = "futures-task"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
+checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
 
 [[package]]
 name = "futures-timer"
@@ -2054,9 +2056,9 @@ checksum = "f288b0a4f20f9a56b5d1da57e2227c661b7b16168e2f72365f57b63326e29b24"
 
 [[package]]
 name = "futures-util"
-version = "0.3.32"
+version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
+checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
 dependencies = [
  "futures-channel",
  "futures-core",
@@ -2066,6 +2068,7 @@ dependencies = [
  "futures-task",
  "memchr",
  "pin-project-lite",
+ "pin-utils",
  "slab",
 ]
 
@@ -2865,7 +2868,7 @@ checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libdd-agent-client"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "bytes",
  "flate2",
@@ -2964,7 +2967,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-common-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "anyhow",
  "assert_no_alloc",
@@ -3019,7 +3022,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-crashtracker-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3080,11 +3083,12 @@ dependencies = [
  "tracing",
  "uuid",
  "web-time",
+ "zstd",
 ]
 
 [[package]]
 name = "libdd-data-pipeline-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "build_common",
  "httpmock",
@@ -3113,7 +3117,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-ddsketch-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3137,7 +3141,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-http-client"
-version = "37.0.0"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "fastrand",
@@ -3208,7 +3212,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-log-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "build_common",
  "libdd-common-ffi",
@@ -3329,7 +3333,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-profiling-heap-gotter-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "anyhow",
  "build_common",
@@ -3427,7 +3431,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-shared-runtime-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "build_common",
  "libdd-shared-runtime",
@@ -3467,7 +3471,7 @@ dependencies = [
 
 [[package]]
 name = "libdd-telemetry-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "build_common",
  "function_name",
@@ -5750,7 +5754,7 @@ dependencies = [
 
 [[package]]
 name = "symbolizer-ffi"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "blazesym-c",
  "build_common",
@@ -6198,7 +6202,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "37.0.0"
+version = "38.0.0"
 dependencies = [
  "anyhow",
  "cargo_metadata",

@@ -16,7 +16,7 @@ Iterate fastest with `cargo check -p <crate>` while editing; validate each affec
 
 2. **Format and lint** — run for every crate that was touched, before finishing:
    ```bash
-   cargo +nightly-2026-02-08 fmt --all -- --check
+   cargo +nightly-2026-07-26 fmt --all -- --check
    cargo +stable clippy -p <crate> --all-targets -- -D warnings
    ```
    Add the feature flags affected by the change. Use `--all-features` only when the crate supports enabling all features together.

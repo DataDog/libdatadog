@@ -299,7 +299,12 @@ mod tests {
         let writer = tokio::task::spawn_blocking(move || {
             let refs: Vec<&[u8]> = chunks.iter().map(|c| c.as_slice()).collect();
             send_datagrams(&a, &refs);
-            // Drop `a` to signal EOF to the reader.
+            // Signal EOF with the protocol's zero-length datagram sentinel
+            // Relying on `drop(a)` alone hangs on
+            // macOS bc closing an AF_UNIX SOCK_DGRAM peer there does not deliver a
+            // readable EOF event, so the reader would never wake
+            let eof: &[u8] = &[];
+            send_datagrams(&a, &[eof]);
             drop(a);
         });
 

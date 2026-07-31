@@ -76,6 +76,10 @@ impl HttpClientCapability for MockHttp {
         Self::new()
     }
 
+    fn new_without_connection_pooling() -> Self {
+        Self::new()
+    }
+
     #[allow(clippy::manual_async_fn)]
     fn request(
         &self,

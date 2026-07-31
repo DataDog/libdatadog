@@ -17,7 +17,7 @@ bench = false
 
 [dependencies]
 async-trait = "0.1"
-futures = { version = "0.3", default-features = false, features = ["alloc"] }
+futures = { workspace = true, features = ["alloc"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 tokio = { workspace = true, features = ["rt", "macros", "time"] }
 tokio-util = "0.7.11"
@@ -40,4 +40,4 @@ wasm-bindgen-futures = "0.4"
 futures-util = { version = "0.3", default-features = false, features = ["alloc", "channel"] }
 
 [dev-dependencies]
-futures = { version = "0.3", features = ["executor"] }
+futures = { workspace = true, features = ["executor"] }

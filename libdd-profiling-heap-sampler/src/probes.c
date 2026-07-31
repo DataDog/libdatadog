@@ -21,20 +21,35 @@
 #include <datadog/heap/sample_flag.h>
 
 #include <errno.h>
+#include <stdbool.h>
+
+/* Single definition of the shared ddheap USDT semaphore. Both the alloc and
+ * free probes reference this semaphore, so attaching to either one activates
+ * sampling for the whole provider. Other TUs access it via
+ * USDT_DECLARE_SEMA(ddheap_alloc) in probes.h. */
+USDT_DEFINE_SEMA(ddheap_alloc);
 
 /* Save / restore errno: an attached USDT consumer may perturb it. */
 void dd_probe_alloc(void *user, uint64_t size, uint64_t weight) {
     int saved_errno = errno;
-    USDT(ddheap, alloc, user, size, weight);
+    USDT_WITH_EXPLICIT_SEMA(ddheap_alloc, ddheap, alloc, user, size, weight);
     errno = saved_errno;
 }
 
 void dd_probe_free(void *ptr) {
 #if DD_HEAP_LIVE_TRACKING
     int saved_errno = errno;
-    USDT(ddheap, free, ptr);
+    USDT_WITH_EXPLICIT_SEMA(ddheap_alloc, ddheap, free, ptr);
     errno = saved_errno;
 #else
     (void)ptr;
 #endif
+}
+
+bool dd_heap_profiler_attached(void) {
+    return USDT_SEMA_IS_ACTIVE(ddheap_alloc);
+}
+
+void dd_test_set_profiler_active(bool active) {
+    USDT_SEMA(ddheap_alloc).active = active ? 1 : 0;
 }

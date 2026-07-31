@@ -23,6 +23,8 @@ ddtelemetry-ffi = ["dep:libdd-telemetry-ffi"]
 datadog-log-ffi = ["dep:libdd-log-ffi"]
 symbolizer = ["symbolizer-ffi"]
 data-pipeline-ffi = ["dep:libdd-data-pipeline-ffi"]
+# Enable zstd compression for the agentless trace intake sender.
+data-pipeline-compression = ["data-pipeline-ffi", "libdd-data-pipeline-ffi/compression"]
 crashtracker-ffi = ["dep:libdd-crashtracker-ffi"]
 # Enables the in-process collection of crash-info
 crashtracker-collector = ["crashtracker-ffi", "libdd-crashtracker-ffi/collector"]
@@ -41,7 +43,7 @@ regex-lite = ["libdd-common/regex-lite"]
 build_common = { path = "../build-common" }
 
 [dependencies]
-allocator-api2 = { version = "0.2.21", default-features = false, features = ["alloc"]  }
+allocator-api2 = { workspace = true, features = ["alloc"] }
 anyhow.workspace = true
 libdd-data-pipeline-ffi = { path = "../libdd-data-pipeline-ffi", default-features = false, optional = true }
 libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", default-features = false, optional = true}
@@ -53,10 +55,10 @@ libdd-telemetry-ffi = { path = "../libdd-telemetry-ffi", default-features = fals
 libdd-ddsketch-ffi = { path = "../libdd-ddsketch-ffi", default-features = false, optional = true }
 libdd-log-ffi = { path = "../libdd-log-ffi", default-features = false, optional = true }
 function_name = "0.3.0"
-futures = { version = "0.3", default-features = false }
+futures.workspace = true
 http-body-util = "0.1"
 hyper = { workspace = true, features = ["http1", "client"] }
-libc = "0.2"
+libc.workspace = true
 serde_json.workspace = true
 symbolizer-ffi = { path = "../symbolizer-ffi", optional = true, default-features = false }
 thiserror = "2"

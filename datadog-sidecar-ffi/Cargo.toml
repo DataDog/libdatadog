@@ -24,7 +24,7 @@ datadog-live-debugger = { path = "../datadog-live-debugger" }
 libdd-dogstatsd-client = { path = "../libdd-dogstatsd-client" }
 libdd-tinybytes = { path = "../libdd-tinybytes", features = ["bytes_string"] }
 paste = "1"
-libc = "0.2"
+libc.workspace = true
 tracing.workspace = true
 rmp-serde = "1.1.1"
 serde_json.workspace = true
@@ -39,7 +39,7 @@ libdd-crashtracker-ffi = { path = "../libdd-crashtracker-ffi", features = ["coll
 [dev-dependencies]
 http = "1.1"
 libdd-trace-utils = { path = "../libdd-trace-utils", features = ["test-utils"] }
-tempfile = { version = "3.3" }
+tempfile.workspace = true
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

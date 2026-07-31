@@ -679,7 +679,7 @@ impl SidecarInterface for ConnectionSidecarHandler {
         session_id: String,
         #[cfg(windows)] remote_config_notify_function: crate::service::remote_configs::RemoteConfigNotifyFunction,
         config: SessionConfig,
-        is_fork: bool,
+        _is_fork: bool,
     ) {
         if self.session_id.set(session_id.clone()).is_ok() {
             let mut counter = self.server.session_counter.lock_or_panic();
@@ -836,10 +836,6 @@ impl SidecarInterface for ConnectionSidecarHandler {
             tokio::spawn(async move {
                 completer.complete(config).await;
             });
-        }
-
-        if !is_fork {
-            session.shutdown_running_instances().await;
         }
     }
 
